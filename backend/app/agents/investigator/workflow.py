@@ -588,6 +588,7 @@ async def _create_stage_rows(
             parent_task_id=investigation.parent_task_id,
             spawn_depth=int(investigation.spawn_depth or 0),
             workflow_type="investigation",
+            requested_by=getattr(investigation, "requested_by", None),
             status="running",
             started_at=datetime.now(timezone.utc),
             execution_metadata={
@@ -845,6 +846,21 @@ async def _finalize(
                 "investigation_id": investigation_id,
                 "budget_spend": spend,
             }
+
+        if status == "completed" and pipeline is not None and row.verdict:
+            from app.services.review_request_service import (  # noqa: PLC0415
+                investigation_evidence_hash,
+                stage_run_review_request,
+            )
+
+            await stage_run_review_request(
+                db,
+                run=pipeline,
+                project_id=row.project_id,
+                report_stage_names=["investigator_synthesis"],
+                evidence_bundle_sha256=investigation_evidence_hash(row.verdict),
+                requested_by=getattr(row, "requested_by", None),
+            )
 
         # Promotion counter: completed shadow runs are the evidence base for
         # a later shadow→suggest promotion (AI-3).

@@ -693,6 +693,105 @@ async def test_stale_finalizer_reconciles_outbox_in_same_commit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_completed_investigator_stages_review_for_its_narrative(monkeypatch):
+    from app.agents.investigator import workflow as workflow_mod
+    from app.services import agent_investigation_service as investigation_service
+    from app.services import review_request_service
+
+    investigation_id = uuid.uuid4()
+    pipeline_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"testlookup:investigation:{investigation_id}"
+    )
+    requester = uuid.uuid4()
+    verdict = {
+        "primary_cause": "commit",
+        "confidence": 82,
+        "narrative": "The regression starts at commit abc123.",
+        "recommended_actions": ["review the diff"],
+    }
+    row = SimpleNamespace(
+        id=investigation_id,
+        project_id=uuid.uuid4(),
+        run_id=uuid.uuid4(),
+        requested_by=requester,
+        status="running",
+        mode="shadow",
+        triggered_by="manual",
+        cancel_requested=False,
+        hypotheses=[],
+        verdict=None,
+        model_info=None,
+        prompt_versions=None,
+        error=None,
+        completed_at=None,
+        spend={"ledger_version": 2, "llm_calls": 0, "tokens": 0},
+    )
+    pipeline = SimpleNamespace(
+        id=pipeline_id,
+        test_run_id=row.run_id,
+        workflow_type="investigation",
+        status="running",
+        completed_at=None,
+        error=None,
+        execution_metadata={},
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def execute(self, statement):
+            sql = str(statement)
+            if "agent_investigations" in sql:
+                return _Result(row)
+            if "agent_pipeline_runs" in sql:
+                return _Result(pipeline)
+            raise AssertionError(sql)
+
+        async def commit(self):
+            return None
+
+    stage_review = AsyncMock(return_value=None)
+    monkeypatch.setattr(workflow_mod, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(investigation_service, "record_agent_run", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.agent_config_service.increment_investigator_shadow_runs",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(review_request_service, "stage_run_review_request", stage_review)
+    monkeypatch.setattr(workflow_mod, "_prompt_versions", lambda: {})
+
+    await workflow_mod._finalize(
+        str(investigation_id),
+        pipeline_run_id=str(pipeline_id),
+        final_state={"hypotheses": [], "verdict": verdict},
+        error=None,
+        wall_seconds=1.0,
+    )
+
+    stage_review.assert_awaited_once()
+    kwargs = stage_review.await_args.kwargs
+    assert kwargs["run"] is pipeline
+    assert kwargs["project_id"] == row.project_id
+    assert kwargs["report_stage_names"] == ["investigator_synthesis"]
+    assert kwargs["requested_by"] == requester
+    assert kwargs["evidence_bundle_sha256"] == (
+        review_request_service.investigation_evidence_hash(verdict)
+    )
+    assert pipeline.status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_cluster_bundle_fails_closed_when_db_membership_is_stale(
     monkeypatch,
 ):

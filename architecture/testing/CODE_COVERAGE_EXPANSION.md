@@ -35,6 +35,10 @@ to 100% statements and lines.
   ingestion, run intelligence, defect promotion, and the append-only release
   gate share one release identity. It also caught and pins the missing release
   attribution on promoted defects.
+- Investigator review-subject tests pin trigger attribution, transactional
+  review creation, per-investigation subject isolation, pending-excerpt
+  withholding, accepted distribution, draft watermarking, and the report
+  collector/renderer seam used by digest attachments.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only
@@ -46,7 +50,7 @@ trivial constants.
 | Priority | Target | Current signal | Required tests |
 |---|---|---|---|
 | P0 | `testManagementService` and TestManagement page | about 5–10% | lifecycle mutations, stale/race/error states, request contracts |
-| P0 | notification distribution | review UI journey is covered; narrative delivery remains safety-critical | reviewed/pending narrative subject and redaction rules |
+| P0 | notification distribution | AI summaries, digests, and Investigator excerpts are gated | webhook/comment repost after acceptance and provider-level delivery proofs |
 | P0 | release decision/override browser path | live-only integration | hermetic decision rendering plus PostgreSQL audit integration |
 | P1 | RAG drawers/components | roughly 0–14% | empty/citation/error/unsafe-link states |
 | P1 | integrations settings | roughly 22–28% | saved/masked secrets, validation, provider failures |

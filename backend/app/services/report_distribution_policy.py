@@ -38,6 +38,7 @@ from app.services.review_envelope import (
     ReviewEnvelope,
     not_ai_generated,
     review_envelope_for_run,
+    review_envelope_for_pipeline,
 )
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "gate_ai_summary_text",
     "gate_enforced",
     "gate_kind_labels",
+    "gate_investigation_excerpt",
     "gate_release_decided_payload",
     "gate_release_verdict",
     "record_distribution",
@@ -132,20 +134,12 @@ async def decide_run_distribution(
     caller has already checked the requester may ask for it (QA lead or above).
     """
     envelope = await review_envelope_for_run(db, run_id, workflow_type=workflow_type)
-    enforced = gate_enforced()
-    if envelope.state == "accepted":
-        return DistributionDecision(True, REVIEWED, envelope, enforced=enforced)
-    if envelope.state == "not_applicable":
-        return DistributionDecision(True, NOT_AI_GENERATED, envelope, enforced=enforced)
-    if envelope.state == "pending_review":
-        if include_unreviewed:
-            return DistributionDecision(True, INCLUDE_UNREVIEWED, envelope, DRAFT_WATERMARK, enforced)
-        if await _project_allows_drafts(db, project_id):
-            return DistributionDecision(True, PROJECT_ALLOWS_DRAFTS, envelope, DRAFT_WATERMARK, enforced)
-    # Pending with no opt-in, or rejected / superseded.
-    if not enforced:
-        return DistributionDecision(True, WOULD_REFUSE, envelope, None, False)
-    return DistributionDecision(False, REFUSED, envelope, None, True)
+    return await _decide_envelope_distribution(
+        db,
+        envelope=envelope,
+        project_id=project_id,
+        include_unreviewed=include_unreviewed,
+    )
 
 
 async def record_distribution(
@@ -308,6 +302,72 @@ REVIEW_PENDING_NOTICE = (
     "An AI summary for this run is ready and awaiting human review. "
     "Open it in TestLookup to read and review it."
 )
+
+INVESTIGATION_REVIEW_PENDING_NOTICE = (
+    "The Investigator narrative is awaiting human review. "
+    "Open the investigation in TestLookup to read and review it."
+)
+
+
+async def _decide_envelope_distribution(
+    db: Any,
+    *,
+    envelope: ReviewEnvelope,
+    project_id: Any,
+    include_unreviewed: bool = False,
+) -> DistributionDecision:
+    """Apply the common distribution rule to an already-resolved subject."""
+    enforced = gate_enforced()
+    if envelope.state == "accepted":
+        return DistributionDecision(True, REVIEWED, envelope, enforced=enforced)
+    if envelope.state == "not_applicable":
+        return DistributionDecision(True, NOT_AI_GENERATED, envelope, enforced=enforced)
+    if envelope.state == "pending_review":
+        if include_unreviewed:
+            return DistributionDecision(
+                True, INCLUDE_UNREVIEWED, envelope, DRAFT_WATERMARK, enforced
+            )
+        if await _project_allows_drafts(db, project_id):
+            return DistributionDecision(
+                True, PROJECT_ALLOWS_DRAFTS, envelope, DRAFT_WATERMARK, enforced
+            )
+    if not enforced:
+        return DistributionDecision(True, WOULD_REFUSE, envelope, None, False)
+    return DistributionDecision(False, REFUSED, envelope, None, True)
+
+
+async def gate_investigation_excerpt(
+    db: Any,
+    *,
+    investigation_id: Any,
+    project_id: Any,
+    excerpt: str,
+    channel: str,
+) -> tuple[str, Optional[DistributionDecision]]:
+    """Gate one stored Investigator narrative excerpt by its own review.
+
+    The stable Investigator pipeline id is derived from the investigation id,
+    matching the workflow runner. Withholding the excerpt never drops the
+    deterministic cause, confidence, tally, or cockpit link around it.
+    """
+    if not excerpt:
+        return excerpt, None
+    try:
+        subject_id = uuid.UUID(str(investigation_id))
+    except (TypeError, ValueError):
+        subject_id = uuid.UUID(int=0)
+    pipeline_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"testlookup:investigation:{subject_id}"
+    )
+    envelope = await review_envelope_for_pipeline(db, pipeline_id)
+    decision = await _decide_envelope_distribution(
+        db, envelope=envelope, project_id=project_id
+    )
+    if not decision.allowed:
+        return INVESTIGATION_REVIEW_PENDING_NOTICE, decision
+    if decision.watermark:
+        return f"{decision.watermark}\n\n{excerpt}", decision
+    return excerpt, decision
 
 
 async def gate_ai_summary_text(

@@ -247,8 +247,13 @@ async def test_collect_investigations_serializes_persisted_rows_verbatim():
     count_result.scalar.return_value = 1
     rows_result = MagicMock()
     rows_result.all.return_value = [(inv, "b42")]
+    review = SimpleNamespace(
+        id=uuid.uuid4(), state="accepted", reviewed_at=NOW,
+    )
+    review_result = MagicMock()
+    review_result.scalars.return_value.first.return_value = review
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+    db.execute = AsyncMock(side_effect=[count_result, rows_result, review_result])
 
     data = await ars._collect_investigations(db, uuid.uuid4(), SINCE, NOW, cap=5)
 
@@ -260,9 +265,81 @@ async def test_collect_investigations_serializes_persisted_rows_verbatim():
     assert item["confidence"] == 65
     assert item["confidence_basis"] == "llm_weighted"  # winning hypothesis's basis
     assert item["narrative_excerpt"] == "Commit onset at abc123. Baseline was green."
+    assert item["narrative_review_state"] == "accepted"
+    assert item["narrative_withheld"] is False
     assert item["hypothesis_tally"] == {
         "validated": 1, "invalidated": 1, "inconclusive": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_collector_withholds_pending_narrative_before_report_render(
+    monkeypatch,
+):
+    from app.services import report_distribution_policy as distribution
+
+    inv = SimpleNamespace(
+        id=uuid.uuid4(),
+        run_id=uuid.uuid4(),
+        mode="shadow",
+        verdict={
+            "primary_cause": "infra",
+            "confidence": 80,
+            "narrative": "Sensitive unreviewed Investigator conclusion.",
+        },
+        hypotheses=[],
+        completed_at=NOW,
+    )
+    count_result = MagicMock()
+    count_result.scalar.return_value = 1
+    rows_result = MagicMock()
+    rows_result.all.return_value = [(inv, "b-pending")]
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+    decision = SimpleNamespace(
+        allowed=False,
+        envelope=SimpleNamespace(state="pending_review"),
+    )
+    gate = AsyncMock(
+        return_value=(distribution.INVESTIGATION_REVIEW_PENDING_NOTICE, decision)
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(distribution, "gate_investigation_excerpt", gate)
+    monkeypatch.setattr(distribution, "record_distribution_detached", audit)
+
+    data = await ars._collect_investigations(
+        db,
+        uuid.uuid4(),
+        SINCE,
+        NOW,
+        cap=5,
+        channel="digest_attachment",
+    )
+
+    item = data["items"][0]
+    assert item["narrative_excerpt"] == distribution.INVESTIGATION_REVIEW_PENDING_NOTICE
+    assert item["narrative_withheld"] is True
+    assert "Sensitive unreviewed" not in str(item)
+    assert gate.await_args.kwargs["investigation_id"] == inv.id
+    assert gate.await_args.kwargs["channel"] == "digest_attachment"
+    audit.assert_awaited_once()
+
+
+def test_report_replaces_a_withheld_narrative_with_review_guidance():
+    from app.services.report_distribution_policy import (
+        INVESTIGATION_REVIEW_PENDING_NOTICE,
+    )
+
+    item = _inv_item(
+        narrative_excerpt=INVESTIGATION_REVIEW_PENDING_NOTICE,
+        narrative_withheld=True,
+        narrative_review_state="pending_review",
+    )
+    html = ars.render_analysis_report_html(_report_data([item]))
+
+    assert INVESTIGATION_REVIEW_PENDING_NOTICE in html
+    assert "withheld pending review" in html
+    assert "connection-refused signatures" not in html
 
 
 # ═══ 2. Digest delta line ════════════════════════════════════════════════════

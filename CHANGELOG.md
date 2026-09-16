@@ -12,6 +12,13 @@ through run intelligence, failure-cluster promotion, and an append-only release
 gate decision. Promoted defects now inherit the source run's release, fixing a
 gap where a HIGH or CRITICAL defect could disappear from the release gate.
 
+Investigator verdicts now create their own human-review subjects. Manual trigger
+identity is preserved through the Investigator pipeline, and narrative excerpts
+in downloadable or digest-attached analysis reports are withheld while pending,
+shown only after acceptance, or clearly watermarked under the project draft
+opt-in. Cause, confidence, hypothesis tally, and investigation links remain
+available when the prose is withheld.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

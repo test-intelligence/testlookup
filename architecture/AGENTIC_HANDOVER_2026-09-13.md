@@ -53,7 +53,7 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 |---|---|---|---|
 | D1 | Where `investigator` and `fixer` policies live (E4.4) | Requirement 4 completion; shrinking `agents.agent-mode-single-writer` baseline | **Answered:** migrate both to `agent_configs` while preserving pinned APIs and runtime budgets |
 | D2 | When to set `REVIEW_GATE_ENFORCED=true` (E8.4) | Requirement 10 enforcement | **Answered:** on a release date configured by the user |
-| D3 | Investigator narrative excerpts in notifications (E8.4) | Enforcement completeness once D2 is on | **Answered:** give excerpts a review subject |
+| D3 | Investigator narrative excerpts in notifications (E8.4) | Enforcement completeness once D2 is on | **Answered and shipped 2026-09-16:** exact Investigator pipeline review subject |
 
 **T1 completed on 2026-09-13.** The decisions above unblock their stories; D2 is a future scheduling requirement and does not enable the flag immediately.
 
@@ -103,7 +103,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
   - E8.3: `/runs/compare` AI comparison has no review subject.
   - E8.5: `passed · reviewed <time>` is now rendered from the identity-free pipeline review summary → **K3 fixed by T20**.
   - E8.6: pipeline-originated mutations now require the proposing agent's current mode to be `act` → **K4 fixed by T4**.
-- **Re-evaluate.** Implement the user-configured release-date rollout (D2) and an Investigator excerpt review subject (D3).
+- **Re-evaluate.** Implement the user-configured release-date rollout (D2). The Investigator excerpt review subject (D3) shipped on 2026-09-16.
 
 ### 2.3 E1 — OpenAPI agent exposure  ✅ Complete
 

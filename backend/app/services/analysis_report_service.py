@@ -602,7 +602,13 @@ async def _collect_gate(
 
 
 async def _collect_investigations(
-    db: AsyncSession, project_id: uuid.UUID, start: datetime, now: datetime, cap: int,
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    start: datetime,
+    now: datetime,
+    cap: int,
+    *,
+    channel: str = "analysis_report",
 ) -> dict:
     """Completed Investigator verdicts for runs in the window (AI-7).
 
@@ -646,6 +652,24 @@ async def _collect_investigations(
             if h.get("id") == primary_cause:
                 basis = h.get("confidence_basis")
                 break
+        excerpt = narrative_excerpt(verdict.get("narrative"))
+        from app.services import report_distribution_policy  # noqa: PLC0415
+
+        gated_excerpt, distribution = (
+            await report_distribution_policy.gate_investigation_excerpt(
+                db,
+                investigation_id=inv.id,
+                project_id=project_id,
+                excerpt=excerpt,
+                channel=channel,
+            )
+        )
+        await report_distribution_policy.record_distribution_detached(
+            distribution,
+            channel=channel,
+            run_id=inv.run_id,
+            project_id=project_id,
+        )
         items.append({
             "investigation_id": str(inv.id),
             "run_id": str(inv.run_id),
@@ -654,7 +678,13 @@ async def _collect_investigations(
             "primary_cause": primary_cause,
             "confidence": int(verdict.get("confidence") or 0),
             "confidence_basis": basis or "heuristic_estimate",
-            "narrative_excerpt": narrative_excerpt(verdict.get("narrative")),
+            "narrative_excerpt": gated_excerpt,
+            "narrative_withheld": bool(
+                distribution is not None and not distribution.allowed
+            ),
+            "narrative_review_state": (
+                distribution.envelope.state if distribution is not None else None
+            ),
             "hypothesis_tally": hypothesis_tally(inv.hypotheses),
             "completed_at": inv.completed_at.isoformat() if inv.completed_at else None,
         })
@@ -748,6 +778,8 @@ async def collect_analysis_report_data(
     window: str,
     now: datetime | None = None,
     caps: dict[str, int] | None = None,
+    *,
+    distribution_channel: str = "analysis_report",
 ) -> dict:
     """Gather every section's data. Never raises: a failing/empty subsystem
     records an omission reason and the report renders around it."""
@@ -827,7 +859,12 @@ async def collect_analysis_report_data(
     await _section(
         "investigations",
         _collect_investigations(
-            db, project_id, start, now, caps.get("investigations", 5),
+            db,
+            project_id,
+            start,
+            now,
+            caps.get("investigations", 5),
+            channel=distribution_channel,
         ),
         "Agent investigation data unavailable.",
     )
@@ -1224,12 +1261,19 @@ def render_analysis_report_html(data: dict) -> str:
                 )
                 basis = str(item.get("confidence_basis") or "").replace("_", " ")
                 excerpt = item.get("narrative_excerpt") or ""
-                excerpt_html = (
-                    f"<br><em>“{_e(excerpt, 320)}”</em> "
-                    f'<span class="muted">— Investigator narrative '
-                    f"(quoted from the stored verdict)</span>"
-                    if excerpt else ""
-                )
+                if excerpt and item.get("narrative_withheld"):
+                    excerpt_html = (
+                        f"<br><em>{_e(excerpt, 320)}</em> "
+                        '<span class="muted">— Investigator narrative withheld '
+                        "pending review</span>"
+                    )
+                else:
+                    excerpt_html = (
+                        f"<br><em>“{_e(excerpt, 380)}”</em> "
+                        f'<span class="muted">— Investigator narrative '
+                        f"(quoted from the stored verdict)</span>"
+                        if excerpt else ""
+                    )
                 cockpit_url = f"{base_url}/deep-investigate/{item.get('run_id')}"
                 paragraphs.append(
                     "<p>"
@@ -1385,9 +1429,17 @@ async def build_analysis_report_html(
     project_id: uuid.UUID,
     window: str,
     now: datetime | None = None,
+    *,
+    distribution_channel: str = "analysis_report",
 ) -> str:
     """Build the complete self-contained HTML analysis report."""
-    data = await collect_analysis_report_data(db, project_id, window, now=now)
+    data = await collect_analysis_report_data(
+        db,
+        project_id,
+        window,
+        now=now,
+        distribution_channel=distribution_channel,
+    )
     html = render_analysis_report_html(data)
     return enforce_size_bound(html, data)
 
@@ -1410,7 +1462,13 @@ async def build_digest_report_attachment(
             return None
         now = now or datetime.now(timezone.utc)
         window = "7d" if period == "weekly" else "1d"
-        html = await build_analysis_report_html(db, project_id, window, now=now)
+        html = await build_analysis_report_html(
+            db,
+            project_id,
+            window,
+            now=now,
+            distribution_channel="digest_attachment",
+        )
         slug = (
             await db.execute(select(Project.slug).where(Project.id == project_id))
         ).scalar_one_or_none()
