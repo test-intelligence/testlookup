@@ -53,6 +53,10 @@ functions and 92.77% lines.
 - `accessibility-keyboard.spec.ts` drives the real SPA using only keyboard
   input. It pins the skip-to-main landmark journey and the New Project dialog's
   focus entry, Tab wrap, Escape close, and opener-focus restoration.
+- MCP coverage is measured over its client, config, prompts, resources,
+  review, server, token-verifier, and tool modules: 41.96% measured with a 41%
+  CI floor. CLI coverage is measured separately at 63.16% with a 62% floor;
+  its SDK tests run in a distinct invocation to preserve the measurement.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only
@@ -71,7 +75,7 @@ trivial constants.
 | P1 | analytics widget picker/registry | roughly 0–11% | add/duplicate/limit/persistence and malformed saved view |
 | P1 | digest/notification settings | roughly 0–43% | schedule/timezone, channel contract, error recovery |
 | P2 | `main.tsx`/polyfills | 0% | boot smoke only if it catches configuration regressions |
-| P2 | MCP and CLI | no numeric floors | measure first; then ratchet by package |
+| P2 | MCP and CLI | 41% MCP / 62% CLI floors enforced | expand low tool and command modules before raising independently |
 
 Coverage percentage is a change detector, not a release claim. Critical
 requirements still need negative, concurrency, authorization and live-system

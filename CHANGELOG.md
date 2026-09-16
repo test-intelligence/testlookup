@@ -34,6 +34,11 @@ New/Edit Project dialog focus contract. Hermetic Chromium tests now verify main
 landmark focus, focus containment, Escape dismissal, and restoration to the
 control that opened the dialog.
 
+CI now measures the MCP server and CLI independently. The MCP suite records
+41.96% line coverage with a 41% floor; the CLI records 63.16% with a 62% floor.
+The SDK remains a separate test invocation so its dynamic module loading cannot
+hide CLI coverage or dilute the CLI ratchet.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

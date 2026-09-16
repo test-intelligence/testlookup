@@ -17,8 +17,8 @@ GAP-03 has one reproducible service-level proof.
 
 1. Raise frontend branch/function floors only after tests cover the lifecycle,
    integration settings, RAG and analytics gaps; raise one point at a time.
-2. Measure MCP and CLI separately, then ratchet each package without combining
-   unlike codebases into one percentage.
+2. MCP and CLI now have separate measured CI floors (41% and 62%). Raise each
+   independently as its low-coverage tools and commands gain behavior tests.
 3. The shell skip-link and project-dialog keyboard journeys are blocking.
    Add axe scans and extend keyboard coverage across the remaining critical
    user paths.
