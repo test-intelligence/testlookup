@@ -54,14 +54,18 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
   let betaRecovered = false
 
   await page.addInitScript(({ seedUser, projectId }) => {
-    localStorage.setItem('auth-storage', JSON.stringify({
-      state: { token: 'access', refreshToken: 'refresh', user: seedUser, isAuthenticated: true },
-      version: 0,
-    }))
-    localStorage.setItem('testlookup-active-project', JSON.stringify({
-      state: { activeProjectId: projectId },
-      version: 0,
-    }))
+    if (!localStorage.getItem('auth-storage')) {
+      localStorage.setItem('auth-storage', JSON.stringify({
+        state: { token: 'access', refreshToken: 'refresh', user: seedUser, isAuthenticated: true },
+        version: 0,
+      }))
+    }
+    if (!localStorage.getItem('testlookup-active-project')) {
+      localStorage.setItem('testlookup-active-project', JSON.stringify({
+        state: { activeProjectId: projectId },
+        version: 0,
+      }))
+    }
   }, { seedUser: user, projectId: PROJECT_A })
 
   await page.route('**/api/v1/**', async (route) => {
