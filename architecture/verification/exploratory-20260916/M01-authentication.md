@@ -1,8 +1,8 @@
 # M01 authentication
 
 **State:** PASSED.
-**Stable environment:** homelab tag `build-20260916-171741`, schema `0189`,
-source revision `7b38d58af5f8a86f25155fe2c858dc2d1564aaee`.
+**Stable environment:** homelab tag `build-20260916-194417`, schema `0189`,
+source revision `f051798cef9a9913cd12ab3f23a23a42fdb28f6c`.
 **Contract oracle:** `architecture/testing/EXPLORATORY_MISSIONS.md` M01 and the
 current authentication routes/tests.
 
@@ -50,4 +50,14 @@ Firefox, and WebKit. A second deployed journey enrolled TOTP, changed the
 password, immediately completed a fresh MFA challenge, and read `/auth/me`.
 Ruff, the 369-error mypy ratchet, all 43 quality guards, 238 guard self-tests,
 TypeScript, and the E2E lint check are green. Independent re-review approved the
-final transaction-atomic implementation. M01 is complete.
+final transaction-atomic implementation. M01 was complete at that checkpoint.
+
+The M02 interface repetition later found EXP-BUG-011: admin-created users were
+given a credential described as temporary without setting
+`must_change_password`. Exact revision
+`f051798cef9a9913cd12ab3f23a23a42fdb28f6c` now forces reset for that creation
+path. All 19 user-management tests and the one required mutation passed. A
+deployed admin-created account completed reset, its bootstrap JWT was revoked,
+and its permanent password logged in with the reset flag cleared. Independent
+closure review approved the implementation and evidence at staged diff hash
+`17b170100beb1edf159969c16e5388cec3ba9ffe`.

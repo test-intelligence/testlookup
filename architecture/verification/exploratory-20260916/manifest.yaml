@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: 05ae055aa119ffb42268b7cf9a29467b5480d1d9
-candidate_tree: 2f6d79508f46c50939b44f08e0900b52e78d4824
+candidate_sha: f051798cef9a9913cd12ab3f23a23a42fdb28f6c
+candidate_tree: 01232ab330e003a51d1adfbbbb9d07fc7abc020d
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T18:47:30Z
+last_checkpoint_at_utc: 2026-09-16T19:59:48Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260916-183915
+  image_tag: build-20260916-194417
   image_digests:
-    backend_and_workers: sha256:3c51269a4838a98890070d650d9633a70b260029dbad6364684bcc1289e693c1
+    backend_and_workers: sha256:ef19ea92aeaaa8e0ffaca85ee0a2b42eae9b784d673d50e53c1805648eee5042
     frontend: sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e
     mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: 05ae055aa119ffb42268b7cf9a29467b5480d1d9
-    built_at: 2026-09-16T18:39:16Z
+    revision: f051798cef9a9913cd12ab3f23a23a42fdb28f6c
+    built_at: 2026-09-16T19:44:17Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Repeat M02 project isolation through the CLI and MCP interfaces, preserving the exact deployed candidate and synthetic-fixture cleanup."
+  next_exact_action: "Start M03 on the same minor-release branch, preserving deploy-before-test and synthetic-fixture cleanup."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []
