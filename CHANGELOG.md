@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
+
+Added an evidence-based testability assessment with requirement traceability,
+end-to-end, exploratory and UAT suites, a unified gap report, and a prioritized
+coverage roadmap. Frontend CI now enforces measured statement, branch, function,
+and line floors and runs a Chromium smoke lane that has no backend, credential,
+VPN, or deployment dependency.
+
+The first coverage slice adds direct contracts for password authentication and
+human review plus real-browser checks for protected deep links, resume-after-
+login, and explicit invalidation of a rejected cached token. The existing live
+Playwright suite remains the release-level proof for database, worker and
+integration behavior.
+
 ## 2026-09-15 - Guard built-in workflow compiler parity (T17 / E3.5)
 
 Added the absolute `workflows.builtins-match-compiled` quality guard. It pins

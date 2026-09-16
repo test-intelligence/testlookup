@@ -17,6 +17,7 @@
 > - **[OBSERVABILITY.md](./OBSERVABILITY.md)** — metrics/traces/logs plus agent decision logs, the Grafana/alerting stack, and the health surfaces.
 > - **[KNOWLEDGE_RAG.md](./KNOWLEDGE_RAG.md)** — the optional RAG layer: indexing sources → chunks, grounded generation with citations, and the redaction/faithfulness/staleness guards.
 > - **[AI_EVALUATION.md](./AI_EVALUATION.md)** — model-ops: golden/feedback datasets, eval runs + drift, the model registry, and the pre-release gate that blocks regressing AI changes.
+> - **[testing/README.md](./testing/README.md)** — testability map, requirements traceability, E2E/exploratory/UAT suites, measured coverage gaps, and the improvement roadmap.
 > - **[AGENTIC_OPENAPI_ARCHITECTURE.md](./AGENTIC_OPENAPI_ARCHITECTURE.md)** — target design for the agentic layer: per-agent OpenAPI exposure, user-defined workflows, per-agent config, SLM/LLM tiering, the generic reviewer, the run state machine (leases, fencing, retry), the human-review gate, evals as the control loop, and the E1–E9 backlog. Cross-reviewed; raw findings in the [review log](./AGENTIC_OPENAPI_ARCHITECTURE.review-log.md).
 >
 > The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short, marketing-adjacent
