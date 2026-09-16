@@ -97,6 +97,10 @@ async def test_ingest_intelligence_promotion_and_gate_share_one_release_axis() -
                 status=LaunchStatus.IN_PROGRESS,
             )
             db.add(run)
+            # These models expose only scalar foreign keys, so SQLAlchemy has
+            # no relationship edge from the link to the pending TestRun. Flush
+            # the parent rows before inserting the explicit release link.
+            await db.flush()
             db.add(
                 ReleaseTestRunLink(
                     release_id=release_id,
