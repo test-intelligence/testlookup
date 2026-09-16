@@ -85,6 +85,30 @@ test.describe('Intelligence to release lineage — live read contract', () => {
       timeout: 30_000,
     })
 
+    // Keep an unrelated project selection valid across TopBar's project-list
+    // refresh. The release detail and every assertion below still come from
+    // the live backend; only the picker inventory is pinned for this scope
+    // regression.
+    const unrelatedProject = {
+      ...project,
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'Unrelated persisted project',
+    }
+    await page.route('**/api/v1/projects', async route => {
+      await route.fulfill({ json: [unrelatedProject, project] })
+    })
+    await page.evaluate((persistedProject) => {
+      localStorage.setItem(
+        'testlookup-active-project',
+        JSON.stringify({
+          state: {
+            activeProjectId: persistedProject.id,
+            activeProject: persistedProject,
+          },
+          version: 0,
+        }),
+      )
+    }, unrelatedProject)
     await page.goto(`/releases/${releaseId}`)
     await expect(page.getByRole('heading', { name: releaseName, exact: true })).toBeVisible({
       timeout: 30_000,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
@@ -357,6 +357,12 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   const LINKED_PAGE_SIZE = 25
   const [linkedPage, setLinkedPage] = useState(1)
 
+  useEffect(() => {
+    if (!detail || !window.location.hash.startsWith('#phase-')) return
+    const targetId = decodeURIComponent(window.location.hash.slice(1))
+    document.getElementById(targetId)?.scrollIntoView({ block: 'center' })
+  }, [detail])
+
   async function updatePhaseStatus(phaseId: string, status: string) {
     try {
       const result = await releasesService.updatePhase(releaseId, phaseId, { status } as Partial<ReleasePhase>)
@@ -548,7 +554,11 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Release Phases</h3>
         <div className="space-y-2">
           {(detail.phases ?? []).map((phase, i) => (
-            <div key={phase.id} className="flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group">
+            <div
+              id={`phase-${phase.id}`}
+              key={phase.id}
+              className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
+            >
               <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
                 {i + 1}
               </div>
@@ -682,11 +692,22 @@ export default function ReleasesPage() {
   const project   = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
 
-  const { data, isLoading, error: releasesError, mutate: refetch } = useReleases()
+  const { data, isLoading: listLoading, error: releasesError, mutate: refetch } = useReleases()
+  const {
+    data: routedRelease,
+    isLoading: routedReleaseLoading,
+    error: routedReleaseError,
+  } = useRelease(releaseId ?? null)
   // Memoize so the array identity is stable across renders — the downstream
-  // `derived` useMemo keys on it, and a fresh `data?.items ?? []` literal each
-  // render would defeat that memo (exhaustive-deps).
-  const releases: Release[] = useMemo(() => data?.items ?? [], [data])
+  // `derived` useMemo keys on it. A detail URL resolves through its own
+  // authorized fetch, independently of whichever project is persisted in the
+  // global picker; the list route remains scoped by that picker.
+  const releases: Release[] = useMemo(
+    () => releaseId ? (routedRelease ? [routedRelease] : []) : (data?.items ?? []),
+    [data, releaseId, routedRelease],
+  )
+  const isLoading = releaseId ? routedReleaseLoading : listLoading
+  const pageError = releaseId ? routedReleaseError : releasesError
 
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
@@ -744,11 +765,11 @@ export default function ReleasesPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   // M21: an outage used to render "No releases yet" and a create-release CTA.
-  if (releasesError && !data) {
-    return <DataUnavailable error={releasesError} onRetry={() => void refetch()} testId="releases-data-unavailable" />
+  if (pageError && releases.length === 0) {
+    return <DataUnavailable error={pageError} onRetry={() => void refetch()} testId="releases-data-unavailable" />
   }
 
-  if (!project && !isAllProjects) {
+  if (!releaseId && !project && !isAllProjects) {
     return (
       <EmptyState
         icon={<Package className="h-10 w-10" />}
@@ -794,7 +815,7 @@ export default function ReleasesPage() {
               >
                 <Calendar className="h-3.5 w-3.5" /> Calendar view
               </button>
-              {!isAllProjects && (
+              {!isAllProjects && !releaseId && (
                 <button
                   onClick={() => { setEditRelease(undefined); setShowModal(true) }}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
@@ -923,7 +944,7 @@ export default function ReleasesPage() {
                         </div>
                         <ReleaseDetailPanel
                           releaseId={r.id}
-                          projectId={projectId ?? ''}
+                          projectId={r.source.project_id || projectId || ''}
                           onEdit={src => { setEditRelease(src); setShowModal(true) }}
                         />
                       </div>

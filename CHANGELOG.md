@@ -70,7 +70,9 @@ back/forward navigation never restore rows from the prior project.
 Release detail deep links now render the Releases page instead of falling
 through to the Dashboard. The production router now registers the same
 `/releases/:releaseId` path already used by release cards and page tests, and
-the requested release opens its inline details on arrival.
+the requested release opens its inline details on arrival even when another
+project is persisted in the project picker. Phase links now expose and scroll
+to their `#phase-…` target after the async detail response renders.
 
 Added a live cross-browser ingestion recovery journey that uploads a report
 through the UI, reloads immediately after acceptance, then reconciles the same
