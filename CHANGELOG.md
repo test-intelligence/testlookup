@@ -67,6 +67,10 @@ The project-isolation outage journey now holds the failing scoped request long
 enough to exercise an in-flight scope change, then verifies retry and browser
 back/forward navigation never restore rows from the prior project.
 
+Release detail deep links now render the Releases page instead of falling
+through to the Dashboard. The production router now registers the same
+`/releases/:releaseId` path already used by release cards and page tests.
+
 Added a live cross-browser ingestion recovery journey that uploads a report
 through the UI, reloads immediately after acceptance, then reconciles the same
 task and verifies the durable run and parsed test result.
