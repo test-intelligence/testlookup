@@ -126,7 +126,7 @@ test.describe('hermetic human review gate', () => {
     await expect(page.getByTestId('review-row')).toHaveCount(0)
 
     await page.getByRole('tab', { name: 'Accepted' }).click()
-    await expect(page.getByText('Accepted', { exact: true })).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'Accepted' })).toBeVisible()
     expect(settlements).toEqual([{ action: 'accept', body: { notes: 'Evidence checked' } }])
   })
 
