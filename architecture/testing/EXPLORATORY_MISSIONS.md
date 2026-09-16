@@ -136,6 +136,16 @@ database and API facts, append-only decision ID, UI trace. The existing
 PostgreSQL integration fixture is a useful oracle, not a substitute for this
 real network/worker journey.
 
+**Executed 2026-09-16 (shipped):** the real queued pipeline completed 16 stages
+with no failures, one promoted HIGH defect blocked a five-test release as
+`NO_GO`, and API, PostgreSQL, reload, and three-browser facts agreed. Shipped
+EXP-BUG-013 so `/releases/:releaseId` renders and expands the requested release.
+The final fix resolves the release independently of the persisted project list
+and honors the real `#phase-…` action target after async detail rendering.
+The healthy hosted-LLM path ran; degraded-model behavior remains assigned to
+its dedicated fault/degradation missions. Evidence:
+`architecture/verification/exploratory-20260916/M04-intelligence-release.md`.
+
 ## M05 — Defect deduplication and ambiguous Jira outcome (P0, integration QA)
 
 **Preconditions:** F3/F4; dedicated Jira sandbox and supported reconciliation
