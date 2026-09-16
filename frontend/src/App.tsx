@@ -92,6 +92,7 @@ const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
 // stays on disk as reference for Direction A; flipping this import is the
 // only switch needed to swap between the two designs.
 const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
+const WorkflowEditorPage = lazy(() => import('@/pages/WorkflowEditorPage'))
 const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))
 const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
 const RunIntelligencePage = lazy(() => import('@/pages/RunIntelligencePage'))
@@ -161,6 +162,7 @@ const appRoutes: AppRoute[] = [
   { path: 'chat', component: ChatPage },
   { path: 'agents', component: AgentStatusPage },
   { path: 'agents/run/:runId', component: AgentStatusPage },
+  { path: 'agents/workflows', component: WorkflowEditorPage },
   { path: 'deep-investigate', component: DeepInvestigationPage },
   { path: 'deep-investigate/:runId', component: DeepInvestigationPage },
   { path: 'release-gate', component: ReleaseGatePage },

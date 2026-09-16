@@ -5,6 +5,7 @@ import {
   Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import ScopedLink from '@/components/ui/ScopedLink'
 import PageHeader from '@/components/ui/PageHeader'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { formatRunWhen } from '@/utils/formatters'
@@ -663,6 +664,12 @@ export default function AgentStatusPage() {
         subtitle="Multi-agent test analysis: ingestion → anomaly detection → root-cause → summary → triage"
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            <ScopedLink
+              to="/agents/workflows"
+              className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+            >
+              <GitBranch className="h-3.5 w-3.5" /> Workflow editor
+            </ScopedLink>
             {/* Pipeline picker: lets the user jump between recent runs by
                 test suite + build number. Each option is labelled
                 ``<suite> · #<build>`` so the user picks by attributes they
