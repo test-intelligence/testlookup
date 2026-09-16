@@ -86,7 +86,7 @@ test.describe('Intelligence to release lineage — live read contract', () => {
     })
 
     await page.goto(`/releases/${releaseId}`)
-    await expect(page.getByText(releaseName, { exact: true }).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: releaseName, exact: true })).toBeVisible({
       timeout: 30_000,
     })
     await expect(page.getByText('Linked Test Runs (1)', { exact: true })).toBeVisible()
