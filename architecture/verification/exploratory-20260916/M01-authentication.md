@@ -22,6 +22,12 @@ fixed that direct transition and passed its component and mutation checks.
 The deployed follow-up journey then exposed EXP-BUG-006. Password reset and
 the cleared server flag commit correctly, but whole-second JWT and cutoff
 comparisons reject an immediately issued permanent-login token as if it
-predated the cutoff. M01 remains RUNNING until the precision fix is deployed
-exactly, the full component and live regressions pass, both mutation harnesses
-are green, and independent review approves the combined authentication fix.
+predated the cutoff. Exact revision `1195a4bb2b834624c219cac935f616cf8456fcf3`
+fixed that comparison: 45 focused regressions, six mutations, and an immediate
+deployed API reset/login/read probe passed.
+
+The next cross-browser run exposed EXP-BUG-008. All three browsers retained
+`/reset-password` as the login return target and resumed it after the permanent
+login despite the server flag being false. M01 remains RUNNING until the
+return-path fix is deployed exactly, the complete browser journey passes,
+mutation is green, and independent review approves the combined M01 changes.

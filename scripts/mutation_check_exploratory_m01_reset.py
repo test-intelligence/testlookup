@@ -25,8 +25,12 @@ MUTATIONS = (
         "      toast.success('Password updated successfully. Welcome!');",
     ),
     (
+        "      navigate('/login', { replace: true, state: null });",
+        "      navigate('/overview', { replace: true, state: null });",
+    ),
+    (
+        "      navigate('/login', { replace: true, state: null });",
         "      navigate('/login', { replace: true });",
-        "      navigate('/overview', { replace: true });",
     ),
 )
 

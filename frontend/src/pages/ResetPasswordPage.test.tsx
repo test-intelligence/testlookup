@@ -47,7 +47,7 @@ describe('ResetPasswordPage revoked bootstrap session', () => {
     ))
     expect(logout).toHaveBeenCalledTimes(1)
     expect(success).toHaveBeenCalledWith('Password updated. Sign in with your new password.')
-    expect(navigate).toHaveBeenCalledWith('/login', { replace: true })
+    expect(navigate).toHaveBeenCalledWith('/login', { replace: true, state: null })
     expect(error).not.toHaveBeenCalled()
   })
 })

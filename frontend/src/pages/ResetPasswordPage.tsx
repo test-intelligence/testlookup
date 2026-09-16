@@ -43,7 +43,7 @@ export default function ResetPasswordPage() {
 
       logout();
       toast.success('Password updated. Sign in with your new password.');
-      navigate('/login', { replace: true });
+      navigate('/login', { replace: true, state: null });
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       toast.error(detail ?? 'Failed to update password. Please try again.');

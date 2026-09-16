@@ -138,6 +138,24 @@ describe('LoginPage — three-way login response routing', () => {
     expect(screen.queryByTestId('mfa-challenge-panel')).toBeNull()
   })
 
+  it('does not resume the forced reset route after the reset session was cleared', async () => {
+    mockLogin.mockResolvedValue(TOKENS)
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/login',
+        state: { from: { pathname: '/reset-password' } },
+      }]}
+      >
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+    await submitPassword()
+
+    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER))
+    expect(mockNavigate).toHaveBeenCalledWith('/overview', { replace: true })
+  })
+
   it('shows the code step on mfa_required', async () => {
     mockLogin.mockResolvedValue({
       mfa_required: true,

@@ -68,7 +68,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = location.state?.from?.pathname || '/overview';
+  const fromPath = location.state?.from?.pathname;
+  const from = fromPath && fromPath !== '/reset-password' ? fromPath : '/overview';
   const isDev = import.meta.env.DEV;
 
   // Live confirm-password check. The submit handler still blocks on a mismatch,

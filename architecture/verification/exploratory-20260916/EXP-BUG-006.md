@@ -25,5 +25,10 @@ deployed `2f106277` browser run, Chromium and WebKit returned to
 `/reset-password` and Firefox remained on `/login`; immediate live API reads
 rejected a newly issued permanent-login token.
 
-**Green evidence, mutation, review, and deployed retest:** pending deployment
-of the fixing commit.
+**Partial green evidence:** exact deployed revision `1195a4bb` passed 45
+focused backend regressions, killed all six precision mutations, and completed
+an immediate live reset → permanent login → `/auth/me` probe. The browser
+journey then exposed the separate stale-return-target defect EXP-BUG-008.
+
+**Independent review and complete deployed retest:** pending the combined M01
+fix.
