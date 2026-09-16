@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: null
-candidate_tree: null
+candidate_sha: 230abe7d4caaaf827861f37c7ac6fc02b35f5604
+candidate_tree: edead38e3d0c39110e37dd0bdd3dcd26f4c86a81
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T13:23:48Z
+last_checkpoint_at_utc: 2026-09-16T16:32:35Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,16 +15,16 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260912-012628
+  image_tag: build-20260916-161635
   image_digests:
-    backend_and_workers: sha256:4f9d5d5f
-    frontend: sha256:ba72e8ec
-    mcp: sha256:fe3c1744
+    backend_and_workers: sha256:31def477b1d38584bf4f6fb99983744d93522265ad943b14fa924a31d287a49a
+    frontend: sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e
+    mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: unknown
-    built_at: unknown
-  schema_head: "0172"
+    revision: 230abe7d4caaaf827861f37c7ac6fc02b35f5604
+    built_at: 2026-09-16T16:16:54Z
+  schema_head: "0189"
   source_schema_head: "0189"
   resources:
     deployment_pods: 17
@@ -75,8 +75,6 @@ baseline:
   mypy_baseline: 369
   guards: 43
   blockers:
-    - "The stable homelab image does not report a source revision or build date."
-    - "The stable homelab schema is 0172 while this source tree has Alembic head 0189; candidate deployment is required before candidate claims."
     - "The homelab has no installed Ollama models and uses hosted OpenRouter; exact local model comparison preconditions are absent."
     - "No isolated namespace or disposable cluster is available yet for destructive outage, restore, and load missions."
 inventory:
@@ -88,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Commit the reviewed execution package, build and deploy that exact commit to the homelab, verify every application image and schema 0189, then restart M01."
+  next_exact_action: "Record the independent M01 re-review, close its four linked defects if approved, then fix EXP-BUG-007 before continuing the next live mission."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []

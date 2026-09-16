@@ -33,8 +33,8 @@ MUTATIONS = (
     (DEPS, "        iat_value = float(iat)", "        iat_value = float(int(iat))"),
     (
         REVOCATION,
-        "    now = datetime.now(timezone.utc).timestamp()",
-        "    now = float(int(datetime.now(timezone.utc).timestamp()))",
+        "    cutoff = datetime.now(timezone.utc).timestamp()",
+        "    cutoff = float(int(datetime.now(timezone.utc).timestamp()))",
     ),
     (
         REVOCATION,
@@ -64,6 +64,11 @@ MUTATIONS = (
         BACKEND / "app" / "routers" / "mfa.py",
         "        await db.execute(select(User).where(User.id == uid).with_for_update())",
         "        await db.execute(select(User).where(User.id == uid))",
+    ),
+    (
+        BACKEND / "app" / "routers" / "mfa.py",
+        "        if await is_token_before_cutoff(uid, iat_value):",
+        "        if False and await is_token_before_cutoff(uid, iat_value):",
     ),
 )
 

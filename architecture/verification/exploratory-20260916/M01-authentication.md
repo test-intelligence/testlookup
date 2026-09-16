@@ -1,8 +1,8 @@
 # M01 authentication
 
 **State:** RUNNING.
-**Stable environment:** homelab tag `build-20260916-144609`, schema `0189`,
-source revision `b785170ea906e2d73993a90da9d1ada307a7aa3a`.
+**Stable environment:** homelab tag `build-20260916-161635`, schema `0189`,
+source revision `230abe7d4caaaf827861f37c7ac6fc02b35f5604`.
 **Contract oracle:** `architecture/testing/EXPLORATORY_MISSIONS.md` M01 and the
 current authentication routes/tests.
 
@@ -38,6 +38,13 @@ changes. A concurrent old-password login, refresh, or MFA exchange could
 therefore escape revoke-all. The candidate now uses statement-time cutoffs,
 copies the exact durable cutoff to Redis, locks the user row across every
 session issuance/password-change boundary, and invalidates predating MFA
-interstitial tokens. M01 remains RUNNING until this combined fix is deployed
-exactly, its unit/integration/mutation/live suites pass, and independent review
-approves it.
+interstitial tokens.
+
+Exact revision `230abe7d4caaaf827861f37c7ac6fc02b35f5604` is now
+deployed and healthy. The focused backend suite passed 133 tests; the real
+PostgreSQL concurrency regression passed against homelab; 11 cutoff/session,
+four reset-transition, and two return-path mutations were killed. The complete
+reset → permanent login → empty-project onboarding journey passed in Chromium,
+Firefox, and WebKit. Ruff, the 369-error mypy ratchet, all 43 quality guards,
+238 guard self-tests, TypeScript, ESLint, and all 1,772 frontend tests passed.
+M01 remains RUNNING only for the independent re-review of the remediated race.

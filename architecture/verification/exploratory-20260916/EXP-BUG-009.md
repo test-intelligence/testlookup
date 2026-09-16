@@ -35,5 +35,15 @@ from receiving different cutoffs.
 contracts on exact deployed revision `e40fbddb564d6139c9ac2ad0c899773d0da4608c`.
 The PostgreSQL concurrency test is executed in the post-deployment green run.
 
-**Green evidence, mutation, review, and deployed retest:** pending exact-candidate
-deployment.
+**Green evidence:** exact revision
+`230abe7d4caaaf827861f37c7ac6fc02b35f5604` was deployed before validation.
+The focused backend suite passed 133 tests and the real PostgreSQL concurrency
+test passed against homelab. The deployed browser journey passed in Chromium,
+Firefox, and WebKit.
+
+**Mutation:** the combined cutoff/session harness killed 11 mutations,
+including transaction-start time, missing login/refresh/MFA row locks, and a
+bypassed MFA cutoff check. The harness asserted exact application and restored
+source bytes after every mutant.
+
+**Independent re-review:** pending.

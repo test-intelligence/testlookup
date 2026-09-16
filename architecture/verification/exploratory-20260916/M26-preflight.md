@@ -29,3 +29,43 @@ no disposable restore target has been established.
 **Result:** RUNNING. Preflight and stable-deployment inventory passed. Candidate
 build/deploy, migration to `0189`, per-container digest verification, live
 mission matrix, rollback rehearsal, and restored-candidate proof remain.
+
+## Candidate checkpoint — 2026-09-16T15:56:50Z
+
+Exact commit `e40fbddb564d6139c9ac2ad0c899773d0da4608c` was built as
+`build-20260916-154849` and deployed at Alembic `0189 (head)`. The supported
+deploy script verified every application workload's image digest and the
+serving backend revision before continuing. `/health/version` reported the
+same commit and build time `2026-09-16T15:49:08Z`; ready and detailed health
+were green.
+
+Observed manifest digests were backend/workers
+`sha256:f85e1d2a440c7630f520f260a43688ab2e3725dc7c918dfb6ef1f213204dcaab`,
+frontend
+`sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e`,
+and MCP
+`sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070`.
+
+The deployment also reproduced EXP-BUG-007: a later broad backend label wait
+includes retained completed migration pods, delays for 300 seconds, and skips
+admin creation even while the backend is `1/1 Running`. The final live health
+check still passed. M26 remains RUNNING for that fix, rollback rehearsal, and
+restored-candidate proof.
+
+## Candidate checkpoint — 2026-09-16T16:32:35Z
+
+Exact runtime commit `230abe7d4caaaf827861f37c7ac6fc02b35f5604` was
+built as `build-20260916-161635` and deployed before its green validation.
+`/health/version` reported the same revision and build time
+`2026-09-16T16:16:54Z`; ready and detailed health were green; all nine
+application Deployments were `1/1`; Alembic remained `0189 (head)`.
+
+Observed manifest digests were backend/workers
+`sha256:31def477b1d38584bf4f6fb99983744d93522265ad943b14fa924a31d287a49a`,
+frontend
+`sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e`,
+and MCP
+`sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070`.
+The strict workload/digest and serving-revision authority check passed again.
+EXP-BUG-007 again added 300 seconds of false waiting and skipped initial-admin
+creation despite the healthy backend; no runtime health failure occurred.
