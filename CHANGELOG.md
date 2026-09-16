@@ -54,6 +54,10 @@ checks list, detail, search, suite, activity, export, ingestion, and scoped-key
 boundaries, then proves a browser cannot retain or display an inaccessible
 project from persisted local state.
 
+Project-scoped feature-flag status checks now authorize the requested project
+before evaluating the flag. A stale or substituted project ID can no longer
+receive a successful rollout answer outside the caller's tenant membership.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

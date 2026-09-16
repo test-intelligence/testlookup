@@ -51,6 +51,7 @@ test.describe('Project isolation — live A/B contract', () => {
     let adminToken = ''
     let scopedKey = ''
     let primaryFailure: unknown
+    const cleanupErrors: Error[] = []
 
     try {
       adminToken = (await login(request, 'admin', adminPassword)).access_token
@@ -241,9 +242,22 @@ test.describe('Project isolation — live A/B contract', () => {
       expect(keyDenied.status(), await keyDenied.text()).toBe(403)
 
       await page.goto('/login')
-      await page.locator('input[name="username"]').fill(user.username)
-      await page.locator('input[name="password"]').fill(user.temp_password)
-      await page.locator('button[type="submit"]').click()
+      await page.evaluate(
+        ({ accessToken, refreshToken }) => {
+          localStorage.setItem(
+            'auth-storage',
+            JSON.stringify({
+              state: { token: accessToken, refreshToken },
+              version: 0,
+            }),
+          )
+        },
+        {
+          accessToken: aLogin.access_token as string,
+          refreshToken: aLogin.refresh_token as string,
+        },
+      )
+      await page.goto('/overview')
       await expect(page).toHaveURL(/\/overview$/, { timeout: 20_000 })
 
       await page.evaluate(project => {
@@ -256,9 +270,11 @@ test.describe('Project isolation — live A/B contract', () => {
         )
       }, created.b)
 
-      const bResponses: number[] = []
+      const bResponses: Array<{ status: number; url: string }> = []
       page.on('response', response => {
-        if (response.url().includes(created.b.id)) bResponses.push(response.status())
+        if (response.url().includes(created.b.id)) {
+          bResponses.push({ status: response.status(), url: response.url() })
+        }
       })
       await page.reload()
 
@@ -266,7 +282,7 @@ test.describe('Project isolation — live A/B contract', () => {
       await expect(selector).toHaveValue(created.a.id, { timeout: 20_000 })
       await expect(selector.locator(`option[value="${created.b.id}"]`)).toHaveCount(0)
       await expect(page.getByText(created.b.name)).toHaveCount(0)
-      expect(bResponses.filter(status => status < 400)).toEqual([])
+      expect(bResponses.filter(response => response.status < 400)).toEqual([])
 
       const deleted = await request.delete(
         `${BACKEND_URL}/api/v1/projects/${created.b.id}`,
@@ -284,7 +300,6 @@ test.describe('Project isolation — live A/B contract', () => {
     } catch (error) {
       primaryFailure = error
     } finally {
-      const cleanupErrors: Error[] = []
       if (adminToken) {
         for (const projectId of projects.reverse()) {
           try {
@@ -336,13 +351,13 @@ test.describe('Project isolation — live A/B contract', () => {
           }
         }
       }
-      const failures = [
-        ...(primaryFailure ? [primaryFailure] : []),
-        ...cleanupErrors,
-      ]
-      if (failures.length) {
-        throw new AggregateError(failures, 'M02 journey or synthetic-fixture cleanup failed')
-      }
+    }
+    const failures = [
+      ...(primaryFailure ? [primaryFailure] : []),
+      ...cleanupErrors,
+    ]
+    if (failures.length) {
+      throw new AggregateError(failures, 'M02 journey or synthetic-fixture cleanup failed')
     }
   })
 })

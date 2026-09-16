@@ -16,7 +16,12 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db, require_role
+from app.core.deps import (
+    get_current_active_user,
+    get_db,
+    require_role,
+    resolve_project_scope,
+)
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
     FeatureFlagCreate,
@@ -125,16 +130,13 @@ async def get_feature_flag_status(
     conditionally render UI without needing ADMIN access. Returns
     ``{key, enabled}`` only — no flag configuration detail is leaked.
     """
-    import uuid as _uuid
-    parsed_project: Optional[_uuid.UUID] = None
+    parsed_project = None
     if project_id:
-        try:
-            parsed_project = _uuid.UUID(project_id)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid project_id",
-            )
+        parsed_project, _ = await resolve_project_scope(
+            db,
+            current_user,
+            project_id,
+        )
 
     enabled = await ff_service.is_enabled(
         key,

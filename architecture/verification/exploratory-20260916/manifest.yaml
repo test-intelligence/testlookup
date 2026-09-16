@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: 1cff9ae4b942f805a700339a035b14f69216d95e
-candidate_tree: dbab417ba0bd365baf500b1dede9debae3e8bd01
+candidate_sha: c3645dde15f5d3da7d28307cb3da5b8ce668fad1
+candidate_tree: 0f39d26558832233db8652430c00e657b115c0e6
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T18:14:26Z
+last_checkpoint_at_utc: 2026-09-16T18:27:47Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260916-174750
+  image_tag: build-20260916-181940
   image_digests:
-    backend_and_workers: sha256:dd606accbe244ecd21cf1d8bb739f75765caeab9798727ec2b4f192ff8fdbeb6
+    backend_and_workers: sha256:92d7c71aa46893ae00d605dbbe6623338819c5f960aef8ac91c86dbe47efaeeb
     frontend: sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e
     mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: 1cff9ae4b942f805a700339a035b14f69216d95e
-    built_at: 2026-09-16T17:48:09Z
+    revision: c3645dde15f5d3da7d28307cb3da5b8ce668fad1
+    built_at: 2026-09-16T18:20:00Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Deploy the tracked M02 live browser journey, run it in Chromium Firefox and WebKit, then repeat isolation through CLI and MCP."
+  next_exact_action: "Commit and deploy EXP-BUG-010, run its focused and mutation checks plus the M02 journey in Chromium Firefox and WebKit, then repeat isolation through CLI and MCP."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []
