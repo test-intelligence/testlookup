@@ -29,6 +29,11 @@ catalog, keeps stale rows visible during an outage, retries both the paginated
 list and health roll together, and prevents overlapping retry requests. Failed
 retries remain explicit without discarding the last usable data.
 
+Added a keyboard-visible skip link to the application shell and completed the
+New/Edit Project dialog focus contract. Hermetic Chromium tests now verify main
+landmark focus, focus containment, Escape dismissal, and restoration to the
+control that opened the dialog.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

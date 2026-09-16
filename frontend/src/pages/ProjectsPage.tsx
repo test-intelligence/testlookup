@@ -4,6 +4,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import { projectsService } from '@/services/projectsService'
 import { useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import type { Project, ProjectUpdate } from '@/types/projects'
 import { fromNow } from '@/utils/formatters'
 import toast from 'react-hot-toast'
@@ -35,6 +36,11 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const createDialogRef = useModalFocus({
+    open: showModal,
+    canClose: !saving,
+    onClose: () => setShowModal(false),
+  })
   const setActiveProject = useProjectStore(s => s.setActiveProject)
   const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
@@ -153,11 +159,11 @@ export default function ProjectsPage() {
 
       {/* Create Project Modal */}
       {showModal && (
-        <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div ref={createDialogRef} role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
               <h2 id="new-project-title" className="font-semibold text-[var(--color-text)]">New Project</h2>
-              <button onClick={() => setShowModal(false)} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
+              <button type="button" aria-label="Close new project dialog" onClick={() => setShowModal(false)} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
@@ -219,6 +225,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   const [endDate, setEndDate] = useState(fmtDate(project.end_date))
   const [tagsInput, setTagsInput] = useState((project.tags ?? []).join(', '))
   const [saving, setSaving] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -256,11 +263,11 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
           <h2 id="edit-project-title" className="font-semibold text-[var(--color-text)]">Edit Project</h2>
-          <button onClick={onClose} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close edit project dialog" onClick={onClose} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
         </div>
         <form onSubmit={handleSave} className="p-6 space-y-4">
           <div>

@@ -64,8 +64,10 @@ const OPTIONAL = [/description/i, /jira project key/i, /ocp namespace/i]
 async function openCreateDialog() {
   render(<ProjectsPage />)
   const btn = await screen.findByRole('button', { name: /new project/i })
+  btn.focus()
   fireEvent.click(btn)
   await waitFor(() => expect(screen.getByText(/project name/i)).toBeTruthy())
+  return btn
 }
 
 describe('ProjectsPage accessibility', () => {
@@ -92,5 +94,26 @@ describe('ProjectsPage accessibility', () => {
     // screen readers ignore it entirely.
     expect(id).toBeTruthy()
     expect(document.querySelector(`label[for="${id}"]`)).toBeTruthy()
+  })
+
+  it('traps focus, closes on Escape, and restores the New Project trigger', async () => {
+    const trigger = await openCreateDialog()
+    const dialog = screen.getByRole('dialog', { name: 'New Project' })
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled])',
+    ))
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+
+    expect(screen.getByLabelText(/project name/i)).toHaveFocus()
+    first.focus()
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
+    expect(last).toHaveFocus()
+    fireEvent.keyDown(last, { key: 'Tab' })
+    expect(first).toHaveFocus()
+
+    fireEvent.keyDown(first, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 })

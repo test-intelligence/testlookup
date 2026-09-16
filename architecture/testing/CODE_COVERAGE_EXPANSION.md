@@ -50,6 +50,9 @@ functions and 92.77% lines.
 - Test Cases page tests pin stale-row preservation, initial-load failure copy,
   joint table/health retries, failed-retry visibility, and the single-flight
   retry control. The page no longer presents an outage as an empty catalog.
+- `accessibility-keyboard.spec.ts` drives the real SPA using only keyboard
+  input. It pins the skip-to-main landmark journey and the New Project dialog's
+  focus entry, Tab wrap, Escape close, and opener-focus restoration.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only

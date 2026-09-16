@@ -19,7 +19,9 @@ GAP-03 has one reproducible service-level proof.
    integration settings, RAG and analytics gaps; raise one point at a time.
 2. Measure MCP and CLI separately, then ratchet each package without combining
    unlike codebases into one percentage.
-3. Add axe and keyboard journeys for the four critical user paths.
+3. The shell skip-link and project-dialog keyboard journeys are blocking.
+   Add axe scans and extend keyboard coverage across the remaining critical
+   user paths.
 4. Version live fixtures and emit a machine-readable manifest of build, data,
    scenario, result, trace and correlation IDs.
 5. Add the Investigator narrative review subject and its full distribution
