@@ -23,6 +23,10 @@ TESTS = (
 )
 
 DEPLOY_MUTATIONS = (
+    (
+        'BACKEND_POD_SELECTOR="app=testlookup-backend,app.kubernetes.io/component=api"',
+        'BACKEND_POD_SELECTOR="app=testlookup-backend"',
+    ),
     ('BUILD_REVISION="$(git rev-parse HEAD)"', 'BUILD_REVISION="unknown"'),
     ('BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"', 'BUILD_DATE="unknown"'),
     (
@@ -106,7 +110,10 @@ MUTATIONS = tuple((DEPLOY, good, bad) for good, bad in DEPLOY_MUTATIONS) + tuple
 
 def main() -> int:
     for source_path, good, bad in MUTATIONS:
-        original = source_path.read_text(encoding="utf-8")
+        original_bytes = source_path.read_bytes()
+        original = (
+            original_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        )
         count = original.count(good)
         if count != 1:
             raise AssertionError(
@@ -126,7 +133,9 @@ def main() -> int:
                 check=False,
             )
         finally:
-            source_path.write_text(original, encoding="utf-8")
+            source_path.write_bytes(original_bytes)
+        if source_path.read_bytes() != original_bytes:
+            raise AssertionError(f"mutation restoration failed: {source_path}")
         if run.returncode == 0:
             raise AssertionError(f"mutation survived: {bad!r}")
     print(f"M26 provenance mutation check: {len(MUTATIONS)} mutations killed")

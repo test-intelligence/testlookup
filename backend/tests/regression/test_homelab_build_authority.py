@@ -187,6 +187,18 @@ def test_deployment_component_excludes_retained_migration_job_pods(tmp_path: Pat
     )
 
 
+def test_backend_readiness_and_execs_exclude_retained_migration_job_pods():
+    source = DEPLOY.read_text(encoding="utf-8")
+
+    assert (
+        'BACKEND_POD_SELECTOR="app=testlookup-backend,'
+        'app.kubernetes.io/component=api"'
+    ) in source
+    assert source.count('wait_for_pods "$BACKEND_POD_SELECTOR"') == 2
+    assert source.count('get pod -l "$BACKEND_POD_SELECTOR"') == 2
+    assert 'wait_for_pods "app=testlookup-backend"' not in source
+
+
 def test_deployment_without_component_label_is_rejected(tmp_path: Path):
     result = _run_image_check(
         tmp_path,

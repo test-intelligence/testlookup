@@ -44,6 +44,11 @@ Access and MFA JWT issuance now uses PostgreSQL's clock while that lock is held,
 so ordering does not depend on clock synchronization between application nodes
 and the revocation database. MFA `iat` claims also preserve subsecond precision.
 
+Homelab deployment readiness and backend maintenance commands now select only
+the serving API pods. Retained completed migration Jobs no longer cause two
+false readiness timeouts or skip idempotent admin creation during a healthy
+rollout.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

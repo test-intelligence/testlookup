@@ -27,6 +27,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REGISTRY="registry.local:30500"
 NAMESPACE="testlookup"
+BACKEND_POD_SELECTOR="app=testlookup-backend,app.kubernetes.io/component=api"
 NODES=("192.168.0.101" "192.168.0.102" "192.168.0.103")
 NODE_USER="labadmin"
 CONTROL_NODE="${NODES[0]}"
@@ -1045,7 +1046,7 @@ fi
 
 # Wait a bit more for the backend after the explicit migration Job completed.
 log "Waiting for backend (may take a minute)..."
-wait_for_pods "app=testlookup-backend" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
+wait_for_pods "$BACKEND_POD_SELECTOR" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
 
 # ── Step 7: Create MinIO Buckets ───────────────────────────
 header "Step 7 — Create MinIO Buckets"
@@ -1208,8 +1209,8 @@ ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
 log "Waiting for backend to be ready..."
 ADMIN_OUTPUT=""
 ADMIN_RAN=false
-if wait_for_pods "app=testlookup-backend" 120; then
-  BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
+  BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
   if [ -n "$BACKEND_POD" ]; then
     log "Running scripts/createAdmin.py inside backend pod (idempotent)..."
@@ -1290,7 +1291,7 @@ if [ -n "$LEGACY_MCP_USER" ]; then
 fi
 
 if [ -n "$LEGACY_MCP_USER" ] && [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" != "true" ]; then
-    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" \
       --field-selector=status.phase=Running \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     if [ -z "$LEGACY_BACKEND_POD" ]; then
