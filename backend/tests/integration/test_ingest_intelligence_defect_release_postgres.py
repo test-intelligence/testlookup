@@ -236,3 +236,84 @@ async def test_ingest_intelligence_promotion_and_gate_share_one_release_axis() -
             )
         finally:
             await engine.dispose()
+
+
+async def test_compliance_history_excludes_phase_gate_rows() -> None:
+    """A release export must not present phase verdicts as release history."""
+    from app.models.postgres import Project, Release, ReleasePhase
+    from app.services import compliance_pack_service
+    from app.services.release_gate_decision_service import record_decision
+
+    token = uuid.uuid4().hex
+    project_id = uuid.uuid4()
+    release_id = uuid.uuid4()
+    phase_id = uuid.uuid4()
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as db:
+            db.add(
+                Project(
+                    id=project_id,
+                    name=f"History {token}",
+                    slug=f"history-{token}",
+                )
+            )
+            db.add(
+                Release(
+                    id=release_id,
+                    project_id=project_id,
+                    name=f"history-{token[:8]}",
+                    status="in_progress",
+                )
+            )
+            db.add(
+                ReleasePhase(
+                    id=phase_id,
+                    release_id=release_id,
+                    name="UAT",
+                    phase_type="uat",
+                )
+            )
+            await db.flush()
+
+            await record_decision(
+                db, release_id, "NO_GO", denominator=5, evidence_count=5
+            )
+            await record_decision(
+                db, release_id, "GO", denominator=6, evidence_count=6
+            )
+            await record_decision(
+                db,
+                release_id,
+                "NOT_EVALUATED",
+                phase_id=phase_id,
+                denominator=0,
+                evidence_count=0,
+            )
+            await db.commit()
+
+        async with sessions() as db:
+            exported = await compliance_pack_service._gather_release_gate(db, release_id)
+
+        assert exported["current"]["verdict"] == "GO"
+        assert len(exported["history"]) == 2
+        assert {row["verdict"] for row in exported["history"]} == {"GO", "NO_GO"}
+        assert all(row["phase_id"] is None for row in exported["history"])
+    finally:
+        primary_error = sys.exception()
+        try:
+            async with sessions() as db:
+                await db.execute(delete(Project).where(Project.id == project_id))
+                await db.commit()
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            warnings.warn(
+                f"history cleanup failed after primary failure: {cleanup_error!r}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
+        finally:
+            await engine.dispose()

@@ -158,9 +158,16 @@ async def decision_history(
     phase_id: uuid.UUID | str | None = None,
     limit: int = 50,
 ) -> list[ReleaseGateDecision]:
-    """Every verdict for a release, newest first — the point of append-only."""
+    """Every verdict for one release-level or phase-level scope, newest first.
+
+    ``phase_id=None`` means the release-level history. It must explicitly match
+    ``phase_id IS NULL``; otherwise an export silently mixes every phase's
+    verdict into the release's own append-only decision trail.
+    """
     stmt = select(ReleaseGateDecision).where(ReleaseGateDecision.release_id == release_id)
-    if phase_id is not None:
+    if phase_id is None:
+        stmt = stmt.where(ReleaseGateDecision.phase_id.is_(None))
+    else:
         stmt = stmt.where(ReleaseGateDecision.phase_id == phase_id)
     stmt = stmt.order_by(ReleaseGateDecision.created_at.desc()).limit(limit)
     return list((await db.execute(stmt)).scalars().all())

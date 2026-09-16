@@ -87,6 +87,11 @@ Homelab image-authority verification now excludes old ReplicaSet pods already
 marked for deletion while still requiring at least one active pod. This keeps a
 successful rollout fail-closed without rejecting it during normal termination.
 
+Release compliance packs now keep release-level gate history separate from
+phase gate history. A phase verdict for the same release can no longer appear
+as though it were a superseded release shipping decision in the exported audit
+trail.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,
