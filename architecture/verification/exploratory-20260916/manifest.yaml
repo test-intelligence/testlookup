@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: 7b38d58af5f8a86f25155fe2c858dc2d1564aaee
-candidate_tree: afe89f7658ce620210b8063545dc8cfa342e1e7e
+candidate_sha: 1cff9ae4b942f805a700339a035b14f69216d95e
+candidate_tree: dbab417ba0bd365baf500b1dede9debae3e8bd01
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T17:33:50Z
+last_checkpoint_at_utc: 2026-09-16T17:56:12Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260916-171741
+  image_tag: build-20260916-174750
   image_digests:
-    backend_and_workers: sha256:8bc943186f12ad839c3861c518f683731d7778a10d4b4a021064b4a96b5c7bac9
+    backend_and_workers: sha256:dd606accbe244ecd21cf1d8bb739f75765caeab9798727ec2b4f192ff8fdbeb6
     frontend: sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e
     mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: 7b38d58af5f8a86f25155fe2c858dc2d1564aaee
-    built_at: 2026-09-16T17:17:42Z
+    revision: 1cff9ae4b942f805a700339a035b14f69216d95e
+    built_at: 2026-09-16T17:48:09Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Fix EXP-BUG-007's broad backend readiness selector, redeploy the exact candidate, and verify the false waits are gone before starting M02."
+  next_exact_action: "Rehearse rollback and restore the exact candidate to complete M26, then start M02."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []

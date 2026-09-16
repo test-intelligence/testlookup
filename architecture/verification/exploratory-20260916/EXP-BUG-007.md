@@ -20,4 +20,19 @@ selector cannot silently return. The mutation harness replaces the shared
 selector with the old broad value and requires the regression to fail; it also
 verifies that every mutated file is restored byte-for-byte.
 
-**Review and deployed retest:** pending exact-commit deployment and validation.
+Exact commit `1cff9ae4b942f805a700339a035b14f69216d95e` was built as
+`build-20260916-174750` and deployed before green validation. Both waits logged
+the API-qualified selector and completed immediately while 28 retained
+migration pods remained visible. The idempotent admin command then ran and
+reported that the admin already existed. `/health/version` reported the exact
+commit, ready and detailed health were green, all nine application Deployments
+were ready on the immutable tag, and Alembic reported `0189 (head)`.
+
+The focused regression suite passed 25 tests, Ruff was clean, the mypy ratchet
+held at 369, all 19 M26 mutations were killed, the 43-guard quality gate passed,
+and its 238 fixture self-tests passed. Independent review approved the patch
+with tracked diff hash `3cc4e9b5d8ff43c69d594330f1ec3363a35ada33`.
+
+**Result:** REVIEW_APPROVED. The deployment no longer waits on completed
+migration pods or skips admin creation. M26 still requires its rollback
+rehearsal and restored-candidate proof.

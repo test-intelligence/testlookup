@@ -106,3 +106,26 @@ and MCP
 The strict workload/digest and serving-revision authority check passed.
 EXP-BUG-007 reproduced with the expected 180-second and 120-second false waits;
 the serving backend stayed `1/1 Running` and final ingress health passed.
+
+## Candidate checkpoint — 2026-09-16T17:50:42Z
+
+Exact commit `1cff9ae4b942f805a700339a035b14f69216d95e` was built as
+`build-20260916-174750` and deployed before validation. `/health/version`
+reported that revision and build time `2026-09-16T17:48:09Z`; ready and
+detailed health were green; all nine application Deployments were ready on the
+immutable tag; Alembic remained `0189 (head)`.
+
+Observed manifest digests were backend/workers
+`sha256:dd606accbe244ecd21cf1d8bb739f75765caeab9798727ec2b4f192ff8fdbeb6`,
+frontend
+`sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e`,
+and MCP
+`sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070`.
+
+EXP-BUG-007 is closed. Both backend waits selected
+`app=testlookup-backend,app.kubernetes.io/component=api` and completed
+immediately despite 28 retained completed migration pods. Admin creation ran
+idempotently and reported the existing admin instead of being skipped. Focused
+tests passed 25/25, all 19 mutations were killed, Ruff and the 369-error mypy
+ratchet were clean, and the 43-guard gate plus 238 self-tests passed. M26
+remains RUNNING for rollback rehearsal and restored-candidate proof.
