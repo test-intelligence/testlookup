@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased - Expand hermetic human-review coverage
+
+Added blocking browser journeys for accepting and rejecting pending AI reports,
+including reason persistence, read-only role behavior, and a separation-of-
+duties refusal that must leave the report pending. These journeys use the real
+SPA and controlled HTTP boundary without a backend, credentials, or VPN.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

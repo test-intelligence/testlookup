@@ -4,8 +4,9 @@
 
 1. Keep frontend coverage above 60/55/51/61 and investigate every decrease.
 2. Keep the three hermetic authentication journeys blocking in Chromium.
-3. Add hermetic pending/accept/reject review journeys, including notification
-   redaction and producer/reviewer separation.
+3. Hermetic pending/accept/reject review journeys and producer/reviewer
+   separation are implemented. Notification redaction remains because its
+   security authority is the backend distribution gate.
 4. Add a service integration fixture spanning ingest, intelligence persistence,
    defect promotion and release decision with one correlation lineage.
 

@@ -11,6 +11,10 @@ backend. The live lane runs `npm run test:e2e` against a configured deployment.
 | E2E-CI-01 | Protected deep link | Empty browser storage | Open `/runs`; assert redirect and sign-in heading | No protected shell may render |
 | E2E-CI-02 | Sign in and resume | Mock token/user; initial `/reviews` | Submit password form; assert form encoding via service test, return to `/reviews`, shell visible | Optional shell endpoints return empty values |
 | E2E-CI-03 | Rejected persisted token | Cached user and expired token; `/auth/me` returns 401 | Open `/runs`; assert local auth is revoked and browser reaches `/login` | Distinguishes explicit 401 from transient network failure |
+| E2E-CI-04 | Accept review | Pending report and distinct QA lead | Add notes, accept, verify pending queue clears and accepted queue retains decision | Exact accept payload is asserted |
+| E2E-CI-05 | Reject review | Pending report and distinct QA lead | Require reason, reject, verify reason and notes in rejected queue | Confirm remains disabled without a reason |
+| E2E-CI-06 | Separation of duties | Pending report triggered by current user | Attempt accept; server refuses; verify error and report remains pending | Refusal cannot optimistically remove the row |
+| E2E-CI-07 | Read-only reviewer | QA engineer session | Open the same pending queue | No accept/reject controls are rendered |
 | E2E-LIVE-01 | Ingest failed run | Admin token, project, JUnit fixture | Upload; wait for persistence; assert counts/status and test rows | malformed XML, duplicate idempotency key, 50k boundary |
 | E2E-LIVE-02 | Run intelligence | Failed run with baseline | Open intelligence; assert diff, clusters, evidence, owner and next action | missing baseline; AI unavailable uses deterministic fallback |
 | E2E-LIVE-03 | Cluster to defect | Eligible cluster and integration policy | Promote; assert local/Jira result, activity and dedupe link | Jira disabled/error creates safe local draft without duplicate |
