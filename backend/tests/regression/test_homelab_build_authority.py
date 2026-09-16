@@ -8,11 +8,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.shell_utils import bash_environment
 
 REPO = Path(__file__).resolve().parents[3]
 DEPLOY = REPO / "homelabsetup/deploy-homelab.sh"
+MCP_DEPLOYMENT = REPO / "k8s/base/mcp-deployment.yaml"
 
 
 def _find_bash() -> str | None:
@@ -192,6 +194,16 @@ def test_deployment_without_component_label_is_rejected(tmp_path: Path):
         component="",
     )
     assert result.returncode != 0
+
+
+def test_mcp_deployment_carries_component_label_into_its_pods():
+    manifest = yaml.safe_load(MCP_DEPLOYMENT.read_text(encoding="utf-8"))
+    deployment_component = manifest["metadata"]["labels"][
+        "app.kubernetes.io/component"
+    ]
+    assert manifest["spec"]["template"]["metadata"]["labels"][
+        "app.kubernetes.io/component"
+    ] == deployment_component
 
 
 @pytest.mark.parametrize(

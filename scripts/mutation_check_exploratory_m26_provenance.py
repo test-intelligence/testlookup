@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "homelabsetup/deploy-homelab.sh"
 MIGRATION_RUNNER = ROOT / "scripts/run-k8s-migrations.sh"
+MCP_DEPLOYMENT = ROOT / "k8s/base/mcp-deployment.yaml"
 TESTS = (
     sys.executable,
     "-m",
@@ -89,8 +90,17 @@ MIGRATION_MUTATIONS = (
     ),
 )
 
+MCP_DEPLOYMENT_MUTATIONS = (
+    (
+        "        app: testlookup-mcp\n        app.kubernetes.io/component: mcp-server\n",
+        "        app: testlookup-mcp\n",
+    ),
+)
+
 MUTATIONS = tuple((DEPLOY, good, bad) for good, bad in DEPLOY_MUTATIONS) + tuple(
     (MIGRATION_RUNNER, good, bad) for good, bad in MIGRATION_MUTATIONS
+) + tuple(
+    (MCP_DEPLOYMENT, good, bad) for good, bad in MCP_DEPLOYMENT_MUTATIONS
 )
 
 

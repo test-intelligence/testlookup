@@ -17,7 +17,8 @@ Live validation also found that the authority check included retained migration
 Job pods when verifying the backend Deployment. It now derives the component
 label from each Deployment and verifies only that workload's ready pods. The
 migration runner no longer lets shell command substitution execute text in its
-generated YAML comments.
+generated YAML comments. The MCP Deployment now propagates its component label
+to pods so it participates in the same fail-closed authority verification.
 
 ## Unreleased - Expand critical-journey coverage
 

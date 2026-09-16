@@ -19,6 +19,7 @@ spec:
     metadata:
       labels:
         app: testlookup-mcp
+        app.kubernetes.io/component: mcp-server
     spec:
       containers:
         - name: mcp
