@@ -71,6 +71,10 @@ Added a live cross-browser ingestion recovery journey that uploads a report
 through the UI, reloads immediately after acceptance, then reconciles the same
 task and verifies the durable run and parsed test result.
 
+Homelab image-authority verification now excludes old ReplicaSet pods already
+marked for deletion while still requiring at least one active pod. This keeps a
+successful rollout fail-closed without rejecting it during normal termination.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

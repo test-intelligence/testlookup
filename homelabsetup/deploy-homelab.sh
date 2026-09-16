@@ -123,23 +123,26 @@ registry_manifest_digest() {
 
 verify_deployment_image() {
   local deployment=$1 expected_image=$2 expected_digest=$3 component pod_rows
-  local image ready image_id extra actual_digest
+  local image ready image_id deleting extra actual_digest active_pods=0
   component=$(kubectl -n "$NAMESPACE" get deployment "$deployment" \
     -o jsonpath='{.spec.template.metadata.labels.app\.kubernetes\.io/component}' \
     2>/dev/null) || return 1
   [ -n "$component" ] || return 1
   pod_rows=$(kubectl -n "$NAMESPACE" get pod \
     -l "app=${deployment},app.kubernetes.io/component=${component}" \
-    -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID' \
+    -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID,DELETING:.metadata.deletionTimestamp' \
     --no-headers 2>/dev/null) || return 1
   [ -n "$pod_rows" ] || return 1
-  while read -r image ready image_id extra; do
+  while read -r image ready image_id deleting extra; do
     [ -z "${extra:-}" ] || return 1
+    [ "$deleting" = "<none>" ] || continue
+    active_pods=$((active_pods + 1))
     [ "$image" = "$expected_image" ] || return 1
     [ "$ready" = "true" ] || return 1
     actual_digest="${image_id##*@}"
     [ "$actual_digest" = "$expected_digest" ] || return 1
   done <<< "$pod_rows"
+  [ "$active_pods" -gt 0 ]
 }
 
 verify_serving_revision() {

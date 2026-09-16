@@ -170,7 +170,7 @@ def _run_image_check(
 def test_ready_pod_on_exact_tag_and_digest_is_accepted(tmp_path: Path):
     result = _run_image_check(
         tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc",
+        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
     )
     assert result.returncode == 0, result.stderr
 
@@ -178,7 +178,7 @@ def test_ready_pod_on_exact_tag_and_digest_is_accepted(tmp_path: Path):
 def test_deployment_component_excludes_retained_migration_job_pods(tmp_path: Path):
     result = _run_image_check(
         tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc",
+        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
     )
     assert result.returncode == 0, result.stderr
     assert (
@@ -202,8 +202,31 @@ def test_backend_readiness_and_execs_exclude_retained_migration_job_pods():
 def test_deployment_without_component_label_is_rejected(tmp_path: Path):
     result = _run_image_check(
         tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc",
+        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
         component="",
+    )
+    assert result.returncode != 0
+
+
+def test_terminating_old_replica_is_excluded_from_image_authority(tmp_path: Path):
+    result = _run_image_check(
+        tmp_path,
+        rows=(
+            "old/backend:tag true registry/old/backend@sha256:old "
+            "2026-09-16T20:00:00Z\n"
+            "expected/backend:tag true registry/expected/backend@sha256:abc <none>"
+        ),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_only_terminating_replicas_are_rejected(tmp_path: Path):
+    result = _run_image_check(
+        tmp_path,
+        rows=(
+            "expected/backend:tag true registry/expected/backend@sha256:abc "
+            "2026-09-16T20:00:00Z"
+        ),
     )
     assert result.returncode != 0
 
@@ -227,16 +250,16 @@ def test_mcp_deployment_carries_component_label_into_its_pods():
     ],
 )
 def test_wrong_or_unready_pod_is_rejected(tmp_path: Path, image: str, ready: str, image_id: str):
-    result = _run_image_check(tmp_path, rows=f"{image} {ready} {image_id}")
+    result = _run_image_check(tmp_path, rows=f"{image} {ready} {image_id} <none>")
     assert result.returncode != 0
 
 
 @pytest.mark.parametrize(
     "second_row",
     [
-        "old/backend:tag true registry/old/backend@sha256:old",
-        "expected/backend:tag false registry/expected/backend@sha256:abc",
-        "expected/backend:tag true registry/expected/backend@sha256:wrong",
+        "old/backend:tag true registry/old/backend@sha256:old <none>",
+        "expected/backend:tag false registry/expected/backend@sha256:abc <none>",
+        "expected/backend:tag true registry/expected/backend@sha256:wrong <none>",
     ],
 )
 def test_one_correct_pod_cannot_hide_an_invalid_sibling(
@@ -245,7 +268,7 @@ def test_one_correct_pod_cannot_hide_an_invalid_sibling(
     result = _run_image_check(
         tmp_path,
         rows=(
-            "expected/backend:tag true registry/expected/backend@sha256:abc\n"
+            "expected/backend:tag true registry/expected/backend@sha256:abc <none>\n"
             + second_row
         ),
     )

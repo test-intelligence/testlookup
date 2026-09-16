@@ -66,6 +66,14 @@ DEPLOY_MUTATIONS = (
         '[ "$actual_digest" != "$expected_digest" ] || return 1',
     ),
     (
+        '[ "$deleting" = "<none>" ] || continue',
+        'true # [ "$deleting" = "<none>" ] || continue',
+    ),
+    (
+        '[ "$active_pods" -gt 0 ]',
+        'true # [ "$active_pods" -gt 0 ]',
+    ),
+    (
         '[ "$revision" = "$expected_revision" ]',
         '[ "$revision" != "$expected_revision" ]',
     ),
