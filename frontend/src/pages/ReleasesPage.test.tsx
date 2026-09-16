@@ -98,6 +98,7 @@ describe('ReleasesPage', () => {
     // assert presence without binding to a specific surface.
     expect(screen.getAllByText(/v2\.4\.0/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/In Progress/i).length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: 'Linked Test Runs (0)' })).toBeVisible()
   })
 
   it('records a reasoned incident from the expanded release detail', async () => {

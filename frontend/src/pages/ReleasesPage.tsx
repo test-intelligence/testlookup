@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
@@ -678,6 +678,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function ReleasesPage() {
+  const { releaseId } = useParams<{ releaseId: string }>()
   const project   = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
 
@@ -689,7 +690,7 @@ export default function ReleasesPage() {
 
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
-  const [expandedId, setExpandedId]   = useState<string | null>(null)
+  const [expandedId, setExpandedId]   = useState<string | null>(releaseId ?? null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
 
@@ -896,9 +897,8 @@ export default function ReleasesPage() {
                       release={r}
                       onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
                     />
-                    {/* Inline detail panel — preserves the existing
-                        expand-to-view-runs flow without forcing a per-release
-                        route this redesign explicitly defers. */}
+                    {/* Inline detail panel — release detail URLs initialize
+                        this expansion while list clicks keep the same flow. */}
                     {expandedId === r.id && (
                       <div
                         className="mt-2 rounded-xl border p-4"
