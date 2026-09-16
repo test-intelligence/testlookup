@@ -252,7 +252,7 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
         if db is not None:
             from sqlalchemy import text
             result = await db.execute(text(_UPSERT_USER_CUTOFF), params)
-            cutoff = result.scalar_one().timestamp()
+            result.scalar_one()
         else:
             rows = await _durable_execute(_UPSERT_USER_CUTOFF, params)
             cutoff = rows[0][0].timestamp()
@@ -260,6 +260,12 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
         logger.error("durable_revocation_unavailable", operation="revoke_all_user_tokens", error=str(exc))
         if _durable_required():
             raise RevocationUnavailable("durable revocation store unavailable") from exc
+    # A caller-owned transaction can still roll back. Publishing its cutoff to
+    # Redis here would let the legacy-cache migration path resurrect a cutoff
+    # whose password change never committed. PostgreSQL is queried first on
+    # every read, so caller-transaction writes need no pre-commit cache copy.
+    if db is not None:
+        return
     redis = await _redis()
     if redis is None:
         _count("revocation_write_failed")

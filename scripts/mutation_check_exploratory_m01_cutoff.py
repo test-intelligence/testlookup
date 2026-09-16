@@ -23,6 +23,7 @@ TESTS = (
     "tests/core/test_deps_revocation_fail_closed.py::test_fractional_iat_reaches_cutoff_check",
     "tests/regression/test_durable_token_revocation.py",
     "tests/regression/test_auth_session_serialization.py",
+    "tests/regression/test_password_change_ends_sessions.py",
 )
 
 SECURITY = BACKEND / "app" / "core" / "security.py"
@@ -59,8 +60,8 @@ MUTATIONS = (
     (REVOCATION, "        cutoff = float(cutoff_str)", "        cutoff = int(cutoff_str)"),
     (
         REVOCATION,
-        "            cutoff = result.scalar_one().timestamp()",
-        "            _ = result.scalar_one().timestamp()",
+        "    if db is not None:\n        return\n    redis = await _redis()",
+        "    if False and db is not None:\n        return\n    redis = await _redis()",
     ),
     (
         REVOCATION,
@@ -124,6 +125,11 @@ MUTATIONS = (
         DEFAULT_QA_LEAD,
         "    await db.execute(select(User.id).where(User.id == user.id).with_for_update())",
         "    await db.execute(select(User.id).where(User.id == user.id))",
+    ),
+    (
+        DEFAULT_QA_LEAD,
+        "    await revoke_all_user_tokens(user.id, db)",
+        "    await revoke_all_user_tokens(user.id)",
     ),
     (
         SESSION_TOKENS,

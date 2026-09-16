@@ -36,7 +36,7 @@ def _stub_session_revocation(monkeypatch):
     """
     import app.services.default_qa_lead_service as svc
 
-    async def _noop_access(user_id):
+    async def _noop_access(user_id, db=None):
         return None
 
     async def _noop_refresh(db, user_id, reason="revoked"):

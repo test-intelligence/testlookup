@@ -97,7 +97,7 @@ async def test_revoke_all_cutoff_uses_wall_clock_not_transaction_start(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_revoke_all_copies_returned_durable_cutoff_to_cache(monkeypatch):
+async def test_revoke_all_does_not_publish_uncommitted_cutoff_to_cache(monkeypatch):
     from app.core import token_revocation
 
     cutoff = datetime(2033, 5, 18, 3, 33, 20, 125000, tzinfo=timezone.utc)
@@ -124,9 +124,7 @@ async def test_revoke_all_copies_returned_durable_cutoff_to_cache(monkeypatch):
 
     await token_revocation.revoke_all_user_tokens(user_id, db=Session())
 
-    assert cached["key"] == f"auth:tokens_valid_from:{user_id}"
-    assert cached["value"] == str(cutoff.timestamp())
-    assert cached["ex"] >= 60
+    assert cached == {}
 
 
 @pytest.mark.asyncio

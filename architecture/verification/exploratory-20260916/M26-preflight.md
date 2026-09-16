@@ -69,3 +69,22 @@ and MCP
 The strict workload/digest and serving-revision authority check passed again.
 EXP-BUG-007 again added 300 seconds of false waiting and skipped initial-admin
 creation despite the healthy backend; no runtime health failure occurred.
+
+## Candidate checkpoint — 2026-09-16T17:02:47Z
+
+Exact runtime commit `5297fea9b6dd9d538a58190b0c5168f91209e592` was
+built as `build-20260916-164412` and deployed before the final M01 validation.
+`/health/version` reported the same revision and build time
+`2026-09-16T16:44:32Z`; ready and detailed health were green; the serving
+backend, frontend, and MCP Deployments were `1/1`; Alembic remained
+`0189 (head)`.
+
+Observed manifest digests were backend/workers
+`sha256:10946d67ddfe6d2d0689b8382922b2cd97e3f35e3e66b9f1d2fd47ecd7529e8f`,
+frontend
+`sha256:f79f0d3f0b1860cd2b48d2d45d7880cc364796b7d1058ffe871f90c5d964668e`,
+and MCP
+`sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070`.
+The strict workload/digest and serving-revision authority check passed.
+EXP-BUG-007 again caused the broad-selector false waits; final health and
+revision authority were unaffected.

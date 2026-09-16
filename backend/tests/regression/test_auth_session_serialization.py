@@ -61,6 +61,9 @@ def test_every_password_change_locks_the_user_row():
     assert _calls_method(auth.first_time_reset, "with_for_update")
     assert _calls_method(auth.change_password, "with_for_update")
     assert _calls_method(default_qa_lead_service.reset_default_qa_lead_password, "with_for_update")
+    assert "revoke_all_user_tokens(user.id, db)" in inspect.getsource(
+        default_qa_lead_service.reset_default_qa_lead_password
+    )
 
 
 @pytest.mark.regression

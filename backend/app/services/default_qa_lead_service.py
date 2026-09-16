@@ -205,9 +205,8 @@ async def reset_default_qa_lead_password(
 
     Ordering: the refresh-family revocation and durable access-token cutoff
     are DB writes in the caller's transaction, so they land with the new hash
-    or not at all. The exact durable cutoff is also copied to Redis before the
-    caller commits. An unreachable cache can delay this transaction by one
-    bounded connect timeout, but Postgres remains the revocation authority.
+    or not at all. Caller-owned transactions do not publish the cutoff to Redis
+    before commit; PostgreSQL is the first authority on every cutoff read.
     """
     user = await ensure_default_qa_lead(db, project)
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
@@ -217,7 +216,7 @@ async def reset_default_qa_lead_password(
     user.must_change_password = False
     await _revoke_refresh_family(db, user.id, reason="password_reset")
     await db.flush()
-    await revoke_all_user_tokens(user.id)
+    await revoke_all_user_tokens(user.id, db)
     logger.info(
         "default_qa_lead_password_reset",
         project_id=str(project.id),

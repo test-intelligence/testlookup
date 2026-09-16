@@ -152,6 +152,28 @@ def _secret_key(monkeypatch):
     secret_service.reset_fernet_cache()
 
 
+@pytest.fixture(autouse=True)
+def _session_issuer_clock(monkeypatch):
+    """Supply the PostgreSQL clock boundary to this SQLite-backed route suite.
+
+    Production session issuance deliberately reads ``clock_timestamp()`` from
+    PostgreSQL.  SQLite has no equivalent function, while the dedicated token
+    issuer tests and PostgreSQL concurrency regression cover that query.  Keep
+    this route suite focused on the MFA protocol by emulating the same aware,
+    sub-second database result at the service boundary.
+    """
+    from app.services import auth_session_tokens
+
+    async def _database_issued_at(_db):
+        return datetime.now(timezone.utc)
+
+    monkeypatch.setattr(
+        auth_session_tokens,
+        "_database_issued_at",
+        _database_issued_at,
+    )
+
+
 _client_seq = itertools.count(1)
 
 

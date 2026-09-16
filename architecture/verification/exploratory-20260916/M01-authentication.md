@@ -1,8 +1,8 @@
 # M01 authentication
 
 **State:** RUNNING.
-**Stable environment:** homelab tag `build-20260916-161635`, schema `0189`,
-source revision `230abe7d4caaaf827861f37c7ac6fc02b35f5604`.
+**Stable environment:** homelab tag `build-20260916-164412`, schema `0189`,
+source revision `5297fea9b6dd9d538a58190b0c5168f91209e592`.
 **Contract oracle:** `architecture/testing/EXPLORATORY_MISSIONS.md` M01 and the
 current authentication routes/tests.
 
@@ -36,15 +36,16 @@ Independent review then found EXP-BUG-009: the durable cutoff used PostgreSQL
 transaction-start time, and session issuance did not serialize with password
 changes. A concurrent old-password login, refresh, or MFA exchange could
 therefore escape revoke-all. The candidate now uses statement-time cutoffs,
-copies the exact durable cutoff to Redis, locks the user row across every
-session issuance/password-change boundary, and invalidates predating MFA
-interstitial tokens.
+keeps caller-transaction cutoffs in PostgreSQL until commit, locks the user row
+across every session issuance/password-change boundary, and invalidates
+predating MFA interstitial tokens.
 
-Exact revision `230abe7d4caaaf827861f37c7ac6fc02b35f5604` is now
-deployed and healthy. The focused backend suite passed 133 tests; the real
-PostgreSQL concurrency regression passed against homelab; 11 cutoff/session,
+Exact revision `5297fea9b6dd9d538a58190b0c5168f91209e592` is now
+deployed and healthy. The focused backend suite passed 142 tests; the real
+PostgreSQL concurrency regression passed against homelab; 22 cutoff/session,
 four reset-transition, and two return-path mutations were killed. The complete
 reset → permanent login → empty-project onboarding journey passed in Chromium,
-Firefox, and WebKit. Ruff, the 369-error mypy ratchet, all 43 quality guards,
-238 guard self-tests, TypeScript, ESLint, and all 1,772 frontend tests passed.
+Firefox, and WebKit. A second deployed journey enrolled TOTP, changed the
+password, immediately completed a fresh MFA challenge, and read `/auth/me`.
+Ruff and TypeScript are clean; the earlier unchanged-surface gates remain green.
 M01 remains RUNNING only for the independent re-review of the remediated race.

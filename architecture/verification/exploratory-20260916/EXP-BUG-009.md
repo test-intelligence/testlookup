@@ -17,9 +17,10 @@ the waiting login to re-read the new password. MFA interstitial tokens are also
 checked against the cutoff after the row is locked.
 
 The durable cutoff uses `clock_timestamp()` in both insert and conflict-update
-paths, returns the stored value, and copies that exact timestamp to Redis. This
-removes transaction-start skew and prevents the durable and cache authorities
-from receiving different cutoffs.
+paths and returns the stored value. Caller-owned transactions do not publish a
+cutoff to Redis before commit, because a rollback would leave a phantom legacy
+marker that could be reimported. PostgreSQL is checked first on every cutoff
+read; the Redis copy remains only for the self-owned legacy path.
 
 Independent review found one more same-second boundary: python-jose converted
 MFA `iat` datetimes to integer seconds, and application-node time could drift
@@ -46,14 +47,17 @@ contracts on exact deployed revision `e40fbddb564d6139c9ac2ad0c899773d0da4608c`.
 The PostgreSQL concurrency test is executed in the post-deployment green run.
 
 **Green evidence:** exact revision
-`230abe7d4caaaf827861f37c7ac6fc02b35f5604` was deployed before validation.
-The focused backend suite passed 133 tests and the real PostgreSQL concurrency
-test passed against homelab. The deployed browser journey passed in Chromium,
-Firefox, and WebKit.
+`5297fea9b6dd9d538a58190b0c5168f91209e592` was deployed before validation.
+The focused backend suite passed 142 tests and the real PostgreSQL concurrency
+test passed against homelab. The reset/onboarding browser journey passed in
+Chromium, Firefox, and WebKit. A dedicated live API journey enrolled TOTP,
+changed the password, immediately exchanged the new MFA challenge, and used the
+resulting access token on `/auth/me`.
 
-**Mutation:** the combined cutoff/session harness killed 11 mutations,
-including transaction-start time, missing login/refresh/MFA row locks, and a
-bypassed MFA cutoff check. The harness asserted exact application and restored
-source bytes after every mutant.
+**Mutation:** the combined cutoff/session harness killed 22 mutations,
+including transaction-start time, missing locks on every direct issuer and
+password-change path, bypassed MFA cutoff validation, lost Redis propagation,
+and application-clock token issuance. The harness asserted exact application
+and restored source bytes after every mutant.
 
 **Independent re-review:** pending.
