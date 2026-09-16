@@ -129,3 +129,15 @@ idempotently and reported the existing admin instead of being skipped. Focused
 tests passed 25/25, all 19 mutations were killed, Ruff and the 369-error mypy
 ratchet were clean, and the 43-guard gate plus 238 self-tests passed. M26
 remains RUNNING for rollback rehearsal and restored-candidate proof.
+
+## Rollback disposition — 2026-09-16T18:14:26Z
+
+M26 is BLOCKED after completing exact-candidate deployment and acceptance. Its
+remaining rehearsal explicitly requires a disposable environment. The only
+available homelab namespace is shared, and the supported restore procedure
+scales all writers to zero before replacing PostgreSQL and MongoDB contents and
+re-uploading MinIO objects. Running it here would violate the mission's
+isolation precondition and risk unrelated data. No destructive restore was
+started. A disposable cluster or an owner-approved disposable namespace with
+independent datastores, secrets, ingress, and backup PVC is required to resume
+the rollback and restored-candidate proof.

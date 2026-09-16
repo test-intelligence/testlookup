@@ -49,6 +49,11 @@ the serving API pods. Retained completed migration Jobs no longer cause two
 false readiness timeouts or skip idempotent admin creation during a healthy
 rollout.
 
+Added a live-deployment project-isolation journey that creates synthetic A/B tenants,
+checks list, detail, search, suite, activity, export, ingestion, and scoped-key
+boundaries, then proves a browser cannot retain or display an inaccessible
+project from persisted local state.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

@@ -1,6 +1,6 @@
 mission,priority,state,record,defects,blocker
 M01,P0,PASSED,M01-authentication.md,EXP-BUG-005;EXP-BUG-006;EXP-BUG-008;EXP-BUG-009,
-M02,P0,NOT_RUN,,,
+M02,P0,RUNNING,M02-project-isolation.md,,Three-browser stale-scope and CLI/MCP repetitions remain
 M03,P0,NOT_RUN,,,
 M04,P0,NOT_RUN,,,
 M05,P0,NOT_RUN,,,
@@ -24,4 +24,4 @@ M22,P1,NOT_RUN,,,
 M23,P0,BLOCKED,,,Requires an isolated disposable environment and a second worker process for stale-writer injection
 M24,P1,BLOCKED,,,Requires an isolated full ingestion environment and production benchmark access token
 M25,P0,BLOCKED,,,Homelab has no installed Ollama models and no fresh paired-inference producer
-M26,P0,RUNNING,M26-preflight.md,,Candidate deployment and rollback rehearsal remain
+M26,P0,BLOCKED,M26-preflight.md,EXP-BUG-001;EXP-BUG-002;EXP-BUG-003;EXP-BUG-004;EXP-BUG-007,Rollback rehearsal requires a disposable environment; the only available homelab namespace is shared and restore replaces PostgreSQL MongoDB and MinIO data

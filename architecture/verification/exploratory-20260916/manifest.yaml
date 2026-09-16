@@ -7,7 +7,7 @@ candidate_sha: 1cff9ae4b942f805a700339a035b14f69216d95e
 candidate_tree: dbab417ba0bd365baf500b1dede9debae3e8bd01
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T17:56:12Z
+last_checkpoint_at_utc: 2026-09-16T18:14:26Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -41,7 +41,7 @@ environment:
     llm_provider: openrouter
     llm_model: mistralai/mistral-nemo
   external_test_sinks: {}
-  backup_restore_evidence: "Backup CronJob scheduled at 17 2 * * *; the three latest observed jobs succeeded. Restore rehearsal has not run."
+  backup_restore_evidence: "Backup CronJob scheduled at 17 2 * * *; the three latest observed jobs succeeded. Restore rehearsal is blocked because only a shared namespace is available and restore replaces PostgreSQL, MongoDB, and MinIO data."
 baseline:
   source_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
   commands_and_exit_codes:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Rehearse rollback and restore the exact candidate to complete M26, then start M02."
+  next_exact_action: "Deploy the tracked M02 live browser journey, run it in Chromium Firefox and WebKit, then repeat isolation through CLI and MCP."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []
