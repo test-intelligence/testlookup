@@ -179,7 +179,7 @@ const appRoutes: AppRoute[] = [
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */
-export const managementRoutes: AppRoute[] = [
+const managementRoutes: AppRoute[] = [
   { path: 'projects', component: ProjectsPage },
   { path: 'releases', component: ReleasesPage },
   { path: 'releases/:releaseId', component: ReleasesPage },
