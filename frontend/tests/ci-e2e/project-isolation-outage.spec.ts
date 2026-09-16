@@ -83,7 +83,10 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
       }
       if (projectId === PROJECT_B) {
         betaAttempts += 1
-        if (!betaRecovered) return json(route, { detail: 'temporary outage' }, 503)
+        if (!betaRecovered) {
+          await new Promise(resolve => setTimeout(resolve, 150))
+          return json(route, { detail: 'temporary outage' }, 503)
+        }
         return json(route, { items: [run('run-b', PROJECT_B, 'Beta Project', 'B-202')], total: 1, page: 1, size: 500, pages: 1 })
       }
       return json(route, { detail: 'project_id required' }, 400)
@@ -103,6 +106,20 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
   betaRecovered = true
   await page.getByRole('button', { name: 'Retry' }).click()
   await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+
+  await page.goto('/runs?m02-history=forward')
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
+
+  await page.goBack()
+  await expect(page).toHaveURL(/\/runs$/)
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
+
+  await page.goForward()
+  await expect(page).toHaveURL(/m02-history=forward/)
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
 
   expect(runProjectIds).toContain(PROJECT_A)
   expect(betaAttempts).toBeGreaterThanOrEqual(2)

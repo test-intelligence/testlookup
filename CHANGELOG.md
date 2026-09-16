@@ -63,6 +63,10 @@ one-time password. Their first login is routed through the existing
 first-time-reset flow instead of silently treating the disclosed bootstrap
 credential as permanent.
 
+The project-isolation outage journey now holds the failing scoped request long
+enough to exercise an in-flight scope change, then verifies retry and browser
+back/forward navigation never restore rows from the prior project.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,
