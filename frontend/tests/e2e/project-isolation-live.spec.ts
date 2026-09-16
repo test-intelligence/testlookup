@@ -97,7 +97,24 @@ test.describe('Project isolation — live A/B contract', () => {
         201,
       )
 
-      const aLogin = await login(request, user.username, user.temp_password)
+      const bootstrapLogin = await login(request, user.username, user.temp_password)
+      expect(bootstrapLogin.must_change_password).toBe(true)
+      const permanentPassword = 'M02-Live-Permanent-9!'
+      const reset = await request.post(`${BACKEND_URL}/api/v1/auth/first-time-reset`, {
+        headers: bearer(bootstrapLogin.access_token),
+        data: {
+          new_password: permanentPassword,
+          confirm_password: permanentPassword,
+        },
+      })
+      expect(reset.status(), await reset.text()).toBe(204)
+      const revokedBootstrap = await request.get(`${BACKEND_URL}/api/v1/projects`, {
+        headers: bearer(bootstrapLogin.access_token),
+      })
+      expect(revokedBootstrap.status()).toBe(401)
+
+      const aLogin = await login(request, user.username, permanentPassword)
+      expect(aLogin.must_change_password).toBe(false)
       const aToken = aLogin.access_token as string
 
       for (const [side, token] of [
