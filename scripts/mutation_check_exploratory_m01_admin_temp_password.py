@@ -1,11 +1,11 @@
 """Prove admin-created bootstrap credentials cannot become permanent silently."""
+
 from __future__ import annotations
 
 import hashlib
 import subprocess
 import sys
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "backend" / "app" / "routers" / "users.py"
