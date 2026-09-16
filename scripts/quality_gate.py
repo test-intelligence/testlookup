@@ -4822,6 +4822,171 @@ def _agents_agent_mode_single_writer() -> list[Violation]:
     return violations
 
 
+_WORKFLOW_BUILTIN_BUILDERS = {
+    "offline": "workflow._build_offline_graph",
+    "deep": "workflow._build_deep_graph",
+    "live": "workflow._build_live_graph",
+}
+
+
+def _dotted_ast_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_ast_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
+
+
+def _workflows_builtins_match_compiled() -> list[Violation]:
+    """Keep the executable three-way topology parity test strong and collected.
+
+    The actual comparison needs LangGraph and the backend dependency graph, so
+    ``backend/tests/test_workflow_compiler.py`` executes it. This pure-stdlib
+    guard makes that test part of the architecture contract: deleting a built-in
+    case, substituting fake executors, or narrowing the assertion to nodes only
+    fails the lightweight quality-gate job as well as the backend suite.
+    """
+    path = REPO_ROOT / "backend" / "tests" / "test_workflow_compiler.py"
+
+    def violation(message: str, line: int = 0) -> list[Violation]:
+        return [Violation(path, line, message)]
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError:
+        return violation("built-in workflow topology parity test is missing")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return violation("built-in workflow topology parity test cannot be parsed", exc.lineno or 0)
+
+    test = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "test_builtin_definitions_compile_to_the_live_graph_topology"
+        ),
+        None,
+    )
+    if test is None:
+        return violation("collected built-in workflow topology parity test is missing")
+
+    skipped = {
+        _dotted_ast_name(decorator.func if isinstance(decorator, ast.Call) else decorator)
+        for decorator in test.decorator_list
+    }
+    if any(name.endswith((".skip", ".skipif", ".xfail")) for name in skipped):
+        return violation("built-in workflow topology parity test must not be skipped or xfailed", test.lineno)
+
+    covered: list[tuple[str, str]] = []
+    for decorator in test.decorator_list:
+        if (
+            not isinstance(decorator, ast.Call)
+            or not _dotted_ast_name(decorator.func).endswith(".parametrize")
+            or len(decorator.args) < 2
+            or not isinstance(decorator.args[1], (ast.List, ast.Tuple))
+        ):
+            continue
+        for row in decorator.args[1].elts:
+            if not isinstance(row, (ast.List, ast.Tuple)) or len(row.elts) != 2:
+                continue
+            workflow_id, builder = row.elts
+            if isinstance(workflow_id, ast.Constant) and isinstance(workflow_id.value, str):
+                covered.append((workflow_id.value, _dotted_ast_name(builder)))
+    if (
+        len(covered) != len(_WORKFLOW_BUILTIN_BUILDERS)
+        or dict(covered) != _WORKFLOW_BUILTIN_BUILDERS
+    ):
+        return violation(
+            "parity test must cover exactly offline/deep/live and their live graph builders",
+            test.lineno,
+        )
+
+    assignments = {
+        target.id: statement.value
+        for statement in test.body
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        for target in (
+            statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        )
+        if isinstance(target, ast.Name)
+    }
+    body_expr = assignments.get("body")
+    body_ok = (
+        isinstance(body_expr, ast.Call)
+        and _dotted_ast_name(body_expr.func) == "definitions.body_from_item"
+        and len(body_expr.args) == 1
+        and isinstance(body_expr.args[0], ast.Call)
+        and _dotted_ast_name(body_expr.args[0].func) == "definitions.builtin"
+        and len(body_expr.args[0].args) == 1
+        and isinstance(body_expr.args[0].args[0], ast.Name)
+        and body_expr.args[0].args[0].id == "workflow_id"
+    )
+    if not body_ok:
+        return violation("parity test must compile the selected built-in definition", test.lineno)
+
+    compiled_expr = assignments.get("compiled")
+    executor_kw = None
+    if isinstance(compiled_expr, ast.Call):
+        executor_kw = next(
+            (kw.value for kw in compiled_expr.keywords if kw.arg == "node_executors"),
+            None,
+        )
+    compile_ok = (
+        isinstance(compiled_expr, ast.Call)
+        and _dotted_ast_name(compiled_expr.func) == "compile_workflow"
+        and len(compiled_expr.args) >= 1
+        and isinstance(compiled_expr.args[0], ast.Name)
+        and compiled_expr.args[0].id == "body"
+        and isinstance(executor_kw, ast.Call)
+        and _dotted_ast_name(executor_kw.func) == "workflow.workflow_node_executors"
+    )
+    if not compile_ok:
+        return violation("parity test must compile with the real workflow node executors", test.lineno)
+
+    def topology_of_compiled(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and _dotted_ast_name(node.func) == "_topology"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Attribute)
+            and _dotted_ast_name(node.args[0]) == "compiled.graph"
+        )
+
+    def topology_of_live(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and _dotted_ast_name(node.func) == "_topology"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Call)
+            and _dotted_ast_name(node.args[0].func) == "legacy_builder"
+        )
+
+    full_comparison = any(
+        isinstance(statement, ast.Assert)
+        and isinstance(statement.test, ast.Compare)
+        and len(statement.test.ops) == 1
+        and isinstance(statement.test.ops[0], ast.Eq)
+        and len(statement.test.comparators) == 1
+        and (
+            (
+                topology_of_compiled(statement.test.left)
+                and topology_of_live(statement.test.comparators[0])
+            )
+            or (
+                topology_of_live(statement.test.left)
+                and topology_of_compiled(statement.test.comparators[0])
+            )
+        )
+        for statement in test.body
+    )
+    if not full_comparison:
+        return violation("parity test must compare full node, edge, and branch topology", test.lineno)
+    return []
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -5193,6 +5358,20 @@ GUARDS: list[Guard] = [
         fix_hint=(
             "Change an agent's mode through agent_config_service.put_config. A "
             "retired compatibility API must project from agent_configs and stay read-only."
+        ),
+    ),
+    Guard(
+        name="workflows.builtins-match-compiled",
+        description=(
+            "The offline/deep/live definitions remain diff-tested against the "
+            "live compiled graph topology with real node executors."
+        ),
+        check=_workflows_builtins_match_compiled,
+        fix_hint=(
+            "Keep test_builtin_definitions_compile_to_the_live_graph_topology "
+            "parameterized over offline/deep/live, compile definitions.builtin(...) "
+            "with workflow.workflow_node_executors(), and compare the complete "
+            "_topology of both graphs."
         ),
     ),
     Guard(

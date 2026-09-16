@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-15 - Guard built-in workflow compiler parity (T17 / E3.5)
+
+Added the absolute `workflows.builtins-match-compiled` quality guard. It pins
+the collected backend regression to exactly the offline, deep, and live
+built-ins, requires the real runtime executors, and requires a complete
+node/edge/branch topology comparison with the live graph builders. Fixture
+self-tests reject removed cases, fake executors, narrowed assertions, and
+skipped parity coverage.
+
+The backend regression remains the executable LangGraph comparison while the
+pure-standard-library guard keeps that regression mandatory in the lightweight
+quality job. Added an operator and developer guide for workflow authoring,
+validation, evaluation, publication, immutable execution, and parity checks.
+
 ## 2026-09-15 - Add the versioned workflow editor (T17 / E3.4)
 
 Added a project-scoped workflow editor at `/agents/workflows`. It lists built-in

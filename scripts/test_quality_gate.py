@@ -1139,6 +1139,126 @@ def test_managed_status_single_writer_ignores_other_status_models(
     assert qg._backend_managed_test_case_status_single_writer() == []
 
 
+# ── workflows.builtins-match-compiled ────────────────────────────────────
+
+
+def _write_workflow_parity_test(tmp_path: Path, *, body: str | None = None) -> Path:
+    target = tmp_path / "backend" / "tests" / "test_workflow_compiler.py"
+    _write(target, body or '''
+        import pytest
+
+        @pytest.mark.parametrize(
+            ("workflow_id", "legacy_builder"),
+            [
+                ("offline", workflow._build_offline_graph),
+                ("deep", workflow._build_deep_graph),
+                ("live", workflow._build_live_graph),
+            ],
+        )
+        def test_builtin_definitions_compile_to_the_live_graph_topology(
+            workflow_id, legacy_builder,
+        ):
+            body = definitions.body_from_item(definitions.builtin(workflow_id))
+            compiled = compile_workflow(
+                body, node_executors=workflow.workflow_node_executors()
+            )
+            assert _topology(compiled.graph) == _topology(legacy_builder())
+    ''')
+    return target
+
+
+def test_workflow_builtin_guard_accepts_full_three_way_parity_test(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_workflow_parity_test(tmp_path)
+    assert qg._workflows_builtins_match_compiled() == []
+
+
+def test_workflow_builtin_guard_covers_the_real_repository() -> None:
+    assert qg._workflows_builtins_match_compiled() == []
+
+
+def test_workflow_builtin_guard_rejects_missing_builtin_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    path = _write_workflow_parity_test(tmp_path)
+    source = path.read_text(encoding="utf-8").replace(
+        '("live", workflow._build_live_graph),', ""
+    )
+    path.write_text(source, encoding="utf-8")
+
+    violations = qg._workflows_builtins_match_compiled()
+    assert len(violations) == 1
+    assert "exactly offline/deep/live" in violations[0].message
+
+
+def test_workflow_builtin_guard_rejects_duplicate_builtin_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    path = _write_workflow_parity_test(tmp_path)
+    source = path.read_text(encoding="utf-8").replace(
+        '("live", workflow._build_live_graph),',
+        '("live", workflow._build_live_graph),\n'
+        '        ("live", workflow._build_live_graph),',
+    )
+    path.write_text(source, encoding="utf-8")
+
+    violations = qg._workflows_builtins_match_compiled()
+    assert len(violations) == 1
+    assert "exactly offline/deep/live" in violations[0].message
+
+
+def test_workflow_builtin_guard_rejects_fake_executors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    path = _write_workflow_parity_test(tmp_path)
+    source = path.read_text(encoding="utf-8").replace(
+        "workflow.workflow_node_executors()", "{}"
+    )
+    path.write_text(source, encoding="utf-8")
+
+    violations = qg._workflows_builtins_match_compiled()
+    assert len(violations) == 1
+    assert "real workflow node executors" in violations[0].message
+
+
+def test_workflow_builtin_guard_rejects_nodes_only_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    path = _write_workflow_parity_test(tmp_path)
+    source = path.read_text(encoding="utf-8").replace(
+        "_topology(compiled.graph) == _topology(legacy_builder())",
+        "set(compiled.graph.nodes) == set(legacy_builder().nodes)",
+    )
+    path.write_text(source, encoding="utf-8")
+
+    violations = qg._workflows_builtins_match_compiled()
+    assert len(violations) == 1
+    assert "full node, edge, and branch topology" in violations[0].message
+
+
+def test_workflow_builtin_guard_rejects_skipped_parity_test(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    path = _write_workflow_parity_test(tmp_path)
+    source = path.read_text(encoding="utf-8").replace(
+        "def test_builtin_definitions_compile_to_the_live_graph_topology(",
+        "@pytest.mark.skip(reason='too slow')\n"
+        "def test_builtin_definitions_compile_to_the_live_graph_topology(",
+    )
+    path.write_text(source, encoding="utf-8")
+
+    violations = qg._workflows_builtins_match_compiled()
+    assert len(violations) == 1
+    assert "must not be skipped" in violations[0].message
+
+
 # ── DEVELOPER_GUIDE.md sync ───────────────────────────────────────────────
 #
 # The guide's section 1 is hand-maintained prose over an auto-listable
