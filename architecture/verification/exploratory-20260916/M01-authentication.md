@@ -1,8 +1,8 @@
 # M01 authentication
 
-**State:** RUNNING.
-**Stable environment:** homelab tag `build-20260916-164412`, schema `0189`,
-source revision `5297fea9b6dd9d538a58190b0c5168f91209e592`.
+**State:** PASSED.
+**Stable environment:** homelab tag `build-20260916-171741`, schema `0189`,
+source revision `7b38d58af5f8a86f25155fe2c858dc2d1564aaee`.
 **Contract oracle:** `architecture/testing/EXPLORATORY_MISSIONS.md` M01 and the
 current authentication routes/tests.
 
@@ -40,12 +40,14 @@ keeps caller-transaction cutoffs in PostgreSQL until commit, locks the user row
 across every session issuance/password-change boundary, and invalidates
 predating MFA interstitial tokens.
 
-Exact revision `5297fea9b6dd9d538a58190b0c5168f91209e592` is now
-deployed and healthy. The focused backend suite passed 142 tests; the real
-PostgreSQL concurrency regression passed against homelab; 22 cutoff/session,
-four reset-transition, and two return-path mutations were killed. The complete
+Exact revision `7b38d58af5f8a86f25155fe2c858dc2d1564aaee` is now
+deployed and healthy. The focused backend suite passed 152 tests; both real
+PostgreSQL concurrency/transaction regressions passed against homelab; 23
+cutoff/session, four reset-transition, and two return-path mutations were
+killed. The complete
 reset → permanent login → empty-project onboarding journey passed in Chromium,
 Firefox, and WebKit. A second deployed journey enrolled TOTP, changed the
 password, immediately completed a fresh MFA challenge, and read `/auth/me`.
-Ruff and TypeScript are clean; the earlier unchanged-surface gates remain green.
-M01 remains RUNNING only for the independent re-review of the remediated race.
+Ruff, the 369-error mypy ratchet, all 43 quality guards, 238 guard self-tests,
+TypeScript, and the E2E lint check are green. Independent re-review approved the
+final transaction-atomic implementation. M01 is complete.

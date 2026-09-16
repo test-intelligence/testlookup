@@ -1,5 +1,5 @@
 mission,priority,state,record,defects,blocker
-M01,P0,RUNNING,M01-authentication.md,,
+M01,P0,PASSED,M01-authentication.md,EXP-BUG-005;EXP-BUG-006;EXP-BUG-008;EXP-BUG-009,
 M02,P0,NOT_RUN,,,
 M03,P0,NOT_RUN,,,
 M04,P0,NOT_RUN,,,

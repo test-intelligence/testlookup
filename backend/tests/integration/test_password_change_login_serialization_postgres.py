@@ -129,6 +129,7 @@ async def test_default_qa_lead_cutoff_shares_password_reset_transaction(monkeypa
                 is_synthetic=True,
             )
         )
+        await setup.flush()
         setup.add(
             Project(
                 id=project_id,

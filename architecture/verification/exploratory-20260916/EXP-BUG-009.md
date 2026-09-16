@@ -47,17 +47,21 @@ contracts on exact deployed revision `e40fbddb564d6139c9ac2ad0c899773d0da4608c`.
 The PostgreSQL concurrency test is executed in the post-deployment green run.
 
 **Green evidence:** exact revision
-`5297fea9b6dd9d538a58190b0c5168f91209e592` was deployed before validation.
-The focused backend suite passed 142 tests and the real PostgreSQL concurrency
-test passed against homelab. The reset/onboarding browser journey passed in
-Chromium, Firefox, and WebKit. A dedicated live API journey enrolled TOTP,
+`7b38d58af5f8a86f25155fe2c858dc2d1564aaee` was deployed before validation.
+The focused backend suite passed 152 tests and both real PostgreSQL concurrency
+and rollback-atomicity tests passed against homelab. The reset/onboarding
+browser journey passed in Chromium, Firefox, and WebKit. A dedicated live API
+journey enrolled TOTP,
 changed the password, immediately exchanged the new MFA challenge, and used the
 resulting access token on `/auth/me`.
 
-**Mutation:** the combined cutoff/session harness killed 22 mutations,
+**Mutation:** the combined cutoff/session harness killed 23 mutations,
 including transaction-start time, missing locks on every direct issuer and
-password-change path, bypassed MFA cutoff validation, lost Redis propagation,
-and application-clock token issuance. The harness asserted exact application
-and restored source bytes after every mutant.
+password-change path, bypassed MFA cutoff validation, lost self-owned cache
+propagation, premature caller-owned cache publication, and application-clock
+token issuance. The harness asserted exact application and restored source
+bytes after every mutant.
 
-**Independent re-review:** pending.
+**Independent re-review:** APPROVE, tracked review diff
+`f299399c201e8bfefb1d61a67f8f441a6b0caac4`. The review additionally found and
+closed a default-QA-lead self-block plus rollback/cache-resurrection boundary.
