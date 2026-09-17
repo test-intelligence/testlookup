@@ -369,6 +369,11 @@ async def export_intelligence_report(
     if not distribution.allowed:
         await db.commit()
         raise HTTPException(status_code=409, detail=refusal_detail(distribution))
+    if distribution.watermark:
+        # JSON exports cannot rely on a renderer to add the visible DRAFT
+        # banner. Carry the same watermark field as HTML/PDF exports so a
+        # downloaded pending report never loses its review status.
+        report["draft_watermark"] = distribution.watermark
 
     # E8.6: the export is a downloadable copy of AI report content, so it says
     # whether a person has accepted that content (review envelope, E8.3).

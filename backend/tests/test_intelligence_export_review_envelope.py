@@ -36,7 +36,7 @@ async def test_the_export_carries_the_review_envelope(monkeypatch):
     monkeypatch.setattr(
         router,
         "decide_run_distribution",
-        AsyncMock(return_value=SimpleNamespace(allowed=True)),
+        AsyncMock(return_value=SimpleNamespace(allowed=True, watermark=None)),
     )
     monkeypatch.setattr(router, "record_distribution", AsyncMock())
 

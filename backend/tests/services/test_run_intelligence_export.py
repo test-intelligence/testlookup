@@ -43,7 +43,7 @@ async def test_export_contains_immutable_report_identity(monkeypatch):
     monkeypatch.setattr(
         run_intelligence,
         "decide_run_distribution",
-        AsyncMock(return_value=SimpleNamespace(allowed=True)),
+        AsyncMock(return_value=SimpleNamespace(allowed=True, watermark=None)),
     )
     monkeypatch.setattr(run_intelligence, "record_distribution", AsyncMock())
 
