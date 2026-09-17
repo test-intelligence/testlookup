@@ -543,6 +543,7 @@ async def test_pipeline_creation_rechecks_queued_cancellation_under_the_invocati
             str(invocation.test_run_id),
             str(invocation.project_id),
             "offline",
+            invocation_stage="summary",
         )
 
     assert len(statements) == 1 and "FOR UPDATE" in str(statements[0])

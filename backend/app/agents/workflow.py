@@ -2918,13 +2918,15 @@ async def _create_pipeline_run(
         # An invocation may be cancelled after API acceptance but before this
         # worker creates its pipeline. Locking the invocation serialises that
         # decision with the cancel route: whichever commits first is observed.
-        invocation = (
-            await db.execute(
-                select(AgentInvocation)
-                .where(AgentInvocation.pipeline_run_id == uuid.UUID(str(pipeline_run_id)))
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
+        invocation = None
+        if invocation_stage is not None:
+            invocation = (
+                await db.execute(
+                    select(AgentInvocation)
+                    .where(AgentInvocation.pipeline_run_id == uuid.UUID(str(pipeline_run_id)))
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
         if invocation is not None and bool(invocation.cancel_requested):
             raise PipelineCancelled(str(pipeline_run_id))
 

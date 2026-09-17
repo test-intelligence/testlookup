@@ -556,6 +556,9 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         async def __aexit__(self, *exc):
             return False
 
+        async def execute(self, _stmt):
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
         def add(self, row):
             added.append(row)
 
