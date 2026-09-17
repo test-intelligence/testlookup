@@ -5,7 +5,7 @@ M03,P0,PASSED,M03-ingestion.md,EXP-BUG-012,
 M04,P0,PASSED,M04-intelligence-release.md,EXP-BUG-013,
 M05,P0,BLOCKED,M05-defect-deduplication.md,,Dedicated Jira sandbox and fault-capable request journal are unavailable; all local and real-PostgreSQL variants passed
 M06,P0,PASSED,M06-release-decisions.md,EXP-BUG-014;EXP-BUG-015;EXP-BUG-016;EXP-BUG-017,
-M07,P0,NOT_RUN,,,
+M07,P0,PARTIAL,M07-review-authority.md,EXP-BUG-018;EXP-BUG-019;EXP-BUG-020;EXP-BUG-021;EXP-BUG-022,Dedicated enforcement-on stack unavailable; shared review enforcement remains off per owner rollout decision
 M08,P0,NOT_RUN,,,
 M09,P1,NOT_RUN,,,
 M10,P1,NOT_RUN,,,

@@ -218,6 +218,21 @@ correctly; stale/superseded authority cannot authorize a later action.
 **Observe/capture:** subject/evidence hash, proposer, audit-only reviewer identity,
 state transition timeline and loser response. Preserve both concurrent requests.
 
+**Execution 2026-09-17:** **PARTIAL.** Exact deployed candidate `bbce4f5f`
+passed 323 focused backend tests, 15 real-PostgreSQL race/resume tests, 22
+focused frontend tests, and the three-browser review transition. Sixteen asserted
+wrong-behaviour mutations were killed. EXP-BUG-018 through EXP-BUG-022 fixed
+evidence identity and serialization, parent/Investigator authority confusion,
+proposal-time mode separation, distinct Investigator supersession, and queued
+worker resurrection. A stable parent-row lock also closed the no-row phantom
+race between concurrent first review inserts; both finalizers now take that
+parent before their child row, matching retention/reset cascade order. The
+shared homelab kept
+`REVIEW_GATE_ENFORCED=false`;
+the required dedicated enforcement-on stack is unavailable, so that deployed
+identity matrix remains blocked. Full record:
+`architecture/verification/exploratory-20260916/M07-review-authority.md`.
+
 ## M08 — Distribution, drafts and notification replay (P0, delivery QA)
 
 **Preconditions:** M07; F4; all real distribution consumers enumerated from

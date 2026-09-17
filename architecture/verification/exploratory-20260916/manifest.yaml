@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: 5d8dd8a579d5dbfd047f71c683d25007f78d5a52
-candidate_tree: 563e7c11e7f1ff22668bda0c71b577968204c668
+candidate_sha: bbce4f5f63105dfbba5d9eeb1b17b2d3a5b3ba26
+candidate_tree: 138aa53198da19a23763f6a931a3fc64ffcb3e50
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-17T01:48:00Z
+last_checkpoint_at_utc: 2026-09-17T03:57:00Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260917-013906
+  image_tag: build-20260917-034955
   image_digests:
-    backend_and_workers: sha256:9cd8e30e67091b06281597a9b4c24a560d04c26af64939c18951e337db1299d0
+    backend_and_workers: sha256:533184e3b700d9d5e90723b8e41aa377c82104ef9443e38e19b59ed69e1c3888
     frontend: sha256:d855a636fe6de606885a72a910ae11ae1549cb57b053c8eef60f9a3bc45b0dd8
     mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: 5d8dd8a579d5dbfd047f71c683d25007f78d5a52
-    built_at: 2026-09-17T01:39:07Z
+    revision: bbce4f5f63105dfbba5d9eeb1b17b2d3a5b3ba26
+    built_at: 2026-09-17T03:49:56Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Start M07 review-subject, settlement-race, and separation-of-duties variants on the same minor-release branch; M05's external Jira boundary remains blocked until a dedicated sandbox exists."
+  next_exact_action: "Start M08 distribution-gate channel variants on the same minor-release branch; M05's external Jira boundary and M07's enforcement-on slice remain blocked until dedicated sandboxes exist."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []
