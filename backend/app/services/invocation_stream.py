@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.db.redis_client import get_redis
 
 _KEY = "testlookup:invocation-stream-ticket:{digest}"
+_ISSUE_ATTEMPTS = 3
 
 
 def _key(ticket: str) -> str:
@@ -37,11 +38,14 @@ def ticket_ttl_seconds() -> int:
 
 async def issue_stream_ticket(invocation_id: uuid.UUID, user_id: Any) -> tuple[str, int]:
     """A new ticket for ``invocation_id`` and its lifetime in seconds."""
-    ticket = secrets.token_urlsafe(32)
     ttl = ticket_ttl_seconds()
     payload = json.dumps({"invocation_id": str(invocation_id), "user_id": str(user_id)})
-    await get_redis().set(_key(ticket), payload, ex=ttl, nx=True)
-    return ticket, ttl
+    redis = get_redis()
+    for _ in range(_ISSUE_ATTEMPTS):
+        ticket = secrets.token_urlsafe(32)
+        if await redis.set(_key(ticket), payload, ex=ttl, nx=True):
+            return ticket, ttl
+    raise RuntimeError("could not allocate a unique stream ticket")
 
 
 async def redeem_stream_ticket(ticket: str, invocation_id: uuid.UUID) -> bool:

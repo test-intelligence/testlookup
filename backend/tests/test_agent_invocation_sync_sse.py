@@ -230,6 +230,22 @@ async def test_a_ticket_is_stored_only_as_a_hash_with_a_short_lifetime(redis):
 
 
 @pytest.mark.asyncio
+async def test_ticket_issue_regenerates_after_a_token_collision(redis, monkeypatch):
+    from app.services import invocation_stream
+
+    collision = "c" * 43
+    replacement = "r" * 43
+    redis.store[invocation_stream._key(collision)] = ("occupied", 60)
+    tokens = iter((collision, replacement))
+    monkeypatch.setattr(invocation_stream.secrets, "token_urlsafe", lambda _size: next(tokens))
+
+    ticket, _ = await invocation_stream.issue_stream_ticket(uuid.uuid4(), "user-1")
+
+    assert ticket == replacement
+    assert invocation_stream._key(replacement) in redis.store
+
+
+@pytest.mark.asyncio
 async def test_a_ticket_opens_its_own_invocation_exactly_once(redis):
     from app.services import invocation_stream
 
@@ -323,6 +339,39 @@ async def test_the_stream_sends_one_event_per_change_and_stops_when_the_run_fini
     events = [f for f in frames if f.startswith("event: invocation")]
     assert len(events) == 2, "an unchanged read is not re-sent"
     assert json.loads(events[-1].split("data: ", 1)[1])["status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_the_stream_emits_when_an_observable_error_changes(monkeypatch):
+    from app.routers import agent_invoke as router
+
+    invocation = SimpleNamespace(id=uuid.uuid4())
+
+    class _Session:
+        async def execute(self, _stmt):
+            return _Result(invocation)
+
+    @asynccontextmanager
+    async def _factory():
+        yield _Session()
+
+    views = iter([
+        _view("in_progress", error=None),
+        _view("in_progress", error="retry scheduled"),
+        _view("failed", error="model unavailable"),
+    ])
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
+    monkeypatch.setattr(router, "_invocation_view", AsyncMock(side_effect=lambda _db, _inv: next(views)))
+    request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+
+    frames = [
+        frame async for frame in router.invocation_event_stream(
+            invocation.id, request, sleep=AsyncMock(), clock=lambda: 0.0,
+        )
+    ]
+    events = [frame for frame in frames if frame.startswith("event: invocation")]
+    assert len(events) == 3
+    assert json.loads(events[1].split("data: ", 1)[1])["error"] == "retry scheduled"
 
 
 @pytest.mark.asyncio

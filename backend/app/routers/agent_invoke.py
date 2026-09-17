@@ -272,16 +272,21 @@ def project_invocation(
     now = now or datetime.now(timezone.utc)
     links = {"self": f"/api/v1/agents/invocations/{invocation.id}"}
     if pipeline is None:
+        cancelled = bool(getattr(invocation, "cancel_requested", False))
         dispatched = getattr(invocation, "dispatched_at", None) or invocation.created_at or now
         if dispatched.tzinfo is None:
             dispatched = dispatched.replace(tzinfo=timezone.utc)
-        lost = now - dispatched > DISPATCH_GRACE
+        lost = not cancelled and now - dispatched > DISPATCH_GRACE
         run_state: dict[str, Any] = {
-            "status": "failed" if lost else "in_progress",
+            "status": "failed" if cancelled or lost else "in_progress",
             "attempt": 1,
             "max_attempts": _DEFAULT_MAX_ATTEMPTS,
             "next_retry_at": None,
-            "error": "invocation_not_started: no worker picked it up" if lost else None,
+            "error": (
+                f"{CANCELLED_ERROR_PREFIX}before worker start"
+                if cancelled
+                else "invocation_not_started: no worker picked it up" if lost else None
+            ),
         }
     else:
         run_state = {
@@ -330,10 +335,13 @@ def project_invocation(
     }
 
 
-async def _load_invocation_or_404(db: AsyncSession, invocation_id: uuid.UUID) -> Any:
-    invocation = (
-        await db.execute(select(AgentInvocation).where(AgentInvocation.id == invocation_id))
-    ).scalar_one_or_none()
+async def _load_invocation_or_404(
+    db: AsyncSession, invocation_id: uuid.UUID, *, for_update: bool = False,
+) -> Any:
+    stmt = select(AgentInvocation).where(AgentInvocation.id == invocation_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    invocation = (await db.execute(stmt)).scalar_one_or_none()
     if invocation is None:
         raise HTTPException(status_code=404, detail="Invocation not found")
     return invocation
@@ -533,7 +541,7 @@ async def invocation_event_stream(
     from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
 
     started = last_sent = clock()
-    last_key: Optional[tuple] = None
+    last_key: Optional[str] = None
     while True:
         if await request.is_disconnected():
             return
@@ -545,14 +553,12 @@ async def invocation_event_stream(
                 yield _sse("gone", {"invocation_id": str(invocation_id)})
                 return
             view = await _invocation_view(db, invocation)
-        key = (
-            view["status"], view["attempt"], view["review"]["state"],
-            str(view["next_retry_at"]), view["output"] is not None,
-        )
+        payload = AgentInvocationResponse(**view).model_dump(mode="json")
+        key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         if key != last_key:
             last_key = key
             last_sent = clock()
-            yield _sse("invocation", AgentInvocationResponse(**view).model_dump(mode="json"))
+            yield _sse("invocation", payload)
         if view["status"] != "in_progress":
             return
         if clock() - started >= max_seconds:
@@ -638,6 +644,17 @@ async def retry_invocation(
     base = {"invocation_id": str(invocation.id)}
     rerun = {"rerun": f"/api/v1/agents/{invocation.agent_id}/invoke"}
 
+    if bool(getattr(invocation, "cancel_requested", False)):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                **base,
+                "message": "Invocation was cancelled; invoke the agent again instead",
+                "reason": "cancelled",
+                "status": "failed",
+                "links": rerun,
+            },
+        )
     if pipeline is None:
         if project_invocation(invocation, None, None)["status"] != "failed":
             raise HTTPException(status_code=409, detail={**base, "message": "Invocation has not started yet"})
@@ -780,17 +797,37 @@ async def cancel_invocation(
 
     A run with no live worker stops now; a running one is asked to stop and
     terminalises at its next stage boundary. Cancellation is sticky: an
-    automatic retry never brings it back. An invocation whose run has not been
-    created yet has nothing to cancel (409).
+    automatic retry never brings it back. Cancellation before the worker
+    creates a run is stored on the invocation and rechecked under a row lock.
     """
-    invocation = await _load_invocation_or_404(db, invocation_id)
+    invocation = await _load_invocation_or_404(db, invocation_id, for_update=True)
     pipeline = await _load_pipeline(db, invocation)
     base = {"invocation_id": str(invocation.id)}
     if pipeline is None:
-        raise HTTPException(
-            status_code=409,
-            detail={**base, "message": "Invocation has not started yet; there is no run to cancel"},
+        if bool(getattr(invocation, "cancel_requested", False)):
+            raise HTTPException(
+                status_code=409,
+                detail={**base, "message": "Invocation has already been cancelled"},
+            )
+        invocation.cancel_requested = True
+        await record_activity(
+            db,
+            project_id=invocation.project_id,
+            event_type="analysis.cancelled",
+            actor=ActorRef.from_user(current_user),
+            entity_id=invocation.test_run_id,
+            entity_label=await _run_label(db, invocation.test_run_id),
+            context={
+                "invocation_id": str(invocation.id),
+                "agent_id": invocation.agent_id,
+                "pipeline_run_id": str(invocation.pipeline_run_id),
+                "from_status": "queued",
+                "terminal": True,
+                "reason": "cancelled_before_start",
+            },
         )
+        await db.commit()
+        return project_invocation(invocation, None, None)
     outcome = await request_cancel(db, pipeline.id, requested_by=getattr(current_user, "email", None))
     if not outcome.accepted:
         raise HTTPException(

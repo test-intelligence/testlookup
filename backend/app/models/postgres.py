@@ -5362,6 +5362,11 @@ class AgentInvocation(Base):
     # When the invocation was last handed to a worker (migration 0177); a retry of a
     # lost dispatch restarts this clock and leaves created_at alone.
     dispatched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sticky cancellation intent covers the broker window before the worker
+    # creates the pipeline row (migration 0191).
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     # E1.3 (migration 0178): the client's Idempotency-Key and the fingerprint of the
     # request it created; a replay with a different request is refused.
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

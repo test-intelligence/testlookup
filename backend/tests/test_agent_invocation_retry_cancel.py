@@ -63,6 +63,7 @@ def _invocation(**overrides):
         "id": uuid.uuid4(), "project_id": uuid.uuid4(), "agent_id": "agent.summary.v1",
         "stage_name": "summary", "test_run_id": uuid.uuid4(), "pipeline_run_id": uuid.uuid4(),
         "workflow_type": "offline", "mode": "async", "created_at": now, "dispatched_at": now,
+        "cancel_requested": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -172,6 +173,21 @@ async def test_retry_refuses_cancelled_invocation_without_side_effects(harness, 
     assert db.order == []
     harness.router.record_activity.assert_not_awaited()
     harness.dispatched["resume"].assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_refuses_an_invocation_cancelled_before_its_pipeline_exists(harness):
+    invocation = _invocation(cancel_requested=True)
+    db = harness.use(_Db(invocation=invocation, pipeline=None))
+
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(
+            invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+        )
+
+    assert exc.value.status_code == 409 and exc.value.detail["reason"] == "cancelled"
+    assert db.order == []
+    harness.dispatched["invocation"].assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -325,13 +341,20 @@ async def test_retry_is_refused_for_an_invocation_that_has_simply_not_started_ye
 
 
 @pytest.mark.asyncio
-async def test_cancel_is_refused_before_the_run_exists(harness):
+async def test_cancel_before_the_run_exists_persists_terminal_intent(harness):
     invocation = _invocation()
     db = harness.use(_Db(invocation=invocation, pipeline=None))
 
-    with pytest.raises(HTTPException) as exc:
-        await harness.router.cancel_invocation(invocation_id=invocation.id, db=db, current_user=_user(), _=None)
-    assert exc.value.status_code == 409 and db.order == []
+    view = await harness.router.cancel_invocation(
+        invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+    )
+
+    assert invocation.cancel_requested is True
+    assert view["status"] == "failed" and view["error"].startswith("cancelled: ")
+    assert db.order == ["commit"]
+    invocation_select = next(s for s in db.statements if "FROM agent_invocations" in str(s))
+    assert "FOR UPDATE" in str(invocation_select)
+    assert harness.router.record_activity.await_args.kwargs["context"]["reason"] == "cancelled_before_start"
 
 
 @pytest.mark.asyncio

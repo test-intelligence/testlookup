@@ -6501,6 +6501,7 @@ def run_agent_invocation(self, invocation_id: str):
     from app.agents.workflow import run_deep_pipeline, run_offline_pipeline
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import AgentInvocation, TestRun
+    from app.services.pipeline_cancellation import PipelineCancelled
 
     async def _load() -> dict | None:
         async with AsyncSessionLocal() as db:
@@ -6519,12 +6520,15 @@ def run_agent_invocation(self, invocation_id: str):
                 "build_number": str(build_number or "invocation"),
                 "config_snapshot": getattr(invocation, "resolved_config_snapshot", None),
                 "requested_by": str(invocation.requested_by) if invocation.requested_by else None,
+                "cancel_requested": bool(invocation.cancel_requested),
             }
 
     loaded = _run_async(_load())
     if loaded is None:
         logger.warning("[Task %s] Invocation %s not found", self.request.id, invocation_id)
         return {"invocation_id": invocation_id, "status": "not_found"}
+    if loaded["cancel_requested"]:
+        return {"invocation_id": invocation_id, "status": "cancelled"}
 
     dedup_key = f"testlookup:dedup:invocation:{invocation_id}"
     dedup_owner = str(self.request.id)
@@ -6550,6 +6554,8 @@ def run_agent_invocation(self, invocation_id: str):
             "invocation_id": invocation_id,
             "completed_stages": list(final_state.get("completed_stages", [])),
         }
+    except PipelineCancelled:
+        return {"invocation_id": invocation_id, "status": "cancelled"}
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent invocation failed"
         logger.error(

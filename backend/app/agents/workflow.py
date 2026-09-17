@@ -65,7 +65,7 @@ from app.agents.triage_agent import DefectTriageAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.enums import ExecutionPath
-from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun
+from app.models.postgres import AgentInvocation, AgentPipelineRun, AgentStageResult, TestRun
 from app.services.agent_planner import (
     _DEEP_STAGES as _PLANNER_DEEP_STAGES,
     _LIVE_STAGES as _PLANNER_LIVE_STAGES,
@@ -2913,6 +2913,21 @@ async def _create_pipeline_run(
     requested_by: str | None = None,
 ) -> dict[str, Any]:
     async with AsyncSessionLocal() as db:
+        from sqlalchemy import select  # noqa: PLC0415
+
+        # An invocation may be cancelled after API acceptance but before this
+        # worker creates its pipeline. Locking the invocation serialises that
+        # decision with the cancel route: whichever commits first is observed.
+        invocation = (
+            await db.execute(
+                select(AgentInvocation)
+                .where(AgentInvocation.pipeline_run_id == uuid.UUID(str(pipeline_run_id)))
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if invocation is not None and bool(invocation.cancel_requested):
+            raise PipelineCancelled(str(pipeline_run_id))
+
         from app.services import workflow_definition_service as workflow_svc
 
         selected = await workflow_svc.get_published_definition(

@@ -36,6 +36,27 @@ MUTATIONS = (
         "backend/tests/test_agent_invocation_retry_cancel.py::test_retry_resumes_the_same_run_after_the_commit",
     ),
     Mutation(
+        "queued-cancel-intent",
+        "backend/app/routers/agent_invoke.py",
+        "        invocation.cancel_requested = True\n",
+        "        invocation.cancel_requested = False\n",
+        "backend/tests/test_agent_invocation_retry_cancel.py::test_cancel_before_the_run_exists_persists_terminal_intent",
+    ),
+    Mutation(
+        "pipeline-create-cancel-recheck",
+        "backend/app/agents/workflow.py",
+        "if invocation is not None and bool(invocation.cancel_requested):",
+        "if False and invocation is not None and bool(invocation.cancel_requested):",
+        "backend/tests/test_agent_invocations.py::test_pipeline_creation_rechecks_queued_cancellation_under_the_invocation_lock",
+    ),
+    Mutation(
+        "worker-queued-cancel-guard",
+        "backend/app/worker/tasks.py",
+        'if loaded["cancel_requested"]:',
+        'if False and loaded["cancel_requested"]:',
+        "backend/tests/test_agent_invocations.py::test_the_worker_does_not_start_an_invocation_cancelled_while_queued",
+    ),
+    Mutation(
         "manual-retry-durable-admission",
         "backend/app/routers/agent_invoke.py",
         'apply_transition(pipeline, "retry_wait", error=pipeline.error)',
@@ -83,6 +104,20 @@ MUTATIONS = (
         "while True:\n        view = await _invocation_view(db, invocation)",
         "while True:\n        await sleep(poll_interval)\n        view = await _invocation_view(db, invocation)",
         "backend/tests/test_agent_invocation_sync_sse.py::test_a_zero_length_sync_wait_reads_once_without_sleeping",
+    ),
+    Mutation(
+        "ticket-collision-regeneration",
+        "backend/app/services/invocation_stream.py",
+        "if await redis.set(_key(ticket), payload, ex=ttl, nx=True):",
+        "if True or await redis.set(_key(ticket), payload, ex=ttl, nx=True):",
+        "backend/tests/test_agent_invocation_sync_sse.py::test_ticket_issue_regenerates_after_a_token_collision",
+    ),
+    Mutation(
+        "sse-observable-change",
+        "backend/app/routers/agent_invoke.py",
+        'key = json.dumps(payload, sort_keys=True, separators=(",", ":"))',
+        'key = str(payload["status"])',
+        "backend/tests/test_agent_invocation_sync_sse.py::test_the_stream_emits_when_an_observable_error_changes",
     ),
     Mutation(
         "openapi-sync-capacity",
