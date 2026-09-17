@@ -132,8 +132,17 @@ async def get_run_summaries(
 
 
 async def list_sessions(db: AsyncSession, current_user) -> list[ChatSession]:
+    from app.core.deps import get_accessible_project_ids
+
+    accessible = await get_accessible_project_ids(db, current_user)
+    statement = select(ChatSession).where(ChatSession.user_id == current_user.id)
+    if accessible is not None:
+        # Session ownership is insufficient after membership is revoked. A
+        # non-admin may list only sessions in projects they can access now.
+        # Projectless sessions are deliberately excluded by this predicate.
+        statement = statement.where(ChatSession.project_id.in_(list(accessible)))
     result = await db.execute(
-        select(ChatSession).where(ChatSession.user_id == current_user.id).order_by(ChatSession.updated_at.desc()).limit(50)
+        statement.order_by(ChatSession.updated_at.desc()).limit(50)
     )
     return list(result.scalars().all())
 

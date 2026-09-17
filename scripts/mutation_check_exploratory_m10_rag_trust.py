@@ -36,6 +36,13 @@ MUTATIONS = (
         "test_existing_chat_session_rechecks_current_project_membership",
     ),
     Mutation(
+        "revoked-session-list",
+        "backend/app/services/chat_service.py",
+        "if accessible is not None:\n        # Session ownership is insufficient after membership is revoked.",
+        "if False and accessible is not None:\n        # Session ownership is insufficient after membership is revoked.",
+        "test_chat_session_list_excludes_projects_after_membership_revocation",
+    ),
+    Mutation(
         "sql-summary-scope",
         "backend/app/services/chat_service.py",
         "elif allowed_project_ids is not None:\n        # Match the Mongo half above.",
@@ -48,6 +55,13 @@ MUTATIONS = (
         "chunk_text = sanitize_free_text(chunk.chunk_text, max_length=2000)",
         "chunk_text = chunk.chunk_text[:2000]",
         "test_retrieved_instructions_are_inert_and_neutralized",
+    ),
+    Mutation(
+        "prompt-boundary-escape",
+        "backend/app/services/rag_generation_service.py",
+        "                + json.dumps(evidence, sort_keys=True, ensure_ascii=True)\n",
+        "                + chunk_text\n",
+        "test_untrusted_evidence_cannot_escape_its_serialized_boundary",
     ),
     Mutation(
         "fabricated-citations",
@@ -80,9 +94,9 @@ MUTATIONS = (
     Mutation(
         "stale-vector-authority",
         "backend/app/services/rag_retrieval_service.py",
-        "chunks = [chunk for chunk in chunks if chunk.source_id in source_meta]",
-        "chunks = list(chunks)",
-        "test_relational_source_lifecycle_is_authoritative_over_vectors",
+        "if chunk.source_id in source_meta and chunk.vector_id in active_vector_ids",
+        "if chunk.source_id in source_meta",
+        "test_orphaned_vector_without_its_active_chunk_row_cannot_ground_generation",
     ),
     Mutation(
         "source-lineage-delete",

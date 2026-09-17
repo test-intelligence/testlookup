@@ -10,7 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import KnowledgeSource
+from app.models.postgres import KnowledgeChunk, KnowledgeSource
 from app.services.knowledge_chunking_service import _get_or_create_knowledge_collection
 
 logger = structlog.get_logger(__name__)
@@ -104,30 +104,42 @@ async def retrieve_chunks(
     # Enrich with source titles and classification from PostgreSQL
     source_id_set = {c.source_id for c in chunks}
     if source_id_set:
+        vector_id_set = {c.vector_id for c in chunks}
         result = await db.execute(
             select(
                 KnowledgeSource.id,
                 KnowledgeSource.title,
                 KnowledgeSource.classification,
                 KnowledgeSource.canonical_url,
+                KnowledgeChunk.vector_id,
+            ).join(
+                KnowledgeChunk,
+                KnowledgeChunk.source_id == KnowledgeSource.id,
             ).where(
                 KnowledgeSource.id.in_(source_id_set),
                 KnowledgeSource.project_id == project_id,
                 KnowledgeSource.is_archived.is_(False),
+                KnowledgeChunk.project_id == project_id,
+                KnowledgeChunk.vector_id.in_(vector_id_set),
+                KnowledgeChunk.is_active.is_(True),
             )
         )
+        active_rows = result.all()
         source_meta = {
-            row.id: (
-                row.title,
-                row.classification or "internal",
-                row.canonical_url,
-            )
-            for row in result.all()
+            row.id: (row.title, row.classification or "internal", row.canonical_url)
+            for row in active_rows
         }
+        active_vector_ids = {row.vector_id for row in active_rows}
         # PostgreSQL is authoritative for source lifecycle and tenancy. Stale
-        # or corrupted vectors must not survive a source archive/delete or
-        # borrow metadata from another project.
-        chunks = [chunk for chunk in chunks if chunk.source_id in source_meta]
+        # or corrupted vectors must not survive a source archive/delete,
+        # failed partial upsert, failed vector retirement, or borrow metadata
+        # from another project. Every returned vector must have its own active
+        # relational KnowledgeChunk row.
+        chunks = [
+            chunk
+            for chunk in chunks
+            if chunk.source_id in source_meta and chunk.vector_id in active_vector_ids
+        ]
         for chunk in chunks:
             title, classification, canonical_url = source_meta[chunk.source_id]
             chunk.source_title = title
