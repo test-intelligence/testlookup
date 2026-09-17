@@ -129,7 +129,7 @@ async def retrieve_chunks(
             row.id: (row.title, row.classification or "internal", row.canonical_url)
             for row in active_rows
         }
-        active_vector_ids = {row.vector_id for row in active_rows}
+        active_pairs = {(row.id, row.vector_id) for row in active_rows}
         # PostgreSQL is authoritative for source lifecycle and tenancy. Stale
         # or corrupted vectors must not survive a source archive/delete,
         # failed partial upsert, failed vector retirement, or borrow metadata
@@ -138,7 +138,7 @@ async def retrieve_chunks(
         chunks = [
             chunk
             for chunk in chunks
-            if chunk.source_id in source_meta and chunk.vector_id in active_vector_ids
+            if (chunk.source_id, chunk.vector_id) in active_pairs
         ]
         for chunk in chunks:
             title, classification, canonical_url = source_meta[chunk.source_id]

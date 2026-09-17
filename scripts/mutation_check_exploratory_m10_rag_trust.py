@@ -93,9 +93,19 @@ MUTATIONS = (
     Mutation(
         "stale-vector-authority",
         "backend/app/services/rag_retrieval_service.py",
-        "if chunk.source_id in source_meta and chunk.vector_id in active_vector_ids",
+        "if (chunk.source_id, chunk.vector_id) in active_pairs",
         "if chunk.source_id in source_meta",
         "test_orphaned_vector_without_its_active_chunk_row_cannot_ground_generation",
+    ),
+    Mutation(
+        "cross-source-vector-authority",
+        "backend/app/services/rag_retrieval_service.py",
+        "if (chunk.source_id, chunk.vector_id) in active_pairs",
+        "if (\n"
+        "                chunk.source_id in source_meta\n"
+        "                and chunk.vector_id in {vector_id for _, vector_id in active_pairs}\n"
+        "            )",
+        "test_cross_source_vector_pair_mismatch_cannot_ground_generation",
     ),
     Mutation(
         "source-lineage-delete",

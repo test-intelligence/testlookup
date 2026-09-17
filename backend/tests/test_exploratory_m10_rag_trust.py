@@ -305,6 +305,52 @@ async def test_orphaned_vector_without_its_active_chunk_row_cannot_ground_genera
 
 
 @pytest.mark.asyncio
+async def test_cross_source_vector_pair_mismatch_cannot_ground_generation() -> None:
+    from app.services.rag_retrieval_service import retrieve_chunks
+
+    project_id = uuid.uuid4()
+    source_a = uuid.uuid4()
+    source_b = uuid.uuid4()
+    collection = SimpleNamespace(query=MagicMock(return_value={
+        "ids": [["vector-b", "vector-a"]],
+        "documents": [["mislabeled A", "mislabeled B"]],
+        "distances": [[0.1, 0.2]],
+        "metadatas": [[
+            {"source_id": str(source_a)},
+            {"source_id": str(source_b)},
+        ]],
+    }))
+    # Both sources and vectors are active, but neither returned vector belongs
+    # to the source ID asserted by Chroma. Independent source/vector set checks
+    # would accept and misclassify both results.
+    sql_result = MagicMock()
+    sql_result.all.return_value = [
+        SimpleNamespace(
+            id=source_a,
+            title="Source A",
+            classification="restricted",
+            canonical_url="https://docs.example.test/a",
+            vector_id="vector-a",
+        ),
+        SimpleNamespace(
+            id=source_b,
+            title="Source B",
+            classification="public",
+            canonical_url="https://docs.example.test/b",
+            vector_id="vector-b",
+        ),
+    ]
+    db = SimpleNamespace(execute=AsyncMock(return_value=sql_result))
+    with patch(
+        "app.services.feature_flags.is_enabled", AsyncMock(return_value=True)
+    ), patch(
+        "app.services.rag_retrieval_service._get_or_create_knowledge_collection",
+        AsyncMock(return_value=collection),
+    ):
+        assert await retrieve_chunks(db, project_id, "query") == []
+
+
+@pytest.mark.asyncio
 async def test_delete_archives_and_retires_source_without_erasing_lineage() -> None:
     from app.services.knowledge_source_service import delete_source
 
