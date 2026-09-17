@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "backend/app/routers/run_intelligence.py"
 MUTATIONS = {
     "json-watermark": """    if distribution.watermark:\n        # JSON exports cannot rely on a renderer to add the visible DRAFT\n        # banner. Carry the same watermark field as HTML/PDF exports so a\n        # downloaded pending report never loses its review status.\n        report[\"draft_watermark\"] = distribution.watermark\n""",
-    "distribution-audit-commit": """    # The request session rolls back on close unless this audit record is\n        # committed. Persist both allowed and refused decisions before returning.\n    await db.commit()\n""",
+    "distribution-audit-commit": """    # The request session rolls back on close unless this audit record is\n    # committed. Persist both allowed and refused decisions before returning.\n    await db.commit()\n""",
 }
 TEST = (
     "backend/tests/test_intelligence_export_review_envelope.py::"

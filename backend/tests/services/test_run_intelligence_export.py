@@ -47,7 +47,8 @@ async def test_export_contains_immutable_report_identity(monkeypatch):
     )
     monkeypatch.setattr(run_intelligence, "record_distribution", AsyncMock())
 
-    response = await run_intelligence.export_intelligence_report(run_id, db=object())
+    db = SimpleNamespace(commit=AsyncMock())
+    response = await run_intelligence.export_intelligence_report(run_id, db=db)
     payload = json.loads(response.body)
 
     assert payload["decision_report"]["report_id"] == "report-2"

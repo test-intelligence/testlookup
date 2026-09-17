@@ -21,4 +21,4 @@ def test_m08_distribution_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M08 distribution mutation check: 1 mutation killed"
+    assert run.stdout.strip() == "M08 distribution mutation check: 2 mutations killed"
