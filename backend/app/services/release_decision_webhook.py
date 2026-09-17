@@ -158,7 +158,7 @@ async def build_release_decided_payload(
         blocking_issues = list(council.blocking_issues or [])
         conditions_for_go = list(council.conditions_for_go or [])
         synthesized = bool(council.synthesized)
-        human_override = council.human_override
+        human_override = bool(council.human_override)
     payload: dict[str, Any] = {
         "run_id": str(run_id),
         "project_id": str(project_id),
