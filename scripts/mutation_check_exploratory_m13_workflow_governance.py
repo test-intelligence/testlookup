@@ -340,8 +340,8 @@ MUTATIONS = (
     Mutation(
         "g4-single-global-config-snapshot",
         "backend/app/services/agent_config_resolver.py",
-        "        global_ai_config=ai_config,\n",
-        "        global_ai_config=await get_effective_ai_config(),\n",
+        "    resolved = resolve(\n        agent_id,\n        global_ai_config=ai_config,\n",
+        "    resolved = resolve(\n        agent_id,\n        global_ai_config=await get_effective_ai_config(),\n",
         "backend/tests/test_agent_config_resolver.py::test_project_resolution_uses_the_supplied_global_snapshot",
     ),
     Mutation(
