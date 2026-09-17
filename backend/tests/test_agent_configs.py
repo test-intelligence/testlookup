@@ -317,12 +317,14 @@ def _row(**over):
 
 
 async def test_put_is_one_upsert_that_bumps_the_version():
-    seen = {}
+    seen = {"sql_calls": []}
 
     class _DB:
         async def execute(self, statement, execution_options=None):
-            seen["sql"] = str(statement.compile(dialect=postgresql.dialect()))
-            seen["params"] = statement.compile(dialect=postgresql.dialect()).params
+            compiled = statement.compile(dialect=postgresql.dialect())
+            seen["sql_calls"].append(str(compiled))
+            seen["sql"] = str(compiled)
+            seen["params"] = compiled.params
             return SimpleNamespace(scalar_one_or_none=lambda: "row")
 
     config = svc.default_config(SUMMARY)
@@ -332,6 +334,7 @@ async def test_put_is_one_upsert_that_bumps_the_version():
     assert "config_version = (agent_configs.config_version +" in sql
     assert "agent_configs.config_version =" in sql
     assert "RETURNING" in sql
+    assert "pg_advisory_xact_lock" in seen["sql_calls"][0]
     assert seen["params"]["config_version"] == 1
     assert not {"agent_id", "enabled", "mode"} & set(seen["params"]["config"]), "mode has one home: its column"
 

@@ -61,6 +61,7 @@ export function publishWorkflow(
     definition_sha256: string
     accept_regression: boolean
     reason?: string | null
+    eval_manifest_checksum?: string | null
   },
 ): Promise<WorkflowItem> {
   return postData(`${base(projectId)}/${workflowId}/publish`, body)

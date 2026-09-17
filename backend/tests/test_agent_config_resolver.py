@@ -65,6 +65,15 @@ def test_no_row_resolves_to_defaults_with_the_global_model_on_both_tiers():
         assert endpoint.base_url == "http://localhost:11434"
 
 
+def test_endpoint_authority_fingerprint_binds_url_without_exposing_it():
+    first = resolver.resolve(SUMMARY, global_ai_config=_ai(base_url="http://model-a:11434"))
+    second = resolver.resolve(SUMMARY, global_ai_config=_ai(base_url="http://model-b:11434"))
+
+    fingerprint = resolver.endpoint_authority_fingerprint(first)
+    assert fingerprint != resolver.endpoint_authority_fingerprint(second)
+    assert "model-a" not in fingerprint
+
+
 # -- env > ai_config ---------------------------------------------------------------------------
 
 

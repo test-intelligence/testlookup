@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -600,6 +600,19 @@ def provider_environment_errors(config: AgentConfigV1, *, offline: bool) -> list
 _COLUMN_FIELDS = frozenset({"agent_id", "enabled", "mode"})
 
 
+def agent_config_authority_lock_key(project_id: uuid.UUID) -> str:
+    """Return the transaction-lock domain shared by config writes and G4."""
+    return f"agent-config-authority:{project_id}"
+
+
+async def lock_agent_config_authority(db: AsyncSession, project_id: uuid.UUID) -> None:
+    """Keep a project config snapshot stable until the transaction finishes."""
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": agent_config_authority_lock_key(project_id)},
+    )
+
+
 async def get_config_row(db: AsyncSession, project_id: uuid.UUID, agent_id: str) -> Optional[AgentConfig]:
     result = await db.execute(
         select(AgentConfig).where(AgentConfig.project_id == project_id, AgentConfig.agent_id == agent_id)
@@ -625,6 +638,7 @@ async def put_config(
     One ``INSERT ... ON CONFLICT DO UPDATE`` statement: two concurrent PUTs get
     distinct versions instead of racing a read-then-write.
     """
+    await lock_agent_config_authority(db, project_id)
     document = config.model_dump(mode="json", exclude=set(_COLUMN_FIELDS))
     now = datetime.now(timezone.utc)
     insert_statement = pg_insert(AgentConfig).values(
@@ -740,6 +754,7 @@ __all__ = [
     "REVIEW_POLICIES",
     "TIER_ORDER",
     "apply_patch",
+    "agent_config_authority_lock_key",
     "config_versions",
     "configurable_capabilities",
     "configurable_agents",
@@ -747,6 +762,7 @@ __all__ = [
     "get_config_row",
     "increment_investigator_shadow_runs",
     "list_config_rows",
+    "lock_agent_config_authority",
     "mode_permits",
     "provider_environment_errors",
     "put_config",

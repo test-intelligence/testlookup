@@ -396,6 +396,10 @@ def validate_workflow(
         )
 
     for step in body.steps:
+        if step.model is not None:
+            errors.append(
+                f"step {step.id}: model overrides are not supported by the workflow runtime"
+            )
         matches = [stage for stage, spec in CAPABILITY_REGISTRY.items() if spec.capability_id == step.agent_id]
         if not matches:
             errors.append(f"step {step.id}: unknown capability {step.agent_id!r}")

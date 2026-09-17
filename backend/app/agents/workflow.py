@@ -3319,6 +3319,7 @@ async def _create_pipeline_run(
         run_budget = run_budget_from_policy(policy)
         from app.services.agent_config_resolver import (
             FrozenAgentConfig,
+            endpoint_authority_fingerprint,
             freeze_for_invocation,
             resolve_for_project,
             resolve_frozen_for_project,
@@ -3330,6 +3331,7 @@ async def _create_pipeline_run(
         agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
         workflow_agent_configs: dict[str, dict[str, Any]] = {}
         resolved_agent_configs: dict[str, dict[str, Any]] = {}
+        endpoint_authority_fingerprints: dict[str, str] = {}
         for agent_id in dict.fromkeys(step.agent_id for step in body.steps):
             # Freeze the effective provider/model and the full validated
             # authority document for every step. Runtime must not re-read a
@@ -3341,6 +3343,7 @@ async def _create_pipeline_run(
             )
             snapshot = freeze_for_invocation(resolved)
             resolved_agent_configs[agent_id] = snapshot
+            endpoint_authority_fingerprints[agent_id] = endpoint_authority_fingerprint(resolved)
             workflow_agent_configs[agent_id] = dict(snapshot["config"])
         frozen_config = None
         frozen_snapshot = None
@@ -3366,6 +3369,9 @@ async def _create_pipeline_run(
             frozen_config = frozen_resolved.config
             accepted_snapshot = freeze_for_invocation(frozen_resolved)
             resolved_agent_configs[expected_agent_id] = accepted_snapshot
+            endpoint_authority_fingerprints[expected_agent_id] = (
+                endpoint_authority_fingerprint(frozen_resolved)
+            )
             workflow_agent_configs[expected_agent_id] = dict(
                 accepted_snapshot["config"]
             )
@@ -3521,6 +3527,7 @@ async def _create_pipeline_run(
                 "run_budget": run_budget,
                 "agent_config_versions": agent_config_versions,
                 "resolved_agent_configs": resolved_agent_configs,
+                "endpoint_authority_fingerprints": endpoint_authority_fingerprints,
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
@@ -3573,6 +3580,7 @@ async def _create_pipeline_run(
             "workflow_deadline_seconds": body.deadline_seconds,
             "workflow_agent_configs": workflow_agent_configs,
             "resolved_agent_configs": resolved_agent_configs,
+            "endpoint_authority_fingerprints": endpoint_authority_fingerprints,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
                 "contract_agent_settings": {"enabled": contract_agent_enabled},

@@ -25,6 +25,8 @@ The resolved object never carries API keys; they stay in ``ai_config``.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
 from typing import Any, Literal, Mapping, Optional, TypeGuard
 
@@ -380,6 +382,27 @@ def freeze_for_invocation(resolved: ResolvedAgentConfig) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+def endpoint_authority_fingerprint(resolved: ResolvedAgentConfig) -> str:
+    """Hash credential-free endpoint identity without persisting its URL."""
+    authority: dict[str, Any] = {}
+    for tier in TIERS:
+        endpoint = resolved.endpoints[tier]
+        authority[tier] = None if endpoint is None else {
+            "provider": endpoint.provider,
+            "model": endpoint.model,
+            "temperature": endpoint.temperature,
+            "max_tokens": endpoint.max_tokens,
+            "source": endpoint.source,
+            "base_url_sha256": (
+                hashlib.sha256(endpoint.base_url.encode("utf-8")).hexdigest()
+                if endpoint.base_url
+                else None
+            ),
+        }
+    canonical = json.dumps(authority, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 async def resolve_frozen_for_project(
     snapshot: Mapping[str, Any],
     *,
@@ -487,6 +510,7 @@ __all__ = [
     "ResolvedAgentConfig",
     "ResolvedEndpoint",
     "invocation_refusal",
+    "endpoint_authority_fingerprint",
     "freeze_for_invocation",
     "resolve",
     "resolve_for_pipeline",

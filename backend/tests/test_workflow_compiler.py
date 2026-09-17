@@ -95,6 +95,17 @@ def test_compiler_rejects_unknown_capability_and_missing_dependency() -> None:
     assert any("triage requires upstream capability 'root_cause_analysis'" in error for error in errors)
 
 
+def test_semantic_validation_rejects_ignored_step_model_override() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"][1]["model"] = {"tier": "llm"}
+    body = definitions.WorkflowBodyV1.model_validate(document)
+
+    assert any(
+        "model overrides are not supported by the workflow runtime" in error
+        for error in validate_workflow(body).errors
+    )
+
+
 def test_validation_rejects_registered_capability_without_workflow_executor() -> None:
     document = _body().model_dump(mode="json", by_alias=True)
     document["steps"] = [

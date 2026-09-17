@@ -252,27 +252,40 @@ async def publish_workflow(
         # acceptance evidence on the immutable published row.
         return svc.serialize(row)
     await _require_semantic_validity(db, project_id, row)
-    if row.status != "published" and row.eval_verdict is None:
-        result = await eval_svc.evaluate_definition(
-            db,
-            project_id=project_id,
-            row=row,
-            sample_limit=eval_svc.MIN_REPLAY_RUNS,
-            evaluated_by=current_user.id,
-        )
-        item = svc.serialize(row)
-        await _activity(
-            db,
-            project_id=project_id,
-            event_type="workflow.evaluated",
-            user=current_user,
-            item=item,
-            extra_context={
-                "verdict": result["verdict"],
-                "coverage": result["coverage"],
-                "sample_count": result["sample_count"],
-            },
-        )
+    # Evaluation evidence is mutable authority: configs, prompts, runtime, and
+    # the replay corpus can change while the draft definition does not. Always
+    # re-evaluate under the publication lock instead of trusting denormalized
+    # verdict fields copied onto the draft by an earlier request.
+    result = await eval_svc.evaluate_definition(
+        db,
+        project_id=project_id,
+        row=row,
+        sample_limit=eval_svc.PUBLISH_REPLAY_RUNS,
+        evaluated_by=current_user.id,
+    )
+    if (
+        body.accept_regression
+        and body.eval_manifest_checksum != result["manifest_checksum"]
+    ):
+        # Keep the new evidence visible, but never apply an approval written
+        # for a different corpus or authority snapshot.
+        await db.commit()
+        raise _conflict(svc.WorkflowConflict(
+            "workflow evaluation changed; inspect the fresh result and explicitly accept its manifest checksum"
+        ))
+    item = svc.serialize(row)
+    await _activity(
+        db,
+        project_id=project_id,
+        event_type="workflow.evaluated",
+        user=current_user,
+        item=item,
+        extra_context={
+            "verdict": result["verdict"],
+            "coverage": result["coverage"],
+            "sample_count": result["sample_count"],
+        },
+    )
     try:
         eval_svc.enforce_publish_gate(
             row,

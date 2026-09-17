@@ -95,5 +95,6 @@ export interface WorkflowEvaluation {
   expected_steps: number
   coverage: number
   topology_measured: boolean
+  manifest_checksum: string
   regressions: Array<Record<string, unknown>>
 }

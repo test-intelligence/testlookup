@@ -28,9 +28,20 @@ immutable, and makes exact repeat publication read-only. Replay evaluation
 marks control-flow topology as unmeasured instead of inferring it from cached
 step outputs. The workflow guide now matches the architecture's existing rule
 that insufficient samples may publish with visible low coverage. Re-review found
-that G4 replay/publish authority is too weak for model, tool, config, prompt,
-and corpus changes; that remains an open M13 blocker rather than being
-represented as complete.
+that G4 replay/publish authority was too weak for model, tool, config, prompt,
+runtime, topology, and corpus changes. Replay input identity now binds all of
+those inputs and the runtime's tamper-evident stage-input receipt. Missing or
+invalid receipts remain unmeasured, duplicate attempts select one terminal
+latest result, and the evaluation manifest digests the evidence itself. The
+authority snapshot covers the compiled plan, feature and policy inputs, frozen
+configs, and a credential-free endpoint fingerprint; config writes share its
+transaction lock. Authority mismatches are publish-blocking regressions and
+corpus population is serialized per project and base workflow. Publish always
+re-evaluates the authoritative 100-run window, and regression acceptance must
+name the fresh manifest checksum. Arbitrary per-step model metadata is rejected
+until the runtime supports it. Candidate cost, latency, and reviewer metrics
+still reuse exact historical outputs; live candidate execution remains an
+optional follow-up rather than a claimed measurement.
 
 M12 invocation hardening now serializes creation per stored subject, keeps
 explicit idempotency keys from being silently discarded, and aligns durable

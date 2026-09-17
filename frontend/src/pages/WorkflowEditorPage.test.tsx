@@ -132,6 +132,7 @@ describe('WorkflowEditorPage', () => {
       version: 1, sample_count: 20, measured_steps: 40, expected_steps: 40,
       coverage: 1, regressions: [],
       topology_measured: true,
+      manifest_checksum: 'b'.repeat(64),
     })
     vi.mocked(publishWorkflow).mockResolvedValue({ ...custom, status: 'published', read_only: true })
   })
@@ -186,6 +187,7 @@ describe('WorkflowEditorPage', () => {
       definition_sha256: 'a'.repeat(64),
       accept_regression: true,
       reason: 'Reviewed against the release corpus',
+      eval_manifest_checksum: 'b'.repeat(64),
     }))
   })
 

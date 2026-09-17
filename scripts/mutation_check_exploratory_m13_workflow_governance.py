@@ -180,6 +180,95 @@ MUTATIONS = (
         '                    result["_workflow_tier_overrides"] = {}\n',
         "backend/tests/test_e33_workflow_runtime.py::test_runtime_shares_step_budget_and_applies_reviewer_tier_override",
     ),
+    Mutation(
+        "g4-execution-authority-input",
+        "backend/app/services/workflow_evaluation_service.py",
+        '        "resolved_agent_config": resolved_agent_configs.get(agent_id),\n',
+        '        "resolved_agent_config": None,\n',
+        "backend/tests/services/test_workflow_evaluation_service.py::test_step_authority_covers_every_behavior_input[config]",
+    ),
+    Mutation(
+        "g4-cross-workflow-corpus-lock",
+        "backend/app/services/workflow_evaluation_service.py",
+        '    return f"workflow-replay-corpus:{project_id}:{base}"\n',
+        '    return f"workflow-evaluation:{project_id}:per-workflow"\n',
+        "backend/tests/services/test_workflow_evaluation_service.py::test_evaluation_uses_project_base_corpus_lock",
+    ),
+    Mutation(
+        "g4-publish-reevaluates",
+        "backend/app/routers/workflows.py",
+        "    # Evaluation evidence is mutable authority: configs, prompts, runtime, and\n"
+        "    # the replay corpus can change while the draft definition does not. Always\n"
+        "    # re-evaluate under the publication lock instead of trusting denormalized\n"
+        "    # verdict fields copied onto the draft by an earlier request.\n"
+        "    result = await eval_svc.evaluate_definition(\n",
+        "    # UNSAFE: reuse stale denormalized evidence.\n"
+        "    result = await (eval_svc.evaluate_definition if row.eval_verdict is None else _reuse_stale_eval)(\n",
+        "backend/tests/test_workflows_router.py::test_publish_reevaluates_existing_verdict_before_enforcement",
+    ),
+    Mutation(
+        "g4-recorded-input-identity",
+        "backend/app/services/workflow_evaluation_service.py",
+        '        "input_checksum_sha256": input_checksum_sha256,\n',
+        '        "input_checksum_sha256": "0" * 64,\n',
+        "backend/tests/services/test_workflow_evaluation_service.py::test_replay_hash_uses_recorded_input_not_test_run_identity",
+    ),
+    Mutation(
+        "g4-receipt-output-integrity",
+        "backend/app/services/workflow_evaluation_service.py",
+        "        or _checksum(checkpoint) != output_checksum\n",
+        "        or False\n",
+        "backend/tests/services/test_workflow_evaluation_service.py::test_replay_receipt_is_required_and_tamper_evident",
+    ),
+    Mutation(
+        "g4-terminal-attempt-selection",
+        "backend/app/services/workflow_evaluation_service.py",
+        "        int(terminal),\n",
+        "        0,\n",
+        "backend/tests/services/test_workflow_evaluation_service.py::test_terminal_latest_stage_attempt_wins_deterministically",
+    ),
+    Mutation(
+        "g4-manifest-binds-evidence",
+        "backend/app/services/workflow_evaluation_service.py",
+        '        "corpus_evidence_sha256": _corpus_evidence(cases),\n',
+        '        "corpus_evidence_sha256": "0" * 64,\n',
+        "backend/tests/services/test_workflow_evaluation_service.py::test_manifest_checksum_binds_replay_evidence",
+    ),
+    Mutation(
+        "g4-acceptance-manifest-binding",
+        "backend/app/routers/workflows.py",
+        "        and body.eval_manifest_checksum != result[\"manifest_checksum\"]\n",
+        "        and False\n",
+        "backend/tests/test_workflows_router.py::test_publish_refuses_acceptance_for_a_stale_eval_manifest",
+    ),
+    Mutation(
+        "g4-authoritative-publish-window",
+        "backend/app/routers/workflows.py",
+        "        sample_limit=eval_svc.PUBLISH_REPLAY_RUNS,\n",
+        "        sample_limit=eval_svc.MIN_REPLAY_RUNS,\n",
+        "backend/tests/test_workflows_router.py::test_publish_uses_the_full_authoritative_replay_window",
+    ),
+    Mutation(
+        "g4-reject-ignored-model-override",
+        "backend/app/agents/workflow_compiler.py",
+        "        if step.model is not None:\n",
+        "        if False and step.model is not None:\n",
+        "backend/tests/test_workflow_compiler.py::test_semantic_validation_rejects_ignored_step_model_override",
+    ),
+    Mutation(
+        "g4-config-snapshot-lock",
+        "backend/app/services/agent_config_service.py",
+        "    await lock_agent_config_authority(db, project_id)\n",
+        "    # UNSAFE: configuration may change while G4 snapshots it.\n",
+        "backend/tests/test_agent_configs.py::test_put_is_one_upsert_that_bumps_the_version",
+    ),
+    Mutation(
+        "g4-endpoint-identity",
+        "backend/app/services/agent_config_resolver.py",
+        '            "base_url_sha256": (\n',
+        '            "base_url_sha256": None if True else (\n',
+        "backend/tests/test_agent_config_resolver.py::test_endpoint_authority_fingerprint_binds_url_without_exposing_it",
+    ),
 )
 
 

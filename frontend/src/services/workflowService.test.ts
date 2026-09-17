@@ -48,6 +48,7 @@ describe('workflowService', () => {
       definition_sha256: 'a'.repeat(64),
       accept_regression: true,
       reason: 'approved',
+      eval_manifest_checksum: 'b'.repeat(64),
     })
 
     expect(getData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows')
@@ -70,6 +71,7 @@ describe('workflowService', () => {
         definition_sha256: 'a'.repeat(64),
         accept_regression: true,
         reason: 'approved',
+        eval_manifest_checksum: 'b'.repeat(64),
       },
     )
   })

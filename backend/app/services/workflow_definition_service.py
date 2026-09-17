@@ -102,11 +102,19 @@ class WorkflowPublishV1(_Strict):
     )
     accept_regression: bool = False
     reason: Optional[str] = Field(default=None, max_length=2000)
+    eval_manifest_checksum: Optional[str] = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
     @model_validator(mode="after")
     def regression_reason_required(self) -> "WorkflowPublishV1":
         if self.accept_regression and not (self.reason or "").strip():
             raise ValueError("accept_regression requires a non-empty reason")
+        if self.accept_regression and self.eval_manifest_checksum is None:
+            raise ValueError("accept_regression requires eval_manifest_checksum")
         return self
 
 
