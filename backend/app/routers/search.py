@@ -265,18 +265,20 @@ async def find_similar_failures(
     import uuid as _uuid
 
     try:
-        tc_result = await db.execute(
-            select(
-                TestCase.test_name,
-                TestCase.error_message,
-                TestRun.project_id,
-            )
-            .join(TestRun, TestCase.test_run_id == TestRun.id)
-            .where(TestCase.id == _uuid.UUID(test_case_id))
+        source_id = _uuid.UUID(test_case_id)
+    except (TypeError, ValueError, AttributeError):
+        return {"items": [], "total": 0, "query": test_case_id}
+
+    tc_result = await db.execute(
+        select(
+            TestCase.test_name,
+            TestCase.error_message,
+            TestRun.project_id,
         )
-        row = tc_result.first()
-    except Exception:
-        row = None
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .where(TestCase.id == source_id)
+    )
+    row = tc_result.first()
 
     if not row:
         return {"items": [], "total": 0, "query": test_case_id}

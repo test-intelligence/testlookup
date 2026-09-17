@@ -822,6 +822,8 @@ async def semantic_search(
     status: Optional[str] = None,
     days: Optional[int] = None,
     allowed_project_ids: Optional[set] = None,
+    *,
+    raise_on_provider_error: bool = False,
 ) -> tuple[list[dict], int, int]:
     """
     Vector-similarity search against ChromaDB.
@@ -860,6 +862,8 @@ async def semantic_search(
         results = await asyncio.to_thread(collection.query, **query_kwargs)
 
     except Exception as exc:
+        if raise_on_provider_error:
+            raise
         logger.warning("ChromaDB query failed — returning empty semantic results: %s", exc)
         return [], 0, 0
 
@@ -1004,6 +1008,7 @@ async def hybrid_search(
     sem_results, _, _ = await semantic_search(
         db, q, 1, size * 2, project_id, status, days,
         allowed_project_ids=allowed_project_ids,
+        raise_on_provider_error=True,
     )
 
     from app.services.search_ranking import compute_hybrid_score, build_match_reasons

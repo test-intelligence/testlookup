@@ -14,6 +14,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import structlog
 from sqlalchemy import case, cast, func, select, or_, String, Text, union
@@ -296,6 +297,7 @@ async def _search_suites(
     stmt = (
         select(
             effective_suite.label("suite_name"),
+            TestRun.project_id.label("project_id"),
             func.count().label("test_count"),
         )
         # The selected expression references both tables, so make TestCase
@@ -310,7 +312,7 @@ async def _search_suites(
             effective_suite.isnot(None),
             Project.is_active.is_(True),
         )
-        .group_by(effective_suite)
+        .group_by(effective_suite, TestRun.project_id)
         .order_by(func.count().desc())
         .limit(override_limit or 15)
     )
@@ -325,7 +327,10 @@ async def _search_suites(
             "entity_id": row.suite_name,
             "title": row.suite_name,
             "subtitle": f"{row.test_count} test executions",
-            "navigation_url": f"/coverage/suite?name={row.suite_name}",
+            "project_id": str(row.project_id),
+            "navigation_url": "/coverage/suite?" + urlencode(
+                {"name": row.suite_name, "project_id": str(row.project_id)}
+            ),
             "relevance_score": 0.6,
             "match_reasons": ["Matched suite name"],
             "metadata": {"test_count": row.test_count},
