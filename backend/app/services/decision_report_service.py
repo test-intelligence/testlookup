@@ -89,6 +89,19 @@ async def load_latest_decision_report(db: Any, test_run_id: str) -> dict[str, An
     return await load_decision_report(db, test_run_id)
 
 
+async def load_decision_report_for_pipeline(
+    db: Any,
+    test_run_id: str,
+    pipeline_run_id: str,
+) -> dict[str, Any] | None:
+    """Read the immutable report produced by one exact pipeline subject."""
+    return await _published_for_pipeline(
+        db,
+        str(test_run_id),
+        str(pipeline_run_id),
+    )
+
+
 async def load_decision_report(
     db: Any,
     test_run_id: str,

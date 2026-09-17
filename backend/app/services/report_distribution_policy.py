@@ -273,6 +273,7 @@ async def release_review_projection(
     synthesized: bool,
     human_override: Any,
     pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
 ) -> tuple[ReviewEnvelope, bool, bool]:
     """The one rule for a release value, shared by the release-readiness response
     and the ``release.decided`` webhook so the two can never disagree.
@@ -285,7 +286,11 @@ async def release_review_projection(
         not_ai_generated()
         if synthesized
         else (
-            await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+            await review_envelope_for_pipeline_subject(
+                db,
+                pipeline_run_id,
+                evidence_bundle_sha256=evidence_bundle_sha256,
+            )
             if pipeline_run_id is not None
             else await review_envelope_for_run(db, run_id, workflow_type="deep")
         )
@@ -307,6 +312,7 @@ async def gate_release_decided_payload(
     synthesized: bool,
     human_override: Any,
     pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
     project_id: Any = None,
 ) -> dict[str, Any]:
     """Project the review gate onto a ``release.decided`` webhook payload.
@@ -323,6 +329,7 @@ async def gate_release_decided_payload(
         synthesized=synthesized,
         human_override=human_override,
         pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
         project_id=project_id,
     )
     return projected
@@ -336,6 +343,7 @@ async def gate_release_decided_delivery(
     synthesized: bool,
     human_override: Any,
     pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
     project_id: Any = None,
 ) -> tuple[dict[str, Any], DistributionDecision]:
     """Gate one webhook attempt and return its auditable decision."""
@@ -345,6 +353,7 @@ async def gate_release_decided_delivery(
         synthesized=synthesized,
         human_override=human_override,
         pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
     )
     decision = (
         DistributionDecision(True, REVIEWED, envelope, enforced=enforced)
@@ -468,6 +477,8 @@ async def gate_ai_summary_text(
     summary_text: str,
     ai_generated: bool,
     channel: str,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
 ) -> tuple[str, Optional[DistributionDecision]]:
     """Return the summary text a notification may carry, and the decision.
 
@@ -481,9 +492,21 @@ async def gate_ai_summary_text(
     """
     if not ai_generated or not summary_text:
         return summary_text, None
-    decision = await decide_run_distribution(
-        db, run_id=run_id, project_id=project_id, channel=channel
-    )
+    if pipeline_run_id is not None and evidence_bundle_sha256 is not None:
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
+        )
+        decision = await _decide_envelope_distribution(
+            db,
+            envelope=envelope,
+            project_id=project_id,
+        )
+    else:
+        decision = await decide_run_distribution(
+            db, run_id=run_id, project_id=project_id, channel=channel
+        )
     if not decision.allowed:
         return REVIEW_PENDING_NOTICE, decision
     if decision.watermark:

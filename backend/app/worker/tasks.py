@@ -2991,6 +2991,8 @@ def dispatch_ai_summary_email(
     test_run_id: str,
     project_id: str,
     build_number: str,
+    pipeline_run_id: str | None = None,
+    evidence_bundle_sha256: str | None = None,
 ):
     """
     EM-1: Send AI executive-summary email after the pipeline completes.
@@ -3065,37 +3067,37 @@ def dispatch_ai_summary_email(
         # enforced (the event still reaches people, pointing at the review),
         # drafted when the project allows drafts, and audited either way.
         from app.services.report_distribution_policy import (
+            REVIEW_PENDING_NOTICE,
             gate_ai_summary_text,
-            record_distribution,
+            gate_enforced,
         )
 
         summary_withheld = False
         try:
             async with AsyncSessionLocal() as db:
-                executive_summary, summary_decision = await gate_ai_summary_text(
-                    db,
-                    run_id=test_run_id,
-                    project_id=project_id,
-                    summary_text=executive_summary,
-                    ai_generated=summary_is_ai,
-                    channel="ai_summary_notification",
-                )
-                if summary_decision is not None:
-                    await record_distribution(
-                        db, summary_decision, channel="ai_summary_notification",
-                        run_id=test_run_id, project_id=project_id,
+                if summary_is_ai and gate_enforced() and (
+                    not pipeline_run_id or not evidence_bundle_sha256
+                ):
+                    executive_summary = REVIEW_PENDING_NOTICE
+                    summary_decision = None
+                else:
+                    executive_summary, summary_decision = await gate_ai_summary_text(
+                        db,
+                        run_id=test_run_id,
+                        project_id=project_id,
+                        summary_text=executive_summary,
+                        ai_generated=summary_is_ai,
+                        channel="ai_summary_notification",
+                        pipeline_run_id=pipeline_run_id,
+                        evidence_bundle_sha256=evidence_bundle_sha256,
                     )
-                    await db.commit()
             summary_withheld = summary_decision is not None and not summary_decision.allowed
+            if summary_is_ai and executive_summary == REVIEW_PENDING_NOTICE:
+                summary_withheld = True
         except Exception as gate_exc:
             # The gate must never stop the notification itself. If it cannot
             # decide: while enforced, fail CLOSED (send the review notice, not
             # the AI text); while not enforced, behave exactly as before E8.4.
-            from app.services.report_distribution_policy import (
-                REVIEW_PENDING_NOTICE,
-                gate_enforced,
-            )
-
             logger.warning(
                 "[AI Email] review gate unavailable for run %s (%s)",
                 test_run_id, type(gate_exc).__name__,
@@ -3125,6 +3127,8 @@ def dispatch_ai_summary_email(
             ),
             original_executive_panel=original_executive_panel,
             summary_is_ai=summary_is_ai,
+            pipeline_run_id=pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         )
 
         # 2. EM-4 + F9: dispatch every EVENT-DRIVEN digest subscription.
@@ -3197,6 +3201,8 @@ def dispatch_ai_summary_email(
                                         "withheld_body_prefix": "",
                                         "original_executive_panel": original_executive_panel,
                                         "ai_generated": True,
+                                        "pipeline_run_id": pipeline_run_id,
+                                        "evidence_bundle_sha256": evidence_bundle_sha256,
                                     }
                                 }
                                 if summary_is_ai

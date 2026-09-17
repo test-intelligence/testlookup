@@ -879,6 +879,10 @@ async def _refresh_review_gated_delivery(
             pipeline_run_id = uuid.UUID(str(raw_pipeline_run_id))
         except (TypeError, ValueError, AttributeError):
             pipeline_run_id = None
+    raw_evidence_hash = original.get("evidence_bundle_sha256")
+    evidence_bundle_sha256 = (
+        str(raw_evidence_hash) if raw_evidence_hash is not None else ""
+    )
 
     from app.services import report_distribution_policy
 
@@ -889,6 +893,7 @@ async def _refresh_review_gated_delivery(
         synthesized=bool(original.get("synthesized")),
         human_override=original.get("overridden"),
         pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
         project_id=original.get("project_id"),
     )
 

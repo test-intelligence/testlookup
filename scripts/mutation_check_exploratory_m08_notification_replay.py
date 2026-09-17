@@ -11,6 +11,9 @@ TESTS = [
     "backend/tests/services/test_run_downstream_outbox_service.py::test_notification_retry_rechecks_review_before_sending_accepted_narrative",
     "backend/tests/test_notification_distribution_gates.py::test_the_task_withholds_the_ai_summary_from_preferences_and_digests",
     "backend/tests/test_notification_distribution_gates.py::test_notification_relay_refreshes_terminal_and_accepted_review_content",
+    "backend/tests/test_notification_distribution_gates.py::test_notification_retry_cannot_borrow_a_newer_run_review",
+    "backend/tests/test_notification_distribution_gates.py::test_withheld_notification_prefix_has_no_invented_release_signal",
+    "backend/tests/test_notification_distribution_gates.py::test_legacy_queued_notification_is_sanitized_and_fails_closed",
 ]
 MUTATIONS = [
     (
@@ -27,9 +30,9 @@ MUTATIONS = [
     ),
     (
         ROOT / "backend/app/services/notification/manager.py",
-        "withheld-prefix-invents-release-signal",
-        '            "withheld_body_prefix": _withheld_body_prefix(),\n',
-        '            "withheld_body_prefix": _body_prefix(None),\n',
+        "legacy-withheld-prefix-is-trusted",
+        "    withheld_body_prefix = _safe_withheld_body_prefix(metadata)\n",
+        "    withheld_body_prefix = str(context.get(\"withheld_body_prefix\") or accepted_body_prefix)\n",
     ),
     (
         ROOT / "backend/app/services/notification/manager.py",
@@ -48,6 +51,26 @@ MUTATIONS = [
         "digest-drops-review-context",
         """                                    _REVIEW_GATE_METADATA_KEY: {\n""",
         """                                    \"_removed_review_gate_v1\": {\n""",
+    ),
+    (
+        ROOT / "backend/app/services/notification/manager.py",
+        "retry-drops-exact-subject",
+        """            pipeline_run_id=pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
+""",
+        """            pipeline_run_id=None,
+            evidence_bundle_sha256=None,
+""",
+    ),
+    (
+        ROOT / "backend/app/worker/tasks.py",
+        "task-audits-before-delivery",
+        """            summary_withheld = summary_decision is not None and not summary_decision.allowed
+""",
+        """            from app.services.access_audit_service import log_access_change
+            await log_access_change(db, action="ai_report.distribution_refused")
+            summary_withheld = summary_decision is not None and not summary_decision.allowed
+""",
     ),
 ]
 

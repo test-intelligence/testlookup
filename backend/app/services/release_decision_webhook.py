@@ -78,9 +78,27 @@ async def build_release_decided_payload(
     project_id: uuid.UUID,
     decision: ReleaseDecision,
     trigger: str,
+    evidence_bundle_sha256: str | None = None,
 ) -> Optional[dict[str, Any]]:
     council = await get_release_council(run_id, db)
     if council is None:
+        return None
+    if decision.pipeline_run_id is not None and evidence_bundle_sha256 is None:
+        from app.db.mongo import get_mongo_db
+        from app.services.decision_report_service import (
+            load_decision_report_for_pipeline,
+        )
+
+        report = await load_decision_report_for_pipeline(
+            get_mongo_db(),
+            str(run_id),
+            str(decision.pipeline_run_id),
+        )
+        if report is None:
+            return None
+        raw_hash = report.get("evidence_bundle_sha256")
+        evidence_bundle_sha256 = str(raw_hash) if raw_hash is not None else None
+    if decision.pipeline_run_id is not None and not evidence_bundle_sha256:
         return None
     payload: dict[str, Any] = {
         "run_id": str(run_id),
@@ -88,6 +106,7 @@ async def build_release_decided_payload(
         "pipeline_run_id": (
             str(decision.pipeline_run_id) if decision.pipeline_run_id is not None else None
         ),
+        "evidence_bundle_sha256": evidence_bundle_sha256,
         "trigger": trigger,
         "recommendation": council.recommendation,
         "risk_score": council.risk_score,
@@ -105,11 +124,17 @@ async def build_release_decided_payload(
         synthesized=bool(council.synthesized),
         human_override=council.human_override,
         pipeline_run_id=decision.pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
         project_id=project_id,
     )
 
 
-async def emit_release_decided(run_id: Any, *, trigger: str) -> int:
+async def emit_release_decided(
+    run_id: Any,
+    *,
+    trigger: str,
+    evidence_bundle_sha256: str | None = None,
+) -> int:
     """Send ``release.decided`` for the committed decision on ``run_id``.
 
     Call only after the write's transaction has committed. Returns the number of
@@ -145,6 +170,7 @@ async def emit_release_decided(run_id: Any, *, trigger: str) -> int:
                 project_id=project_id,
                 decision=decision,
                 trigger=trigger,
+                evidence_bundle_sha256=evidence_bundle_sha256,
             )
             scope = delivery_scope(decision, trigger)
         if payload is None:

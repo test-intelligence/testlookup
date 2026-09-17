@@ -2187,13 +2187,22 @@ async def test_every_staged_payload_binds_to_its_task(monkeypatch):
         MagicMock(), run=run, project=SimpleNamespace(name="payments"), run_ai=True
     )
     await service.stage_ai_summary_notification_operation(
-        MagicMock(), run_id=run.id, project_id=run.project_id, build_number="build-42"
+        MagicMock(),
+        run_id=run.id,
+        project_id=run.project_id,
+        build_number="build-42",
+        pipeline_run_id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
+        evidence_bundle_sha256="a" * 64,
     )
     await service.stage_live_persist_operation(
         MagicMock(), canonical_run_id=run.id, session=session, final_state={"passed": 1}
     )
 
     payloads = {call.kwargs["operation"]: call.kwargs["payload"] for call in staged.await_args_list}
+    assert payloads["ai_summary_notifications"]["pipeline_run_id"] == (
+        "11111111-1111-4111-8111-111111111111"
+    )
+    assert payloads["ai_summary_notifications"]["evidence_bundle_sha256"] == "a" * 64
     assert set(payloads) == set(service._OPERATIONS), (
         "an operation the outbox publishes is not staged here, so its payload is unchecked"
     )

@@ -19,6 +19,7 @@ from app.models.postgres import (
     AgentPipelineRun,
     AgentStageResult,
     NotificationLog,
+    ReviewRequest,
     RunDownstreamOutbox,
     TestRun,
     WebhookDelivery,
@@ -120,12 +121,16 @@ async def stage_ai_summary_notification_operation(
     run_id: uuid.UUID,
     project_id: uuid.UUID,
     build_number: str,
+    pipeline_run_id: uuid.UUID | None = None,
+    evidence_bundle_sha256: str | None = None,
 ) -> bool:
     """Stage the stable AI-summary publication on the caller's transaction."""
     payload = {
         "test_run_id": str(run_id),
         "project_id": str(project_id),
         "build_number": str(build_number),
+        "pipeline_run_id": str(pipeline_run_id) if pipeline_run_id is not None else None,
+        "evidence_bundle_sha256": evidence_bundle_sha256,
     }
     return await stage_downstream_operation(
         db,
@@ -181,11 +186,24 @@ async def repair_terminal_ai_summary_operation(
     ).scalar_one_or_none() is not None
     inserted = False
     if summary_completed:
+        evidence_bundle_sha256 = (
+            await db.execute(
+                select(ReviewRequest.evidence_bundle_sha256)
+                .where(
+                    ReviewRequest.pipeline_run_id == pipeline_run_id,
+                    ReviewRequest.kind == "report",
+                )
+                .order_by(ReviewRequest.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
         inserted = await stage_ai_summary_notification_operation(
             db,
             run_id=run_id,
             project_id=project_id,
             build_number=build_number,
+            pipeline_run_id=pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         )
     return {
         "pipeline_status": str(terminal),

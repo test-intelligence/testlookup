@@ -77,6 +77,52 @@ def test_clean_report_passes_all_critic_checks():
     assert all(item["status"] == "pass" for item in checks)
 
 
+@pytest.mark.asyncio
+async def test_published_report_emits_release_webhook_with_exact_evidence(
+    monkeypatch,
+):
+    from app.agents import decision_report_critic_agent as critic_module
+    from app.services import release_decision_webhook
+
+    evidence_hash = "e" * 64
+    collection = type(
+        "Collection",
+        (),
+        {"update_one": AsyncMock(return_value=None)},
+    )()
+
+    class _Mongo:
+        def __getitem__(self, _name):
+            return collection
+
+    monkeypatch.setattr(critic_module, "get_mongo_db", lambda: _Mongo())
+    monkeypatch.setattr(
+        critic_module,
+        "publish_decision_report",
+        AsyncMock(
+            return_value={
+                "report_id": "report-1",
+                "report_version": 1,
+                "supersedes_report_id": None,
+                "status": "published",
+                "generated_at": "2026-09-17T00:00:00+00:00",
+                "evidence_bundle_sha256": evidence_hash,
+            }
+        ),
+    )
+    emit = AsyncMock(return_value=1)
+    monkeypatch.setattr(release_decision_webhook, "emit_release_decided", emit)
+
+    agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
+    await agent._persist(_state(), {"verification": {"status": "passed"}}, "# report")
+
+    emit.assert_awaited_once_with(
+        "run-1",
+        trigger=release_decision_webhook.TRIGGER_AGENT,
+        evidence_bundle_sha256=evidence_hash,
+    )
+
+
 def test_bounded_repair_restores_metrics_release_disclosures_and_hash():
     state = _state()
     draft = build_decision_intelligence(state)

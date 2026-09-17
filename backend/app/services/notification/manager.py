@@ -184,6 +184,25 @@ _EXPLICIT_ROUTE_METADATA_KEY = "_durable_explicit_route"
 _REVIEW_GATE_METADATA_KEY = "_review_gate_v1"
 
 
+def _safe_withheld_body_prefix(metadata: dict[str, Any]) -> str:
+    """Build a deterministic prefix that contains no AI-derived release signal.
+
+    Older queued rows stored the accepted prefix in the withheld slot. Rebuild
+    it from durable run facts so an upgrade also repairs those rows at egress.
+    """
+    failed_tests = int(metadata.get("failed_tests") or 0)
+    if failed_tests <= 0:
+        return ""
+    project_name = str(metadata.get("project_name") or "the project")
+    build_number = str(metadata.get("build_number") or "")
+    pass_rate = float(metadata.get("pass_rate") or 0)
+    build = f" (build {build_number}, {pass_rate:.1f}% pass rate)" if build_number else ""
+    return (
+        f"{failed_tests} failure{'s' if failed_tests != 1 else ''} detected in "
+        f"{project_name}{build}.\n\n"
+    )
+
+
 async def _refresh_review_gated_delivery(
     db: Any,
     row: NotificationLog,
@@ -202,16 +221,28 @@ async def _refresh_review_gated_delivery(
 
     original_summary = str(context.get("original_summary") or "")
     accepted_body_prefix = str(context.get("accepted_body_prefix") or "")
-    withheld_body_prefix = str(
-        context.get("withheld_body_prefix") or accepted_body_prefix
-    )
+    withheld_body_prefix = _safe_withheld_body_prefix(metadata)
     ai_generated = bool(context.get("ai_generated", True))
     original_panel = context.get("original_executive_panel")
+    pipeline_run_id = context.get("pipeline_run_id")
+    evidence_bundle_sha256 = context.get("evidence_bundle_sha256")
     try:
         from app.services.report_distribution_policy import (
+            REVIEW_PENDING_NOTICE,
             gate_ai_summary_text,
+            gate_enforced,
         )
 
+        if ai_generated and gate_enforced() and (
+            not pipeline_run_id or not evidence_bundle_sha256
+        ):
+            metadata["executive_panel"] = None
+            return (
+                row.title,
+                f"{withheld_body_prefix}{REVIEW_PENDING_NOTICE}",
+                metadata,
+                None,
+            )
         summary, decision = await gate_ai_summary_text(
             db,
             run_id=row.run_id,
@@ -219,6 +250,8 @@ async def _refresh_review_gated_delivery(
             summary_text=original_summary,
             ai_generated=ai_generated,
             channel="ai_summary_notification_relay",
+            pipeline_run_id=pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         )
         metadata["executive_panel"] = (
             None if decision is not None and not decision.allowed else original_panel
@@ -1351,6 +1384,8 @@ async def dispatch_ai_summary_notifications(
     original_executive_summary: Optional[str] = None,
     original_executive_panel: Optional[dict] = None,
     summary_is_ai: bool = False,
+    pipeline_run_id: Optional[str] = None,
+    evidence_bundle_sha256: Optional[str] = None,
 ) -> None:
     """
     Send AI executive-summary email after the AI pipeline completes.
@@ -1406,6 +1441,8 @@ async def dispatch_ai_summary_notifications(
             "withheld_body_prefix": _withheld_body_prefix(),
             "original_executive_panel": original_executive_panel,
             "ai_generated": summary_is_ai,
+            "pipeline_run_id": pipeline_run_id,
+            "evidence_bundle_sha256": evidence_bundle_sha256,
         }
 
     def _msg(_event: NotificationEventType) -> tuple[str, str]:

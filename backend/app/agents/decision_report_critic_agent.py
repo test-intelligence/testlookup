@@ -797,6 +797,22 @@ class DecisionReportCriticAgent(BaseAgent):
                 "decision_report_summary_projection_failed",
                 error_type=type(exc).__name__,
             )
+        try:
+            from app.services.release_decision_webhook import (
+                TRIGGER_AGENT,
+                emit_release_decided,
+            )
+
+            await emit_release_decided(
+                state["test_run_id"],
+                trigger=TRIGGER_AGENT,
+                evidence_bundle_sha256=report.get("evidence_bundle_sha256"),
+            )
+        except Exception as exc:  # noqa: BLE001 -- outbound publication is best-effort
+            logger.warning(
+                "release_decided_webhook_after_report_failed",
+                error_type=type(exc).__name__,
+            )
 
     async def _persist_failure(
         self,

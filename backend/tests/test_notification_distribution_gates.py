@@ -24,6 +24,8 @@ from app.services.review_envelope import ReviewEnvelope, not_ai_generated
 
 RUN = uuid.uuid4()
 PROJECT = uuid.uuid4()
+PIPELINE = uuid.uuid4()
+EVIDENCE_HASH = "a" * 64
 AI_TEXT = "The checkout suite regressed because the payment stub timed out."
 
 
@@ -46,6 +48,16 @@ def world(monkeypatch):
         return state.drafts
 
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
+    async def _envelope_for_subject(
+        db, pipeline_run_id, *, ai_generated=True, evidence_bundle_sha256=None
+    ):
+        assert pipeline_run_id == PIPELINE
+        assert evidence_bundle_sha256 == EVIDENCE_HASH
+        return _envelope(state.review)
+
+    monkeypatch.setattr(
+        policy, "review_envelope_for_pipeline_subject", _envelope_for_subject
+    )
     monkeypatch.setattr(policy, "_project_allows_drafts", _drafts)
     monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", True)
     state.enforce = lambda on: monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", on)
@@ -137,7 +149,8 @@ def _drive(monkeypatch, *, doc, fallback_text=None):
     digests = AsyncMock()
     monkeypatch.setattr(manager, "dispatch_ai_summary_notifications", preferences)
     monkeypatch.setattr(manager, "stage_explicit_notification_deliveries", digests)
-    monkeypatch.setattr("app.services.access_audit_service.log_access_change", AsyncMock())
+    access_audit = AsyncMock()
+    monkeypatch.setattr("app.services.access_audit_service.log_access_change", access_audit)
     monkeypatch.setattr(tasks, "run_matches_digest_scope", lambda _sub, _run: True)
     monkeypatch.setattr(tasks, "_run_async", asyncio.run)
     if fallback_text is not None:
@@ -145,8 +158,14 @@ def _drive(monkeypatch, *, doc, fallback_text=None):
             "app.services.run_summary_service.build_fallback_summary",
             AsyncMock(return_value=SimpleNamespace(executive_summary=fallback_text, executive_panel=None)),
         )
-    tasks.dispatch_ai_summary_email.run(str(RUN), str(PROJECT), "42")
-    return preferences.await_args.kwargs, digests.await_args.kwargs["deliveries"]
+    tasks.dispatch_ai_summary_email.run(
+        str(RUN), str(PROJECT), "42", str(PIPELINE), EVIDENCE_HASH
+    )
+    return (
+        preferences.await_args.kwargs,
+        digests.await_args.kwargs["deliveries"],
+        access_audit,
+    )
 
 
 class _AnyKey(dict):
@@ -161,7 +180,7 @@ class _AnyKey(dict):
 
 
 def test_the_task_withholds_the_ai_summary_from_preferences_and_digests(monkeypatch, world):
-    prefs, deliveries = _drive(
+    prefs, deliveries, access_audit = _drive(
         monkeypatch, doc={"executive_summary": AI_TEXT, "executive_panel": {"headline": "NO_GO"}},
     )
     assert prefs["executive_summary"] == policy.REVIEW_PENDING_NOTICE
@@ -172,6 +191,9 @@ def test_the_task_withholds_the_ai_summary_from_preferences_and_digests(monkeypa
     marker = deliveries[0]["metadata"]["_review_gate_v1"]
     assert marker["original_summary"] == AI_TEXT
     assert "Release signal:" not in marker["withheld_body_prefix"]
+    assert marker["pipeline_run_id"] == str(PIPELINE)
+    assert marker["evidence_bundle_sha256"] == EVIDENCE_HASH
+    access_audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -194,6 +216,8 @@ async def test_notification_relay_refreshes_terminal_and_accepted_review_content
                 "withheld_body_prefix": "withheld prefix\n\n",
                 "original_executive_panel": {"headline": "NO_GO"},
                 "ai_generated": True,
+                "pipeline_run_id": str(PIPELINE),
+                "evidence_bundle_sha256": EVIDENCE_HASH,
             },
         },
     )
@@ -202,7 +226,7 @@ async def test_notification_relay_refreshes_terminal_and_accepted_review_content
     _title, rejected_body, rejected_metadata, rejected_decision = (
         await manager._refresh_review_gated_delivery(object(), row)
     )
-    assert rejected_body == f"withheld prefix\n\n{policy.REVIEW_PENDING_NOTICE}"
+    assert rejected_body == policy.REVIEW_PENDING_NOTICE
     assert AI_TEXT not in rejected_body
     assert rejected_metadata["executive_panel"] is None
     assert manager._REVIEW_GATE_METADATA_KEY not in rejected_metadata
@@ -218,21 +242,137 @@ async def test_notification_relay_refreshes_terminal_and_accepted_review_content
     assert accepted_decision is not None and accepted_decision.allowed is True
 
 
+@pytest.mark.asyncio
+async def test_notification_retry_cannot_borrow_a_newer_run_review(
+    monkeypatch, world,
+):
+    from app.services.notification import manager
+
+    monkeypatch.setattr(
+        policy,
+        "review_envelope_for_run",
+        AsyncMock(return_value=_envelope("accepted")),
+    )
+    monkeypatch.setattr(
+        policy,
+        "review_envelope_for_pipeline_subject",
+        AsyncMock(return_value=_envelope("rejected")),
+    )
+    row = SimpleNamespace(
+        title="AI summary",
+        body="stale draft",
+        run_id=RUN,
+        project_id=PROJECT,
+        delivery_key="exact-subject-delivery",
+        delivery_metadata={
+            "failed_tests": 0,
+            manager._REVIEW_GATE_METADATA_KEY: {
+                "original_summary": AI_TEXT,
+                "accepted_body_prefix": "",
+                "original_executive_panel": {"headline": "NO_GO"},
+                "ai_generated": True,
+                "pipeline_run_id": str(PIPELINE),
+                "evidence_bundle_sha256": EVIDENCE_HASH,
+            },
+        },
+    )
+
+    _title, body, _metadata, decision = await manager._refresh_review_gated_delivery(
+        object(), row
+    )
+
+    assert body == policy.REVIEW_PENDING_NOTICE
+    assert AI_TEXT not in body
+    assert decision is not None and decision.envelope.state == "rejected"
+    policy.review_envelope_for_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_withheld_notification_prefix_has_no_invented_release_signal(
+    monkeypatch,
+):
+    from app.services.notification import manager
+
+    staged = AsyncMock()
+    monkeypatch.setattr(manager, "_load_and_notify", staged)
+
+    await manager.dispatch_ai_summary_notifications(
+        PROJECT,
+        RUN,
+        "42",
+        "Checkout",
+        policy.REVIEW_PENDING_NOTICE,
+        executive_panel=None,
+        pass_rate=80.0,
+        total_tests=10,
+        failed_tests=2,
+        original_executive_summary=AI_TEXT,
+        original_executive_panel={"status_signal": "NO_GO", "risk_score": 90},
+        summary_is_ai=True,
+        pipeline_run_id=str(PIPELINE),
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    metadata = staged.await_args.args[4]
+    context = metadata[manager._REVIEW_GATE_METADATA_KEY]
+    assert "Release signal: NO GO" in context["accepted_body_prefix"]
+    assert "Release signal:" not in context["withheld_body_prefix"]
+    assert "2 failures detected" in context["withheld_body_prefix"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_queued_notification_is_sanitized_and_fails_closed(
+    monkeypatch, world,
+):
+    from app.services.notification import manager
+
+    row = SimpleNamespace(
+        title="AI summary",
+        body="stale draft",
+        run_id=RUN,
+        project_id=PROJECT,
+        delivery_key="legacy-delivery",
+        delivery_metadata={
+            "project_name": "Checkout",
+            "build_number": "42",
+            "pass_rate": 80.0,
+            "failed_tests": 2,
+            manager._REVIEW_GATE_METADATA_KEY: {
+                "original_summary": AI_TEXT,
+                "accepted_body_prefix": "Release signal: CONDITIONAL GO.\n\n",
+                "withheld_body_prefix": "Release signal: CONDITIONAL GO.\n\n",
+                "ai_generated": True,
+            },
+        },
+    )
+
+    _title, body, metadata, decision = await manager._refresh_review_gated_delivery(
+        object(), row
+    )
+
+    assert body.endswith(policy.REVIEW_PENDING_NOTICE)
+    assert "2 failures detected in Checkout" in body
+    assert "Release signal:" not in body
+    assert AI_TEXT not in body
+    assert metadata["executive_panel"] is None
+    assert decision is None
+
+
 def test_the_task_drafts_the_summary_under_a_project_opt_in(monkeypatch, world):
     world.drafts = True
-    prefs, deliveries = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
+    prefs, deliveries, _audit = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
     assert prefs["executive_summary"].startswith(policy.DRAFT_WATERMARK)
     assert deliveries[0]["body"].startswith(policy.DRAFT_WATERMARK)
 
 
 def test_the_task_sends_a_deterministic_fallback_unchanged(monkeypatch, world):
-    prefs, _ = _drive(monkeypatch, doc=None, fallback_text="3 failures in checkout.")
+    prefs, _, _audit = _drive(monkeypatch, doc=None, fallback_text="3 failures in checkout.")
     assert prefs["executive_summary"] == "3 failures in checkout."
 
 
 def test_the_task_is_unchanged_while_the_gate_is_not_enforced(monkeypatch, world):
     world.enforce(False)
-    prefs, deliveries = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
+    prefs, deliveries, _audit = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
     assert prefs["executive_summary"] == AI_TEXT
     assert deliveries[0]["body"] == AI_TEXT
 
@@ -343,7 +483,7 @@ def test_a_broken_gate_never_stops_the_notification_and_fails_closed_when_enforc
     """If the gate cannot decide, the event must still reach people -- and
     while enforced, without the unreviewed AI text."""
     _break_the_gate(monkeypatch)
-    prefs, deliveries = _drive(
+    prefs, deliveries, _audit = _drive(
         monkeypatch, doc={"executive_summary": AI_TEXT, "executive_panel": {"headline": "NO_GO"}},
     )
     assert prefs["executive_summary"] == policy.REVIEW_PENDING_NOTICE
@@ -354,7 +494,7 @@ def test_a_broken_gate_never_stops_the_notification_and_fails_closed_when_enforc
 def test_a_broken_gate_changes_nothing_while_not_enforced(monkeypatch, world):
     world.enforce(False)
     _break_the_gate(monkeypatch)
-    prefs, deliveries = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
+    prefs, deliveries, _audit = _drive(monkeypatch, doc={"executive_summary": AI_TEXT})
     assert prefs["executive_summary"] == AI_TEXT
     assert deliveries[0]["body"] == AI_TEXT
 

@@ -50,6 +50,7 @@ from app.services.review_envelope import ReviewEnvelope
 RUN = uuid.uuid4()
 PROJECT = uuid.uuid4()
 PIPELINE = uuid.uuid4()
+EVIDENCE_HASH = "e" * 64
 CREATED = datetime(2026, 9, 12, 18, 30, tzinfo=timezone.utc)
 UPDATED = datetime(2026, 9, 12, 19, 5, tzinfo=timezone.utc)
 REVIEW_ID = str(uuid.uuid4())
@@ -171,7 +172,14 @@ def world(monkeypatch):
         task_signature.bind(*args, **kwargs)
         published.append(kwargs)
 
-    state = SimpleNamespace(log=log, table=table, published=published, review="pending_review", decision=None)
+    state = SimpleNamespace(
+        log=log,
+        table=table,
+        published=published,
+        review="pending_review",
+        decision=None,
+        seen_subjects=[],
+    )
 
     async def _envelope_for(db, run_id, workflow_type=None, ai_generated=True):
         assert workflow_type == "deep"
@@ -179,8 +187,15 @@ def world(monkeypatch):
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
         return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
 
-    async def _envelope_for_subject(db, pipeline_run_id, ai_generated=True):
+    async def _envelope_for_subject(
+        db,
+        pipeline_run_id,
+        *,
+        ai_generated=True,
+        evidence_bundle_sha256=None,
+    ):
         assert pipeline_run_id == PIPELINE
+        state.seen_subjects.append((pipeline_run_id, evidence_bundle_sha256))
         if state.review == "accepted":
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
         return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
@@ -209,6 +224,11 @@ def world(monkeypatch):
         emitter, "AsyncSessionLocal", lambda: _Session(_decision_lookup, log=log, name="emitter")
     )
     monkeypatch.setattr(emitter, "get_release_council", _council)
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: object())
+    monkeypatch.setattr(
+        "app.services.decision_report_service.load_decision_report_for_pipeline",
+        AsyncMock(return_value={"evidence_bundle_sha256": EVIDENCE_HASH}),
+    )
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
     monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
     monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=False))
@@ -260,6 +280,7 @@ async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(mo
         "run_id": str(RUN),
         "project_id": str(PROJECT),
         "pipeline_run_id": str(PIPELINE),
+        "evidence_bundle_sha256": EVIDENCE_HASH,
         "trigger": "agent",
         "recommendation": "GO",
         "draft_recommendation": None,
@@ -389,6 +410,7 @@ async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(
         "run_id": str(RUN),
         "project_id": str(PROJECT),
         "pipeline_run_id": str(PIPELINE),
+        "evidence_bundle_sha256": EVIDENCE_HASH,
         "recommendation": "PENDING_REVIEW",
         "draft_recommendation": "GO",
         "risk_score": 14,
@@ -429,6 +451,7 @@ async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(
         assert "review" not in source
         assert "review_gate_enforced" not in source
         assert call.kwargs["pipeline_run_id"] == PIPELINE
+        assert call.kwargs["evidence_bundle_sha256"] == EVIDENCE_HASH
 
 
 @pytest.mark.asyncio
@@ -524,6 +547,7 @@ async def test_release_webhook_uses_its_exact_pipeline_review(monkeypatch, world
         synthesized=False,
         human_override=None,
         pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
     )
 
     assert payload["review"]["state"] == "rejected"
@@ -531,6 +555,33 @@ async def test_release_webhook_uses_its_exact_pipeline_review(monkeypatch, world
     assert payload["draft_recommendation"] is None
     assert payload["blocking_issues"] == []
     assert payload["conditions_for_go"] == []
+    assert world.seen_subjects[-1] == (PIPELINE, EVIDENCE_HASH)
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_retry_without_evidence_hash_fails_closed(
+    monkeypatch, world,
+):
+    world.enforce(True)
+    world.review = "accepted"
+    stored = {
+        "run_id": str(RUN),
+        "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
+        "recommendation": "GO",
+        "synthesized": False,
+        "overridden": False,
+    }
+    delivery = SimpleNamespace(
+        event_type="release.decided",
+        run_id=RUN,
+        event_payload=stored,
+    )
+
+    payload = await webhook_service._refresh_review_gated_payload(None, delivery)
+
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert world.seen_subjects[-1] == (PIPELINE, "")
 
 
 @pytest.mark.asyncio
