@@ -497,6 +497,7 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     from app.services import agent_config_resolver, agent_investigation_service, feature_flags
 
     added = []
+    lock_keys = []
 
     class _Session:
         async def __aenter__(self):
@@ -505,6 +506,11 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
+        async def execute(self, _stmt, params=None):
+            if params and "key" in params:
+                lock_keys.append(params["key"])
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
         def add(self, row):
             added.append(row)
 
@@ -512,6 +518,11 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
             return None
 
     monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value={}),
+    )
     monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(agent_investigation_service, "get_effective_policy", AsyncMock(return_value={"budgets": {}}))
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
@@ -523,7 +534,7 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     monkeypatch.setattr(
         agent_config_resolver,
         "resolve_for_project",
-        AsyncMock(side_effect=lambda _db, _project_id, agent_id: agent_config_resolver.resolve(
+        AsyncMock(side_effect=lambda _db, _project_id, agent_id, **_kwargs: agent_config_resolver.resolve(
             agent_id, global_ai_config={}
         )),
     )
@@ -539,6 +550,10 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
 
     (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
     assert run.execution_metadata["agent_config_versions"] == {SUMMARY: 4}
+    assert lock_keys[:2] == [
+        "agent-authority:global",
+        f"agent-config-authority:{PROJECT_ID}",
+    ]
     assert run.requested_by == requester
     from app.services.eval_provenance_service import current_eval_manifest_checksum
 
@@ -559,7 +574,7 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         async def __aexit__(self, *exc):
             return False
 
-        async def execute(self, _stmt):
+        async def execute(self, _stmt, params=None):
             return SimpleNamespace(scalar_one_or_none=lambda: None)
 
         def add(self, row):
@@ -589,6 +604,11 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
     # A ceiling tightened after request acceptance still wins at worker start.
     monkeypatch.setattr(settings, "AGENT_MAX_ATTEMPTS_CEILING", 1)
     monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value={}),
+    )
     monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(
         agent_investigation_service,
@@ -604,7 +624,7 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
     monkeypatch.setattr(
         agent_config_resolver,
         "resolve_for_project",
-        AsyncMock(side_effect=lambda _db, _project_id, agent_id: agent_config_resolver.resolve(
+        AsyncMock(side_effect=lambda _db, _project_id, agent_id, **_kwargs: agent_config_resolver.resolve(
             agent_id, global_ai_config={}
         )),
     )

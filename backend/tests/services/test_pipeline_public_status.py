@@ -348,6 +348,7 @@ async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
         "resolved_agent_configs": accepted_snapshot,
         "endpoint_authority_fingerprints": {capability: "b" * 64},
         "agent_config_versions": {capability: 9},
+        "workflow_behavior_plan_sha256": "c" * 64,
         "prompt_versions": {"summary_system": "v1:abc"},
         "runtime_versions": {"langgraph": "1.2.3"},
         "cluster_child_settings": {"enabled": False, "max_members": 50},
@@ -382,6 +383,7 @@ async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
     for key in (
         "endpoint_authority_fingerprints",
         "agent_config_versions",
+        "workflow_behavior_plan_sha256",
         "prompt_versions",
         "runtime_versions",
         "cluster_child_settings",

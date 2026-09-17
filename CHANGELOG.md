@@ -42,6 +42,15 @@ name the fresh manifest checksum. Arbitrary per-step model metadata is rejected
 until the runtime supports it. Candidate cost, latency, and reviewer metrics
 still reuse exact historical outputs; live candidate execution remains an
 optional follow-up rather than a claimed measurement.
+The final G4 authority review now separates executable behavior from workflow
+identity, so behavior-identical forks and new versions can reuse exact replay
+evidence while workflow ids, versions, names, and descriptions remain
+provenance. Runtime metadata preserves that behavior-plan digest through
+finalization. Evaluation freezes global AI settings, project configuration,
+drift pins, policy, and fresh feature-flag values under shared transaction
+locks, and every corresponding writer participates in the same lock domains.
+The workflow editor evaluates the same authoritative 100-run window used by
+publish, so a manifest-bound regression acceptance can succeed.
 
 M12 invocation hardening now serializes creation per stored subject, keeps
 explicit idempotency keys from being silently discarded, and aligns durable

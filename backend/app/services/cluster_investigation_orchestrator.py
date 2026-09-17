@@ -145,9 +145,16 @@ def _apply_parent_cost_budget(
 async def resolve_cluster_child_settings(
     db: AsyncSession,
     project_id: uuid.UUID,
+    *,
+    fresh_feature_flags: bool = False,
 ) -> dict[str, Any]:
     """Freeze the feature/policy gate and bounded allocation at run start."""
-    flag_enabled = await is_enabled(FEATURE_FLAG, db=db, project_id=project_id)
+    flag_enabled = await is_enabled(
+        FEATURE_FLAG,
+        db=db,
+        project_id=project_id,
+        fresh=fresh_feature_flags,
+    )
     policy = await get_effective_policy(db, project_id, AGENT_ID_INVESTIGATOR)
     budgets = policy.get("budgets") if isinstance(policy.get("budgets"), dict) else {}
     return {

@@ -310,6 +310,7 @@ async def resolve_for_project(
     agent_id: str,
     *,
     patch: Optional[AgentConfigPatch] = None,
+    global_ai_config: Optional[Mapping[str, Any]] = None,
 ) -> ResolvedAgentConfig:
     """``resolve`` against the stored row and the live global config, plus endpoint residency."""
     row = await configs.get_config_row(db, project_id, agent_id)
@@ -319,9 +320,14 @@ async def resolve_for_project(
         stored = {**dict(row.config or {}), "enabled": bool(row.enabled), "mode": row.mode}
         version = int(row.config_version)
     drift_pin_active = await has_active_drift_pin(db, project_id, agent_id)
+    ai_config = (
+        global_ai_config
+        if global_ai_config is not None
+        else await get_effective_ai_config()
+    )
     resolved = resolve(
         agent_id,
-        global_ai_config=await get_effective_ai_config(),
+        global_ai_config=ai_config,
         stored=stored,
         config_version=version,
         patch=patch,
@@ -409,6 +415,7 @@ async def resolve_frozen_for_project(
     expected_agent_id: str,
     db: AsyncSession,
     project_id: uuid.UUID,
+    global_ai_config: Optional[Mapping[str, Any]] = None,
 ) -> ResolvedAgentConfig:
     """Restore an invocation snapshot under today's one-way safety ceilings."""
     try:
@@ -421,9 +428,14 @@ async def resolve_frozen_for_project(
             [f"frozen agent_id {frozen.agent_id!r} does not match {expected_agent_id!r}"],
         )
     drift_pin_active = await has_active_drift_pin(db, project_id, expected_agent_id)
+    ai_config = (
+        global_ai_config
+        if global_ai_config is not None
+        else await get_effective_ai_config()
+    )
     resolved = resolve(
         expected_agent_id,
-        global_ai_config=await get_effective_ai_config(),
+        global_ai_config=ai_config,
         stored=frozen.config,
         config_version=frozen.config_version,
         drift_pin_active=drift_pin_active,

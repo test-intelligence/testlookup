@@ -106,8 +106,7 @@ def step_execution_authority(
     endpoint_authority_fingerprints: Mapping[str, Any],
     prompt_versions: Mapping[str, Any],
     runtime_versions: Mapping[str, Any],
-    workflow_plan_sha256: str,
-    workflow_runtime_authority_sha256: str,
+    workflow_behavior_plan_sha256: str,
     planning_context: Mapping[str, Any],
 ) -> str:
     """Bind replay evidence to every behavior authority that can change output."""
@@ -126,8 +125,7 @@ def step_execution_authority(
         "endpoint_authority_fingerprint": endpoint_authority_fingerprints.get(agent_id),
         "prompt_versions": prompt_versions,
         "runtime_versions": runtime_versions,
-        "workflow_plan_sha256": workflow_plan_sha256,
-        "workflow_runtime_authority_sha256": workflow_runtime_authority_sha256,
+        "workflow_behavior_plan_sha256": workflow_behavior_plan_sha256,
         "planning_context": planning_context,
     })
 
@@ -540,9 +538,8 @@ async def _load_replay_cases(
         historical_configs = metadata.get("resolved_agent_configs")
         historical_endpoints = metadata.get("endpoint_authority_fingerprints")
         historical_prompts = metadata.get("prompt_versions")
-        historical_plan_sha256 = metadata.get("workflow_plan_sha256")
-        historical_runtime_authority = metadata.get(
-            "workflow_runtime_authority_sha256"
+        historical_behavior_plan_sha256 = metadata.get(
+            "workflow_behavior_plan_sha256"
         )
         run_stages = sorted(
             stages_by_run.get(run.id, []), key=lambda item: (item.stage_name, str(item.id))
@@ -592,12 +589,9 @@ async def _load_replay_cases(
                     historical_prompts if isinstance(historical_prompts, Mapping) else {}
                 ),
                 runtime_versions=(receipt_runtime if isinstance(receipt_runtime, Mapping) else {}),
-                workflow_plan_sha256=(
-                    historical_plan_sha256 if isinstance(historical_plan_sha256, str) else ""
-                ),
-                workflow_runtime_authority_sha256=(
-                    historical_runtime_authority
-                    if isinstance(historical_runtime_authority, str)
+                workflow_behavior_plan_sha256=(
+                    historical_behavior_plan_sha256
+                    if isinstance(historical_behavior_plan_sha256, str)
                     else ""
                 ),
                 planning_context=planning_context,
@@ -669,7 +663,6 @@ async def _candidate_step_authority(
     from app.agents.workflow import (
         _prompt_registry_versions,
         _runtime_version_snapshot,
-        _workflow_runtime_authority_checksum,
     )
     from app.services.agent_capability_registry import get_capability
     from app.services.agent_config_resolver import (
@@ -677,11 +670,15 @@ async def _candidate_step_authority(
         freeze_for_invocation,
         resolve_for_project,
     )
+    from app.services.ai_config_resolver import get_effective_ai_config
     from app.services.agent_investigation_service import (
         get_effective_policy,
         run_budget_from_policy,
     )
-    from app.services.agent_planner import build_workflow_plan, compute_workflow_plan_hash
+    from app.services.agent_planner import (
+        build_workflow_plan,
+        compute_workflow_behavior_plan_hash,
+    )
     from app.services.cluster_investigation_orchestrator import (
         resolve_cluster_child_settings,
     )
@@ -697,8 +694,14 @@ async def _candidate_step_authority(
     configs: dict[str, Any] = {}
     workflow_configs: dict[str, dict[str, Any]] = {}
     endpoint_fingerprints: dict[str, str] = {}
+    global_ai_config = await get_effective_ai_config(db=db, fresh=True)
     for agent_id in dict.fromkeys(str(step.get("agent_id") or "") for step in steps):
-        resolved = await resolve_for_project(db, project_id, agent_id)
+        resolved = await resolve_for_project(
+            db,
+            project_id,
+            agent_id,
+            global_ai_config=global_ai_config,
+        )
         snapshot = freeze_for_invocation(resolved)
         configs[agent_id] = snapshot
         workflow_configs[agent_id] = dict(snapshot["config"])
@@ -722,29 +725,34 @@ async def _candidate_step_authority(
         },
     }
     if base == "deep":
-        cluster_settings = await resolve_cluster_child_settings(db, project_id)
+        cluster_settings = await resolve_cluster_child_settings(
+            db, project_id, fresh_feature_flags=True
+        )
     async_supersession = (
         await is_enabled(
-            "async_decision_report_supersession", db=db, project_id=project_id
+            "async_decision_report_supersession",
+            db=db,
+            project_id=project_id,
+            fresh=True,
         )
         if base == "deep"
         else False
     )
     specialist_flags = {
         "contract_validation": await is_enabled(
-            "contract_validation", db=db, project_id=project_id
+            "contract_validation", db=db, project_id=project_id, fresh=True
         ),
         "log_intelligence": await is_enabled(
-            "log_intelligence", db=db, project_id=project_id
+            "log_intelligence", db=db, project_id=project_id, fresh=True
         ),
         "regression_watchman": await is_enabled(
-            "regression_watchman", db=db, project_id=project_id
+            "regression_watchman", db=db, project_id=project_id, fresh=True
         ),
         "change_ownership": await is_enabled(
-            "change_ownership", db=db, project_id=project_id
+            "change_ownership", db=db, project_id=project_id, fresh=True
         ),
         "defect_commander": await is_enabled(
-            "defect_commander", db=db, project_id=project_id
+            "defect_commander", db=db, project_id=project_id, fresh=True
         ),
     }
     run_budget = run_budget_from_policy(await get_effective_policy(db, project_id))
@@ -803,17 +811,7 @@ async def _candidate_step_authority(
         "workflow_ref": workflow_ref,
         "stages": selected_plan,
     }
-    plan_sha256 = compute_workflow_plan_hash(plan)
-    runtime_authority = _workflow_runtime_authority_checksum(
-        project_id=str(project_id),
-        workflow_id=workflow_id,
-        workflow_version=workflow_version,
-        workflow_ref=workflow_ref,
-        definition=runtime_definition,
-        plan_sha256=plan_sha256,
-        agent_configs=workflow_configs,
-        resolved_agent_configs=configs,
-    )
+    behavior_plan_sha256 = compute_workflow_behavior_plan_hash(plan)
     prompts = _prompt_registry_versions()
     runtime = _runtime_version_snapshot()
     planning_context = {
@@ -834,8 +832,7 @@ async def _candidate_step_authority(
             endpoint_authority_fingerprints=endpoint_fingerprints,
             prompt_versions=prompts,
             runtime_versions=runtime,
-            workflow_plan_sha256=plan_sha256,
-            workflow_runtime_authority_sha256=runtime_authority,
+            workflow_behavior_plan_sha256=behavior_plan_sha256,
             planning_context=planning_context,
         )
         for step in steps
@@ -855,9 +852,9 @@ async def evaluate_definition(
         raise WorkflowEvaluationConflict(
             f"sample_limit must be between {MIN_REPLAY_RUNS} and 100"
         )
-    from app.services.agent_config_service import lock_agent_config_authority
+    from app.services.agent_authority_lock import lock_agent_authority_snapshot
 
-    await lock_agent_config_authority(db, project_id)
+    await lock_agent_authority_snapshot(db, project_id)
     lock_key = replay_corpus_lock_key(project_id, row.base)
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),

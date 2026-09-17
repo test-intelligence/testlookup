@@ -49,7 +49,7 @@ export function evaluateWorkflow(
 ): Promise<WorkflowEvaluation> {
   return postData(`${base(projectId)}/${workflowId}/evaluate`, {
     version,
-    sample_limit: 20,
+    sample_limit: 100,
   })
 }
 

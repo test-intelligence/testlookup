@@ -74,6 +74,24 @@ def test_endpoint_authority_fingerprint_binds_url_without_exposing_it():
     assert "model-a" not in fingerprint
 
 
+@pytest.mark.asyncio
+async def test_project_resolution_uses_the_supplied_global_snapshot(monkeypatch):
+    monkeypatch.setattr(configs, "get_config_row", AsyncMock(return_value=None))
+    live_read = AsyncMock(side_effect=AssertionError("must not re-read global config"))
+    monkeypatch.setattr(resolver, "get_effective_ai_config", live_read)
+    monkeypatch.setattr(resolver, "_apply_endpoint_residency", AsyncMock())
+
+    resolved = await resolver.resolve_for_project(
+        object(),
+        PROJECT_ID,
+        SUMMARY,
+        global_ai_config=_ai(model="frozen-model"),
+    )
+
+    assert resolved.endpoints["slm"].model == "frozen-model"
+    live_read.assert_not_awaited()
+
+
 # -- env > ai_config ---------------------------------------------------------------------------
 
 

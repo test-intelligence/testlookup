@@ -1,6 +1,7 @@
 """Prove M13 workflow-governance regressions kill their unsafe behavior."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -285,10 +286,93 @@ MUTATIONS = (
         '                    "prompt_versions": _prompt_registry_versions(),\n',
         "backend/tests/services/test_pipeline_public_status.py::test_finalize_preserves_the_invocation_config_authority",
     ),
+    Mutation(
+        "g4-terminal-preserves-behavior-plan-authority",
+        "backend/app/agents/workflow.py",
+        '                    "workflow_behavior_plan_sha256": prior_metadata.get(\n'
+        '                        "workflow_behavior_plan_sha256"\n'
+        "                    ),\n",
+        '                    "workflow_behavior_plan_sha256": None,\n',
+        "backend/tests/services/test_pipeline_public_status.py::test_finalize_preserves_the_invocation_config_authority",
+    ),
+    Mutation(
+        "g4-behavior-plan-excludes-workflow-identity",
+        "backend/app/services/agent_planner.py",
+        '        "workflow_id",\n        "workflow_version",\n        "workflow_ref",\n        "name",\n        "description",\n',
+        "",
+        "backend/tests/services/test_workflow_evaluation_service.py::test_behavior_identical_workflow_identity_reuses_replay_authority",
+    ),
+    Mutation(
+        "g4-authority-lock-order",
+        "backend/app/services/agent_authority_lock.py",
+        "    await lock_global_agent_authority(db)\n    await lock_project_agent_authority(db, project_id)\n",
+        "    await lock_project_agent_authority(db, project_id)\n",
+        "backend/tests/services/test_agent_authority_lock.py::test_authority_snapshot_locks_global_then_project",
+    ),
+    Mutation(
+        "g4-runtime-authority-snapshot-lock",
+        "backend/app/agents/workflow.py",
+        "        await lock_agent_authority_snapshot(db, authority_project_id)\n",
+        "        # UNSAFE: runtime authority may combine concurrent writes.\n",
+        "backend/tests/test_agent_configs.py::test_a_pipeline_run_freezes_the_projects_config_versions",
+    ),
+    Mutation(
+        "g4-fresh-feature-authority",
+        "backend/app/services/feature_flags.py",
+        "    redis_flag = None if fresh else await _load_from_redis(key)\n",
+        "    redis_flag = await _load_from_redis(key)\n",
+        "backend/tests/services/test_feature_flags_service.py::test_fresh_authority_read_bypasses_shared_cache",
+    ),
+    Mutation(
+        "g4-feature-writer-authority-lock",
+        "backend/app/services/feature_flags.py",
+        "    rollout_percent: int,\n    actor: User,\n) -> FeatureFlag:\n    await lock_global_agent_authority(db)\n",
+        "    rollout_percent: int,\n    actor: User,\n) -> FeatureFlag:\n",
+        "backend/tests/services/test_feature_flags_service.py::test_feature_flag_writers_share_the_global_authority_lock",
+    ),
+    Mutation(
+        "g4-ai-config-writer-authority-lock",
+        "backend/app/routers/app_settings.py",
+        "    await lock_global_agent_authority(db)\n    existing = await _load_ai_config(db)\n",
+        "    existing = await _load_ai_config(db)\n",
+        "backend/tests/regression/test_knowledge_rag_single_gate.py::test_flag_caches_are_dropped_after_the_commit_not_before",
+    ),
+    Mutation(
+        "g4-single-global-config-snapshot",
+        "backend/app/services/agent_config_resolver.py",
+        "        global_ai_config=ai_config,\n",
+        "        global_ai_config=await get_effective_ai_config(),\n",
+        "backend/tests/test_agent_config_resolver.py::test_project_resolution_uses_the_supplied_global_snapshot",
+    ),
+    Mutation(
+        "g4-fresh-global-config-authority",
+        "backend/app/services/ai_config_resolver.py",
+        "    if not fresh:\n        try:\n            from app.db.redis_client import get_redis\n            redis = get_redis()\n            cached = await redis.get(_CACHE_KEY)\n",
+        "    if True:\n        try:\n            from app.db.redis_client import get_redis\n            redis = get_redis()\n            cached = await redis.get(_CACHE_KEY)\n",
+        "backend/tests/services/test_ai_config_resolver.py::test_fresh_authority_snapshot_uses_callers_db_and_bypasses_cache",
+    ),
+    Mutation(
+        "g4-frontend-authoritative-evaluation-window",
+        "frontend/src/services/workflowService.ts",
+        "    sample_limit: 100,\n",
+        "    sample_limit: 20,\n",
+        "frontend/src/services/workflowService.test.ts",
+    ),
 )
 
 
 def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
+    if test.startswith("frontend/"):
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        return subprocess.run(
+            [npm, "run", "test", "--", test.removeprefix("frontend/")],
+            cwd=ROOT / "frontend",
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     return subprocess.run(
         [
             sys.executable,

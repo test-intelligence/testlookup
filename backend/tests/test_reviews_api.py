@@ -55,7 +55,7 @@ class _DB:
         self.committed = False
         self.statements = []
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, *args, **kwargs):
         self.statements.append(stmt)
         return SimpleNamespace(
             scalar_one_or_none=lambda: self.row,
@@ -82,6 +82,32 @@ def transitions(monkeypatch):
 
     monkeypatch.setattr("app.services.workflow_run_state.guarded_transition", _guarded)
     return calls
+
+
+@pytest.mark.asyncio
+async def test_settling_drift_review_takes_project_authority_lock(
+    monkeypatch, transitions
+):
+    lock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.agent_authority_lock.lock_project_agent_authority",
+        lock,
+    )
+    review = _review(
+        kind="eval_drift",
+        subject_type="capability",
+        pipeline_run_id=None,
+    )
+    db = _DB()
+
+    await svc.settle_review(
+        db,
+        review=review,
+        reviewer=_user(),
+        decision="accepted",
+    )
+
+    lock.assert_awaited_once_with(db, PROJECT)
 
 
 # ── settle_review: the refusals, in order ────────────────────────────────────

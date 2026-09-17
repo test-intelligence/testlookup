@@ -71,6 +71,7 @@ from app.services.agent_planner import (
     _LIVE_STAGES as _PLANNER_LIVE_STAGES,
     attach_workflow_plan_and_verification,
     build_workflow_plan,
+    compute_workflow_behavior_plan_hash,
     compute_workflow_plan_hash,
 )
 from app.services.agent_capability_registry import get_capability
@@ -1830,6 +1831,9 @@ async def _claim_pipeline_resume(
             "workflow_definition": metadata.get("workflow_definition"),
             "workflow_definition_sha256": metadata.get("workflow_definition_sha256"),
             "workflow_plan_sha256": metadata.get("workflow_plan_sha256"),
+            "workflow_behavior_plan_sha256": metadata.get(
+                "workflow_behavior_plan_sha256"
+            ),
             "workflow_runtime_authority_sha256": metadata.get(
                 "workflow_runtime_authority_sha256"
             ),
@@ -3257,6 +3261,18 @@ async def _create_pipeline_run(
         if invocation is not None and bool(invocation.cancel_requested):
             raise PipelineCancelled(str(pipeline_run_id))
 
+        authority_project_id = uuid.UUID(str(project_id))
+        from app.services.agent_authority_lock import (  # noqa: PLC0415
+            lock_agent_authority_snapshot,
+        )
+
+        await lock_agent_authority_snapshot(db, authority_project_id)
+        from app.services.ai_config_resolver import (  # noqa: PLC0415
+            get_effective_ai_config,
+        )
+
+        global_ai_config = await get_effective_ai_config(db=db, fresh=True)
+
         from app.services import workflow_definition_service as workflow_svc
 
         selected = await workflow_svc.get_published_definition(
@@ -3295,7 +3311,7 @@ async def _create_pipeline_run(
             )
 
             cluster_settings = await resolve_cluster_child_settings(
-                db, uuid.UUID(str(project_id))
+                db, authority_project_id, fresh_feature_flags=True
             )
         from app.services.agent_investigation_service import (
             get_effective_policy,
@@ -3306,16 +3322,17 @@ async def _create_pipeline_run(
         async_report_supersession_enabled = await is_enabled(
             "async_decision_report_supersession",
             db=db,
-            project_id=uuid.UUID(str(project_id)),
+            project_id=authority_project_id,
+            fresh=True,
         ) if workflow_type == "deep" else False
-        contract_agent_enabled = await is_enabled("contract_validation", db=db, project_id=uuid.UUID(str(project_id)))
-        log_intelligence_enabled = await is_enabled("log_intelligence", db=db, project_id=uuid.UUID(str(project_id)))
-        regression_watchman_enabled = await is_enabled("regression_watchman", db=db, project_id=uuid.UUID(str(project_id)))
-        change_ownership_enabled = await is_enabled("change_ownership", db=db, project_id=uuid.UUID(str(project_id)))
+        contract_agent_enabled = await is_enabled("contract_validation", db=db, project_id=authority_project_id, fresh=True)
+        log_intelligence_enabled = await is_enabled("log_intelligence", db=db, project_id=authority_project_id, fresh=True)
+        regression_watchman_enabled = await is_enabled("regression_watchman", db=db, project_id=authority_project_id, fresh=True)
+        change_ownership_enabled = await is_enabled("change_ownership", db=db, project_id=authority_project_id, fresh=True)
         # MUTATING stage — a missing flag row evaluates False, so absent = off.
-        defect_commander_enabled = await is_enabled("defect_commander", db=db, project_id=uuid.UUID(str(project_id)))
+        defect_commander_enabled = await is_enabled("defect_commander", db=db, project_id=authority_project_id, fresh=True)
 
-        policy = await get_effective_policy(db, uuid.UUID(str(project_id)))
+        policy = await get_effective_policy(db, authority_project_id)
         run_budget = run_budget_from_policy(policy)
         from app.services.agent_config_resolver import (
             FrozenAgentConfig,
@@ -3328,7 +3345,7 @@ async def _create_pipeline_run(
 
         # E4.1: freeze each configured agent's config_version, so a later
         # config change never alters how this run is interpreted.
-        agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
+        agent_config_versions = await _agent_config_versions(db, authority_project_id)
         workflow_agent_configs: dict[str, dict[str, Any]] = {}
         resolved_agent_configs: dict[str, dict[str, Any]] = {}
         endpoint_authority_fingerprints: dict[str, str] = {}
@@ -3338,8 +3355,9 @@ async def _create_pipeline_run(
             # project PUT that happened after this pipeline was accepted.
             resolved = await resolve_for_project(
                 db,
-                uuid.UUID(str(project_id)),
+                authority_project_id,
                 agent_id,
+                global_ai_config=global_ai_config,
             )
             snapshot = freeze_for_invocation(resolved)
             resolved_agent_configs[agent_id] = snapshot
@@ -3364,7 +3382,8 @@ async def _create_pipeline_run(
                 frozen_snapshot.model_dump(mode="json"),
                 expected_agent_id=expected_agent_id,
                 db=db,
-                project_id=uuid.UUID(str(project_id)),
+                project_id=authority_project_id,
+                global_ai_config=global_ai_config,
             )
             frozen_config = frozen_resolved.config
             accepted_snapshot = freeze_for_invocation(frozen_resolved)
@@ -3472,6 +3491,7 @@ async def _create_pipeline_run(
         plan_sha256 = compute_workflow_plan_hash(initial_plan)
         initial_plan["plan_id"] = f"plan:{plan_sha256[:20]}"
         initial_plan["plan_sha256"] = plan_sha256
+        behavior_plan_sha256 = compute_workflow_behavior_plan_hash(initial_plan)
         workflow_runtime_authority_sha256 = _workflow_runtime_authority_checksum(
             project_id=str(project_id),
             workflow_id=body.workflow_id,
@@ -3514,6 +3534,7 @@ async def _create_pipeline_run(
                 "workflow_definition": workflow_snapshot,
                 "workflow_definition_sha256": workflow_sha256,
                 "workflow_plan_sha256": initial_plan["plan_sha256"],
+                "workflow_behavior_plan_sha256": behavior_plan_sha256,
                 "workflow_runtime_authority_sha256": workflow_runtime_authority_sha256,
                 "workflow_deadline_seconds": body.deadline_seconds,
                 "workflow_agent_configs": workflow_agent_configs,
@@ -3580,6 +3601,7 @@ async def _create_pipeline_run(
             "workflow_definition": workflow_snapshot,
             "workflow_definition_sha256": workflow_sha256,
             "workflow_plan_sha256": initial_plan["plan_sha256"],
+            "workflow_behavior_plan_sha256": behavior_plan_sha256,
             "workflow_runtime_authority_sha256": workflow_runtime_authority_sha256,
             "workflow_deadline_seconds": body.deadline_seconds,
             "workflow_agent_configs": workflow_agent_configs,
@@ -3798,6 +3820,9 @@ async def _mark_pipeline_done(
                     "workflow_definition": prior_metadata.get("workflow_definition"),
                     "workflow_definition_sha256": prior_metadata.get("workflow_definition_sha256"),
                     "workflow_plan_sha256": prior_metadata.get("workflow_plan_sha256"),
+                    "workflow_behavior_plan_sha256": prior_metadata.get(
+                        "workflow_behavior_plan_sha256"
+                    ),
                     "workflow_runtime_authority_sha256": prior_metadata.get(
                         "workflow_runtime_authority_sha256"
                     ),

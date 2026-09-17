@@ -351,6 +351,9 @@ async def settle_review(
     from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind  # noqa: PLC0415
     from app.models.postgres import REVIEW_REASON_CODES  # noqa: PLC0415
     from app.services.privacy_service import sanitize_for_llm  # noqa: PLC0415
+    from app.services.agent_authority_lock import (  # noqa: PLC0415
+        lock_project_agent_authority,
+    )
     from app.services.workflow_run_state import (  # noqa: PLC0415
         PipelineRunStatus,
         TransitionLost,
@@ -359,6 +362,8 @@ async def settle_review(
 
     if decision not in ("accepted", "rejected"):
         raise ValueError(f"unknown review decision: {decision!r}")
+    if review.kind == "eval_drift":
+        await lock_project_agent_authority(db, review.project_id)
     if credential_kind(reviewer) != CREDENTIAL_KIND_JWT:
         raise ReviewDecisionRefused(
             403, "interactive_login_required",

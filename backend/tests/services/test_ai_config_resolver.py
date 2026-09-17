@@ -336,6 +336,28 @@ async def test_cached_value_round_trips_to_subsequent_call(monkeypatch, fake_red
     assert first["google_api_key"] == "g-key"
 
 
+@pytest.mark.asyncio
+async def test_fresh_authority_snapshot_uses_callers_db_and_bypasses_cache(
+    monkeypatch, fake_redis
+):
+    _set_env_defaults(monkeypatch)
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_secrets(monkeypatch)
+    await fake_redis.set(
+        _CACHE_KEY,
+        json.dumps({"provider": "stale", "offline_mode": True}),
+    )
+    row = MagicMock()
+    row.value = {"llm_provider": "ollama", "llm_model": "fresh-model"}
+    db = _make_db(row=row)
+
+    cfg = await get_effective_ai_config(db=db, fresh=True)
+
+    assert cfg["model"] == "fresh-model"
+    db.execute.assert_awaited_once()
+    assert await fake_redis.get(_CACHE_KEY) is not None
+
+
 # ── Graceful degradation ─────────────────────────────────────────────────────
 
 

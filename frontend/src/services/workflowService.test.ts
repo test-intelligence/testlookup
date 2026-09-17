@@ -62,7 +62,7 @@ describe('workflowService', () => {
       { params: { version: 1 } },
     )
     expect(postData).toHaveBeenCalledWith(
-      '/api/v1/projects/p1/workflows/wf.fast/evaluate', { version: 2, sample_limit: 20 },
+      '/api/v1/projects/p1/workflows/wf.fast/evaluate', { version: 2, sample_limit: 100 },
     )
     expect(postData).toHaveBeenCalledWith(
       '/api/v1/projects/p1/workflows/wf.fast/publish',

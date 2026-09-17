@@ -159,10 +159,16 @@ async def test_flag_caches_are_dropped_after_the_commit_not_before():
         calls.append("update_flag")
         return MagicMock()
 
+    async def _lock(_db):
+        calls.append("authority_lock")
+
+    async def _invalidate_ai():
+        calls.append("invalidate:ai_config")
+
     payload = MagicMock()
     payload.model_dump.return_value = {"knowledge_rag_enabled": True}
 
-    with patch("app.routers.app_settings._load_ai_config", new=AsyncMock(return_value={})),          patch("app.routers.app_settings._ml_status", new=AsyncMock(return_value={})),          patch("app.routers.app_settings.extract_secrets_from_config", return_value={}),          patch("app.routers.app_settings.log_settings_change", new=AsyncMock()),          patch("app.services.ai_config_resolver.env_offline_pinned", return_value=False),          patch("app.services.ai_config_resolver.resolve_offline_mode", return_value=(True, "env")),          patch("app.services.feature_flags.get_flag", new=AsyncMock(return_value=MagicMock())),          patch("app.services.feature_flags.update_flag", new=_update_flag),          patch("app.services.feature_flags.invalidate_flag_cache", new=_invalidate),          patch("app.services.feature_flags.is_enabled", new=AsyncMock(return_value=True)),          patch("app.routers.app_settings.AIConfigRead", new=MagicMock()):
+    with patch("app.routers.app_settings._load_ai_config", new=AsyncMock(return_value={})),          patch("app.routers.app_settings._ml_status", new=AsyncMock(return_value={})),          patch("app.routers.app_settings.extract_secrets_from_config", return_value={}),          patch("app.routers.app_settings.log_settings_change", new=AsyncMock()),          patch("app.services.agent_authority_lock.lock_global_agent_authority", new=_lock),          patch("app.services.ai_config_resolver.invalidate_ai_config_cache", new=_invalidate_ai),          patch("app.services.ai_config_resolver.env_offline_pinned", return_value=False),          patch("app.services.ai_config_resolver.resolve_offline_mode", return_value=(True, "env")),          patch("app.services.feature_flags.get_flag", new=AsyncMock(return_value=MagicMock())),          patch("app.services.feature_flags.update_flag", new=_update_flag),          patch("app.services.feature_flags.invalidate_flag_cache", new=_invalidate),          patch("app.services.feature_flags.is_enabled", new=AsyncMock(return_value=True)),          patch("app.routers.app_settings.AIConfigRead", new=MagicMock()):
         try:
             await settings_router.update_ai_config(payload, current_user=MagicMock(), db=db)
         except Exception:
@@ -170,8 +176,9 @@ async def test_flag_caches_are_dropped_after_the_commit_not_before():
             pass
 
     assert "commit" in calls, f"handler never committed: {calls}"
+    assert calls.index("authority_lock") < calls.index("commit")
+    assert calls.index("invalidate:ai_config") > calls.index("commit")
     assert "invalidate:knowledge_rag" in calls, f"caches never dropped: {calls}"
     assert calls.index("invalidate:knowledge_rag") > calls.index("commit"), (
         f"invalidated before the commit — the stale row wins: {calls}"
     )
-

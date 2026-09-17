@@ -69,8 +69,10 @@ class _ReviewSession:
         self.live = live
         self.added = []
         self.flushes = 0
+        self.params = []
 
-    async def execute(self, _statement):
+    async def execute(self, _statement, params=None):
+        self.params.append(params)
         return _ScalarResult(self.live)
 
     def add(self, row):
@@ -121,6 +123,7 @@ async def test_detected_drift_creates_one_pending_capability_review():
     assert row.state == "pending_review"
     assert len(row.evidence_bundle_sha256) == 64
     assert row.eval_manifest_checksum == drift.current_eval_manifest_checksum()
+    assert db.params[0] == {"key": f"agent-config-authority:{project_id}"}
 
 
 @pytest.mark.asyncio

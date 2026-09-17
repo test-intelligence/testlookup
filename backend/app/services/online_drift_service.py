@@ -20,6 +20,7 @@ from app.models.postgres import (
     ReviewRequest,
 )
 from app.services.agent_capability_registry import get_capability
+from app.services.agent_authority_lock import lock_project_agent_authority
 from app.services.eval_provenance_service import current_eval_manifest_checksum
 from app.services.review_request_service import AI_DISCLAIMER_VERSION
 
@@ -123,6 +124,7 @@ async def ensure_drift_review(
     report: Mapping[str, Any],
 ) -> tuple[ReviewRequest, bool]:
     """Return the live pin, creating a new pending human review when needed."""
+    await lock_project_agent_authority(db, project_id)
     subject_id = f"{project_id}:{capability_id}"
     live = (
         await db.execute(

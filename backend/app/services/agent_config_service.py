@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,10 @@ from app.services.llm_policy_service import (
     configured_provider_allowlist,
 )
 from app.services.retry_policy import DEFAULT_RETRYABLE
+from app.services.agent_authority_lock import (
+    lock_project_agent_authority,
+    project_agent_authority_lock_key,
+)
 
 Mode = Literal["shadow", "suggest", "act"]
 Tier = Literal["auto", "deterministic", "slm", "llm"]
@@ -602,15 +606,12 @@ _COLUMN_FIELDS = frozenset({"agent_id", "enabled", "mode"})
 
 def agent_config_authority_lock_key(project_id: uuid.UUID) -> str:
     """Return the transaction-lock domain shared by config writes and G4."""
-    return f"agent-config-authority:{project_id}"
+    return project_agent_authority_lock_key(project_id)
 
 
 async def lock_agent_config_authority(db: AsyncSession, project_id: uuid.UUID) -> None:
     """Keep a project config snapshot stable until the transaction finishes."""
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-        {"key": agent_config_authority_lock_key(project_id)},
-    )
+    await lock_project_agent_authority(db, project_id)
 
 
 async def get_config_row(db: AsyncSession, project_id: uuid.UUID, agent_id: str) -> Optional[AgentConfig]:

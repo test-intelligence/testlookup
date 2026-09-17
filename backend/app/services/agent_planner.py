@@ -11,7 +11,7 @@ import math
 import re
 import uuid
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from app.core.config import settings
 from app.services.agent_capability_registry import get_capability
@@ -119,6 +119,27 @@ def invocation_stage_closure(workflow_type: str, stage_name: str) -> list[str]:
 def compute_workflow_plan_hash(plan: dict[str, Any]) -> str:
     """Hash the authoritative plan projection, excluding digest metadata."""
     projection = {key: value for key, value in plan.items() if key not in {"plan_id", "plan_sha256"}}
+    canonical = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def compute_workflow_behavior_plan_hash(plan: Mapping[str, Any]) -> str:
+    """Hash only plan fields that can change execution behavior.
+
+    Workflow identity and descriptive fields are provenance. Including them
+    in G4's replay authority prevents a behavior-identical fork or version
+    from reusing evidence produced by its predecessor.
+    """
+    excluded = {
+        "plan_id",
+        "plan_sha256",
+        "workflow_id",
+        "workflow_version",
+        "workflow_ref",
+        "name",
+        "description",
+    }
+    projection = {key: value for key, value in plan.items() if key not in excluded}
     canonical = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 

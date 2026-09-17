@@ -470,8 +470,14 @@ async def update_ai_config(
 ) -> AIConfigRead:
     from sqlalchemy import select
 
-    from app.services.ai_config_resolver import env_offline_pinned, resolve_offline_mode
+    from app.services.agent_authority_lock import lock_global_agent_authority
+    from app.services.ai_config_resolver import (
+        env_offline_pinned,
+        invalidate_ai_config_cache,
+        resolve_offline_mode,
+    )
 
+    await lock_global_agent_authority(db)
     existing = await _load_ai_config(db)
     updates = payload.model_dump(exclude_none=True)
 
@@ -556,6 +562,7 @@ async def update_ai_config(
     # Audit log
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
+    await invalidate_ai_config_cache()
     # Cache in Redis for fast sync reads by analysis_router / knowledge services
     try:
         from app.db.redis_client import get_redis

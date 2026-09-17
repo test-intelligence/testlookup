@@ -4,11 +4,13 @@ import uuid
 from hashlib import sha256
 from types import SimpleNamespace
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
 from app.models.postgres import WorkflowDefinition
 from app.services import workflow_evaluation_service as svc
+from app.services.agent_planner import compute_workflow_behavior_plan_hash
 
 
 PROJECT_ID = uuid.uuid4()
@@ -148,8 +150,7 @@ def test_step_authority_covers_every_behavior_input(change: str) -> None:
         endpoint_authority_fingerprints=endpoints,
         prompt_versions=prompts,
         runtime_versions=runtime,
-        workflow_plan_sha256="a" * 64,
-        workflow_runtime_authority_sha256="b" * 64,
+        workflow_behavior_plan_sha256="a" * 64,
         planning_context=planning,
     )
     if change == "tools":
@@ -178,11 +179,84 @@ def test_step_authority_covers_every_behavior_input(change: str) -> None:
         endpoint_authority_fingerprints=endpoints,
         prompt_versions=prompts,
         runtime_versions=runtime,
-        workflow_plan_sha256=("c" * 64 if change == "plan" else "a" * 64),
-        workflow_runtime_authority_sha256="b" * 64,
+        workflow_behavior_plan_sha256=(
+            "c" * 64 if change == "plan" else "a" * 64
+        ),
         planning_context=planning,
     )
     assert changed != baseline
+
+
+def test_behavior_identical_workflow_identity_reuses_replay_authority() -> None:
+    first = _definition()
+    second = {
+        **_definition(),
+        "workflow_id": "wf.custom.fork",
+        "version": 9,
+        "project_id": str(uuid.uuid4()),
+        "name": "Renamed fork",
+        "description": "Provenance-only text",
+    }
+    first_plan = {
+        "workflow_id": first["workflow_id"],
+        "workflow_version": first["version"],
+        "workflow_ref": f"{first['workflow_id']}@{first['version']}",
+        "stages": [{"stage": "summary", "planned": True}],
+    }
+    second_plan = {
+        **first_plan,
+        "workflow_id": second["workflow_id"],
+        "workflow_version": second["version"],
+        "workflow_ref": f"{second['workflow_id']}@{second['version']}",
+        "name": second["name"],
+        "description": second["description"],
+    }
+    common: dict[str, Any] = {
+        "step_id": "summary",
+        "resolved_agent_configs": {},
+        "endpoint_authority_fingerprints": {},
+        "prompt_versions": {},
+        "runtime_versions": {"workflow": "v1"},
+        "planning_context": {},
+    }
+    historical = svc.step_execution_authority(
+        definition=first,
+        workflow_behavior_plan_sha256=compute_workflow_behavior_plan_hash(first_plan),
+        **common,
+    )
+    candidate = svc.step_execution_authority(
+        definition=second,
+        workflow_behavior_plan_sha256=compute_workflow_behavior_plan_hash(second_plan),
+        **common,
+    )
+    assert candidate == historical
+
+    case = _case(0)
+    entry = case.entries[0]
+    replay_case = svc.ReplayCase(**{
+        **case.__dict__,
+        "entries": (
+            svc.ReplayEntry(**{
+                **entry.__dict__,
+                "authority_sha256": historical,
+                "input_hash": svc.replay_input_hash(
+                    PROJECT_ID,
+                    entry.input_checksum_sha256,
+                    "summary",
+                    historical,
+                ),
+            }),
+        ),
+    })
+    result = svc.evaluate_replay(
+        project_id=PROJECT_ID,
+        workflow_id=second["workflow_id"],
+        version=second["version"],
+        definition=second,
+        cases=[replay_case],
+        candidate_step_authority={"summary": candidate},
+    )
+    assert result["cases"][0]["steps"][0]["measurement"] == "replayed"
 
 
 def test_replay_hash_uses_recorded_input_not_test_run_identity() -> None:
