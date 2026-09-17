@@ -1,10 +1,12 @@
 """One persisted journey from result ingestion to a release gate verdict."""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import uuid
 import warnings
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -312,6 +314,99 @@ async def test_compliance_history_excludes_phase_gate_rows() -> None:
                 raise
             warnings.warn(
                 f"history cleanup failed after primary failure: {cleanup_error!r}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
+        finally:
+            await engine.dispose()
+
+
+async def test_concurrent_release_overrides_preserve_both_audit_entries() -> None:
+    """Two QA decisions must serialize instead of losing one audit record."""
+    from app.models.postgres import Project, ReleaseDecision, TestRun
+    from app.services import policy_evaluator_service
+    from app.services.release_council_service import apply_override
+
+    token = uuid.uuid4().hex
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    engine = create_async_engine(_dsn(), pool_size=3, max_overflow=0)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def no_policy_with_overlap(*_args, **_kwargs):
+        # Without a row lock, this gives both transactions time to read the
+        # same pre-override JSON audit list before either flushes its update.
+        await asyncio.sleep(0.2)
+        return None, "hardcoded"
+
+    async def override(recommendation: str, reason: str) -> None:
+        async with sessions() as db:
+            result = await apply_override(
+                run_id,
+                recommendation,
+                reason,
+                SimpleNamespace(id=None, username=f"qa-{recommendation.lower()}"),
+                db,
+            )
+            assert result is not None
+            await db.commit()
+
+    try:
+        async with sessions() as db:
+            db.add(Project(id=project_id, name=f"Override {token}", slug=f"override-{token}"))
+            db.add(
+                TestRun(
+                    id=run_id,
+                    project_id=project_id,
+                    build_number=f"override-{token}",
+                    jenkins_job="coverage-integration",
+                    status="completed",
+                )
+            )
+            await db.flush()
+            db.add(
+                ReleaseDecision(
+                    test_run_id=run_id,
+                    recommendation="NO_GO",
+                    risk_score=80,
+                    override_audit=[],
+                )
+            )
+            await db.commit()
+
+        with patch.object(
+            policy_evaluator_service,
+            "resolve_effective_policy",
+            no_policy_with_overlap,
+        ):
+            await asyncio.gather(
+                override("GO", "first independent QA decision"),
+                override("CONDITIONAL_GO", "second independent QA decision"),
+            )
+
+        async with sessions() as db:
+            decision = (
+                await db.execute(
+                    select(ReleaseDecision).where(ReleaseDecision.test_run_id == run_id)
+                )
+            ).scalar_one()
+            assert decision.original_recommendation == "NO_GO"
+            assert len(decision.override_audit or []) == 2
+            assert {entry["reason"] for entry in decision.override_audit or []} == {
+                "first independent QA decision",
+                "second independent QA decision",
+            }
+    finally:
+        primary_error = sys.exception()
+        try:
+            async with sessions() as db:
+                await db.execute(delete(Project).where(Project.id == project_id))
+                await db.commit()
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            warnings.warn(
+                f"override-race cleanup failed after primary failure: {cleanup_error!r}",
                 RuntimeWarning,
                 stacklevel=1,
             )

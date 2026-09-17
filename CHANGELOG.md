@@ -2,6 +2,10 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Concurrent release-readiness overrides now lock the persisted decision while
+appending its audit trail. Two QA decisions racing from stale pages therefore
+remain visible instead of the last commit silently erasing the first audit row.
+
 Added a repository-grounded GPT-5.6 Sol execution package with 26 live missions,
 specialized QA/developer/reviewer assignments, mandatory unit and deployed E2E
 regressions for every defect, evidence templates, homelab deployment/rollback
