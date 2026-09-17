@@ -166,8 +166,55 @@ def test_the_task_withholds_the_ai_summary_from_preferences_and_digests(monkeypa
     )
     assert prefs["executive_summary"] == policy.REVIEW_PENDING_NOTICE
     assert prefs["executive_panel"] is None, "the panel carries the AI verdict; it must go with the text"
+    assert prefs["original_executive_summary"] == AI_TEXT
+    assert prefs["summary_is_ai"] is True
     assert deliveries and deliveries[0]["body"] == policy.REVIEW_PENDING_NOTICE
-    assert AI_TEXT not in str(deliveries)
+    marker = deliveries[0]["metadata"]["_review_gate_v1"]
+    assert marker["original_summary"] == AI_TEXT
+
+
+@pytest.mark.asyncio
+async def test_notification_relay_refreshes_terminal_and_accepted_review_content(
+    monkeypatch, world,
+):
+    from app.services.notification import manager
+
+    record = AsyncMock()
+    monkeypatch.setattr(policy, "record_distribution", record)
+    row = SimpleNamespace(
+        title="AI summary",
+        body="stale draft",
+        run_id=RUN,
+        project_id=PROJECT,
+        delivery_key="delivery-key",
+        delivery_metadata={
+            "executive_panel": None,
+            manager._REVIEW_GATE_METADATA_KEY: {
+                "original_summary": AI_TEXT,
+                "accepted_body_prefix": "accepted prefix\n\n",
+                "withheld_body_prefix": "withheld prefix\n\n",
+                "original_executive_panel": {"headline": "NO_GO"},
+                "ai_generated": True,
+            },
+        },
+    )
+
+    world.review = "rejected"
+    _title, rejected_body, rejected_metadata = (
+        await manager._refresh_review_gated_delivery(object(), row)
+    )
+    assert rejected_body == f"withheld prefix\n\n{policy.REVIEW_PENDING_NOTICE}"
+    assert AI_TEXT not in rejected_body
+    assert rejected_metadata["executive_panel"] is None
+    assert manager._REVIEW_GATE_METADATA_KEY not in rejected_metadata
+
+    world.review = "accepted"
+    _title, accepted_body, accepted_metadata = (
+        await manager._refresh_review_gated_delivery(object(), row)
+    )
+    assert accepted_body == f"accepted prefix\n\n{AI_TEXT}"
+    assert accepted_metadata["executive_panel"] == {"headline": "NO_GO"}
+    assert manager._REVIEW_GATE_METADATA_KEY not in accepted_metadata
 
 
 def test_the_task_drafts_the_summary_under_a_project_opt_in(monkeypatch, world):

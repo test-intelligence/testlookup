@@ -3043,8 +3043,12 @@ def dispatch_ai_summary_email(
                     executive_summary = fallback.executive_summary
                     executive_panel = fallback.executive_panel
 
+        original_executive_summary = executive_summary
+        original_executive_panel = executive_panel
+
         from app.core.config import settings
         from app.services.notification.manager import (
+            _REVIEW_GATE_METADATA_KEY,
             dispatch_ai_summary_notifications,
             stage_explicit_notification_deliveries,
         )
@@ -3116,6 +3120,11 @@ def dispatch_ai_summary_email(
             failed_tests=_failed_tests,
             dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
             delivery_scope=f"{delivery_scope}:preferences",
+            original_executive_summary=(
+                original_executive_summary if summary_is_ai else None
+            ),
+            original_executive_panel=original_executive_panel,
+            summary_is_ai=summary_is_ai,
         )
 
         # 2. EM-4 + F9: dispatch every EVENT-DRIVEN digest subscription.
@@ -3180,6 +3189,19 @@ def dispatch_ai_summary_email(
                             "failed_tests": _failed_tests,
                             "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
                             "executive_panel": executive_panel,
+                            **(
+                                {
+                                    _REVIEW_GATE_METADATA_KEY: {
+                                        "original_summary": original_executive_summary,
+                                        "accepted_body_prefix": "",
+                                        "withheld_body_prefix": "",
+                                        "original_executive_panel": original_executive_panel,
+                                        "ai_generated": True,
+                                    }
+                                }
+                                if summary_is_ai
+                                else {}
+                            ),
                         },
                     }
                 )

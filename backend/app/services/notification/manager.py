@@ -181,6 +181,83 @@ async def _digest_rows_still_deliverable(
 _MAX_DURABLE_DELIVERY_ATTEMPTS = 8
 _TEAM_ROUTE_METADATA_KEY = "_durable_team_route"
 _EXPLICIT_ROUTE_METADATA_KEY = "_durable_explicit_route"
+_REVIEW_GATE_METADATA_KEY = "_review_gate_v1"
+
+
+async def _refresh_review_gated_delivery(
+    db: Any,
+    row: NotificationLog,
+) -> tuple[str, str, dict[str, Any]]:
+    """Re-evaluate an AI narrative immediately before each provider attempt.
+
+    Durable rows can wait through a review transition. Their internal metadata
+    retains the original narrative so acceptance can release it, while a later
+    rejection or supersession replaces it with the review notice. The marker is
+    removed before provider dispatch.
+    """
+    metadata = dict(row.delivery_metadata or {})
+    context = metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
+    if not isinstance(context, dict) or row.run_id is None or row.project_id is None:
+        return row.title, row.body, metadata
+
+    original_summary = str(context.get("original_summary") or "")
+    accepted_body_prefix = str(context.get("accepted_body_prefix") or "")
+    withheld_body_prefix = str(
+        context.get("withheld_body_prefix") or accepted_body_prefix
+    )
+    ai_generated = bool(context.get("ai_generated", True))
+    original_panel = context.get("original_executive_panel")
+    try:
+        from app.services.report_distribution_policy import (
+            gate_ai_summary_text,
+            record_distribution,
+        )
+
+        summary, decision = await gate_ai_summary_text(
+            db,
+            run_id=row.run_id,
+            project_id=row.project_id,
+            summary_text=original_summary,
+            ai_generated=ai_generated,
+            channel="ai_summary_notification_relay",
+        )
+        if decision is not None:
+            await record_distribution(
+                db,
+                decision,
+                channel="ai_summary_notification_relay",
+                run_id=row.run_id,
+                project_id=row.project_id,
+            )
+        metadata["executive_panel"] = (
+            None if decision is not None and not decision.allowed else original_panel
+        )
+        body_prefix = (
+            withheld_body_prefix
+            if decision is not None and not decision.allowed
+            else accepted_body_prefix
+        )
+        return row.title, f"{body_prefix}{summary}", metadata
+    except Exception as exc:  # noqa: BLE001 -- delivery fails closed when enforced
+        from app.services.report_distribution_policy import (
+            REVIEW_PENDING_NOTICE,
+            gate_enforced,
+        )
+
+        logger.warning(
+            "Notification review gate refresh failed delivery=%s: %s",
+            row.delivery_key,
+            type(exc).__name__,
+        )
+        if ai_generated and gate_enforced():
+            metadata["executive_panel"] = None
+            return (
+                row.title,
+                f"{withheld_body_prefix}{REVIEW_PENDING_NOTICE}",
+                metadata,
+            )
+        metadata["executive_panel"] = original_panel
+        return row.title, f"{accepted_body_prefix}{original_summary}", metadata
 
 
 # ── Message builders ──────────────────────────────────────────
@@ -867,6 +944,20 @@ async def relay_pending_notification_deliveries(
             for row in rows
         }
         digest_rows_allowed = await _digest_rows_still_deliverable(db, rows, explicit_routes)
+        delivery_content: dict[uuid.UUID, tuple[str, str, dict[str, Any]]] = {}
+        review_gated_rows = [
+            row
+            for row in rows
+            if isinstance(row.delivery_metadata, dict)
+            and isinstance(
+                row.delivery_metadata.get(_REVIEW_GATE_METADATA_KEY), dict
+            )
+        ]
+        for row in review_gated_rows:
+            delivery_content[row.id] = await _refresh_review_gated_delivery(db, row)
+        if review_gated_rows:
+            # Persist the audit decision made for this concrete provider attempt.
+            await db.commit()
         needs_email = any(
             (
                 preferences_by_row.get(row.id, (None, None))[0] is not None
@@ -911,16 +1002,20 @@ async def relay_pending_notification_deliveries(
             if not target:
                 return "failed", "Notification delivery target is missing"
             event = NotificationEventType(row.event_type)
-            metadata = dict(row.delivery_metadata or {})
+            title, body, metadata = delivery_content.get(
+                row.id,
+                (row.title, row.body, dict(row.delivery_metadata or {})),
+            )
             metadata.pop(_TEAM_ROUTE_METADATA_KEY, None)
             metadata.pop(_EXPLICIT_ROUTE_METADATA_KEY, None)
+            metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
             if channel == NotificationChannel.EMAIL:
                 if not (smtp_cfg or {}).get("enabled"):
                     return "failed", "SMTP is not configured — no email was sent"
                 await email_service.send_notification(
                     to=target,
-                    title=row.title,
-                    body=row.body,
+                    title=title,
+                    body=body,
                     event_type=event.value,
                     metadata=metadata,
                     smtp_cfg=smtp_cfg,
@@ -932,8 +1027,8 @@ async def relay_pending_notification_deliveries(
                 # deployment's own, so the allow-list does not cover them.
                 await slack_service.send_notification(
                     webhook_url=target,
-                    title=row.title,
-                    body=row.body,
+                    title=title,
+                    body=body,
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
@@ -942,8 +1037,8 @@ async def relay_pending_notification_deliveries(
             elif channel == NotificationChannel.TEAMS:
                 await teams_service.send_notification(
                     webhook_url=target,
-                    title=row.title,
-                    body=row.body,
+                    title=title,
+                    body=body,
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
@@ -1012,13 +1107,18 @@ async def relay_pending_notification_deliveries(
             event = NotificationEventType(row.event_type)
         except ValueError:
             return "failed", f"Unsupported notification event: {row.event_type}"
+        title, body, metadata = delivery_content.get(
+            row.id,
+            (row.title, row.body, dict(row.delivery_metadata or {})),
+        )
+        metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
         return await _dispatch_to_channel(
             pref,
             user_email,
-            row.title,
-            row.body,
+            title,
+            body,
             event,
-            dict(row.delivery_metadata or {}),
+            metadata,
             smtp_cfg,
             global_webhooks,
             delivery_id=row.delivery_key,
@@ -1231,6 +1331,9 @@ async def dispatch_ai_summary_notifications(
     failed_tests: int = 0,
     dashboard_url: str = "#",
     delivery_scope: Optional[str] = None,
+    original_executive_summary: Optional[str] = None,
+    original_executive_panel: Optional[dict] = None,
+    summary_is_ai: bool = False,
 ) -> None:
     """
     Send AI executive-summary email after the AI pipeline completes.
@@ -1240,23 +1343,27 @@ async def dispatch_ai_summary_notifications(
     """
     events = [NotificationEventType.AI_ANALYSIS_COMPLETE]
 
-    status_signal = "CONDITIONAL_GO"
-    risk_score = None
-    if executive_panel:
-        status_signal = executive_panel.get("status_signal", "CONDITIONAL_GO")
-        risk_score = executive_panel.get("risk_score")
-
     title = f"🤖 AI Summary — Build {build_number}"
-    if failed_tests == 0:
-        body = f"All {total_tests} tests passed in {project_name} (build {build_number}). No issues detected."
-    else:
-        body = (
+    def _body_prefix(panel: Optional[dict]) -> str:
+        if failed_tests == 0:
+            return ""
+        status_signal = "CONDITIONAL_GO"
+        risk_score = None
+        if panel:
+            status_signal = panel.get("status_signal", "CONDITIONAL_GO")
+            risk_score = panel.get("risk_score")
+        return (
             f"{failed_tests} failure{'s' if failed_tests != 1 else ''} detected in {project_name} "
             f"(build {build_number}, {pass_rate:.1f}% pass rate). "
             f"Release signal: {status_signal.replace('_', ' ')}"
             + (f" (risk {risk_score}/100)" if risk_score is not None else "")
-            + f".\n\n{executive_summary}"
+            + ".\n\n"
         )
+
+    if failed_tests == 0:
+        body = f"All {total_tests} tests passed in {project_name} (build {build_number}). No issues detected."
+    else:
+        body = f"{_body_prefix(executive_panel)}{executive_summary}"
 
     meta = {
         "project_name": project_name,
@@ -1267,6 +1374,14 @@ async def dispatch_ai_summary_notifications(
         "dashboard_url": dashboard_url,
         "executive_panel": executive_panel,
     }
+    if original_executive_summary is not None and failed_tests > 0:
+        meta[_REVIEW_GATE_METADATA_KEY] = {
+            "original_summary": original_executive_summary,
+            "accepted_body_prefix": _body_prefix(original_executive_panel),
+            "withheld_body_prefix": _body_prefix(None),
+            "original_executive_panel": original_executive_panel,
+            "ai_generated": summary_is_ai,
+        }
 
     def _msg(_event: NotificationEventType) -> tuple[str, str]:
         return title, body

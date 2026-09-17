@@ -1309,6 +1309,99 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
 
 
 @pytest.mark.asyncio
+async def test_notification_retry_rechecks_review_before_sending_accepted_narrative(
+    monkeypatch,
+):
+    from app.models.postgres import NotificationChannel, NotificationEventType
+    from app.services.notification import manager
+
+    pref = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        channel=NotificationChannel.EMAIL,
+        email_override=None,
+    )
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=pref.project_id,
+        run_id=uuid.uuid4(),
+        preference_id=pref.id,
+        delivery_attempts=1,
+        delivery_token=uuid.uuid4(),
+        event_type=NotificationEventType.AI_ANALYSIS_COMPLETE.value,
+        title="AI summary",
+        body="stale pending draft",
+        delivery_metadata={
+            "pass_rate": 80.0,
+            "_review_gate_v1": {"original_summary": "accepted narrative"},
+        },
+        delivery_key=hashlib.sha256(b"review-aware-notification").hexdigest(),
+    )
+
+    claim_dbs = [MagicMock(), MagicMock()]
+    outcome_dbs = [MagicMock(), MagicMock()]
+    for db in claim_dbs:
+        preferences = MagicMock()
+        preferences.all.return_value = [(pref, "qa@example.test")]
+        recipient = MagicMock()
+        recipient.all.return_value = [(pref.user_id, True, "QA_ENGINEER")]
+        membership = MagicMock()
+        membership.all.return_value = [(pref.user_id, pref.project_id)]
+        db.execute = AsyncMock(side_effect=[preferences, recipient, membership])
+        db.commit = AsyncMock()
+    for db in outcome_dbs:
+        db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+        db.commit = AsyncMock()
+    sessions = iter(
+        [claim_dbs[0], outcome_dbs[0], claim_dbs[1], outcome_dbs[1]]
+    )
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return next(sessions)
+
+        async def __aexit__(self, *_args):
+            return False
+
+    refresh = AsyncMock(
+        side_effect=[
+            ("AI summary", "awaiting human review", {"pass_rate": 80.0}),
+            ("AI summary", "accepted narrative", {"pass_rate": 80.0}),
+        ]
+    )
+    send = AsyncMock(side_effect=[("failed", "provider timeout"), ("sent", None)])
+    monkeypatch.setattr(manager, "AsyncSessionLocal", lambda: _SessionContext())
+    monkeypatch.setattr(
+        manager,
+        "claim_pending_notification_deliveries",
+        AsyncMock(side_effect=[[row], [row]]),
+    )
+    monkeypatch.setattr(
+        manager, "_refresh_review_gated_delivery", refresh, raising=False
+    )
+    monkeypatch.setattr(manager, "_dispatch_to_channel", send)
+    monkeypatch.setattr(
+        manager.email_service,
+        "_get_smtp_cfg",
+        AsyncMock(return_value={"enabled": True}),
+    )
+
+    first = await manager.relay_pending_notification_deliveries()
+    row.delivery_attempts = 2
+    row.delivery_token = uuid.uuid4()
+    second = await manager.relay_pending_notification_deliveries()
+
+    assert first == {"claimed": 1, "sent": 0, "retrying": 1, "failed": 0}
+    assert second == {"claimed": 1, "sent": 1, "retrying": 0, "failed": 0}
+    assert [call.args[3] for call in send.await_args_list] == [
+        "awaiting human review",
+        "accepted narrative",
+    ]
+    assert refresh.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_explicit_digest_delivery_retries_then_updates_subscription_once(
     monkeypatch,
 ):
