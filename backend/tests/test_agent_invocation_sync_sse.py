@@ -150,7 +150,10 @@ async def test_the_sync_slot_is_released_when_the_wait_raises(invoke, monkeypatc
 async def test_the_wait_polls_until_the_run_leaves_in_progress(monkeypatch):
     from app.routers import agent_invoke as router
 
-    views = iter([_view("in_progress"), _view("in_progress"), _view("passed")])
+    first = _view("in_progress")
+    unchanged = dict(first)
+    passed = {**first, "status": "passed", "output": {"flaky": []}}
+    views = iter([first, unchanged, passed])
     view = AsyncMock(side_effect=lambda _db, _inv: next(views))
     monkeypatch.setattr(router, "_invocation_view", view)
     sleep = AsyncMock()
@@ -325,7 +328,10 @@ async def test_the_stream_sends_one_event_per_change_and_stops_when_the_run_fini
     async def _factory():
         yield _Session()
 
-    views = iter([_view("in_progress"), _view("in_progress"), _view("passed")])
+    first = _view("in_progress")
+    unchanged = dict(first)
+    passed = {**first, "status": "passed", "output": {"flaky": []}}
+    views = iter([first, unchanged, passed])
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
     monkeypatch.setattr(router, "_invocation_view", AsyncMock(side_effect=lambda _db, _inv: next(views)))
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
@@ -392,3 +398,24 @@ def test_the_events_route_is_guarded_by_the_ticket_and_the_ticket_route_by_acces
     assert "require_invocation_stream_ticket" in events.dependency.__qualname__
     ticket = inspect.signature(router.issue_invocation_stream_ticket).parameters["current_user"].default
     assert "require_invocation_access" in ticket.dependency.__qualname__
+
+
+def test_the_eventsource_route_is_not_hidden_behind_the_global_header_auth():
+    """The ticket is the stream credential; EventSource cannot add headers."""
+    from fastapi.routing import APIRoute
+
+    from app.bootstrap import PROTECTED_ROUTERS, PUBLIC_ROUTERS
+    from app.routers import agent_invoke as router
+
+    assert router.stream_router in PUBLIC_ROUTERS
+    assert router.stream_router not in PROTECTED_ROUTERS
+    routes = [route for route in router.stream_router.routes if isinstance(route, APIRoute)]
+    assert [(route.path, route.methods) for route in routes] == [
+        ("/api/v1/agents/invocations/{invocation_id}/events", {"GET"}),
+    ]
+    dependency_names = {
+        getattr(dependency.call, "__qualname__", "")
+        for dependency in routes[0].dependant.dependencies
+    }
+    assert any("require_invocation_stream_ticket" in name for name in dependency_names)
+    assert not any("get_current_user_or_api_key" in name for name in dependency_names)

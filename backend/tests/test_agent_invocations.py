@@ -336,7 +336,7 @@ def _invocation(**overrides):
         "id": uuid.uuid4(), "project_id": uuid.uuid4(), "agent_id": "agent.summary.v1",
         "stage_name": "summary", "test_run_id": uuid.uuid4(), "pipeline_run_id": uuid.uuid4(),
         "workflow_type": "offline", "mode": "async", "created_at": datetime.now(timezone.utc),
-        "cancel_requested": False,
+        "cancel_requested": False, "requested_by": None,
     }
     base.update(overrides)
     return SimpleNamespace(**base)

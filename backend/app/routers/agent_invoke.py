@@ -83,6 +83,11 @@ from app.services.workflow_run_state import (
 )
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agent Invocations"])
+# EventSource cannot attach the router-wide Bearer/API-key credential installed
+# on protected routers.  The stream therefore lives on a separate public
+# router and authenticates with the invocation-bound, single-use ticket that
+# the protected ticket endpoint issues.
+stream_router = APIRouter(prefix="/api/v1/agents", tags=["Agent Invocations"])
 
 #: An invocation whose pipeline run has not appeared this long after it was
 #: dispatched was lost (broker down, worker gone). It reads ``failed`` so a
@@ -604,7 +609,7 @@ async def issue_invocation_stream_ticket(
     }
 
 
-@router.get("/invocations/{invocation_id}/events")
+@stream_router.get("/invocations/{invocation_id}/events")
 async def stream_invocation_events(
     invocation_id: uuid.UUID,
     request: Request,

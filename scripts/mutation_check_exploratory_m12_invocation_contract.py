@@ -113,6 +113,13 @@ MUTATIONS = (
         "backend/tests/test_agent_invocation_sync_sse.py::test_ticket_issue_regenerates_after_a_token_collision",
     ),
     Mutation(
+        "eventsource-public-router",
+        "backend/app/bootstrap.py",
+        "    agent_invoke.stream_router,\n",
+        "",
+        "backend/tests/test_agent_invocation_sync_sse.py::test_the_eventsource_route_is_not_hidden_behind_the_global_header_auth",
+    ),
+    Mutation(
         "sse-observable-change",
         "backend/app/routers/agent_invoke.py",
         'key = json.dumps(payload, sort_keys=True, separators=(",", ":"))',
