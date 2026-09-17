@@ -43,7 +43,7 @@ import structlog
 from sqlalchemy import select
 
 from app.core.metrics import review_requests_total
-from app.models.postgres import AgentActionLedger, AgentPipelineRun, ReviewRequest
+from app.models.postgres import AgentActionLedger, AgentPipelineRun, ReviewRequest, TestRun
 from app.services.agent_capability_registry import get_capability, is_report_producing
 from app.services.eval_label_provenance import checksum_from_execution_metadata
 
@@ -154,9 +154,20 @@ async def create_run_review_request(
         return None
     requester = _as_uuid(requested_by)
     subject_id = str(run.id)
+    test_run_id = _as_uuid(getattr(run, "test_run_id", None))
+    workflow_type = getattr(run, "workflow_type", None)
     manifest_checksum = checksum_from_execution_metadata(
         getattr(run, "execution_metadata", None)
     )
+
+    # A row lock on an existing review cannot serialize two concurrent inserts
+    # for different pipeline subjects: each transaction may see neither one's
+    # uncommitted row. Lock the stable parent before either insert so every
+    # finalizer in this test-run scope observes and supersedes its predecessor.
+    if test_run_id is not None:
+        await db.execute(
+            select(TestRun.id).where(TestRun.id == test_run_id).with_for_update()
+        )
 
     # Typed explicitly: scalar_one_or_none() is Any, and returning it would
     # widen this function's declared ReviewRequest return (mypy no-any-return).
@@ -203,8 +214,6 @@ async def create_run_review_request(
         live.superseded_by = request.id
 
     # A newer run over the same test run and workflow replaces older pending reviews.
-    test_run_id = _as_uuid(getattr(run, "test_run_id", None))
-    workflow_type = getattr(run, "workflow_type", None)
     older: list[ReviewRequest] = []
     if test_run_id is not None and workflow_type and workflow_type != "investigation":
         older = (

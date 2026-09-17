@@ -342,6 +342,66 @@ async def test_accept_wins_over_concurrent_newer_run_supersession(ctx):
     assert old_pipeline_state == "passed"
 
 
+async def test_concurrent_same_scope_finalizers_leave_one_pending_review(ctx):
+    from app.services.review_request_service import create_run_review_request
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    first_pipeline = await new_pipeline()
+    second_pipeline = await new_pipeline()
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as first_db:
+        first = await create_run_review_request(
+            first_db,
+            run=SimpleNamespace(
+                id=first_pipeline,
+                test_run_id=test_run_id,
+                workflow_type="offline",
+                execution_metadata={},
+            ),
+            project_id=project_id,
+            report_stage_names=["summary"],
+            evidence_bundle_sha256="a" * 64,
+        )
+
+        async def finalize_second():
+            async with session() as second_db:
+                second = await create_run_review_request(
+                    second_db,
+                    run=SimpleNamespace(
+                        id=second_pipeline,
+                        test_run_id=test_run_id,
+                        workflow_type="offline",
+                        execution_metadata={},
+                    ),
+                    project_id=project_id,
+                    report_stage_names=["summary"],
+                    evidence_bundle_sha256="b" * 64,
+                )
+                await second_db.commit()
+                return second.id
+
+        second_task = asyncio.create_task(finalize_second())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(second_task), timeout=0.2)
+        await first_db.commit()
+        second_id = await asyncio.wait_for(second_task, timeout=5)
+
+    async with engine.begin() as db:
+        states = dict(
+            (
+                await db.execute(
+                    text(
+                        "SELECT id, state FROM review_requests "
+                        "WHERE id IN (:first, :second)"
+                    ),
+                    {"first": first.id, "second": second_id},
+                )
+            ).all()
+        )
+    assert states == {first.id: "superseded", second_id: "pending_review"}
+
+
 async def test_distinct_investigator_subjects_stay_pending_in_postgres(ctx):
     from app.services.review_request_service import create_run_review_request
 

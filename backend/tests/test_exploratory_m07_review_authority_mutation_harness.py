@@ -21,4 +21,4 @@ def test_m07_review_authority_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M07 review-authority mutation check: 13 mutations killed"
+    assert run.stdout.strip() == "M07 review-authority mutation check: 14 mutations killed"

@@ -21,6 +21,13 @@ class Mutation:
 
 MUTATIONS = (
     Mutation(
+        "stable parent scope lock",
+        "backend/app/services/review_request_service.py",
+        """    if test_run_id is not None:\n        await db.execute(\n            select(TestRun.id).where(TestRun.id == test_run_id).with_for_update()\n        )\n\n""",
+        "",
+        ("tests/services/test_review_request_service.py::test_review_creation_locks_the_stable_parent_before_inserting",),
+    ),
+    Mutation(
         "subject row lock",
         "backend/app/services/review_request_service.py",
         """            .where(\n                ReviewRequest.kind == \"report\",\n                ReviewRequest.subject_type == \"pipeline_run\",\n                ReviewRequest.subject_id == subject_id,\n                ReviewRequest.state != \"superseded\",\n            )\n            .with_for_update()\n""",

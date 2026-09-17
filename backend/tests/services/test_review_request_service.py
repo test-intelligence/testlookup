@@ -29,6 +29,8 @@ class _Session:
 
     async def execute(self, stmt):
         self.statements.append(stmt)
+        if "FROM test_runs" in str(stmt.compile()):
+            return SimpleNamespace(scalar_one_or_none=lambda: TEST_RUN)
         p = stmt.compile().params
         if "test_run_id_1" in p:  # the "older pending in this scope" query
             found = [
@@ -239,6 +241,17 @@ async def test_review_creation_locks_live_rows_before_refresh_or_supersession():
 
 
 @pytest.mark.asyncio
+async def test_review_creation_locks_the_stable_parent_before_inserting():
+    session = _Session()
+
+    await _create(session, _run())
+
+    first = session.statements[0]
+    assert "FROM test_runs" in str(first.compile())
+    assert first._for_update_arg is not None
+
+
+@pytest.mark.asyncio
 async def test_newer_run_locks_older_pending_scope_before_supersession():
     session = _Session()
     await _create(session, _run())
@@ -247,7 +260,7 @@ async def test_newer_run_locks_older_pending_scope_before_supersession():
     await _create(session, _run())
 
     new_statements = session.statements[before:]
-    assert len(new_statements) == 2
+    assert len(new_statements) == 3
     assert all(stmt._for_update_arg is not None for stmt in new_statements)
 
 
