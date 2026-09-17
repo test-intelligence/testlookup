@@ -1,6 +1,7 @@
 """M11 regressions for frozen configuration and runtime tool authority."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -44,8 +45,12 @@ async def test_log_agent_does_not_call_tools_removed_by_the_frozen_allowlist(
 
     trace = AsyncMock(side_effect=AssertionError("trace tool was called"))
     anomaly = AsyncMock(side_effect=AssertionError("anomaly tool was called"))
-    monkeypatch.setattr(module.reconstruct_distributed_trace, "ainvoke", trace)
-    monkeypatch.setattr(module.detect_log_rate_anomaly, "ainvoke", anomaly)
+    monkeypatch.setattr(
+        module, "reconstruct_distributed_trace", SimpleNamespace(ainvoke=trace)
+    )
+    monkeypatch.setattr(
+        module, "detect_log_rate_anomaly", SimpleNamespace(ainvoke=anomaly)
+    )
 
     with workflow_step_scope("log_intelligence", allowed_tools=[]):
         output = await LogIntelligenceAgent().investigate(
