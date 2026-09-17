@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: d65eabdfa7c893375f2def18a6530bf08f3b47b0
-candidate_tree: 98dd75b9a5480917d532aa71433d1ab59a2a8727
+candidate_sha: 5d8dd8a579d5dbfd047f71c683d25007f78d5a52
+candidate_tree: 563e7c11e7f1ff22668bda0c71b577968204c668
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-17T00:24:54Z
+last_checkpoint_at_utc: 2026-09-17T01:48:00Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260917-002215
+  image_tag: build-20260917-013906
   image_digests:
-    backend_and_workers: sha256:4877c5e014d24d4668ff4900c24185d1665f2ee3f2e2826fa08784807006cb56
-    frontend: sha256:f894bede666bf56b98c7d04370b06bfae8f49fc8e10a3fbae23c12b2a4cc7554
-    mcp: sha256:12191208788cd7472e207f4b9c88d480213be1c5a666a6adfe6d866084f54336
+    backend_and_workers: sha256:9cd8e30e67091b06281597a9b4c24a560d04c26af64939c18951e337db1299d0
+    frontend: sha256:d855a636fe6de606885a72a910ae11ae1549cb57b053c8eef60f9a3bc45b0dd8
+    mcp: sha256:b01b5c380ab0039a077223ddfcd5c8469adbf0fa5a77aa8245024f13bbd89070
   build_identity:
     version: 0.0.1
-    revision: d65eabdfa7c893375f2def18a6530bf08f3b47b0
-    built_at: 2026-09-17T00:22:35Z
+    revision: 5d8dd8a579d5dbfd047f71c683d25007f78d5a52
+    built_at: 2026-09-17T01:39:07Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Start M06 release decision boundary and outcome-history variants on the same minor-release branch; M05's external Jira boundary remains blocked until a dedicated sandbox exists."
+  next_exact_action: "Start M07 review-subject, settlement-race, and separation-of-duties variants on the same minor-release branch; M05's external Jira boundary remains blocked until a dedicated sandbox exists."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []

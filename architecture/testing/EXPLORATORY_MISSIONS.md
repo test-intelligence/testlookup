@@ -191,6 +191,15 @@ optimistic GO from missing evidence or unreviewed gated report.
 **Observe/capture:** exact policy snapshot, counts, decision/evidence hashes,
 override/outcome/audit IDs. Assert business verdict and reason, not only color.
 
+**Executed 2026-09-17 — PASSED.** Exact candidate `5d8dd8a5` was deployed
+before final tests. Live healthy/failing/skipped/empty boundaries produced
+`GO`/`NO_GO`/`NOT_EVALUATED`/`NOT_EVALUATED`; viewer writes were refused;
+incident and rollback outcomes survived reload with two activity events. Five
+real PostgreSQL journeys covered release/phase history, concurrent overrides,
+and override/recompute serialization. The broad release suite passed 811 tests
+and six mutations were killed. EXP-BUG-014 through EXP-BUG-017 shipped.
+Evidence: `architecture/verification/exploratory-20260916/M06-release-decisions.md`.
+
 ## M07 — Review subject, races and separation of duties (P0, security QA)
 
 **Preconditions:** F1 producer/reviewer; F3 pending report and distinct Investigator
