@@ -7,5 +7,5 @@ SQLAlchemy `AsyncSession`, which can reject overlapping driver operations.
 They now execute sequentially. A tracking-session regression fails if more than
 one operation is active.
 
-**Green evidence:** exact candidate `5e43ba14` deployed as
-`build-20260917-095930`; focused M09 regression and mutation passed.
+**Green evidence:** final candidate `0da8f248` deployed as
+`build-20260917-101919`; focused M09 regression and mutation passed.

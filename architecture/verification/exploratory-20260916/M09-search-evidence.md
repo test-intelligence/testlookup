@@ -6,15 +6,15 @@ covered by executable regressions.
 
 **Window:** 2026-09-17T09:35Z–2026-09-17T10:07Z
 
-**Final executable candidate:** `5e43ba14d7bf8072d107d02d356b2e3bbcc86d05`,
-deployed before validation as `build-20260917-095930`, built at
-`2026-09-17T09:59:31Z`. `/health/version` reported the exact revision after all
+**Final executable candidate:** `0da8f248ef0734e1bddc208f556e491c83001c11`,
+deployed before validation as `build-20260917-101919`, built at
+`2026-09-17T10:19:20Z`. `/health/version` reported the exact revision after all
 application and worker rollouts became ready. Image digests were
-`sha256:9fdee82d24c6edbb2977354c3617f98ce01747c26a934d8225f592713546b400`
+`sha256:03bd2dc35ac5372c8f774b665854a2e06fbefd47f8aa32345744380559fda654`
 for backend and workers,
 `sha256:7483ce9312282608799a9e1f18a417f57056ec4016ad1717c4932e9c5cfd1106`
 for frontend, and
-`sha256:9629601d5d55dcf9606447abb0ae3f24d28df00495108ef0df14b82d25085bc7`
+`sha256:14feb62ea9366d481cb3440ed8831ba0ce91b657ddeffb414cc4dfe85292be5a`
 for MCP.
 
 ## Findings and fixes
@@ -38,15 +38,15 @@ valid empty evidence.
 
 ## Verification
 
-- 142 backend search tests passed against exact deployed `5e43ba14`, including
+- 143 backend search tests passed against exact deployed `0da8f248`, including
   empty/browse paths, punctuation escaping, Unicode, tenant and deleted-project
   scope, period filtering, fallback labeling, evidence lookup and pagination.
-- The focused M09 mutation harness killed all 9 mutations. It asserts every
+- The M09 backend and consumer mutation harnesses killed all 15 mutations. They assert every
   replacement applies exactly once, requires each wrong behavior to fail, and
   restores the original bytes.
 - 18 SearchPage tests, TypeScript type checking and ESLint passed. ESLint
   retained the repository's 19 pre-existing warnings and reported no errors.
-- All 137 CLI tests passed with 2 skips; all 173 MCP tests passed.
+- All 138 CLI tests passed with 2 skips; all 174 MCP tests passed.
 - Ruff passed for the changed Python surfaces. The mypy ratchet held at 369
   errors in 114 files. All 43 quality guards and 238 guard self-tests passed.
 - PostgreSQL migration and every backend, frontend, MCP and worker rollout

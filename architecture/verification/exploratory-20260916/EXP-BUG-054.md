@@ -6,5 +6,5 @@ The similar-evidence route caught database failures and returned a plausible
 empty response. It now treats only malformed UUID input as missing; database
 failures propagate to the normal error path.
 
-**Green evidence:** exact candidate `5e43ba14`; provider-failure regression and
+**Green evidence:** final candidate `0da8f248`; provider-failure regression and
 mutation passed after deployment.

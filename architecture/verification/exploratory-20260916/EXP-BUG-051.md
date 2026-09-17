@@ -8,5 +8,5 @@ bounded candidate window as the complete corpus. Candidate sizing now covers
 the requested hybrid page, date-filtered semantic search uses the full bounded
 window, and responses disclose lower-bound totals.
 
-**Green evidence:** exact candidate `5e43ba14`; page-three regression and
+**Green evidence:** final candidate `0da8f248`; page-three regression and
 mutation passed after deployment.
