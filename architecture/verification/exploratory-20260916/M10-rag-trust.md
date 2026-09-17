@@ -49,6 +49,8 @@ Both probes left no source or generated case behind.
   every replacement asserted it applied exactly once and restored bytes.
 - Ruff passed; mypy held at **369 errors in 114 files** (baseline 369); all
   **43** quality guards and **238** guard self-tests passed.
+- Independent final review approved evidence head `ff2c5dfa` after the exact
+  source/vector-pair regression and mutation closed the last review finding.
 
 ## Remaining gaps
 
