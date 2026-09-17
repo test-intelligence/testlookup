@@ -296,11 +296,6 @@ async def test_superseded_investigator_excerpt_retains_terminal_subject(
 ):
     subject = AsyncMock(return_value=_envelope("superseded"))
     monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", subject)
-    monkeypatch.setattr(
-        policy,
-        "review_envelope_for_pipeline",
-        AsyncMock(return_value=_envelope("accepted")),
-    )
 
     text, decision = await policy.gate_investigation_excerpt(
         None,
