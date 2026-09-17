@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from app.agents.log_intelligence_agent import LogIntelligenceAgent
 from app.agents.workflow import _stage_tool_allowlist
@@ -35,6 +37,52 @@ def test_named_step_reads_tools_from_its_frozen_capability_snapshot() -> None:
     assert _stage_tool_allowlist(state, "logs_for_checkout") == [
         "detect_log_rate_anomaly"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("router_name", "path", "route_path"),
+    [
+        (
+            "fixer",
+            "/api/v1/projects/00000000-0000-0000-0000-000000000001/fixer/config",
+            "/api/v1/projects/{project_id}/fixer/config",
+        ),
+        (
+            "investigator",
+            "/api/v1/projects/00000000-0000-0000-0000-000000000001/agent-policies/unknown",
+            "/api/v1/projects/{project_id}/agent-policies/{agent_id}",
+        ),
+    ],
+)
+async def test_retired_config_puts_return_405_before_parsing_any_body(
+    router_name: str,
+    path: str,
+    route_path: str,
+) -> None:
+    from app.routers import agent_investigations, fixer
+
+    router = fixer.router if router_name == "fixer" else agent_investigations.router
+    app = FastAPI()
+    app.include_router(router)
+    route = next(
+        item
+        for item in app.routes
+        if getattr(item, "path", None) == route_path and "PUT" in getattr(item, "methods", set())
+    )
+
+    async def _allowed():
+        return SimpleNamespace()
+
+    for dependency in route.dependant.dependencies:
+        app.dependency_overrides[dependency.call] = _allowed
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        empty = await client.put(path)
+        malformed = await client.put(path, content=b"{", headers={"Content-Type": "application/json"})
+
+    assert empty.status_code == malformed.status_code == 405
+    assert empty.headers["location"] == malformed.headers["location"]
 
 
 @pytest.mark.asyncio

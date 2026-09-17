@@ -103,6 +103,20 @@ MUTATIONS = (
         'if False and not tool_allowed("embed_and_cluster"):',
         "backend/tests/test_exploratory_m11_config_authority.py::test_cluster_agent_does_not_call_a_tool_removed_by_the_frozen_allowlist",
     ),
+    Mutation(
+        "retired-fixer-body-validation",
+        "backend/app/routers/fixer.py",
+        "async def put_fixer_config(\n    project_id: uuid.UUID,\n    db:",
+        "async def put_fixer_config(\n    project_id: uuid.UUID,\n    body: dict[str, Any],\n    db:",
+        "backend/tests/test_exploratory_m11_config_authority.py::test_retired_config_puts_return_405_before_parsing_any_body[fixer-/api/v1/projects/00000000-0000-0000-0000-000000000001/fixer/config-/api/v1/projects/{project_id}/fixer/config]",
+    ),
+    Mutation(
+        "retired-investigator-body-validation",
+        "backend/app/routers/agent_investigations.py",
+        "async def update_agent_policy(\n    project_id: uuid.UUID,\n    agent_id: str,\n    db:",
+        "async def update_agent_policy(\n    project_id: uuid.UUID,\n    agent_id: str,\n    body: dict[str, Any],\n    db:",
+        "backend/tests/test_exploratory_m11_config_authority.py::test_retired_config_puts_return_405_before_parsing_any_body[investigator-/api/v1/projects/00000000-0000-0000-0000-000000000001/agent-policies/unknown-/api/v1/projects/{project_id}/agent-policies/{agent_id}]",
+    ),
 )
 
 

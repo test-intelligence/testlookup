@@ -24,7 +24,7 @@ import uuid
 from typing import Any, Optional
 
 import structlog
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,7 +172,6 @@ async def get_fixer_config(
 @router.put("/projects/{project_id}/fixer/config", deprecated=True)
 async def put_fixer_config(
     project_id: uuid.UUID,
-    body: Any = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),

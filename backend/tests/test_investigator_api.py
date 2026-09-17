@@ -393,18 +393,9 @@ async def test_policies_default_shape_when_no_row():
 @pytest.mark.asyncio
 async def test_policy_put_is_a_read_only_alias():
     db = _FakeSession(policy=None)
-    body = router_mod.AgentPolicyUpdate(
-        enabled=False,
-        mode="suggest",
-        budgets=router_mod.AgentPolicyBudgets(
-            max_runs_per_day=5, max_llm_calls_per_run=10,
-            max_tokens_per_run=20000, max_seconds_per_run=120,
-        ),
-        promotion=router_mod.AgentPolicyPromotion(shadow_runs_completed=999, note="ready"),
-    )
     with pytest.raises(HTTPException) as exc:
         await router_mod.update_agent_policy(
-            project_id=PROJECT_ID, agent_id="investigator", body=body,
+            project_id=PROJECT_ID, agent_id="investigator",
             db=db, current_user=_user(UserRole.QA_LEAD), _lead=_user(UserRole.QA_LEAD),
         )
     assert exc.value.status_code == 405
@@ -418,7 +409,6 @@ async def test_retired_policy_put_is_405_even_for_unknown_agent():
     with pytest.raises(HTTPException) as exc:
         await router_mod.update_agent_policy(
             project_id=PROJECT_ID, agent_id="terminator",
-            body=router_mod.AgentPolicyUpdate(),
             db=db, current_user=_user(UserRole.QA_LEAD), _lead=_user(UserRole.QA_LEAD),
         )
     assert exc.value.status_code == 405
