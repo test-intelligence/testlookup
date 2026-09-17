@@ -239,6 +239,19 @@ async def test_review_creation_locks_live_rows_before_refresh_or_supersession():
 
 
 @pytest.mark.asyncio
+async def test_newer_run_locks_older_pending_scope_before_supersession():
+    session = _Session()
+    await _create(session, _run())
+
+    before = len(session.statements)
+    await _create(session, _run())
+
+    new_statements = session.statements[before:]
+    assert len(new_statements) == 2
+    assert all(stmt._for_update_arg is not None for stmt in new_statements)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("other", [{"workflow": "deep"}, {"test_run": uuid.uuid4()}])
 async def test_a_run_over_a_different_subject_supersedes_nothing(other):
     session = _Session()

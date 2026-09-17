@@ -23,6 +23,7 @@ from app.models.postgres import REVIEW_REASON_CODES, UserRole
 from app.services import review_request_service as svc
 
 PROJECT = uuid.uuid4()
+DECISION_REPORT = "agent.decision_report.v1"
 
 
 def _user(kind=CREDENTIAL_KIND_JWT, *, role=UserRole.QA_LEAD.value, synthetic=False):
@@ -142,7 +143,7 @@ async def test_the_requester_cannot_review_their_own_act_mode_run(monkeypatch, t
             _DB(
                 action_payloads=[{"proposing_agent_id": "decision_report"}],
                 pipeline_metadata={
-                    "workflow_agent_configs": {"decision_report": {"mode": "act"}}
+                    "workflow_agent_configs": {DECISION_REPORT: {"mode": "act"}}
                 },
             ),
             review=_review(requested_by=reviewer.id),
@@ -162,7 +163,7 @@ async def test_frozen_act_proposal_cannot_self_review_after_live_mode_is_lowered
     db = _DB(
         action_payloads=[{"proposing_agent_id": "decision_report"}],
         pipeline_metadata={
-            "workflow_agent_configs": {"decision_report": {"mode": "act"}}
+            "workflow_agent_configs": {DECISION_REPORT: {"mode": "act"}}
         },
     )
 
@@ -214,7 +215,7 @@ async def test_the_requester_may_review_when_the_run_has_no_act_mode_proposal(
         _DB(
             action_payloads=action_payloads,
             pipeline_metadata={
-                "workflow_agent_configs": {"decision_report": {"mode": mode}}
+                "workflow_agent_configs": {DECISION_REPORT: {"mode": mode}}
             },
         ),
         review=review,
@@ -223,6 +224,44 @@ async def test_the_requester_may_review_when_the_run_has_no_act_mode_proposal(
     )
 
     assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "accepted_mode, worker_mode, refused",
+    [("act", "suggest", True), ("suggest", "act", False)],
+)
+async def test_invocation_separation_prefers_the_api_accepted_snapshot(
+    transitions, accepted_mode, worker_mode, refused
+):
+    reviewer = _user()
+    review = _review(requested_by=reviewer.id)
+    db = _DB(
+        action_payloads=[{"proposing_agent_id": "decision_report"}],
+        pipeline_metadata={
+            "workflow_agent_configs": {
+                DECISION_REPORT: {"mode": worker_mode},
+            },
+            "resolved_agent_configs": {
+                DECISION_REPORT: {
+                    "agent_id": DECISION_REPORT,
+                    "config": {"mode": accepted_mode},
+                }
+            },
+        },
+    )
+
+    if refused:
+        with pytest.raises(svc.ReviewDecisionRefused) as exc:
+            await svc.settle_review(
+                db, review=review, reviewer=reviewer, decision="accepted"
+            )
+        assert exc.value.code == "separation_of_duties"
+    else:
+        await svc.settle_review(
+            db, review=review, reviewer=reviewer, decision="accepted"
+        )
+        assert review.state == "accepted"
 
 
 @pytest.mark.asyncio

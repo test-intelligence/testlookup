@@ -3355,6 +3355,7 @@ async def _mark_pipeline_done(
                     "workflow_plan_sha256": prior_metadata.get("workflow_plan_sha256"),
                     "workflow_deadline_seconds": prior_metadata.get("workflow_deadline_seconds"),
                     "workflow_agent_configs": prior_metadata.get("workflow_agent_configs") or {},
+                    "resolved_agent_configs": prior_metadata.get("resolved_agent_configs") or {},
                     "eval_manifest_checksum": prior_metadata.get(
                         "eval_manifest_checksum"
                     ),

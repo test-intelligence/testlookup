@@ -115,6 +115,18 @@ async def test_generic_parent_report_lookup_excludes_investigator_subjects():
     assert "investigation" in params.values()
 
 
+@pytest.mark.asyncio
+async def test_investigator_lookup_is_bound_to_the_exact_pipeline_subject():
+    db = _DB(_review("accepted"))
+
+    await env.review_envelope_for_pipeline(db, RUN)
+
+    sql = str(db.statements[0].compile(compile_kwargs={"literal_binds": False}))
+    params = db.statements[0].compile().params
+    assert "review_requests.pipeline_run_id =" in sql
+    assert RUN in params.values()
+
+
 def test_the_disclaimer_is_versioned_in_the_payload():
     fields = env._unreviewed().fields()
     assert fields["ai_disclaimer_version"] == AI_DISCLAIMER_VERSION

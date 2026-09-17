@@ -44,7 +44,7 @@ from sqlalchemy import select
 
 from app.core.metrics import review_requests_total
 from app.models.postgres import AgentActionLedger, AgentPipelineRun, ReviewRequest
-from app.services.agent_capability_registry import is_report_producing
+from app.services.agent_capability_registry import get_capability, is_report_producing
 from app.services.eval_label_provenance import checksum_from_execution_metadata
 
 logger = structlog.get_logger("services.review_request")
@@ -422,14 +422,23 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
         )
         if not isinstance(agent_id, str) or not agent_id:
             return True
-        frozen = (
-            workflow_configs.get(agent_id)
-            if isinstance(workflow_configs, dict)
-            else None
-        )
-        if not isinstance(frozen, dict) and isinstance(invocation_configs, dict):
-            snapshot = invocation_configs.get(agent_id)
+        try:
+            capability_id = get_capability(agent_id).capability_id
+        except ValueError:
+            return True
+
+        # Invocation authority was accepted at the API boundary, before a
+        # worker could observe a later project config. Prefer that durable
+        # snapshot when present. Ordinary workflows have no invocation entry
+        # and use their proposal-time workflow snapshot instead. Both maps are
+        # keyed by canonical capability id, while the action ledger stores the
+        # stage name.
+        frozen = None
+        if isinstance(invocation_configs, dict):
+            snapshot = invocation_configs.get(capability_id)
             frozen = snapshot.get("config") if isinstance(snapshot, dict) else None
+        if not isinstance(frozen, dict) and isinstance(workflow_configs, dict):
+            frozen = workflow_configs.get(capability_id)
         if not isinstance(frozen, dict):
             return True
         mode = frozen.get("mode")
