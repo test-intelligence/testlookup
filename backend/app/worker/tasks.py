@@ -3022,14 +3022,18 @@ def dispatch_ai_summary_email(
             project = (await db.execute(select(_Project).where(_Project.id == run.project_id))).scalar_one_or_none()
             project_name = project.name if project else str(run.project_id)
 
-        # Load summary from MongoDB
-        mongo = get_mongo_db()
-        doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
-        if not doc:
-            try:
-                doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
-            except (ValueError, TypeError):
-                doc = None
+        # Legacy operations did not freeze their source bytes and still need
+        # the run-wide Mongo document. New operations are self-contained, so a
+        # Mongo outage cannot block their already-durable notification.
+        doc = None
+        if source_executive_summary is None:
+            mongo = get_mongo_db()
+            doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
+            if not doc:
+                try:
+                    doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
+                except (ValueError, TypeError):
+                    doc = None
 
         executive_summary = source_executive_summary or ""
         executive_panel = source_executive_panel

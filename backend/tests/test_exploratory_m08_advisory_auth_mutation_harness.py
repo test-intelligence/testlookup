@@ -22,5 +22,5 @@ def test_m08_advisory_authorisation_mutation_harness() -> None:
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert run.stdout.strip() == (
-        "M08 advisory-authorisation mutation check: 1 mutation killed"
+        "M08 advisory-authorisation mutation check: 4 mutations killed"
     )

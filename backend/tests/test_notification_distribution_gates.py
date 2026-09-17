@@ -131,7 +131,7 @@ class _Session:
         pass
 
 
-def _drive(monkeypatch, *, doc, fallback_text=None, mongo_doc=None):
+def _drive(monkeypatch, *, doc, fallback_text=None, mongo_doc=None, fail_mongo=False):
     from app.services.notification import manager
     from app.worker import tasks
 
@@ -146,7 +146,12 @@ def _drive(monkeypatch, *, doc, fallback_text=None, mongo_doc=None):
         find_one=AsyncMock(return_value=mongo_doc if mongo_doc is not None else doc)
     )
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
-    monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: _AnyKey(collection))
+    def _mongo():
+        if fail_mongo:
+            raise AssertionError("immutable notification must not reload Mongo")
+        return _AnyKey(collection)
+
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", _mongo)
     preferences = AsyncMock()
     digests = AsyncMock()
     monkeypatch.setattr(manager, "dispatch_ai_summary_notifications", preferences)
@@ -218,6 +223,7 @@ def test_delayed_task_uses_its_immutable_outbox_summary(monkeypatch, world):
             "executive_summary": mutable_pipeline_b,
             "executive_panel": {"headline": "PIPELINE_B"},
         },
+        fail_mongo=True,
     )
 
     assert prefs["original_executive_summary"] == pipeline_a

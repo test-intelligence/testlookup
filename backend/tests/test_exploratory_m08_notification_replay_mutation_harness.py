@@ -22,5 +22,5 @@ def test_m08_notification_replay_mutation_harness() -> None:
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert run.stdout.strip() == (
-        "M08 notification-replay mutation check: 3 mutations killed"
+        "M08 notification-replay mutation check: 9 mutations killed"
     )

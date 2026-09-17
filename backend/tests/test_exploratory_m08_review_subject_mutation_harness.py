@@ -22,4 +22,4 @@ def test_m08_review_subject_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M08 review-subject mutation check: 4 mutations killed"
+    assert run.stdout.strip() == "M08 review-subject mutation check: 8 mutations killed"

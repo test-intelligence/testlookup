@@ -179,6 +179,7 @@ def world(monkeypatch):
         review="pending_review",
         decision=None,
         seen_subjects=[],
+        decision_select_for_update=False,
     )
 
     async def _envelope_for(db, run_id, workflow_type=None, ai_generated=True):
@@ -202,7 +203,8 @@ def world(monkeypatch):
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
         return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
 
-    async def _decision_lookup(_statement):
+    async def _decision_lookup(statement):
+        state.decision_select_for_update = statement._for_update_arg is not None
         found = (state.decision, PROJECT) if state.decision is not None else None
         return _Result(first=found)
 
@@ -227,17 +229,17 @@ def world(monkeypatch):
     )
     monkeypatch.setattr(emitter, "get_release_council", _council)
     monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: object())
+    report_loader = AsyncMock(
+        return_value={
+            "evidence_bundle_sha256": EVIDENCE_HASH,
+            "decision_intelligence": {"release_decision": dict(AGENT_DECISION)},
+        }
+    )
     monkeypatch.setattr(
         "app.services.decision_report_service.load_decision_report_for_pipeline",
-        AsyncMock(
-            return_value={
-                "evidence_bundle_sha256": EVIDENCE_HASH,
-                "decision_intelligence": {
-                    "release_decision": dict(AGENT_DECISION)
-                },
-            }
-        ),
+        report_loader,
     )
+    state.report_loader = report_loader
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
     monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
     monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=False))
@@ -359,6 +361,36 @@ async def test_critic_emitter_refuses_a_concurrent_pipeline_replacement(world):
 
     assert emitted == 0
     assert world.table.rows == {}
+    world.report_loader.assert_not_awaited()
+    assert world.decision_select_for_update is True
+
+
+@pytest.mark.asyncio
+async def test_delayed_agent_event_cannot_follow_a_human_override(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=14,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="QA accepted the release",
+        override_audit=[{"timestamp": "2026-09-12T19:00:00+00:00"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
+    world.report_loader.assert_not_awaited()
+    assert world.decision_select_for_update is True
 
 
 @pytest.mark.asyncio
@@ -390,6 +422,16 @@ async def test_agent_webhook_uses_immutable_report_decision_bytes(world):
 
 @pytest.mark.asyncio
 async def test_agent_webhook_refuses_a_report_hash_mismatch(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=14,
+        blocking_issues=[],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
     emitted = await emitter.emit_release_decided(
         RUN,
         trigger=emitter.TRIGGER_AGENT,
@@ -418,6 +460,8 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     from app.routers import release_readiness as route
 
     reason = "accepting the known payments flake for this hotfix"
+    override_one_at = "2026-09-12T19:05:00+00:00"
+    override_two_at = "2026-09-12T19:06:00+00:00"
     overrider = SimpleNamespace(id=uuid.uuid4(), username="dana.qa", full_name="Dana Q")
     world.enforce(True)  # an override is a person's decision; the gate leaves it alone
     world.decision = ReleaseDecision(
@@ -431,12 +475,50 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
         overridden_by=overrider.id,
         original_recommendation="NO_GO",
         original_risk_score=71,
-        override_audit=[{"actor_id": str(overrider.id), "actor_name": "dana.qa", "reason": reason}],
+        override_audit=[
+            {
+                "timestamp": override_one_at,
+                "actor_id": str(overrider.id),
+                "actor_name": "dana.qa",
+                "before_recommendation": "NO_GO",
+                "before_risk_score": 71,
+                "after_recommendation": "GO",
+                "reason": reason,
+            }
+        ],
         created_at=CREATED,
         updated_at=UPDATED,
     )
-    council = SimpleNamespace(recommendation="GO")
-    monkeypatch.setattr(route, "apply_override", AsyncMock(return_value=council))
+    first_audit = dict(world.decision.override_audit[0])
+    second_audit = {
+        **first_audit,
+        "timestamp": override_two_at,
+        "before_recommendation": "GO",
+        "reason": "re-confirmed",
+    }
+    council = ReleaseCouncilResponse(
+        run_id=str(RUN),
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=["payments suite 3 failures"],
+        conditions_for_go=[],
+        human_override=reason,
+        override_audit=[first_audit],
+    )
+    council_two = ReleaseCouncilResponse(
+        run_id=str(RUN),
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=["payments suite 3 failures"],
+        conditions_for_go=[],
+        human_override="re-confirmed",
+        override_audit=[first_audit, second_audit],
+    )
+    monkeypatch.setattr(
+        route,
+        "apply_override",
+        AsyncMock(side_effect=[council, council_two]),
+    )
     monkeypatch.setattr(
         "app.services.intelligence_snapshot_service.mark_stale", AsyncMock(return_value=None)
     )
@@ -461,16 +543,72 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     assert payload["draft_recommendation"] is None
     assert payload["review_gate_enforced"] is True
     assert payload["created_at"] == CREATED.isoformat()
-    assert payload["updated_at"] == UPDATED.isoformat()
+    assert payload["updated_at"] == override_one_at
     sent = json.dumps(payload)
     for identity in (str(overrider.id), "dana.qa", "Dana Q", reason):
         assert identity not in sent
 
     # A second override is a second decision, and a second delivery.
-    world.decision.override_audit = [*world.decision.override_audit, {"reason": "re-confirmed"}]
+    world.decision.override_audit = [*world.decision.override_audit, second_audit]
     await route.override_release_decision(run_id=RUN, body=body, current_user=overrider, _=overrider)
     assert len(world.table.rows) == 2
     assert len(world.published) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_override_emitters_keep_each_committed_snapshot(world):
+    first_at = "2026-09-12T19:05:00+00:00"
+    second_at = "2026-09-12T19:06:00+00:00"
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=82,
+        blocking_issues=["current second override"],
+        conditions_for_go=[],
+        human_override="second override",
+        override_audit=[
+            {"timestamp": first_at, "after_recommendation": "GO"},
+            {"timestamp": second_at, "after_recommendation": "NO_GO"},
+        ],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    first = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp=first_at,
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": ["first override snapshot"],
+            "conditions_for_go": ["monitor checkout"],
+            "synthesized": False,
+        },
+    )
+    second = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=2,
+        override_audit_timestamp=second_at,
+        override_snapshot={
+            "recommendation": "NO_GO",
+            "risk_score": 82,
+            "blocking_issues": ["current second override"],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
+    )
+
+    assert (first, second) == (1, 1)
+    payloads = [row["event_payload"] for row in world.table.rows.values()]
+    assert [payload["recommendation"] for payload in payloads] == ["GO", "NO_GO"]
+    assert payloads[0]["blocking_issues"] == ["first override snapshot"]
+    assert payloads[0]["updated_at"] == first_at
+    assert payloads[1]["updated_at"] == second_at
+    assert world.decision_select_for_update is True
 
 
 @pytest.mark.asyncio
@@ -479,6 +617,7 @@ async def test_override_webhook_does_not_require_an_immutable_agent_report(
 ):
     from app.services import decision_report_service
 
+    override_at = "2026-09-12T19:05:00+00:00"
     world.decision = ReleaseDecision(
         test_run_id=RUN,
         pipeline_run_id=PIPELINE,
@@ -487,7 +626,7 @@ async def test_override_webhook_does_not_require_an_immutable_agent_report(
         blocking_issues=[],
         conditions_for_go=[],
         human_override="authorized hotfix",
-        override_audit=[{"reason": "authorized hotfix"}],
+        override_audit=[{"timestamp": override_at, "reason": "authorized hotfix"}],
         created_at=CREATED,
         updated_at=UPDATED,
     )
@@ -501,6 +640,15 @@ async def test_override_webhook_does_not_require_an_immutable_agent_report(
     emitted = await emitter.emit_release_decided(
         RUN,
         trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp=override_at,
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": [],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
     )
 
     assert emitted == 1

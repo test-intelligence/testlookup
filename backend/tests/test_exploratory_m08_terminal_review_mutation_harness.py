@@ -21,4 +21,4 @@ def test_m08_terminal_review_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M08 terminal-review mutation check: 1 mutation killed"
+    assert run.stdout.strip() == "M08 terminal-review mutation check: 4 mutations killed"

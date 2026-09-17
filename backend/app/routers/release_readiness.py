@@ -152,7 +152,20 @@ async def override_release_decision(
             emit_release_decided,
         )
 
-        await emit_release_decided(run_id, trigger=TRIGGER_OVERRIDE)
+        committed_override = council.override_audit[-1]
+        await emit_release_decided(
+            run_id,
+            trigger=TRIGGER_OVERRIDE,
+            override_ordinal=len(council.override_audit),
+            override_audit_timestamp=committed_override.timestamp,
+            override_snapshot={
+                "recommendation": council.recommendation,
+                "risk_score": council.risk_score,
+                "blocking_issues": list(council.blocking_issues or []),
+                "conditions_for_go": list(council.conditions_for_go or []),
+                "synthesized": bool(council.synthesized),
+            },
+        )
     except Exception as exc:  # noqa: BLE001 — the committed override stands
         logger.warning("release.decided webhook hook failed for run %s: %s", run_id, exc)
     return council

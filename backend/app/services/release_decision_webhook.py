@@ -62,10 +62,17 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value is not None else None
 
 
-def delivery_scope(decision: ReleaseDecision, trigger: str) -> str:
+def delivery_scope(
+    decision: ReleaseDecision,
+    trigger: str,
+    *,
+    override_ordinal: int | None = None,
+) -> str:
     """The idempotency scope for one decision write."""
     if trigger == TRIGGER_OVERRIDE:
-        marker = f"override:{len(decision.override_audit or [])}"
+        if override_ordinal is None:
+            raise ValueError("override delivery scope requires its committed ordinal")
+        marker = f"override:{override_ordinal}"
     else:
         marker = f"pipeline:{decision.pipeline_run_id}"
     return f"release-decided:{decision.test_run_id}:{marker}:v1"
@@ -79,6 +86,8 @@ async def build_release_decided_payload(
     decision: ReleaseDecision,
     trigger: str,
     evidence_bundle_sha256: str | None = None,
+    override_snapshot: dict[str, Any] | None = None,
+    override_audit_timestamp: str | None = None,
 ) -> Optional[dict[str, Any]]:
     report: dict[str, Any] | None = None
     if (
@@ -133,6 +142,13 @@ async def build_release_decided_payload(
         conditions_for_go = list(source.get("conditions_for_go") or [])
         synthesized = False
         human_override = None
+    elif trigger == TRIGGER_OVERRIDE and override_snapshot is not None:
+        recommendation = override_snapshot.get("recommendation")
+        risk_score = override_snapshot.get("risk_score")
+        blocking_issues = list(override_snapshot.get("blocking_issues") or [])
+        conditions_for_go = list(override_snapshot.get("conditions_for_go") or [])
+        synthesized = bool(override_snapshot.get("synthesized"))
+        human_override = True
     else:
         council = await get_release_council(run_id, db)
         if council is None:
@@ -158,7 +174,7 @@ async def build_release_decided_payload(
         "synthesized": synthesized,
         "overridden": bool(human_override),
         "created_at": _iso(decision.created_at),
-        "updated_at": _iso(decision.updated_at),
+        "updated_at": override_audit_timestamp or _iso(decision.updated_at),
     }
     return await report_distribution_policy.gate_release_decided_payload(
         db,
@@ -178,6 +194,9 @@ async def emit_release_decided(
     trigger: str,
     pipeline_run_id: Any = None,
     evidence_bundle_sha256: str | None = None,
+    override_ordinal: int | None = None,
+    override_audit_timestamp: str | None = None,
+    override_snapshot: dict[str, Any] | None = None,
 ) -> int:
     """Send ``release.decided`` for the committed decision on ``run_id``.
 
@@ -198,6 +217,7 @@ async def emit_release_decided(
                     select(ReleaseDecision, TestRun.project_id)
                     .join(TestRun, TestRun.id == ReleaseDecision.test_run_id)
                     .where(ReleaseDecision.test_run_id == run_uuid)
+                    .with_for_update()
                 )
             ).first()
             if found is None:
@@ -212,6 +232,24 @@ async def emit_release_decided(
                 pipeline_run_id
             ):
                 return 0
+            if trigger == TRIGGER_AGENT and decision.human_override is not None:
+                return 0
+            if trigger == TRIGGER_OVERRIDE:
+                if (
+                    override_ordinal is None
+                    or override_ordinal < 1
+                    or override_snapshot is None
+                    or override_audit_timestamp is None
+                ):
+                    return 0
+                audit = list(decision.override_audit or [])
+                if override_ordinal > len(audit):
+                    return 0
+                committed_entry = audit[override_ordinal - 1]
+                if str(committed_entry.get("timestamp")) != str(
+                    override_audit_timestamp
+                ):
+                    return 0
             payload = await build_release_decided_payload(
                 db,
                 run_id=run_uuid,
@@ -219,16 +257,25 @@ async def emit_release_decided(
                 decision=decision,
                 trigger=trigger,
                 evidence_bundle_sha256=evidence_bundle_sha256,
+                override_snapshot=override_snapshot,
+                override_audit_timestamp=override_audit_timestamp,
             )
-            scope = delivery_scope(decision, trigger)
-        if payload is None:
-            return 0
-        return await webhook_service.emit_event(
-            "release.decided",
-            project_id=project_id,
-            payload=payload,
-            delivery_scope=scope,
-        )
+            scope = delivery_scope(
+                decision,
+                trigger,
+                override_ordinal=override_ordinal,
+            )
+            if payload is None:
+                return 0
+            # Keep the decision row locked through durable staging. An override
+            # that wins the lock first suppresses a delayed agent event; an
+            # agent event that wins is staged before the later override event.
+            return await webhook_service.emit_event(
+                "release.decided",
+                project_id=project_id,
+                payload=payload,
+                delivery_scope=scope,
+            )
     except Exception as exc:  # noqa: BLE001 — the release gate must not fail on a webhook
         logger.warning(
             "release_decided_emit_failed",

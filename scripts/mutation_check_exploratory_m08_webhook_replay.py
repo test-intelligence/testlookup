@@ -11,9 +11,11 @@ TESTS = [
     "backend/tests/test_release_decided_webhook.py::test_release_risk_write_waits_for_immutable_report_publication",
     "backend/tests/test_release_decided_webhook.py::test_an_agent_decision_stages_exactly_one_delivery_after_its_commit",
     "backend/tests/test_release_decided_webhook.py::test_critic_emitter_refuses_a_concurrent_pipeline_replacement",
+    "backend/tests/test_release_decided_webhook.py::test_delayed_agent_event_cannot_follow_a_human_override",
     "backend/tests/test_release_decided_webhook.py::test_agent_webhook_uses_immutable_report_decision_bytes",
     "backend/tests/test_release_decided_webhook.py::test_agent_webhook_refuses_a_report_hash_mismatch",
     "backend/tests/test_release_decided_webhook.py::test_override_webhook_does_not_require_an_immutable_agent_report",
+    "backend/tests/test_release_decided_webhook.py::test_concurrent_override_emitters_keep_each_committed_snapshot",
     "backend/tests/test_release_decided_webhook.py::test_webhook_retry_rechecks_review_and_restores_the_original_decision",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_uses_its_exact_pipeline_review",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_retry_without_evidence_hash_fails_closed",
@@ -147,6 +149,36 @@ MUTATIONS = [
         "agent-accepts-report-hash-mismatch",
         "            and str(evidence_bundle_sha256) != str(report_hash)\n",
         "            and False\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "agent-publishes-after-human-override",
+        "            if trigger == TRIGGER_AGENT and decision.human_override is not None:\n",
+        "            if False and trigger == TRIGGER_AGENT and decision.human_override is not None:\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "override-scope-uses-current-audit-length",
+        '        marker = f"override:{override_ordinal}"\n',
+        '        marker = f"override:{len(decision.override_audit or [])}"\n',
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "override-ignores-committed-snapshot",
+        "    elif trigger == TRIGGER_OVERRIDE and override_snapshot is not None:\n",
+        "    elif False and trigger == TRIGGER_OVERRIDE and override_snapshot is not None:\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "emitter-drops-decision-lock",
+        "                    .where(ReleaseDecision.test_run_id == run_uuid)\n                    .with_for_update()\n",
+        "                    .where(ReleaseDecision.test_run_id == run_uuid)\n",
+    ),
+    (
+        ROOT / "backend/app/routers/release_readiness.py",
+        "override-route-drops-committed-ordinal",
+        "            override_ordinal=len(council.override_audit),\n",
+        "            override_ordinal=None,\n",
     ),
 ]
 

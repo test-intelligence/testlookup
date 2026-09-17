@@ -75,9 +75,9 @@ MUTATIONS = [
     ),
     (
         ROOT / "backend/app/worker/tasks.py",
-        "task-reloads-mutable-summary",
-        "        if source_executive_summary is None and doc:\n",
-        "        if doc:\n",
+        "task-reloads-mongo-despite-immutable-source",
+        "        if source_executive_summary is None:\n            mongo = get_mongo_db()\n",
+        "        if True:\n            mongo = get_mongo_db()\n",
     ),
 ]
 
