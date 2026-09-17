@@ -555,6 +555,11 @@ async def _load_replay_cases(
             receipt = _stage_replay_receipt(stage)
             if receipt is None:
                 continue
+            checkpoint_output = (
+                dict(stage.checkpoint_data)
+                if isinstance(stage.checkpoint_data, Mapping)
+                else {}
+            )
             receipt_runtime = receipt.get("runtime_versions")
             planning_context = {
                 "cluster_child_settings": metadata.get("cluster_child_settings"),
@@ -614,7 +619,7 @@ async def _load_replay_cases(
                     agent_id=stage.capability_id,
                     prompt_version=prompt_version,
                     input_hash=input_hash,
-                    output=dict(stage.checkpoint_data),
+                    output=checkpoint_output,
                     stage_status=stage.status,
                     degraded=run_degraded or stage.status != "completed",
                     cost_usd=max(0.0, float(stage.cost_usd or 0.0)),
