@@ -12,7 +12,7 @@
 2 app/agents/log_intelligence_agent.py
 6 app/agents/release_risk_agent.py
 1 app/agents/summary_agent.py
-9 app/agents/workflow.py
+7 app/agents/workflow.py
 2 app/bootstrap.py
 1 app/core/deps.py
 1 app/core/scim_errors.py
