@@ -627,8 +627,8 @@ class TestBuildGroundedPrompt:
             _make_chunk(source_title="Confluence Page", requirement_id="REQ-2"),
         ]
         prompt = _build_grounded_prompt("Generate tests", chunks)
-        assert 'id="EVIDENCE-1"' in prompt
-        assert 'id="EVIDENCE-2"' in prompt
+        assert '"id": "EVIDENCE-1"' in prompt
+        assert '"id": "EVIDENCE-2"' in prompt
         assert "Jira PROJ-1" in prompt
         assert "Confluence Page" in prompt
         assert "AC-1" in prompt
@@ -646,7 +646,7 @@ class TestBuildGroundedPrompt:
         from app.services.rag_generation_service import _build_grounded_prompt
         chunk = _make_chunk(section_heading=None, requirement_id=None)
         prompt = _build_grounded_prompt("test", [chunk])
-        assert 'id="EVIDENCE-1"' in prompt
+        assert '"id": "EVIDENCE-1"' in prompt
 
 
 class TestCallLlmGenerate:

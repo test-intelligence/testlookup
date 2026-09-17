@@ -69,7 +69,7 @@ class TestGroundedPromptBuilding:
             relevance_score=0.95, requirement_id="AC-1",
         )]
         prompt = _build_grounded_prompt("Generate login tests", chunks)
-        assert 'id="EVIDENCE-1"' in prompt
+        assert '"id": "EVIDENCE-1"' in prompt
         assert "Jira PROJ-1" in prompt
         assert "AC-1" in prompt
         assert "Acceptance Criteria" in prompt
