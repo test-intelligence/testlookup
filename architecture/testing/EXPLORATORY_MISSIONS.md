@@ -326,6 +326,19 @@ authority; rendering/link handling safe; failed generations do not look complete
 decision and provenance. Reproduce rendering/security bugs deterministically;
 evaluate answer quality separately from a single model phrasing difference.
 
+**Execution 2026-09-17 (shipped, partial):** Exact executable candidate
+`25d37f2b` was deployed first as `build-20260917-120037`. EXP-BUG-057 through
+EXP-BUG-069 fixed cross-tenant chat scope, revoked-session access, raw prompt
+persistence, fabricated citations, prompt injection, stale vector authority,
+unsafe rendering/links, false successful generations and false synchronized
+sources. The broad backend suite passed 336 tests, four focused frontend tests
+passed, and 16 wrong-behavior mutations were killed. Ruff, TypeScript, ESLint,
+the 369-error mypy ratchet, all 43 guards and 238 guard self-tests passed.
+Homelab has zero knowledge sources and no installed model, so controlled positive
+ingest, answerable/conflicting generation and real-provider timeout remain
+blocked. CLI/MCP RAG surfaces and richer chat source detail also remain gaps.
+Evidence: `architecture/verification/exploratory-20260916/M10-rag-trust.md`.
+
 ## M11 — Configuration precedence and tool authority (P0, agent QA)
 
 **Preconditions:** registered read-only/report/mutating capabilities; copied

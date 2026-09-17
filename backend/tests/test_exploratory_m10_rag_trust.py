@@ -56,6 +56,35 @@ async def test_existing_chat_session_rechecks_current_project_membership() -> No
         await require_session_access()(request, db, user)
 
 
+@pytest.mark.asyncio
+async def test_run_summary_sql_fallback_uses_allowed_project_scope() -> None:
+    from app.services.chat_service import get_run_summaries
+
+    class Cursor:
+        def sort(self, *_args):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        async def to_list(self, *, length):
+            assert length == 20
+            return []
+
+    mongo = MagicMock()
+    mongo.__getitem__.return_value.find.return_value = Cursor()
+    sql_result = MagicMock()
+    sql_result.scalars.return_value.all.return_value = []
+    db = SimpleNamespace(execute=AsyncMock(return_value=sql_result))
+    allowed = {uuid.uuid4(), uuid.uuid4()}
+    with patch("app.db.mongo.get_mongo_db", return_value=mongo):
+        assert await get_run_summaries(db, None, 5, allowed_project_ids=allowed) == []
+    statement = str(db.execute.await_args.args[0])
+    assert "test_runs.project_id IN" in statement
+    params = db.execute.await_args.args[0].compile().params
+    assert any(set(value) == allowed for value in params.values() if isinstance(value, list))
+
+
 def test_retrieved_instructions_are_inert_and_neutralized() -> None:
     from app.services.rag_generation_service import _build_grounded_prompt
 
@@ -159,6 +188,74 @@ async def test_more_than_ten_selected_sources_remain_source_scoped() -> None:
         for call in collection.query.call_args_list
     }
     assert queried_ids == {str(source_id) for source_id in source_ids}
+
+
+@pytest.mark.asyncio
+async def test_relational_source_lifecycle_is_authoritative_over_vectors() -> None:
+    from app.services.rag_retrieval_service import retrieve_chunks
+
+    stale_source_id = uuid.uuid4()
+    collection = SimpleNamespace(query=MagicMock(return_value={
+        "ids": [["stale-vector"]],
+        "documents": [["deleted requirement"]],
+        "distances": [[0.1]],
+        "metadatas": [[{"source_id": str(stale_source_id)}]],
+    }))
+    sql_result = MagicMock()
+    sql_result.all.return_value = []
+    db = SimpleNamespace(execute=AsyncMock(return_value=sql_result))
+    with patch(
+        "app.services.feature_flags.is_enabled", AsyncMock(return_value=True)
+    ), patch(
+        "app.services.rag_retrieval_service._get_or_create_knowledge_collection",
+        AsyncMock(return_value=collection),
+    ):
+        assert await retrieve_chunks(db, uuid.uuid4(), "query") == []
+
+
+@pytest.mark.asyncio
+async def test_delete_archives_and_retires_source_without_erasing_lineage() -> None:
+    from app.services.knowledge_source_service import delete_source
+
+    source = SimpleNamespace(id=uuid.uuid4(), is_archived=False)
+    db = SimpleNamespace(delete=AsyncMock())
+    retire = AsyncMock()
+    stale = AsyncMock()
+    with patch(
+        "app.services.knowledge_source_service.get_source_or_404",
+        AsyncMock(return_value=source),
+    ), patch(
+        "app.services.knowledge_chunking_service.retire_chunks_for_source", retire
+    ), patch(
+        "app.services.rag_staleness_service.mark_cases_stale_for_source", stale
+    ):
+        await delete_source(db, source.id, SimpleNamespace())
+    assert source.is_archived is True
+    retire.assert_awaited_once_with(db, source.id)
+    stale.assert_awaited_once_with(db, source.id)
+    db.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_source_creation_rejects_unsafe_scheme_before_insert() -> None:
+    from app.services.knowledge_source_service import create_source
+
+    db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace()), add=MagicMock())
+    payload = {
+        "source_type": "internal_url",
+        "title": "unsafe",
+        "canonical_url": "javascript:alert(1)",
+        "classification": "internal",
+    }
+    with patch(
+        "app.services.knowledge_source_service.require_rag_enabled_async", AsyncMock()
+    ), patch(
+        "app.services.knowledge_source_service._check_project_access", AsyncMock()
+    ), pytest.raises(HTTPException, match="not allowed"):
+        await create_source(
+            db, uuid.uuid4(), payload, SimpleNamespace(id=uuid.uuid4())
+        )
+    db.add.assert_not_called()
 
 
 @pytest.mark.asyncio

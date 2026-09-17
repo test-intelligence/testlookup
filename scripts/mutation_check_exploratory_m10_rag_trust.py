@@ -36,6 +36,13 @@ MUTATIONS = (
         "test_existing_chat_session_rechecks_current_project_membership",
     ),
     Mutation(
+        "sql-summary-scope",
+        "backend/app/services/chat_service.py",
+        "elif allowed_project_ids is not None:\n        # Match the Mongo half above.",
+        "elif False and allowed_project_ids is not None:\n        # Match the Mongo half above.",
+        "test_run_summary_sql_fallback_uses_allowed_project_scope",
+    ),
+    Mutation(
         "prompt-injection",
         "backend/app/services/rag_generation_service.py",
         "chunk_text = sanitize_free_text(chunk.chunk_text, max_length=2000)",
@@ -69,6 +76,27 @@ MUTATIONS = (
         "if source_ids:\n        # Per-source queries merged for precise filtering",
         "if source_ids and len(source_ids) <= 10:\n        # Per-source queries merged for precise filtering",
         "test_more_than_ten_selected_sources_remain_source_scoped",
+    ),
+    Mutation(
+        "stale-vector-authority",
+        "backend/app/services/rag_retrieval_service.py",
+        "chunks = [chunk for chunk in chunks if chunk.source_id in source_meta]",
+        "chunks = list(chunks)",
+        "test_relational_source_lifecycle_is_authoritative_over_vectors",
+    ),
+    Mutation(
+        "source-lineage-delete",
+        "backend/app/services/knowledge_source_service.py",
+        "source.is_archived = True",
+        "source.is_archived = False",
+        "test_delete_archives_and_retires_source_without_erasing_lineage",
+    ),
+    Mutation(
+        "unsafe-source-url",
+        "backend/app/services/knowledge_source_service.py",
+        "        validate_url_scheme(canonical_url)",
+        "        pass",
+        "test_source_creation_rejects_unsafe_scheme_before_insert",
     ),
     Mutation(
         "minio-false-success",
