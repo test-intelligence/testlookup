@@ -563,13 +563,19 @@ async def test_deliver_sends_the_fresh_review_projection(monkeypatch):
         "draft_recommendation": None,
         "review": {"state": "accepted"},
     }
-    refresh = AsyncMock(return_value=refreshed)
+    distribution_decision = object()
+    refresh = AsyncMock(return_value=(refreshed, distribution_decision))
+    record_distribution = AsyncMock()
     monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
     monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(svc.asyncio, "to_thread", AsyncMock(return_value=(True, "public")))
-    monkeypatch.setattr(svc, "_refresh_review_gated_payload", refresh)
+    monkeypatch.setattr(svc, "_refresh_review_gated_delivery", refresh)
     monkeypatch.setattr(svc, "get_public_http_client", _Client)
     monkeypatch.setattr(svc, "_transition_processing_delivery", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.services.report_distribution_policy.record_distribution",
+        record_distribution,
+    )
 
     result = await svc.deliver(delivery.id)
 
@@ -577,6 +583,13 @@ async def test_deliver_sends_the_fresh_review_projection(monkeypatch):
     refresh.assert_awaited_once()
     sent = json.loads(posted["content"])
     assert sent["data"] == refreshed
+    record_distribution.assert_awaited_once()
+    assert record_distribution.await_args.args[1] is distribution_decision
+    assert record_distribution.await_args.kwargs == {
+        "channel": "release.decided.webhook",
+        "run_id": delivery.run_id,
+        "project_id": subscription.project_id,
+    }
 
 
 @pytest.mark.asyncio

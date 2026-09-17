@@ -21,4 +21,4 @@ def test_m08_webhook_replay_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M08 webhook-replay mutation check: 4 mutations killed"
+    assert run.stdout.strip() == "M08 webhook-replay mutation check: 6 mutations killed"

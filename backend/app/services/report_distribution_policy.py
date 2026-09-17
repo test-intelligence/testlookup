@@ -53,6 +53,7 @@ __all__ = [
     "gate_enforced",
     "gate_kind_labels",
     "gate_investigation_excerpt",
+    "gate_release_decided_delivery",
     "gate_release_decided_payload",
     "gate_release_verdict",
     "record_distribution",
@@ -286,24 +287,56 @@ async def gate_release_decided_payload(
     synthesized: bool,
     human_override: Any,
     pipeline_run_id: Any = None,
+    project_id: Any = None,
 ) -> dict[str, Any]:
     """Project the review gate onto a ``release.decided`` webhook payload.
 
-    Same rule as :func:`apply_release_review_gate`, without the advisory variant:
-    a webhook has no caller to ask for one. While enforced, an unreviewed AI
-    decision is sent as ``PENDING_REVIEW`` with the model's value in
-    ``draft_recommendation``; otherwise the value is unchanged. Either way the
-    payload gains ``review`` ``{state, review_id, reviewed_at}``, which says that
+    A pending value is sent as a watermarked draft only when the project opted
+    in. Otherwise enforcement replaces it with ``PENDING_REVIEW``. The payload
+    always gains ``review`` ``{state, review_id, reviewed_at}``, which says that
     a human reviewed it and when, never who.
     """
-    envelope, enforced, withhold = await release_review_projection(
+    projected, _decision = await gate_release_decided_delivery(
+        db,
+        payload,
+        run_id=run_id,
+        synthesized=synthesized,
+        human_override=human_override,
+        pipeline_run_id=pipeline_run_id,
+        project_id=project_id,
+    )
+    return projected
+
+
+async def gate_release_decided_delivery(
+    db: Any,
+    payload: dict[str, Any],
+    *,
+    run_id: Any,
+    synthesized: bool,
+    human_override: Any,
+    pipeline_run_id: Any = None,
+    project_id: Any = None,
+) -> tuple[dict[str, Any], DistributionDecision]:
+    """Gate one webhook attempt and return its auditable decision."""
+    envelope, enforced, _withhold = await release_review_projection(
         db,
         run_id=run_id,
         synthesized=synthesized,
         human_override=human_override,
         pipeline_run_id=pipeline_run_id,
     )
+    decision = (
+        DistributionDecision(True, REVIEWED, envelope, enforced=enforced)
+        if human_override
+        else await _decide_envelope_distribution(
+            db,
+            envelope=envelope,
+            project_id=project_id,
+        )
+    )
     projected = dict(payload)
+    projected.pop("draft_watermark", None)
     projected["requires_human_review"] = envelope.ai_generated
     projected["review"] = {
         "state": envelope.state,
@@ -312,14 +345,16 @@ async def gate_release_decided_payload(
     }
     projected["review_gate_enforced"] = enforced
     projected["draft_recommendation"] = None
-    if withhold:
+    if decision.watermark:
+        projected["draft_watermark"] = decision.watermark
+    elif not decision.allowed:
         if envelope.state in _TERMINAL_REVIEW_STATES:
             projected["blocking_issues"] = []
             projected["conditions_for_go"] = []
         else:
             projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
-    return projected
+    return projected, decision
 
 
 # ── AI summary text in notifications and digests (E8.4 slice 2) ─────────────

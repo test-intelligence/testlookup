@@ -105,6 +105,7 @@ async def build_release_decided_payload(
         synthesized=bool(council.synthesized),
         human_override=council.human_override,
         pipeline_run_id=decision.pipeline_run_id,
+        project_id=project_id,
     )
 
 

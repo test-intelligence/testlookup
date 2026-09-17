@@ -211,6 +211,7 @@ def world(monkeypatch):
     monkeypatch.setattr(emitter, "get_release_council", _council)
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
     monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
+    monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=False))
     monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", False)
     state.enforce = lambda on: monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", on)
     return state
@@ -406,8 +407,8 @@ async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(
         "draft_recommendation": None,
         "review": {"state": "accepted", "review_id": REVIEW_ID, "reviewed_at": REVIEWED_AT},
     }
-    gate = AsyncMock(side_effect=[pending, accepted])
-    monkeypatch.setattr(policy, "gate_release_decided_payload", gate)
+    gate = AsyncMock(side_effect=[(pending, object()), (accepted, object())])
+    monkeypatch.setattr(policy, "gate_release_decided_delivery", gate)
     delivery = SimpleNamespace(
         event_type="release.decided",
         run_id=RUN,
@@ -428,6 +429,51 @@ async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(
         assert "review" not in source
         assert "review_gate_enforced" not in source
         assert call.kwargs["pipeline_run_id"] == PIPELINE
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_honours_the_project_draft_setting(monkeypatch, world):
+    world.enforce(True)
+    monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=True))
+
+    payload, decision = await policy.gate_release_decided_delivery(
+        None,
+        {
+            "project_id": str(PROJECT),
+            "recommendation": "GO",
+            "blocking_issues": ["draft blocker"],
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+        project_id=PROJECT,
+    )
+
+    assert decision.reason == policy.PROJECT_ALLOWS_DRAFTS
+    assert payload["recommendation"] == "GO"
+    assert payload["draft_recommendation"] is None
+    assert payload["draft_watermark"] == policy.DRAFT_WATERMARK
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_reports_would_refuse_while_enforcement_is_off(world):
+    world.enforce(False)
+
+    payload, decision = await policy.gate_release_decided_delivery(
+        None,
+        {"project_id": str(PROJECT), "recommendation": "NO_GO"},
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+        project_id=PROJECT,
+    )
+
+    assert decision.reason == policy.WOULD_REFUSE
+    assert decision.audit_action == "ai_report.distribution_would_refuse"
+    assert payload["recommendation"] == "NO_GO"
+    assert "draft_watermark" not in payload
 
 
 @pytest.mark.asyncio

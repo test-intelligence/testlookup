@@ -11,6 +11,8 @@ TESTS = [
     "backend/tests/test_release_decided_webhook.py::test_an_agent_decision_stages_exactly_one_delivery_after_its_commit",
     "backend/tests/test_release_decided_webhook.py::test_webhook_retry_rechecks_review_and_restores_the_original_decision",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_uses_its_exact_pipeline_review",
+    "backend/tests/test_release_decided_webhook.py::test_release_webhook_honours_the_project_draft_setting",
+    "backend/tests/test_release_decided_webhook.py::test_release_webhook_reports_would_refuse_while_enforcement_is_off",
     "backend/tests/services/test_webhook_service.py::test_deliver_sends_the_fresh_review_projection",
 ]
 MUTATIONS = [
@@ -37,6 +39,18 @@ MUTATIONS = [
         "release-uses-newest-run-review",
         "            await review_envelope_for_pipeline_subject(db, pipeline_run_id)\n",
         '            await review_envelope_for_run(db, run_id, workflow_type="deep")\n',
+    ),
+    (
+        ROOT / "backend/app/services/report_distribution_policy.py",
+        "project-draft-setting-is-ignored",
+        "    if decision.watermark:\n",
+        "    if False and decision.watermark:\n",
+    ),
+    (
+        ROOT / "backend/app/services/webhook_service.py",
+        "successful-delivery-skips-audit",
+        "            if distribution_decision is not None:\n",
+        "            if False and distribution_decision is not None:\n",
     ),
 ]
 

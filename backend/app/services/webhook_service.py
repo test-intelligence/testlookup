@@ -85,7 +85,8 @@ SUPPORTED_EVENTS: dict[str, str] = {
         "NO_GO or CONDITIONAL_GO; PENDING_REVIEW while the human-review gate is "
         "enforced and no human has accepted the AI decision), "
         "draft_recommendation, risk_score, blocking_issues, conditions_for_go, "
-        "synthesized, overridden, requires_human_review, review {state, "
+        "draft_watermark when the project allows pending drafts, synthesized, "
+        "overridden, requires_human_review, review {state, "
         "review_id, reviewed_at}, review_gate_enforced, created_at, updated_at."
     ),
     "flaky.quarantined": "Fired when a QA Lead approves a flaky-test quarantine.",
@@ -836,6 +837,14 @@ async def _refresh_review_gated_payload(
     db: AsyncSession,
     delivery: WebhookDelivery,
 ) -> dict[str, Any]:
+    payload, _decision = await _refresh_review_gated_delivery(db, delivery)
+    return payload
+
+
+async def _refresh_review_gated_delivery(
+    db: AsyncSession,
+    delivery: WebhookDelivery,
+) -> tuple[dict[str, Any], Any]:
     """Apply the current review state immediately before webhook egress.
 
     A delivery can wait through a receiver outage while its exact pipeline
@@ -845,7 +854,7 @@ async def _refresh_review_gated_payload(
     """
     stored = dict(delivery.event_payload or {})
     if delivery.event_type != "release.decided" or delivery.run_id is None:
-        return stored
+        return stored, None
 
     original = dict(stored)
     draft_recommendation = original.pop("draft_recommendation", None)
@@ -855,6 +864,7 @@ async def _refresh_review_gated_payload(
         "requires_human_review",
         "review",
         "review_gate_enforced",
+        "draft_watermark",
     ):
         original.pop(field, None)
 
@@ -868,13 +878,14 @@ async def _refresh_review_gated_payload(
 
     from app.services import report_distribution_policy
 
-    return await report_distribution_policy.gate_release_decided_payload(
+    return await report_distribution_policy.gate_release_decided_delivery(
         db,
         original,
         run_id=delivery.run_id,
         synthesized=bool(original.get("synthesized")),
         human_override=original.get("overridden"),
         pipeline_run_id=pipeline_run_id,
+        project_id=original.get("project_id"),
     )
 
 
@@ -1027,7 +1038,9 @@ async def deliver(
                 return {"error": "signing_secret_unavailable"}
 
         try:
-            delivery_payload = await _refresh_review_gated_payload(db, delivery)
+            delivery_payload, distribution_decision = await _refresh_review_gated_delivery(
+                db, delivery
+            )
         except Exception as exc:  # fail closed when live review state is unavailable
             retry_at = datetime.now(timezone.utc) + timedelta(seconds=30)
             error = f"release.decided review gate lookup failed: {type(exc).__name__}"
@@ -1132,6 +1145,23 @@ async def deliver(
 
         if 200 <= resp.status_code < 300:
             delivered_at = datetime.now(timezone.utc)
+            if distribution_decision is not None:
+                from app.services import report_distribution_policy
+
+                try:
+                    await report_distribution_policy.record_distribution(
+                        db,
+                        distribution_decision,
+                        channel="release.decided.webhook",
+                        run_id=delivery.run_id,
+                        project_id=subscription.project_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- delivery already happened
+                    logger.warning(
+                        "release_decided_distribution_audit_not_staged",
+                        delivery_id=str(delivery.id),
+                        error_type=type(exc).__name__,
+                    )
             changed = await _transition_processing_delivery(
                 db,
                 delivery_id=delivery.id,
