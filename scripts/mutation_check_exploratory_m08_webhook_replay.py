@@ -43,8 +43,8 @@ MUTATIONS = [
     (
         ROOT / "backend/app/services/report_distribution_policy.py",
         "project-draft-setting-is-ignored",
-        "    if decision.watermark:\n",
-        "    if False and decision.watermark:\n",
+        '    projected["draft_recommendation"] = None\n    if decision.watermark:\n',
+        '    projected["draft_recommendation"] = None\n    if False and decision.watermark:\n',
     ),
     (
         ROOT / "backend/app/services/webhook_service.py",
