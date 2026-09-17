@@ -300,10 +300,10 @@ index/relational discrepancy and opened evidence. Do not demand exact semantic
 ordering where the contract promises relevance rather than stable rank.
 
 **Execution 2026-09-17 (shipped):** PASS on exact deployed executable candidate
-`0da8f248` (`build-20260917-101919`). EXP-BUG-049 through EXP-BUG-055 fixed
+`0da8f248` (`build-20260917-101919`). EXP-BUG-049 through EXP-BUG-056 fixed
 single-session query overlap, false hybrid fallback labels, unreachable later
 hybrid pages, silent adapter/DB failures, cross-project suite collapse and
-false exact totals. Bounded semantic and mixed-entity retrieval remains bounded
+false exact totals and duplicate cross-project flaky identities. Bounded semantic and mixed-entity retrieval remains bounded
 by design and now identifies counts as lower bounds. Full evidence:
 `architecture/verification/exploratory-20260916/M09-search-evidence.md`.
 

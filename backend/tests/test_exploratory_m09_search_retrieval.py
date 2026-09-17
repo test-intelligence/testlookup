@@ -226,6 +226,27 @@ async def test_flaky_rate_filter_is_applied_before_adapter_limit():
 
 
 @pytest.mark.asyncio
+async def test_flaky_results_use_project_bound_identity():
+    from app.services.global_search_service import _search_flaky_tests
+
+    project_id = uuid.uuid4()
+    row = SimpleNamespace(
+        test_fingerprint="shared-fingerprint",
+        project_id=project_id,
+        test_name="checkout retries",
+        suite_name="payments",
+        total_runs=10,
+        fail_count=4,
+    )
+    db = SimpleNamespace(execute=AsyncMock(return_value=_Rows([row])))
+
+    results = await _search_flaky_tests(db, "checkout", None, None)
+
+    assert results[0]["entity_id"] == f"{project_id}:shared-fingerprint"
+    assert results[0]["project_id"] == str(project_id)
+
+
+@pytest.mark.asyncio
 async def test_hybrid_fetches_enough_candidates_for_requested_page(monkeypatch):
     from app.services import search_service, semantic_search
 

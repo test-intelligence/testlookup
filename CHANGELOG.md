@@ -5,10 +5,11 @@
 Search retrieval now preserves project identity for suite results, labels
 keyword fallback after vector-provider failure, serializes count queries on one
 request session, and propagates similar-search database failures. Hybrid search
-fetches enough bounded candidates for the requested page. Global, semantic and
-hybrid responses disclose bounded or failed-source totals as lower bounds, and
+uses one stable bounded candidate universe across pages. Global, semantic and
+hybrid responses disclose bounded or failed-source totals as lower bounds.
+Same-fingerprint flaky results now carry project-bound identities, and
 the web, CLI and MCP consumers render that status instead of claiming exact
-counts. M09 records seven fixed defects with deployed, regression and mutation
+counts. M09 records eight fixed defects with deployed, regression and mutation
 evidence.
 
 Distribution review authority now follows the exact immutable report subject

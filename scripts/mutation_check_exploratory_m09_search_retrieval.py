@@ -118,6 +118,12 @@ MUTATIONS = [
         '''        .having(total_runs >= 5)
 ''',
     ),
+    (
+        ROOT / "backend/app/services/global_search_service.py",
+        "flaky-result-identity-collides-across-projects",
+        '                    "entity_id": f"{row.project_id}:{row.test_fingerprint}",\n',
+        '                    "entity_id": row.test_fingerprint,\n',
+    ),
 ]
 
 

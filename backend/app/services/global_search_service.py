@@ -462,9 +462,11 @@ async def _search_flaky_tests(
     for row in rows:
         if row.total_runs > 0:
             rate = (row.fail_count / row.total_runs) * 100
-            results.append({
+                results.append({
                     "entity_type": "flaky_test",
-                    "entity_id": row.test_fingerprint,
+                    # Fingerprints are not project-salted. Keep same-test rows
+                    # from two authorized projects distinct for consumer keys.
+                    "entity_id": f"{row.project_id}:{row.test_fingerprint}",
                     "title": row.test_name or row.test_fingerprint,
                     "subtitle": f"{rate:.0f}% failure rate over {row.total_runs} runs",
                     "project_id": str(row.project_id) if row.project_id else None,
