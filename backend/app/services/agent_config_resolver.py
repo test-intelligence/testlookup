@@ -336,10 +336,14 @@ async def _apply_endpoint_residency(resolved: ResolvedAgentConfig) -> None:
             continue
         try:
             await enforce_provider_policy_async(endpoint.provider, offline=resolved.offline_mode, base_url=endpoint.base_url)
-        except LLMPolicyViolation as exc:
+        except LLMPolicyViolation:
             resolved.endpoints[tier] = None
             resolved.clamps.append(Clamp(
-                field=f"model.{tier}.base_url", layer=LAYER_ENV, requested=endpoint.provider, effective=None, reason=str(exc),
+                field=f"model.{tier}.endpoint",
+                layer=LAYER_ENV,
+                requested=endpoint.provider,
+                effective=None,
+                reason="endpoint refused by live provider policy",
             ))
 
 

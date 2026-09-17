@@ -271,6 +271,37 @@ async def test_a_tier_refused_at_acceptance_stays_unavailable(monkeypatch):
     assert restored.endpoints == {"slm": None, "llm": None}
 
 
+async def test_a_refused_endpoint_clamp_is_sanitized_before_freezing(monkeypatch):
+    accepted = resolver.resolve(SUMMARY, global_ai_config=_ai())
+    refused_url = "http://secret-host.internal:11434"
+    accepted.endpoints["slm"].base_url = refused_url
+
+    async def _enforce(_provider, *, offline, base_url):
+        if base_url == refused_url:
+            raise resolver.LLMPolicyViolation(
+                f"LLM base_url host 'secret-host.internal' is not permitted"
+            )
+
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", _enforce)
+    await resolver._apply_endpoint_residency(accepted)
+
+    assert accepted.endpoints["slm"] is None
+    assert accepted.endpoints["llm"] is not None
+    snapshot = resolver.freeze_for_invocation(accepted)
+    encoded = json.dumps(snapshot)
+    assert "base_url" not in encoded
+    assert "secret-host.internal" not in encoded
+    assert "secret-host" not in encoded
+    assert "api_key" not in encoded
+    assert snapshot["clamps"][-1] == {
+        "field": "model.slm.endpoint",
+        "layer": "env",
+        "requested": "ollama",
+        "effective": None,
+        "reason": "endpoint refused by live provider policy",
+    }
+
+
 async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
     snapshot = resolver.freeze_for_invocation(
         resolver.resolve(SUMMARY, global_ai_config=_ai())
@@ -388,7 +419,7 @@ async def test_resolve_for_project_reads_the_row_and_checks_endpoint_residency(m
     get_row.assert_awaited_once_with("db", PROJECT_ID, SUMMARY)
     assert (out.source, out.config_version, out.config.enabled, out.config.mode) == ("project", 6, False, "suggest")
     assert out.endpoints == {"slm": None, "llm": None}
-    assert {c.field for c in out.clamps} == {"model.slm.base_url", "model.llm.base_url"}
+    assert {c.field for c in out.clamps} == {"model.slm.endpoint", "model.llm.endpoint"}
 
 
 async def test_resolve_for_project_keeps_an_endpoint_that_passes_residency(monkeypatch):

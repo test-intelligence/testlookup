@@ -161,6 +161,13 @@ MUTATIONS = (
         "backend/tests/test_agent_config_resolver.py::test_frozen_restore_reapplies_a_new_eval_drift_pin",
     ),
     Mutation(
+        "frozen-endpoint-clamp-sanitization",
+        "backend/app/services/agent_config_resolver.py",
+        'field=f"model.{tier}.endpoint",',
+        'field=f"model.{tier}.base_url",',
+        "backend/tests/test_agent_config_resolver.py::test_a_refused_endpoint_clamp_is_sanitized_before_freezing",
+    ),
+    Mutation(
         "reviewer-config-version",
         "backend/app/services/reviewer_quality_service.py",
         "expected_version=int(config_row.config_version),",
