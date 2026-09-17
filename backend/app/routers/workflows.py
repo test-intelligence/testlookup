@@ -232,7 +232,7 @@ async def evaluate_workflow(
 async def publish_workflow(
     project_id: uuid.UUID,
     workflow_id: str,
-    body: svc.WorkflowPublishV1 = Body(default_factory=svc.WorkflowPublishV1),
+    body: svc.WorkflowPublishV1,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
