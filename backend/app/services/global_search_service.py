@@ -33,6 +33,14 @@ logger = structlog.get_logger("services.global_search")
 
 # Supported entity types
 ALL_ENTITY_TYPES = {"test_case", "test_run", "suite", "defect", "flaky_test", "release"}
+_DEFAULT_ADAPTER_LIMITS = {
+    "test_case": 50,
+    "test_run": 20,
+    "suite": 15,
+    "defect": 20,
+    "flaky_test": 15,
+    "release": 10,
+}
 
 
 async def global_search(
@@ -68,6 +76,8 @@ async def global_search(
         return {
             "items": [], "total": 0, "query": q, "search_type": "keyword",
             "entity_counts": {}, "page": page, "size": size, "pages": 0,
+            "result_status": "complete", "failed_entity_types": [],
+            "counts_are_exact": True,
         }
 
     # When the caller narrows to a single entity type (Tests, Runs, …),
@@ -90,7 +100,9 @@ async def global_search(
 
     # Fan out to adapters
     all_results: list[dict] = []
-    for entity_type in types:
+    failed_entity_types: list[str] = []
+    capped_entity_types: list[str] = []
+    for entity_type in sorted(types):
         adapter = _ADAPTERS.get(entity_type)
         if adapter:
             try:
@@ -99,8 +111,14 @@ async def global_search(
                     override_limit=adapter_override_limit,
                 )
                 all_results.extend(results)
+                effective_limit = adapter_override_limit or _DEFAULT_ADAPTER_LIMITS.get(
+                    entity_type
+                )
+                if effective_limit is not None and len(results) >= effective_limit:
+                    capped_entity_types.append(entity_type)
             except Exception as exc:
                 logger.warning("search_adapter_failed", entity_type=entity_type, error=str(exc))
+                failed_entity_types.append(entity_type)
 
     # Sort by relevance descending
     all_results.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
@@ -112,6 +130,7 @@ async def global_search(
     total = len(all_results)
     start = (page - 1) * size
     page_results = all_results[start:start + size]
+    counts_are_exact = not failed_entity_types and not capped_entity_types
 
     return {
         "items": page_results,
@@ -122,6 +141,11 @@ async def global_search(
         "page": page,
         "size": size,
         "pages": math.ceil(total / size) if size > 0 else 0,
+        # Adapters intentionally use bounded samples. Disclose failures and
+        # cap hits so consumers never present a lower bound as an exact total.
+        "result_status": "complete" if counts_are_exact else "partial",
+        "failed_entity_types": failed_entity_types,
+        "counts_are_exact": counts_are_exact,
     }
 
 

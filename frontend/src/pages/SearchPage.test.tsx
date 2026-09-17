@@ -13,8 +13,13 @@ import { useReleaseStore } from '@/store/releaseStore'
 const mockGlobalSearch = vi.fn()
 const mockGetIndexStatus = vi.fn()
 const mockGetEntityCounts = vi.fn()
-const { mockProjectState } = vi.hoisted(() => ({
-  mockProjectState: { activeProjectId: 'proj-1' },
+const { mockProjectState, mockSetActiveProject } = vi.hoisted(() => ({
+  mockSetActiveProject: vi.fn(),
+  mockProjectState: {
+    activeProjectId: 'proj-1',
+    activeProject: { id: 'proj-1', name: 'One' },
+    projects: [{ id: 'proj-1', name: 'One' }, { id: 'proj-2', name: 'Two' }],
+  },
 }))
 
 vi.mock('@/services/searchService', () => ({
@@ -34,8 +39,8 @@ vi.mock('@/services/searchService', () => ({
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (state: { activeProjectId: string }) => unknown) =>
-    selector(mockProjectState)),
+  useProjectStore: vi.fn((selector: (state: typeof mockProjectState & { setActiveProject: typeof mockSetActiveProject }) => unknown) =>
+    selector({ ...mockProjectState, setActiveProject: mockSetActiveProject })),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -120,6 +125,7 @@ describe('SearchPage', () => {
     mockGlobalSearch.mockReset()
     mockGetIndexStatus.mockReset()
     mockGetEntityCounts.mockReset()
+    mockSetActiveProject.mockReset()
     mockGetIndexStatus.mockResolvedValue(makeIndexStatus())
     // Default: no project-scoped totals available — covers the existing
     // tests' chip-count expectations. Specific tests override per-case.
@@ -293,6 +299,37 @@ describe('SearchPage', () => {
     expect(screen.getByText('Keyword retrieval', { exact: true })).toBeInTheDocument()
     expect(mockGlobalSearch).toHaveBeenCalledWith(
       expect.objectContaining({ q: 'loads', page: 1, size: 25 }),
+    )
+  })
+
+  it('labels capped or failed search results as lower bounds', async () => {
+    mockGlobalSearch.mockResolvedValue({
+      ...makeResponse([makeResult()]),
+      total: 50,
+      counts_are_exact: false,
+      result_status: 'partial',
+      failed_entity_types: ['defect'],
+    })
+
+    renderAt('/search?q=loads&scope=all')
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Some search sources were unavailable: defect. Counts shown are lower bounds.',
+    )
+    expect(screen.getByText('50+')).toBeInTheDocument()
+    expect(screen.getByText(/of at least 50/)).toBeInTheDocument()
+  })
+
+  it('selects a result project before opening its project-scoped link', async () => {
+    mockGlobalSearch.mockResolvedValue(
+      makeResponse([makeResult({ project_id: 'proj-2', title: 'cross-project suite' })]),
+    )
+
+    renderAt('/search?q=suite&scope=all')
+    fireEvent.click(await screen.findByRole('button', { name: /cross-project suite/i }))
+
+    expect(mockSetActiveProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'proj-2' }),
     )
   })
 

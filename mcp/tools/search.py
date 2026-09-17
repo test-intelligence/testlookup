@@ -77,7 +77,13 @@ def register(mcp) -> None:  # noqa: ANN001
         if not items:
             return f"No results for '{query}'."
 
-        lines = [f"## Global Search: '{query}' ({data.get('total', 0)} results)"]
+        exact = data.get("counts_are_exact", True)
+        suffix = "" if exact else "+"
+        lines = [f"## Global Search: '{query}' ({data.get('total', 0)}{suffix} results)"]
+        if data.get("result_status") == "partial":
+            failed = ", ".join(data.get("failed_entity_types", []))
+            detail = f" Unavailable sources: {failed}." if failed else ""
+            lines.append(f"> Search totals are lower bounds.{detail}")
         if counts:
             lines.append("**Entity counts:** " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
         for r in items[:10]:

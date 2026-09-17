@@ -1118,6 +1118,8 @@ function relativeTime(ts: number): string {
 export default function SearchPage() {
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
+  const projects = useProjectStore(s => s.projects)
+  const setActiveProject = useProjectStore(s => s.setActiveProject)
   const [searchParams, setSearchParams] = useSearchParams()
 
   // URL-driven state (deep-linkable)
@@ -1319,6 +1321,14 @@ export default function SearchPage() {
     }
   }
 
+  const handleOpenResult = (row: GlobalSearchResult) => {
+    if (row.project_id) {
+      const destinationProject = projects.find(candidate => candidate.id === row.project_id)
+      if (destinationProject) setActiveProject(destinationProject)
+    }
+    navigate(row.navigation_url)
+  }
+
   const handleUnsave = (id: string) => {
     setSaved(prev => {
       const next = prev.filter(s => s.id !== id)
@@ -1481,6 +1491,18 @@ export default function SearchPage() {
 
       <WorkflowRibbon stages={ribbonStages} />
 
+      {response?.result_status === 'partial' && (
+        <div
+          role="status"
+          className="mb-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-3 py-2 text-[12px] text-[var(--status-broken)]"
+        >
+          {response.failed_entity_types?.length
+            ? `Some search sources were unavailable: ${response.failed_entity_types.join(', ')}. `
+            : 'Search sampled the most relevant matches. '}
+          Counts shown are lower bounds.
+        </div>
+      )}
+
       {/* Live results — only when a query has been run */}
       {response && response.items.length > 0 && (
         <>
@@ -1488,7 +1510,7 @@ export default function SearchPage() {
             title={
               <>
                 Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
-                  <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+                  <strong>{Intl.NumberFormat().format(response.total)}{response.counts_are_exact === false ? '+' : ''}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
                 </span>
                 {/* The header's release picker is visible on this page and does
                     NOT apply here. Without saying so, a reader with 2.4.0
@@ -1505,12 +1527,12 @@ export default function SearchPage() {
               <span className="font-mono">
                 <code className="text-[11px]">{response.search_type}</code>
                 {' · '}
-                showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.total}
+                showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.counts_are_exact === false ? 'at least ' : ''}{response.total}
               </span>
             }
           >
             <div className="flex flex-col">
-              {response.items.map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => navigate(r.navigation_url)} />)}
+              {response.items.map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => handleOpenResult(r)} />)}
             </div>
           </CardShell>
           {response.pages > 1 && (

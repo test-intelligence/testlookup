@@ -65,5 +65,9 @@ export interface GlobalSearchResponse {
   page: number
   size: number
   pages: number
+  /** False means totals are lower bounds because an adapter failed or hit its cap. */
+  counts_are_exact?: boolean
+  result_status?: 'complete' | 'partial'
+  failed_entity_types?: SearchEntityType[]
   scope?: SearchScope
 }

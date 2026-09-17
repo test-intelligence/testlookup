@@ -1,6 +1,7 @@
 """M09 regressions for truthful fallback and project-bound evidence links."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -15,6 +16,14 @@ class _Rows:
 
     def all(self):
         return self._rows
+
+
+class _Scalar:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one(self):
+        return self._value
 
 
 @pytest.mark.asyncio
@@ -124,3 +133,117 @@ async def test_similar_search_still_treats_an_invalid_id_as_missing():
 
     assert result == {"items": [], "total": 0, "query": "not-a-uuid"}
     db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_entity_counts_serialize_queries_on_one_session(monkeypatch):
+    """One request must never overlap operations on its injected AsyncSession."""
+    from app.routers import search
+
+    project_id = uuid.uuid4()
+
+    class TrackingSession:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+            return _Scalar(1)
+
+    db = TrackingSession()
+    monkeypatch.setattr(
+        search,
+        "resolve_project_scope",
+        AsyncMock(return_value=(project_id, {project_id})),
+    )
+
+    result = await search.get_entity_counts(
+        project_id=str(project_id), db=db, current_user=MagicMock()
+    )
+
+    assert db.calls == 6
+    assert db.max_active == 1
+    assert set(result.values()) == {1}
+
+
+@pytest.mark.asyncio
+async def test_global_search_discloses_adapter_failure(monkeypatch):
+    from app.services import global_search_service as service
+
+    async def good(*_args, **_kwargs):
+        return [{"entity_type": "test_case", "relevance_score": 1.0}]
+
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("defect store unavailable")
+
+    monkeypatch.setattr(service, "_ADAPTERS", {"test_case": good, "defect": broken})
+    result = await service.global_search(
+        MagicMock(), q="checkout", entity_types={"test_case", "defect"}
+    )
+
+    assert result["result_status"] == "partial"
+    assert result["failed_entity_types"] == ["defect"]
+    assert result["counts_are_exact"] is False
+
+
+@pytest.mark.asyncio
+async def test_global_search_discloses_capped_adapter_sample(monkeypatch):
+    from app.services import global_search_service as service
+
+    async def capped(*_args, **_kwargs):
+        return [
+            {"entity_type": "release", "entity_id": str(i), "relevance_score": 1.0}
+            for i in range(10)
+        ]
+
+    monkeypatch.setattr(service, "_ADAPTERS", {"release": capped})
+    result = await service.global_search(MagicMock(), q="")
+
+    assert result["result_status"] == "partial"
+    assert result["failed_entity_types"] == []
+    assert result["counts_are_exact"] is False
+
+
+@pytest.mark.asyncio
+async def test_hybrid_fetches_enough_candidates_for_requested_page(monkeypatch):
+    from app.services import search_service, semantic_search
+
+    requested_sizes = []
+
+    async def keywords(_db, **kwargs):
+        requested_sizes.append(kwargs["size"])
+        items = [
+            {"test_case_id": f"keyword-{i}", "last_run_date": "", "status": "PASSED"}
+            for i in range(kwargs["size"])
+        ]
+        return items, 50, 1
+
+    async def semantics(_db, _q, _page, size, *_args, **_kwargs):
+        items = [
+            {
+                "test_case_id": f"semantic-{i}",
+                "last_run_date": "",
+                "status": "FAILED",
+                "relevance_score": 0.8,
+            }
+            for i in range(size)
+        ]
+        return items, size, 1
+
+    monkeypatch.setattr(search_service, "search_test_cases_query", keywords)
+    monkeypatch.setattr(semantic_search, "semantic_search", semantics)
+
+    items, total, pages = await semantic_search.hybrid_search(
+        MagicMock(), q="checkout", page=3, size=2
+    )
+
+    assert requested_sizes == [12]
+    assert len(items) == 2
+    assert total == 24
+    assert pages == 12

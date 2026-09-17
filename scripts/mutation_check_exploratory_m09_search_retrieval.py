@@ -65,6 +65,41 @@ MUTATIONS = [
         row = None
 ''',
     ),
+    (
+        ROOT / "backend/app/routers/search.py",
+        "entity-counts-overlap-session-operations",
+        '''    test_run = await _count(test_runs_q)
+    test_case = await _count(test_cases_q)
+    suite = await _count(suites_q)
+    defect = await _count(defects_q)
+    flaky_test = await _count(flaky_q)
+    release = await _count(releases_q)
+''',
+        '''    import asyncio as _asyncio
+    test_run, test_case, suite, defect, flaky_test, release = await _asyncio.gather(
+        _count(test_runs_q), _count(test_cases_q), _count(suites_q),
+        _count(defects_q), _count(flaky_q), _count(releases_q),
+    )
+''',
+    ),
+    (
+        ROOT / "backend/app/services/global_search_service.py",
+        "global-search-hides-adapter-failure",
+        "                failed_entity_types.append(entity_type)\n",
+        "                pass  # hide the failed source\n",
+    ),
+    (
+        ROOT / "backend/app/services/global_search_service.py",
+        "global-search-claims-capped-sample-is-exact",
+        "                if effective_limit is not None and len(results) >= effective_limit:\n",
+        "                if False and effective_limit is not None and len(results) >= effective_limit:\n",
+    ),
+    (
+        ROOT / "backend/app/services/semantic_search.py",
+        "hybrid-later-pages-use-first-page-pool",
+        "    candidate_size = min(page * size * 2, 200)\n",
+        "    candidate_size = min(size * 2, 200)\n",
+    ),
 ]
 
 

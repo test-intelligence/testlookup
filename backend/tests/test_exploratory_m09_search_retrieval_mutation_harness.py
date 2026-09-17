@@ -21,4 +21,4 @@ def test_m09_search_retrieval_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "M09 search-retrieval mutation check: 5 mutations killed" in run.stdout
+    assert "M09 search-retrieval mutation check: 9 mutations killed" in run.stdout

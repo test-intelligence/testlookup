@@ -853,7 +853,11 @@ async def semantic_search(
 
         query_kwargs: dict = {
             "query_texts": [q],
-            "n_results": min((page + 1) * size, 200),
+            # Date filtering happens after Chroma retrieval because its ISO
+            # string comparison is unreliable. Use the full bounded window
+            # when a date filter is active so older high-ranked hits do not
+            # crowd out recent eligible evidence from the tiny page window.
+            "n_results": 200 if days else min((page + 1) * size, 200),
             "include": ["documents", "distances", "metadatas"],
         }
         if where:
@@ -1000,13 +1004,17 @@ async def hybrid_search(
     # timing-dependent). The two reads are independent, so serialising them
     # gives identical results without the concurrency hazard. (A genuinely
     # parallel version would need a second, isolated session.)
+    # Fetch enough candidates to cover the requested merged page. The old
+    # fixed ``size * 2`` pool made page 3 and later empty even when both
+    # providers had more matches. Keep the existing 200-result safety bound.
+    candidate_size = min(page * size * 2, 200)
     keyword_results, kw_total, _ = await search_test_cases_query(
-        db, q=q, page=1, size=size * 2,
+        db, q=q, page=1, size=candidate_size,
         project_id=project_id, status=status, days=days,
         allowed_project_ids=allowed_project_ids,
     )
     sem_results, _, _ = await semantic_search(
-        db, q, 1, size * 2, project_id, status, days,
+        db, q, 1, candidate_size, project_id, status, days,
         allowed_project_ids=allowed_project_ids,
         raise_on_provider_error=True,
     )

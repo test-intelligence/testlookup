@@ -27,10 +27,15 @@ def search(
     try:
         data = asyncio.run(client.request("GET", "/api/v1/search/global", params=params, profile_name=profile_name))
         items = data.get("items", [])
+        exact = data.get("counts_are_exact", True)
+        if data.get("result_status") == "partial":
+            failed = ", ".join(data.get("failed_entity_types", []))
+            detail = f" Unavailable sources: {failed}." if failed else ""
+            output.print_warning(f"Search totals are lower bounds.{detail}")
         output.render(
             items, output_format,
             columns=["entity_type", "title", "subtitle", "relevance_score", "navigation_url"],
-            title=f'Search: "{query}" ({data.get("total", 0)} results)',
+            title=f'Search: "{query}" ({data.get("total", 0)}{"+" if not exact else ""} results)',
         )
     except Exception as e:
         output.print_error(str(e))
