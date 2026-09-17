@@ -47,6 +47,7 @@ __all__ = [
     "not_ai_generated",
     "review_envelope_for_run",
     "review_envelope_for_pipeline",
+    "review_envelope_for_pipeline_subject",
 ]
 
 HEADER_AI_GENERATED = "X-TestLookup-AI-Generated"
@@ -208,6 +209,44 @@ async def review_envelope_for_pipeline(
                 ReviewRequest.pipeline_run_id == pipeline_uuid,
                 ReviewRequest.kind == "report",
                 ReviewRequest.state != "superseded",
+            )
+            .order_by(ReviewRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    return envelope_from_review(row) if row is not None else _unreviewed()
+
+
+async def review_envelope_for_pipeline_subject(
+    db: Any,
+    pipeline_run_id: Any,
+    *,
+    ai_generated: bool = True,
+) -> ReviewEnvelope:
+    """Return the historical envelope for one immutable pipeline artifact.
+
+    Unlike the live-subject lookup above, this includes a superseded review.
+    Immutable report versions must retain that terminal state instead of being
+    relabelled by whichever deep pipeline happened to run most recently.
+    """
+    if not ai_generated:
+        return not_ai_generated()
+    try:
+        pipeline_uuid = (
+            pipeline_run_id
+            if isinstance(pipeline_run_id, uuid.UUID)
+            else uuid.UUID(str(pipeline_run_id))
+        )
+    except (TypeError, ValueError):
+        return _unreviewed()
+    if db is None:
+        return _unreviewed()
+    row: Optional[ReviewRequest] = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(
+                ReviewRequest.pipeline_run_id == pipeline_uuid,
+                ReviewRequest.kind == "report",
             )
             .order_by(ReviewRequest.created_at.desc())
             .limit(1)

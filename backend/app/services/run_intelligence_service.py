@@ -197,6 +197,10 @@ async def get_run_intelligence(
                     "status": published.get("status"),
                     "generated_at": published.get("generated_at"),
                 }
+                if report_version is not None:
+                    summary["_decision_report_pipeline_run_id"] = published.get(
+                        "pipeline_run_id"
+                    )
             return summary
         except ValueError:
             raise
@@ -311,9 +315,13 @@ async def get_run_intelligence(
     structured_summary: Optional[dict] = None
     fallback_used = False
     generated_at = None
+    decision_report_pipeline_run_id = None
 
     if summary_doc:
         summary_doc.pop("_id", None)
+        decision_report_pipeline_run_id = summary_doc.pop(
+            "_decision_report_pipeline_run_id", None
+        )
         structured_summary = _structured_summary_projection(summary_doc)
         fallback_used = bool(summary_doc.get("fallback_used", False))
         generated_at = summary_doc.get("generated_at")
@@ -513,7 +521,7 @@ async def get_run_intelligence(
                 "classification": what_changed.get("regression_classification", "unclassified"),
             }
 
-    return {
+    result = {
         "run": run_summary,
         "structured_summary": structured_summary,
         "failure_clusters": failure_clusters,
@@ -534,6 +542,9 @@ async def get_run_intelligence(
         "partial_errors": _partial_errors if _partial_errors else None,
         "deep_pipeline_status": deep_pipeline_status,
     }
+    if decision_report_pipeline_run_id is not None:
+        result["_decision_report_pipeline_run_id"] = decision_report_pipeline_run_id
+    return result
 
 
 

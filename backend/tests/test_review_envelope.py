@@ -127,6 +127,18 @@ async def test_investigator_lookup_is_bound_to_the_exact_pipeline_subject():
     assert RUN in params.values()
 
 
+@pytest.mark.asyncio
+async def test_immutable_pipeline_subject_lookup_retains_superseded_state():
+    db = _DB(_review("superseded"))
+
+    envelope = await env.review_envelope_for_pipeline_subject(db, RUN)
+
+    sql = str(db.statements[0].compile(compile_kwargs={"literal_binds": False}))
+    assert "review_requests.pipeline_run_id =" in sql
+    assert "review_requests.state !=" not in sql
+    assert envelope.state == "superseded"
+
+
 def test_the_disclaimer_is_versioned_in_the_payload():
     fields = env._unreviewed().fields()
     assert fields["ai_disclaimer_version"] == AI_DISCLAIMER_VERSION
@@ -225,23 +237,61 @@ async def test_the_mode_summary_follows_its_fallback_flag(monkeypatch, fallback_
 
 
 @pytest.mark.asyncio
-async def test_decision_reports_look_up_the_deep_workflow_review(monkeypatch):
+async def test_decision_report_versions_use_their_exact_pipeline_reviews(monkeypatch):
     from app.routers import run_intelligence
 
     monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: object())
+    pipeline_1 = uuid.uuid4()
+    pipeline_2 = uuid.uuid4()
     monkeypatch.setattr(
         "app.services.decision_report_service.list_decision_report_versions",
-        AsyncMock(return_value=[{"report_id": "r1", "report_version": 1}]),
+        AsyncMock(return_value=[
+            {"report_id": "r2", "report_version": 2, "pipeline_run_id": str(pipeline_2)},
+            {"report_id": "r1", "report_version": 1, "pipeline_run_id": str(pipeline_1)},
+        ]),
     )
-    review = _review("accepted", datetime.now(timezone.utc))
-    db = _DB(review)
+    exact = AsyncMock(side_effect=[
+        env.ReviewEnvelope(ai_generated=True, state="accepted", message="accepted"),
+        env.ReviewEnvelope(ai_generated=True, state="superseded", message="superseded"),
+    ])
+    monkeypatch.setattr(run_intelligence, "review_envelope_for_pipeline_subject", exact)
     response = Response()
 
-    out = await run_intelligence.list_run_decision_reports(RUN, response, limit=5, db=db)
+    out = await run_intelligence.list_run_decision_reports(RUN, response, limit=5, db=object())
 
-    assert out[0]["review"]["state"] == "accepted"
-    assert "deep" in db.statements[0].compile().params.values()
+    assert [row["review"]["state"] for row in out] == ["accepted", "superseded"]
+    assert [call.args[1] for call in exact.await_args_list] == [
+        str(pipeline_2), str(pipeline_1)
+    ]
+    assert all("pipeline_run_id" not in row for row in out)
     assert response.headers["X-TestLookup-Review-State"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_selected_decision_report_uses_its_exact_pipeline_review(monkeypatch):
+    from app.routers import run_intelligence
+
+    pipeline_id = uuid.uuid4()
+    result = {
+        "summary": "immutable version",
+        "_decision_report_pipeline_run_id": str(pipeline_id),
+    }
+    exact = AsyncMock(return_value=env.ReviewEnvelope(
+        ai_generated=True, state="superseded", message="superseded"
+    ))
+    monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(run_intelligence, "get_run_intelligence", AsyncMock(return_value=result))
+    monkeypatch.setattr(run_intelligence, "review_envelope_for_pipeline_subject", exact)
+    response = Response()
+    db = object()
+
+    out = await run_intelligence.get_run_intelligence_endpoint(
+        RUN, response, include="", report_version=1, db=db
+    )
+
+    assert out["review"]["state"] == "superseded"
+    assert "_decision_report_pipeline_run_id" not in out
+    exact.assert_awaited_once_with(db, str(pipeline_id))
 
 
 @pytest.mark.asyncio

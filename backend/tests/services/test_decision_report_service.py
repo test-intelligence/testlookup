@@ -157,6 +157,7 @@ async def test_report_version_selection_is_run_scoped_and_bounded():
     versions = await list_decision_report_versions(db, "run-1", limit=1)
     assert len(versions) == 1
     assert versions[0]["report_version"] == 2
+    assert versions[0]["pipeline_run_id"] == "pipeline-2"
     assert "decision_intelligence" not in versions[0]
 
 
