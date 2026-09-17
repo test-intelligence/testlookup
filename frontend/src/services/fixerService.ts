@@ -44,7 +44,9 @@ export const fixerService = {
         schedule: update.schedule,
       } },
     }
-    const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config)
+    const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config, {
+      headers: { 'If-Match': `"${view.config_version}"` },
+    })
     const extension = saved.config.extensions?.fixer
     if (!extension) throw new Error('Saved Fixer AgentConfig extension is missing')
     return {

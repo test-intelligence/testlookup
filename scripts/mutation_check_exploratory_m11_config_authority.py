@@ -117,10 +117,27 @@ MUTATIONS = (
         "async def update_agent_policy(\n    project_id: uuid.UUID,\n    agent_id: str,\n    body: dict[str, Any],\n    db:",
         "backend/tests/test_exploratory_m11_config_authority.py::test_retired_config_puts_return_405_before_parsing_any_body[investigator-/api/v1/projects/00000000-0000-0000-0000-000000000001/agent-policies/unknown-/api/v1/projects/{project_id}/agent-policies/{agent_id}]",
     ),
+    Mutation(
+        "fixer-config-version-header",
+        "frontend/src/services/fixerService.ts",
+        "headers: { 'If-Match': `\"${view.config_version}\"` },",
+        "headers: {},",
+        "frontend/src/services/fixerService.test.ts",
+    ),
 )
 
 
 def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
+    if test.startswith("frontend/"):
+        return subprocess.run(
+            ["npm", "run", "test", "--", test.removeprefix("frontend/")],
+            cwd=ROOT / "frontend",
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     return subprocess.run(
         [
             sys.executable,
