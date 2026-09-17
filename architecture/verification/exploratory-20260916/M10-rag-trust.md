@@ -4,26 +4,31 @@
 
 **PARTIAL — local and deployed fail-closed variants passed; positive provider and
 full ingestion journeys remain blocked.** Exact executable candidate
-`25d37f2b03668d5800739ebf8af2384678c8294c` was deployed first as
-`build-20260917-120037`, built `2026-09-17T12:00:38Z`. `/health/version`
+`805f7714398ac495a656bf7c415e70dee2d0cbbb` was deployed first as
+`build-20260917-125909`, built `2026-09-17T12:59:10Z`. `/health/version`
 reported that revision, `/health/ready` reported PostgreSQL, MongoDB and Redis
 ready, and every application Deployment was at its desired replica count on the
 same tag.
 
 ## What was proved
 
-- Non-admin chat requires a project, existing sessions recheck current project
-  membership, and both Mongo and PostgreSQL run-summary fallbacks use the
-  caller's allowed project set.
+- Non-admin chat requires a project, existing sessions and session listings
+  recheck current project membership, and both Mongo and PostgreSQL run-summary
+  fallbacks use the caller's allowed project set.
 - Prompt text is redacted before persistence. Generation provenance records
   sanitized prompt/output SHA-256 hashes, selected sources, retrieved vectors,
   resolved citations and the evidence policy.
-- Retrieved instructions are delimited as untrusted data and neutralized.
+- Retrieved instructions are sanitized and JSON-serialized as untrusted data,
+  so quotes, newlines and forged section/tag delimiters remain inside a parsed
+  string rather than escaping into prompt authority.
   Model citations resolve only explicit `EVIDENCE-n` identifiers; unknown or
   absent identifiers produce no verified citation.
-- PostgreSQL project/archive state is authoritative over vector results. More
-  than ten selected sources stay individually filtered. Archive/delete retires
-  vectors, marks generated cases stale and preserves citation lineage.
+- PostgreSQL project/archive state and the exact active
+  `(KnowledgeChunk.source_id, KnowledgeChunk.vector_id)` pair are authoritative
+  over vector results. Partial Chroma upserts, cross-source metadata corruption
+  and failed vector retirement therefore cannot ground a generation. More than ten
+  selected sources stay individually filtered. Archive/delete retires vectors,
+  marks generated cases stale and preserves citation lineage.
 - Empty, malformed, missing, timed-out or failed provider output is an explicit
   failure. MinIO and Chroma failures cannot make a source look synchronized.
 - Citation links permit only HTTP(S), untrusted evidence renders as text,
@@ -36,11 +41,11 @@ Both probes left no source or generated case behind.
 
 ## Verification
 
-- Backend: **336 passed** across RAG, knowledge, chat, authorization and
-  lifecycle suites; the focused set was 207 passed before expansion.
+- Backend: **406 passed** across RAG, knowledge, chat, authorization and
+  lifecycle suites; the final focused trust set was 19 passed.
 - Frontend: **4 passed** across citation safety, unsupported-evidence labeling
   and project-switch state isolation; TypeScript and changed-file ESLint passed.
-- Mutation: **13 backend** and **3 consumer** wrong-behavior mutations killed;
+- Mutation: **16 backend** and **3 consumer** wrong-behavior mutations killed;
   every replacement asserted it applied exactly once and restored bytes.
 - Ruff passed; mypy held at **369 errors in 114 files** (baseline 369); all
   **43** quality guards and **238** guard self-tests passed.

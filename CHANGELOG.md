@@ -4,9 +4,10 @@
 
 Knowledge-grounded generation now requires project scope for non-admin chat,
 rechecks revoked session membership, filters every selected source regardless
-of list size, and treats PostgreSQL source lifecycle as authoritative over
-vectors. Prompts are redacted before persistence, retrieved instructions are
-neutralized, citations require explicit model evidence IDs, and prompt/output
+of list size, scopes session listings to current memberships, and requires an
+exact active PostgreSQL chunk row for every vector returned by the index.
+Prompts are redacted before persistence, retrieved instructions are sanitized
+and JSON-serialized as inert evidence, citations require explicit model evidence IDs, and prompt/output
 hashes plus source/citation provenance are recorded. Provider, object-storage
 and vector-index failures remain explicit instead of producing complete-looking
 stub cases or synced sources. Archived sources preserve citation lineage while

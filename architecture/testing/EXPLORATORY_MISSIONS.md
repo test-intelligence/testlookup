@@ -327,12 +327,13 @@ decision and provenance. Reproduce rendering/security bugs deterministically;
 evaluate answer quality separately from a single model phrasing difference.
 
 **Execution 2026-09-17 (shipped, partial):** Exact executable candidate
-`25d37f2b` was deployed first as `build-20260917-120037`. EXP-BUG-057 through
+`805f7714` was deployed first as `build-20260917-125909`. EXP-BUG-057 through
 EXP-BUG-069 fixed cross-tenant chat scope, revoked-session access, raw prompt
-persistence, fabricated citations, prompt injection, stale vector authority,
+persistence, fabricated citations, prompt injection and delimiter escape,
+orphan/stale vector authority,
 unsafe rendering/links, false successful generations and false synchronized
-sources. The broad backend suite passed 336 tests, four focused frontend tests
-passed, and 16 wrong-behavior mutations were killed. Ruff, TypeScript, ESLint,
+sources. The broad backend suite passed 406 tests, four focused frontend tests
+passed, and 19 wrong-behavior mutations were killed. Ruff, TypeScript, ESLint,
 the 369-error mypy ratchet, all 43 guards and 238 guard self-tests passed.
 Homelab has zero knowledge sources and no installed model, so controlled positive
 ingest, answerable/conflicting generation and real-provider timeout remain
