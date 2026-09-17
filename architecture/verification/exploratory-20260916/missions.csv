@@ -4,7 +4,7 @@ M02,P0,PASSED,M02-project-isolation.md,EXP-BUG-010,
 M03,P0,PASSED,M03-ingestion.md,EXP-BUG-012,
 M04,P0,PASSED,M04-intelligence-release.md,EXP-BUG-013,
 M05,P0,BLOCKED,M05-defect-deduplication.md,,Dedicated Jira sandbox and fault-capable request journal are unavailable; all local and real-PostgreSQL variants passed
-M06,P0,NOT_RUN,,,
+M06,P0,RUNNING,,EXP-BUG-014,
 M07,P0,NOT_RUN,,,
 M08,P0,NOT_RUN,,,
 M09,P1,NOT_RUN,,,
