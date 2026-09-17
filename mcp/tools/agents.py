@@ -151,6 +151,12 @@ def render_invocation(data: Any) -> str:
         lines.append(f"**Next retry:** {data['next_retry_at']}")
     if data.get("error"):
         lines.append(f"**Error:** {str(data['error'])[:300]}")
+    snapshot = data.get("config_snapshot")
+    if isinstance(snapshot, dict):
+        rendered_snapshot = json.dumps(snapshot, indent=2, default=str)
+        if len(rendered_snapshot) > _MAX_OUTPUT_CHARS:
+            rendered_snapshot = rendered_snapshot[: _MAX_OUTPUT_CHARS - 1] + "…"
+        lines += ["", "### Frozen configuration", "```json", rendered_snapshot, "```"]
     output = data.get("output")
     if output is not None:
         text = json.dumps(output, indent=2, default=str)

@@ -719,6 +719,65 @@ class TestProgressiveFallback:
 
 class TestAnalysisAgentRun:
     @pytest.mark.asyncio
+    async def test_frozen_max_failures_limits_the_prioritized_analysis_scope(self, monkeypatch):
+        from app.services.llm_cost_budget import CapDecision
+
+        agent = AnalysisAgent()
+        agent.mark_stage_running = AsyncMock()  # type: ignore[method-assign]
+        agent.mark_stage_done = AsyncMock()  # type: ignore[method-assign]
+        agent.broadcast_progress = AsyncMock()  # type: ignore[method-assign]
+        agent.log_decision = AsyncMock()  # type: ignore[method-assign]
+        agent._fetch_test_metadata = AsyncMock(return_value={  # type: ignore[method-assign]
+            "normal": {"test_name": "normal", "severity": "NORMAL"},
+            "blocker": {"test_name": "blocker", "severity": "BLOCKER"},
+            "critical": {"test_name": "critical", "severity": "CRITICAL"},
+        })
+        agent._fetch_human_corrections = AsyncMock(return_value={})  # type: ignore[method-assign]
+        agent._resolve_adaptive_concurrency = AsyncMock(return_value={  # type: ignore[method-assign]
+            "concurrency": 1,
+            "rationale": "test",
+        })
+        analysed: list[str] = []
+
+        async def _analyse(_semaphore, tc_id, _meta, _state):
+            analysed.append(tc_id)
+            return {
+                "root_cause_summary": f"Analysis for {tc_id} with enough detail.",
+                "failure_category": "UNKNOWN",
+                "confidence_score": 0,
+                "requires_human_review": True,
+                "evidence_references": [],
+                "tools_used": [],
+                "_audit": {},
+            }
+
+        agent._analyse_with_retry = _analyse  # type: ignore[method-assign]
+        agent._batch_upsert_analyses = AsyncMock()  # type: ignore[method-assign]
+        agent._record_latency_feedback = MagicMock()  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "app.services.llm_cost_budget.check_and_apply_cap",
+            AsyncMock(return_value=CapDecision(action="ALLOW", rationale="within budget")),
+        )
+        state = {
+            "pipeline_run_id": "pipeline-1",
+            "project_id": "symbolic-project",
+            "failed_test_ids": ["normal", "blocker", "critical"],
+            "resolved_agent_configs": {
+                "agent.root_cause_analysis.v1": {
+                    "config": {"thresholds": {"max_failures_analyzed": 2}}
+                }
+            },
+        }
+
+        result = await agent.run(state)
+
+        assert analysed == ["blocker", "critical"]
+        assert set(result["analyses"]) == {"blocker", "critical"}
+        assert result["stage_quality"] == "degraded"
+        assert any("max_failures_analyzed=2" in error for error in result["errors"])
+        assert agent.mark_stage_done.await_args.kwargs["result_data"]["config_skipped"] == 1
+
+    @pytest.mark.asyncio
     async def test_durable_pipeline_honors_hard_cost_cap(self, monkeypatch):
         from app.services.llm_cost_budget import CapDecision
 

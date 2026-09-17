@@ -94,6 +94,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(router, "record_activity", AsyncMock())
     monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _u: "actor"))
     monkeypatch.setattr(router, "_current_mode_snapshot", AsyncMock(return_value={}))
+    original_config_changed = router._invocation_config_changed
     monkeypatch.setattr(router, "_invocation_config_changed", AsyncMock(return_value=False))
     monkeypatch.setattr(router, "decide_retry_mode", lambda _meta, _snap: SimpleNamespace(is_rerun=False, reason="config_unchanged"))
 
@@ -101,7 +102,13 @@ def harness(monkeypatch):
         holder["db"] = db
         return db
 
-    return SimpleNamespace(router=router, tasks=tasks, dispatched=dispatched, use=_use)
+    return SimpleNamespace(
+        router=router,
+        tasks=tasks,
+        dispatched=dispatched,
+        use=_use,
+        original_config_changed=original_config_changed,
+    )
 
 
 def _user():
@@ -194,6 +201,43 @@ async def test_retry_is_refused_when_the_frozen_agent_config_changed(harness):
     assert exc.value.detail["reason"] == "agent_config_changed"
     assert exc.value.detail["links"]["rerun"].endswith("/invoke")
     assert db.order == []
+
+
+@pytest.mark.asyncio
+async def test_config_change_check_reapplies_live_safety_policy(harness, monkeypatch):
+    snapshot = {
+        "schema_version": 1,
+        "agent_id": "agent.summary.v1",
+        "source": "project",
+        "config_version": 7,
+        "patched": False,
+        "config": {},
+        "unavailable_tiers": [],
+        "clamps": [],
+    }
+    invocation = _invocation(resolved_config_snapshot=snapshot)
+    db = object()
+    monkeypatch.setattr(
+        harness.router,
+        "get_config_row",
+        AsyncMock(return_value=SimpleNamespace(config_version=7)),
+    )
+    restored = SimpleNamespace()
+    resolve = AsyncMock(return_value=restored)
+    monkeypatch.setattr(harness.router, "resolve_frozen_for_project", resolve)
+    monkeypatch.setattr(
+        harness.router,
+        "freeze_for_invocation",
+        lambda _resolved: {**snapshot, "clamps": [{"layer": "eval_drift"}]},
+    )
+
+    assert await harness.original_config_changed(db, invocation) is True
+    resolve.assert_awaited_once_with(
+        snapshot,
+        expected_agent_id=invocation.agent_id,
+        db=db,
+        project_id=invocation.project_id,
+    )
 
 
 @pytest.mark.asyncio

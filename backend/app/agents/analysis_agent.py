@@ -128,6 +128,33 @@ class AnalysisAgent(BaseAgent):
     stage_name = "root_cause_analysis"
     UNKNOWN_CATEGORY = "UNKNOWN"
 
+    @staticmethod
+    def _max_failures_analyzed(state: dict) -> int | None:
+        """Return the frozen Root Cause cap, or no cap for legacy runs."""
+        snapshots = state.get("resolved_agent_configs")
+        snapshot = (
+            snapshots.get("agent.root_cause_analysis.v1")
+            if isinstance(snapshots, dict)
+            else None
+        )
+        config = snapshot.get("config") if isinstance(snapshot, dict) else None
+        if not isinstance(config, dict):
+            legacy = state.get("workflow_agent_configs")
+            config = (
+                legacy.get("agent.root_cause_analysis.v1")
+                if isinstance(legacy, dict)
+                else None
+            )
+        thresholds = config.get("thresholds") if isinstance(config, dict) else None
+        limit = (
+            thresholds.get("max_failures_analyzed")
+            if isinstance(thresholds, dict)
+            else None
+        )
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            return None
+        return max(1, int(limit))
+
     async def run(self, state: dict) -> dict:
         pipeline_run_id = state["pipeline_run_id"]
         project_id = state["project_id"]
@@ -238,7 +265,29 @@ class AnalysisAgent(BaseAgent):
         state["_human_corrections"] = await self._fetch_human_corrections(project_id, test_meta)
 
         # Sort by priority: blockers/critical first, then by severity
-        prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
+        all_prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
+        failure_limit = self._max_failures_analyzed(state)
+        prioritized_ids = (
+            all_prioritized_ids[:failure_limit]
+            if failure_limit is not None
+            else all_prioritized_ids
+        )
+        threshold_skipped = all_prioritized_ids[len(prioritized_ids):]
+        if threshold_skipped:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="max_failures_analyzed",
+                chosen=str(len(prioritized_ids)),
+                rationale=(
+                    f"the frozen agent configuration limits root-cause analysis to "
+                    f"{failure_limit} of {len(all_prioritized_ids)} failed tests"
+                ),
+                context={
+                    "configured_limit": failure_limit,
+                    "analysed": len(prioritized_ids),
+                    "not_analysed": len(threshold_skipped),
+                },
+            )
 
         resolved_mode = str(state.get("analysis_mode_resolved") or "auto").lower()
         if (
@@ -392,6 +441,12 @@ class AnalysisAgent(BaseAgent):
         total_analysed = len(prioritized_ids)
         error_ratio = error_count / max(total_analysed, 1)
         stage_quality = "degraded" if error_ratio > 0.3 else "normal"
+        if threshold_skipped:
+            errors.append(
+                f"{len(threshold_skipped)} of {len(all_prioritized_ids)} failed tests were not "
+                f"analysed: max_failures_analyzed={failure_limit}"
+            )
+            stage_quality = "degraded"
         if budget_skipped:
             # Recorded as a stage error, not folded into error_ratio: these
             # tests did not fail analysis, they never got one. Saying so
@@ -444,6 +499,7 @@ class AnalysisAgent(BaseAgent):
                 "fallback_count": fallback_count,
                 "adaptive_concurrency": concurrency_policy,
                 "budget_skipped": len(budget_skipped),
+                "config_skipped": len(threshold_skipped),
             },
             analysis_mode=dominant_mode,
             fallback_reason=stage_fallback_reason,
@@ -460,6 +516,7 @@ class AnalysisAgent(BaseAgent):
                 "message": f"Root-cause analysis complete: {len(analyses)} test(s) analysed"
                 + (f", {timed_out} timed out" if timed_out else "")
                 + (f", {retried} retried" if retried else "")
+                + (f", {len(threshold_skipped)} skipped by config" if threshold_skipped else "")
                 + quality_msg,
             },
         )

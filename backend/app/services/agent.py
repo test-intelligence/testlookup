@@ -29,6 +29,7 @@ from app.services.llm_factory import get_llm
 from app.services.agent_config_resolver import ResolvedEndpoint
 from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.prompt_registry import get_prompt_text
+from app.services.workflow_step_context import tool_allowed
 from app.services.resilience import (
     compute_analysis_cache_key,
     truncate_to_token_budget,
@@ -40,6 +41,20 @@ _tracer = get_tracer("services.agent")
 # Versioned in the prompt registry (AI-F2): edits happen THERE, with a manifest
 # bump + eval-gate attestation. v2 teaches the loop the memory recall tool.
 SYSTEM_PROMPT = get_prompt_text("react_triage")
+
+_REACT_TOOL_NAMES = (
+    "fetch_allure_stacktrace",
+    "fetch_rest_api_payload",
+    "query_splunk_logs",
+    "check_test_flakiness",
+    "analyze_openshift_pod_events",
+    "recall_similar_failures",
+)
+
+
+def _cache_authorized() -> bool:
+    """A narrower tool grant must not reuse output created with broader tools."""
+    return all(tool_allowed(name) for name in _REACT_TOOL_NAMES)
 
 
 def _observation_text(value) -> str:
@@ -98,6 +113,7 @@ def _get_tools():
             analyze_openshift_pod_events,
             recall_similar_failures,
         )
+        if tool_allowed(tool.name)
     ]
 
 
@@ -152,7 +168,7 @@ async def run_triage_agent(
         await _check_analysis_cache(
             test_name, error_message or "", stack_trace or "", project_id
         )
-        if project_id and not skip_cache
+        if project_id and not skip_cache and _cache_authorized()
         else None
     )
     if cached is not None:
@@ -175,7 +191,7 @@ async def run_triage_agent(
             await semantic_cache_lookup(
                 test_name, error_message or "", stack_trace or "", project_id=project_id
             )
-            if project_id and not skip_cache
+            if project_id and not skip_cache and _cache_authorized()
             else None
         )
         if sem_cached is not None:

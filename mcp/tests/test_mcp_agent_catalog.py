@@ -190,6 +190,25 @@ def test_the_invocation_view_carries_output_and_ends_with_review_state(monkeypat
     assert text.rstrip().endswith("AI-generated content. Verify before acting.")
 
 
+def test_the_invocation_view_shows_the_sanitized_frozen_config():
+    snapshot = {
+        "agent_id": "agent.summary.v1",
+        "config_version": 3,
+        "clamps": [{"field": "timeout_seconds", "layer": "env"}],
+    }
+    text = agents.render_invocation({
+        "id": "inv-1",
+        "agent_id": "agent.summary.v1",
+        "status": "in_progress",
+        "attempt": 1,
+        "max_attempts": 2,
+        "config_snapshot": snapshot,
+        "review": {"state": "not_required"},
+    })
+    assert "### Frozen configuration" in text
+    assert json.dumps(snapshot, indent=2) in text
+
+
 def test_the_agents_module_is_registered_in_the_server():
     import ast
 

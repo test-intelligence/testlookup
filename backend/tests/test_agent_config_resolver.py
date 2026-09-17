@@ -238,6 +238,8 @@ async def test_an_invocation_snapshot_freezes_values_without_base_urls_or_keys(m
     restored = await resolver.resolve_frozen_for_project(
         snapshot,
         expected_agent_id=SUMMARY,
+        db=object(),
+        project_id=PROJECT_ID,
     )
 
     assert restored.patched and restored.config_version == 7
@@ -263,6 +265,8 @@ async def test_a_tier_refused_at_acceptance_stays_unavailable(monkeypatch):
     restored = await resolver.resolve_frozen_for_project(
         snapshot,
         expected_agent_id=SUMMARY,
+        db=object(),
+        project_id=PROJECT_ID,
     )
     assert restored.endpoints == {"slm": None, "llm": None}
 
@@ -280,7 +284,12 @@ async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
     monkeypatch.setattr(resolver, "resolve_for_project", live)
 
     assert await resolver.resolve_for_pipeline("db", pipeline, PROJECT_ID, SUMMARY) == "frozen"
-    frozen.assert_awaited_once_with(snapshot, expected_agent_id=SUMMARY)
+    frozen.assert_awaited_once_with(
+        snapshot,
+        expected_agent_id=SUMMARY,
+        db="db",
+        project_id=PROJECT_ID,
+    )
     live.assert_not_awaited()
 
 
@@ -317,7 +326,47 @@ async def test_a_frozen_snapshot_cannot_be_replayed_for_another_agent():
         await resolver.resolve_frozen_for_project(
             snapshot,
             expected_agent_id="agent.root_cause_analysis.v1",
+            db=object(),
+            project_id=PROJECT_ID,
         )
+
+
+async def test_frozen_restore_reapplies_a_new_eval_drift_pin(monkeypatch):
+    stored = _stored(review={
+        "policy": "human_required_plus_auto_reviewer",
+        "auto_reviewer": True,
+        "second_model_check": True,
+    })
+    accepted = resolver.resolve(
+        SUMMARY,
+        global_ai_config=_ai(),
+        stored=stored,
+    )
+    snapshot = resolver.freeze_for_invocation(accepted)
+    drift = AsyncMock(return_value=True)
+    monkeypatch.setattr(resolver, "has_active_drift_pin", drift)
+    monkeypatch.setattr(resolver, "get_effective_ai_config", AsyncMock(return_value=_ai()))
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", AsyncMock())
+    db = object()
+
+    restored = await resolver.resolve_frozen_for_project(
+        snapshot,
+        expected_agent_id=SUMMARY,
+        db=db,
+        project_id=PROJECT_ID,
+    )
+
+    drift.assert_awaited_once_with(db, PROJECT_ID, SUMMARY)
+    assert restored.config.review.policy == "human_required"
+    assert restored.config.review.auto_reviewer is False
+    assert restored.config.review.second_model_check is False
+    assert restored.config.override_policy.allow_tier_downgrade is False
+    assert {clamp.field for clamp in restored.clamps if clamp.layer == "eval_drift"} == {
+        "review.policy",
+        "review.auto_reviewer",
+        "review.second_model_check",
+        "override_policy.allow_tier_downgrade",
+    }
 
 
 # -- the async project resolver ---------------------------------------------------------------------------

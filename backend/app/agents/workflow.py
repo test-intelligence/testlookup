@@ -3016,6 +3016,8 @@ async def _create_pipeline_run(
             frozen_resolved = await resolve_frozen_for_project(
                 frozen_snapshot.model_dump(mode="json"),
                 expected_agent_id=expected_agent_id,
+                db=db,
+                project_id=uuid.UUID(str(project_id)),
             )
             frozen_config = frozen_resolved.config
             accepted_snapshot = freeze_for_invocation(frozen_resolved)

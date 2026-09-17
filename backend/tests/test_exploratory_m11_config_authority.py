@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.agents.log_intelligence_agent import LogIntelligenceAgent
+from app.agents.analysis_agent import AnalysisAgent
 from app.agents.workflow import _stage_tool_allowlist
 from app.services.workflow_step_context import tool_allowed, workflow_step_scope
 
@@ -18,6 +19,31 @@ def test_empty_tool_allowlist_is_authoritative_inside_a_step() -> None:
     with workflow_step_scope("contract_validation", allowed_tools=[]):
         assert tool_allowed("validate_api_contract") is False
     assert tool_allowed("validate_api_contract") is True
+
+
+def test_root_cause_react_tools_follow_the_frozen_allowlist() -> None:
+    from app.services.agent import _cache_authorized, _get_tools
+
+    with workflow_step_scope(
+        "root_cause_analysis",
+        allowed_tools=["check_test_flakiness"],
+    ):
+        assert [tool.name for tool in _get_tools()] == ["check_test_flakiness"]
+    with workflow_step_scope("root_cause_analysis", allowed_tools=[]):
+        assert _get_tools() == []
+        assert _cache_authorized() is False
+
+
+def test_root_cause_failure_limit_comes_from_the_frozen_snapshot() -> None:
+    state = {
+        "resolved_agent_configs": {
+            "agent.root_cause_analysis.v1": {
+                "config": {"thresholds": {"max_failures_analyzed": 2}}
+            }
+        }
+    }
+    assert AnalysisAgent._max_failures_analyzed(state) == 2
+    assert AnalysisAgent._max_failures_analyzed({}) is None
 
 
 def test_named_step_reads_tools_from_its_frozen_capability_snapshot() -> None:
@@ -110,6 +136,31 @@ async def test_log_agent_does_not_call_tools_removed_by_the_frozen_allowlist(
     anomaly.assert_not_awaited()
     assert output["distributed_trace"]["error"] == "PermissionError"
     assert output["log_anomaly"]["error"] == "PermissionError"
+
+
+@pytest.mark.asyncio
+async def test_contract_agent_does_not_call_a_tool_removed_by_the_frozen_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.agents.contract_agent as module
+
+    called = AsyncMock(side_effect=AssertionError("contract tool was called"))
+    monkeypatch.setattr(
+        module,
+        "validate_api_contract",
+        SimpleNamespace(ainvoke=called),
+    )
+    with workflow_step_scope("contract_validation", allowed_tools=[]):
+        output = await module.ContractAgent().validate_cluster(
+            ["test-1"],
+            project_id="project-1",
+            run_id="run-1",
+            pipeline_run_id="pipeline-1",
+        )
+
+    called.assert_not_awaited()
+    assert output["status"] == "not_enough_evidence"
+    assert "not allowed" in output["summary"]
 
 
 @pytest.mark.asyncio

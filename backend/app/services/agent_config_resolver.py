@@ -105,6 +105,7 @@ class FrozenAgentConfig(BaseModel):
     patched: bool
     config: dict[str, Any]
     unavailable_tiers: list[Literal["slm", "llm"]] = Field(default_factory=list)
+    clamps: list[Clamp] = Field(default_factory=list)
 
 
 # -- env ceilings on a stored document ---------------------------------------------------
@@ -258,18 +259,31 @@ def resolve(
     if drift_pin_active:
         requested_policy = config.review.policy
         requested_auto = config.review.auto_reviewer
+        requested_second_model = config.review.second_model_check
+        requested_tier_downgrade = config.override_policy.allow_tier_downgrade
         config.review.policy = "human_required"
         config.review.auto_reviewer = False
         config.review.second_model_check = False
         config.override_policy.allow_tier_downgrade = False
-        if requested_policy != "human_required" or requested_auto:
-            clamps.append(Clamp(
-                field="review.policy",
-                layer="eval_drift",
-                requested=requested_policy,
-                effective="human_required",
-                reason="capability drift review is pending",
-            ))
+        changes = (
+            ("review.policy", requested_policy, "human_required"),
+            ("review.auto_reviewer", requested_auto, False),
+            ("review.second_model_check", requested_second_model, False),
+            (
+                "override_policy.allow_tier_downgrade",
+                requested_tier_downgrade,
+                False,
+            ),
+        )
+        for field, requested, effective in changes:
+            if requested != effective:
+                clamps.append(Clamp(
+                    field=field,
+                    layer="eval_drift",
+                    requested=requested,
+                    effective=effective,
+                    reason="capability drift review is pending",
+                ))
 
     endpoints: dict[str, Optional[ResolvedEndpoint]] = {
         tier: _endpoint(tier, config, ai, clamps) for tier in TIERS
@@ -358,6 +372,7 @@ def freeze_for_invocation(resolved: ResolvedAgentConfig) -> dict[str, Any]:
         patched=resolved.patched,
         config=config,
         unavailable_tiers=unavailable_tiers,
+        clamps=resolved.clamps,
     ).model_dump(mode="json")
 
 
@@ -365,6 +380,8 @@ async def resolve_frozen_for_project(
     snapshot: Mapping[str, Any],
     *,
     expected_agent_id: str,
+    db: AsyncSession,
+    project_id: uuid.UUID,
 ) -> ResolvedAgentConfig:
     """Restore an invocation snapshot under today's one-way safety ceilings."""
     try:
@@ -376,16 +393,19 @@ async def resolve_frozen_for_project(
             expected_agent_id,
             [f"frozen agent_id {frozen.agent_id!r} does not match {expected_agent_id!r}"],
         )
+    drift_pin_active = await has_active_drift_pin(db, project_id, expected_agent_id)
     resolved = resolve(
         expected_agent_id,
         global_ai_config=await get_effective_ai_config(),
         stored=frozen.config,
         config_version=frozen.config_version,
+        drift_pin_active=drift_pin_active,
     )
     resolved.source = frozen.source
     resolved.patched = frozen.patched
     for tier in frozen.unavailable_tiers:
         resolved.endpoints[tier] = None
+    resolved.clamps = [*frozen.clamps, *resolved.clamps]
     await _apply_endpoint_residency(resolved)
     return resolved
 
@@ -405,7 +425,12 @@ async def resolve_for_pipeline(
     snapshots = metadata.get("resolved_agent_configs")
     snapshot = snapshots.get(agent_id) if isinstance(snapshots, dict) else None
     if isinstance(snapshot, dict):
-        return await resolve_frozen_for_project(snapshot, expected_agent_id=agent_id)
+        return await resolve_frozen_for_project(
+            snapshot,
+            expected_agent_id=agent_id,
+            db=db,
+            project_id=project_id,
+        )
     # Older runs froze only the validated project document. Use it rather than
     # silently re-reading a newer project row; current one-way environment
     # ceilings and provider policy are still applied by ``resolve``.

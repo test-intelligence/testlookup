@@ -410,6 +410,8 @@ async def _invocation_config_changed(db: AsyncSession, invocation: Any) -> bool:
         refreshed = await resolve_frozen_for_project(
             snapshot,
             expected_agent_id=invocation.agent_id,
+            db=db,
+            project_id=invocation.project_id,
         )
     except AgentConfigInvalid:
         return True

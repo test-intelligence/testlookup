@@ -19,7 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AIEvalReviewerQuality, AgentConfig
-from app.services.agent_config_service import AgentConfigV1, put_config, serialize
+from app.services.agent_config_service import (
+    AgentConfigV1,
+    ConfigVersionConflict,
+    put_config,
+    serialize,
+)
 from app.services.agent_eval_samples import MutationClass
 from app.services.eval_verdict import EvalVerdict
 
@@ -361,7 +366,7 @@ async def disable_second_model_if_eligible(
             select(AgentConfig).where(
                 AgentConfig.project_id == project_id,
                 AgentConfig.agent_id == agent_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if config_row is None:
@@ -372,7 +377,16 @@ async def disable_second_model_if_eligible(
     updated = config.model_copy(update={
         "review": config.review.model_copy(update={"second_model_check": False})
     })
-    row = await put_config(db, project_id, updated, updated_by=updated_by)
+    try:
+        row = await put_config(
+            db,
+            project_id,
+            updated,
+            updated_by=updated_by,
+            expected_version=int(config_row.config_version),
+        )
+    except ConfigVersionConflict:
+        return False
     result["auto_disable_applied"] = True
     result["auto_disable_config_version"] = int(row.config_version)
     return True
