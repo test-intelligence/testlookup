@@ -242,6 +242,7 @@ async def test_settlement_locks_pipeline_before_review_to_match_finalization_ord
     assert db.statements[0]._for_update_arg is None
     assert db.statements[1]._for_update_arg is not None
     assert db.statements[2]._for_update_arg is not None
+    assert db.statements[2].get_execution_options()["populate_existing"] is True
 
 
 @pytest.mark.asyncio

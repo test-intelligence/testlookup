@@ -172,7 +172,10 @@ async def _load_for_update(db: AsyncSession, review_id: uuid.UUID) -> ReviewRequ
         )
     review = (
         await db.execute(
-            select(ReviewRequest).where(ReviewRequest.id == review_id).with_for_update()
+            select(ReviewRequest)
+            .where(ReviewRequest.id == review_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if review is None:
