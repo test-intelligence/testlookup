@@ -654,6 +654,9 @@ async def _collect_investigations(
                 break
         excerpt = narrative_excerpt(verdict.get("narrative"))
         from app.services import report_distribution_policy  # noqa: PLC0415
+        from app.services.review_request_service import (  # noqa: PLC0415
+            investigation_evidence_hash,
+        )
 
         gated_excerpt, distribution = (
             await report_distribution_policy.gate_investigation_excerpt(
@@ -662,6 +665,7 @@ async def _collect_investigations(
                 project_id=project_id,
                 excerpt=excerpt,
                 channel=channel,
+                evidence_bundle_sha256=investigation_evidence_hash(verdict),
             )
         )
         await report_distribution_policy.record_distribution_detached(

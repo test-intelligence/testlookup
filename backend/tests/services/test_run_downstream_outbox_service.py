@@ -1364,13 +1364,26 @@ async def test_notification_retry_rechecks_review_before_sending_accepted_narrat
         async def __aexit__(self, *_args):
             return False
 
+    first_decision = object()
+    second_decision = object()
     refresh = AsyncMock(
         side_effect=[
-            ("AI summary", "awaiting human review", {"pass_rate": 80.0}),
-            ("AI summary", "accepted narrative", {"pass_rate": 80.0}),
+            (
+                "AI summary",
+                "awaiting human review",
+                {"pass_rate": 80.0},
+                first_decision,
+            ),
+            (
+                "AI summary",
+                "accepted narrative",
+                {"pass_rate": 80.0},
+                second_decision,
+            ),
         ]
     )
     send = AsyncMock(side_effect=[("failed", "provider timeout"), ("sent", None)])
+    record_distribution = AsyncMock()
     monkeypatch.setattr(manager, "AsyncSessionLocal", lambda: _SessionContext())
     monkeypatch.setattr(
         manager,
@@ -1381,6 +1394,10 @@ async def test_notification_retry_rechecks_review_before_sending_accepted_narrat
         manager, "_refresh_review_gated_delivery", refresh, raising=False
     )
     monkeypatch.setattr(manager, "_dispatch_to_channel", send)
+    monkeypatch.setattr(
+        "app.services.report_distribution_policy.record_distribution",
+        record_distribution,
+    )
     monkeypatch.setattr(
         manager.email_service,
         "_get_smtp_cfg",
@@ -1399,6 +1416,12 @@ async def test_notification_retry_rechecks_review_before_sending_accepted_narrat
         "accepted narrative",
     ]
     assert refresh.await_count == 2
+    record_distribution.assert_awaited_once()
+    assert record_distribution.await_args.args[1] is second_decision
+    successful_update = outcome_dbs[1].execute.await_args_list[0].args[0]
+    successful_values = successful_update.compile().params
+    assert "accepted narrative" in successful_values.values()
+    assert "stale pending draft" not in successful_values.values()
 
 
 @pytest.mark.asyncio

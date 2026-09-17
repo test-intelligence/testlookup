@@ -486,8 +486,10 @@ async def test_terminal_review_never_leaves_in_release_webhook_content(world, re
         None,
         {
             "recommendation": "NO_GO",
+            "original_recommendation": "GO",
             "blocking_issues": ["rejected blocker narrative"],
             "conditions_for_go": ["rejected condition narrative"],
+            "reasoning": "rejected reasoning narrative",
         },
         run_id=RUN,
         synthesized=False,
@@ -498,6 +500,8 @@ async def test_terminal_review_never_leaves_in_release_webhook_content(world, re
     assert payload["draft_recommendation"] is None
     assert payload["blocking_issues"] == []
     assert payload["conditions_for_go"] == []
+    assert payload["reasoning"] is None
+    assert payload["original_recommendation"] is None
 
 
 @pytest.mark.asyncio

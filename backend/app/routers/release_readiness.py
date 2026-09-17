@@ -10,10 +10,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.core.deps import require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import User, UserRole
+from app.models.postgres import ReleaseDecision, TestRun, User, UserRole
 from app.models.schemas import (
     ReleaseCouncilOverrideRequest,
     ReleaseCouncilResponse,
@@ -72,9 +73,27 @@ async def get_release_decision(
             )
         from app.services.report_distribution_policy import apply_release_review_gate
 
-        return await apply_release_review_gate(
-            db, council, run_id=run_id, allow_advisory=allow_advisory
+        review_context = (
+            await db.execute(
+                select(ReleaseDecision.pipeline_run_id, TestRun.project_id)
+                .join(TestRun, TestRun.id == ReleaseDecision.test_run_id)
+                .where(ReleaseDecision.test_run_id == run_id)
+            )
+        ).first()
+        pipeline_run_id = review_context[0] if review_context is not None else None
+        project_id = review_context[1] if review_context is not None else None
+        response = await apply_release_review_gate(
+            db,
+            council,
+            run_id=run_id,
+            allow_advisory=allow_advisory,
+            pipeline_run_id=pipeline_run_id,
+            project_id=project_id,
+            actor=current_user if allow_advisory else None,
         )
+        if allow_advisory and response.recommendation.startswith("ADVISORY_"):
+            await db.commit()
+        return response
 
 
 @router.post("/{run_id}/override", response_model=ReleaseCouncilResponse)

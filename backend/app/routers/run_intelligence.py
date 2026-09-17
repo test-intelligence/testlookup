@@ -158,12 +158,20 @@ async def get_run_intelligence_endpoint(
                 logger.warning("Failed to save intelligence snapshot: %s", cache_err)
 
         pipeline_subject = None
+        evidence_subject = None
         if isinstance(result, dict):
             pipeline_subject = result.pop("_decision_report_pipeline_run_id", None)
+            evidence_subject = result.pop(
+                "_decision_report_evidence_bundle_sha256", None
+            )
             result["_snapshot"] = {"cached": False, "stale": False}
         # After save_snapshot above: the envelope is never written into the cache.
         if report_version is not None and pipeline_subject is not None:
-            envelope = await review_envelope_for_pipeline_subject(db, pipeline_subject)
+            envelope = await review_envelope_for_pipeline_subject(
+                db,
+                pipeline_subject,
+                evidence_bundle_sha256=evidence_subject,
+            )
             envelope.apply_headers(response)
             return {**result, **envelope.fields()}
         return await _with_review(db, response, run_id, result)
@@ -201,7 +209,12 @@ async def list_run_decision_reports(
     for version in versions:
         public_version = dict(version)
         pipeline_subject = public_version.pop("pipeline_run_id", None)
-        envelope = await review_envelope_for_pipeline_subject(db, pipeline_subject)
+        evidence_subject = public_version.get("evidence_bundle_sha256")
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_subject,
+            evidence_bundle_sha256=evidence_subject,
+        )
         if first_envelope is None:
             first_envelope = envelope
         result.append({**public_version, **envelope.fields()})

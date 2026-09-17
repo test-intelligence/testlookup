@@ -142,11 +142,11 @@ async def test_report_version_selection_is_run_scoped_and_bounded():
     db = _Mongo()
     await publish_decision_report(
         db, state=_state("pipeline-1"),
-        decision={"verification": {"status": "passed"}}, markdown="v1",
+        decision={"verification": {"status": "passed"}, "evidence_bundle_sha256": "a" * 64}, markdown="v1",
     )
     await publish_decision_report(
         db, state=_state("pipeline-2"),
-        decision={"verification": {"status": "passed"}}, markdown="v2",
+        decision={"verification": {"status": "passed"}, "evidence_bundle_sha256": "b" * 64}, markdown="v2",
     )
 
     selected = await load_decision_report(db, "run-1", report_version=1)
@@ -158,6 +158,7 @@ async def test_report_version_selection_is_run_scoped_and_bounded():
     assert len(versions) == 1
     assert versions[0]["report_version"] == 2
     assert versions[0]["pipeline_run_id"] == "pipeline-2"
+    assert versions[0]["evidence_bundle_sha256"] == "b" * 64
     assert "decision_intelligence" not in versions[0]
 
 

@@ -49,8 +49,14 @@ MUTATIONS = [
     (
         ROOT / "backend/app/services/webhook_service.py",
         "successful-delivery-skips-audit",
-        "            if distribution_decision is not None:\n",
-        "            if False and distribution_decision is not None:\n",
+        "                if distribution_decision is None:\n                    return\n",
+        "                if distribution_decision is not None:\n                    return\n",
+    ),
+    (
+        ROOT / "backend/app/services/webhook_service.py",
+        "successful-history-keeps-stale-payload",
+        '                    "event_payload": delivery_payload,\n',
+        '                    "event_payload": delivery.event_payload,\n',
     ),
 ]
 

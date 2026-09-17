@@ -571,7 +571,16 @@ async def test_deliver_sends_the_fresh_review_projection(monkeypatch):
     monkeypatch.setattr(svc.asyncio, "to_thread", AsyncMock(return_value=(True, "public")))
     monkeypatch.setattr(svc, "_refresh_review_gated_delivery", refresh)
     monkeypatch.setattr(svc, "get_public_http_client", _Client)
-    monkeypatch.setattr(svc, "_transition_processing_delivery", AsyncMock(return_value=True))
+    successful_values = {}
+
+    async def _transition(_db, **kwargs):
+        successful_values.update(kwargs["delivery_values"])
+        before_commit = kwargs.get("before_commit")
+        if before_commit is not None:
+            await before_commit(_db)
+        return True
+
+    monkeypatch.setattr(svc, "_transition_processing_delivery", _transition)
     monkeypatch.setattr(
         "app.services.report_distribution_policy.record_distribution",
         record_distribution,
@@ -583,6 +592,7 @@ async def test_deliver_sends_the_fresh_review_projection(monkeypatch):
     refresh.assert_awaited_once()
     sent = json.loads(posted["content"])
     assert sent["data"] == refreshed
+    assert successful_values["event_payload"] == refreshed
     record_distribution.assert_awaited_once()
     assert record_distribution.await_args.args[1] is distribution_decision
     assert record_distribution.await_args.kwargs == {

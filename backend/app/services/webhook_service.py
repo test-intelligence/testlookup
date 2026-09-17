@@ -39,6 +39,7 @@ import hmac
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 import structlog
@@ -226,6 +227,7 @@ async def _transition_processing_delivery(
     delivery_values: dict[str, Any],
     subscription_id: uuid.UUID | None = None,
     subscription_values: dict[str, Any] | None = None,
+    before_commit: Callable[[AsyncSession], Awaitable[None]] | None = None,
 ) -> bool:
     """Commit an attempt outcome only while this worker still owns its lease.
 
@@ -252,6 +254,8 @@ async def _transition_processing_delivery(
             .where(WebhookSubscription.id == subscription_id)
             .values(**subscription_values)
         )
+    if before_commit is not None:
+        await before_commit(db)
     await db.commit()
     return True
 
@@ -1145,23 +1149,20 @@ async def deliver(
 
         if 200 <= resp.status_code < 300:
             delivered_at = datetime.now(timezone.utc)
-            if distribution_decision is not None:
+
+            async def _stage_distribution_audit(audit_db: AsyncSession) -> None:
+                if distribution_decision is None:
+                    return
                 from app.services import report_distribution_policy
 
-                try:
-                    await report_distribution_policy.record_distribution(
-                        db,
-                        distribution_decision,
-                        channel="release.decided.webhook",
-                        run_id=delivery.run_id,
-                        project_id=subscription.project_id,
-                    )
-                except Exception as exc:  # noqa: BLE001 -- delivery already happened
-                    logger.warning(
-                        "release_decided_distribution_audit_not_staged",
-                        delivery_id=str(delivery.id),
-                        error_type=type(exc).__name__,
-                    )
+                await report_distribution_policy.record_distribution(
+                    audit_db,
+                    distribution_decision,
+                    channel="release.decided.webhook",
+                    run_id=delivery.run_id,
+                    project_id=subscription.project_id,
+                )
+
             changed = await _transition_processing_delivery(
                 db,
                 delivery_id=delivery.id,
@@ -1171,6 +1172,7 @@ async def deliver(
                     "http_status": resp.status_code,
                     "response_preview": response_preview,
                     "delivered_at": delivered_at,
+                    "event_payload": delivery_payload,
                     "error": None,
                     "dispatch_token": None,
                     "dispatch_lease_expires_at": None,
@@ -1183,6 +1185,7 @@ async def deliver(
                     "last_failure_at": None,
                     "total_delivered": WebhookSubscription.total_delivered + 1,
                 },
+                before_commit=_stage_distribution_audit,
             )
             if not changed:
                 return {"skipped": "stale_dispatch_token"}

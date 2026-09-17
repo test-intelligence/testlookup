@@ -17,13 +17,31 @@ MUTATIONS = [
         ROOT / "backend/app/services/notification/manager.py",
         "relay-skips-review-refresh",
         """        for row in review_gated_rows:\n            delivery_content[row.id] = await _refresh_review_gated_delivery(db, row)\n""",
-        """        for row in review_gated_rows:\n            delivery_content[row.id] = (\n                row.title, row.body, dict(row.delivery_metadata or {})\n            )\n""",
+        """        for row in review_gated_rows:\n            delivery_content[row.id] = (\n                row.title, row.body, dict(row.delivery_metadata or {}), None\n            )\n""",
     ),
     (
         ROOT / "backend/app/services/notification/manager.py",
         "refresh-uses-stale-staged-body",
         """    original_summary = str(context.get(\"original_summary\") or \"\")\n""",
         """    original_summary = row.body\n""",
+    ),
+    (
+        ROOT / "backend/app/services/notification/manager.py",
+        "withheld-prefix-invents-release-signal",
+        '            "withheld_body_prefix": _withheld_body_prefix(),\n',
+        '            "withheld_body_prefix": _body_prefix(None),\n',
+    ),
+    (
+        ROOT / "backend/app/services/notification/manager.py",
+        "successful-history-keeps-stale-body",
+        '                    "body": sent_body,\n',
+        '                    "body": row.body,\n',
+    ),
+    (
+        ROOT / "backend/app/services/notification/manager.py",
+        "successful-delivery-skips-audit",
+        "                if distribution_decision is not None:\n",
+        "                if False and distribution_decision is not None:\n",
     ),
     (
         ROOT / "backend/app/worker/tasks.py",

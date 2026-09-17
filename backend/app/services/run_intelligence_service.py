@@ -201,6 +201,9 @@ async def get_run_intelligence(
                     summary["_decision_report_pipeline_run_id"] = published.get(
                         "pipeline_run_id"
                     )
+                    summary["_decision_report_evidence_bundle_sha256"] = published.get(
+                        "evidence_bundle_sha256"
+                    )
             return summary
         except ValueError:
             raise
@@ -316,11 +319,15 @@ async def get_run_intelligence(
     fallback_used = False
     generated_at = None
     decision_report_pipeline_run_id = None
+    decision_report_evidence_bundle_sha256 = None
 
     if summary_doc:
         summary_doc.pop("_id", None)
         decision_report_pipeline_run_id = summary_doc.pop(
             "_decision_report_pipeline_run_id", None
+        )
+        decision_report_evidence_bundle_sha256 = summary_doc.pop(
+            "_decision_report_evidence_bundle_sha256", None
         )
         structured_summary = _structured_summary_projection(summary_doc)
         fallback_used = bool(summary_doc.get("fallback_used", False))
@@ -544,6 +551,9 @@ async def get_run_intelligence(
     }
     if decision_report_pipeline_run_id is not None:
         result["_decision_report_pipeline_run_id"] = decision_report_pipeline_run_id
+        result["_decision_report_evidence_bundle_sha256"] = (
+            decision_report_evidence_bundle_sha256
+        )
     return result
 
 

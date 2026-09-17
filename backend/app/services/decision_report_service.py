@@ -130,6 +130,7 @@ async def list_decision_report_versions(
             "_id": 0,
             "report_id": 1,
             "pipeline_run_id": 1,
+            "evidence_bundle_sha256": 1,
             "report_version": 1,
             "supersedes_report_id": 1,
             "generated_at": 1,
@@ -141,6 +142,7 @@ async def list_decision_report_versions(
         {
             "report_id": row.get("report_id"),
             "pipeline_run_id": row.get("pipeline_run_id"),
+            "evidence_bundle_sha256": row.get("evidence_bundle_sha256"),
             "report_version": row.get("report_version"),
             "supersedes_report_id": row.get("supersedes_report_id"),
             "generated_at": row.get("generated_at"),

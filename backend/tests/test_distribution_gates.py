@@ -184,6 +184,7 @@ async def test_terminal_review_never_exposes_release_draft_content(world, review
         None,
         _council(
             recommendation="NO_GO",
+            original_recommendation="GO",
             blocking_issues=["rejected blocker narrative"],
             conditions_for_go=["rejected condition narrative"],
             reasoning="rejected reasoning narrative",
@@ -197,6 +198,40 @@ async def test_terminal_review_never_exposes_release_draft_content(world, review
     assert out.blocking_issues == []
     assert out.conditions_for_go == []
     assert out.reasoning is None
+    assert out.original_recommendation is None
+
+
+@pytest.mark.asyncio
+async def test_release_readiness_uses_exact_pipeline_and_audits_advisory(
+    monkeypatch, world,
+):
+    pipeline_id = uuid.uuid4()
+    seen = {}
+
+    async def _exact(_db, subject, **_kwargs):
+        seen["pipeline"] = subject
+        return _envelope("pending_review")
+
+    audit = AsyncMock()
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _exact)
+    monkeypatch.setattr("app.services.access_audit_service.log_access_change", audit)
+    actor = _user("QA_LEAD")
+
+    out = await policy.apply_release_review_gate(
+        object(),
+        _council(recommendation="NO_GO"),
+        run_id=RUN,
+        allow_advisory=True,
+        pipeline_run_id=pipeline_id,
+        project_id=PROJECT,
+        actor=actor,
+    )
+
+    assert seen["pipeline"] == pipeline_id
+    assert out.recommendation == "ADVISORY_NO_GO"
+    assert audit.await_args.kwargs["action"] == "ai_report.distributed_unreviewed"
+    assert audit.await_args.kwargs["actor"] is actor
+    assert audit.await_args.kwargs["after_value"]["channel"] == "release_readiness_advisory"
 
 
 @pytest.mark.asyncio
@@ -284,6 +319,50 @@ async def test_release_advisory_override_requires_qa_lead():
 
     assert exc.value.status_code == 403
     assert exc.value.detail == "Advisory release values require the QA Lead role."
+
+
+@pytest.mark.asyncio
+async def test_release_advisory_route_commits_exact_subject_audit(
+    monkeypatch, world,
+):
+    from app.routers import release_readiness
+
+    pipeline_id = uuid.uuid4()
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(first=lambda: (pipeline_id, PROJECT))
+        ),
+        commit=AsyncMock(),
+    )
+
+    class _Context:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return False
+
+    exact = AsyncMock(return_value=_envelope("pending_review"))
+    audit = AsyncMock()
+    monkeypatch.setattr(release_readiness, "AsyncSessionLocal", _Context)
+    monkeypatch.setattr(
+        release_readiness,
+        "get_release_council",
+        AsyncMock(return_value=_council(recommendation="GO")),
+    )
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", exact)
+    monkeypatch.setattr("app.services.access_audit_service.log_access_change", audit)
+
+    out = await release_readiness.get_release_decision(
+        RUN,
+        allow_advisory=True,
+        current_user=_user("QA_LEAD"),
+    )
+
+    assert out.recommendation == "ADVISORY_GO"
+    exact.assert_awaited_once_with(db, pipeline_id)
+    audit.assert_awaited_once()
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

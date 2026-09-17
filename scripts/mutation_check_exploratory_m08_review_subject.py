@@ -13,14 +13,27 @@ TESTS = [
     "backend/tests/test_review_envelope.py::test_decision_report_versions_use_their_exact_pipeline_reviews",
     "backend/tests/test_review_envelope.py::test_selected_decision_report_uses_its_exact_pipeline_review",
     "backend/tests/services/test_decision_report_service.py::test_report_version_selection_is_run_scoped_and_bounded",
+    "backend/tests/test_notification_distribution_gates.py::test_superseded_investigator_excerpt_retains_terminal_subject",
 ]
 
 MUTATIONS = [
     (
         ROOT / "backend/app/services/review_envelope.py",
         "historical-subject-drops-superseded",
-        """            .where(\n                ReviewRequest.pipeline_run_id == pipeline_uuid,\n                ReviewRequest.kind == \"report\",\n            )\n            .order_by(ReviewRequest.created_at.desc())\n""",
-        """            .where(\n                ReviewRequest.pipeline_run_id == pipeline_uuid,\n                ReviewRequest.kind == \"report\",\n                ReviewRequest.state != \"superseded\",\n            )\n            .order_by(ReviewRequest.created_at.desc())\n""",
+        """    conditions = [\n        ReviewRequest.pipeline_run_id == pipeline_uuid,\n        ReviewRequest.kind == \"report\",\n    ]\n""",
+        """    conditions = [\n        ReviewRequest.pipeline_run_id == pipeline_uuid,\n        ReviewRequest.kind == \"report\",\n        ReviewRequest.state != \"superseded\",\n    ]\n""",
+    ),
+    (
+        ROOT / "backend/app/services/review_envelope.py",
+        "historical-subject-drops-evidence-binding",
+        "        conditions.append(ReviewRequest.evidence_bundle_sha256 == normalized_hash)\n",
+        "        pass\n",
+    ),
+    (
+        ROOT / "backend/app/services/report_distribution_policy.py",
+        "investigator-excerpt-uses-live-subject",
+        """    envelope = await review_envelope_for_pipeline_subject(\n        db,\n        pipeline_id,\n        evidence_bundle_sha256=evidence_bundle_sha256,\n    )\n""",
+        """    envelope = await review_envelope_for_pipeline(db, pipeline_id)\n""",
     ),
     (
         ROOT / "backend/app/services/decision_report_service.py",
@@ -29,16 +42,28 @@ MUTATIONS = [
         "",
     ),
     (
+        ROOT / "backend/app/services/decision_report_service.py",
+        "version-metadata-drops-evidence-subject",
+        """            \"evidence_bundle_sha256\": row.get(\"evidence_bundle_sha256\"),\n""",
+        "",
+    ),
+    (
         ROOT / "backend/app/routers/run_intelligence.py",
         "version-list-inherits-newest-run-review",
-        """        pipeline_subject = public_version.pop(\"pipeline_run_id\", None)\n        envelope = await review_envelope_for_pipeline_subject(db, pipeline_subject)\n""",
-        """        pipeline_subject = public_version.pop(\"pipeline_run_id\", None)\n        envelope = await review_envelope_for_run(db, run_id, workflow_type=\"deep\")\n""",
+        """        envelope = await review_envelope_for_pipeline_subject(\n            db,\n            pipeline_subject,\n            evidence_bundle_sha256=evidence_subject,\n        )\n""",
+        """        envelope = await review_envelope_for_run(\n            db, run_id, workflow_type=\"deep\"\n        )\n""",
     ),
     (
         ROOT / "backend/app/routers/run_intelligence.py",
         "selected-version-inherits-newest-run-review",
-        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_pipeline_subject(db, pipeline_subject)\n""",
-        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_run(db, run_id, workflow_type=\"deep\")\n""",
+        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_pipeline_subject(\n                db,\n                pipeline_subject,\n                evidence_bundle_sha256=evidence_subject,\n            )\n""",
+        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_run(\n                db, run_id, workflow_type=\"deep\"\n            )\n""",
+    ),
+    (
+        ROOT / "backend/app/routers/run_intelligence.py",
+        "selected-version-drops-evidence-binding",
+        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_pipeline_subject(\n                db,\n                pipeline_subject,\n                evidence_bundle_sha256=evidence_subject,\n            )\n            envelope.apply_headers(response)\n""",
+        """        if report_version is not None and pipeline_subject is not None:\n            envelope = await review_envelope_for_pipeline_subject(\n                db,\n                pipeline_subject,\n                evidence_bundle_sha256=None,\n            )\n            envelope.apply_headers(response)\n""",
     ),
 ]
 

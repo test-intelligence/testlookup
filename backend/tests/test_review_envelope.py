@@ -130,12 +130,18 @@ async def test_investigator_lookup_is_bound_to_the_exact_pipeline_subject():
 @pytest.mark.asyncio
 async def test_immutable_pipeline_subject_lookup_retains_superseded_state():
     db = _DB(_review("superseded"))
+    evidence_hash = "a" * 64
 
-    envelope = await env.review_envelope_for_pipeline_subject(db, RUN)
+    envelope = await env.review_envelope_for_pipeline_subject(
+        db, RUN, evidence_bundle_sha256=evidence_hash
+    )
 
     sql = str(db.statements[0].compile(compile_kwargs={"literal_binds": False}))
+    params = db.statements[0].compile().params
     assert "review_requests.pipeline_run_id =" in sql
+    assert "review_requests.evidence_bundle_sha256 =" in sql
     assert "review_requests.state !=" not in sql
+    assert evidence_hash in params.values()
     assert envelope.state == "superseded"
 
 
@@ -246,8 +252,8 @@ async def test_decision_report_versions_use_their_exact_pipeline_reviews(monkeyp
     monkeypatch.setattr(
         "app.services.decision_report_service.list_decision_report_versions",
         AsyncMock(return_value=[
-            {"report_id": "r2", "report_version": 2, "pipeline_run_id": str(pipeline_2)},
-            {"report_id": "r1", "report_version": 1, "pipeline_run_id": str(pipeline_1)},
+            {"report_id": "r2", "report_version": 2, "pipeline_run_id": str(pipeline_2), "evidence_bundle_sha256": "b" * 64},
+            {"report_id": "r1", "report_version": 1, "pipeline_run_id": str(pipeline_1), "evidence_bundle_sha256": "a" * 64},
         ]),
     )
     exact = AsyncMock(side_effect=[
@@ -260,8 +266,9 @@ async def test_decision_report_versions_use_their_exact_pipeline_reviews(monkeyp
     out = await run_intelligence.list_run_decision_reports(RUN, response, limit=5, db=object())
 
     assert [row["review"]["state"] for row in out] == ["accepted", "superseded"]
-    assert [call.args[1] for call in exact.await_args_list] == [
-        str(pipeline_2), str(pipeline_1)
+    assert [call.args[1] for call in exact.await_args_list] == [str(pipeline_2), str(pipeline_1)]
+    assert [call.kwargs["evidence_bundle_sha256"] for call in exact.await_args_list] == [
+        "b" * 64, "a" * 64
     ]
     assert all("pipeline_run_id" not in row for row in out)
     assert response.headers["X-TestLookup-Review-State"] == "accepted"
@@ -275,6 +282,7 @@ async def test_selected_decision_report_uses_its_exact_pipeline_review(monkeypat
     result = {
         "summary": "immutable version",
         "_decision_report_pipeline_run_id": str(pipeline_id),
+        "_decision_report_evidence_bundle_sha256": "c" * 64,
     }
     exact = AsyncMock(return_value=env.ReviewEnvelope(
         ai_generated=True, state="superseded", message="superseded"
@@ -291,7 +299,9 @@ async def test_selected_decision_report_uses_its_exact_pipeline_review(monkeypat
 
     assert out["review"]["state"] == "superseded"
     assert "_decision_report_pipeline_run_id" not in out
-    exact.assert_awaited_once_with(db, str(pipeline_id))
+    exact.assert_awaited_once_with(
+        db, str(pipeline_id), evidence_bundle_sha256="c" * 64
+    )
 
 
 @pytest.mark.asyncio

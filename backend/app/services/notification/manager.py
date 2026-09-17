@@ -187,7 +187,7 @@ _REVIEW_GATE_METADATA_KEY = "_review_gate_v1"
 async def _refresh_review_gated_delivery(
     db: Any,
     row: NotificationLog,
-) -> tuple[str, str, dict[str, Any]]:
+) -> tuple[str, str, dict[str, Any], Any]:
     """Re-evaluate an AI narrative immediately before each provider attempt.
 
     Durable rows can wait through a review transition. Their internal metadata
@@ -198,7 +198,7 @@ async def _refresh_review_gated_delivery(
     metadata = dict(row.delivery_metadata or {})
     context = metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
     if not isinstance(context, dict) or row.run_id is None or row.project_id is None:
-        return row.title, row.body, metadata
+        return row.title, row.body, metadata, None
 
     original_summary = str(context.get("original_summary") or "")
     accepted_body_prefix = str(context.get("accepted_body_prefix") or "")
@@ -210,7 +210,6 @@ async def _refresh_review_gated_delivery(
     try:
         from app.services.report_distribution_policy import (
             gate_ai_summary_text,
-            record_distribution,
         )
 
         summary, decision = await gate_ai_summary_text(
@@ -221,14 +220,6 @@ async def _refresh_review_gated_delivery(
             ai_generated=ai_generated,
             channel="ai_summary_notification_relay",
         )
-        if decision is not None:
-            await record_distribution(
-                db,
-                decision,
-                channel="ai_summary_notification_relay",
-                run_id=row.run_id,
-                project_id=row.project_id,
-            )
         metadata["executive_panel"] = (
             None if decision is not None and not decision.allowed else original_panel
         )
@@ -237,7 +228,7 @@ async def _refresh_review_gated_delivery(
             if decision is not None and not decision.allowed
             else accepted_body_prefix
         )
-        return row.title, f"{body_prefix}{summary}", metadata
+        return row.title, f"{body_prefix}{summary}", metadata, decision
     except Exception as exc:  # noqa: BLE001 -- delivery fails closed when enforced
         from app.services.report_distribution_policy import (
             REVIEW_PENDING_NOTICE,
@@ -255,9 +246,10 @@ async def _refresh_review_gated_delivery(
                 row.title,
                 f"{withheld_body_prefix}{REVIEW_PENDING_NOTICE}",
                 metadata,
+                None,
             )
         metadata["executive_panel"] = original_panel
-        return row.title, f"{accepted_body_prefix}{original_summary}", metadata
+        return row.title, f"{accepted_body_prefix}{original_summary}", metadata, None
 
 
 # ── Message builders ──────────────────────────────────────────
@@ -944,7 +936,9 @@ async def relay_pending_notification_deliveries(
             for row in rows
         }
         digest_rows_allowed = await _digest_rows_still_deliverable(db, rows, explicit_routes)
-        delivery_content: dict[uuid.UUID, tuple[str, str, dict[str, Any]]] = {}
+        delivery_content: dict[
+            uuid.UUID, tuple[str, str, dict[str, Any], Any]
+        ] = {}
         review_gated_rows = [
             row
             for row in rows
@@ -955,9 +949,6 @@ async def relay_pending_notification_deliveries(
         ]
         for row in review_gated_rows:
             delivery_content[row.id] = await _refresh_review_gated_delivery(db, row)
-        if review_gated_rows:
-            # Persist the audit decision made for this concrete provider attempt.
-            await db.commit()
         needs_email = any(
             (
                 preferences_by_row.get(row.id, (None, None))[0] is not None
@@ -1002,9 +993,9 @@ async def relay_pending_notification_deliveries(
             if not target:
                 return "failed", "Notification delivery target is missing"
             event = NotificationEventType(row.event_type)
-            title, body, metadata = delivery_content.get(
+            title, body, metadata, _decision = delivery_content.get(
                 row.id,
-                (row.title, row.body, dict(row.delivery_metadata or {})),
+                (row.title, row.body, dict(row.delivery_metadata or {}), None),
             )
             metadata.pop(_TEAM_ROUTE_METADATA_KEY, None)
             metadata.pop(_EXPLICIT_ROUTE_METADATA_KEY, None)
@@ -1107,9 +1098,9 @@ async def relay_pending_notification_deliveries(
             event = NotificationEventType(row.event_type)
         except ValueError:
             return "failed", f"Unsupported notification event: {row.event_type}"
-        title, body, metadata = delivery_content.get(
+        title, body, metadata, _decision = delivery_content.get(
             row.id,
-            (row.title, row.body, dict(row.delivery_metadata or {})),
+            (row.title, row.body, dict(row.delivery_metadata or {}), None),
         )
         metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
         return await _dispatch_to_channel(
@@ -1134,11 +1125,21 @@ async def relay_pending_notification_deliveries(
             is_team_route = isinstance(team_route, dict)
             explicit_route = explicit_routes.get(row.id)
             if status == "sent":
+                sent_title, sent_body, sent_metadata, _decision = delivery_content.get(
+                    row.id,
+                    (row.title, row.body, dict(row.delivery_metadata or {}), None),
+                )
+                sent_metadata.pop(_TEAM_ROUTE_METADATA_KEY, None)
+                sent_metadata.pop(_EXPLICIT_ROUTE_METADATA_KEY, None)
+                sent_metadata.pop(_REVIEW_GATE_METADATA_KEY, None)
                 values = {
                     "status": "sent",
                     "sent_at": now_done,
                     "error_detail": None,
                     "next_delivery_at": None,
+                    "title": sent_title,
+                    "body": sent_body,
+                    "delivery_metadata": sent_metadata,
                 }
             elif attempts >= _MAX_DURABLE_DELIVERY_ATTEMPTS:
                 values = {
@@ -1175,6 +1176,22 @@ async def relay_pending_notification_deliveries(
                 continue
             if status == "sent":
                 sent += 1
+                distribution_decision = delivery_content.get(
+                    row.id,
+                    (row.title, row.body, dict(row.delivery_metadata or {}), None),
+                )[3]
+                if distribution_decision is not None:
+                    from app.services.report_distribution_policy import (  # noqa: PLC0415
+                        record_distribution,
+                    )
+
+                    await record_distribution(
+                        db,
+                        distribution_decision,
+                        channel="ai_summary_notification_relay",
+                        run_id=row.run_id,
+                        project_id=row.project_id,
+                    )
                 if isinstance(explicit_route, dict):
                     raw_subscription_id = explicit_route.get("digest_subscription_id")
                     if raw_subscription_id:
@@ -1360,6 +1377,14 @@ async def dispatch_ai_summary_notifications(
             + ".\n\n"
         )
 
+    def _withheld_body_prefix() -> str:
+        if failed_tests == 0:
+            return ""
+        return (
+            f"{failed_tests} failure{'s' if failed_tests != 1 else ''} detected in "
+            f"{project_name} (build {build_number}, {pass_rate:.1f}% pass rate).\n\n"
+        )
+
     if failed_tests == 0:
         body = f"All {total_tests} tests passed in {project_name} (build {build_number}). No issues detected."
     else:
@@ -1378,7 +1403,7 @@ async def dispatch_ai_summary_notifications(
         meta[_REVIEW_GATE_METADATA_KEY] = {
             "original_summary": original_executive_summary,
             "accepted_body_prefix": _body_prefix(original_executive_panel),
-            "withheld_body_prefix": _body_prefix(None),
+            "withheld_body_prefix": _withheld_body_prefix(),
             "original_executive_panel": original_executive_panel,
             "ai_generated": summary_is_ai,
         }

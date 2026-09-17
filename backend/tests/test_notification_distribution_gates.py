@@ -171,6 +171,7 @@ def test_the_task_withholds_the_ai_summary_from_preferences_and_digests(monkeypa
     assert deliveries and deliveries[0]["body"] == policy.REVIEW_PENDING_NOTICE
     marker = deliveries[0]["metadata"]["_review_gate_v1"]
     assert marker["original_summary"] == AI_TEXT
+    assert "Release signal:" not in marker["withheld_body_prefix"]
 
 
 @pytest.mark.asyncio
@@ -179,8 +180,6 @@ async def test_notification_relay_refreshes_terminal_and_accepted_review_content
 ):
     from app.services.notification import manager
 
-    record = AsyncMock()
-    monkeypatch.setattr(policy, "record_distribution", record)
     row = SimpleNamespace(
         title="AI summary",
         body="stale draft",
@@ -200,21 +199,23 @@ async def test_notification_relay_refreshes_terminal_and_accepted_review_content
     )
 
     world.review = "rejected"
-    _title, rejected_body, rejected_metadata = (
+    _title, rejected_body, rejected_metadata, rejected_decision = (
         await manager._refresh_review_gated_delivery(object(), row)
     )
     assert rejected_body == f"withheld prefix\n\n{policy.REVIEW_PENDING_NOTICE}"
     assert AI_TEXT not in rejected_body
     assert rejected_metadata["executive_panel"] is None
     assert manager._REVIEW_GATE_METADATA_KEY not in rejected_metadata
+    assert rejected_decision is not None and rejected_decision.allowed is False
 
     world.review = "accepted"
-    _title, accepted_body, accepted_metadata = (
+    _title, accepted_body, accepted_metadata, accepted_decision = (
         await manager._refresh_review_gated_delivery(object(), row)
     )
     assert accepted_body == f"accepted prefix\n\n{AI_TEXT}"
     assert accepted_metadata["executive_panel"] == {"headline": "NO_GO"}
     assert manager._REVIEW_GATE_METADATA_KEY not in accepted_metadata
+    assert accepted_decision is not None and accepted_decision.allowed is True
 
 
 def test_the_task_drafts_the_summary_under_a_project_opt_in(monkeypatch, world):
@@ -245,23 +246,27 @@ async def test_pending_investigator_excerpt_is_withheld_by_its_exact_subject(
 ):
     seen = {}
 
-    async def _subject(_db, pipeline_id):
+    async def _subject(_db, pipeline_id, *, evidence_bundle_sha256=None):
         seen["pipeline_id"] = pipeline_id
+        seen["evidence_bundle_sha256"] = evidence_bundle_sha256
         return _envelope("pending_review")
 
-    monkeypatch.setattr(policy, "review_envelope_for_pipeline", _subject)
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _subject)
     investigation_id = uuid.uuid4()
+    evidence_hash = "d" * 64
     text, decision = await policy.gate_investigation_excerpt(
         None,
         investigation_id=investigation_id,
         project_id=PROJECT,
         excerpt=AI_TEXT,
         channel="digest_attachment",
+        evidence_bundle_sha256=evidence_hash,
     )
 
     assert seen["pipeline_id"] == uuid.uuid5(
         uuid.NAMESPACE_URL, f"testlookup:investigation:{investigation_id}"
     )
+    assert seen["evidence_bundle_sha256"] == evidence_hash
     assert text == policy.INVESTIGATION_REVIEW_PENDING_NOTICE
     assert AI_TEXT not in text
     assert decision is not None and decision.allowed is False
@@ -271,7 +276,7 @@ async def test_pending_investigator_excerpt_is_withheld_by_its_exact_subject(
 async def test_accepted_investigator_excerpt_is_distributed(monkeypatch, world):
     monkeypatch.setattr(
         policy,
-        "review_envelope_for_pipeline",
+        "review_envelope_for_pipeline_subject",
         AsyncMock(return_value=_envelope("accepted")),
     )
     text, decision = await policy.gate_investigation_excerpt(
@@ -286,11 +291,37 @@ async def test_accepted_investigator_excerpt_is_distributed(monkeypatch, world):
 
 
 @pytest.mark.asyncio
+async def test_superseded_investigator_excerpt_retains_terminal_subject(
+    monkeypatch, world,
+):
+    subject = AsyncMock(return_value=_envelope("superseded"))
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", subject)
+    monkeypatch.setattr(
+        policy,
+        "review_envelope_for_pipeline",
+        AsyncMock(return_value=_envelope("accepted")),
+    )
+
+    text, decision = await policy.gate_investigation_excerpt(
+        None,
+        investigation_id=uuid.uuid4(),
+        project_id=PROJECT,
+        excerpt=AI_TEXT,
+        channel="analysis_report",
+        evidence_bundle_sha256="e" * 64,
+    )
+
+    assert text == policy.INVESTIGATION_REVIEW_PENDING_NOTICE
+    assert decision is not None and decision.envelope.state == "superseded"
+    assert subject.await_args.kwargs["evidence_bundle_sha256"] == "e" * 64
+
+
+@pytest.mark.asyncio
 async def test_opted_in_investigator_excerpt_is_watermarked(monkeypatch, world):
     world.drafts = True
     monkeypatch.setattr(
         policy,
-        "review_envelope_for_pipeline",
+        "review_envelope_for_pipeline_subject",
         AsyncMock(return_value=_envelope("pending_review")),
     )
     text, decision = await policy.gate_investigation_excerpt(
@@ -353,6 +384,7 @@ async def test_terminal_review_redacts_the_embedded_release_verdict(world, revie
     world.review = review
     verdict = {
         **_verdict(),
+        "original_recommendation": "GO",
         "blocking_issues": ["rejected blocker narrative"],
         "conditions_for_go": ["rejected condition narrative"],
         "reasoning": "rejected reasoning narrative",
@@ -365,6 +397,7 @@ async def test_terminal_review_redacts_the_embedded_release_verdict(world, revie
     assert out["blocking_issues"] == []
     assert out["conditions_for_go"] == []
     assert out["reasoning"] is None
+    assert out["original_recommendation"] is None
 
 
 @pytest.mark.asyncio
