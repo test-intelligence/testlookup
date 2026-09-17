@@ -430,7 +430,10 @@ async def test_idempotency_scope_migration_really_downgrades_after_scoped_use():
     def _run(sync_connection, operation) -> None:
         context = MigrationContext.configure(sync_connection)
         with Operations.context(context):
-            operation()
+            # Match env.py: Alembic owns the transaction that an
+            # autocommit_block commits before running concurrent DDL.
+            with context.begin_transaction():
+                operation()
 
     try:
         async with engine.connect() as db:
