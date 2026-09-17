@@ -19,10 +19,12 @@ The value is the one ``GET /api/v1/release-readiness/{run_id}`` returns: the
 E8.4 review-gate rule (``release_review_projection``). While
 ``REVIEW_GATE_ENFORCED`` is on, an unreviewed AI decision is sent as
 ``PENDING_REVIEW`` with the model's value in ``draft_recommendation``. Otherwise
-the value is unchanged. Either way a ``review`` block says whether a human
-reviewed the decision and when, never who. ``overridden_by`` and the override
-reason stay out for the same reason: the reason is free text that routinely
-names people.
+the value is unchanged. Each delivery attempt rechecks the exact pipeline
+subject so a queued retry reflects acceptance, rejection, or supersession that
+happened while the receiver was unavailable. Either way a ``review`` block says
+whether a human reviewed the decision and when, never who. ``overridden_by`` and
+the override reason stay out for the same reason: the reason is free text that
+routinely names people.
 
 Delivery
 --------
@@ -83,6 +85,9 @@ async def build_release_decided_payload(
     payload: dict[str, Any] = {
         "run_id": str(run_id),
         "project_id": str(project_id),
+        "pipeline_run_id": (
+            str(decision.pipeline_run_id) if decision.pipeline_run_id is not None else None
+        ),
         "trigger": trigger,
         "recommendation": council.recommendation,
         "risk_score": council.risk_score,
@@ -99,6 +104,7 @@ async def build_release_decided_payload(
         run_id=run_id,
         synthesized=bool(council.synthesized),
         human_override=council.human_override,
+        pipeline_run_id=decision.pipeline_run_id,
     )
 
 

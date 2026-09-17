@@ -39,6 +39,7 @@ from app.services.review_envelope import (
     not_ai_generated,
     review_envelope_for_run,
     review_envelope_for_pipeline,
+    review_envelope_for_pipeline_subject,
 )
 
 __all__ = [
@@ -250,6 +251,7 @@ async def release_review_projection(
     run_id: Any,
     synthesized: bool,
     human_override: Any,
+    pipeline_run_id: Any = None,
 ) -> tuple[ReviewEnvelope, bool, bool]:
     """The one rule for a release value, shared by the release-readiness response
     and the ``release.decided`` webhook so the two can never disagree.
@@ -261,7 +263,11 @@ async def release_review_projection(
     envelope = (
         not_ai_generated()
         if synthesized
-        else await review_envelope_for_run(db, run_id, workflow_type="deep")
+        else (
+            await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+            if pipeline_run_id is not None
+            else await review_envelope_for_run(db, run_id, workflow_type="deep")
+        )
     )
     enforced = gate_enforced()
     unreviewed = (
@@ -279,6 +285,7 @@ async def gate_release_decided_payload(
     run_id: Any,
     synthesized: bool,
     human_override: Any,
+    pipeline_run_id: Any = None,
 ) -> dict[str, Any]:
     """Project the review gate onto a ``release.decided`` webhook payload.
 
@@ -290,7 +297,11 @@ async def gate_release_decided_payload(
     a human reviewed it and when, never who.
     """
     envelope, enforced, withhold = await release_review_projection(
-        db, run_id=run_id, synthesized=synthesized, human_override=human_override
+        db,
+        run_id=run_id,
+        synthesized=synthesized,
+        human_override=human_override,
+        pipeline_run_id=pipeline_run_id,
     )
     projected = dict(payload)
     projected["requires_human_review"] = envelope.ai_generated

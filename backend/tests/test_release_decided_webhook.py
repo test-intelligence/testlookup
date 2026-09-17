@@ -179,6 +179,12 @@ def world(monkeypatch):
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
         return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
 
+    async def _envelope_for_subject(db, pipeline_run_id, ai_generated=True):
+        assert pipeline_run_id == PIPELINE
+        if state.review == "accepted":
+            return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
+        return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
+
     async def _decision_lookup(_statement):
         found = (state.decision, PROJECT) if state.decision is not None else None
         return _Result(first=found)
@@ -204,6 +210,7 @@ def world(monkeypatch):
     )
     monkeypatch.setattr(emitter, "get_release_council", _council)
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
     monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", False)
     state.enforce = lambda on: monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", on)
     return state
@@ -247,9 +254,11 @@ async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(mo
     assert world.log == ["decision_commit", "stage", "webhook_commit"]
     assert row["event_type"] == "release.decided"
     assert row["subscription_id"] == world.table.subscription.id
+    assert row["run_id"] == RUN
     assert row["event_payload"] == {
         "run_id": str(RUN),
         "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
         "trigger": "agent",
         "recommendation": "GO",
         "draft_recommendation": None,
@@ -373,6 +382,55 @@ async def test_while_enforced_an_accepted_ai_decision_leaves_unchanged(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(monkeypatch):
+    """A queued payload is a source artifact, not a frozen authorization decision."""
+    stored = {
+        "run_id": str(RUN),
+        "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
+        "recommendation": "PENDING_REVIEW",
+        "draft_recommendation": "GO",
+        "risk_score": 14,
+        "blocking_issues": ["latency regression"],
+        "conditions_for_go": ["rerun staging"],
+        "synthesized": False,
+        "overridden": False,
+        "requires_human_review": True,
+        "review": {"state": "pending_review", "review_id": REVIEW_ID, "reviewed_at": None},
+        "review_gate_enforced": True,
+    }
+    pending = dict(stored)
+    accepted = {
+        **stored,
+        "recommendation": "GO",
+        "draft_recommendation": None,
+        "review": {"state": "accepted", "review_id": REVIEW_ID, "reviewed_at": REVIEWED_AT},
+    }
+    gate = AsyncMock(side_effect=[pending, accepted])
+    monkeypatch.setattr(policy, "gate_release_decided_payload", gate)
+    delivery = SimpleNamespace(
+        event_type="release.decided",
+        run_id=RUN,
+        event_payload=stored,
+    )
+
+    first = await webhook_service._refresh_review_gated_payload(None, delivery)
+    second = await webhook_service._refresh_review_gated_payload(None, delivery)
+
+    assert first["recommendation"] == "PENDING_REVIEW"
+    assert second["recommendation"] == "GO"
+    assert gate.await_count == 2
+    for call in gate.await_args_list:
+        source = call.args[1]
+        assert source["recommendation"] == "GO"
+        assert "draft_recommendation" not in source
+        assert "requires_human_review" not in source
+        assert "review" not in source
+        assert "review_gate_enforced" not in source
+        assert call.kwargs["pipeline_run_id"] == PIPELINE
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("review", ["rejected", "superseded"])
 async def test_terminal_review_never_leaves_in_release_webhook_content(world, review):
     world.enforce(True)
@@ -390,6 +448,35 @@ async def test_terminal_review_never_leaves_in_release_webhook_content(world, re
         human_override=None,
     )
 
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert payload["draft_recommendation"] is None
+    assert payload["blocking_issues"] == []
+    assert payload["conditions_for_go"] == []
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_uses_its_exact_pipeline_review(monkeypatch, world):
+    world.enforce(True)
+
+    async def _wrong_newer_review(*_args, **_kwargs):
+        return ReviewEnvelope(True, "accepted", "accepted", str(uuid.uuid4()), REVIEWED_AT)
+
+    monkeypatch.setattr(policy, "review_envelope_for_run", _wrong_newer_review)
+    world.review = "rejected"
+    payload = await policy.gate_release_decided_payload(
+        None,
+        {
+            "recommendation": "NO_GO",
+            "blocking_issues": ["pipeline-specific blocker"],
+            "conditions_for_go": ["pipeline-specific condition"],
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+    )
+
+    assert payload["review"]["state"] == "rejected"
     assert payload["recommendation"] == "PENDING_REVIEW"
     assert payload["draft_recommendation"] is None
     assert payload["blocking_issues"] == []

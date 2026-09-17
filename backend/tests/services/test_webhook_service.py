@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -503,6 +504,79 @@ async def test_deliver_respects_zero_retry_budget(
     assert result.get("retry") is not True
     assert delivery.attempt_count == 1
     assert delivery.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_deliver_sends_the_fresh_review_projection(monkeypatch):
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        enabled=True,
+        has_secret=False,
+        target_url="https://hooks.example.test/testlookup",
+        max_retries=5,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        run_id=uuid.uuid4(),
+        event_type="release.decided",
+        event_payload={"recommendation": "PENDING_REVIEW"},
+        status="PENDING",
+        attempt_count=0,
+        dispatch_attempts=0,
+        dispatch_token=None,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    posted: dict = {}
+
+    class _Client:
+        async def post(self, _url, **kwargs):
+            posted.update(kwargs)
+            return SimpleNamespace(status_code=200, text="accepted")
+
+    refreshed = {
+        "recommendation": "GO",
+        "draft_recommendation": None,
+        "review": {"state": "accepted"},
+    }
+    refresh = AsyncMock(return_value=refreshed)
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(svc.asyncio, "to_thread", AsyncMock(return_value=(True, "public")))
+    monkeypatch.setattr(svc, "_refresh_review_gated_payload", refresh)
+    monkeypatch.setattr(svc, "get_public_http_client", _Client)
+    monkeypatch.setattr(svc, "_transition_processing_delivery", AsyncMock(return_value=True))
+
+    result = await svc.deliver(delivery.id)
+
+    assert result == {"status": "SUCCESS", "http_status": 200}
+    refresh.assert_awaited_once()
+    sent = json.loads(posted["content"])
+    assert sent["data"] == refreshed
 
 
 @pytest.mark.asyncio

@@ -81,7 +81,7 @@ SUPPORTED_EVENTS: dict[str, str] = {
     "release.decided": (
         "Fired when a release decision is written: by the release-risk agent at "
         "the end of a deep investigation, or by a QA lead's override. data: "
-        "run_id, project_id, trigger (agent|override), recommendation (GO, "
+        "run_id, project_id, pipeline_run_id, trigger (agent|override), recommendation (GO, "
         "NO_GO or CONDITIONAL_GO; PENDING_REVIEW while the human-review gate is "
         "enforced and no human has accepted the AI decision), "
         "draft_recommendation, risk_score, blocking_issues, conditions_for_go, "
@@ -584,7 +584,7 @@ async def emit_event(
     except (TypeError, ValueError):
         return 0
     event_run_id: uuid.UUID | None = None
-    if event_type == "run.completed":
+    if event_type in {"run.completed", "release.decided"}:
         try:
             event_run_id = uuid.UUID(str(payload.get("run_id")))
         except (TypeError, ValueError, AttributeError):
@@ -832,6 +832,52 @@ async def relay_pending_webhook_deliveries(*, limit: int = 200) -> dict[str, int
     return {"claimed": len(rows), "published": published, "failed": failed}
 
 
+async def _refresh_review_gated_payload(
+    db: AsyncSession,
+    delivery: WebhookDelivery,
+) -> dict[str, Any]:
+    """Apply the current review state immediately before webhook egress.
+
+    A delivery can wait through a receiver outage while its exact pipeline
+    report moves from pending to accepted, rejected, or superseded. Rebuild the
+    original release decision from the stored projection and gate it again on
+    every provider attempt so retries cannot send stale authorization state.
+    """
+    stored = dict(delivery.event_payload or {})
+    if delivery.event_type != "release.decided" or delivery.run_id is None:
+        return stored
+
+    original = dict(stored)
+    draft_recommendation = original.pop("draft_recommendation", None)
+    if draft_recommendation is not None:
+        original["recommendation"] = draft_recommendation
+    for field in (
+        "requires_human_review",
+        "review",
+        "review_gate_enforced",
+    ):
+        original.pop(field, None)
+
+    pipeline_run_id: uuid.UUID | None = None
+    raw_pipeline_run_id = original.get("pipeline_run_id")
+    if raw_pipeline_run_id is not None:
+        try:
+            pipeline_run_id = uuid.UUID(str(raw_pipeline_run_id))
+        except (TypeError, ValueError, AttributeError):
+            pipeline_run_id = None
+
+    from app.services import report_distribution_policy
+
+    return await report_distribution_policy.gate_release_decided_payload(
+        db,
+        original,
+        run_id=delivery.run_id,
+        synthesized=bool(original.get("synthesized")),
+        human_override=original.get("overridden"),
+        pipeline_run_id=pipeline_run_id,
+    )
+
+
 async def deliver(
     delivery_id: uuid.UUID,
     *,
@@ -980,6 +1026,27 @@ async def deliver(
                 ).inc()
                 return {"error": "signing_secret_unavailable"}
 
+        try:
+            delivery_payload = await _refresh_review_gated_payload(db, delivery)
+        except Exception as exc:  # fail closed when live review state is unavailable
+            retry_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+            error = f"release.decided review gate lookup failed: {type(exc).__name__}"
+            changed = await _transition_processing_delivery(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                delivery_values={
+                    "status": "PENDING",
+                    "error": error,
+                    "dispatch_token": None,
+                    "dispatch_lease_expires_at": None,
+                    "next_dispatch_at": retry_at,
+                },
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
+            return {"retry": True, "error": error}
+
         # Build the body and sign.
         envelope = {
             "event_type": delivery.event_type,
@@ -987,7 +1054,7 @@ async def deliver(
             "subscription_id": str(subscription.id),
             "project_id": str(subscription.project_id),
             "emitted_at": datetime.now(timezone.utc).isoformat(),
-            "data": delivery.event_payload or {},
+            "data": delivery_payload,
         }
         body = json.dumps(envelope, default=str).encode("utf-8")
         headers = {
