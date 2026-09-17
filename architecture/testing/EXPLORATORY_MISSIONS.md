@@ -361,7 +361,7 @@ projection and retired PUT 405 without migrating them again.
 
 **Execution 2026-09-17:** **PARTIAL.** The deployed candidate passed the API,
 frontend, MCP, CLI, frozen-config, exact-review-subject, optimistic-concurrency,
-tool-authority, drift-pin and 24-mutation checks. Remaining gaps are recorded in
+tool-authority, drift-pin, endpoint-sanitization and 25-mutation checks. Remaining gaps are recorded in
 the M11 evidence: several capability-specific model-tier, retry, timeout, review
 and budget settings are still not runtime consumers; no durable per-specialist
 tool-call ledger or CLI config/invoke surface exists; and no real PostgreSQL

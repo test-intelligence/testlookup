@@ -13,6 +13,8 @@ the API, web adapters, and automatic reviewer-quality writer. Mutation approval
 requires the exact accepted report subject and current `act` mode. Legacy
 Investigator/Fixer writes return 405 before body parsing, structured validation
 errors reach the UI, and MCP invocation views show the sanitized frozen config.
+Refused endpoint clamps use a bounded policy reason, so frozen and returned
+snapshots cannot disclose a base URL or hostname through diagnostic metadata.
 
 Knowledge-grounded generation now requires project scope for non-admin chat,
 rechecks revoked session membership, filters every selected source regardless

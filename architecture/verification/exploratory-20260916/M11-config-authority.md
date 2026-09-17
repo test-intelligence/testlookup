@@ -4,8 +4,8 @@
 
 **PARTIAL — the frozen-authority, exact-review-subject, concurrency and runtime
 tool checks passed; advertised settings still have capability-specific gaps.**
-Exact executable candidate `273cb432` was deployed first as
-`build-20260917-152624`. The deploy verifier confirmed that every application
+Exact executable candidate `80be109a` was deployed first as
+`build-20260917-155053`. The deploy verifier confirmed that every application
 pod digest and the serving backend revision matched the build, and the ingress
 health check passed before verification began.
 
@@ -15,6 +15,9 @@ health check passed before verification began.
   Unknown fields, endpoint or API-key injection, unsupported tools and deadline
   violations are refused. The accepted sanitized config, version and clamps are
   frozen into invocation and workflow metadata.
+- A refused endpoint records only a generic endpoint-policy clamp. Frozen and
+  returned snapshots contain neither the endpoint URL nor its hostname, even
+  when another usable tier lets the invocation proceed.
 - Worker start and retry use that frozen authority while reapplying current
   safety ceilings, endpoint policy and eval-drift pins. A changed project config
   refuses invocation retry rather than silently changing authority.
@@ -42,7 +45,7 @@ health check passed before verification began.
   had zero errors (19 pre-existing warnings).
 - MCP focused: **20 passed**; MCP full: **177 passed**; CLI full: **138 passed,
   2 skipped**.
-- Mutation: **24 wrong-behavior mutations killed**, with exact-once replacement
+- Mutation: **25 wrong-behavior mutations killed**, with exact-once replacement
   assertions and byte restoration.
 - Ruff passed; mypy held at **369 errors in 114 files** (baseline 369); all
   **43** quality guards and **238** guard self-tests passed; generated Agent API

@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: 273cb432cd35bd2dd75f8ae09dd1aae912807739
-candidate_tree: 9e577c1cb0a86731d1243d4eac87843c8d15db46
+candidate_sha: 80be109afba31de3456f84d1d9fb77b5837c261b
+candidate_tree: 75d643d528db94f9033ed3909b6170454b12ddb9
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-17T15:39:59Z
+last_checkpoint_at_utc: 2026-09-17T15:58:02Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,15 +15,15 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260917-152624
+  image_tag: build-20260917-155053
   image_digests:
-    backend_and_workers: sha256:5e7ea36569ad980e06cc874b138cf1648797ca41754b54b8ba8a3f2c487d35ec
+    backend_and_workers: sha256:bf749bb1d77d7d9afbb662980191390f2fe0102f24f3900c03568618316797bf
     frontend: sha256:cc76170707fd9e72e5a4cba69b840ae34a284b35b08b68862d207bd2a9ca39c5
     mcp: sha256:95d4563df97b940a33eacfc98523bcf307f1e6c9e89d4de386fdaa84db1c2366
   build_identity:
     version: 0.0.1
-    revision: 273cb432cd35bd2dd75f8ae09dd1aae912807739
-    built_at: 2026-09-17T15:26:25Z
+    revision: 80be109afba31de3456f84d1d9fb77b5837c261b
+    built_at: 2026-09-17T15:50:54Z
   schema_head: "0189"
   source_schema_head: "0189"
   resources:
