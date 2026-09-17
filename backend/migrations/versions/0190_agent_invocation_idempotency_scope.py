@@ -19,6 +19,15 @@ NEW_INDEX = "ux_agent_invocations_scoped_idempotency_key"
 
 def upgrade() -> None:
     with op.get_context().autocommit_block():
+        # A failed concurrent build leaves an invalid same-name index.  Drop
+        # any residue before IF NOT EXISTS so a retry cannot skip the rebuild
+        # and then remove the still-valid legacy authority.
+        op.drop_index(
+            NEW_INDEX,
+            table_name="agent_invocations",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
         op.create_index(
             NEW_INDEX,
             "agent_invocations",

@@ -379,10 +379,13 @@ def test_the_scope_migration_replaces_the_unique_index_concurrently_and_can_down
     ).read_text(encoding="utf-8")
     assert 'down_revision = "0189"' in source
     assert source.count("autocommit_block") == 2
-    assert source.count("postgresql_concurrently=True") == 5
+    assert source.count("postgresql_concurrently=True") == 6
     assert '["requested_by", "project_id", "agent_id", "idempotency_key"]' in source
     assert "def downgrade()" in source and "if_not_exists=True" in source
     assert "row_number() OVER" in source and "SET idempotency_key = NULL" in source
+    assert source.index("op.drop_index(\n            NEW_INDEX") < source.index(
+        "op.create_index(\n            NEW_INDEX"
+    )
     assert source.index("op.drop_index(\n            OLD_INDEX", source.index("def downgrade")) < source.index(
         "op.create_index(\n            OLD_INDEX", source.index("def downgrade")
     )

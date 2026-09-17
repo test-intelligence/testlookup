@@ -117,6 +117,22 @@ MUTATIONS = (
         "test_idempotency_scope_migration_really_downgrades_after_scoped_use",
     ),
     Mutation(
+        "upgrade-idempotency-stale-index-recovery",
+        "backend/migrations/versions/0190_agent_invocation_idempotency_scope.py",
+        "        # A failed concurrent build leaves an invalid same-name index.  Drop\n"
+        "        # any residue before IF NOT EXISTS so a retry cannot skip the rebuild\n"
+        "        # and then remove the still-valid legacy authority.\n"
+        "        op.drop_index(\n"
+        "            NEW_INDEX,\n"
+        "            table_name=\"agent_invocations\",\n"
+        "            postgresql_concurrently=True,\n"
+        "            if_exists=True,\n"
+        "        )\n",
+        "",
+        "backend/tests/integration/test_pipeline_cancel_retry_postgres.py::"
+        "test_idempotency_scope_migration_really_downgrades_after_scoped_use",
+    ),
+    Mutation(
         "zero-wait-no-sleep",
         "backend/app/routers/agent_invoke.py",
         "while True:\n        view = await _invocation_view(db, invocation)",

@@ -453,8 +453,30 @@ async def test_idempotency_scope_migration_really_downgrades_after_scoped_use():
                     "WHERE idempotency_key IS NOT NULL"
                 )
             )
+            # Simulate residue left by an interrupted concurrent build.  A
+            # valid but wrong definition is even more dangerous than an
+            # invalid index: IF NOT EXISTS accepts it without a warning that
+            # the intended uniqueness contract is absent.
+            await db.execute(
+                text(
+                    "CREATE INDEX ux_agent_invocations_scoped_idempotency_key "
+                    "ON agent_invocations (id)"
+                )
+            )
             await db.commit()
             await db.run_sync(_run, migration.upgrade)
+
+            scoped_index = (
+                await db.execute(
+                    text(
+                        "SELECT indisvalid, indisunique, pg_get_indexdef(indexrelid) "
+                        "FROM pg_index "
+                        "WHERE indexrelid='ux_agent_invocations_scoped_idempotency_key'::regclass"
+                    )
+                )
+            ).one()
+            assert scoped_index[0] is True and scoped_index[1] is True
+            assert "(requested_by, project_id, agent_id, idempotency_key)" in scoped_index[2]
 
             user_id, key = uuid.uuid4(), f"m12-{uuid.uuid4()}"
             for offset, (project_id, agent_id) in enumerate(
