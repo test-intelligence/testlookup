@@ -78,6 +78,8 @@ _AUDIT_ACTIONS = {
     WOULD_REFUSE: "ai_report.distribution_would_refuse",
 }
 
+_TERMINAL_REVIEW_STATES = frozenset({"rejected", "superseded"})
+
 
 @dataclass(frozen=True)
 class DistributionDecision:
@@ -224,10 +226,21 @@ async def apply_release_review_gate(
     }
     if withhold:
         recommendation = str(council.recommendation)
-        update["draft_recommendation"] = recommendation
-        update["recommendation"] = (
-            f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
-        )
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            # Rejected and superseded content is no longer a draft. Preserve
+            # only the terminal review envelope; no model narrative may leave.
+            update.update(
+                recommendation="PENDING_REVIEW",
+                draft_recommendation=None,
+                blocking_issues=[],
+                conditions_for_go=[],
+                reasoning=None,
+            )
+        else:
+            update["draft_recommendation"] = recommendation
+            update["recommendation"] = (
+                f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
+            )
     return council.model_copy(update=update)
 
 
@@ -289,7 +302,11 @@ async def gate_release_decided_payload(
     projected["review_gate_enforced"] = enforced
     projected["draft_recommendation"] = None
     if withhold:
-        projected["draft_recommendation"] = projected.get("recommendation")
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            projected["blocking_issues"] = []
+            projected["conditions_for_go"] = []
+        else:
+            projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
     return projected
 
@@ -428,7 +445,13 @@ async def gate_release_verdict(
         projected["draft_watermark"] = DRAFT_WATERMARK
         return projected
     if gate_enforced():
-        projected["draft_recommendation"] = projected.get("recommendation")
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            projected["draft_recommendation"] = None
+            projected["blocking_issues"] = []
+            projected["conditions_for_go"] = []
+            projected["reasoning"] = None
+        else:
+            projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
     return projected
 

@@ -177,7 +177,7 @@ def world(monkeypatch):
         assert workflow_type == "deep"
         if state.review == "accepted":
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
-        return ReviewEnvelope(True, "pending_review", "pending", REVIEW_ID)
+        return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
 
     async def _decision_lookup(_statement):
         found = (state.decision, PROJECT) if state.decision is not None else None
@@ -370,6 +370,30 @@ async def test_while_enforced_an_accepted_ai_decision_leaves_unchanged(monkeypat
     assert payload["recommendation"] == "GO"
     assert payload["draft_recommendation"] is None
     assert payload["review"] == {"state": "accepted", "review_id": REVIEW_ID, "reviewed_at": REVIEWED_AT}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["rejected", "superseded"])
+async def test_terminal_review_never_leaves_in_release_webhook_content(world, review):
+    world.enforce(True)
+    world.review = review
+
+    payload = await policy.gate_release_decided_payload(
+        None,
+        {
+            "recommendation": "NO_GO",
+            "blocking_issues": ["rejected blocker narrative"],
+            "conditions_for_go": ["rejected condition narrative"],
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+    )
+
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert payload["draft_recommendation"] is None
+    assert payload["blocking_issues"] == []
+    assert payload["conditions_for_go"] == []
 
 
 @pytest.mark.asyncio

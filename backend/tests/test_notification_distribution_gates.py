@@ -301,6 +301,26 @@ async def test_an_unreviewed_verdict_reads_pending_review_when_enforced(world):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["rejected", "superseded"])
+async def test_terminal_review_redacts_the_embedded_release_verdict(world, review):
+    world.review = review
+    verdict = {
+        **_verdict(),
+        "blocking_issues": ["rejected blocker narrative"],
+        "conditions_for_go": ["rejected condition narrative"],
+        "reasoning": "rejected reasoning narrative",
+    }
+
+    out = await policy.gate_release_verdict(None, verdict, test_run_id=RUN)
+
+    assert out["recommendation"] == "PENDING_REVIEW"
+    assert out.get("draft_recommendation") is None
+    assert out["blocking_issues"] == []
+    assert out["conditions_for_go"] == []
+    assert out["reasoning"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_project_that_allows_drafts_sees_the_value_marked_draft(world):
     world.drafts = True
     out = await policy.gate_release_verdict(None, _verdict(), test_run_id=RUN)

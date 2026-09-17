@@ -177,6 +177,29 @@ async def test_allow_advisory_returns_the_marked_draft_value(world):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["rejected", "superseded"])
+async def test_terminal_review_never_exposes_release_draft_content(world, review):
+    world.set(review=review)
+    out = await policy.apply_release_review_gate(
+        None,
+        _council(
+            recommendation="NO_GO",
+            blocking_issues=["rejected blocker narrative"],
+            conditions_for_go=["rejected condition narrative"],
+            reasoning="rejected reasoning narrative",
+        ),
+        run_id=RUN,
+        allow_advisory=True,
+    )
+
+    assert out.recommendation == "PENDING_REVIEW"
+    assert out.draft_recommendation is None
+    assert out.blocking_issues == []
+    assert out.conditions_for_go == []
+    assert out.reasoning is None
+
+
+@pytest.mark.asyncio
 async def test_an_accepted_decision_is_unchanged(world):
     world.set(review="accepted")
     out = await policy.apply_release_review_gate(None, _council(), run_id=RUN)
