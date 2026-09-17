@@ -229,7 +229,6 @@ def test_numeric_grounding_matches_each_label_to_its_own_number() -> None:
         },
         {"disagreements": [{"kind": "conflict", "agents": ["a"], "resolution": "reject", "severity": "blocking"}]},
         {"hallucination_risk": "high"},
-        {"second_model": {"provider": "ollama", "model": "llama", "agreement_score": 0.69}},
     ],
 )
 def test_pass_verdict_invariants_reject_contradictory_output(mutation) -> None:
@@ -261,6 +260,38 @@ def test_pass_verdict_invariants_reject_contradictory_output(mutation) -> None:
     with pytest.raises(ValidationError):
         ReviewVerdictV1.model_validate(value)
     assert validate_review_verdict(value).verdict == "reject"
+
+
+def test_low_second_model_agreement_continues_only_with_flags_and_human_review() -> None:
+    value = {
+        "reviewed_steps": ["summary"],
+        "checks": [
+            {
+                "family": family,
+                "name": f"family_{family}",
+                "passed": True,
+                "severity": "blocking",
+                "step_name": "summary",
+            }
+            for family in (1, 2, 5)
+        ],
+        "verdict": "pass",
+        "disagreements": [],
+        "hallucination_risk": "low",
+        "requires_human_review": False,
+        "second_model": {
+            "provider": "ollama",
+            "model": "llama",
+            "agreement_score": 0.69,
+        },
+    }
+
+    with pytest.raises(ValidationError, match="second-model agreement"):
+        ReviewVerdictV1.model_validate(value)
+
+    value["verdict"] = "pass_with_flags"
+    value["requires_human_review"] = True
+    assert ReviewVerdictV1.model_validate(value).verdict == "pass_with_flags"
 
 
 def test_pass_cannot_omit_a_deterministic_check_family() -> None:

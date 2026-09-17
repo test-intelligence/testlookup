@@ -163,22 +163,36 @@ def test_custom_step_tools_narrow_the_frozen_project_allowlist() -> None:
     ]
 
 
+def test_runtime_state_carries_frozen_tool_and_model_authority() -> None:
+    setup = {
+        "workflow_agent_configs": {"agent.summary.v1": {"mode": "act"}},
+        "resolved_agent_configs": {
+            "agent.summary.v1": {"config": {"model": {"tier": "slm"}}}
+        },
+    }
+
+    assert workflow._workflow_runtime_state(setup) == setup
+
+
 def test_checkpoint_restore_requires_exact_workflow_authority() -> None:
     metadata = {
         "workflow_ref": "wf.runtime.test@4",
         "workflow_definition_sha256": "definition-4",
         "workflow_plan_sha256": "plan-4",
+        "workflow_runtime_authority_sha256": "runtime-4",
     }
     assert workflow._checkpoint_authority_matches(
         metadata,
         workflow_ref="wf.runtime.test@4",
         workflow_definition_sha256="definition-4",
         workflow_plan_sha256="plan-4",
+        workflow_runtime_authority_sha256="runtime-4",
     )
     for key, value in (
         ("workflow_ref", "wf.runtime.test@5"),
         ("workflow_definition_sha256", "definition-5"),
         ("workflow_plan_sha256", "plan-5"),
+        ("workflow_runtime_authority_sha256", "runtime-5"),
     ):
         changed = dict(metadata)
         changed[key] = value
@@ -187,6 +201,7 @@ def test_checkpoint_restore_requires_exact_workflow_authority() -> None:
             workflow_ref="wf.runtime.test@4",
             workflow_definition_sha256="definition-4",
             workflow_plan_sha256="plan-4",
+            workflow_runtime_authority_sha256="runtime-4",
         )
 
 
@@ -218,6 +233,30 @@ def test_custom_plan_is_not_replaced_by_its_builtin_base_at_finalization() -> No
     assert [item["stage"] for item in result["workflow_plan"]["stages"]] == [
         "first_ingest"
     ]
+
+
+def test_named_step_outputs_use_instance_identity_for_verification_and_contracts() -> None:
+    result = workflow._normalize_step_result_identity(
+        {
+            "completed_stages": ["ingestion"],
+            "skipped_stages": ["ingestion"],
+            "current_stage": "ingestion",
+            "stage_errors": {"ingestion": ["example"]},
+            "stage_metrics": {"ingestion": {"latency_ms": 1}},
+            "agent_contracts": {"ingestion": {"schema": "v1"}},
+        },
+        step_id="first_ingest",
+        capability_stage="ingestion",
+    )
+
+    assert result == {
+        "completed_stages": ["first_ingest"],
+        "skipped_stages": ["first_ingest"],
+        "current_stage": "first_ingest",
+        "stage_errors": {"first_ingest": ["example"]},
+        "stage_metrics": {"first_ingest": {"latency_ms": 1}},
+        "agent_contracts": {"first_ingest": {"schema": "v1"}},
+    }
 
 
 @pytest.mark.asyncio
@@ -252,6 +291,16 @@ async def test_runtime_reviewer_binds_declared_output_and_frozen_policy(monkeypa
     executors = workflow._workflow_runtime_executors(
         body,
         {"agent.summary.v1": {"mode": "act"}},
+        {
+            "agent.summary.v1": {
+                "config": {
+                    "model": {
+                        "tier": "slm",
+                        "slm": {"provider": "ollama", "model": "qwen2.5:7b"},
+                    }
+                }
+            }
+        },
     )
     raw = executors["review_summary"].__workflow_original_node__
     await raw({
@@ -270,7 +319,7 @@ async def test_runtime_reviewer_binds_declared_output_and_frozen_policy(monkeypa
     })
     reviewed = seen[0]["reviewed_steps"][0]
     assert reviewed == {
-        "step_name": "summary",
+        "step_name": "named_summary",
         "output": {
             "summary_markdown": "verified",
             "tools_used": ["list_run_failures"],
@@ -278,6 +327,9 @@ async def test_runtime_reviewer_binds_declared_output_and_frozen_policy(monkeypa
         "mode": "act",
         "tools_used": ["list_run_failures"],
         "tool_permissions": {"list_run_failures": "read_only"},
+        "model_tier": "slm",
+        "model_provider": "ollama",
+        "model_name": "qwen2.5:7b",
     }
     assert seen[0]["references"] == {
         "test_case_ids": ["case-1"],

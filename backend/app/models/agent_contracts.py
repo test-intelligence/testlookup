@@ -211,11 +211,11 @@ class ReviewVerdictV1(BaseModel):
         if self.verdict in {"pass", "pass_with_flags"} and self.hallucination_risk == "high":
             raise ValueError("a continuing verdict is incompatible with high hallucination risk")
         if (
-            self.verdict in {"pass", "pass_with_flags"}
+            self.verdict == "pass"
             and self.second_model is not None
             and self.second_model.agreement_score < 0.7
         ):
-            raise ValueError("a continuing verdict requires second-model agreement of at least 0.7")
+            raise ValueError("pass requires second-model agreement of at least 0.7")
         if self.verdict != "pass" and not self.requires_human_review:
             raise ValueError("a non-pass verdict requires human review")
         return self

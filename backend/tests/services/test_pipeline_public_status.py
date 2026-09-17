@@ -369,6 +369,46 @@ async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
     assert pipeline.execution_metadata["resolved_agent_configs"] == accepted_snapshot
 
 
+@pytest.mark.asyncio
+async def test_finalize_persists_reviewer_authority(monkeypatch):
+    from app.agents import workflow
+    from app.services import agent_action_ledger_service, run_downstream_outbox
+
+    pipeline = _pipeline()
+    monkeypatch.setattr(
+        workflow, "AsyncSessionLocal", lambda: _Session(pipeline, [_stage("ingestion")])
+    )
+    monkeypatch.setattr(
+        agent_action_ledger_service, "persist_report_action_proposals", AsyncMock()
+    )
+    monkeypatch.setattr(
+        run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock()
+    )
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=True,
+        final_state={
+            "project_id": str(uuid.uuid4()),
+            "test_run_id": str(pipeline.test_run_id),
+            "review_verdict": {
+                "reviewed_steps": ["ingestion"],
+                "verdict": "pass_with_flags",
+                "requires_human_review": True,
+            },
+            "supervisor": {
+                "route": "continue",
+                "requires_human_review": True,
+                "retry_count": 0,
+            },
+            "step_llm_budget": {"limit": 2, "used": 1, "remaining": 1},
+        },
+    )
+
+    assert pipeline.execution_metadata["review_verdict"]["verdict"] == "pass_with_flags"
+    assert pipeline.execution_metadata["review_supervisor"]["route"] == "continue"
+    assert pipeline.execution_metadata["step_llm_budget"]["remaining"] == 1
+
+
 # ── the agentic-runtime projection (GET /pipelines/{id}/agentic-runtime) ─────
 
 

@@ -56,6 +56,7 @@ __all__ = [
     "ReviewDecisionRefused",
     "create_run_review_request",
     "evidence_hash_from",
+    "reviewer_evidence_hash_from",
     "investigation_evidence_hash",
     "report_stages",
     "settle_review",
@@ -88,6 +89,32 @@ def evidence_hash_from(final_state: Optional[Mapping[str, Any]]) -> Optional[str
         return None
     value = decision.get("evidence_bundle_sha256")
     return value if isinstance(value, str) and _SHA256.match(value) else None
+
+
+def reviewer_evidence_hash_from(
+    final_state: Optional[Mapping[str, Any]],
+) -> Optional[str]:
+    """Bind reviewer-only requests to the verdict and reviewed output bytes."""
+    state = final_state or {}
+    verdict = state.get("review_verdict")
+    if not isinstance(verdict, Mapping):
+        return None
+    outputs = state.get("_workflow_step_outputs")
+    outputs = outputs if isinstance(outputs, Mapping) else {}
+    reviewed = verdict.get("reviewed_steps")
+    reviewed = reviewed if isinstance(reviewed, list) else []
+    evidence = {
+        "review_verdict": dict(verdict),
+        "reviewed_outputs": {
+            step_name: outputs.get(step_name)
+            for step_name in reviewed
+            if isinstance(step_name, str) and step_name
+        },
+    }
+    canonical = json.dumps(
+        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def investigation_evidence_hash(verdict: Mapping[str, Any]) -> str:

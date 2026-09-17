@@ -189,6 +189,7 @@ def _checkpoint_restore_metadata(stage: AgentStageResult) -> dict[str, Any] | No
     if not isinstance(replay, dict):
         return None
     expected_checksum = replay.get("output_checksum_sha256")
+    input_checksum = replay.get("input_checksum_sha256")
     runtime_versions = replay.get("runtime_versions")
     if (
         not isinstance(expected_checksum, str)
@@ -196,7 +197,15 @@ def _checkpoint_restore_metadata(stage: AgentStageResult) -> dict[str, Any] | No
         or any(char not in "0123456789abcdef" for char in expected_checksum)
     ):
         return None
+    if (
+        not isinstance(input_checksum, str)
+        or len(input_checksum) != 64
+        or any(char not in "0123456789abcdef" for char in input_checksum)
+    ):
+        return None
     if not isinstance(runtime_versions, dict) or not runtime_versions:
+        return None
+    if runtime_versions != _runtime_version_snapshot():
         return None
     attempt = replay.get("attempt")
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
@@ -812,14 +821,61 @@ def workflow_node_executors() -> dict[str, Any]:
     }
 
 
+def _reviewed_step_model_provenance(
+    *,
+    agent_id: str,
+    output: dict[str, Any],
+    resolved_agent_configs: dict[str, Any],
+) -> dict[str, str]:
+    """Project the model identity frozen for a reviewed producer output."""
+    from app.services.agent_capability_registry import DEFAULT_TIERS
+
+    snapshot = resolved_agent_configs.get(agent_id) or {}
+    config = snapshot.get("config") if isinstance(snapshot, dict) else {}
+    model = config.get("model") if isinstance(config, dict) else {}
+    model = model if isinstance(model, dict) else {}
+    routing = output.get("_routing") or output.get("summary_provenance") or {}
+    routing = routing if isinstance(routing, dict) else {}
+    stage = agent_id.removeprefix("agent.").removesuffix(".v1")
+    configured = model.get("tier")
+    tier = routing.get("tier_used") or routing.get("explanation_tier")
+    if tier not in {"deterministic", "slm", "llm"}:
+        tier = DEFAULT_TIERS.get(stage) if configured == "auto" else configured
+    if tier not in {"deterministic", "slm", "llm"}:
+        return {}
+    provenance = {"model_tier": str(tier)}
+    if tier == "deterministic":
+        return provenance
+    endpoint = model.get(tier)
+    endpoint = endpoint if isinstance(endpoint, dict) else {}
+    provider = (
+        routing.get("explanation_provider")
+        or routing.get("classification_provider")
+        or endpoint.get("provider")
+    )
+    model_name = (
+        routing.get("explanation_model")
+        or routing.get("classification_model")
+        or endpoint.get("model")
+    )
+    if isinstance(provider, str) and provider:
+        provenance["model_provider"] = provider
+    if isinstance(model_name, str) and model_name:
+        provenance["model_name"] = model_name
+    return provenance
+
+
 def _workflow_runtime_executors(
-    body: Any, agent_configs: dict[str, Any] | None = None
+    body: Any,
+    agent_configs: dict[str, Any] | None = None,
+    resolved_agent_configs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Bind every published step id to its capability implementation."""
     capability_nodes = workflow_node_executors()
     executors: dict[str, Any] = {}
     steps = {step.id: step for step in body.steps}
     configs = agent_configs or {}
+    resolved_configs = resolved_agent_configs or {}
     reviewer_loops = {
         step.id: [
             (index, loop)
@@ -839,16 +895,20 @@ def _workflow_runtime_executors(
                 reviewed_steps = []
                 for target_id in review_step.reviews:
                     target = steps[target_id]
-                    target_stage = target.agent_id.removeprefix("agent.").removesuffix(".v1")
                     target_output = dict(outputs.get(target_id) or {})
                     reviewed_steps.append({
-                        "step_name": target_stage,
+                        "step_name": target_id,
                         "output": target_output,
                         "mode": str(configs.get(target.agent_id, {}).get("mode") or "shadow"),
                         "tools_used": list(target_output.get("tools_used") or []),
                         "tool_permissions": {
                             tool: AGENT_TOOL_PERMISSIONS[tool] for tool in target.tools
                         },
+                        **_reviewed_step_model_provenance(
+                            agent_id=target.agent_id,
+                            output=target_output,
+                            resolved_agent_configs=resolved_configs,
+                        ),
                     })
                 reviewer_input = {
                     "reviewed_steps": reviewed_steps,
@@ -894,7 +954,9 @@ def _workflow_runtime_executors(
                     raise ValueError("validation_failed: reviewer retry loop missing")
                 return result
 
-            executors[step.id] = _make_checkpointed_node(review_node, step.id)
+            executors[step.id] = _make_checkpointed_node(
+                review_node, step.id, capability_stage="reviewer"
+            )
             continue
         canonical = capability_nodes.get(step.agent_id)
         if canonical is None:
@@ -907,7 +969,9 @@ def _workflow_runtime_executors(
             executors[step.id] = canonical
             continue
         raw = getattr(canonical, "__workflow_original_node__", None)
-        executors[step.id] = _make_checkpointed_node(raw or canonical, step.id)
+        executors[step.id] = _make_checkpointed_node(
+            raw or canonical, step.id, capability_stage=stage_name
+        )
     return executors
 
 
@@ -988,11 +1052,22 @@ def _compile_frozen_workflow(setup: dict[str, Any]) -> Any:
         raise ValueError("workflow_runtime_authority_mismatch")
     body = WorkflowBodyV1.model_validate(snapshot)
     agent_configs = setup.get("workflow_agent_configs") or {}
+    resolved_agent_configs = setup.get("resolved_agent_configs") or {}
     return compile_workflow(
         body,
         agent_configs=agent_configs,
-        node_executors=_workflow_runtime_executors(body, agent_configs),
+        node_executors=_workflow_runtime_executors(
+            body, agent_configs, resolved_agent_configs
+        ),
     ).graph.compile()
+
+
+def _workflow_runtime_state(setup: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Copy immutable config authority into the executable graph state."""
+    return {
+        "workflow_agent_configs": setup.get("workflow_agent_configs") or {},
+        "resolved_agent_configs": setup.get("resolved_agent_configs") or {},
+    }
 
 
 def _frozen_workflow_authority_valid(
@@ -1022,11 +1097,14 @@ def _checkpoint_authority_matches(
     workflow_ref: str,
     workflow_definition_sha256: str | None,
     workflow_plan_sha256: str | None,
+    workflow_runtime_authority_sha256: str | None,
 ) -> bool:
     return bool(
         metadata.get("workflow_ref") == workflow_ref
         and metadata.get("workflow_definition_sha256") == workflow_definition_sha256
         and metadata.get("workflow_plan_sha256") == workflow_plan_sha256
+        and metadata.get("workflow_runtime_authority_sha256")
+        == workflow_runtime_authority_sha256
     )
 
 
@@ -1394,6 +1472,7 @@ async def _load_checkpoint(
     workflow_ref: str | None = None,
     workflow_definition_sha256: str | None = None,
     workflow_plan_sha256: str | None = None,
+    workflow_runtime_authority_sha256: str | None = None,
 ) -> Optional[dict]:
     """
     Look for a prior failed pipeline run for the same test_run_id.
@@ -1440,6 +1519,7 @@ async def _load_checkpoint(
                     workflow_ref=workflow_ref,
                     workflow_definition_sha256=workflow_definition_sha256,
                     workflow_plan_sha256=workflow_plan_sha256,
+                    workflow_runtime_authority_sha256=workflow_runtime_authority_sha256,
                 ):
                     logger.info(
                         "checkpoint_restore_skipped",
@@ -1473,7 +1553,13 @@ async def _load_checkpoint(
             checkpoint_stage_names: list[str] = []
             checkpoint_replay_metadata: dict[str, dict[str, Any]] = {}
             for stage in completed_stages:
-                if stage.stage_name in _PIPELINE_BOUND_CHECKPOINT_STAGES:
+                capability_id = str(getattr(stage, "capability_id", "") or "")
+                capability_stage = (
+                    capability_id.removeprefix("agent.").removesuffix(".v1")
+                    if capability_id
+                    else stage.stage_name
+                )
+                if capability_stage in _PIPELINE_BOUND_CHECKPOINT_STAGES:
                     continue
                 metadata = _checkpoint_restore_metadata(stage)
                 if metadata is None:
@@ -1941,7 +2027,33 @@ async def _raise_if_pipeline_cancelled(pipeline_run_id: str) -> None:
         raise PipelineCancelled(str(pipeline_run_id))
 
 
-def _make_checkpointed_node(original_node, stage_name: str):
+def _normalize_step_result_identity(
+    result: dict[str, Any], *, step_id: str, capability_stage: str
+) -> dict[str, Any]:
+    """Rewrite canonical per-stage output keys for a named workflow instance."""
+    if step_id == capability_stage:
+        return result
+    normalized = dict(result)
+    for key in ("completed_stages", "skipped_stages"):
+        values = normalized.get(key)
+        if isinstance(values, list):
+            normalized[key] = [
+                step_id if item == capability_stage else item for item in values
+            ]
+    if normalized.get("current_stage") == capability_stage:
+        normalized["current_stage"] = step_id
+    for key in ("stage_errors", "stage_metrics", "agent_contracts"):
+        values = normalized.get(key)
+        if isinstance(values, dict) and capability_stage in values:
+            remapped = dict(values)
+            remapped[step_id] = remapped.pop(capability_stage)
+            normalized[key] = remapped
+    return normalized
+
+
+def _make_checkpointed_node(
+    original_node, stage_name: str, *, capability_stage: str | None = None
+):
     """Wrap a node function so its output is checkpointed after successful execution."""
     async def execute(state: WorkflowState) -> dict[str, Any]:
         pipeline_run_id = state.get("pipeline_run_id", "")
@@ -2053,7 +2165,12 @@ def _make_checkpointed_node(original_node, stage_name: str):
                         stage_name,
                         allowed_tools=_stage_tool_allowlist(state, stage_name),
                     ):
-                        return cast(dict[str, Any], await original_node(state))
+                        result = cast(dict[str, Any], await original_node(state))
+                        return _normalize_step_result_identity(
+                            result,
+                            step_id=stage_name,
+                            capability_stage=capability_stage or stage_name,
+                        )
 
                 node = asyncio.ensure_future(invoke_bound_node())
                 if lease_lost is None:
@@ -2287,6 +2404,9 @@ async def run_offline_pipeline(
             workflow_ref=pipeline_setup.get("workflow_ref"),
             workflow_definition_sha256=pipeline_setup.get("workflow_definition_sha256"),
             workflow_plan_sha256=pipeline_setup.get("workflow_plan_sha256"),
+            workflow_runtime_authority_sha256=pipeline_setup.get(
+                "workflow_runtime_authority_sha256"
+            ),
         )
         if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
@@ -2372,6 +2492,7 @@ async def run_offline_pipeline(
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            **_workflow_runtime_state(pipeline_setup),
             "workflow_verification": {},
             "agent_contracts": {},
             "schema_version":     2,
@@ -2568,6 +2689,9 @@ async def run_deep_pipeline(
             workflow_ref=pipeline_setup.get("workflow_ref"),
             workflow_definition_sha256=pipeline_setup.get("workflow_definition_sha256"),
             workflow_plan_sha256=pipeline_setup.get("workflow_plan_sha256"),
+            workflow_runtime_authority_sha256=pipeline_setup.get(
+                "workflow_runtime_authority_sha256"
+            ),
         )
         if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
@@ -2651,6 +2775,7 @@ async def run_deep_pipeline(
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            **_workflow_runtime_state(pipeline_setup),
             "workflow_verification": {},
             "agent_contracts": {},
             "schema_version":     2,
@@ -3450,14 +3575,28 @@ async def _mark_pipeline_done(
             else:
                 apply_transition(run, PipelineRunStatus.FAILED, error=error)
             has_degraded_stages = bool(success and has_failed_stages)
+            reviewer_verdict = (final_state or {}).get("review_verdict") or {}
+            reviewer_supervisor = (final_state or {}).get("supervisor") or {}
+            reviewer_requires_human = bool(
+                isinstance(reviewer_verdict, dict)
+                and reviewer_verdict.get("requires_human_review")
+                or isinstance(reviewer_supervisor, dict)
+                and reviewer_supervisor.get("requires_human_review")
+            )
             # E7.5: a clean run that produced no report has nothing for a human
             # to accept, so it settles ``completed -> passed`` in this same
             # transaction (architecture section 7.1) and a client can wait for
             # ``passed | failed``. A report-producing run rests at ``completed``
             # until its review is accepted (E8). "Ran" means the stage row
             # reached completed -- skipped and failed stages produced nothing.
-            if success and not has_degraded_stages and passes_without_review(
-                None, [s.stage_name for s in stages if s.status == "completed"]
+            if (
+                success
+                and not has_degraded_stages
+                and not reviewer_requires_human
+                and passes_without_review(
+                    None,
+                    [s.stage_name for s in stages if s.status == "completed"],
+                )
             ):
                 apply_transition(run, PipelineRunStatus.PASSED)
                 run.review_policy = REVIEW_NOT_APPLICABLE
@@ -3470,6 +3609,13 @@ async def _mark_pipeline_done(
                 from app.services import review_request_service  # noqa: PLC0415
 
                 produced = review_request_service.report_stages(stages)
+                if reviewer_requires_human and not produced:
+                    reviewed_steps = reviewer_verdict.get("reviewed_steps") or []
+                    produced = [
+                        str(step_name)
+                        for step_name in reviewed_steps
+                        if isinstance(step_name, str) and step_name
+                    ] or ["reviewer"]
                 if produced:
                     try:
                         review_project_id = (final_state or {}).get("project_id") or (
@@ -3482,7 +3628,10 @@ async def _mark_pipeline_done(
                             run=run,
                             project_id=review_project_id,
                             report_stage_names=produced,
-                            evidence_bundle_sha256=review_request_service.evidence_hash_from(final_state),
+                            evidence_bundle_sha256=(
+                                review_request_service.evidence_hash_from(final_state)
+                                or review_request_service.reviewer_evidence_hash_from(final_state)
+                            ),
                             requested_by=run.requested_by,
                         )
                     except Exception as review_exc:  # noqa: BLE001
@@ -3580,6 +3729,15 @@ async def _mark_pipeline_done(
                     "initial_workflow_plan": final_state.get("initial_workflow_plan", {}),
                     "workflow_verification": final_state.get("workflow_verification", {}),
                     "agent_contracts": final_state.get("agent_contracts", {}),
+                    "review_verdict": sanitize_persistence_payload(
+                        final_state.get("review_verdict")
+                    )[0],
+                    "review_supervisor": sanitize_persistence_payload(
+                        final_state.get("supervisor")
+                    )[0],
+                    "step_llm_budget": sanitize_persistence_payload(
+                        final_state.get("step_llm_budget")
+                    )[0],
                     "cluster_child_settings": final_state.get(
                         "cluster_child_settings", {}
                     ),

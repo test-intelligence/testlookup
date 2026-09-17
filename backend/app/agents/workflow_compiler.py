@@ -583,19 +583,30 @@ def validate_workflow(
         )
         errors.extend(condition_errors)
 
-    for step in body.steps:
-        if step.agent_id != "agent.reviewer.v1":
-            continue
+    reviewer_steps = [step for step in body.steps if step.agent_id == "agent.reviewer.v1"]
+    for left_index, left in enumerate(reviewer_steps):
+        for right in reviewer_steps[left_index + 1:]:
+            if (
+                left.id not in dominators.get(right.id, set())
+                and right.id not in dominators.get(left.id, set())
+            ):
+                errors.append(
+                    f"reviewer steps {left.id!r} and {right.id!r} must be ordered; "
+                    "parallel reviewers cannot safely update supervisor state"
+                )
+
+    for step in reviewer_steps:
+        source_loops = [loop for loop in body.loops if loop.source == step.id]
         retry_loops = [
             loop
-            for loop in body.loops
+            for loop in source_loops
             if loop.source == step.id
             and loop.to in step.reviews
             and loop.when
             == {"field": "supervisor_route", "op": "eq", "value": "retry"}
             and loop.max_iterations == 1
         ]
-        if len(retry_loops) != 1:
+        if len(retry_loops) != 1 or len(source_loops) != 1:
             errors.append(
                 f"step {step.id}: reviewer requires exactly one bounded retry loop "
                 "to a reviewed step using supervisor_route == 'retry' and max_iterations=1"

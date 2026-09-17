@@ -8,12 +8,25 @@ step tools to the published declaration, and binds project, version, plan,
 definition, and frozen configurations into one resume-authority digest. Reviewer
 steps have one explicit bounded retry loop; final rejection stops execution,
 and blocking deterministic failures cannot be converted into
-`pass_with_flags`. Workflow publication now carries the selected version and
+`pass_with_flags`. Low second-model agreement remains a valid
+`pass_with_flags` result that pins human review. Runtime reviewer inputs now use
+unique workflow step ids plus frozen model identity, and those frozen configs
+are present in executable graph state. Named-step results retain their instance
+identity, pipeline-bound outputs cannot replay under aliases, and checkpoints
+must match the full runtime authority and deployed runtime versions. Reviewer
+flags force a content-bound `ReviewRequest` even when no report stage ran, and
+the verdict, supervisor decision, and shared-budget snapshot remain in durable
+execution metadata. The compiler also refuses extra reviewer loops and parallel
+reviewers that would race scalar supervisor state. Workflow publication now carries the selected version and
 definition digest, rejects stale drafts, keeps published evaluation evidence
 immutable, and makes exact repeat publication read-only. Replay evaluation
 marks control-flow topology as unmeasured instead of inferring it from cached
 step outputs. The workflow guide now matches the architecture's existing rule
-that insufficient samples may publish with visible low coverage.
+that insufficient samples may publish with visible low coverage. Re-review found
+that producer escalation still does not consume the reviewer's shared step
+budget or apply its LLM retry override, and that G4 replay/publish authority is
+too weak for model, tool, config, prompt, and corpus changes; those remain open
+M13 blockers rather than being represented as complete.
 
 M12 invocation hardening now serializes creation per stored subject, keeps
 explicit idempotency keys from being silently discarded, and aligns durable

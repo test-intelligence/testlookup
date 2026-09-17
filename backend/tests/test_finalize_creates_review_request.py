@@ -82,7 +82,9 @@ def _stage(name, status="completed"):
     return SimpleNamespace(stage_name=name, status=status)
 
 
-async def _finalize(monkeypatch, stages, *, success=True, stage_review=None):
+async def _finalize(
+    monkeypatch, stages, *, success=True, stage_review=None, final_state=None
+):
     from app.agents import workflow
     from app.services import agent_action_ledger_service, review_request_service, run_downstream_outbox
 
@@ -93,7 +95,12 @@ async def _finalize(monkeypatch, stages, *, success=True, stage_review=None):
     monkeypatch.setattr(review_request_service, "stage_run_review_request", stage_review)
     monkeypatch.setattr(agent_action_ledger_service, "persist_report_action_proposals", AsyncMock())
     monkeypatch.setattr(run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock())
-    await workflow._mark_pipeline_done(str(pipeline.id), success=success, error=None if success else "boom")
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=success,
+        error=None if success else "boom",
+        final_state=final_state,
+    )
     return pipeline, session, stage_review
 
 
@@ -140,6 +147,30 @@ async def test_a_run_that_passed_without_a_report_gets_no_request(monkeypatch):
     )
     assert pipeline.status == "passed"
     stage_review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reviewer_flag_forces_review_even_without_a_report_stage(monkeypatch):
+    pipeline, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("ingestion"), _stage("reviewer")],
+        final_state={
+            "project_id": str(PROJECT),
+            "test_run_id": str(uuid.uuid4()),
+            "review_verdict": {
+                "reviewed_steps": ["ingestion"],
+                "verdict": "pass_with_flags",
+                "requires_human_review": True,
+            },
+            "supervisor": {"route": "continue", "requires_human_review": True},
+        },
+    )
+
+    assert pipeline.status == "completed"
+    stage_review.assert_awaited_once()
+    assert stage_review.await_args.kwargs["report_stage_names"] == ["ingestion"]
+    evidence_hash = stage_review.await_args.kwargs["evidence_bundle_sha256"]
+    assert isinstance(evidence_hash, str) and len(evidence_hash) == 64
 
 
 @pytest.mark.asyncio

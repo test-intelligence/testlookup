@@ -130,6 +130,40 @@ def test_reviewer_requires_one_bounded_supervisor_retry_loop() -> None:
     valid = definitions.WorkflowBodyV1.model_validate(document)
     assert validate_workflow(valid).valid is True
 
+    document["loops"].append({
+        "from": "review",
+        "to": "summary",
+        "when": {"field": "supervisor_route", "op": "eq", "value": "continue"},
+        "max_iterations": 1,
+    })
+    extra = definitions.WorkflowBodyV1.model_validate(document)
+    assert any("exactly one bounded retry loop" in error
+               for error in validate_workflow(extra).errors)
+
+
+def test_parallel_reviewer_steps_are_rejected() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"].extend([
+        {"id": "review_a", "agent_id": "agent.reviewer.v1", "reviews": ["summary"]},
+        {"id": "review_b", "agent_id": "agent.reviewer.v1", "reviews": ["summary"]},
+    ])
+    document["edges"].extend([
+        {"from": "summary", "to": "review_a"},
+        {"from": "summary", "to": "review_b"},
+    ])
+    document["loops"] = [
+        {
+            "from": reviewer,
+            "to": "summary",
+            "when": {"field": "supervisor_route", "op": "eq", "value": "retry"},
+            "max_iterations": 1,
+        }
+        for reviewer in ("review_a", "review_b")
+    ]
+    body = definitions.WorkflowBodyV1.model_validate(document)
+
+    assert any("parallel reviewers" in error for error in validate_workflow(body).errors)
+
 
 @pytest.mark.parametrize("op", ["lt", "lte", "gt", "gte"])
 def test_relational_condition_treats_missing_runtime_fact_as_false(op: str) -> None:

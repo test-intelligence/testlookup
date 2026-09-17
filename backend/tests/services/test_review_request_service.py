@@ -301,6 +301,26 @@ def test_evidence_hash_is_taken_only_when_valid(final_state, expected):
     assert svc.evidence_hash_from(final_state) == expected
 
 
+def test_reviewer_evidence_hash_binds_verdict_and_reviewed_outputs():
+    state = {
+        "review_verdict": {
+            "reviewed_steps": ["named_summary"],
+            "verdict": "pass_with_flags",
+            "requires_human_review": True,
+        },
+        "_workflow_step_outputs": {
+            "named_summary": {"summary_markdown": "first"},
+            "unreviewed": {"ignored": True},
+        },
+    }
+    first = svc.reviewer_evidence_hash_from(state)
+    assert isinstance(first, str) and len(first) == 64
+    assert svc.reviewer_evidence_hash_from(state) == first
+
+    state["_workflow_step_outputs"]["named_summary"]["summary_markdown"] = "changed"
+    assert svc.reviewer_evidence_hash_from(state) != first
+
+
 @pytest.mark.asyncio
 async def test_the_savepoint_wrapper_is_used_when_the_session_has_one():
     entered: list[str] = []
