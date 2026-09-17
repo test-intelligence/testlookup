@@ -16,8 +16,11 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import Response
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -80,6 +83,39 @@ async def _status(engine, pipeline_id: uuid.UUID) -> tuple:
                 {"id": pipeline_id},
             )
         ).first()
+
+
+async def _seed_invocation_subject(engine) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    user_id, project_id, run_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    suffix = uuid.uuid4().hex
+    async with engine.begin() as db:
+        await db.execute(
+            text(
+                "INSERT INTO users (id,email,username,hashed_password,role,is_active) "
+                "VALUES (:id,:email,:username,'integration','QA_ENGINEER',true)"
+            ),
+            {"id": user_id, "email": f"m12-{suffix}@example.com", "username": f"m12-{suffix}"},
+        )
+        await db.execute(
+            text("INSERT INTO projects (id,name,slug,is_active) VALUES (:id,'M12 race',:slug,true)"),
+            {"id": project_id, "slug": f"m12-race-{suffix}"},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO test_runs "
+                "(id,project_id,build_number,status,ingestion_source,total_tests,passed_tests,"
+                " failed_tests,skipped_tests,broken_tests,unknown_tests) "
+                "VALUES (:id,:project,'m12','IN_PROGRESS','unknown',0,0,0,0,0,0)"
+            ),
+            {"id": run_id, "project": project_id},
+        )
+    return user_id, project_id, run_id
+
+
+async def _cleanup_invocation_subject(engine, user_id: uuid.UUID, project_id: uuid.UUID) -> None:
+    async with engine.begin() as db:
+        await db.execute(text("DELETE FROM projects WHERE id = :id"), {"id": project_id})
+        await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
 
 
 # ── cancel ────────────────────────────────────────────────────────────────────
@@ -183,6 +219,124 @@ async def test_cancel_and_the_retry_scheduler_serialise_on_the_row_lock():
         assert error.startswith("cancelled: ")
     finally:
         await _cleanup(engine, pipeline_id)
+        await engine.dispose()
+
+
+async def test_concurrent_invokes_share_one_durable_invocation(monkeypatch):
+    """The TestRun lock closes the active-lookup/insert race with real Postgres."""
+    from app.routers import agent_invoke as router
+    from app.services import agent_config_resolver
+    from app.worker import tasks
+
+    engine = create_async_engine(_dsn(), pool_size=4, max_overflow=0)
+    user_id, project_id, run_id = await _seed_invocation_subject(engine)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    dispatch = MagicMock()
+    monkeypatch.setattr(router, "resolve_project_scope", AsyncMock())
+    monkeypatch.setattr(
+        router,
+        "resolve_for_project",
+        AsyncMock(
+            side_effect=lambda _db, _project, agent, **_kw: agent_config_resolver.resolve(
+                agent, global_ai_config={}
+            )
+        ),
+    )
+    monkeypatch.setattr(router, "record_activity", AsyncMock())
+    monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _user: "actor"))
+    monkeypatch.setattr(tasks.run_agent_invocation, "apply_async", dispatch)
+    body = router.AgentInvokeRequest(
+        project_id=project_id,
+        input={
+            "agent_id": "agent.summary.v1",
+            "payload": {"test_run_id": str(run_id)},
+        },
+    )
+    user = SimpleNamespace(id=user_id)
+
+    async def _invoke():
+        async with sessions() as db:
+            response = Response(status_code=202)
+            result = await router.invoke_agent(
+                agent_id="agent.summary.v1",
+                body=body,
+                response=response,
+                db=db,
+                current_user=user,
+                idempotency_key=None,
+            )
+            return result, response.status_code
+
+    try:
+        first, second = await asyncio.gather(_invoke(), _invoke())
+        assert first[0]["id"] == second[0]["id"]
+        assert sorted((first[1], second[1])) == [200, 202]
+        dispatch.assert_called_once()
+        async with engine.begin() as db:
+            count = (
+                await db.execute(
+                    text(
+                        "SELECT count(*) FROM agent_invocations "
+                        "WHERE test_run_id = :run AND agent_id = 'agent.summary.v1'"
+                    ),
+                    {"run": run_id},
+                )
+            ).scalar_one()
+        assert count == 1
+    finally:
+        await _cleanup_invocation_subject(engine, user_id, project_id)
+        await engine.dispose()
+
+
+async def test_idempotency_key_is_independent_across_project_and_agent_scopes():
+    engine = create_async_engine(_dsn(), pool_size=2, max_overflow=0)
+    user_id, project_a, run_a = await _seed_invocation_subject(engine)
+    _user_b, project_b, run_b = await _seed_invocation_subject(engine)
+    key = f"m12-{uuid.uuid4()}"
+
+    async def _insert(db, project_id, run_id, agent_id):
+        await db.execute(
+            text(
+                "INSERT INTO agent_invocations "
+                "(id,project_id,agent_id,stage_name,test_run_id,pipeline_run_id,workflow_type,"
+                " mode,requested_by,idempotency_key,request_sha256) "
+                "VALUES (:id,:project,:agent,'summary',:run,:pipeline,'offline','async',"
+                " :user,:key,:fingerprint)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "project": project_id,
+                "agent": agent_id,
+                "run": run_id,
+                "pipeline": uuid.uuid4(),
+                "user": user_id,
+                "key": key,
+                "fingerprint": uuid.uuid4().hex,
+            },
+        )
+
+    try:
+        async with engine.begin() as db:
+            await _insert(db, project_a, run_a, "agent.summary.v1")
+            await _insert(db, project_b, run_b, "agent.summary.v1")
+            await _insert(db, project_a, run_a, "agent.flaky_sentinel.v1")
+        async with engine.begin() as db:
+            count = (
+                await db.execute(
+                    text(
+                        "SELECT count(*) FROM agent_invocations "
+                        "WHERE requested_by = :user AND idempotency_key = :key"
+                    ),
+                    {"user": user_id, "key": key},
+                )
+            ).scalar_one()
+        assert count == 3
+        with pytest.raises(IntegrityError):
+            async with engine.begin() as db:
+                await _insert(db, project_a, run_a, "agent.summary.v1")
+    finally:
+        await _cleanup_invocation_subject(engine, user_id, project_a)
+        await _cleanup_invocation_subject(engine, _user_b, project_b)
         await engine.dispose()
 
 
