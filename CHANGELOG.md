@@ -11,6 +11,13 @@ pipeline. Sync waiting reads immediately, OpenAPI publishes every bounded
 outcome, stream tickets retry token collisions, and SSE emits every public
 response change. The EventSource route now sits outside the global header-auth
 wrapper so its short-lived single-use ticket can actually authenticate it.
+Lost-dispatch retry now locks the invocation before checking for its pipeline,
+so concurrent retry requests enqueue once. The scoped idempotency migration's
+downgrade preserves every invocation while deterministically clearing keys that
+the legacy narrower unique index cannot represent, and a real PostgreSQL
+upgrade/use/downgrade regression exercises the migration itself. Upgrade also
+drops stale same-name index residue before its concurrent rebuild, preventing
+an interrupted build retry from removing the last valid uniqueness authority.
 
 M11 configuration-authority hardening now freezes the full sanitized resolved
 configuration before execution, reapplies live safety ceilings and eval-drift

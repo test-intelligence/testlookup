@@ -4,7 +4,7 @@
 
 **PASS — the invocation contract now survives concurrent submission,
 cancellation, retry and real EventSource use.** Exact executable candidate
-`e96b9de3` was deployed first as `build-20260917-172252`. `/health/version`
+`da26981b` was deployed first as `build-20260917-183523`. `/health/version`
 reported the full candidate revision and every backend/worker Deployment became
 available on that immutable tag before verification ran.
 
@@ -27,28 +27,34 @@ available on that immutable tag before verification ran.
 - Retry refuses review rejection and cancellation, commits `retry_wait` before
   dispatch and supplies the expected-attempt fence. Cancellation remains sticky
   in the broker window before a pipeline exists; worker entry and pipeline
-  creation both recheck it.
+  creation both recheck it. The invocation row serializes lost-dispatch retries,
+  so two callers produce one activity event and one broker dispatch.
 - A zero-length sync wait reads once without sleeping; bounded 200/202/409/422/
   503 outcomes are present in OpenAPI. SSE change detection covers the whole
   public response, including error, output and review changes.
 
 ## Verification
 
-- Focused invocation suite: **118 passed** before the final routing regression;
-  final counts are recorded in the candidate manifest and branch validation.
-- Real PostgreSQL concurrency/cancellation suite: **7 passed**.
-- Mutation harness: **16 unsafe changes killed**, with exact-once mutation
+- Focused invocation suite: **164 passed**; Appendix B backend set:
+  **445 passed**.
+- Real PostgreSQL concurrency/cancellation/migration suite: **9 passed**.
+- Mutation harness: **19 unsafe changes killed**, with exact-once mutation
   application and byte restoration.
-- Live homelab journey: revision `e96b9de3`; catalog 30; async 202 then `passed`;
+- Final live homelab smoke: revision `da26981b`; catalog 30; async 202 then `passed`;
   same-key replay 200; changed request 422; SSE ticket issue 200, replay 401,
-  expiry 401; sync 200/`passed`; ten requests; polling survived stream close.
-- Alembic has one head, `0191`; both new migrations have real downgrades and
-  the replacement index is built concurrently in an autocommit block.
+  sync 200/`passed`; ten requests. The earlier exact-candidate journey also
+  proved real 60-second expiry returned 401 and polling survived stream close.
+- Alembic has one head, `0191`; both new migrations have real downgrades. A real
+  0190 upgrade/use/downgrade preserves all scoped-key rows, deterministically
+  clears only colliding legacy keys, removes wrong-definition same-name residue,
+  and rebuilds valid unique indexes concurrently.
+- Independent final rereview: **APPROVE** at executable `da26981b`; no
+  release-blocking findings remain.
 
 ## Defects fixed
 
-EXP-BUG-082 through EXP-BUG-088. The branch also adds the existing real
-PostgreSQL invocation race module to CI; it had been tracked but never selected.
+EXP-BUG-082 through EXP-BUG-088. The existing PostgreSQL CI selection already
+included the invocation race module; M12 extends that module with the new races.
 
 ## Deviations and remaining gaps
 

@@ -3,11 +3,11 @@ state: RUNNING
 coordinator: GPT-6 Astra
 branch: codex/exploratory-quality-release
 base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
-candidate_sha: e96b9de37288914624e0149e77709bd1ba32b5a0
-candidate_tree: 3d26625002054bebe21ca99cb9e61a110845c7ab
+candidate_sha: da26981be889c6aa2351f3c9973ef18023fd618d
+candidate_tree: e0722587dd8a1a374d0c6a133d96ff6b1ddf6afa
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-17T17:26:00Z
+last_checkpoint_at_utc: 2026-09-17T18:46:00Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -15,19 +15,19 @@ environment:
   frontend_origin: http://testlookup.local
   backend_origin: http://testlookup.local
   ingress_address_at_checkpoint: 192.168.0.201
-  image_tag: build-20260917-172252
+  image_tag: build-20260917-183523
   component_image_tags:
-    backend_and_workers: build-20260917-172252
-    frontend: build-20260917-170142
-    mcp: build-20260917-170142
+    backend_and_workers: build-20260917-183523
+    frontend: build-20260917-183523
+    mcp: build-20260917-183523
   image_digests:
-    backend_and_workers: sha256:821e90c3d3cddb0481e6c00a4d4241b9874c85d388bcb9e5c0e01fe05c222cd9
+    backend_and_workers: sha256:cbea2486a3bf19068c569c35a650a7902de83a9f620e3564876a0b44a6e65825
     frontend: sha256:cc76170707fd9e72e5a4cba69b840ae34a284b35b08b68862d207bd2a9ca39c5
     mcp: sha256:95d4563df97b940a33eacfc98523bcf307f1e6c9e89d4de386fdaa84db1c2366
   build_identity:
     version: 0.0.1
-    revision: e96b9de37288914624e0149e77709bd1ba32b5a0
-    built_at: 2026-09-17T17:22:52Z
+    revision: da26981be889c6aa2351f3c9973ef18023fd618d
+    built_at: 2026-09-17T18:35:24Z
   schema_head: "0191"
   source_schema_head: "0191"
   resources:
@@ -90,7 +90,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Complete M12 independent review and final gates, then start M13 custom workflow and reviewer governance on the same minor-release branch; blocked sandbox missions remain unchanged."
+  next_exact_action: "Start M13 custom workflow and reviewer governance on the same minor-release branch; blocked sandbox missions remain unchanged."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []
