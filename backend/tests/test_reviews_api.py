@@ -2,9 +2,10 @@
 
 Pins section 8.3's enforcement: API keys and synthetic accounts cannot decide,
 a rejection needs a reason, only a pending review can be settled, the requester
-cannot review their own run, and the run moves ``completed -> passed | failed``
-through the state machine or the decision is refused. Also: non-members get
-404, reviewer identity stays out of responses, and notes are redacted.
+cannot review their own act-mode proposal, and the run moves
+``completed -> passed | failed`` through the state machine or the decision is
+refused. Also: non-members get 404, reviewer identity stays out of responses,
+and notes are redacted.
 """
 from __future__ import annotations
 
@@ -51,8 +52,10 @@ class _DB:
         self.pipeline_metadata = pipeline_metadata or {}
         self.flushed = False
         self.committed = False
+        self.statements = []
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        self.statements.append(stmt)
         return SimpleNamespace(
             scalar_one_or_none=lambda: self.row,
             scalars=lambda: SimpleNamespace(all=lambda: list(self.action_payloads)),
@@ -136,7 +139,12 @@ async def test_the_requester_cannot_review_their_own_act_mode_run(monkeypatch, t
     )
     with pytest.raises(svc.ReviewDecisionRefused) as exc:
         await svc.settle_review(
-            _DB(action_payloads=[{"proposing_agent_id": "decision_report"}]),
+            _DB(
+                action_payloads=[{"proposing_agent_id": "decision_report"}],
+                pipeline_metadata={
+                    "workflow_agent_configs": {"decision_report": {"mode": "act"}}
+                },
+            ),
             review=_review(requested_by=reviewer.id),
             reviewer=reviewer,
             decision="accepted",
@@ -203,13 +211,37 @@ async def test_the_requester_may_review_when_the_run_has_no_act_mode_proposal(
 
     review = _review(requested_by=reviewer.id)
     await svc.settle_review(
-        _DB(action_payloads=action_payloads),
+        _DB(
+            action_payloads=action_payloads,
+            pipeline_metadata={
+                "workflow_agent_configs": {"decision_report": {"mode": mode}}
+            },
+        ),
         review=review,
         reviewer=reviewer,
         decision="accepted",
     )
 
     assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_settlement_locks_pipeline_before_review_to_match_finalization_order():
+    from app.routers.reviews import _load_for_update
+
+    review = _review()
+    db = _DB(review)
+
+    assert await _load_for_update(db, review.id) is review
+
+    sql = [str(stmt.compile()) for stmt in db.statements]
+    assert len(sql) == 3
+    assert "FROM review_requests" in sql[0]
+    assert "FROM agent_pipeline_runs" in sql[1]
+    assert "FROM review_requests" in sql[2]
+    assert db.statements[0]._for_update_arg is None
+    assert db.statements[1]._for_update_arg is not None
+    assert db.statements[2]._for_update_arg is not None
 
 
 @pytest.mark.asyncio

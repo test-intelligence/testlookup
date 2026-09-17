@@ -2,6 +2,13 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Human review authority now stays bound to the exact evidence and proposal-time
+mode a reviewer inspected. Changed evidence mints a new pending review instead
+of silently reusing an old ID; distinct Investigator subjects no longer
+supersede each other or authorize parent-run reports. Pipeline and review
+settlement use one lock order, supersession rechecks locked rows, and queued
+workers cannot resurrect a review-rejected run.
+
 Concurrent release-readiness overrides now lock the persisted decision while
 appending its audit trail. Two QA decisions racing from stale pages therefore
 remain visible instead of the last commit silently erasing the first audit row.

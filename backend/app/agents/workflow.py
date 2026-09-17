@@ -1436,6 +1436,18 @@ async def _claim_pipeline_resume(
         # restart a run the operator was told had stopped.
         if bool(getattr(pipeline, "cancel_requested", False)):
             return None
+        # An endpoint may enqueue a resume immediately before a human rejects
+        # the run. The claim holds the authoritative row lock, so it must repeat
+        # the refusal here; otherwise that already-queued worker can resurrect
+        # a review-rejected pipeline after the rejection commits.
+        from app.services.review_request_service import (  # noqa: PLC0415
+            REVIEW_REJECTED_ERROR_PREFIX,
+        )
+
+        if str(getattr(pipeline, "error", "") or "").startswith(
+            REVIEW_REJECTED_ERROR_PREFIX
+        ):
+            return None
         # E7.2: a scheduled retry names the attempt it was queued for. If the
         # row has moved on (cancelled, or a manual retry already consumed that
         # attempt), this claim is stale and must do nothing.

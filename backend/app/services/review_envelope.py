@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models.postgres import ReviewRequest
 from app.services.review_request_service import AI_DISCLAIMER, AI_DISCLAIMER_VERSION
@@ -159,6 +159,16 @@ async def review_envelope_for_run(
     )
     if workflow_type:
         stmt = stmt.where(ReviewRequest.workflow_type == workflow_type)
+    else:
+        # Investigator narratives have exact pipeline-scoped reviews. They
+        # share their parent test_run_id, so they must never authorize a parent
+        # summary/export that asks for the run's ordinary report envelope.
+        stmt = stmt.where(
+            or_(
+                ReviewRequest.workflow_type.is_(None),
+                ReviewRequest.workflow_type != "investigation",
+            )
+        )
     row: Optional[ReviewRequest] = (
         await db.execute(stmt.order_by(ReviewRequest.created_at.desc()).limit(1))
     ).scalars().first()

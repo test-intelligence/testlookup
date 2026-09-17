@@ -162,29 +162,30 @@ async def create_run_review_request(
     # widen this function's declared ReviewRequest return (mypy no-any-return).
     live: Optional[ReviewRequest] = (
         await db.execute(
-            select(ReviewRequest).where(
+            select(ReviewRequest)
+            .where(
                 ReviewRequest.kind == "report",
                 ReviewRequest.subject_type == "pipeline_run",
                 ReviewRequest.subject_id == subject_id,
                 ReviewRequest.state != "superseded",
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
 
     if live is not None:
-        if live.state == "pending_review":
-            # Same run finalized again: one request, refreshed to the latest payload.
-            if evidence_bundle_sha256:
-                live.evidence_bundle_sha256 = evidence_bundle_sha256
+        if live.evidence_bundle_sha256 == evidence_bundle_sha256:
+            # The same review still describes the exact same evidence. A
+            # pending request keeps its identity so idempotent finalization is
+            # harmless; a settled request remains immutable history.
             if getattr(live, "eval_manifest_checksum", None) is None:
                 live.eval_manifest_checksum = manifest_checksum
-            await db.flush()
+                await db.flush()
             return live
-        if live.evidence_bundle_sha256 == evidence_bundle_sha256:
-            # A settled review still describes this exact payload.
-            return live
-        # The report changed after its review settled; that review no longer
-        # describes it. Supersede first so the one-live-per-subject index holds.
+        # Evidence changed after the review was shown or settled. Keep the old
+        # hash bound to its old id and mint a new pending subject so a stale tab
+        # cannot accept bytes it never reviewed. Supersede first so the
+        # one-live-per-subject index holds.
         live.state = "superseded"
         await db.flush()
         review_requests_total.labels(state="superseded").inc()
@@ -205,16 +206,18 @@ async def create_run_review_request(
     test_run_id = _as_uuid(getattr(run, "test_run_id", None))
     workflow_type = getattr(run, "workflow_type", None)
     older: list[ReviewRequest] = []
-    if test_run_id is not None and workflow_type:
+    if test_run_id is not None and workflow_type and workflow_type != "investigation":
         older = (
             await db.execute(
-                select(ReviewRequest).where(
+                select(ReviewRequest)
+                .where(
                     ReviewRequest.project_id == pid,
                     ReviewRequest.test_run_id == test_run_id,
                     ReviewRequest.workflow_type == workflow_type,
                     ReviewRequest.state == "pending_review",
                     ReviewRequest.subject_id != subject_id,
                 )
+                .with_for_update()
             )
         ).scalars().all()
         for row in older:
@@ -386,10 +389,10 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
     """Whether this review covers an action proposed by an act-mode agent.
 
     The action ledger is the durable record that a report proposed a mutation.
-    Its hashed payload carries the proposing agent id (T4). Invocation runs use
-    their frozen config; ordinary pipelines use the current project config,
-    matching the execution-time mode check. An unidentifiable legacy proposal
-    fails closed for self-review.
+    Its hashed payload carries the proposing agent id (T4). The proposing mode
+    comes from the pipeline's frozen execution metadata, never the mutable live
+    project config. An unidentifiable legacy proposal fails closed for
+    self-review.
     """
     if review.pipeline_run_id is None:
         return False
@@ -403,7 +406,13 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
         return False
 
     pipeline = await db.get(AgentPipelineRun, review.pipeline_run_id)
-    from app.services.agent_config_resolver import resolve_for_pipeline  # noqa: PLC0415
+    metadata = (
+        dict(pipeline.execution_metadata)
+        if pipeline is not None and isinstance(pipeline.execution_metadata, dict)
+        else {}
+    )
+    workflow_configs = metadata.get("workflow_agent_configs")
+    invocation_configs = metadata.get("resolved_agent_configs")
 
     for payload in payloads:
         agent_id = (
@@ -413,9 +422,19 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
         )
         if not isinstance(agent_id, str) or not agent_id:
             return True
-        resolved = await resolve_for_pipeline(
-            db, pipeline, review.project_id, agent_id
+        frozen = (
+            workflow_configs.get(agent_id)
+            if isinstance(workflow_configs, dict)
+            else None
         )
-        if resolved.config.mode == "act":
+        if not isinstance(frozen, dict) and isinstance(invocation_configs, dict):
+            snapshot = invocation_configs.get(agent_id)
+            frozen = snapshot.get("config") if isinstance(snapshot, dict) else None
+        if not isinstance(frozen, dict):
+            return True
+        mode = frozen.get("mode")
+        if mode == "act":
+            return True
+        if mode not in {"shadow", "suggest"}:
             return True
     return False
