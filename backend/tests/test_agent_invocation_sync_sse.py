@@ -172,6 +172,23 @@ async def test_the_wait_gives_up_at_its_deadline(monkeypatch):
     assert out["status"] == "in_progress"
 
 
+@pytest.mark.asyncio
+async def test_a_zero_length_sync_wait_reads_once_without_sleeping(monkeypatch):
+    from app.routers import agent_invoke as router
+
+    view = AsyncMock(return_value=_view("in_progress"))
+    sleep = AsyncMock()
+    monkeypatch.setattr(router, "_invocation_view", view)
+
+    out = await router._wait_for_terminal(
+        None, object(), wait_seconds=0, sleep=sleep, clock=lambda: 10.0,
+    )
+
+    assert out["status"] == "in_progress"
+    view.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
 # -- stream tickets --------------------------------------------------------------------------
 
 

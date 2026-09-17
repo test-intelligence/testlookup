@@ -73,7 +73,9 @@ from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
 from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
+    CANCELLED_ERROR_PREFIX,
     REVIEW_NOT_APPLICABLE,
+    apply_transition,
     is_resumable,
     is_terminal,
     normalize_status,
@@ -337,16 +339,17 @@ async def _load_invocation_or_404(db: AsyncSession, invocation_id: uuid.UUID) ->
     return invocation
 
 
-async def _load_pipeline(db: AsyncSession, invocation: Any) -> Any:
+async def _load_pipeline(db: AsyncSession, invocation: Any, *, for_update: bool = False) -> Any:
     # populate_existing: a sync wait re-reads the same row in one session, and
     # the identity map would otherwise keep answering with the first read.
-    return (
-        await db.execute(
-            select(AgentPipelineRun)
-            .where(AgentPipelineRun.id == invocation.pipeline_run_id)
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one_or_none()
+    stmt = (
+        select(AgentPipelineRun)
+        .where(AgentPipelineRun.id == invocation.pipeline_run_id)
+        .execution_options(populate_existing=True)
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def _invocation_view(db: AsyncSession, invocation: Any) -> dict[str, Any]:
@@ -430,10 +433,11 @@ async def _wait_for_terminal(
     """Re-read the invocation until its run leaves ``in_progress`` or the wait ends."""
     deadline = clock() + max(0.0, float(wait_seconds))
     while True:
-        await sleep(poll_interval)
         view = await _invocation_view(db, invocation)
-        if view["status"] != "in_progress" or clock() >= deadline:
+        now = clock()
+        if view["status"] != "in_progress" or now >= deadline:
             return view
+        await sleep(min(poll_interval, max(0.0, deadline - now)))
 
 
 def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, str, uuid.UUID]:
@@ -630,7 +634,7 @@ async def retry_invocation(
     started is dispatched again.
     """
     invocation = await _load_invocation_or_404(db, invocation_id)
-    pipeline = await _load_pipeline(db, invocation)
+    pipeline = await _load_pipeline(db, invocation, for_update=True)
     base = {"invocation_id": str(invocation.id)}
     rerun = {"rerun": f"/api/v1/agents/{invocation.agent_id}/invoke"}
 
@@ -642,6 +646,19 @@ async def retry_invocation(
         invocation.dispatched_at = datetime.now(timezone.utc)
     else:
         current = normalize_status(pipeline.status)
+        if bool(getattr(pipeline, "cancel_requested", False)) or str(
+            getattr(pipeline, "error", "") or ""
+        ).startswith(CANCELLED_ERROR_PREFIX):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": "Invocation was cancelled; invoke the agent again instead",
+                    "reason": "cancelled",
+                    "status": public_status(current),
+                    "links": rerun,
+                },
+            )
         if (pipeline.error or "").startswith(REVIEW_REJECTED_ERROR_PREFIX):
             raise HTTPException(
                 status_code=409,
@@ -711,6 +728,11 @@ async def retry_invocation(
                     "links": rerun,
                 },
             )
+        # Persist admission before dispatch. This makes a second retry observe
+        # an in-progress run, and lets cancellation terminalise the parked
+        # retry before a queued worker can claim it.
+        apply_transition(pipeline, "retry_wait", error=pipeline.error)
+        pipeline.next_retry_at = None
         mode = "resume"
 
     await record_activity(
@@ -733,7 +755,11 @@ async def retry_invocation(
         from app.worker.tasks import resume_agent_pipeline
 
         resume_agent_pipeline.apply_async(
-            kwargs={"pipeline_run_id": str(invocation.pipeline_run_id), "build_number": "manual-retry"},
+            kwargs={
+                "pipeline_run_id": str(invocation.pipeline_run_id),
+                "build_number": "manual-retry",
+                "expected_attempt": int(pipeline.attempt or 1) + 1,
+            },
             queue="ai_analysis",
         )
     else:
@@ -792,15 +818,22 @@ async def cancel_invocation(
 
 
 async def _idempotent_replay(
-    db: AsyncSession, user_id: Any, idempotency_key: str, fingerprint: str,
+    db: AsyncSession,
+    user_id: Any,
+    project_id: Any,
+    agent_id: str,
+    idempotency_key: str,
+    fingerprint: str,
 ) -> Optional[dict[str, Any]]:
-    """The invocation this user's key already created, or None. 422 when the request differs."""
+    """The invocation this scoped key created, or None. 422 when the request differs."""
     if user_id is None:
         return None
     existing = (
         await db.execute(
             select(AgentInvocation).where(
                 AgentInvocation.requested_by == user_id,
+                AgentInvocation.project_id == project_id,
+                AgentInvocation.agent_id == agent_id,
                 AgentInvocation.idempotency_key == idempotency_key,
             )
         )
@@ -815,7 +848,25 @@ async def _idempotent_replay(
 _KEY_REUSED = "Idempotency-Key was already used for a different request; send a new key"
 
 
-@router.post("/{agent_id}/invoke", response_model=AgentInvocationResponse, status_code=202)
+@router.post(
+    "/{agent_id}/invoke",
+    response_model=AgentInvocationResponse,
+    status_code=202,
+    responses={
+        200: {"model": AgentInvocationResponse, "description": "Completed sync result or idempotent replay"},
+        409: {"description": "Invocation conflict or request still in flight"},
+        422: {"description": "Invalid input or Idempotency-Key reuse"},
+        503: {
+            "description": "Synchronous invocation capacity is full; Retry-After is returned",
+            "headers": {
+                "Retry-After": {
+                    "description": "Seconds before retrying the request",
+                    "schema": {"type": "integer"},
+                }
+            },
+        },
+    },
+)
 async def invoke_agent(
     agent_id: str,
     body: AgentInvokeRequest,
@@ -853,17 +904,24 @@ async def invoke_agent(
     """
     stage_name, workflow_type, test_run_id = _validate_invocation(agent_id, body)
     sync = body.mode == "sync" and is_sync_eligible(stage_name)
-    run = (await db.execute(select(TestRun).where(TestRun.id == test_run_id))).scalar_one_or_none()
+    # Serialize the active-invocation lookup and insert for one stored subject.
+    # The lock is released by the commit before any synchronous wait begins.
+    run = (
+        await db.execute(
+            select(TestRun).where(TestRun.id == test_run_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="TestRun not found")
-    await resolve_project_scope(db, current_user, str(run.project_id))
-    if body.project_id != run.project_id:
+    project_id = run.project_id
+    await resolve_project_scope(db, current_user, str(project_id))
+    if body.project_id != project_id:
         raise HTTPException(status_code=400, detail="project_id does not match the test run's project")
     # E4.2: the project's resolved agent config decides whether this agent may run.
     try:
         resolved = await resolve_for_project(
             db,
-            run.project_id,
+            project_id,
             agent_id,
             patch=body.config_overrides,
         )
@@ -886,7 +944,7 @@ async def invoke_agent(
                 "errors": exc.errors,
             },
         ) from None
-    refusal = invocation_refusal(resolved, project_id=run.project_id)
+    refusal = invocation_refusal(resolved, project_id=project_id)
     if refusal is not None:
         raise HTTPException(status_code=403, detail=refusal)
     config_snapshot = freeze_for_invocation(resolved)
@@ -896,16 +954,24 @@ async def invoke_agent(
     claimed = False
     if idempotency_key is not None:
         fingerprint = invocation_idempotency.request_fingerprint(agent_id, body.model_dump(mode="json"))
-        replay = await _idempotent_replay(db, user_id, idempotency_key, fingerprint)
+        replay = await _idempotent_replay(
+            db, user_id, project_id, agent_id, idempotency_key, fingerprint
+        )
         if replay is not None:
             response.status_code = 200
             return replay
-        claim = await invocation_idempotency.claim(user_id, run.project_id, agent_id, idempotency_key, fingerprint)
+        claim = await invocation_idempotency.claim(user_id, project_id, agent_id, idempotency_key, fingerprint)
         if claim == "conflict":
             raise HTTPException(status_code=422, detail=_KEY_REUSED)
         if claim in ("in_flight", "done"):
             # ``done``: the first request committed after the lookup above; read it back.
-            replay = await _idempotent_replay(db, user_id, idempotency_key, fingerprint) if claim == "done" else None
+            replay = (
+                await _idempotent_replay(
+                    db, user_id, project_id, agent_id, idempotency_key, fingerprint
+                )
+                if claim == "done"
+                else None
+            )
             if replay is not None:
                 response.status_code = 200
                 return replay
@@ -930,6 +996,20 @@ async def invoke_agent(
             ),
         )
         if existing is not None:
+            if idempotency_key is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "This agent is already running on the test run under a different "
+                            "request; retry this Idempotency-Key after it finishes"
+                        ),
+                        "reason": "agent_already_running",
+                        "invocation_id": str(existing["id"]),
+                        "links": existing.get("links", {}),
+                    },
+                    headers={"Retry-After": "1"},
+                )
             response.status_code = 200
             return existing
 
@@ -945,7 +1025,7 @@ async def invoke_agent(
         now = datetime.now(timezone.utc)
         invocation = AgentInvocation(
             id=uuid.uuid4(),
-            project_id=run.project_id,
+            project_id=project_id,
             agent_id=agent_id,
             stage_name=stage_name,
             test_run_id=run.id,
@@ -963,7 +1043,7 @@ async def invoke_agent(
         db.add(invocation)
         await record_activity(
             db,
-            project_id=run.project_id,
+            project_id=project_id,
             event_type="agent.invoked",
             actor=ActorRef.from_user(current_user),
             entity_id=run.id,
@@ -978,7 +1058,9 @@ async def invoke_agent(
             # with the same key committed first (the Redis lock was unavailable).
             await db.rollback()
             replay = (
-                await _idempotent_replay(db, user_id, idempotency_key, fingerprint)
+                await _idempotent_replay(
+                    db, user_id, project_id, agent_id, idempotency_key, fingerprint
+                )
                 if idempotency_key is not None and fingerprint is not None
                 else None
             )
@@ -988,7 +1070,7 @@ async def invoke_agent(
             return replay
         if claimed and idempotency_key is not None and fingerprint is not None:
             await invocation_idempotency.complete(
-                user_id, run.project_id, agent_id, idempotency_key, fingerprint, invocation.id,
+                user_id, project_id, agent_id, idempotency_key, fingerprint, invocation.id,
             )
             claimed = False
 
@@ -1008,4 +1090,4 @@ async def invoke_agent(
             SYNC_SLOTS.release()
         if claimed and idempotency_key is not None and fingerprint is not None:
             # Nothing was committed under this key: free it so the client can retry.
-            await invocation_idempotency.release(user_id, run.project_id, agent_id, idempotency_key, fingerprint)
+            await invocation_idempotency.release(user_id, project_id, agent_id, idempotency_key, fingerprint)

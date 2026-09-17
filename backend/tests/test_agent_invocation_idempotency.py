@@ -228,6 +228,22 @@ async def test_a_done_lock_reads_the_committed_invocation_back(route):
 
 
 @pytest.mark.asyncio
+async def test_an_explicit_key_does_not_silently_adopt_an_unrelated_active_invocation(route):
+    active = _view(status="in_progress")
+    route.router._in_progress_invocation.return_value = active
+
+    with pytest.raises(HTTPException) as exc:
+        await route.call()
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "agent_already_running"
+    assert exc.value.detail["invocation_id"] == str(active["id"])
+    route.db.add.assert_not_called()
+    route.dispatch.assert_not_called()
+    route.router.invocation_idempotency.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_a_first_request_stores_its_key_commits_marks_the_key_done_then_dispatches(route):
     order: list[str] = []
     route.db.commit.side_effect = lambda: order.append("commit")
@@ -242,6 +258,7 @@ async def test_a_first_request_stores_its_key_commits_marks_the_key_done_then_di
     assert route.router.invocation_idempotency.complete.await_args.args[-1] == added.id
     route.router.invocation_idempotency.release.assert_not_awaited()
     assert response.status_code == 202 and out["id"] == added.id
+    assert "FOR UPDATE" in str(route.db.execute.await_args_list[0].args[0])
 
 
 @pytest.mark.asyncio
@@ -311,14 +328,29 @@ async def test_the_replay_lookup_is_scoped_to_the_user_and_refuses_a_different_r
     db.execute = AsyncMock(return_value=_Result(stored))
     monkeypatch.setattr(router, "_invocation_view", AsyncMock(return_value={"id": "x"}))
 
-    assert await router._idempotent_replay(db, uuid.uuid4(), KEY, "fp-original") == {"id": "x"}
+    user_id, project_id = uuid.uuid4(), uuid.uuid4()
+    assert await router._idempotent_replay(
+        db, user_id, project_id, "agent.summary.v1", KEY, "fp-original"
+    ) == {"id": "x"}
     # The WHERE clause, not the whole statement: every column name appears in the SELECT list.
     where = str(db.execute.await_args.args[0].whereclause)
-    assert "agent_invocations.requested_by" in where and "agent_invocations.idempotency_key" in where
+    assert all(
+        column in where
+        for column in (
+            "agent_invocations.requested_by",
+            "agent_invocations.project_id",
+            "agent_invocations.agent_id",
+            "agent_invocations.idempotency_key",
+        )
+    )
     with pytest.raises(HTTPException) as exc:
-        await router._idempotent_replay(db, uuid.uuid4(), KEY, "fp-different")
+        await router._idempotent_replay(
+            db, user_id, project_id, "agent.summary.v1", KEY, "fp-different"
+        )
     assert exc.value.status_code == 422
-    assert await router._idempotent_replay(db, None, KEY, "fp-original") is None
+    assert await router._idempotent_replay(
+        db, None, project_id, "agent.summary.v1", KEY, "fp-original"
+    ) is None
 
 
 def test_the_header_is_optional_for_direct_callers_and_validated_for_http():
@@ -332,19 +364,32 @@ def test_the_header_is_optional_for_direct_callers_and_validated_for_http():
     assert header.alias == "Idempotency-Key"
 
 
-def test_the_migration_builds_the_unique_index_concurrently():
+def test_openapi_documents_every_bounded_invoke_outcome():
+    from app.main import app
+
+    operation = app.openapi()["paths"]["/api/v1/agents/{agent_id}/invoke"]["post"]
+    assert {"200", "202", "409", "422", "503"} <= set(operation["responses"])
+    retry_after = operation["responses"]["503"]["headers"]["Retry-After"]
+    assert retry_after["schema"]["type"] == "integer"
+
+
+def test_the_scope_migration_replaces_the_unique_index_concurrently_and_can_downgrade():
     source = (
-        Path(__file__).resolve().parents[1] / "migrations/versions/0178_agent_invocation_idempotency.py"
+        Path(__file__).resolve().parents[1] / "migrations/versions/0190_agent_invocation_idempotency_scope.py"
     ).read_text(encoding="utf-8")
-    assert 'down_revision = "0177"' in source
-    assert "autocommit_block" in source and "postgresql_concurrently=True" in source
-    assert '["requested_by", "idempotency_key"]' in source and "unique=True" in source
+    assert 'down_revision = "0189"' in source
+    assert source.count("autocommit_block") == 2
+    assert source.count("postgresql_concurrently=True") == 4
+    assert '["requested_by", "project_id", "agent_id", "idempotency_key"]' in source
+    assert "def downgrade()" in source and "if_not_exists=True" in source
 
 
 def test_the_model_declares_the_same_partial_unique_index():
     from app.models.postgres import AgentInvocation
 
-    index = next(i for i in AgentInvocation.__table__.indexes if i.name == "ux_agent_invocations_user_idempotency_key")
-    assert index.unique and [c.name for c in index.columns] == ["requested_by", "idempotency_key"]
+    index = next(i for i in AgentInvocation.__table__.indexes if i.name == "ux_agent_invocations_scoped_idempotency_key")
+    assert index.unique and [c.name for c in index.columns] == [
+        "requested_by", "project_id", "agent_id", "idempotency_key",
+    ]
     assert "idempotency_key IS NOT NULL" in str(index.dialect_options["postgresql"]["where"])
     assert isinstance(datetime.now(timezone.utc), datetime)

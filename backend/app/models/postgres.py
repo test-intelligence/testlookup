@@ -5333,10 +5333,13 @@ class AgentInvocation(Base):
         Index("ix_agent_invocations_project_created", "project_id", "created_at"),
         Index("ix_agent_invocations_run_agent", "test_run_id", "agent_id", "created_at"),
         Index("ux_agent_invocations_pipeline_run", "pipeline_run_id", unique=True),
-        # E1.3: a client Idempotency-Key belongs to one user (migration 0178).
+        # E1.3: keys are independent per user, project and invocation route
+        # (migration 0190 aligns the durable authority with the Redis claim).
         Index(
-            "ux_agent_invocations_user_idempotency_key",
+            "ux_agent_invocations_scoped_idempotency_key",
             "requested_by",
+            "project_id",
+            "agent_id",
             "idempotency_key",
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
