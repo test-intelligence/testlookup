@@ -284,6 +284,31 @@ async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
     live.assert_not_awaited()
 
 
+async def test_an_ordinary_pipeline_uses_its_frozen_workflow_config(monkeypatch):
+    frozen_config = configs.default_config(SUMMARY).model_dump(mode="json")
+    frozen_config["timeout_seconds"] = 19
+    pipeline = SimpleNamespace(execution_metadata={
+        "workflow_agent_configs": {SUMMARY: frozen_config},
+        "agent_config_versions": {SUMMARY: 6},
+        "resolved_agent_configs": {},
+    })
+    monkeypatch.setattr(
+        resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value=_ai()),
+    )
+    live = AsyncMock(side_effect=AssertionError("live project row read"))
+    monkeypatch.setattr(resolver, "resolve_for_project", live)
+
+    resolved = await resolver.resolve_for_pipeline(
+        None, pipeline, PROJECT_ID, SUMMARY
+    )
+
+    assert resolved.config.timeout_seconds == 19
+    assert resolved.config_version == 6
+    live.assert_not_awaited()
+
+
 async def test_a_frozen_snapshot_cannot_be_replayed_for_another_agent():
     snapshot = resolver.freeze_for_invocation(
         resolver.resolve(SUMMARY, global_ai_config=_ai())

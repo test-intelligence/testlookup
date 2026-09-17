@@ -1562,6 +1562,7 @@ async def _claim_pipeline_resume(
             "workflow_plan_sha256": metadata.get("workflow_plan_sha256"),
             "workflow_deadline_seconds": metadata.get("workflow_deadline_seconds"),
             "workflow_agent_configs": metadata.get("workflow_agent_configs") or {},
+            "resolved_agent_configs": metadata.get("resolved_agent_configs") or {},
             "cluster_child_settings": metadata.get("cluster_child_settings") or {},
             "async_decision_report_supersession_enabled": bool(
                 metadata.get("async_decision_report_supersession_enabled", False)
@@ -1946,7 +1947,10 @@ def _make_checkpointed_node(original_node, stage_name: str):
             # calls the BaseAgent lifecycle hooks must still hold its lease.
             async with held_lease(pipeline_run_id, fencing_token) as lease_lost:
                 async def invoke_bound_node() -> dict[str, Any]:
-                    with workflow_step_scope(stage_name):
+                    with workflow_step_scope(
+                        stage_name,
+                        allowed_tools=_stage_tool_allowlist(state, stage_name),
+                    ):
                         return cast(dict[str, Any], await original_node(state))
 
                 node = asyncio.ensure_future(invoke_bound_node())
@@ -2033,6 +2037,33 @@ def _make_checkpointed_node(original_node, stage_name: str):
     wrapper.__name__ = original_node.__name__
     wrapper.__workflow_original_node__ = original_node  # type: ignore[attr-defined]
     return wrapper
+
+
+def _stage_tool_allowlist(
+    state: WorkflowState,
+    stage_name: str,
+) -> list[str] | None:
+    """Read a step's allowlist from its immutable pipeline snapshot."""
+    capability_id = f"agent.{stage_name}.v1"
+    plan = state.get("initial_workflow_plan") or {}
+    stages = plan.get("stages", []) if isinstance(plan, dict) else []
+    for item in stages:
+        if isinstance(item, dict) and item.get("stage") == stage_name:
+            capability_id = str(item.get("capability_id") or capability_id)
+            break
+    resolved = state.get("resolved_agent_configs") or {}
+    snapshot = resolved.get(capability_id) if isinstance(resolved, dict) else None
+    config = snapshot.get("config") if isinstance(snapshot, dict) else None
+    if not isinstance(config, dict):
+        workflow_configs = state.get("workflow_agent_configs") or {}
+        config = (
+            workflow_configs.get(capability_id)
+            if isinstance(workflow_configs, dict)
+            else None
+        )
+    tools = config.get("tools") if isinstance(config, dict) else None
+    allowlist = tools.get("allowlist") if isinstance(tools, dict) else None
+    return [str(item) for item in allowlist] if isinstance(allowlist, list) else None
 
 
 # Compile once at module load (compilation is expensive; instances are thread-safe)
@@ -2944,24 +2975,29 @@ async def _create_pipeline_run(
         run_budget = run_budget_from_policy(policy)
         from app.services.agent_config_resolver import (
             FrozenAgentConfig,
+            freeze_for_invocation,
+            resolve_for_project,
             resolve_frozen_for_project,
         )
         from app.services.agent_config_service import config_versions as _agent_config_versions
-        from app.services.agent_config_service import (
-            list_config_rows as _list_agent_config_rows,
-            serialize as _serialize_agent_config,
-        )
 
         # E4.1: freeze each configured agent's config_version, so a later
         # config change never alters how this run is interpreted.
         agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
-        config_rows = await _list_agent_config_rows(db, uuid.UUID(str(project_id)))
-        workflow_agent_configs = {
-            step.agent_id: _serialize_agent_config(
-                step.agent_id, config_rows.get(step.agent_id)
-            )["config"]
-            for step in body.steps
-        }
+        workflow_agent_configs: dict[str, dict[str, Any]] = {}
+        resolved_agent_configs: dict[str, dict[str, Any]] = {}
+        for agent_id in dict.fromkeys(step.agent_id for step in body.steps):
+            # Freeze the effective provider/model and the full validated
+            # authority document for every step. Runtime must not re-read a
+            # project PUT that happened after this pipeline was accepted.
+            resolved = await resolve_for_project(
+                db,
+                uuid.UUID(str(project_id)),
+                agent_id,
+            )
+            snapshot = freeze_for_invocation(resolved)
+            resolved_agent_configs[agent_id] = snapshot
+            workflow_agent_configs[agent_id] = dict(snapshot["config"])
         frozen_config = None
         frozen_snapshot = None
         if invocation_config_snapshot is not None:
@@ -2977,12 +3013,16 @@ async def _create_pipeline_run(
             # one-way. Re-resolve immediately before the run is created so an
             # offline flip or a lowered attempt/timeout ceiling wins even when
             # it happened between API acceptance and worker execution.
-            frozen_config = (
-                await resolve_frozen_for_project(
-                    frozen_snapshot.model_dump(mode="json"),
-                    expected_agent_id=expected_agent_id,
-                )
-            ).config
+            frozen_resolved = await resolve_frozen_for_project(
+                frozen_snapshot.model_dump(mode="json"),
+                expected_agent_id=expected_agent_id,
+            )
+            frozen_config = frozen_resolved.config
+            accepted_snapshot = freeze_for_invocation(frozen_resolved)
+            resolved_agent_configs[expected_agent_id] = accepted_snapshot
+            workflow_agent_configs[expected_agent_id] = dict(
+                accepted_snapshot["config"]
+            )
             agent_config_versions[expected_agent_id] = frozen_snapshot.config_version
             run_budget = {
                 **run_budget,
@@ -3120,15 +3160,7 @@ async def _create_pipeline_run(
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
                 "run_budget": run_budget,
                 "agent_config_versions": agent_config_versions,
-                "resolved_agent_configs": (
-                    {
-                        frozen_snapshot.agent_id: frozen_snapshot.model_dump(
-                            mode="json"
-                        )
-                    }
-                    if frozen_snapshot is not None
-                    else {}
-                ),
+                "resolved_agent_configs": resolved_agent_configs,
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
@@ -3179,6 +3211,7 @@ async def _create_pipeline_run(
             "workflow_plan_sha256": initial_plan["plan_sha256"],
             "workflow_deadline_seconds": body.deadline_seconds,
             "workflow_agent_configs": workflow_agent_configs,
+            "resolved_agent_configs": resolved_agent_configs,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
                 "contract_agent_settings": {"enabled": contract_agent_enabled},

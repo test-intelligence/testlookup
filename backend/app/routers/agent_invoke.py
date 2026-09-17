@@ -65,8 +65,9 @@ from app.services.agent_config_resolver import (
     freeze_for_invocation,
     invocation_refusal,
     resolve_for_project,
+    resolve_frozen_for_project,
 )
-from app.services.agent_config_service import AgentConfigPatch, OverrideRejected
+from app.services.agent_config_service import AgentConfigPatch, OverrideRejected, get_config_row
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
@@ -130,6 +131,10 @@ class AgentInvocationResponse(BaseModel):
     output: Optional[dict[str, Any]] = Field(
         default=None,
         description="The invoked agent's stored stage output, once that stage has completed.",
+    )
+    config_snapshot: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Credential-free resolved configuration accepted for this invocation.",
     )
     requires_human_review: bool
     review: ReviewBlock
@@ -315,6 +320,7 @@ def project_invocation(
         "mode": invocation.mode,
         **run_state,
         "output": _stage_output(stage),
+        "config_snapshot": getattr(invocation, "resolved_config_snapshot", None),
         "requires_human_review": envelope.ai_generated,
         "review": envelope.block(),
         "created_at": invocation.created_at,
@@ -382,6 +388,32 @@ async def _current_mode_snapshot() -> dict[str, Any]:
     from app.agents.workflow import _resolve_analysis_mode_snapshot  # noqa: PLC0415
 
     return await _resolve_analysis_mode_snapshot()
+
+
+async def _invocation_config_changed(db: AsyncSession, invocation: Any) -> bool:
+    """Whether retrying would reuse authority that is no longer current.
+
+    The invocation snapshot is immutable. A project PUT always bumps its
+    version, while re-resolving that snapshot reveals one-way environment
+    clamps added since acceptance. Either change requires a fresh invocation;
+    resuming checkpoints under the older authority would bypass a tightened
+    mode, tool allowlist, retry, timeout, review, or budget setting.
+    """
+    snapshot = getattr(invocation, "resolved_config_snapshot", None)
+    if not isinstance(snapshot, dict):
+        return True
+    row = await get_config_row(db, invocation.project_id, invocation.agent_id)
+    current_version = int(row.config_version) if row is not None else 0
+    if int(snapshot.get("config_version", -1)) != current_version:
+        return True
+    try:
+        refreshed = await resolve_frozen_for_project(
+            snapshot,
+            expected_agent_id=invocation.agent_id,
+        )
+    except AgentConfigInvalid:
+        return True
+    return freeze_for_invocation(refreshed) != snapshot
 
 
 async def _wait_for_terminal(
@@ -647,6 +679,19 @@ async def retry_invocation(
                     ),
                     "attempt": attempt,
                     "max_attempts": max_attempts,
+                    "links": rerun,
+                },
+            )
+        if await _invocation_config_changed(db, invocation):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": (
+                        "The agent configuration changed since this invocation ran; invoke the "
+                        "agent again to run under the current configuration"
+                    ),
+                    "reason": "agent_config_changed",
                     "links": rerun,
                 },
             )

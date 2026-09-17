@@ -114,7 +114,13 @@ def _uuid(value: str, name: str) -> str:
         raise ValueError(f"{name} must be a UUID") from None
 
 
-def invoke_body(agent_id: str, project_id: str, test_run_id: str, mode: str = "async") -> dict[str, Any]:
+def invoke_body(
+    agent_id: str,
+    project_id: str,
+    test_run_id: str,
+    mode: str = "async",
+    config_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The invoke request body, or ValueError naming what is wrong."""
     if not AGENT_ID_PATTERN.match(agent_id or ""):
         raise ValueError("agent_id must look like agent.<name>.v<version>, for example agent.summary.v1")
@@ -122,11 +128,14 @@ def invoke_body(agent_id: str, project_id: str, test_run_id: str, mode: str = "a
         raise ValueError(f"{agent_id} cannot be invoked on its own; see list_agents")
     if mode not in _MODES:
         raise ValueError("mode must be 'async' or 'sync'")
-    return {
+    body = {
         "project_id": _uuid(project_id, "project_id"),
         "input": {"agent_id": agent_id, "payload": {"test_run_id": _uuid(test_run_id, "test_run_id")}},
         "mode": mode,
     }
+    if config_overrides is not None:
+        body["config_overrides"] = config_overrides
+    return body
 
 
 def render_invocation(data: Any) -> str:
@@ -184,6 +193,7 @@ def register(mcp) -> None:  # noqa: ANN001
         project_id: str,
         test_run_id: str,
         mode: str = "async",
+        config_overrides: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
         """
@@ -211,10 +221,11 @@ def register(mcp) -> None:  # noqa: ANN001
             project_id: Project UUID; must be the test run's project.
             test_run_id: The stored test run to analyse.
             mode: "async" (default) or "sync" (waits briefly, only for sync-eligible agents).
+            config_overrides: Optional backend-validated tighten-only override document.
             idempotency_key: Pass the key from an earlier call to retry it safely.
         """
         try:
-            body = invoke_body(agent_id, project_id, test_run_id, mode)
+            body = invoke_body(agent_id, project_id, test_run_id, mode, config_overrides)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         key = idempotency_key or str(uuid.uuid4())

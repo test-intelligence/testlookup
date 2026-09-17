@@ -46,6 +46,20 @@ describe('extractErrorMessage', () => {
     )
   })
 
+  it('surfaces a structured agent tier-gate refusal', () => {
+    const detail = {
+      verdict: 'fail',
+      reason: 'candidate tier regressed on the paired evaluation',
+      candidate_tier: 'slm',
+      gate_run_id: 'gate-17',
+    }
+    const out = extractErrorMessage(detail, 'Request failed')
+    expect(out).toContain('verdict: fail')
+    expect(out).toContain('reason: candidate tier regressed')
+    expect(out).toContain('candidate_tier: slm')
+    expect(out).toContain('gate_run_id: gate-17')
+  })
+
   it('falls back when detail is empty, missing, or unusable', () => {
     expect(extractErrorMessage(undefined, 'Request failed')).toBe('Request failed')
     expect(extractErrorMessage('', 'Request failed')).toBe('Request failed')

@@ -100,6 +100,14 @@ def test_invoke_body_uses_the_catalog_input_shape():
     }
 
 
+def test_invoke_body_forwards_tighten_only_config_overrides():
+    override = {"retry": {"max_attempts": 1}, "tools": {"allowlist": []}}
+    body = agents.invoke_body(
+        "agent.summary.v1", PROJECT, RUN, config_overrides=override
+    )
+    assert body["config_overrides"] == override
+
+
 # -- the real tool bodies -----------------------------------------------------------------
 
 
@@ -129,6 +137,20 @@ def test_invoke_sends_the_callers_idempotency_key(monkeypatch):
         "ok": True, "invocation_id": "inv-1", "status": "in_progress", "review_state": "pending_review",
         "idempotency_key": "key-abcdefgh", "note": "Poll get_agent_invocation for status and output.",
     }
+
+
+def test_invoke_forwards_config_overrides_to_the_rest_authority(monkeypatch):
+    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress"})
+    override = {"model": {"tier": "deterministic"}}
+    asyncio.run(
+        tools["invoke_agent"](
+            "agent.summary.v1",
+            PROJECT,
+            RUN,
+            config_overrides=override,
+        )
+    )
+    assert calls[0][2]["json"]["config_overrides"] == override
 
 
 def test_invoke_generates_a_key_and_returns_it_for_reuse(monkeypatch):

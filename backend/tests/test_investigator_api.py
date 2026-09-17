@@ -413,7 +413,7 @@ async def test_policy_put_is_a_read_only_alias():
 
 
 @pytest.mark.asyncio
-async def test_policy_put_unknown_agent_404():
+async def test_retired_policy_put_is_405_even_for_unknown_agent():
     db = _FakeSession()
     with pytest.raises(HTTPException) as exc:
         await router_mod.update_agent_policy(
@@ -421,7 +421,8 @@ async def test_policy_put_unknown_agent_404():
             body=router_mod.AgentPolicyUpdate(),
             db=db, current_user=_user(UserRole.QA_LEAD), _lead=_user(UserRole.QA_LEAD),
         )
-    assert exc.value.status_code == 404
+    assert exc.value.status_code == 405
+    assert exc.value.headers["Location"].endswith("/agent-configs/investigator")
 
 
 def test_policy_body_rejects_invalid_mode():

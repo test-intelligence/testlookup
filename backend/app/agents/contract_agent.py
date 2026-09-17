@@ -14,6 +14,7 @@ from app.models.agent_contracts import (
     validate_agent_contract,
 )
 from app.services.evidence_sanitizer import sanitize_reference_text
+from app.services.workflow_step_context import tool_allowed
 from app.tools.validate_api_contract import validate_api_contract
 
 logger = structlog.get_logger("agents.contract")
@@ -73,6 +74,19 @@ class ContractAgent(BaseAgent):
                 "endpoints_checked": [],
                 "evidence_refs": [],
                 "summary": "Contract evidence requires project, run, and pipeline scope.",
+                "suggests_product_bug": False,
+            }
+
+        if ids and not tool_allowed("validate_api_contract"):
+            return {
+                "status": "not_enough_evidence",
+                "violations": [],
+                "violation_count": 0,
+                "critical_count": 0,
+                "drift_count": 0,
+                "endpoints_checked": [],
+                "evidence_refs": [],
+                "summary": "Contract validation tool was not allowed by the frozen agent configuration.",
                 "suggests_product_bug": False,
             }
 

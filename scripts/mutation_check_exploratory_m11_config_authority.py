@@ -1,0 +1,145 @@
+"""Prove M11 configuration-authority regressions kill unsafe behavior."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@dataclass(frozen=True)
+class Mutation:
+    name: str
+    path: str
+    safe: str
+    unsafe: str
+    test: str
+
+
+MUTATIONS = (
+    Mutation(
+        "retry-agent-config",
+        "backend/app/routers/agent_invoke.py",
+        "if await _invocation_config_changed(db, invocation):",
+        "if False and await _invocation_config_changed(db, invocation):",
+        "backend/tests/test_agent_invocation_retry_cancel.py::test_retry_is_refused_when_the_frozen_agent_config_changed",
+    ),
+    Mutation(
+        "review-project",
+        "backend/app/services/agent_action_ledger_service.py",
+        "ReviewRequest.project_id == action.project_id,",
+        "ReviewRequest.project_id == uuid.uuid4(),",
+        "backend/tests/services/test_agent_action_ledger_service.py::test_executor_denies_an_action_whose_proposing_run_is_not_accepted",
+    ),
+    Mutation(
+        "review-kind",
+        "backend/app/services/agent_action_ledger_service.py",
+        'ReviewRequest.kind == "report",',
+        'ReviewRequest.kind == "evaluation",',
+        "backend/tests/services/test_agent_action_ledger_service.py::test_executor_denies_an_action_whose_proposing_run_is_not_accepted",
+    ),
+    Mutation(
+        "review-subject-type",
+        "backend/app/services/agent_action_ledger_service.py",
+        'ReviewRequest.subject_type == "pipeline_run",',
+        'ReviewRequest.subject_type == "capability",',
+        "backend/tests/services/test_agent_action_ledger_service.py::test_executor_denies_an_action_whose_proposing_run_is_not_accepted",
+    ),
+    Mutation(
+        "review-subject-id",
+        "backend/app/services/agent_action_ledger_service.py",
+        "ReviewRequest.subject_id == str(pipeline_run_id),",
+        'ReviewRequest.subject_id == "wrong-subject",',
+        "backend/tests/services/test_agent_action_ledger_service.py::test_executor_denies_an_action_whose_proposing_run_is_not_accepted",
+    ),
+    Mutation(
+        "canonical-proposer",
+        "backend/app/services/agent_action_ledger_service.py",
+        '"proposing_agent_id": "agent.decision_report.v1",',
+        '"proposing_agent_id": "decision_report",',
+        "backend/tests/services/test_agent_action_ledger_service.py::test_report_proposals_are_bounded_and_approval_gated",
+    ),
+    Mutation(
+        "frozen-workflow-config",
+        "backend/app/services/agent_config_resolver.py",
+        "if isinstance(frozen_config, dict):",
+        "if False and isinstance(frozen_config, dict):",
+        "backend/tests/test_agent_config_resolver.py::test_an_ordinary_pipeline_uses_its_frozen_workflow_config",
+    ),
+    Mutation(
+        "trace-tool-authority",
+        "backend/app/agents/log_intelligence_agent.py",
+        'if not tool_allowed("reconstruct_distributed_trace"):',
+        'if False and not tool_allowed("reconstruct_distributed_trace"):',
+        "backend/tests/test_exploratory_m11_config_authority.py::test_log_agent_does_not_call_tools_removed_by_the_frozen_allowlist",
+    ),
+    Mutation(
+        "anomaly-tool-authority",
+        "backend/app/agents/log_intelligence_agent.py",
+        'if not tool_allowed("detect_log_rate_anomaly"):',
+        'if False and not tool_allowed("detect_log_rate_anomaly"):',
+        "backend/tests/test_exploratory_m11_config_authority.py::test_log_agent_does_not_call_tools_removed_by_the_frozen_allowlist",
+    ),
+)
+
+
+def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:testlookup",
+            "--basetemp",
+            f".pytest-tmp-exploratory-m11-mutation-{suffix}",
+            test,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def main() -> int:
+    originals: dict[Path, bytes] = {}
+    for mutation in MUTATIONS:
+        path = ROOT / mutation.path
+        originals.setdefault(path, path.read_bytes())
+        text = originals[path].decode("utf-8")
+        if text.count(mutation.safe) != 1:
+            raise AssertionError(f"{mutation.name} mutation must apply exactly once")
+        baseline = run_test(mutation.test, f"baseline-{mutation.name}")
+        if baseline.returncode != 0:
+            raise AssertionError(
+                f"{mutation.name} baseline failed\n{baseline.stdout}{baseline.stderr}"
+            )
+        try:
+            path.write_text(
+                text.replace(mutation.safe, mutation.unsafe, 1),
+                encoding="utf-8",
+                newline="",
+            )
+            mutated = run_test(mutation.test, mutation.name)
+            if mutated.returncode != 1:
+                raise AssertionError(
+                    f"{mutation.name} was not killed with pytest exit 1\n"
+                    f"{mutated.stdout}{mutated.stderr}"
+                )
+        finally:
+            path.write_bytes(originals[path])
+    for path, original in originals.items():
+        if path.read_bytes() != original:
+            raise AssertionError(f"mutation harness did not restore {path}")
+    print(f"M11 configuration-authority mutation check: {len(MUTATIONS)} mutations killed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

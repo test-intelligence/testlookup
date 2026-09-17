@@ -369,6 +369,25 @@ def test_status_and_attempts_are_read_from_the_pipeline_run():
     assert view["links"]["pipeline"] == f"/api/v1/agents/pipelines/{invocation.pipeline_run_id}"
 
 
+def test_invocation_view_discloses_only_its_sanitized_frozen_config():
+    from app.routers.agent_invoke import project_invocation
+
+    snapshot = {
+        "schema_version": 1,
+        "agent_id": "agent.summary.v1",
+        "source": "project",
+        "config_version": 7,
+        "patched": True,
+        "config": {"mode": "shadow", "tools": {"allowlist": []}},
+        "unavailable_tiers": ["llm"],
+    }
+    invocation = _invocation(resolved_config_snapshot=snapshot)
+    view = project_invocation(invocation, _pipeline(invocation), None)
+    assert view["config_snapshot"] == snapshot
+    assert "api_key" not in str(view["config_snapshot"])
+    assert "base_url" not in str(view["config_snapshot"])
+
+
 def test_a_settled_review_is_carried_with_its_link():
     from app.routers.agent_invoke import project_invocation
 

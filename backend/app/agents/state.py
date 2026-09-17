@@ -170,6 +170,8 @@ class WorkflowState(TypedDict):
     _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages
     workflow_plan: dict  # deterministic planner output for expected stage path
     initial_workflow_plan: dict  # immutable planner snapshot captured before execution
+    workflow_agent_configs: dict[str, dict]  # frozen compiler/runtime authority per capability
+    resolved_agent_configs: dict[str, dict]  # credential-free effective snapshots per capability
     workflow_verification: dict  # verifier checks comparing final state to plan
     agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)

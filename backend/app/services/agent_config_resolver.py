@@ -406,6 +406,30 @@ async def resolve_for_pipeline(
     snapshot = snapshots.get(agent_id) if isinstance(snapshots, dict) else None
     if isinstance(snapshot, dict):
         return await resolve_frozen_for_project(snapshot, expected_agent_id=agent_id)
+    # Older runs froze only the validated project document. Use it rather than
+    # silently re-reading a newer project row; current one-way environment
+    # ceilings and provider policy are still applied by ``resolve``.
+    workflow_configs = metadata.get("workflow_agent_configs")
+    frozen_config = (
+        workflow_configs.get(agent_id)
+        if isinstance(workflow_configs, dict)
+        else None
+    )
+    if isinstance(frozen_config, dict):
+        versions = metadata.get("agent_config_versions")
+        version = (
+            int(versions.get(agent_id, 0))
+            if isinstance(versions, dict)
+            else 0
+        )
+        resolved = resolve(
+            agent_id,
+            global_ai_config=await get_effective_ai_config(),
+            stored=frozen_config,
+            config_version=version,
+        )
+        await _apply_endpoint_residency(resolved)
+        return resolved
     return await resolve_for_project(db, project_id, agent_id)
 
 

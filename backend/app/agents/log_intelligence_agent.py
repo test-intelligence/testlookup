@@ -20,6 +20,7 @@ from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
     sanitize_reference_text,
 )
+from app.services.workflow_step_context import tool_allowed
 
 logger = structlog.get_logger("agents.log_intelligence")
 
@@ -101,6 +102,8 @@ class LogIntelligenceAgent(BaseAgent):
 
         # 1. Reconstruct distributed trace
         try:
+            if not tool_allowed("reconstruct_distributed_trace"):
+                raise PermissionError("tool_not_allowed: reconstruct_distributed_trace")
             trace_json = await reconstruct_distributed_trace.ainvoke({
                 "params_json": json.dumps({
                     "correlation_id": safe_correlation,
@@ -117,6 +120,8 @@ class LogIntelligenceAgent(BaseAgent):
 
         # 2. Detect log rate anomaly for primary service
         try:
+            if not tool_allowed("detect_log_rate_anomaly"):
+                raise PermissionError("tool_not_allowed: detect_log_rate_anomaly")
             anomaly_json = await detect_log_rate_anomaly.ainvoke({
                 "params_json": json.dumps({
                     "service_name": safe_service,

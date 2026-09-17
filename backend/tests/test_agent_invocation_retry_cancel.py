@@ -94,6 +94,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(router, "record_activity", AsyncMock())
     monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _u: "actor"))
     monkeypatch.setattr(router, "_current_mode_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(router, "_invocation_config_changed", AsyncMock(return_value=False))
     monkeypatch.setattr(router, "decide_retry_mode", lambda _meta, _snap: SimpleNamespace(is_rerun=False, reason="config_unchanged"))
 
     def _use(db):
@@ -172,6 +173,26 @@ async def test_retry_is_refused_when_the_configuration_changed(harness, monkeypa
 
     assert exc.value.status_code == 409
     assert exc.value.detail["reason"] == "config_changed" and "rerun" in exc.value.detail["links"]
+    assert db.order == []
+
+
+@pytest.mark.asyncio
+async def test_retry_is_refused_when_the_frozen_agent_config_changed(harness):
+    invocation = _invocation()
+    db = harness.use(_Db(invocation=invocation, pipeline=_pipeline(invocation)))
+    harness.router._invocation_config_changed.return_value = True
+
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(
+            invocation_id=invocation.id,
+            db=db,
+            current_user=_user(),
+            _=None,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "agent_config_changed"
+    assert exc.value.detail["links"]["rerun"].endswith("/invoke")
     assert db.order == []
 
 
