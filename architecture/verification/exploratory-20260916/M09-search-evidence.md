@@ -4,13 +4,13 @@
 identified scope, fallback, failure, pagination and session-safety defects are
 covered by executable regressions.
 
-**Window:** 2026-09-17T09:35Z–2026-09-17T10:35Z
+**Window:** 2026-09-17T09:35Z–2026-09-17T10:54Z
 
-**Final executable candidate:** `0da8f248ef0734e1bddc208f556e491c83001c11`,
-deployed before validation as `build-20260917-101919`, built at
-`2026-09-17T10:19:20Z`. `/health/version` reported the exact revision after all
+**Final executable candidate:** `0c8676967b4f2d85dbb121e06eda73e5646b8fad`,
+deployed before validation as `build-20260917-104804`, built at
+`2026-09-17T10:48:05Z`. `/health/version` reported the exact revision after all
 application and worker rollouts became ready. Image digests were
-`sha256:03bd2dc35ac5372c8f774b665854a2e06fbefd47f8aa32345744380559fda654`
+`sha256:4661a1230867954c7c5b4294923eaa80fc30ee3dcbd407eced7def92ddb0789d`
 for backend and workers,
 `sha256:7483ce9312282608799a9e1f18a417f57056ec4016ad1717c4932e9c5cfd1106`
 for frontend, and
@@ -38,7 +38,7 @@ instead of looking like valid empty evidence.
 
 ## Verification
 
-- 142 broad backend search tests plus 10 focused M09 regressions passed against
+- 190 broad backend search tests plus 10 focused M09 regressions passed against
   the exact deployed candidate, including
   empty/browse paths, punctuation escaping, Unicode, tenant and deleted-project
   scope, period filtering, fallback labeling, evidence lookup and pagination.
