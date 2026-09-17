@@ -117,7 +117,7 @@ MUTATIONS = (
         "backend/app/bootstrap.py",
         "    agent_invoke.stream_router,\n",
         "",
-        "backend/tests/test_agent_invocation_sync_sse.py::test_the_eventsource_route_is_not_hidden_behind_the_global_header_auth",
+        "backend/tests/test_agent_invocation_sync_sse.py::test_a_ticket_reaches_the_mounted_eventsource_without_auth_headers",
     ),
     Mutation(
         "sse-observable-change",

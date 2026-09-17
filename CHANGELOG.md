@@ -2,6 +2,16 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M12 invocation hardening now serializes creation per stored subject, keeps
+explicit idempotency keys from being silently discarded, and aligns durable
+key uniqueness with the documented user/project/agent route scope. Manual
+retry persists admission before dispatch, carries an attempt fence, and refuses
+cancelled runs. Cancellation is durable even before a worker creates its
+pipeline. Sync waiting reads immediately, OpenAPI publishes every bounded
+outcome, stream tickets retry token collisions, and SSE emits every public
+response change. The EventSource route now sits outside the global header-auth
+wrapper so its short-lived single-use ticket can actually authenticate it.
+
 M11 configuration-authority hardening now freezes the full sanitized resolved
 configuration before execution, reapplies live safety ceilings and eval-drift
 pins when restoring it, and refuses retry when project configuration has

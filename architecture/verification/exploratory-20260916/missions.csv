@@ -10,7 +10,7 @@ M08,P0,PARTIAL,M08-distribution-replay.md,EXP-BUG-023;EXP-BUG-024;EXP-BUG-025;EX
 M09,P1,PASS,M09-search-evidence.md,EXP-BUG-049;EXP-BUG-050;EXP-BUG-051;EXP-BUG-052;EXP-BUG-053;EXP-BUG-054;EXP-BUG-055;EXP-BUG-056,"Exact arbitrary-depth semantic and mixed-entity pagination remains a disclosed bounded lower-bound contract"
 M10,P1,PARTIAL,M10-rag-trust.md,EXP-BUG-057;EXP-BUG-058;EXP-BUG-059;EXP-BUG-060;EXP-BUG-061;EXP-BUG-062;EXP-BUG-063;EXP-BUG-064;EXP-BUG-065;EXP-BUG-066;EXP-BUG-067;EXP-BUG-068;EXP-BUG-069,"Positive ingest/generation and real-provider timeout blocked by zero homelab knowledge sources and no installed model; CLI/MCP RAG surfaces remain absent"
 M11,P0,PARTIAL,M11-config-authority.md,EXP-BUG-070;EXP-BUG-071;EXP-BUG-072;EXP-BUG-073;EXP-BUG-074;EXP-BUG-075;EXP-BUG-076;EXP-BUG-077;EXP-BUG-078;EXP-BUG-079;EXP-BUG-080;EXP-BUG-081,"Several accepted config fields remain capability-specific no-ops; no durable specialist tool ledger or CLI config/invoke surface; no real PostgreSQL write race"
-M12,P0,NOT_RUN,,,
+M12,P0,PASS,M12-invoke-streams.md,EXP-BUG-082;EXP-BUG-083;EXP-BUG-084;EXP-BUG-085;EXP-BUG-086;EXP-BUG-087;EXP-BUG-088,"Stream tickets are bearer capabilities authorized at issue time; structured payload invocation remains deferred"
 M13,P1,NOT_RUN,,,
 M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive outage injection
 M15,P1,NOT_RUN,,,

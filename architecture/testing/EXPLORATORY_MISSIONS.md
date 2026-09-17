@@ -385,6 +385,15 @@ poll fallback and four public statuses; canceled/rejected run not resurrected.
 **Observe/capture:** invocation/pipeline IDs, key hash, request counts, stream
 events, ticket status (never its secret), attempts and durable terminal result.
 
+**Execution 2026-09-17:** **PASS.** Exact candidate `e96b9de3` was deployed as
+`build-20260917-172252` before verification. Real PostgreSQL races proved
+active-invocation and idempotency uniqueness; the deployed journey proved
+async/sync completion, same-key replay, changed-body refusal, headerless SSE,
+single use, real Redis expiry, disconnect and polling recovery. Retry and
+pre-worker cancellation were hardened and mutation checked. Stream tickets are
+documented bearer capabilities authorized when issued; structured payload
+invocation remains the existing E1.2 follow-up.
+
 ## M13 — Custom workflow and reviewer governance (P1, workflow QA)
 
 **Preconditions:** built-ins, project configs and versioned draft fixtures;

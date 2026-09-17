@@ -419,3 +419,31 @@ def test_the_eventsource_route_is_not_hidden_behind_the_global_header_auth():
     }
     assert any("require_invocation_stream_ticket" in name for name in dependency_names)
     assert not any("get_current_user_or_api_key" in name for name in dependency_names)
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_reaches_the_mounted_eventsource_without_auth_headers(redis, monkeypatch):
+    """App-level regression for the 401 seen through the deployed ingress."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.routers import agent_invoke as router
+    from app.services import invocation_stream
+
+    invocation_id = uuid.uuid4()
+    ticket, _ = await invocation_stream.issue_stream_ticket(invocation_id, "user-1")
+
+    async def _one_event(_invocation_id, _request):
+        yield 'event: invocation\ndata: {"status":"passed"}\n\n'
+
+    monkeypatch.setattr(router, "invocation_event_stream", _one_event)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/agents/invocations/{invocation_id}/events",
+            params={"ticket": ticket},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.text.startswith("event: invocation")
