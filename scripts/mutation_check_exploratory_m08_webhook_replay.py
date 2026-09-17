@@ -17,6 +17,7 @@ TESTS = [
     "backend/tests/test_release_decided_webhook.py::test_an_override_is_announced_after_the_route_commits",
     "backend/tests/test_release_decided_webhook.py::test_override_webhook_does_not_require_an_immutable_agent_report",
     "backend/tests/test_release_decided_webhook.py::test_concurrent_override_emitters_keep_each_committed_snapshot",
+    "backend/tests/test_release_decided_webhook.py::test_override_emitter_refuses_a_mismatched_audit_timestamp",
     "backend/tests/test_release_decided_webhook.py::test_webhook_retry_rechecks_review_and_restores_the_original_decision",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_uses_its_exact_pipeline_review",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_retry_without_evidence_hash_fails_closed",
@@ -180,6 +181,18 @@ MUTATIONS = [
         "override-route-drops-committed-ordinal",
         "            override_ordinal=len(council.override_audit),\n",
         "            override_ordinal=None,\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "override-accepts-mismatched-audit-timestamp",
+        """                if str(committed_entry.get("timestamp")) != str(
+                    override_audit_timestamp
+                ):
+                    return 0
+""",
+        """                if False:
+                    return 0
+""",
     ),
 ]
 

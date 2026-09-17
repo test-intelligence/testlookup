@@ -5,9 +5,11 @@ The defect
 ``webhook_service.SUPPORTED_EVENTS`` listed ``release.decided``, and the webhook
 API accepted subscriptions to it, but no code path ever called ``emit_event``
 with it. A subscriber got a success response and then never received a delivery.
-A release decision is written in two places, and both now emit after their commit:
+A release decision is published in two places, and both now emit after the
+durable source artifact exists:
 
-* ``ReleaseRiskAgent._persist_decision`` (``trigger="agent"``);
+* ``DecisionReportCriticAgent`` after immutable report publication
+  (``trigger="agent"``);
 * ``POST /api/v1/release-readiness/{run_id}/override`` (``trigger="override"``).
 
 What is pinned
@@ -17,7 +19,8 @@ What is pinned
   payload a receiver is promised; a retried write stages nothing more;
 * a decision whose commit fails is never announced;
 * an override emits after the route's commit, marked ``overridden``, with no
-  reviewer or overrider identity; each override is its own delivery;
+  reviewer or overrider identity; each override carries its committed audit
+  ordinal, timestamp, and frozen council snapshot as its own delivery;
 * while ``REVIEW_GATE_ENFORCED`` is on, an unreviewed AI decision leaves as
   ``PENDING_REVIEW`` with the model's value in ``draft_recommendation``, and the
   webhook and the release-readiness response apply one rule;
@@ -609,6 +612,40 @@ async def test_concurrent_override_emitters_keep_each_committed_snapshot(world):
     assert payloads[0]["updated_at"] == first_at
     assert payloads[1]["updated_at"] == second_at
     assert world.decision_select_for_update is True
+
+
+@pytest.mark.asyncio
+async def test_override_emitter_refuses_a_mismatched_audit_timestamp(world):
+    committed_at = "2026-09-12T19:05:00+00:00"
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="authorized hotfix",
+        override_audit=[{"timestamp": committed_at, "after_recommendation": "GO"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp="2026-09-12T19:04:59+00:00",
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": [],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
 
 
 @pytest.mark.asyncio

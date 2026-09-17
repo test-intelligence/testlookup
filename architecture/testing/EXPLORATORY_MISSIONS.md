@@ -259,6 +259,29 @@ PR/MR comments currently originate before the AI pipeline and are not
 automatically reposted after acceptance; record this as a known gap rather than
 inventing a full Cartesian expectation.
 
+**Execution 2026-09-17:** **PARTIAL.** Exact executable candidate `b3a0d5ee`
+was deployed before final tests as `build-20260917-084451`. The final focused
+repair suite passed 251 tests, all six asserted mutation harnesses killed 48 wrong
+behaviors, Ruff passed, the mypy ratchet held at 369 errors, all 43 quality
+guards passed, and all 259 guard/ratchet self-tests passed. EXP-BUG-023 through
+EXP-BUG-048 fixed missing JSON draft marking/auditing, cross-version and
+cross-evidence authority, terminal narrative/verdict leakage, unauthorized or
+unaudited advisory release values, invented withheld release signals, false
+delivery audits, stale notification/webhook retries, and stale delivery history.
+Queued summaries and release webhooks now retain the exact pipeline-and-evidence
+subject; queued summaries also retain their immutable source bytes and release
+events use the immutable report's decision bytes after publication. Legacy rows
+without exact identity fail closed under enforcement. The `release.decided`
+sink and release-readiness API use the persisted decision pipeline, while human
+override events do not require an agent report. The shared homelab remains
+enforcement-off. Decision-row locking orders agent and override events, and each
+override retains its committed audit ordinal and snapshot. Immutable summary
+jobs no longer depend on a Mongo read. The homelab has no
+dedicated SMTP, Slack, Teams, public webhook, GitHub, or GitLab receiver, so the
+required real-sink bytes/counts remain blocked.
+Full record:
+`architecture/verification/exploratory-20260916/M08-distribution-replay.md`.
+
 ## M09 — Search and evidence retrieval (P1, search QA)
 
 **Preconditions:** indexed A/B corpus with known terms and citations; isolated

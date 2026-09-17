@@ -2,6 +2,34 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Distribution review authority now follows the exact immutable report subject
+through export, notification retry, and `release.decided` webhook retry. JSON
+draft exports carry their watermark and persist their distribution audit;
+rejected and superseded narratives are redacted; advisory release values require
+QA Lead or Admin authority and commit an actor-bound distribution audit. Queued
+notification and webhook deliveries recheck review state immediately before
+each provider attempt, audit only successful token-fenced delivery, and persist
+the exact bytes represented in delivery history. Immutable report and
+Investigator excerpts bind authority to pipeline plus evidence hash. Release
+readiness and webhooks use the persisted decision pipeline, terminal projections
+clear the original verdict, and withheld notifications no longer invent a
+release signal. Release webhooks also honour the project draft setting,
+watermark permitted drafts, and commit the distribution audit with a successful
+delivery transition. Queued summaries now carry their producing pipeline and
+evidence hash, and legacy rows without that identity fail closed under
+enforcement. Release events wait for the immutable DecisionReport and retain its
+evidence hash through retries. The relay rebuilds a neutral withheld prefix for
+legacy rows, while the summary worker no longer writes a pre-delivery audit.
+Queued summaries also freeze their original narrative bytes and AI provenance,
+so a later pipeline cannot replace the text authorized by the queued subject.
+Agent release events now originate only after immutable report publication,
+carry the critic's exact pipeline and evidence hash, and build their decision
+fields from that report. Human override events remain independent of agent
+report availability. Release-event staging now serializes on the decision row:
+an intervening human override suppresses a delayed model event, while concurrent
+overrides keep their own audit ordinal, timestamp and frozen council payload.
+Self-contained summary notifications no longer query Mongo before delivery.
+
 Human review authority now stays bound to the exact evidence and proposal-time
 mode a reviewer inspected. Changed evidence mints a new pending review instead
 of silently reusing an old ID; distinct Investigator subjects no longer

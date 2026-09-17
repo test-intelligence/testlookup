@@ -6,7 +6,7 @@ M04,P0,PASSED,M04-intelligence-release.md,EXP-BUG-013,
 M05,P0,BLOCKED,M05-defect-deduplication.md,,Dedicated Jira sandbox and fault-capable request journal are unavailable; all local and real-PostgreSQL variants passed
 M06,P0,PASSED,M06-release-decisions.md,EXP-BUG-014;EXP-BUG-015;EXP-BUG-016;EXP-BUG-017,
 M07,P0,PARTIAL,M07-review-authority.md,EXP-BUG-018;EXP-BUG-019;EXP-BUG-020;EXP-BUG-021;EXP-BUG-022,Dedicated enforcement-on stack unavailable; shared review enforcement remains off per owner rollout decision
-M08,P0,NOT_RUN,,,
+M08,P0,PARTIAL,M08-distribution-replay.md,EXP-BUG-023;EXP-BUG-024;EXP-BUG-025;EXP-BUG-026;EXP-BUG-027;EXP-BUG-028;EXP-BUG-029;EXP-BUG-030;EXP-BUG-031;EXP-BUG-032;EXP-BUG-033;EXP-BUG-034;EXP-BUG-035;EXP-BUG-036;EXP-BUG-037;EXP-BUG-038;EXP-BUG-039;EXP-BUG-040;EXP-BUG-041;EXP-BUG-042;EXP-BUG-043;EXP-BUG-044;EXP-BUG-045;EXP-BUG-046;EXP-BUG-047;EXP-BUG-048,"Shared enforcement remains off and no dedicated external delivery receivers are available for real-sink payload verification"
 M09,P1,NOT_RUN,,,
 M10,P1,NOT_RUN,,,
 M11,P0,NOT_RUN,,,
