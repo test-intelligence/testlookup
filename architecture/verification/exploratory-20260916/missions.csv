@@ -9,7 +9,7 @@ M07,P0,PARTIAL,M07-review-authority.md,EXP-BUG-018;EXP-BUG-019;EXP-BUG-020;EXP-B
 M08,P0,PARTIAL,M08-distribution-replay.md,EXP-BUG-023;EXP-BUG-024;EXP-BUG-025;EXP-BUG-026;EXP-BUG-027;EXP-BUG-028;EXP-BUG-029;EXP-BUG-030;EXP-BUG-031;EXP-BUG-032;EXP-BUG-033;EXP-BUG-034;EXP-BUG-035;EXP-BUG-036;EXP-BUG-037;EXP-BUG-038;EXP-BUG-039;EXP-BUG-040;EXP-BUG-041;EXP-BUG-042;EXP-BUG-043;EXP-BUG-044;EXP-BUG-045;EXP-BUG-046;EXP-BUG-047;EXP-BUG-048,"Shared enforcement remains off and no dedicated external delivery receivers are available for real-sink payload verification"
 M09,P1,PASS,M09-search-evidence.md,EXP-BUG-049;EXP-BUG-050;EXP-BUG-051;EXP-BUG-052;EXP-BUG-053;EXP-BUG-054;EXP-BUG-055;EXP-BUG-056,"Exact arbitrary-depth semantic and mixed-entity pagination remains a disclosed bounded lower-bound contract"
 M10,P1,PARTIAL,M10-rag-trust.md,EXP-BUG-057;EXP-BUG-058;EXP-BUG-059;EXP-BUG-060;EXP-BUG-061;EXP-BUG-062;EXP-BUG-063;EXP-BUG-064;EXP-BUG-065;EXP-BUG-066;EXP-BUG-067;EXP-BUG-068;EXP-BUG-069,"Positive ingest/generation and real-provider timeout blocked by zero homelab knowledge sources and no installed model; CLI/MCP RAG surfaces remain absent"
-M11,P0,NOT_RUN,,,
+M11,P0,PARTIAL,M11-config-authority.md,EXP-BUG-070;EXP-BUG-071;EXP-BUG-072;EXP-BUG-073;EXP-BUG-074;EXP-BUG-075;EXP-BUG-076;EXP-BUG-077;EXP-BUG-078;EXP-BUG-079;EXP-BUG-080,"Several accepted config fields remain capability-specific no-ops; no durable specialist tool ledger or CLI config/invoke surface; no real PostgreSQL write race"
 M12,P0,NOT_RUN,,,
 M13,P1,NOT_RUN,,,
 M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive outage injection

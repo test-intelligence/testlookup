@@ -2,6 +2,18 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M11 configuration-authority hardening now freezes the full sanitized resolved
+configuration before execution, reapplies live safety ceilings and eval-drift
+pins when restoring it, and refuses retry when project configuration has
+changed. Runtime tool permissions now constrain Root Cause ReAct, Contract,
+Log Intelligence, Flaky Sentinel, and Cluster tool calls; Root Cause cache reuse
+also requires the current frozen tool grant. Root Cause honors its configured
+failure-analysis cap. AgentConfig writes use optimistic concurrency throughout
+the API, web adapters, and automatic reviewer-quality writer. Mutation approval
+requires the exact accepted report subject and current `act` mode. Legacy
+Investigator/Fixer writes return 405 before body parsing, structured validation
+errors reach the UI, and MCP invocation views show the sanitized frozen config.
+
 Knowledge-grounded generation now requires project scope for non-admin chat,
 rechecks revoked session membership, filters every selected source regardless
 of list size, scopes session listings to current memberships, and requires an
