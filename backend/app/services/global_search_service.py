@@ -348,7 +348,9 @@ async def _search_suites(
     return [
         {
             "entity_type": "suite",
-            "entity_id": row.suite_name,
+            # Suite names are unique only within a project. The composite key
+            # keeps same-name rows distinct in API consumers and React lists.
+            "entity_id": f"{row.project_id}:{row.suite_name}",
             "title": row.suite_name,
             "subtitle": f"{row.test_count} test executions",
             "project_id": str(row.project_id),
@@ -420,14 +422,18 @@ async def _search_flaky_tests(
     # ``(fingerprint, project_id)`` so each project's flaky test is its own,
     # correctly-scoped entry. (For a single pinned project the tenant filter
     # already restricts to one project, so this is a no-op there.)
+    total_runs = func.count()
+    fail_count = func.count().filter(
+        TestCaseHistory.status.in_(["FAILED", "BROKEN"])
+    )
     stmt = (
         select(
             TestCaseHistory.test_fingerprint,
             TestRun.project_id.label("project_id"),
             func.max(TestCase.test_name).label("test_name"),
             func.max(TestCase.suite_name).label("suite_name"),
-            func.count().label("total_runs"),
-            func.count().filter(TestCaseHistory.status.in_(["FAILED", "BROKEN"])).label("fail_count"),
+            total_runs.label("total_runs"),
+            fail_count.label("fail_count"),
         )
         .join(TestCase, TestCaseHistory.test_case_id == TestCase.id)
         .join(TestRun, TestCaseHistory.test_run_id == TestRun.id)
@@ -437,7 +443,14 @@ async def _search_flaky_tests(
             Project.is_active.is_(True),
         )
         .group_by(TestCaseHistory.test_fingerprint, TestRun.project_id)
-        .having(func.count() >= 5)
+        # Filter the flaky-rate range before LIMIT. Filtering in Python after
+        # LIMIT could return fewer than the cap while eligible groups existed
+        # below it, making global search falsely mark the sample exact.
+        .having(
+            total_runs >= 5,
+            fail_count * 100 >= total_runs * 10,
+            fail_count * 100 <= total_runs * 90,
+        )
         .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
@@ -449,8 +462,7 @@ async def _search_flaky_tests(
     for row in rows:
         if row.total_runs > 0:
             rate = (row.fail_count / row.total_runs) * 100
-            if 10 <= rate <= 90:  # flaky range
-                results.append({
+            results.append({
                     "entity_type": "flaky_test",
                     "entity_id": row.test_fingerprint,
                     "title": row.test_name or row.test_fingerprint,
@@ -460,7 +472,7 @@ async def _search_flaky_tests(
                     "relevance_score": 0.55,
                     "match_reasons": ["Flaky test matching query"],
                     "metadata": {"failure_rate": round(rate, 1), "total_runs": row.total_runs, "suite_name": row.suite_name},
-                })
+            })
     return results
 
 

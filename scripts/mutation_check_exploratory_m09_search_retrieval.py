@@ -97,8 +97,26 @@ MUTATIONS = [
     (
         ROOT / "backend/app/services/semantic_search.py",
         "hybrid-later-pages-use-first-page-pool",
-        "    candidate_size = min(page * size * 2, 200)\n",
+        "    candidate_size = 200\n",
         "    candidate_size = min(size * 2, 200)\n",
+    ),
+    (
+        ROOT / "backend/app/services/global_search_service.py",
+        "suite-result-identity-collides-across-projects",
+        '            "entity_id": f"{row.project_id}:{row.suite_name}",\n',
+        '            "entity_id": row.suite_name,\n',
+    ),
+    (
+        ROOT / "backend/app/services/global_search_service.py",
+        "flaky-rate-filter-runs-after-limit",
+        '''        .having(
+            total_runs >= 5,
+            fail_count * 100 >= total_runs * 10,
+            fail_count * 100 <= total_runs * 90,
+        )
+''',
+        '''        .having(total_runs >= 5)
+''',
     ),
 ]
 

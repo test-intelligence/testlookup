@@ -99,6 +99,7 @@ async def test_suite_results_keep_project_identity_and_encode_their_link():
     group_by = str(statement).split("GROUP BY", 1)[1]
     assert "test_runs.project_id" in group_by
     assert results[0]["project_id"] == str(project_id)
+    assert results[0]["entity_id"] == f"{project_id}:{suite_name}"
     query = parse_qs(urlsplit(results[0]["navigation_url"]).query)
     assert query == {"name": [suite_name], "project_id": [str(project_id)]}
 
@@ -211,6 +212,20 @@ async def test_global_search_discloses_capped_adapter_sample(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_flaky_rate_filter_is_applied_before_adapter_limit():
+    from app.services.global_search_service import _search_flaky_tests
+
+    db = SimpleNamespace(execute=AsyncMock(return_value=_Rows([])))
+    await _search_flaky_tests(db, "checkout", None, None)
+
+    sql = str(db.execute.await_args.args[0])
+    having = sql.split("HAVING", 1)[1].split("LIMIT", 1)[0]
+    assert having.count("FILTER") >= 2
+    assert ">=" in having and "<=" in having
+    assert "test_case_history.status" in having
+
+
+@pytest.mark.asyncio
 async def test_hybrid_fetches_enough_candidates_for_requested_page(monkeypatch):
     from app.services import search_service, semantic_search
 
@@ -243,7 +258,7 @@ async def test_hybrid_fetches_enough_candidates_for_requested_page(monkeypatch):
         MagicMock(), q="checkout", page=3, size=2
     )
 
-    assert requested_sizes == [12]
+    assert requested_sizes == [200]
     assert len(items) == 2
-    assert total == 24
-    assert pages == 12
+    assert total == 400
+    assert pages == 200

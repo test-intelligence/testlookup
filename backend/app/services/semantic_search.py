@@ -1004,10 +1004,12 @@ async def hybrid_search(
     # timing-dependent). The two reads are independent, so serialising them
     # gives identical results without the concurrency hazard. (A genuinely
     # parallel version would need a second, isolated session.)
-    # Fetch enough candidates to cover the requested merged page. The old
-    # fixed ``size * 2`` pool made page 3 and later empty even when both
-    # providers had more matches. Keep the existing 200-result safety bound.
-    candidate_size = min(page * size * 2, 200)
+    # Every page must rank the SAME candidate universe. Expanding the pool by
+    # page lets newly fetched candidates re-rank ahead of earlier pages, which
+    # duplicates or skips rows as a user advances. Use the fixed 200-result
+    # bounded universe for stable pagination and disclose the lower-bound total
+    # in the router response.
+    candidate_size = 200
     keyword_results, kw_total, _ = await search_test_cases_query(
         db, q=q, page=1, size=candidate_size,
         project_id=project_id, status=status, days=days,

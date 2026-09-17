@@ -2,6 +2,15 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Search retrieval now preserves project identity for suite results, labels
+keyword fallback after vector-provider failure, serializes count queries on one
+request session, and propagates similar-search database failures. Hybrid search
+fetches enough bounded candidates for the requested page. Global, semantic and
+hybrid responses disclose bounded or failed-source totals as lower bounds, and
+the web, CLI and MCP consumers render that status instead of claiming exact
+counts. M09 records seven fixed defects with deployed, regression and mutation
+evidence.
+
 Distribution review authority now follows the exact immutable report subject
 through export, notification retry, and `release.decided` webhook retry. JSON
 draft exports carry their watermark and persist their distribution audit;

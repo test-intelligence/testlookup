@@ -299,6 +299,14 @@ deleted authority or arbitrary script execution; missing evidence explicit.
 index/relational discrepancy and opened evidence. Do not demand exact semantic
 ordering where the contract promises relevance rather than stable rank.
 
+**Execution 2026-09-17 (shipped):** PASS on exact deployed executable candidate
+`5e43ba14` (`build-20260917-095930`). EXP-BUG-049 through EXP-BUG-055 fixed
+single-session query overlap, false hybrid fallback labels, unreachable later
+hybrid pages, silent adapter/DB failures, cross-project suite collapse and
+false exact totals. Bounded semantic and mixed-entity retrieval remains bounded
+by design and now identifies counts as lower bounds. Full evidence:
+`architecture/verification/exploratory-20260916/M09-search-evidence.md`.
+
 ## M10 — RAG, knowledge and AI explanation trust (P1, evidence QA)
 
 **Preconditions:** controlled knowledge source and failed run; missing/conflicting
