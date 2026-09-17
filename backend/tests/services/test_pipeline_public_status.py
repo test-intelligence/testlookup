@@ -343,10 +343,22 @@ async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
         }
     }
     pipeline = _pipeline()
-    pipeline.execution_metadata = {
+    authority_metadata = {
         "workflow_agent_configs": {capability: {"mode": "suggest"}},
         "resolved_agent_configs": accepted_snapshot,
+        "endpoint_authority_fingerprints": {capability: "b" * 64},
+        "agent_config_versions": {capability: 9},
+        "prompt_versions": {"summary_system": "v1:abc"},
+        "runtime_versions": {"langgraph": "1.2.3"},
+        "cluster_child_settings": {"enabled": False, "max_members": 50},
+        "async_decision_report_supersession_enabled": True,
+        "contract_agent_settings": {"enabled": True},
+        "log_intelligence_settings": {"enabled": False},
+        "regression_watchman_settings": {"enabled": True},
+        "change_ownership_settings": {"enabled": False},
+        "defect_commander_settings": {"enabled": False},
     }
+    pipeline.execution_metadata = authority_metadata
     monkeypatch.setattr(
         workflow, "AsyncSessionLocal", lambda: _Session(pipeline, [_stage("summary")])
     )
@@ -367,6 +379,20 @@ async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
     )
 
     assert pipeline.execution_metadata["resolved_agent_configs"] == accepted_snapshot
+    for key in (
+        "endpoint_authority_fingerprints",
+        "agent_config_versions",
+        "prompt_versions",
+        "runtime_versions",
+        "cluster_child_settings",
+        "async_decision_report_supersession_enabled",
+        "contract_agent_settings",
+        "log_intelligence_settings",
+        "regression_watchman_settings",
+        "change_ownership_settings",
+        "defect_commander_settings",
+    ):
+        assert pipeline.execution_metadata[key] == authority_metadata[key]
 
 
 @pytest.mark.asyncio

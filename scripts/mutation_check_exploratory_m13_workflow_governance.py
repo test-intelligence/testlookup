@@ -269,6 +269,22 @@ MUTATIONS = (
         '            "base_url_sha256": None if True else (\n',
         "backend/tests/test_agent_config_resolver.py::test_endpoint_authority_fingerprint_binds_url_without_exposing_it",
     ),
+    Mutation(
+        "g4-terminal-preserves-endpoint-authority",
+        "backend/app/agents/workflow.py",
+        '                    "endpoint_authority_fingerprints": prior_metadata.get(\n'
+        '                        "endpoint_authority_fingerprints"\n'
+        '                    ) or {},\n',
+        '                    "endpoint_authority_fingerprints": {},\n',
+        "backend/tests/services/test_pipeline_public_status.py::test_finalize_preserves_the_invocation_config_authority",
+    ),
+    Mutation(
+        "g4-terminal-preserves-start-prompt-authority",
+        "backend/app/agents/workflow.py",
+        '                    "prompt_versions": prior_metadata.get("prompt_versions") or {},\n',
+        '                    "prompt_versions": _prompt_registry_versions(),\n',
+        "backend/tests/services/test_pipeline_public_status.py::test_finalize_preserves_the_invocation_config_authority",
+    ),
 )
 
 

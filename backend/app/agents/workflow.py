@@ -3484,6 +3484,8 @@ async def _create_pipeline_run(
         )
         _lease_token, _lease_fields = acquire_lease_fields()
         eval_checksum = current_eval_manifest_checksum()
+        prompt_versions = _prompt_registry_versions()
+        runtime_versions = _runtime_version_snapshot()
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
             **_lease_fields,
@@ -3528,6 +3530,8 @@ async def _create_pipeline_run(
                 "agent_config_versions": agent_config_versions,
                 "resolved_agent_configs": resolved_agent_configs,
                 "endpoint_authority_fingerprints": endpoint_authority_fingerprints,
+                "prompt_versions": prompt_versions,
+                "runtime_versions": runtime_versions,
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
@@ -3581,6 +3585,8 @@ async def _create_pipeline_run(
             "workflow_agent_configs": workflow_agent_configs,
             "resolved_agent_configs": resolved_agent_configs,
             "endpoint_authority_fingerprints": endpoint_authority_fingerprints,
+            "prompt_versions": prompt_versions,
+            "runtime_versions": runtime_versions,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
                 "contract_agent_settings": {"enabled": contract_agent_enabled},
@@ -3798,6 +3804,10 @@ async def _mark_pipeline_done(
                     "workflow_deadline_seconds": prior_metadata.get("workflow_deadline_seconds"),
                     "workflow_agent_configs": prior_metadata.get("workflow_agent_configs") or {},
                     "resolved_agent_configs": prior_metadata.get("resolved_agent_configs") or {},
+                    "endpoint_authority_fingerprints": prior_metadata.get(
+                        "endpoint_authority_fingerprints"
+                    ) or {},
+                    "agent_config_versions": prior_metadata.get("agent_config_versions") or {},
                     "eval_manifest_checksum": prior_metadata.get(
                         "eval_manifest_checksum"
                     ),
@@ -3836,10 +3846,31 @@ async def _mark_pipeline_done(
                         final_state.get("step_llm_budget")
                     )[0],
                     "cluster_child_settings": final_state.get(
-                        "cluster_child_settings", {}
+                        "cluster_child_settings",
+                        prior_metadata.get("cluster_child_settings", {}),
                     ),
                     "async_decision_report_supersession_enabled": bool(
-                        final_state.get("async_decision_report_supersession_enabled", False)
+                        final_state.get(
+                            "async_decision_report_supersession_enabled",
+                            prior_metadata.get(
+                                "async_decision_report_supersession_enabled", False
+                            ),
+                        )
+                    ),
+                    "contract_agent_settings": prior_metadata.get(
+                        "contract_agent_settings", {}
+                    ),
+                    "log_intelligence_settings": prior_metadata.get(
+                        "log_intelligence_settings", {}
+                    ),
+                    "regression_watchman_settings": prior_metadata.get(
+                        "regression_watchman_settings", {}
+                    ),
+                    "change_ownership_settings": prior_metadata.get(
+                        "change_ownership_settings", {}
+                    ),
+                    "defect_commander_settings": prior_metadata.get(
+                        "defect_commander_settings", {}
                     ),
                     "cluster_investigation_plan": sanitize_persistence_payload(
                         final_state.get("cluster_investigation_plan")
@@ -3849,8 +3880,8 @@ async def _mark_pipeline_done(
                     )[0],
                     **({"stage_quality": DEGRADED} if has_degraded_stages else {}),
                     "final_state_checksum_sha256": _canonical_checksum(final_state),
-                    "runtime_versions": _runtime_version_snapshot(),
-                    "prompt_versions": _prompt_registry_versions(),
+                    "runtime_versions": prior_metadata.get("runtime_versions") or {},
+                    "prompt_versions": prior_metadata.get("prompt_versions") or {},
                     "resume_attempt": prior_metadata.get("resume_attempt", 0),
                     "resume_started_at": prior_metadata.get("resume_started_at"),
                     "resume_source_pipeline_run_id": prior_metadata.get(
