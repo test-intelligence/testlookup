@@ -412,3 +412,241 @@ async def test_concurrent_release_overrides_preserve_both_audit_entries() -> Non
             )
         finally:
             await engine.dispose()
+
+
+async def test_agent_recompute_preserves_human_override() -> None:
+    """A later agent pass may refresh facts but must not erase the QA verdict."""
+    from app.agents import release_risk_agent
+    from app.models.postgres import AgentPipelineRun, Project, ReleaseDecision, TestRun
+
+    token = uuid.uuid4().hex
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as db:
+            db.add(Project(id=project_id, name=f"Recompute {token}", slug=f"recompute-{token}"))
+            db.add(
+                TestRun(
+                    id=run_id,
+                    project_id=project_id,
+                    build_number=f"recompute-{token}",
+                    jenkins_job="coverage-integration",
+                    status="completed",
+                )
+            )
+            await db.flush()
+            db.add(
+                AgentPipelineRun(
+                    id=pipeline_id,
+                    test_run_id=run_id,
+                    workflow_type="deep",
+                    status="completed",
+                )
+            )
+            db.add(
+                ReleaseDecision(
+                    test_run_id=run_id,
+                    pipeline_run_id=pipeline_id,
+                    recommendation="GO",
+                    risk_score=80,
+                    human_override="QA accepted the documented residual risk",
+                    original_recommendation="NO_GO",
+                    original_risk_score=80,
+                    override_audit=[{"reason": "QA accepted the documented residual risk"}],
+                )
+            )
+            await db.commit()
+
+        with patch.object(release_risk_agent, "AsyncSessionLocal", sessions), patch(
+            "app.services.release_decision_webhook.emit_release_decided",
+            AsyncMock(),
+        ):
+            await release_risk_agent.ReleaseRiskAgent()._persist_decision(
+                str(run_id),
+                str(pipeline_id),
+                {
+                    "recommendation": "CONDITIONAL_GO",
+                    "risk_score": 45,
+                    "blocking_issues": [],
+                    "conditions_for_go": ["Recheck after deployment"],
+                    "reasoning": "Fresh agent evidence is less severe.",
+                    "dimension_scores": {"user_impact": 20.0},
+                    "composite_risk": 45.0,
+                    "score_model_version": 1,
+                    "policy_id": None,
+                    "policy_evaluation": None,
+                },
+                {"pass_rate": 95.0},
+            )
+
+        async with sessions() as db:
+            decision = (
+                await db.execute(
+                    select(ReleaseDecision).where(ReleaseDecision.test_run_id == run_id)
+                )
+            ).scalar_one()
+            assert decision.recommendation == "GO"
+            assert decision.risk_score == 45
+            assert decision.human_override == "QA accepted the documented residual risk"
+            assert decision.original_recommendation == "NO_GO"
+            assert decision.original_risk_score == 80
+            assert decision.override_audit == [
+                {"reason": "QA accepted the documented residual risk"}
+            ]
+            assert decision.reasoning == "Fresh agent evidence is less severe."
+            assert decision.input_snapshot == {"pass_rate": 95.0}
+    finally:
+        primary_error = sys.exception()
+        try:
+            async with sessions() as db:
+                await db.execute(delete(Project).where(Project.id == project_id))
+                await db.commit()
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            warnings.warn(
+                f"recompute cleanup failed after primary failure: {cleanup_error!r}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
+        finally:
+            await engine.dispose()
+
+
+async def test_override_wins_when_agent_recompute_waits_on_its_row_lock() -> None:
+    """An override committed first must survive a waiting agent recomputation."""
+    from app.agents import release_risk_agent
+    from app.models.postgres import AgentPipelineRun, Project, ReleaseDecision, TestRun
+    from app.services import policy_evaluator_service
+    from app.services.release_council_service import apply_override
+
+    token = uuid.uuid4().hex
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    pipeline_id = uuid.uuid4()
+    engine = create_async_engine(_dsn(), pool_size=3, max_overflow=0)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    override_holds_lock = asyncio.Event()
+    release_override = asyncio.Event()
+
+    async def pause_after_override_lock(*_args, **_kwargs):
+        # apply_override resolves policy only after SELECT FOR UPDATE, so this
+        # pause proves recomputation waits behind the human transaction.
+        override_holds_lock.set()
+        await release_override.wait()
+        return None, "hardcoded"
+
+    async def override() -> None:
+        async with sessions() as db:
+            result = await apply_override(
+                run_id,
+                "GO",
+                "QA accepted the documented residual risk",
+                SimpleNamespace(id=None, username="qa-lead"),
+                db,
+            )
+            assert result is not None
+            await db.commit()
+
+    decision = {
+        "recommendation": "CONDITIONAL_GO",
+        "risk_score": 45,
+        "blocking_issues": [],
+        "conditions_for_go": ["Recheck after deployment"],
+        "reasoning": "Fresh agent evidence is less severe.",
+        "dimension_scores": {"user_impact": 20.0},
+        "composite_risk": 45.0,
+        "score_model_version": 1,
+        "policy_id": None,
+        "policy_evaluation": None,
+    }
+
+    try:
+        async with sessions() as db:
+            db.add(Project(id=project_id, name=f"Race {token}", slug=f"race-{token}"))
+            db.add(
+                TestRun(
+                    id=run_id,
+                    project_id=project_id,
+                    build_number=f"race-{token}",
+                    jenkins_job="coverage-integration",
+                    status="completed",
+                )
+            )
+            await db.flush()
+            db.add(
+                AgentPipelineRun(
+                    id=pipeline_id,
+                    test_run_id=run_id,
+                    workflow_type="deep",
+                    status="completed",
+                )
+            )
+            db.add(
+                ReleaseDecision(
+                    test_run_id=run_id,
+                    pipeline_run_id=pipeline_id,
+                    recommendation="NO_GO",
+                    risk_score=80,
+                    override_audit=[],
+                )
+            )
+            await db.commit()
+
+        with patch.object(
+            policy_evaluator_service,
+            "resolve_effective_policy",
+            pause_after_override_lock,
+        ), patch.object(release_risk_agent, "AsyncSessionLocal", sessions), patch(
+            "app.services.release_decision_webhook.emit_release_decided",
+            AsyncMock(),
+        ):
+            override_task = asyncio.create_task(override())
+            await asyncio.wait_for(override_holds_lock.wait(), timeout=2)
+            recompute_task = asyncio.create_task(
+                release_risk_agent.ReleaseRiskAgent()._persist_decision(
+                    str(run_id), str(pipeline_id), decision, {"pass_rate": 95.0}
+                )
+            )
+            await asyncio.sleep(0.1)
+            assert not recompute_task.done()
+            release_override.set()
+            await asyncio.gather(override_task, recompute_task)
+
+        async with sessions() as db:
+            stored = (
+                await db.execute(
+                    select(ReleaseDecision).where(ReleaseDecision.test_run_id == run_id)
+                )
+            ).scalar_one()
+            assert stored.recommendation == "GO"
+            assert stored.risk_score == 45
+            assert stored.human_override == "QA accepted the documented residual risk"
+            assert stored.original_recommendation == "NO_GO"
+            assert stored.original_risk_score == 80
+            assert len(stored.override_audit or []) == 1
+            assert stored.override_audit[0]["before_recommendation"] == "NO_GO"
+            assert stored.override_audit[0]["before_risk_score"] == 80
+            assert stored.override_audit[0]["after_recommendation"] == "GO"
+            assert stored.reasoning == "Fresh agent evidence is less severe."
+    finally:
+        release_override.set()
+        primary_error = sys.exception()
+        try:
+            async with sessions() as db:
+                await db.execute(delete(Project).where(Project.id == project_id))
+                await db.commit()
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            warnings.warn(
+                f"override/recompute race cleanup failed after primary failure: {cleanup_error!r}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
+        finally:
+            await engine.dispose()

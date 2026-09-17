@@ -5,6 +5,8 @@
 Concurrent release-readiness overrides now lock the persisted decision while
 appending its audit trail. Two QA decisions racing from stale pages therefore
 remain visible instead of the last commit silently erasing the first audit row.
+Agent recomputation now locks the same decision and refreshes the automated
+counterfactual without replacing an active human override.
 
 Added a repository-grounded GPT-5.6 Sol execution package with 26 live missions,
 specialized QA/developer/reviewer assignments, mandatory unit and deployed E2E

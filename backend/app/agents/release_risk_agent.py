@@ -591,13 +591,22 @@ class ReleaseRiskAgent(BaseAgent):
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
             existing = await db.execute(
-                select(ReleaseDecision).where(ReleaseDecision.test_run_id == test_run_id)
+                select(ReleaseDecision)
+                .where(ReleaseDecision.test_run_id == test_run_id)
+                .with_for_update()
             )
             record = existing.scalar_one_or_none()
             if record:
                 record.pipeline_run_id = uuid.UUID(str(pipeline_run_id))
-                record.recommendation = decision["recommendation"]
+                # Risk is an observed automated fact, not part of the human
+                # verdict. Keep it current even while the override stands.
                 record.risk_score = decision["risk_score"]
+                if record.human_override is None:
+                    record.recommendation = decision["recommendation"]
+                # Once an override exists, recommendation is the explicit human
+                # verdict and original_* remains its immutable pre-override
+                # snapshot. The row lock serializes this with apply_override,
+                # whichever transaction starts first.
                 record.blocking_issues = decision.get("blocking_issues", [])
                 record.conditions_for_go = decision.get("conditions_for_go", [])
                 record.reasoning = decision.get("reasoning", "")
