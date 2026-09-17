@@ -25,8 +25,10 @@ class _Session:
     def __init__(self, rows=None):
         self.rows = list(rows or [])
         self.flushes = 0
+        self.statements = []
 
     async def execute(self, stmt):
+        self.statements.append(stmt)
         p = stmt.compile().params
         if "test_run_id_1" in p:  # the "older pending in this scope" query
             found = [
@@ -130,15 +132,19 @@ async def test_an_unknown_project_gets_none_rather_than_a_guess():
 
 
 @pytest.mark.asyncio
-async def test_refinalizing_the_same_run_keeps_one_request_and_refreshes_its_payload():
+async def test_refinalizing_changed_evidence_supersedes_the_stale_pending_request():
     session, run = _Session(), _run()
     first = await _create(session, run, evidence=HASH_A)
 
     second = await _create(session, run, evidence=HASH_B)
 
-    assert second is first
-    assert len(session.rows) == 1
-    assert first.evidence_bundle_sha256 == HASH_B
+    assert second is not first
+    assert len(session.rows) == 2
+    assert first.evidence_bundle_sha256 == HASH_A
+    assert first.state == "superseded"
+    assert first.superseded_by == second.id
+    assert second.state == "pending_review"
+    assert second.evidence_bundle_sha256 == HASH_B
 
 
 @pytest.mark.asyncio
@@ -206,6 +212,30 @@ async def test_a_newer_run_never_overwrites_an_accepted_review():
     await _create(session, _run())
 
     assert older.state == "accepted", "an accepted review is history, not a draft to replace"
+
+
+@pytest.mark.asyncio
+async def test_distinct_investigations_keep_distinct_pending_reviews():
+    session = _Session()
+    first_run = _run(workflow="investigation")
+    second_run = _run(workflow="investigation")
+
+    first = await _create(session, first_run)
+    second = await _create(session, second_run)
+
+    assert first.state == "pending_review"
+    assert second.state == "pending_review"
+    assert first.subject_id != second.subject_id
+
+
+@pytest.mark.asyncio
+async def test_review_creation_locks_live_rows_before_refresh_or_supersession():
+    session, run = _Session(), _run()
+    await _create(session, run)
+
+    await _create(session, run)
+
+    assert session.statements[-1]._for_update_arg is not None
 
 
 @pytest.mark.asyncio

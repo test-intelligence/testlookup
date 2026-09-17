@@ -228,6 +228,30 @@ async def test_same_pipeline_resume_claim_is_idempotent_for_running_pipeline(mon
 
     assert await _claim_pipeline_resume("pipeline-1") is None
     assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_resume_cannot_resurrect_a_review_rejected_pipeline(monkeypatch):
+    pipeline = SimpleNamespace(
+        id="pipeline-1",
+        status="failed",
+        test_run_id="run-1",
+        workflow_type="deep",
+        execution_metadata={
+            "initial_workflow_plan": {"schema_version": 2, "stages": []},
+            "analysis_mode_resolution": {"requested": "rules", "resolved": "rules"},
+        },
+        error="review_rejected: missing_evidence",
+        cancel_requested=False,
+    )
+    session = _ResumeSession(pipeline, "project-1", [])
+    monkeypatch.setattr("app.agents.workflow.AsyncSessionLocal", lambda: session)
+
+    assert await _claim_pipeline_resume("pipeline-1") is None
+    assert pipeline.status == "failed"
+    assert session.commit_count == 0
+
+
 @pytest.mark.asyncio
 async def test_partial_replay_metadata_is_not_restored(monkeypatch):
     previous = SimpleNamespace(id="old-pipeline")

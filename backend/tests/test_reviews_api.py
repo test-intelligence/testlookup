@@ -45,9 +45,10 @@ def _review(**kw):
 
 
 class _DB:
-    def __init__(self, row=None, *, action_payloads=()):
+    def __init__(self, row=None, *, action_payloads=(), pipeline_metadata=None):
         self.row = row
         self.action_payloads = list(action_payloads)
+        self.pipeline_metadata = pipeline_metadata or {}
         self.flushed = False
         self.committed = False
 
@@ -58,7 +59,7 @@ class _DB:
         )
 
     async def get(self, _model, _row_id):
-        return SimpleNamespace(execution_metadata={})
+        return SimpleNamespace(execution_metadata=self.pipeline_metadata)
 
     async def flush(self):
         self.flushed = True
@@ -141,6 +142,32 @@ async def test_the_requester_cannot_review_their_own_act_mode_run(monkeypatch, t
             decision="accepted",
         )
     assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+
+
+@pytest.mark.asyncio
+async def test_frozen_act_proposal_cannot_self_review_after_live_mode_is_lowered(
+    monkeypatch, transitions
+):
+    reviewer = _user()
+    live = AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(mode="suggest")))
+    monkeypatch.setattr("app.services.agent_config_resolver.resolve_for_pipeline", live)
+    db = _DB(
+        action_payloads=[{"proposing_agent_id": "decision_report"}],
+        pipeline_metadata={
+            "workflow_agent_configs": {"decision_report": {"mode": "act"}}
+        },
+    )
+
+    with pytest.raises(svc.ReviewDecisionRefused) as exc:
+        await svc.settle_review(
+            db,
+            review=_review(requested_by=reviewer.id),
+            reviewer=reviewer,
+            decision="accepted",
+        )
+
+    assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+    live.assert_not_awaited()
 
 
 @pytest.mark.asyncio
