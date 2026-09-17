@@ -50,6 +50,8 @@ health check passed before verification began.
 - Ruff passed; mypy held at **369 errors in 114 files** (baseline 369); all
   **43** quality guards and **238** guard self-tests passed; generated Agent API
   documentation matched the OpenAPI schema.
+- Independent final review approved evidence head `0680c81e` after the refused
+  endpoint clamp regression and mutation closed its sole release-blocking finding.
 
 ## Remaining gaps
 
