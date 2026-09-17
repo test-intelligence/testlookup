@@ -14,6 +14,10 @@ export default function KnowledgeGenerationTab() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
 
+  return <KnowledgeGenerationProject key={projectId ?? 'no-project'} projectId={projectId} />
+}
+
+function KnowledgeGenerationProject({ projectId }: { projectId: string | null }) {
   const { data: ragStatus } = useRagStatus()
   const { data: sourcesData, isLoading: sourcesLoading } = useKnowledgeSources(projectId)
 
@@ -25,13 +29,11 @@ export default function KnowledgeGenerationTab() {
   const [result, setResult] = useState<RagGenerateResponse | null>(null)
   const projectEpoch = useRef(0)
 
-  useEffect(() => {
+  useEffect(() => () => {
+    // Invalidate requests owned by the unmounted project instance. The key on
+    // the child component also gives each project fresh local form state.
     projectEpoch.current += 1
-    setSelectedSourceIds([])
-    setRetrievedChunks([])
-    setResult(null)
-    setPromptText('')
-  }, [projectId])
+  }, [])
 
   if (!projectId) {
     return <EmptyState icon={<Search className="h-8 w-8" />} title="Select a project" description="Choose a project from the selector to use knowledge generation." />

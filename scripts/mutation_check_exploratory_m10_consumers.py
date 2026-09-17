@@ -37,8 +37,8 @@ MUTATIONS = (
     Mutation(
         "cross-project-state",
         "frontend/src/pages/test-management/KnowledgeGenerationTab.tsx",
-        "    setPromptText('')",
-        "    // prompt retained across projects",
+        "return <KnowledgeGenerationProject key={projectId ?? 'no-project'} projectId={projectId} />",
+        "return <KnowledgeGenerationProject projectId={projectId} />",
         "src/pages/test-management/KnowledgeGenerationTab.test.tsx",
     ),
 )
