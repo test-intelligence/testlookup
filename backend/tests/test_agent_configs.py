@@ -514,6 +514,11 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
     monkeypatch.setattr(
         agent_config_resolver,
+        "has_active_drift_pin",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        agent_config_resolver,
         "resolve_for_project",
         AsyncMock(side_effect=lambda _db, _project_id, agent_id: agent_config_resolver.resolve(
             agent_id, global_ai_config={}
@@ -585,6 +590,11 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         AsyncMock(return_value={"budgets": {}}),
     )
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "has_active_drift_pin",
+        AsyncMock(return_value=False),
+    )
     monkeypatch.setattr(
         agent_config_resolver,
         "resolve_for_project",
