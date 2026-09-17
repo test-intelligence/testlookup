@@ -56,6 +56,13 @@ async def get_release_decision(
     dimension scores, linked cluster insights, baseline diff, open defects,
     and override audit trail.
     """
+    if allow_advisory:
+        role = getattr(current_user.role, "value", current_user.role)
+        if role not in {UserRole.QA_LEAD.value, UserRole.ADMIN.value}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Advisory release values require the QA Lead role.",
+            )
     async with AsyncSessionLocal() as db:
         council = await get_release_council(run_id, db)
         if not council:

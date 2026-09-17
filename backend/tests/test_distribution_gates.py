@@ -272,6 +272,21 @@ def _user(role="QA_LEAD"):
 
 
 @pytest.mark.asyncio
+async def test_release_advisory_override_requires_qa_lead():
+    from app.routers.release_readiness import get_release_decision
+
+    with pytest.raises(HTTPException) as exc:
+        await get_release_decision(
+            RUN,
+            allow_advisory=True,
+            current_user=_user("QA_ENGINEER"),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Advisory release values require the QA Lead role."
+
+
+@pytest.mark.asyncio
 async def test_pdf_export_of_an_unreviewed_report_is_409_and_the_refusal_is_kept(pdf_route):
     from app.routers.reports import export_run_report_pdf
 
