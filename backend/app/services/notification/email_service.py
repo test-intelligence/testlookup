@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiosmtplib
 
@@ -84,6 +86,18 @@ _HEADER_ICONS = {
 }
 
 
+def _safe_dashboard_url(value: object) -> str:
+    """Return an escaped absolute HTTP(S) URL or a non-link sentinel."""
+    candidate = str(value or "").strip()
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return "#"
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return "#"
+    return escape(candidate, quote=True)
+
+
 def _build_html(
     title: str,
     body: str,
@@ -92,12 +106,14 @@ def _build_html(
 ) -> str:
     colour = _STATUS_COLOURS.get(event_type, "#3b82f6")
     icon = _HEADER_ICONS.get(event_type, "🔔")
-    dashboard_url = metadata.get("dashboard_url", "#")
-    build_number = metadata.get("build_number", "")
-    project_name = metadata.get("project_name", "")
+    dashboard_url = _safe_dashboard_url(metadata.get("dashboard_url"))
+    build_number = escape(str(metadata.get("build_number", "")))
+    project_name = escape(str(metadata.get("project_name", "")))
     pass_rate = metadata.get("pass_rate")
-    total_tests = metadata.get("total_tests", "")
-    failed_tests = metadata.get("failed_tests", "")
+    total_tests = escape(str(metadata.get("total_tests", "")))
+    failed_tests = escape(str(metadata.get("failed_tests", "")))
+    safe_title = escape(str(title))
+    safe_body = escape(str(body))
 
     stats_rows = ""
     if pass_rate is not None:
@@ -137,14 +153,14 @@ def _build_html(
         <!-- Header -->
         <tr>
           <td style="background:{colour};padding:20px 28px;">
-            <p style="margin:0;font-size:22px;font-weight:700;color:#fff;">{icon} {title}</p>
+            <p style="margin:0;font-size:22px;font-weight:700;color:#fff;">{icon} {safe_title}</p>
             {f'<p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.8);">{project_name}</p>' if project_name else ''}
           </td>
         </tr>
         <!-- Body -->
         <tr>
           <td style="padding:24px 28px;">
-            {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{body}</p>'}
+            {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{safe_body}</p>'}
             {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows and not metadata.get("executive_panel") else ''}
             {f'<a href="{dashboard_url}" style="display:inline-block;padding:10px 20px;background:{colour};color:#fff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">View in Dashboard →</a>' if dashboard_url != "#" else ''}
           </td>

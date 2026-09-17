@@ -26,6 +26,7 @@ class RetrievedChunk:
     relevance_score: float
     requirement_id: Optional[str]
     chunk_text_preview: Optional[str] = None
+    canonical_url: Optional[str] = None
 
 
 async def retrieve_chunks(
@@ -64,7 +65,7 @@ async def retrieve_chunks(
         pass  # handled below
 
     # Query ChromaDB
-    if source_ids and len(source_ids) <= 10:
+    if source_ids:
         # Per-source queries merged for precise filtering
         all_results: list[RetrievedChunk] = []
         for sid in source_ids:
@@ -104,14 +105,33 @@ async def retrieve_chunks(
     source_id_set = {c.source_id for c in chunks}
     if source_id_set:
         result = await db.execute(
-            select(KnowledgeSource.id, KnowledgeSource.title, KnowledgeSource.classification).where(
+            select(
+                KnowledgeSource.id,
+                KnowledgeSource.title,
+                KnowledgeSource.classification,
+                KnowledgeSource.canonical_url,
+            ).where(
                 KnowledgeSource.id.in_(source_id_set),
+                KnowledgeSource.project_id == project_id,
+                KnowledgeSource.is_archived.is_(False),
             )
         )
-        source_meta = {row.id: (row.title, row.classification or "internal") for row in result.all()}
+        source_meta = {
+            row.id: (
+                row.title,
+                row.classification or "internal",
+                row.canonical_url,
+            )
+            for row in result.all()
+        }
+        # PostgreSQL is authoritative for source lifecycle and tenancy. Stale
+        # or corrupted vectors must not survive a source archive/delete or
+        # borrow metadata from another project.
+        chunks = [chunk for chunk in chunks if chunk.source_id in source_meta]
         for chunk in chunks:
-            title, classification = source_meta.get(chunk.source_id, ("Unknown Source", "internal"))
+            title, classification, canonical_url = source_meta[chunk.source_id]
             chunk.source_title = title
+            chunk.canonical_url = canonical_url
 
             # RAG-13: Apply redaction to chunk text before it reaches the UI or LLM
             from app.services.rag_redaction_service import redact_chunk_text

@@ -156,6 +156,11 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
                     Citations
                   </button>
                 )}
+                {!hasCitations && result.generation_mode === 'grounded' && (
+                  <span className="text-xs text-[var(--status-broken)] ml-auto">
+                    No verified citations
+                  </span>
+                )}
               </div>
             </div>
           )

@@ -627,8 +627,8 @@ class TestBuildGroundedPrompt:
             _make_chunk(source_title="Confluence Page", requirement_id="REQ-2"),
         ]
         prompt = _build_grounded_prompt("Generate tests", chunks)
-        assert "Evidence 1" in prompt
-        assert "Evidence 2" in prompt
+        assert 'id="EVIDENCE-1"' in prompt
+        assert 'id="EVIDENCE-2"' in prompt
         assert "Jira PROJ-1" in prompt
         assert "Confluence Page" in prompt
         assert "AC-1" in prompt
@@ -646,28 +646,27 @@ class TestBuildGroundedPrompt:
         from app.services.rag_generation_service import _build_grounded_prompt
         chunk = _make_chunk(section_heading=None, requirement_id=None)
         prompt = _build_grounded_prompt("test", [chunk])
-        assert "Evidence 1" in prompt
-        assert " > " not in prompt.split("Evidence 1")[1].split("\n")[0]
+        assert 'id="EVIDENCE-1"' in prompt
 
 
 class TestCallLlmGenerate:
     @pytest.mark.asyncio
-    async def test_fallback_to_stubs_on_import_error(self):
-        from app.services.rag_generation_service import _call_llm_generate
+    async def test_import_error_is_an_explicit_provider_failure(self):
+        from app.services.rag_generation_service import RagGenerationUnavailable, _call_llm_generate
         with patch.dict("sys.modules", {"app.services.test_case_ai_agent": None}):
-            with patch("app.services.rag_generation_service._stub_generated_cases") as mock_stub:
-                mock_stub.return_value = [{"title": "Stub"}]
-                # Force ImportError
-                result = await _call_llm_generate("test prompt", None)
-                # Should get stub cases (either from mock or real stub)
-                assert isinstance(result, list)
+            with pytest.raises(RagGenerationUnavailable, match="provider is unavailable"):
+                await _call_llm_generate("test prompt", None)
 
     @pytest.mark.asyncio
     async def test_generation_config_appended_to_prompt(self):
         from app.services.rag_generation_service import _call_llm_generate
         config = {"test_type": "security", "priority": "high", "count": 5}
-        # Will fall back to stubs since test_case_ai_agent likely not importable
-        result = await _call_llm_generate("base prompt", config)
+        generated = [{"title": "Configured case"}]
+        with patch(
+            "app.services.test_case_ai_agent.ai_generate_test_cases",
+            AsyncMock(return_value=generated),
+        ):
+            result = await _call_llm_generate("base prompt", config)
         assert isinstance(result, list)
         assert len(result) >= 1
 
@@ -709,16 +708,23 @@ class TestBuildCitations:
             _build_citations,
         )
         chunks = [_make_chunk() for _ in range(10)]
-        cases = [{"title": "Case 1"}]
+        cases = [{
+            "title": "Case 1",
+            "evidence_ids": [f"EVIDENCE-{index}" for index in range(1, 11)],
+        }]
         citations = _build_citations(cases, chunks)
         assert len(citations) == MAX_CITATIONS_PER_CASE
 
     def test_citations_per_case(self):
         from app.services.rag_generation_service import _build_citations
         chunks = [_make_chunk()]
-        cases = [{"title": "Case 1"}, {"title": "Case 2"}, {"title": "Case 3"}]
+        cases = [
+            {"title": "Case 1", "evidence_ids": ["EVIDENCE-1"]},
+            {"title": "Case 2", "evidence_ids": ["EVIDENCE-1"]},
+            {"title": "Case 3", "evidence_ids": ["EVIDENCE-1"]},
+        ]
         citations = _build_citations(cases, chunks)
-        # Each case should get citations from chunks[:5]
+        # Each case explicitly binds itself to the first retrieved evidence item.
         case_indices = {c["case_index"] for c in citations}
         assert case_indices == {0, 1, 2}
 

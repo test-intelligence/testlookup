@@ -1499,6 +1499,13 @@ def require_session_access():
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this chat session",
             )
+        if not is_admin and session.project_id is not None:
+            accessible = await get_accessible_project_ids(db, current_user)
+            if accessible is not None and session.project_id not in accessible:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You no longer have access to this chat session's project",
+                )
         return session
 
     return _check

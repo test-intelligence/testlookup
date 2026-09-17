@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Bot, Loader2, Search, Settings, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -23,6 +23,15 @@ export default function KnowledgeGenerationTab() {
   const [generating, setGenerating] = useState(false)
   const [retrieving, setRetrieving] = useState(false)
   const [result, setResult] = useState<RagGenerateResponse | null>(null)
+  const projectEpoch = useRef(0)
+
+  useEffect(() => {
+    projectEpoch.current += 1
+    setSelectedSourceIds([])
+    setRetrievedChunks([])
+    setResult(null)
+    setPromptText('')
+  }, [projectId])
 
   if (!projectId) {
     return <EmptyState icon={<Search className="h-8 w-8" />} title="Select a project" description="Choose a project from the selector to use knowledge generation." />
@@ -66,6 +75,7 @@ export default function KnowledgeGenerationTab() {
       return
     }
     setRetrieving(true)
+    const requestEpoch = projectEpoch.current
     try {
       const res = await ragService.retrieve({
         project_id: projectId,
@@ -73,8 +83,10 @@ export default function KnowledgeGenerationTab() {
         source_ids: selectedSourceIds.length > 0 ? selectedSourceIds : undefined,
         top_k: 10,
       })
-      setRetrievedChunks(res.chunks)
-      toast.success(`Retrieved ${res.total} chunks`)
+      if (requestEpoch === projectEpoch.current) {
+        setRetrievedChunks(res.chunks)
+        toast.success(`Retrieved ${res.total} chunks`)
+      }
     } catch {
       toast.error('Retrieval failed')
     } finally {
@@ -85,6 +97,7 @@ export default function KnowledgeGenerationTab() {
   const handleGenerate = async () => {
     setGenerating(true)
     setResult(null)
+    const requestEpoch = projectEpoch.current
     try {
       const res = await ragService.generate({
         project_id: projectId,
@@ -92,8 +105,10 @@ export default function KnowledgeGenerationTab() {
         source_ids: selectedSourceIds,
         persist: true,
       })
-      setResult(res)
-      toast.success(`Generated ${res.test_cases.length} test cases`)
+      if (requestEpoch === projectEpoch.current) {
+        setResult(res)
+        toast.success(`Generated ${res.test_cases.length} test cases`)
+      }
     } catch (err: unknown) {
       // The api interceptor already shows a toast for non-422/404 errors,
       // so only add context when the interceptor message is generic.

@@ -7,6 +7,16 @@ interface Props {
   onClose: () => void
 }
 
+function safeSourceUrl(value: string | null | undefined): string | null {
+  if (!value) return null
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null
+  } catch {
+    return null
+  }
+}
+
 export default function CitationDrawer({ citations, caseIndex, onClose }: Props) {
   const caseCitations = citations.filter(c => c.case_index === caseIndex)
 
@@ -24,7 +34,9 @@ export default function CitationDrawer({ citations, caseIndex, onClose }: Props)
         {caseCitations.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)]">No citations for this case.</p>
         ) : (
-          caseCitations.map((cit, i) => (
+          caseCitations.map((cit, i) => {
+            const sourceUrl = safeSourceUrl(cit.canonical_url)
+            return (
             <div key={i} className="rounded-lg border border-[var(--color-border)] p-3 space-y-1.5">
               <div className="flex items-center gap-2">
                 <FileText className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
@@ -41,8 +53,19 @@ export default function CitationDrawer({ citations, caseIndex, onClose }: Props)
               {cit.chunk_text_preview && (
                 <p className="text-xs text-[var(--color-text-faint)] line-clamp-4">{cit.chunk_text_preview}</p>
               )}
+              {sourceUrl && (
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex text-xs text-[var(--color-link)] hover:underline"
+                >
+                  Open source
+                </a>
+              )}
             </div>
-          ))
+            )
+          })
         )}
       </div>
     </div>

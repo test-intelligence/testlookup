@@ -68,6 +68,10 @@ async def get_run_summaries(
             stmt = stmt.where(TestRun.project_id == uuid.UUID(project_id))
         except ValueError:
             pass
+    elif allowed_project_ids is not None:
+        # Match the Mongo half above. An empty membership set compiles to a
+        # false predicate; it must never fall through to the fleet query.
+        stmt = stmt.where(TestRun.project_id.in_(list(allowed_project_ids)))
 
     db_runs = (await db.execute(stmt)).scalars().all()
     stubs = []

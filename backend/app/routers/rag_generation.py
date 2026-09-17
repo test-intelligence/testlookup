@@ -78,6 +78,7 @@ async def rag_retrieve(
             chunk_text=c.chunk_text,
             relevance_score=c.relevance_score,
             requirement_id=c.requirement_id,
+            canonical_url=c.canonical_url,
         ) for c in chunks],
         total=len(chunks),
     )
@@ -100,16 +101,25 @@ async def rag_generate(
     # — or read RAG evidence from — a project they can't access. Verify before
     # the (write-capable) generation runs.
     await resolve_project_scope(db, current_user, str(payload.project_id))
-    from app.services.rag_generation_service import grounded_generate
-    result = await grounded_generate(
-        db,
-        project_id=payload.project_id,
-        prompt_text=payload.prompt_text,
-        source_ids=payload.source_ids,
-        generation_config=payload.generation_config,
-        current_user=current_user,
-        persist=payload.persist,
+    from app.services.rag_generation_service import (
+        RagEvidenceUnavailable,
+        RagGenerationUnavailable,
+        grounded_generate,
     )
+    try:
+        result = await grounded_generate(
+            db,
+            project_id=payload.project_id,
+            prompt_text=payload.prompt_text,
+            source_ids=payload.source_ids,
+            generation_config=payload.generation_config,
+            current_user=current_user,
+            persist=payload.persist,
+        )
+    except RagEvidenceUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RagGenerationUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return RagGenerateResponse(
         batch_id=result.batch_id,
         generation_mode=result.generation_mode,

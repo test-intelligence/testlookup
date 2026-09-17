@@ -2,6 +2,17 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Knowledge-grounded generation now requires project scope for non-admin chat,
+rechecks revoked session membership, filters every selected source regardless
+of list size, and treats PostgreSQL source lifecycle as authoritative over
+vectors. Prompts are redacted before persistence, retrieved instructions are
+neutralized, citations require explicit model evidence IDs, and prompt/output
+hashes plus source/citation provenance are recorded. Provider, object-storage
+and vector-index failures remain explicit instead of producing complete-looking
+stub cases or synced sources. Archived sources preserve citation lineage while
+retiring vectors, citation links permit only HTTP(S), notification HTML escapes
+untrusted values, and the browser clears stale generation state across projects.
+
 Search retrieval now preserves project identity for suite results, labels
 keyword fallback after vector-provider failure, serializes count queries on one
 request session, and propagates similar-search database failures. Hybrid search

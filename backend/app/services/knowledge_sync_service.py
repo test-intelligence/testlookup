@@ -264,19 +264,16 @@ async def store_raw_content(
 ) -> str:
     """Upload raw content to MinIO. Returns storage path."""
     key = f"{project_id}/{source_id}/{content.content_hash}.txt"
-    try:
-        from app.db.storage import get_storage_provider
-        storage = get_storage_provider()
-        await storage.put_object(
-            key=key,
-            content=content.raw_text.encode("utf-8"),
-            content_type="text/plain",
-            bucket=settings.KNOWLEDGE_DOCS_BUCKET,
-        )
-        return key
-    except Exception as exc:
-        logger.warning("minio_upload_failed", source_id=str(source_id), error=str(exc))
-        return f"upload_failed/{key}"
+    from app.db.storage import get_storage_provider
+
+    storage = get_storage_provider()
+    await storage.put_object(
+        key=key,
+        content=content.raw_text.encode("utf-8"),
+        content_type="text/plain",
+        bucket=settings.KNOWLEDGE_DOCS_BUCKET,
+    )
+    return key
 
 
 # ── Sync history ──────────────────────────────────────────────────────────────

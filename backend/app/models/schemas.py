@@ -4747,6 +4747,7 @@ class RetrievedChunkSchema(BaseModel):
     chunk_text: str
     relevance_score: float
     requirement_id: Optional[str] = None
+    canonical_url: Optional[str] = None
 
 
 class RagRetrieveResponse(BaseModel):
@@ -4773,6 +4774,7 @@ class CitationSchema(BaseModel):
     section_heading: Optional[str] = None
     chunk_text_preview: Optional[str] = None
     relevance_score: Optional[float] = None
+    canonical_url: Optional[str] = None
 
 
 class RagGenerateResponse(BaseModel):
