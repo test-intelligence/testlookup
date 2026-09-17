@@ -51,7 +51,7 @@ def world(monkeypatch):
     async def _envelope_for_subject(
         db, pipeline_run_id, *, ai_generated=True, evidence_bundle_sha256=None
     ):
-        assert pipeline_run_id == PIPELINE
+        assert uuid.UUID(str(pipeline_run_id)) == PIPELINE
         assert evidence_bundle_sha256 == EVIDENCE_HASH
         return _envelope(state.review)
 

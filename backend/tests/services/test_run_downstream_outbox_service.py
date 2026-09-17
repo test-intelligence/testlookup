@@ -1802,7 +1802,13 @@ async def test_terminal_success_repair_uses_completed_summary_stage(
     terminal_result.scalar_one_or_none.return_value = terminal_status
     summary_result = MagicMock()
     summary_result.scalar_one_or_none.return_value = uuid.uuid4()
-    db = SimpleNamespace(execute=AsyncMock(side_effect=[terminal_result, summary_result]))
+    evidence_result = MagicMock()
+    evidence_result.scalar_one_or_none.return_value = "e" * 64
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[terminal_result, summary_result, evidence_result]
+        )
+    )
     stage = AsyncMock(return_value=True)
     monkeypatch.setattr(service, "stage_ai_summary_notification_operation", stage)
 
@@ -1824,6 +1830,8 @@ async def test_terminal_success_repair_uses_completed_summary_stage(
         run_id=run_id,
         project_id=project_id,
         build_number="42",
+        pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256="e" * 64,
     )
 
 

@@ -38,13 +38,13 @@ MUTATIONS = [
     (
         ROOT / "backend/app/services/report_distribution_policy.py",
         "release-uses-newest-run-review",
-        """            await review_envelope_for_pipeline_subject(
-                db,
-                pipeline_run_id,
-                evidence_bundle_sha256=evidence_bundle_sha256,
-            )
+        """        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
+        )
 """,
-        '            await review_envelope_for_run(db, run_id, workflow_type="deep")\n',
+        '        envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")\n',
     ),
     (
         ROOT / "backend/app/services/report_distribution_policy.py",

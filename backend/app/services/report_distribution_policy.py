@@ -282,19 +282,18 @@ async def release_review_projection(
     must not leave as-is: an AI decision no human accepted and no human overrode,
     while the gate is enforced.
     """
-    envelope = (
-        not_ai_generated()
-        if synthesized
-        else (
-            await review_envelope_for_pipeline_subject(
-                db,
-                pipeline_run_id,
-                evidence_bundle_sha256=evidence_bundle_sha256,
-            )
-            if pipeline_run_id is not None
-            else await review_envelope_for_run(db, run_id, workflow_type="deep")
+    if synthesized:
+        envelope = not_ai_generated()
+    elif pipeline_run_id is None:
+        envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")
+    elif evidence_bundle_sha256 is None:
+        envelope = await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+    else:
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         )
-    )
     enforced = gate_enforced()
     unreviewed = (
         envelope.ai_generated

@@ -196,6 +196,8 @@ def world(monkeypatch):
     ):
         assert pipeline_run_id == PIPELINE
         state.seen_subjects.append((pipeline_run_id, evidence_bundle_sha256))
+        if evidence_bundle_sha256 == "":
+            return ReviewEnvelope(True, "pending_review", "pending_review", None)
         if state.review == "accepted":
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
         return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
