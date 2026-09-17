@@ -82,6 +82,7 @@ function item(overrides: Partial<WorkflowItem>): WorkflowItem {
       project_id: workflowId === 'offline' ? null : 'project-1',
       version: 1,
     },
+    definition_sha256: overrides.definition_sha256 ?? 'a'.repeat(64),
     status: overrides.status ?? 'draft',
     published_at: null,
     eval_verdict: overrides.eval_verdict ?? null,
@@ -130,6 +131,7 @@ describe('WorkflowEditorPage', () => {
       verdict: 'pass', status: 'pass', reason: 'ok', workflow_id: custom.workflow_id,
       version: 1, sample_count: 20, measured_steps: 40, expected_steps: 40,
       coverage: 1, regressions: [],
+      topology_measured: true,
     })
     vi.mocked(publishWorkflow).mockResolvedValue({ ...custom, status: 'published', read_only: true })
   })
@@ -180,6 +182,8 @@ describe('WorkflowEditorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
 
     await waitFor(() => expect(publishWorkflow).toHaveBeenCalledWith('project-1', 'wf.fast', {
+      version: 1,
+      definition_sha256: 'a'.repeat(64),
       accept_regression: true,
       reason: 'Reviewed against the release corpus',
     }))

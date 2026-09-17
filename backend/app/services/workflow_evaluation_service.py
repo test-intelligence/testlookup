@@ -107,6 +107,18 @@ def evaluate_replay(
     steps = list(definition.get("steps") or [])
     if not steps:
         raise WorkflowEvaluationConflict("workflow definition has no steps")
+    topology_measured = not (
+        definition.get("loops")
+        or any(
+            isinstance(edge, Mapping)
+            and (edge.get("when") is not None or edge.get("join") is not None)
+            for edge in definition.get("edges") or []
+        )
+        or any(
+            isinstance(step, Mapping) and bool(step.get("reviews"))
+            for step in steps
+        )
+    )
 
     measured = 0
     expected = len(cases) * len(steps)
@@ -197,7 +209,13 @@ def evaluate_replay(
                 "tolerance": REGRESSION_TOLERANCE,
             })
 
-    if len(cases) < MIN_REPLAY_RUNS or coverage < MIN_COVERAGE:
+    if not topology_measured:
+        verdict = EvalVerdict.INSUFFICIENT_SAMPLES
+        reason = (
+            "workflow replay does not measure branch, join, loop, or reviewer routing; "
+            "publication remains low-coverage evidence"
+        )
+    elif len(cases) < MIN_REPLAY_RUNS or coverage < MIN_COVERAGE:
         verdict = EvalVerdict.INSUFFICIENT_SAMPLES
         reason = (
             f"workflow replay needs at least {MIN_REPLAY_RUNS} runs and "
@@ -267,6 +285,7 @@ def evaluate_replay(
         "measured_steps": measured,
         "expected_steps": expected,
         "coverage": coverage,
+        "topology_measured": topology_measured,
         "manifest_checksum": manifest_checksum,
         "manifest": {**manifest, "manifest_checksum_sha256": manifest_checksum},
         "per_gate": {"G4": metrics},

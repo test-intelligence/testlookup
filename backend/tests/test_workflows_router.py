@@ -50,6 +50,20 @@ def _allow_semantic(monkeypatch) -> None:
     monkeypatch.setattr(workflows, "_require_semantic_validity", AsyncMock())
 
 
+def _publish_body(
+    row: WorkflowDefinition,
+    *,
+    accept_regression: bool = False,
+    reason: str | None = None,
+) -> svc.WorkflowPublishV1:
+    return svc.WorkflowPublishV1(
+        version=row.version,
+        definition_sha256=svc.definition_checksum(row.definition),
+        accept_regression=accept_regression,
+        reason=reason,
+    )
+
+
 def test_every_route_is_project_scoped_and_mutations_require_qa_lead() -> None:
     for route in workflows.router.routes:
         assert "{project_id}" in route.path
@@ -126,7 +140,7 @@ async def test_publish_refuses_measured_regression_without_override(monkeypatch)
         await workflows.publish_workflow(
             row.project_id,
             row.workflow_id,
-            svc.WorkflowPublishV1(),
+            _publish_body(row),
             db,
             actor,
             actor,
@@ -150,7 +164,8 @@ async def test_publish_records_reasoned_regression_acceptance(monkeypatch) -> No
     response = await workflows.publish_workflow(
         row.project_id,
         row.workflow_id,
-        svc.WorkflowPublishV1(
+        _publish_body(
+            row,
             accept_regression=True,
             reason="Accepted for a time-critical release",
         ),
@@ -193,7 +208,7 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
     response = await workflows.publish_workflow(
         row.project_id,
         row.workflow_id,
-        svc.WorkflowPublishV1(),
+        _publish_body(row),
         db,
         actor,
         actor,
@@ -223,7 +238,7 @@ async def test_publish_refuses_semantically_invalid_workflow_before_evaluation(m
         await workflows.publish_workflow(
             row.project_id,
             row.workflow_id,
-            svc.WorkflowPublishV1(),
+            _publish_body(row),
             db,
             actor,
             actor,
@@ -233,3 +248,57 @@ async def test_publish_refuses_semantically_invalid_workflow_before_evaluation(m
     assert exc.value.detail["errors"] == ["cycle"]
     evaluate.assert_not_awaited()
     assert row.status == "draft"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_refuses_to_mutate_a_published_version(monkeypatch) -> None:
+    row = _row(verdict="pass")
+    row.status = "published"
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    evaluate = AsyncMock()
+    monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows.evaluate_workflow(
+            row.project_id,
+            row.workflow_id,
+            svc.WorkflowEvaluateV1(version=row.version),
+            db,
+            actor,
+            actor,
+        )
+
+    assert exc.value.status_code == 409
+    evaluate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_publish_is_bound_to_selected_version_digest_and_exact_repeats_are_read_only(
+    monkeypatch,
+) -> None:
+    row = _row(verdict="pass")
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    semantic = AsyncMock()
+    monkeypatch.setattr(workflows, "_require_semantic_validity", semantic)
+
+    stale = _publish_body(row).model_copy(update={"definition_sha256": "0" * 64})
+    with pytest.raises(HTTPException) as exc:
+        await workflows.publish_workflow(
+            row.project_id, row.workflow_id, stale, db, actor, actor
+        )
+    assert exc.value.status_code == 409
+    assert "changed after validation" in exc.value.detail
+    semantic.assert_not_awaited()
+
+    row.status = "published"
+    original_evidence = (row.eval_verdict, row.eval_regression_accepted, row.evaluated_at)
+    response = await workflows.publish_workflow(
+        row.project_id, row.workflow_id, _publish_body(row), db, actor, actor
+    )
+    assert response["status"] == "published"
+    assert (row.eval_verdict, row.eval_regression_accepted, row.evaluated_at) == original_evidence
+    semantic.assert_not_awaited()

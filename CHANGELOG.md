@@ -2,6 +2,19 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M13 workflow governance now refuses registered capabilities that lack a runtime
+executor, treats missing conditional facts as an unmet branch, narrows custom
+step tools to the published declaration, and binds project, version, plan,
+definition, and frozen configurations into one resume-authority digest. Reviewer
+steps have one explicit bounded retry loop; final rejection stops execution,
+and blocking deterministic failures cannot be converted into
+`pass_with_flags`. Workflow publication now carries the selected version and
+definition digest, rejects stale drafts, keeps published evaluation evidence
+immutable, and makes exact repeat publication read-only. Replay evaluation
+marks control-flow topology as unmeasured instead of inferring it from cached
+step outputs. The workflow guide now matches the architecture's existing rule
+that insufficient samples may publish with visible low coverage.
+
 M12 invocation hardening now serializes creation per stored subject, keeps
 explicit idempotency keys from being silently discarded, and aligns durable
 key uniqueness with the documented user/project/agent route scope. Manual

@@ -380,6 +380,8 @@ export default function WorkflowEditorPage() {
         return
       }
       const published = await publishWorkflow(projectId, selected.workflow_id, {
+        version: selected.version,
+        definition_sha256: selected.definition_sha256,
         accept_regression: acceptRegression,
         reason: acceptRegression ? regressionReason.trim() : null,
       })
@@ -488,7 +490,7 @@ export default function WorkflowEditorPage() {
                     <button type="button" onClick={handleValidate} disabled={busy !== null || dirty} title={dirty ? 'Save changes before validating the stored version' : undefined} className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50 hover:bg-[var(--color-bg-hover)]">
                       <ShieldCheck className="h-3.5 w-3.5" /> Validate
                     </button>
-                    {isQaLead && !selected.built_in && (
+                    {isQaLead && !selected.built_in && selected.status === 'draft' && (
                       <button type="button" onClick={handleEvaluate} disabled={busy !== null || dirty} className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50 hover:bg-[var(--color-bg-hover)]">
                         <PlayCircle className="h-3.5 w-3.5" /> Run evaluation
                       </button>

@@ -43,7 +43,12 @@ describe('workflowService', () => {
     await validateWorkflow('p1', 'wf.fast', 2)
     await forkWorkflow('p1', 'offline', { workflow_id: 'wf.fast', name: 'Fast' }, 1)
     await evaluateWorkflow('p1', 'wf.fast', 2)
-    await publishWorkflow('p1', 'wf.fast', { accept_regression: true, reason: 'approved' })
+    await publishWorkflow('p1', 'wf.fast', {
+      version: 2,
+      definition_sha256: 'a'.repeat(64),
+      accept_regression: true,
+      reason: 'approved',
+    })
 
     expect(getData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows')
     expect(putData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows/wf.fast', body)
@@ -60,7 +65,12 @@ describe('workflowService', () => {
     )
     expect(postData).toHaveBeenCalledWith(
       '/api/v1/projects/p1/workflows/wf.fast/publish',
-      { accept_regression: true, reason: 'approved' },
+      {
+        version: 2,
+        definition_sha256: 'a'.repeat(64),
+        accept_regression: true,
+        reason: 'approved',
+      },
     )
   })
 })

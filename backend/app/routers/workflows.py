@@ -160,6 +160,7 @@ async def delete_workflow(
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> Response:
     _mutable(workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
     row = await _get(db, project_id, workflow_id)
     assert isinstance(row, WorkflowDefinition)
     item = svc.serialize(row)
@@ -194,8 +195,11 @@ async def evaluate_workflow(
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     _mutable(workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
     row = await _get(db, project_id, workflow_id, body.version)
     assert isinstance(row, WorkflowDefinition)
+    if row.status == "published":
+        raise _conflict(svc.WorkflowConflict("published workflow versions are immutable"))
     await _require_semantic_validity(db, project_id, row)
     try:
         result = await eval_svc.evaluate_definition(
@@ -234,8 +238,19 @@ async def publish_workflow(
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     _mutable(workflow_id)
-    row = await _get(db, project_id, workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
+    row = await _get(db, project_id, workflow_id, body.version)
     assert isinstance(row, WorkflowDefinition)
+    if svc.definition_checksum(row.definition) != body.definition_sha256:
+        raise _conflict(
+            svc.WorkflowConflict(
+                "workflow definition changed after validation; reload and validate the selected version"
+            )
+        )
+    if row.status == "published":
+        # An exact repeat is idempotent and cannot rewrite evaluation or
+        # acceptance evidence on the immutable published row.
+        return svc.serialize(row)
     await _require_semantic_validity(db, project_id, row)
     if row.status != "published" and row.eval_verdict is None:
         result = await eval_svc.evaluate_definition(
@@ -297,6 +312,7 @@ async def fork_workflow(
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
+    await svc.lock_definition(db, project_id, workflow_id)
     source = await _get(db, project_id, workflow_id, version)
     try:
         row = await svc.fork_definition(db, project_id, source, body, actor_id=current_user.id)

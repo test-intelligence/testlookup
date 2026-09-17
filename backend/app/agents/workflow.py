@@ -820,6 +820,15 @@ def _workflow_runtime_executors(
     executors: dict[str, Any] = {}
     steps = {step.id: step for step in body.steps}
     configs = agent_configs or {}
+    reviewer_loops = {
+        step.id: [
+            (index, loop)
+            for index, loop in enumerate(body.loops)
+            if loop.source == step.id and loop.to in step.reviews
+        ]
+        for step in body.steps
+        if step.agent_id == "agent.reviewer.v1"
+    }
     for step in body.steps:
         if step.agent_id == "agent.reviewer.v1":
             from app.agents.reviewer_agent import ReviewerAgent
@@ -859,7 +868,31 @@ def _workflow_runtime_executors(
                     "run_data": dict(state.get("test_run_data") or {}),
                     "analyses": dict(state.get("analyses") or {}),
                 }
-                return await ReviewerAgent().run({**state, "reviewer_input": reviewer_input})
+                loops = reviewer_loops.get(review_step.id, [])
+                counters = state.get("_workflow_loop_iterations") or {}
+                retry_count = max(
+                    (
+                        int(counters.get(f"loop_{index}", 0))
+                        for index, _loop in loops
+                    ),
+                    default=0,
+                )
+                max_iterations = max(
+                    (int(loop.max_iterations) for _index, loop in loops),
+                    default=0,
+                )
+                result = await ReviewerAgent().run({
+                    **state,
+                    "reviewer_input": reviewer_input,
+                    "review_retry_count": retry_count,
+                    "review_max_iterations": max_iterations,
+                })
+                supervisor = result.get("supervisor")
+                if isinstance(supervisor, dict) and supervisor.get("route") == "finalize":
+                    raise ValueError(str(supervisor.get("error_code") or "validation_failed"))
+                if isinstance(supervisor, dict) and supervisor.get("route") == "retry" and not loops:
+                    raise ValueError("validation_failed: reviewer retry loop missing")
+                return result
 
             executors[step.id] = _make_checkpointed_node(review_node, step.id)
             continue
@@ -883,6 +916,64 @@ def _definition_checksum(snapshot: dict[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _workflow_runtime_authority_checksum(
+    *,
+    project_id: str,
+    workflow_id: str,
+    workflow_version: int,
+    workflow_ref: str,
+    definition: dict[str, Any],
+    plan_sha256: str,
+    agent_configs: dict[str, Any],
+    resolved_agent_configs: dict[str, Any],
+) -> str:
+    """Bind every compiler/runtime policy input to the frozen workflow."""
+    return _canonical_checksum({
+        "project_id": project_id,
+        "workflow_id": workflow_id,
+        "workflow_version": workflow_version,
+        "workflow_ref": workflow_ref,
+        "definition": definition,
+        "plan_sha256": plan_sha256,
+        "agent_configs": agent_configs,
+        "resolved_agent_configs": resolved_agent_configs,
+    })
+
+
+def _workflow_runtime_authority_valid(setup: dict[str, Any]) -> bool:
+    project_id = setup.get("project_id")
+    workflow_id = setup.get("workflow_id")
+    workflow_version = setup.get("workflow_version")
+    workflow_ref = setup.get("workflow_ref")
+    snapshot = setup.get("workflow_definition")
+    plan_sha256 = setup.get("workflow_plan_sha256")
+    agent_configs = setup.get("workflow_agent_configs")
+    resolved = setup.get("resolved_agent_configs")
+    expected = setup.get("workflow_runtime_authority_sha256")
+    return bool(
+        isinstance(project_id, str)
+        and isinstance(workflow_id, str)
+        and isinstance(workflow_version, int)
+        and isinstance(workflow_ref, str)
+        and workflow_ref == f"{workflow_id}@{workflow_version}"
+        and isinstance(snapshot, dict)
+        and isinstance(plan_sha256, str)
+        and isinstance(agent_configs, dict)
+        and isinstance(resolved, dict)
+        and isinstance(expected, str)
+        and _workflow_runtime_authority_checksum(
+            project_id=project_id,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            workflow_ref=workflow_ref,
+            definition=snapshot,
+            plan_sha256=plan_sha256,
+            agent_configs=agent_configs,
+            resolved_agent_configs=resolved,
+        ) == expected
+    )
+
+
 def _compile_frozen_workflow(setup: dict[str, Any]) -> Any:
     from app.agents.workflow_compiler import compile_workflow
     from app.services.workflow_definition_service import WorkflowBodyV1
@@ -893,6 +984,8 @@ def _compile_frozen_workflow(setup: dict[str, Any]) -> Any:
         raise ValueError("workflow_definition_snapshot_missing")
     if _definition_checksum(snapshot) != expected:
         raise ValueError("workflow_definition_snapshot_mismatch")
+    if not _workflow_runtime_authority_valid(setup):
+        raise ValueError("workflow_runtime_authority_mismatch")
     body = WorkflowBodyV1.model_validate(snapshot)
     agent_configs = setup.get("workflow_agent_configs") or {}
     return compile_workflow(
@@ -907,13 +1000,19 @@ def _frozen_workflow_authority_valid(
 ) -> bool:
     snapshot = metadata.get("workflow_definition")
     digest = metadata.get("workflow_definition_sha256")
-    expected_ref = f"{metadata.get('workflow_id')}@{metadata.get('workflow_version')}"
+    workflow_id = metadata.get("workflow_id")
+    workflow_version = metadata.get("workflow_version")
+    expected_ref = f"{workflow_id}@{workflow_version}"
     return bool(
         isinstance(snapshot, dict)
         and isinstance(digest, str)
         and _definition_checksum(snapshot) == digest
         and metadata.get("workflow_ref") == expected_ref
         and metadata.get("workflow_plan_sha256") == compute_workflow_plan_hash(initial_plan)
+        and initial_plan.get("workflow_id") == workflow_id
+        and initial_plan.get("workflow_version") == workflow_version
+        and initial_plan.get("workflow_ref") == expected_ref
+        and _workflow_runtime_authority_valid(metadata)
     )
 
 
@@ -1560,6 +1659,9 @@ async def _claim_pipeline_resume(
             "workflow_definition": metadata.get("workflow_definition"),
             "workflow_definition_sha256": metadata.get("workflow_definition_sha256"),
             "workflow_plan_sha256": metadata.get("workflow_plan_sha256"),
+            "workflow_runtime_authority_sha256": metadata.get(
+                "workflow_runtime_authority_sha256"
+            ),
             "workflow_deadline_seconds": metadata.get("workflow_deadline_seconds"),
             "workflow_agent_configs": metadata.get("workflow_agent_configs") or {},
             "resolved_agent_configs": metadata.get("resolved_agent_configs") or {},
@@ -2047,9 +2149,13 @@ def _stage_tool_allowlist(
     capability_id = f"agent.{stage_name}.v1"
     plan = state.get("initial_workflow_plan") or {}
     stages = plan.get("stages", []) if isinstance(plan, dict) else []
+    declared_tools: list[str] | None = None
     for item in stages:
         if isinstance(item, dict) and item.get("stage") == stage_name:
             capability_id = str(item.get("capability_id") or capability_id)
+            raw_declared = item.get("tools")
+            if isinstance(raw_declared, list):
+                declared_tools = [str(tool) for tool in raw_declared]
             break
     resolved = state.get("resolved_agent_configs") or {}
     snapshot = resolved.get(capability_id) if isinstance(resolved, dict) else None
@@ -2063,7 +2169,14 @@ def _stage_tool_allowlist(
         )
     tools = config.get("tools") if isinstance(config, dict) else None
     allowlist = tools.get("allowlist") if isinstance(tools, dict) else None
-    return [str(item) for item in allowlist] if isinstance(allowlist, list) else None
+    configured = [str(item) for item in allowlist] if isinstance(allowlist, list) else None
+    workflow_id = str(plan.get("workflow_id") or "") if isinstance(plan, dict) else ""
+    if workflow_id.startswith("wf."):
+        # A custom step's declaration narrows its frozen project config.  An
+        # empty declaration means the step gets no tools.
+        configured_set = set(configured or [])
+        return [tool for tool in (declared_tools or []) if tool in configured_set]
+    return configured
 
 
 # Compile once at module load (compilation is expensive; instances are thread-safe)
@@ -3093,6 +3206,7 @@ async def _create_pipeline_run(
             planned.update({
                 "stage": step.id,
                 "capability_id": step.agent_id,
+                "tools": list(step.tools),
                 "dependencies": incoming[step.id],
                 "planned": bool(planned.get("planned", True))
                 and bool(workflow_agent_configs[step.agent_id]["enabled"]),
@@ -3106,9 +3220,6 @@ async def _create_pipeline_run(
             "workflow_ref": workflow_ref,
             "stages": selected_plan,
         }
-        plan_sha256 = compute_workflow_plan_hash(initial_plan)
-        initial_plan["plan_id"] = f"plan:{plan_sha256[:20]}"
-        initial_plan["plan_sha256"] = plan_sha256
         if frozen_config is not None and invocation_stage is not None:
             for planned_stage in initial_plan.get("stages", []):
                 if planned_stage.get("stage") != invocation_stage:
@@ -3136,6 +3247,21 @@ async def _create_pipeline_run(
                 )
                 planned_stage["budget"] = allocated
                 break
+        # Invocation-specific budget clamps are part of the executable plan,
+        # so freeze and hash only after every accepted clamp is applied.
+        plan_sha256 = compute_workflow_plan_hash(initial_plan)
+        initial_plan["plan_id"] = f"plan:{plan_sha256[:20]}"
+        initial_plan["plan_sha256"] = plan_sha256
+        workflow_runtime_authority_sha256 = _workflow_runtime_authority_checksum(
+            project_id=str(project_id),
+            workflow_id=body.workflow_id,
+            workflow_version=int(selected_item["version"]),
+            workflow_ref=workflow_ref,
+            definition=workflow_snapshot,
+            plan_sha256=plan_sha256,
+            agent_configs=workflow_agent_configs,
+            resolved_agent_configs=resolved_agent_configs,
+        )
         _lease_token, _lease_fields = acquire_lease_fields()
         eval_checksum = current_eval_manifest_checksum()
         db.add(AgentPipelineRun(
@@ -3166,6 +3292,7 @@ async def _create_pipeline_run(
                 "workflow_definition": workflow_snapshot,
                 "workflow_definition_sha256": workflow_sha256,
                 "workflow_plan_sha256": initial_plan["plan_sha256"],
+                "workflow_runtime_authority_sha256": workflow_runtime_authority_sha256,
                 "workflow_deadline_seconds": body.deadline_seconds,
                 "workflow_agent_configs": workflow_agent_configs,
                 "eval_manifest_checksum": eval_checksum,
@@ -3228,6 +3355,7 @@ async def _create_pipeline_run(
             "workflow_definition": workflow_snapshot,
             "workflow_definition_sha256": workflow_sha256,
             "workflow_plan_sha256": initial_plan["plan_sha256"],
+            "workflow_runtime_authority_sha256": workflow_runtime_authority_sha256,
             "workflow_deadline_seconds": body.deadline_seconds,
             "workflow_agent_configs": workflow_agent_configs,
             "resolved_agent_configs": resolved_agent_configs,
@@ -3418,6 +3546,9 @@ async def _mark_pipeline_done(
                     "workflow_definition": prior_metadata.get("workflow_definition"),
                     "workflow_definition_sha256": prior_metadata.get("workflow_definition_sha256"),
                     "workflow_plan_sha256": prior_metadata.get("workflow_plan_sha256"),
+                    "workflow_runtime_authority_sha256": prior_metadata.get(
+                        "workflow_runtime_authority_sha256"
+                    ),
                     "workflow_deadline_seconds": prior_metadata.get("workflow_deadline_seconds"),
                     "workflow_agent_configs": prior_metadata.get("workflow_agent_configs") or {},
                     "resolved_agent_configs": prior_metadata.get("resolved_agent_configs") or {},

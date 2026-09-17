@@ -26,6 +26,37 @@ def _body() -> WorkflowBodyV1:
     })
 
 
+def _authority(snapshot: dict, plan: dict) -> dict:
+    project_id = "00000000-0000-0000-0000-000000000004"
+    workflow_id = "wf.runtime.test"
+    workflow_version = 4
+    workflow_ref = f"{workflow_id}@{workflow_version}"
+    agent_configs: dict = {}
+    resolved_agent_configs: dict = {}
+    plan_sha256 = compute_workflow_plan_hash(plan)
+    return {
+        "project_id": project_id,
+        "workflow_id": workflow_id,
+        "workflow_version": workflow_version,
+        "workflow_ref": workflow_ref,
+        "workflow_definition": snapshot,
+        "workflow_definition_sha256": workflow._definition_checksum(snapshot),
+        "workflow_plan_sha256": plan_sha256,
+        "workflow_agent_configs": agent_configs,
+        "resolved_agent_configs": resolved_agent_configs,
+        "workflow_runtime_authority_sha256": workflow._workflow_runtime_authority_checksum(
+            project_id=project_id,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            workflow_ref=workflow_ref,
+            definition=snapshot,
+            plan_sha256=plan_sha256,
+            agent_configs=agent_configs,
+            resolved_agent_configs=resolved_agent_configs,
+        ),
+    }
+
+
 @pytest.mark.asyncio
 async def test_compiler_prefers_step_specific_executor_for_repeated_capability() -> None:
     calls: list[str] = []
@@ -57,15 +88,13 @@ async def test_compiler_prefers_step_specific_executor_for_repeated_capability()
 
 def test_resume_authority_rejects_definition_plan_and_version_mutations() -> None:
     snapshot = _body().model_dump(mode="json", by_alias=True)
-    plan = {"stages": [{"stage": "first_ingest"}], "workflow_ref": "wf.runtime.test@4"}
-    metadata = {
+    plan = {
         "workflow_id": "wf.runtime.test",
         "workflow_version": 4,
         "workflow_ref": "wf.runtime.test@4",
-        "workflow_definition": snapshot,
-        "workflow_definition_sha256": workflow._definition_checksum(snapshot),
-        "workflow_plan_sha256": compute_workflow_plan_hash(plan),
+        "stages": [{"stage": "first_ingest"}],
     }
+    metadata = _authority(snapshot, plan)
     assert workflow._frozen_workflow_authority_valid(metadata, plan)
 
     changed = deepcopy(metadata)
@@ -80,13 +109,29 @@ def test_resume_authority_rejects_definition_plan_and_version_mutations() -> Non
     changed_plan["stages"].append({"stage": "second_ingest"})
     assert not workflow._frozen_workflow_authority_valid(metadata, changed_plan)
 
+    changed = deepcopy(metadata)
+    changed["workflow_agent_configs"]["agent.ingestion.v1"] = {"mode": "act"}
+    assert not workflow._frozen_workflow_authority_valid(changed, plan)
+
+    coordinated = deepcopy(metadata)
+    coordinated["workflow_version"] = 5
+    coordinated["workflow_ref"] = "wf.runtime.test@5"
+    coordinated_plan = deepcopy(plan)
+    coordinated_plan["workflow_version"] = 5
+    coordinated_plan["workflow_ref"] = "wf.runtime.test@5"
+    coordinated["workflow_plan_sha256"] = compute_workflow_plan_hash(coordinated_plan)
+    assert not workflow._frozen_workflow_authority_valid(coordinated, coordinated_plan)
+
 
 def test_compile_frozen_workflow_refuses_tampered_snapshot() -> None:
     snapshot = _body().model_dump(mode="json", by_alias=True)
-    setup = {
-        "workflow_definition": snapshot,
-        "workflow_definition_sha256": workflow._definition_checksum(snapshot),
+    plan = {
+        "workflow_id": "wf.runtime.test",
+        "workflow_version": 4,
+        "workflow_ref": "wf.runtime.test@4",
+        "stages": [{"stage": "first_ingest"}],
     }
+    setup = _authority(snapshot, plan)
     assert workflow._compile_frozen_workflow(setup) is not None
 
     tampered = deepcopy(setup)
@@ -94,6 +139,28 @@ def test_compile_frozen_workflow_refuses_tampered_snapshot() -> None:
 
     with pytest.raises(ValueError, match="snapshot_mismatch"):
         workflow._compile_frozen_workflow(tampered)
+
+
+def test_custom_step_tools_narrow_the_frozen_project_allowlist() -> None:
+    state = {
+        "initial_workflow_plan": {
+            "workflow_id": "wf.runtime.test",
+            "stages": [{
+                "stage": "named_summary",
+                "capability_id": "agent.summary.v1",
+                "tools": ["list_run_failures"],
+            }],
+        },
+        "workflow_agent_configs": {
+            "agent.summary.v1": {
+                "tools": {"allowlist": ["list_run_failures", "search_logs"]},
+            },
+        },
+    }
+
+    assert workflow._stage_tool_allowlist(state, "named_summary") == [
+        "list_run_failures"
+    ]
 
 
 def test_checkpoint_restore_requires_exact_workflow_authority() -> None:
@@ -217,3 +284,58 @@ async def test_runtime_reviewer_binds_declared_output_and_frozen_policy(monkeypa
         "cluster_ids": ["cluster-1"],
         "artifact_ids": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_reviewer_applies_loop_count_and_stops_on_final_rejection(
+    monkeypatch,
+) -> None:
+    from app.agents.reviewer_agent import ReviewerAgent
+
+    body = WorkflowBodyV1.model_validate({
+        "workflow_id": "wf.runtime.review_reject",
+        "name": "Review reject",
+        "base": "offline",
+        "steps": [
+            {"id": "summary", "agent_id": "agent.summary.v1"},
+            {
+                "id": "review",
+                "agent_id": "agent.reviewer.v1",
+                "reviews": ["summary"],
+            },
+        ],
+        "edges": [
+            {"from": "summary", "to": "review"},
+            {"from": "review", "to": "__end__"},
+        ],
+        "loops": [{
+            "from": "review",
+            "to": "summary",
+            "when": {"field": "supervisor_route", "op": "eq", "value": "retry"},
+            "max_iterations": 1,
+        }],
+    })
+    seen: list[dict] = []
+
+    async def reject(_self, state):
+        seen.append(state)
+        return {
+            "supervisor": {"route": "finalize", "error_code": "validation_failed"},
+            "review_verdict": {"verdict": "reject"},
+        }
+
+    monkeypatch.setattr(ReviewerAgent, "run", reject)
+    raw = workflow._workflow_runtime_executors(body)["review"].__workflow_original_node__
+
+    with pytest.raises(ValueError, match="validation_failed"):
+        await raw({
+            "_workflow_loop_iterations": {"loop_0": 1},
+            "_workflow_step_outputs": {"summary": {}},
+            "failed_test_ids": [],
+            "failure_clusters": [],
+            "test_run_data": {},
+            "analyses": {},
+        })
+
+    assert seen[0]["review_retry_count"] == 1
+    assert seen[0]["review_max_iterations"] == 1

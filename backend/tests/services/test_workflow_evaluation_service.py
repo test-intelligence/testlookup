@@ -105,6 +105,28 @@ def test_fewer_than_twenty_runs_is_insufficient_even_with_full_coverage() -> Non
     assert "19 runs" in result["reason"]
 
 
+def test_replay_never_claims_to_measure_control_flow_from_cached_step_outputs() -> None:
+    definition = _definition()
+    definition["edges"] = [{
+        "from": "summary",
+        "to": "__end__",
+        "when": {"field": "fallback_used", "op": "is_true"},
+    }]
+
+    result = svc.evaluate_replay(
+        project_id=PROJECT_ID,
+        workflow_id="wf.custom.eval",
+        version=1,
+        definition=definition,
+        cases=[_case(index) for index in range(20)],
+    )
+
+    assert result["coverage"] == 1.0
+    assert result["topology_measured"] is False
+    assert result["verdict"] == "insufficient_samples"
+    assert "does not measure branch" in result["reason"]
+
+
 def _row(verdict: str) -> WorkflowDefinition:
     now = datetime.now(timezone.utc)
     return WorkflowDefinition(

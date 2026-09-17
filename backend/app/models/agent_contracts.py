@@ -199,6 +199,15 @@ class ReviewVerdictV1(BaseModel):
                 raise ValueError("pass is incompatible with a blocking disagreement")
             if self.hallucination_risk == "high":
                 raise ValueError("pass is incompatible with high hallucination risk")
+        elif self.verdict == "pass_with_flags" and any(
+            not check.passed
+            and check.severity == "blocking"
+            and check.family in {1, 2, 5}
+            for check in self.checks
+        ):
+            raise ValueError(
+                "pass_with_flags cannot continue after a blocking deterministic check fails"
+            )
         elif not self.requires_human_review:
             raise ValueError("a non-pass verdict requires human review")
         if (

@@ -56,7 +56,12 @@ export function evaluateWorkflow(
 export function publishWorkflow(
   projectId: string,
   workflowId: string,
-  body: { accept_regression: boolean; reason?: string | null },
+  body: {
+    version: number
+    definition_sha256: string
+    accept_regression: boolean
+    reason?: string | null
+  },
 ): Promise<WorkflowItem> {
   return postData(`${base(projectId)}/${workflowId}/publish`, body)
 }
