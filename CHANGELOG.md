@@ -6,7 +6,10 @@ Concurrent release-readiness overrides now lock the persisted decision while
 appending its audit trail. Two QA decisions racing from stale pages therefore
 remain visible instead of the last commit silently erasing the first audit row.
 Agent recomputation now locks the same decision and refreshes the automated
-counterfactual without replacing an active human override.
+risk and evidence without replacing an active human override or rewriting its
+immutable pre-override snapshot. Release read-axis source regressions now strip
+function docstrings by AST location, so the explanatory prose cannot make the
+correct executable predicate fail its own test.
 
 Added a repository-grounded GPT-5.6 Sol execution package with 26 live missions,
 specialized QA/developer/reviewer assignments, mandatory unit and deployed E2E
