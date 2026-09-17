@@ -64,8 +64,8 @@ MUTATIONS = (
     Mutation(
         "blocking-review-check",
         "backend/app/models/agent_contracts.py",
-        '        elif self.verdict == "pass_with_flags" and any(\n',
-        '        elif False and self.verdict == "pass_with_flags" and any(\n',
+        '        if self.verdict in {"pass", "pass_with_flags"} and any(\n',
+        '        if False and self.verdict in {"pass", "pass_with_flags"} and any(\n',
         "backend/tests/agents/test_reviewer_agent.py::test_pass_with_flags_cannot_override_a_blocking_deterministic_failure",
     ),
     Mutation(
