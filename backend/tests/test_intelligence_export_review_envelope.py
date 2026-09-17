@@ -40,7 +40,8 @@ async def test_the_export_carries_the_review_envelope(monkeypatch):
     )
     monkeypatch.setattr(router, "record_distribution", AsyncMock())
 
-    response = await router.export_intelligence_report(run_id=run_id, mode="manager", db=object(), _=None)
+    db = SimpleNamespace(commit=AsyncMock())
+    response = await router.export_intelligence_report(run_id=run_id, mode="manager", db=db, _=None)
 
     body = json.loads(response.body)
     assert body["requires_human_review"] is True
@@ -122,6 +123,7 @@ async def test_allowed_pending_intelligence_export_carries_the_draft_watermark(m
         watermark=DRAFT_WATERMARK,
         enforced=True,
     )
+    db = SimpleNamespace(commit=AsyncMock())
     monkeypatch.setattr(router, "get_mongo_db", lambda: None)
     monkeypatch.setattr(
         router, "get_run_intelligence", AsyncMock(return_value=intelligence)
@@ -136,10 +138,11 @@ async def test_allowed_pending_intelligence_export_carries_the_draft_watermark(m
     )
 
     response = await router.export_intelligence_report(
-        run_id=run_id, mode="manager", db=object(), _=None
+        run_id=run_id, mode="manager", db=db, _=None
     )
 
     body = json.loads(response.body)
     assert body["draft_watermark"] == DRAFT_WATERMARK
     assert body["summary"] == "Unreviewed AI text."
     assert body["decision_report"]["recommendation"] == "NO_GO"
+    db.commit.assert_awaited_once()

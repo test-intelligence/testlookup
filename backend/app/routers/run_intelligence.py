@@ -366,8 +366,10 @@ async def export_intelligence_report(
         project_id=project_id,
         actor=_,
     )
+    # The request session rolls back on close unless this audit record is
+    # committed. Persist both allowed and refused decisions before returning.
+    await db.commit()
     if not distribution.allowed:
-        await db.commit()
         raise HTTPException(status_code=409, detail=refusal_detail(distribution))
     if distribution.watermark:
         # JSON exports cannot rely on a renderer to add the visible DRAFT
