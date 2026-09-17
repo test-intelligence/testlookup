@@ -698,6 +698,15 @@ async def _finalize(
     from app.services.agent_investigation_service import record_agent_run
 
     async with AsyncSessionLocal() as db:
+        # Retention and project reset delete TestRun before cascading to an
+        # investigation. Match that parent-before-child lock order before the
+        # review service re-locks the parent to serialize first-subject inserts.
+        await db.execute(
+            select(TestRun.id)
+            .join(AgentInvestigation, AgentInvestigation.run_id == TestRun.id)
+            .where(AgentInvestigation.id == uuid.UUID(investigation_id))
+            .with_for_update(of=TestRun)
+        )
         row = (
             await db.execute(
                 select(AgentInvestigation)

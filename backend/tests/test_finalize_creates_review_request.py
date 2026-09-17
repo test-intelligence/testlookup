@@ -35,11 +35,16 @@ class _Result:
 
 
 class _Session:
-    """Execute order in _mark_pipeline_done: the run, its stages, then (for a
-    report run with no final_state) the owning project. Everything after is empty."""
+    """Execute order: parent lock, run lock, stages, then owning project."""
 
     def __init__(self, pipeline, stages, project_id=PROJECT):
-        self._results = [_Result(scalar=pipeline), _Result(scalars=stages), _Result(scalar=project_id)]
+        self._results = [
+            _Result(scalar=pipeline.test_run_id),
+            _Result(scalar=pipeline),
+            _Result(scalars=stages),
+            _Result(scalar=project_id),
+        ]
+        self.statements = []
         self.committed = False
 
     async def __aenter__(self):
@@ -49,6 +54,7 @@ class _Session:
         return False
 
     async def execute(self, _statement):
+        self.statements.append(_statement)
         return self._results.pop(0) if self._results else _Result()
 
     def add(self, _row):
@@ -105,6 +111,17 @@ async def test_a_completed_report_run_stages_its_review_request(monkeypatch):
     assert kwargs["report_stage_names"] == ["summary"]
     assert kwargs["requested_by"] == pipeline.requested_by
     assert session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_locks_test_run_before_pipeline(monkeypatch):
+    _, session, _ = await _finalize(monkeypatch, [_stage("summary")])
+
+    first, second = session.statements[:2]
+    assert "JOIN agent_pipeline_runs" in str(first)
+    assert first._for_update_arg is not None
+    assert second._for_update_arg is not None
+    assert "JOIN agent_pipeline_runs" not in str(second)
 
 
 @pytest.mark.asyncio

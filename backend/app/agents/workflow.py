@@ -3221,9 +3221,22 @@ async def _mark_pipeline_done(
             retry_pending_stage_settlements,
         )
 
+        parent_query = (
+            sa_select(TestRun.id)
+            .join(AgentPipelineRun, AgentPipelineRun.test_run_id == TestRun.id)
+            .where(AgentPipelineRun.id == pipeline_run_id)
+        )
         query = sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
         if fencing_token is not None:
+            parent_query = parent_query.where(
+                AgentPipelineRun.fencing_token == fencing_token
+            )
             query = query.where(AgentPipelineRun.fencing_token == fencing_token)
+        # Retention and project reset delete the parent TestRun before their FK
+        # cascades reach this pipeline. Take the same parent-before-child order
+        # here so finalization cannot deadlock a concurrent delete while review
+        # creation serializes first inserts in this run scope.
+        await db.execute(parent_query.with_for_update(of=TestRun))
         result = await db.execute(query.with_for_update())
         run = result.scalar_one_or_none()
         if run is None and fencing_token is not None:

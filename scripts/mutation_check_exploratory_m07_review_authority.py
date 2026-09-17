@@ -21,6 +21,20 @@ class Mutation:
 
 MUTATIONS = (
     Mutation(
+        "ordinary finalizer parent-first lock order",
+        "backend/app/agents/workflow.py",
+        """        # Retention and project reset delete the parent TestRun before their FK\n        # cascades reach this pipeline. Take the same parent-before-child order\n        # here so finalization cannot deadlock a concurrent delete while review\n        # creation serializes first inserts in this run scope.\n        await db.execute(parent_query.with_for_update(of=TestRun))\n""",
+        "",
+        ("tests/test_finalize_creates_review_request.py::test_finalize_locks_test_run_before_pipeline",),
+    ),
+    Mutation(
+        "investigator finalizer parent-first lock order",
+        "backend/app/agents/investigator/workflow.py",
+        """        # Retention and project reset delete TestRun before cascading to an\n        # investigation. Match that parent-before-child lock order before the\n        # review service re-locks the parent to serialize first-subject inserts.\n        await db.execute(\n            select(TestRun.id)\n            .join(AgentInvestigation, AgentInvestigation.run_id == TestRun.id)\n            .where(AgentInvestigation.id == uuid.UUID(investigation_id))\n            .with_for_update(of=TestRun)\n        )\n""",
+        "",
+        ("tests/test_investigator_workflow.py::test_completed_investigator_stages_review_for_its_narrative",),
+    ),
+    Mutation(
         "stable parent scope lock",
         "backend/app/services/review_request_service.py",
         """    if test_run_id is not None:\n        await db.execute(\n            select(TestRun.id).where(TestRun.id == test_run_id).with_for_update()\n        )\n\n""",

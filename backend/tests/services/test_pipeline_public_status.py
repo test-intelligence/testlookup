@@ -129,10 +129,14 @@ class _Result:
 
 
 class _Session:
-    """First execute loads the run, second its stages, the rest are empty."""
+    """First execute locks the parent, second the run, third its stages."""
 
     def __init__(self, pipeline, stages):
-        self._results = [_Result(scalar=pipeline), _Result(scalars=stages)]
+        self._results = [
+            _Result(scalar=pipeline.test_run_id),
+            _Result(scalar=pipeline),
+            _Result(scalars=stages),
+        ]
         self.committed = False
 
     async def __aenter__(self):
