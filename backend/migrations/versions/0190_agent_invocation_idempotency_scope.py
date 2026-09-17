@@ -37,7 +37,38 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The wider scope intentionally permits the same user/key pair on several
+    # projects or agent routes.  The legacy index cannot represent that.  Keep
+    # every invocation row and deterministically retain the key on the oldest
+    # row; older code treats the NULL keys as non-idempotent history.
+    op.execute(
+        sa.text(
+            """
+            WITH ranked AS (
+                SELECT id,
+                       row_number() OVER (
+                           PARTITION BY requested_by, idempotency_key
+                           ORDER BY created_at, id
+                       ) AS collision_rank
+                FROM agent_invocations
+                WHERE requested_by IS NOT NULL AND idempotency_key IS NOT NULL
+            )
+            UPDATE agent_invocations AS invocation
+            SET idempotency_key = NULL
+            FROM ranked
+            WHERE invocation.id = ranked.id AND ranked.collision_rank > 1
+            """
+        )
+    )
     with op.get_context().autocommit_block():
+        # A failed concurrent build can leave an invalid index with this name.
+        # Remove it before IF NOT EXISTS so a retry cannot silently keep it.
+        op.drop_index(
+            OLD_INDEX,
+            table_name="agent_invocations",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
         op.create_index(
             OLD_INDEX,
             "agent_invocations",

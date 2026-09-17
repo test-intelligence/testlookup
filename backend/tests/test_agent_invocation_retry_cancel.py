@@ -325,6 +325,8 @@ async def test_a_lost_dispatch_is_sent_again_with_a_fresh_dispatch_clock(harness
     assert invocation.dispatched_at > old
     assert view["status"] == "in_progress"
     assert harness.router.record_activity.await_args.kwargs["context"]["mode"] == "redispatch"
+    invocation_select = next(s for s in db.statements if "FROM agent_invocations" in str(s))
+    assert "FOR UPDATE" in str(invocation_select)
 
 
 @pytest.mark.asyncio

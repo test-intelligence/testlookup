@@ -274,7 +274,7 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{$guid}}",
-                "description": "Client-generated key (UUID or ULID). The same key with the same request returns the invocation it created (200); with a different request, 422; while the first request is still being handled, 409. Scoped to your user and project."
+                "description": "Client-generated key (UUID or ULID). The same key with the same request returns the invocation it created (200); with a different request, 422; while the first request is still being handled, 409. Scoped to your user, project, and agent route."
               },
               {
                 "key": "X-API-Key",

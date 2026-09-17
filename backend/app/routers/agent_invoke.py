@@ -644,7 +644,11 @@ async def retry_invocation(
     so that is 409 with ``links.rerun`` too. An invocation whose run never
     started is dispatched again.
     """
-    invocation = await _load_invocation_or_404(db, invocation_id)
+    # The invocation is the durable authority even before its pipeline row
+    # exists.  Lock it first so two retries of a lost dispatch cannot both
+    # observe the missing pipeline and enqueue duplicate work.  Cancellation
+    # takes the same invocation -> pipeline lock order.
+    invocation = await _load_invocation_or_404(db, invocation_id, for_update=True)
     pipeline = await _load_pipeline(db, invocation, for_update=True)
     base = {"invocation_id": str(invocation.id)}
     rerun = {"rerun": f"/api/v1/agents/{invocation.agent_id}/invoke"}
@@ -925,7 +929,7 @@ async def invoke_agent(
             description=(
                 "Client-generated key (UUID or ULID). The same key with the same request returns "
                 "the invocation it created (200); with a different request, 422; while the first "
-                "request is still being handled, 409. Scoped to your user and project."
+                "request is still being handled, 409. Scoped to your user, project, and agent route."
             ),
         ),
     ] = None,

@@ -36,6 +36,16 @@ MUTATIONS = (
         "backend/tests/test_agent_invocation_retry_cancel.py::test_retry_resumes_the_same_run_after_the_commit",
     ),
     Mutation(
+        "lost-dispatch-invocation-lock",
+        "backend/app/routers/agent_invoke.py",
+        "invocation = await _load_invocation_or_404(db, invocation_id, for_update=True)\n"
+        "    pipeline = await _load_pipeline(db, invocation, for_update=True)",
+        "invocation = await _load_invocation_or_404(db, invocation_id)\n"
+        "    pipeline = await _load_pipeline(db, invocation, for_update=True)",
+        "backend/tests/integration/test_pipeline_cancel_retry_postgres.py::"
+        "test_concurrent_lost_dispatch_retries_enqueue_once",
+    ),
+    Mutation(
         "queued-cancel-intent",
         "backend/app/routers/agent_invoke.py",
         "        invocation.cancel_requested = True\n",
@@ -97,6 +107,14 @@ MUTATIONS = (
         "                AgentInvocation.agent_id == agent_id,\n",
         "",
         "backend/tests/test_agent_invocation_idempotency.py::test_the_replay_lookup_is_scoped_to_the_user_and_refuses_a_different_request",
+    ),
+    Mutation(
+        "downgrade-idempotency-collision-collapse",
+        "backend/migrations/versions/0190_agent_invocation_idempotency_scope.py",
+        "            SET idempotency_key = NULL\n",
+        "            SET idempotency_key = idempotency_key\n",
+        "backend/tests/integration/test_pipeline_cancel_retry_postgres.py::"
+        "test_idempotency_scope_migration_really_downgrades_after_scoped_use",
     ),
     Mutation(
         "zero-wait-no-sleep",
