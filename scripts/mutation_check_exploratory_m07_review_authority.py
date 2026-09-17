@@ -67,7 +67,7 @@ MUTATIONS = (
         "backend/app/services/review_request_service.py",
         "            capability_id = get_capability(agent_id).capability_id\n",
         "            capability_id = agent_id\n",
-        ("tests/test_reviews_api.py::test_frozen_act_proposal_cannot_self_review_after_live_mode_is_lowered",),
+        ("tests/test_reviews_api.py::test_the_requester_may_review_when_the_run_has_no_act_mode_proposal",),
     ),
     Mutation(
         "invocation accepted snapshot precedence",
