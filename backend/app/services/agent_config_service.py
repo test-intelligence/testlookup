@@ -501,6 +501,14 @@ class OverrideRejected(ValueError):
         super().__init__("; ".join(reasons))
 
 
+class ConfigVersionConflict(RuntimeError):
+    """A conditional config replacement lost a concurrent-write race."""
+
+    def __init__(self, expected_version: int):
+        self.expected_version = expected_version
+        super().__init__(f"agent config version {expected_version} is stale")
+
+
 def _lower_only(reasons: list[str], field: str, requested: Any, base: Any) -> None:
     if requested is not None and requested > base:
         reasons.append(f"{field}={requested} loosens the project value {base}; a request may only lower it")
@@ -610,6 +618,7 @@ async def put_config(
     config: AgentConfigV1,
     *,
     updated_by: Optional[uuid.UUID],
+    expected_version: Optional[int] = None,
 ) -> AgentConfig:
     """Replace a project's configuration of one agent and bump its version.
 
@@ -630,6 +639,9 @@ async def put_config(
         created_at=now,
         updated_at=now,
     )
+    conflict_kwargs: dict[str, Any] = {}
+    if expected_version is not None:
+        conflict_kwargs["where"] = AgentConfig.config_version == expected_version
     upsert = insert_statement.on_conflict_do_update(
         constraint="uq_agent_configs_project_agent",
         set_={
@@ -640,9 +652,13 @@ async def put_config(
             "updated_by": insert_statement.excluded.updated_by,
             "updated_at": insert_statement.excluded.updated_at,
         },
+        **conflict_kwargs,
     ).returning(AgentConfig)
     result = await db.execute(upsert, execution_options={"populate_existing": True})
-    row: AgentConfig = result.scalar_one()
+    row: Optional[AgentConfig] = result.scalar_one_or_none()
+    if row is None:
+        assert expected_version is not None
+        raise ConfigVersionConflict(expected_version)
     return row
 
 
@@ -718,6 +734,7 @@ __all__ = [
     "COMPATIBILITY_AGENT_IDS",
     "AgentConfigPatch",
     "AgentConfigV1",
+    "ConfigVersionConflict",
     "MODE_ORDER",
     "OverrideRejected",
     "REVIEW_POLICIES",

@@ -82,6 +82,27 @@ MUTATIONS = (
         'if False and not tool_allowed("detect_log_rate_anomaly"):',
         "backend/tests/test_exploratory_m11_config_authority.py::test_log_agent_does_not_call_tools_removed_by_the_frozen_allowlist",
     ),
+    Mutation(
+        "config-if-match-precheck",
+        "backend/app/routers/agent_configs.py",
+        "if current_version != expected_version:",
+        "if False and current_version != expected_version:",
+        "backend/tests/test_agent_configs.py::test_put_requires_a_fresh_if_match_version",
+    ),
+    Mutation(
+        "config-atomic-version-check",
+        "backend/app/services/agent_config_service.py",
+        "if expected_version is not None:\n        conflict_kwargs",
+        "if False and expected_version is not None:\n        conflict_kwargs",
+        "backend/tests/test_agent_configs.py::test_put_is_one_upsert_that_bumps_the_version",
+    ),
+    Mutation(
+        "clustering-tool-authority",
+        "backend/app/agents/cluster_agent.py",
+        'if not tool_allowed("embed_and_cluster"):',
+        'if False and not tool_allowed("embed_and_cluster"):',
+        "backend/tests/test_exploratory_m11_config_authority.py::test_cluster_agent_does_not_call_a_tool_removed_by_the_frozen_allowlist",
+    ),
 )
 
 
