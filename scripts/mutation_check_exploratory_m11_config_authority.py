@@ -1,6 +1,7 @@
 """Prove M11 configuration-authority regressions kill unsafe behavior."""
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -192,8 +193,9 @@ MUTATIONS = (
 
 def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
     if test.startswith("frontend/"):
+        npm = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
         return subprocess.run(
-            ["npm", "run", "test", "--", test.removeprefix("frontend/")],
+            [npm, "run", "test", "--", test.removeprefix("frontend/")],
             cwd=ROOT / "frontend",
             check=False,
             capture_output=True,
