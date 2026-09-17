@@ -279,7 +279,7 @@ async def test_a_refused_endpoint_clamp_is_sanitized_before_freezing(monkeypatch
     async def _enforce(_provider, *, offline, base_url):
         if base_url == refused_url:
             raise resolver.LLMPolicyViolation(
-                f"LLM base_url host 'secret-host.internal' is not permitted"
+                "LLM base_url host 'secret-host.internal' is not permitted"
             )
 
     monkeypatch.setattr(resolver, "enforce_provider_policy_async", _enforce)
