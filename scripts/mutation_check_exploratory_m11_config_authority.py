@@ -156,8 +156,8 @@ MUTATIONS = (
     Mutation(
         "frozen-drift-clamp",
         "backend/app/services/agent_config_resolver.py",
-        "drift_pin_active=drift_pin_active,",
-        "drift_pin_active=False,",
+        "stored=frozen.config,\n        config_version=frozen.config_version,\n        drift_pin_active=drift_pin_active,",
+        "stored=frozen.config,\n        config_version=frozen.config_version,\n        drift_pin_active=False,",
         "backend/tests/test_agent_config_resolver.py::test_frozen_restore_reapplies_a_new_eval_drift_pin",
     ),
     Mutation(
