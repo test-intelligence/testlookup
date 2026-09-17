@@ -30,7 +30,7 @@ describe('agentGovernanceService agent configs', () => {
     expect(putData).toHaveBeenCalledWith(
       '/api/v1/projects/proj-1/agent-configs/agent.summary.v1',
       document,
-      { headers: { 'If-Match': '7' } },
+      { headers: { 'If-Match': '"7"' } },
     )
   })
 
@@ -78,7 +78,7 @@ describe('agentGovernanceService agent configs', () => {
           budgets: expect.objectContaining({ max_runs_per_day: 5, max_seconds_per_run: 120 }),
         }) }),
       }),
-      { headers: { 'If-Match': '7' } },
+      { headers: { 'If-Match': '"7"' } },
     )
     expect(String((putData as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).not.toContain('agent-policies')
   })

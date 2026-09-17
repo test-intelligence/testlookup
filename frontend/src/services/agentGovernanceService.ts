@@ -49,7 +49,7 @@ export const agentGovernanceService = {
       },
     }
     const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config, {
-      headers: { 'If-Match': String(view.config_version) },
+      headers: { 'If-Match': `"${view.config_version}"` },
     })
     const savedExtension = saved.config.extensions?.investigator
     if (!savedExtension) throw new Error('Saved Investigator AgentConfig extension is missing')
@@ -73,7 +73,7 @@ export const agentGovernanceService = {
     putData<AgentConfigView, AgentConfigDocument>(
       `/api/v1/projects/${projectId}/agent-configs/${agentId}`,
       config,
-      { headers: { 'If-Match': String(configVersion) } },
+      { headers: { 'If-Match': `"${configVersion}"` } },
     ),
 
   listAgentRuns: (
