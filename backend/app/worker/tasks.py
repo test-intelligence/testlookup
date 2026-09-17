@@ -2993,6 +2993,9 @@ def dispatch_ai_summary_email(
     build_number: str,
     pipeline_run_id: str | None = None,
     evidence_bundle_sha256: str | None = None,
+    source_executive_summary: str | None = None,
+    source_executive_panel: dict | None = None,
+    source_summary_is_ai: bool | None = None,
 ):
     """
     EM-1: Send AI executive-summary email after the pipeline completes.
@@ -3028,13 +3031,17 @@ def dispatch_ai_summary_email(
             except (ValueError, TypeError):
                 doc = None
 
-        executive_summary = ""
-        executive_panel = None
-        if doc:
+        executive_summary = source_executive_summary or ""
+        executive_panel = source_executive_panel
+        if source_executive_summary is None and doc:
             executive_summary = doc.get("executive_summary") or doc.get("layer1_executive_summary") or ""
             executive_panel = doc.get("executive_panel")
         # E8.4: only the Mongo summary is AI-written; the fallback below is not.
-        summary_is_ai = bool(executive_summary)
+        summary_is_ai = (
+            bool(executive_summary)
+            if source_summary_is_ai is None
+            else bool(source_summary_is_ai and executive_summary)
+        )
 
         if not executive_summary:
             # Fallback to deterministic summary
@@ -3076,7 +3083,9 @@ def dispatch_ai_summary_email(
         try:
             async with AsyncSessionLocal() as db:
                 if summary_is_ai and gate_enforced() and (
-                    not pipeline_run_id or not evidence_bundle_sha256
+                    not pipeline_run_id
+                    or not evidence_bundle_sha256
+                    or source_executive_summary is None
                 ):
                     executive_summary = REVIEW_PENDING_NOTICE
                     summary_decision = None

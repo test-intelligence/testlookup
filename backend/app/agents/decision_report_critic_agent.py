@@ -806,6 +806,7 @@ class DecisionReportCriticAgent(BaseAgent):
             await emit_release_decided(
                 state["test_run_id"],
                 trigger=TRIGGER_AGENT,
+                pipeline_run_id=state["pipeline_run_id"],
                 evidence_bundle_sha256=report.get("evidence_bundle_sha256"),
             )
         except Exception as exc:  # noqa: BLE001 -- outbound publication is best-effort

@@ -8,13 +8,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = [
+    "backend/tests/test_release_decided_webhook.py::test_release_risk_write_waits_for_immutable_report_publication",
     "backend/tests/test_release_decided_webhook.py::test_an_agent_decision_stages_exactly_one_delivery_after_its_commit",
+    "backend/tests/test_release_decided_webhook.py::test_critic_emitter_refuses_a_concurrent_pipeline_replacement",
+    "backend/tests/test_release_decided_webhook.py::test_agent_webhook_uses_immutable_report_decision_bytes",
+    "backend/tests/test_release_decided_webhook.py::test_agent_webhook_refuses_a_report_hash_mismatch",
+    "backend/tests/test_release_decided_webhook.py::test_override_webhook_does_not_require_an_immutable_agent_report",
     "backend/tests/test_release_decided_webhook.py::test_webhook_retry_rechecks_review_and_restores_the_original_decision",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_uses_its_exact_pipeline_review",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_retry_without_evidence_hash_fails_closed",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_honours_the_project_draft_setting",
     "backend/tests/test_release_decided_webhook.py::test_release_webhook_reports_would_refuse_while_enforcement_is_off",
     "backend/tests/services/test_webhook_service.py::test_deliver_sends_the_fresh_review_projection",
+    "backend/tests/test_decision_report_critic_agent.py::test_published_report_emits_release_webhook_with_exact_evidence",
 ]
 MUTATIONS = [
     (
@@ -38,13 +44,20 @@ MUTATIONS = [
     (
         ROOT / "backend/app/services/report_distribution_policy.py",
         "release-uses-newest-run-review",
-        """        envelope = await review_envelope_for_pipeline_subject(
+        """    elif evidence_bundle_sha256 is None:
+        envelope = await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+    else:
+        envelope = await review_envelope_for_pipeline_subject(
             db,
             pipeline_run_id,
             evidence_bundle_sha256=evidence_bundle_sha256,
         )
 """,
-        '        envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")\n',
+        """    elif evidence_bundle_sha256 is None:
+        envelope = await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+    else:
+        envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")
+""",
     ),
     (
         ROOT / "backend/app/services/report_distribution_policy.py",
@@ -75,6 +88,65 @@ MUTATIONS = [
         "legacy-retry-borrows-pipeline-review",
         '        str(raw_evidence_hash) if raw_evidence_hash is not None else ""\n',
         '        str(raw_evidence_hash) if raw_evidence_hash is not None else None\n',
+    ),
+    (
+        ROOT / "backend/app/agents/release_risk_agent.py",
+        "release-risk-emits-before-report-publication",
+        "        # AI-1 auto-trigger (shadow): a recorded NO_GO gate decision enqueues\n",
+        """        from app.services.release_decision_webhook import (
+            TRIGGER_AGENT,
+            emit_release_decided,
+        )
+        await emit_release_decided(test_run_id, trigger=TRIGGER_AGENT)
+
+        # AI-1 auto-trigger (shadow): a recorded NO_GO gate decision enqueues
+""",
+    ),
+    (
+        ROOT / "backend/app/agents/decision_report_critic_agent.py",
+        "critic-drops-pipeline-binding",
+        '                pipeline_run_id=state["pipeline_run_id"],\n',
+        "                pipeline_run_id=None,\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "emitter-allows-concurrent-pipeline-replacement",
+        """            if pipeline_run_id is not None and str(decision.pipeline_run_id) != str(
+                pipeline_run_id
+            ):
+""",
+        """            if False and pipeline_run_id is not None and str(decision.pipeline_run_id) != str(
+                pipeline_run_id
+            ):
+""",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "override-requires-agent-report",
+        """    if (
+        trigger == TRIGGER_AGENT
+        and decision.pipeline_run_id is not None
+        and evidence_bundle_sha256 is None
+    ):
+""",
+        """    if (
+        trigger in {TRIGGER_AGENT, TRIGGER_OVERRIDE}
+        and decision.pipeline_run_id is not None
+        and evidence_bundle_sha256 is None
+    ):
+""",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "agent-uses-mutable-decision-bytes",
+        '        recommendation = source.get("recommendation")\n',
+        "        recommendation = decision.recommendation\n",
+    ),
+    (
+        ROOT / "backend/app/services/release_decision_webhook.py",
+        "agent-accepts-report-hash-mismatch",
+        "            and str(evidence_bundle_sha256) != str(report_hash)\n",
+        "            and False\n",
     ),
 ]
 

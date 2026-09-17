@@ -14,6 +14,7 @@ TESTS = [
     "backend/tests/test_notification_distribution_gates.py::test_notification_retry_cannot_borrow_a_newer_run_review",
     "backend/tests/test_notification_distribution_gates.py::test_withheld_notification_prefix_has_no_invented_release_signal",
     "backend/tests/test_notification_distribution_gates.py::test_legacy_queued_notification_is_sanitized_and_fails_closed",
+    "backend/tests/test_notification_distribution_gates.py::test_delayed_task_uses_its_immutable_outbox_summary",
 ]
 MUTATIONS = [
     (
@@ -71,6 +72,12 @@ MUTATIONS = [
             await log_access_change(db, action="ai_report.distribution_refused")
             summary_withheld = summary_decision is not None and not summary_decision.allowed
 """,
+    ),
+    (
+        ROOT / "backend/app/worker/tasks.py",
+        "task-reloads-mutable-summary",
+        "        if source_executive_summary is None and doc:\n",
+        "        if doc:\n",
     ),
 ]
 

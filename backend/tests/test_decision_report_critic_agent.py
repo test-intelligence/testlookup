@@ -119,6 +119,7 @@ async def test_published_report_emits_release_webhook_with_exact_evidence(
     emit.assert_awaited_once_with(
         "run-1",
         trigger=release_decision_webhook.TRIGGER_AGENT,
+        pipeline_run_id="pipeline-1",
         evidence_bundle_sha256=evidence_hash,
     )
 

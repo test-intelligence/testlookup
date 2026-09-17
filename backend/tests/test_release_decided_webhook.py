@@ -229,7 +229,14 @@ def world(monkeypatch):
     monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: object())
     monkeypatch.setattr(
         "app.services.decision_report_service.load_decision_report_for_pipeline",
-        AsyncMock(return_value={"evidence_bundle_sha256": EVIDENCE_HASH}),
+        AsyncMock(
+            return_value={
+                "evidence_bundle_sha256": EVIDENCE_HASH,
+                "decision_intelligence": {
+                    "release_decision": dict(AGENT_DECISION)
+                },
+            }
+        ),
     )
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
     monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
@@ -239,7 +246,9 @@ def world(monkeypatch):
     return state
 
 
-async def _persist_agent_decision(monkeypatch, world, *, fail_commit=False):
+async def _persist_agent_decision(
+    monkeypatch, world, *, fail_commit=False, publish_report=True
+):
     from app.agents import release_risk_agent as agent_module
 
     def _on_add(row):
@@ -259,6 +268,13 @@ async def _persist_agent_decision(monkeypatch, world, *, fail_commit=False):
     await agent._persist_decision(
         str(RUN), str(PIPELINE), dict(AGENT_DECISION), input_snapshot={"pass_rate": 0.97}
     )
+    if not fail_commit and publish_report:
+        await emitter.emit_release_decided(
+            RUN,
+            trigger=emitter.TRIGGER_AGENT,
+            pipeline_run_id=PIPELINE,
+            evidence_bundle_sha256=EVIDENCE_HASH,
+        )
 
 
 def _only_delivery(world) -> dict:
@@ -267,6 +283,16 @@ def _only_delivery(world) -> dict:
 
 
 # ── The agent's write ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_release_risk_write_waits_for_immutable_report_publication(
+    monkeypatch, world,
+):
+    await _persist_agent_decision(monkeypatch, world, publish_report=False)
+
+    assert world.log == ["decision_commit"]
+    assert world.table.rows == {}
 
 
 @pytest.mark.asyncio
@@ -301,9 +327,78 @@ async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(mo
     assert world.published == [{"delivery_id": str(row["id"])}]
 
     # A retried write for the same pipeline run is the same event.
-    assert await emitter.emit_release_decided(RUN, trigger=emitter.TRIGGER_AGENT) == 0
+    assert await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    ) == 0
     assert len(world.table.rows) == 1
     assert len(world.published) == 1
+
+
+@pytest.mark.asyncio
+async def test_critic_emitter_refuses_a_concurrent_pipeline_replacement(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=uuid.uuid4(),
+        recommendation="NO_GO",
+        risk_score=99,
+        blocking_issues=["newer pipeline"],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_agent_webhook_uses_immutable_report_decision_bytes(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=99,
+        blocking_issues=["mutable retry value"],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 1
+    payload = _only_delivery(world)["event_payload"]
+    assert payload["recommendation"] == AGENT_DECISION["recommendation"]
+    assert payload["risk_score"] == AGENT_DECISION["risk_score"]
+    assert "mutable retry value" not in payload["blocking_issues"]
+
+
+@pytest.mark.asyncio
+async def test_agent_webhook_refuses_a_report_hash_mismatch(world):
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256="f" * 64,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
 
 
 @pytest.mark.asyncio
@@ -376,6 +471,41 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     await route.override_release_decision(run_id=RUN, body=body, current_user=overrider, _=overrider)
     assert len(world.table.rows) == 2
     assert len(world.published) == 2
+
+
+@pytest.mark.asyncio
+async def test_override_webhook_does_not_require_an_immutable_agent_report(
+    monkeypatch, world,
+):
+    from app.services import decision_report_service
+
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="authorized hotfix",
+        override_audit=[{"reason": "authorized hotfix"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+    unavailable = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        decision_report_service,
+        "load_decision_report_for_pipeline",
+        unavailable,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+    )
+
+    assert emitted == 1
+    assert _only_delivery(world)["event_payload"]["recommendation"] == "GO"
+    unavailable.assert_not_awaited()
 
 
 # ── The human-review gate (E8.4) ─────────────────────────────────────────────

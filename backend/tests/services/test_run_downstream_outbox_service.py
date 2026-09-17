@@ -2201,6 +2201,9 @@ async def test_every_staged_payload_binds_to_its_task(monkeypatch):
         build_number="build-42",
         pipeline_run_id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
         evidence_bundle_sha256="a" * 64,
+        source_executive_summary="immutable pipeline summary",
+        source_executive_panel={"status_signal": "NO_GO"},
+        source_summary_is_ai=True,
     )
     await service.stage_live_persist_operation(
         MagicMock(), canonical_run_id=run.id, session=session, final_state={"passed": 1}
@@ -2211,6 +2214,9 @@ async def test_every_staged_payload_binds_to_its_task(monkeypatch):
         "11111111-1111-4111-8111-111111111111"
     )
     assert payloads["ai_summary_notifications"]["evidence_bundle_sha256"] == "a" * 64
+    assert payloads["ai_summary_notifications"]["source_executive_summary"] == (
+        "immutable pipeline summary"
+    )
     assert set(payloads) == set(service._OPERATIONS), (
         "an operation the outbox publishes is not staged here, so its payload is unchecked"
     )

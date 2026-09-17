@@ -3435,6 +3435,8 @@ async def _mark_pipeline_done(
                 )
                 from app.services.review_request_service import evidence_hash_from
 
+                structured_summary = final_state.get("structured_summary") or {}
+                summary_provenance = structured_summary.get("_provenance") or {}
                 await stage_ai_summary_notification_operation(
                     db,
                     run_id=uuid.UUID(str(run.test_run_id)),
@@ -3442,6 +3444,13 @@ async def _mark_pipeline_done(
                     build_number=str(final_state.get("build_number") or ""),
                     pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
                     evidence_bundle_sha256=evidence_hash_from(final_state),
+                    source_executive_summary=structured_summary.get(
+                        "layer1_executive_summary"
+                    ),
+                    source_executive_panel=structured_summary.get("executive_panel"),
+                    source_summary_is_ai=not bool(
+                        summary_provenance.get("fallback_used", False)
+                    ),
                 )
         # Mark stages that were never reached (still "pending") as "skipped".
         # Also tag them with a conditional_skip execution_path so the UI shows

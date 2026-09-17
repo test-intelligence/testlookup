@@ -131,7 +131,7 @@ class _Session:
         pass
 
 
-def _drive(monkeypatch, *, doc, fallback_text=None):
+def _drive(monkeypatch, *, doc, fallback_text=None, mongo_doc=None):
     from app.services.notification import manager
     from app.worker import tasks
 
@@ -142,7 +142,9 @@ def _drive(monkeypatch, *, doc, fallback_text=None):
     async def _factory():
         yield _Session(run, SimpleNamespace(name="Checkout"), [(sub, "qa@example.com")])
 
-    collection = SimpleNamespace(find_one=AsyncMock(return_value=doc))
+    collection = SimpleNamespace(
+        find_one=AsyncMock(return_value=mongo_doc if mongo_doc is not None else doc)
+    )
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
     monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: _AnyKey(collection))
     preferences = AsyncMock()
@@ -159,7 +161,14 @@ def _drive(monkeypatch, *, doc, fallback_text=None):
             AsyncMock(return_value=SimpleNamespace(executive_summary=fallback_text, executive_panel=None)),
         )
     tasks.dispatch_ai_summary_email.run(
-        str(RUN), str(PROJECT), "42", str(PIPELINE), EVIDENCE_HASH
+        str(RUN),
+        str(PROJECT),
+        "42",
+        str(PIPELINE),
+        EVIDENCE_HASH,
+        doc.get("executive_summary") if doc else None,
+        doc.get("executive_panel") if doc else None,
+        True if doc and doc.get("executive_summary") else None,
     )
     return (
         preferences.await_args.kwargs,
@@ -194,6 +203,28 @@ def test_the_task_withholds_the_ai_summary_from_preferences_and_digests(monkeypa
     assert marker["pipeline_run_id"] == str(PIPELINE)
     assert marker["evidence_bundle_sha256"] == EVIDENCE_HASH
     access_audit.assert_not_awaited()
+
+
+def test_delayed_task_uses_its_immutable_outbox_summary(monkeypatch, world):
+    pipeline_a = AI_TEXT
+    mutable_pipeline_b = "A newer pipeline blamed a different service."
+    prefs, deliveries, _audit = _drive(
+        monkeypatch,
+        doc={
+            "executive_summary": pipeline_a,
+            "executive_panel": {"headline": "PIPELINE_A"},
+        },
+        mongo_doc={
+            "executive_summary": mutable_pipeline_b,
+            "executive_panel": {"headline": "PIPELINE_B"},
+        },
+    )
+
+    assert prefs["original_executive_summary"] == pipeline_a
+    assert deliveries[0]["metadata"]["_review_gate_v1"]["original_summary"] == (
+        pipeline_a
+    )
+    assert mutable_pipeline_b not in deliveries[0]["body"]
 
 
 @pytest.mark.asyncio

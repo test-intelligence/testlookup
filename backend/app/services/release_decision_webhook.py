@@ -2,11 +2,11 @@
 
 ``webhook_service.SUPPORTED_EVENTS`` offered ``release.decided`` to subscribers,
 and nothing ever sent it: a subscription was accepted and then never received a
-delivery. A release decision is written in two places, and both emit AFTER their
-transaction commits, so a receiver is never told about a decision that rolled back:
+delivery. A release decision is published from two places, both only after its
+authoritative source has committed:
 
-* ``trigger="agent"``: ``ReleaseRiskAgent._persist_decision`` inserted or
-  rewrote the row at the end of a deep pipeline run;
+* ``trigger="agent"``: ``DecisionReportCriticAgent._persist`` published the
+  immutable decision report for the deep pipeline run;
 * ``trigger="override"``: a QA lead overrode it through
   ``POST /api/v1/release-readiness/{run_id}/override``. An override changes the
   value CI pipelines gate on, which is exactly what a subscriber listens for, so
@@ -80,10 +80,12 @@ async def build_release_decided_payload(
     trigger: str,
     evidence_bundle_sha256: str | None = None,
 ) -> Optional[dict[str, Any]]:
-    council = await get_release_council(run_id, db)
-    if council is None:
-        return None
-    if decision.pipeline_run_id is not None and evidence_bundle_sha256 is None:
+    report: dict[str, Any] | None = None
+    if (
+        trigger == TRIGGER_AGENT
+        and decision.pipeline_run_id is not None
+        and evidence_bundle_sha256 is None
+    ):
         from app.db.mongo import get_mongo_db
         from app.services.decision_report_service import (
             load_decision_report_for_pipeline,
@@ -98,8 +100,49 @@ async def build_release_decided_payload(
             return None
         raw_hash = report.get("evidence_bundle_sha256")
         evidence_bundle_sha256 = str(raw_hash) if raw_hash is not None else None
-    if decision.pipeline_run_id is not None and not evidence_bundle_sha256:
+    if (
+        trigger == TRIGGER_AGENT
+        and decision.pipeline_run_id is not None
+        and not evidence_bundle_sha256
+    ):
         return None
+    if trigger == TRIGGER_AGENT and decision.pipeline_run_id is not None:
+        if report is None:
+            from app.db.mongo import get_mongo_db
+            from app.services.decision_report_service import (
+                load_decision_report_for_pipeline,
+            )
+
+            report = await load_decision_report_for_pipeline(
+                get_mongo_db(), str(run_id), str(decision.pipeline_run_id)
+            )
+        report_hash = (report or {}).get("evidence_bundle_sha256")
+        if not report_hash or (
+            evidence_bundle_sha256 is not None
+            and str(evidence_bundle_sha256) != str(report_hash)
+        ):
+            return None
+        evidence_bundle_sha256 = str(report_hash)
+        intelligence = (report or {}).get("decision_intelligence") or {}
+        source = intelligence.get("release_decision") or {}
+        if not source:
+            return None
+        recommendation = source.get("recommendation")
+        risk_score = source.get("risk_score")
+        blocking_issues = list(source.get("blocking_issues") or [])
+        conditions_for_go = list(source.get("conditions_for_go") or [])
+        synthesized = False
+        human_override = None
+    else:
+        council = await get_release_council(run_id, db)
+        if council is None:
+            return None
+        recommendation = council.recommendation
+        risk_score = council.risk_score
+        blocking_issues = list(council.blocking_issues or [])
+        conditions_for_go = list(council.conditions_for_go or [])
+        synthesized = bool(council.synthesized)
+        human_override = council.human_override
     payload: dict[str, Any] = {
         "run_id": str(run_id),
         "project_id": str(project_id),
@@ -108,12 +151,12 @@ async def build_release_decided_payload(
         ),
         "evidence_bundle_sha256": evidence_bundle_sha256,
         "trigger": trigger,
-        "recommendation": council.recommendation,
-        "risk_score": council.risk_score,
-        "blocking_issues": list(council.blocking_issues or []),
-        "conditions_for_go": list(council.conditions_for_go or []),
-        "synthesized": bool(council.synthesized),
-        "overridden": bool(council.human_override),
+        "recommendation": recommendation,
+        "risk_score": risk_score,
+        "blocking_issues": blocking_issues,
+        "conditions_for_go": conditions_for_go,
+        "synthesized": synthesized,
+        "overridden": bool(human_override),
         "created_at": _iso(decision.created_at),
         "updated_at": _iso(decision.updated_at),
     }
@@ -121,8 +164,8 @@ async def build_release_decided_payload(
         db,
         payload,
         run_id=run_id,
-        synthesized=bool(council.synthesized),
-        human_override=council.human_override,
+        synthesized=synthesized,
+        human_override=human_override,
         pipeline_run_id=decision.pipeline_run_id,
         evidence_bundle_sha256=evidence_bundle_sha256,
         project_id=project_id,
@@ -133,6 +176,7 @@ async def emit_release_decided(
     run_id: Any,
     *,
     trigger: str,
+    pipeline_run_id: Any = None,
     evidence_bundle_sha256: str | None = None,
 ) -> int:
     """Send ``release.decided`` for the committed decision on ``run_id``.
@@ -164,6 +208,10 @@ async def emit_release_decided(
                 )
                 return 0
             decision, project_id = found
+            if pipeline_run_id is not None and str(decision.pipeline_run_id) != str(
+                pipeline_run_id
+            ):
+                return 0
             payload = await build_release_decided_payload(
                 db,
                 run_id=run_uuid,

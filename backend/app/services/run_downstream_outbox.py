@@ -123,6 +123,9 @@ async def stage_ai_summary_notification_operation(
     build_number: str,
     pipeline_run_id: uuid.UUID | None = None,
     evidence_bundle_sha256: str | None = None,
+    source_executive_summary: str | None = None,
+    source_executive_panel: dict[str, Any] | None = None,
+    source_summary_is_ai: bool | None = None,
 ) -> bool:
     """Stage the stable AI-summary publication on the caller's transaction."""
     payload = {
@@ -131,6 +134,9 @@ async def stage_ai_summary_notification_operation(
         "build_number": str(build_number),
         "pipeline_run_id": str(pipeline_run_id) if pipeline_run_id is not None else None,
         "evidence_bundle_sha256": evidence_bundle_sha256,
+        "source_executive_summary": source_executive_summary,
+        "source_executive_panel": source_executive_panel,
+        "source_summary_is_ai": source_summary_is_ai,
     }
     return await stage_downstream_operation(
         db,
