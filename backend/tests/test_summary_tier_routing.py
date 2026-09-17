@@ -10,6 +10,7 @@ from app.agents.summary_agent import SummaryAgent
 from app.services.agent_capability_registry import CAPABILITY_REGISTRY, DEFAULT_TIERS
 from app.services.agent_config_resolver import ResolvedAgentConfig, ResolvedEndpoint
 from app.services.agent_config_service import default_config
+from app.services.step_llm_budget import StepLLMBudget
 
 
 def _endpoint(model: str) -> ResolvedEndpoint:
@@ -80,6 +81,7 @@ async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
         agent="summary", **{"from": "slm", "to": "llm"}
     )
     before = metric._value.get()
+    budget = StepLLMBudget(limit=2)
 
     structured, routing = await agent._generate_tiered_report(
         run_data={},
@@ -93,6 +95,7 @@ async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
         project_id="00000000-0000-0000-0000-000000000002",
         test_run_id="00000000-0000-0000-0000-000000000003",
         failed_test_ids=[],
+        step_budget=budget,
     )
 
     assert calls == ["small", "small", "large"]
@@ -109,6 +112,43 @@ async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
     assert queued[0]["candidate_tier"] == "slm"
     assert queued[0]["incumbent_output"]["source"] == "large"
     assert queued[0]["candidate_output"]["source"] == "small"
+    assert budget.as_state()["reasons"] == ["model_escalation"]
+
+
+@pytest.mark.asyncio
+async def test_summary_retry_override_uses_llm_directly(monkeypatch) -> None:
+    agent = SummaryAgent()
+    agent.log_decision = AsyncMock()
+    agent._routing_inputs = AsyncMock(return_value=(_resolved(tier="slm"), 1.0, 10))
+
+    async def fake_get_llm(*, endpoint):
+        return SimpleNamespace(name=endpoint.model)
+
+    async def fake_generate(*, llm, **_kwargs):
+        return {"source": llm.name}
+
+    monkeypatch.setattr(summary_module, "get_llm", fake_get_llm)
+    monkeypatch.setattr(agent, "_generate_structured_report", fake_generate)
+    monkeypatch.setattr(agent, "_report_failures", lambda *_args, **_kwargs: [])
+
+    structured, routing = await agent._generate_tiered_report(
+        run_data={},
+        anomaly_summary="",
+        anomalies=[],
+        analyses={},
+        similar_failures=[],
+        stage_quality="normal",
+        stage_errors={},
+        pipeline_run_id="00000000-0000-0000-0000-000000000001",
+        project_id="00000000-0000-0000-0000-000000000002",
+        test_run_id="00000000-0000-0000-0000-000000000003",
+        failed_test_ids=[],
+        tier_override="llm",
+    )
+
+    assert structured == {"source": "large"}
+    assert routing["tier_used"] == "llm"
+    assert routing["escalations"] == 0
 
 
 @pytest.mark.asyncio

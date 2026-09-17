@@ -130,7 +130,7 @@ async def test_model_families_use_distinct_endpoints_and_hide_reasoning(monkeypa
     assert result["review_verdict"]["second_model"] == {
         "provider": "ollama", "model": "llama-70b", "agreement_score": 0.91,
     }
-    assert result["step_llm_budget"]["remaining"] == 0
+    assert result["step_llm_budget"]["remaining"] == 2
     assert all("private scratch work" not in prompt for prompt in prompts)
     assert all("private evidence scratch work" not in prompt for prompt in prompts)
 
@@ -229,20 +229,24 @@ async def test_low_second_model_agreement_flags_without_retry(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_exhausted_shared_budget_caps_verdict_at_flags_without_call(monkeypatch) -> None:
-    async def forbidden(**_kwargs):  # pragma: no cover - mutation must not reach this
-        raise AssertionError("model call escaped exhausted step budget")
+async def test_model_review_checks_do_not_consume_escalation_and_retry_budget(monkeypatch) -> None:
+    responses = iter([
+        '{"reference_ids":["tc-1"],"numeric_facts":{"failed_tests":2}}',
+        '{"agreement_score":0.9,"unsupported_claims":[],"blocking_unsupported_claims":[]}',
+    ])
 
-    monkeypatch.setattr("app.agents.reviewer_agent.get_llm", forbidden)
+    async def fake_get_llm(*, endpoint):
+        return _LLM(next(responses), [])
+
+    monkeypatch.setattr("app.agents.reviewer_agent.get_llm", fake_get_llm)
     agent = await _quiet_agent(monkeypatch, _resolved())
     result = await agent.run({
         "reviewer_input": _payload(),
         "step_llm_budget": {"limit": 2, "used": 2, "reasons": ["workflow_loop", "model_escalation"]},
     })
 
-    assert result["review_verdict"]["verdict"] == "pass_with_flags"
+    assert result["review_verdict"]["verdict"] == "pass"
     assert result["supervisor"]["route"] == "continue"
-    assert result["supervisor"]["requires_human_review"] is True
     assert result["step_llm_budget"]["reasons"] == ["workflow_loop", "model_escalation"]
 
 

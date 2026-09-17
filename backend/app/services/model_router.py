@@ -66,6 +66,7 @@ def choose_model(
     *,
     budget_remaining_usd: float | None,
     promoted_classifier: str | None = None,
+    tier_override: Literal["llm"] | None = None,
 ) -> ModelChoice:
     """Choose the cheapest configured tier allowed by today's defaults.
 
@@ -76,7 +77,10 @@ def choose_model(
     """
     capability = get_capability(stage)
     configured = resolved.config.model.tier
-    tier = cast(ModelTier, DEFAULT_TIERS[stage] if configured == "auto" else configured)
+    tier = cast(
+        ModelTier,
+        tier_override or (DEFAULT_TIERS[stage] if configured == "auto" else configured),
+    )
     if tier == "deterministic":
         return ModelChoice(tier="deterministic", endpoint=None, reason="tier")
     if capability.expected_cost_usd <= 0:
@@ -90,7 +94,11 @@ def choose_model(
     if tier == "slm" and classifier and stage in CLASSIFY_CAPABILITIES:
         endpoint = endpoint.model_copy(update={"model": classifier, "source": "classifier"})
         return ModelChoice(tier="slm", endpoint=endpoint, reason="classifier")
-    return ModelChoice(tier=tier, endpoint=endpoint, reason="tier")
+    return ModelChoice(
+        tier=tier,
+        endpoint=endpoint,
+        reason="supervisor_retry" if tier_override else "tier",
+    )
 
 
 def _trigger_applies(

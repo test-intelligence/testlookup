@@ -17,16 +17,20 @@ must match the full runtime authority and deployed runtime versions. Reviewer
 flags force a content-bound `ReviewRequest` even when no report stage ran, and
 the verdict, supervisor decision, and shared-budget snapshot remain in durable
 execution metadata. The compiler also refuses extra reviewer loops and parallel
-reviewers that would race scalar supervisor state. Workflow publication now carries the selected version and
+reviewers that would race scalar supervisor state. The custom runtime now keeps
+one per-step budget across producer escalation and its reviewer retry, and
+applies the supervisor's `llm` override to the retried Summary or Root Cause
+producer. Reviewer family 3/4 checks remain governed by the run-level atomic
+model budget and no longer spend the separate loop/escalation counter. Workflow
+publication now carries the selected version and
 definition digest, rejects stale drafts, keeps published evaluation evidence
 immutable, and makes exact repeat publication read-only. Replay evaluation
 marks control-flow topology as unmeasured instead of inferring it from cached
 step outputs. The workflow guide now matches the architecture's existing rule
 that insufficient samples may publish with visible low coverage. Re-review found
-that producer escalation still does not consume the reviewer's shared step
-budget or apply its LLM retry override, and that G4 replay/publish authority is
-too weak for model, tool, config, prompt, and corpus changes; those remain open
-M13 blockers rather than being represented as complete.
+that G4 replay/publish authority is too weak for model, tool, config, prompt,
+and corpus changes; that remains an open M13 blocker rather than being
+represented as complete.
 
 M12 invocation hardening now serializes creation per stored subject, keeps
 explicit idempotency keys from being silently discarded, and aligns durable

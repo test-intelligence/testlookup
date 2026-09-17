@@ -54,6 +54,7 @@ from app.services.confidence_validation import (
     validate_confidence,
 )
 from app.services.prompt_registry import prompt_versions_used as _prompt_versions_used
+from app.services.step_llm_budget import StepLLMBudget
 
 import structlog
 
@@ -159,6 +160,12 @@ class AnalysisAgent(BaseAgent):
         pipeline_run_id = state["pipeline_run_id"]
         project_id = state["project_id"]
         failed_ids: list[str] = state.get("failed_test_ids", [])
+        step_budget: StepLLMBudget | None = None
+        if state.get("step_llm_budget") is not None:
+            try:
+                step_budget = StepLLMBudget.from_state(state["step_llm_budget"])
+            except ValueError:
+                step_budget = StepLLMBudget(limit=0)
 
         await self.mark_stage_running(pipeline_run_id)
 
@@ -302,9 +309,14 @@ class AnalysisAgent(BaseAgent):
                 # point while durable pipeline runs (UUID ids) use tier policy.
                 logger.debug("root_cause_tier_resolution_skipped_for_symbolic_ids")
             else:
-                state["_root_cause_tier_context"] = await self._routing_inputs(
+                routing_inputs = await self._routing_inputs(
                     project_id=str(project_id),
                     pipeline_run_id=str(pipeline_run_id),
+                )
+                state["_root_cause_tier_context"] = (
+                    *routing_inputs,
+                    step_budget,
+                    "llm" if state.get("model_tier_override") == "llm" else None,
                 )
 
         concurrency_policy = await self._resolve_adaptive_concurrency(state, len(prioritized_ids))
@@ -534,7 +546,7 @@ class AnalysisAgent(BaseAgent):
         log_consistency_failures(consistency_report, pipeline_run_id=pipeline_run_id)
         evidence_refs.append(consistency_report.evidence_ref())
 
-        return validate_agent_contract(
+        contracted = validate_agent_contract(
             AnalysisAgentOutput,
             {
                 "analyses": analyses,
@@ -557,6 +569,9 @@ class AnalysisAgent(BaseAgent):
                 if stage_quality == "normal" else f"root_cause_analysis_{stage_quality}"
             ) + consistency_report.decision_suffix(),
         )
+        if step_budget is not None:
+            contracted["step_llm_budget"] = step_budget.as_state()
+        return contracted
 
     def _prioritize_tests(
         self, failed_ids: list[str], test_meta: dict[str, dict]
@@ -816,7 +831,13 @@ class AnalysisAgent(BaseAgent):
                             test_fingerprint=meta.get("test_fingerprint"),
                         )
                     else:
-                        resolved, budget_remaining, step_calls = tier_context
+                        (
+                            resolved,
+                            budget_remaining,
+                            step_calls,
+                            step_budget,
+                            tier_override,
+                        ) = tier_context
                         operation = classify_root_cause_tiered(
                             test_case={
                                 "test_case_id": tc_id,
@@ -834,6 +855,8 @@ class AnalysisAgent(BaseAgent):
                             resolved=resolved,
                             budget_remaining_usd=budget_remaining,
                             step_llm_calls_remaining=step_calls,
+                            step_budget=step_budget,
+                            tier_override=tier_override,
                         )
                     analysis = await asyncio.wait_for(
                         operation,

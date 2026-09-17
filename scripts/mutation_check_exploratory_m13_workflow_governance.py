@@ -157,6 +157,29 @@ MUTATIONS = (
         "    if False and runtime_versions != _runtime_version_snapshot():\n",
         "backend/tests/test_decision_evidence_checkpoint_resume.py::test_checkpoint_from_a_different_runtime_is_not_restored",
     ),
+    Mutation(
+        "reviewer-retry-tier-override",
+        "backend/app/services/model_router.py",
+        '        tier_override or (DEFAULT_TIERS[stage] if configured == "auto" else configured),\n',
+        '        DEFAULT_TIERS[stage] if configured == "auto" else configured,\n',
+        "backend/tests/services/test_model_router.py::test_supervisor_retry_override_selects_llm_over_configured_slm",
+    ),
+    Mutation(
+        "review-checks-preserve-shared-budget",
+        "backend/app/agents/reviewer_agent.py",
+        '                    if endpoint is None:\n'
+        '                        budget_blocked = True\n',
+        '                    if endpoint is None or not budget.consume("review_self_consistency"):\n'
+        '                        budget_blocked = True\n',
+        "backend/tests/agents/test_reviewer_model_supervisor.py::test_model_review_checks_do_not_consume_escalation_and_retry_budget",
+    ),
+    Mutation(
+        "runtime-applies-reviewer-tier-override",
+        "backend/app/agents/workflow.py",
+        '                    result["_workflow_tier_overrides"] = {retry_target: "llm"}\n',
+        '                    result["_workflow_tier_overrides"] = {}\n',
+        "backend/tests/test_e33_workflow_runtime.py::test_runtime_shares_step_budget_and_applies_reviewer_tier_override",
+    ),
 )
 
 

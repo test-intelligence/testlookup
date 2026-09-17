@@ -391,3 +391,96 @@ async def test_runtime_reviewer_applies_loop_count_and_stops_on_final_rejection(
 
     assert seen[0]["review_retry_count"] == 1
     assert seen[0]["review_max_iterations"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_shares_step_budget_and_applies_reviewer_tier_override(
+    monkeypatch,
+) -> None:
+    from app.agents.reviewer_agent import ReviewerAgent
+    from app.services.step_llm_budget import StepLLMBudget
+
+    body = WorkflowBodyV1.model_validate({
+        "workflow_id": "wf.runtime.review_retry",
+        "name": "Review retry authority",
+        "base": "offline",
+        "steps": [
+            {"id": "named_summary", "agent_id": "agent.summary.v1"},
+            {
+                "id": "review_summary",
+                "agent_id": "agent.reviewer.v1",
+                "reviews": ["named_summary"],
+            },
+        ],
+        "edges": [
+            {"from": "named_summary", "to": "review_summary"},
+            {"from": "review_summary", "to": "__end__"},
+        ],
+        "loops": [{
+            "from": "review_summary",
+            "to": "named_summary",
+            "when": {"field": "supervisor_route", "op": "eq", "value": "retry"},
+            "max_iterations": 1,
+        }],
+    })
+    producer_states: list[dict] = []
+
+    async def producer(state):
+        producer_states.append(state)
+        return {
+            "summary_markdown": "candidate",
+            "step_llm_budget": state["step_llm_budget"],
+        }
+
+    async def retry(_self, state):
+        budget = StepLLMBudget.from_state(state["step_llm_budget"])
+        assert budget.consume("review_retry") is True
+        return {
+            "review_verdict": {"verdict": "retry"},
+            "supervisor": {"route": "retry", "tier_override": "llm"},
+            "step_llm_budget": budget.as_state(),
+        }
+
+    monkeypatch.setattr(
+        workflow,
+        "workflow_node_executors",
+        lambda: {"agent.summary.v1": producer},
+    )
+    monkeypatch.setattr(ReviewerAgent, "run", retry)
+    executors = workflow._workflow_runtime_executors(
+        body,
+        {
+            "agent.summary.v1": {
+                "model": {"escalation": {"max_escalations": 1}},
+                "budget": {"max_llm_calls_per_run": 5},
+            }
+        },
+    )
+    target = executors["named_summary"].__workflow_original_node__
+    reviewer = executors["review_summary"].__workflow_original_node__
+    base = {
+        "_workflow_step_outputs": {},
+        "_workflow_step_llm_budgets": {},
+        "_workflow_tier_overrides": {},
+        "_workflow_loop_iterations": {},
+        "failed_test_ids": [],
+        "failure_clusters": [],
+        "test_run_data": {},
+        "analyses": {},
+    }
+
+    first = await target(base)
+    reviewed = await reviewer({
+        **base,
+        **first,
+        "_workflow_step_outputs": {"named_summary": first},
+    })
+    second = await target({**base, **first, **reviewed})
+
+    assert producer_states[0]["step_llm_budget"] == {
+        "limit": 2, "used": 0, "remaining": 2, "reasons": []
+    }
+    assert producer_states[1]["model_tier_override"] == "llm"
+    assert producer_states[1]["step_llm_budget"]["used"] == 1
+    assert producer_states[1]["step_llm_budget"]["reasons"] == ["review_retry"]
+    assert second["_workflow_step_llm_budgets"]["named_summary"]["used"] == 1

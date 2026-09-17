@@ -885,6 +885,35 @@ def _workflow_runtime_executors(
         for step in body.steps
         if step.agent_id == "agent.reviewer.v1"
     }
+    reviewed_target_iterations = {
+        loop.to: int(loop.max_iterations)
+        for loops in reviewer_loops.values()
+        for _index, loop in loops
+    }
+
+    def initial_step_budget(target_step: Any) -> dict[str, Any]:
+        from app.services.step_llm_budget import StepLLMBudget
+
+        config = configs.get(target_step.agent_id) or {}
+        model = config.get("model") if isinstance(config, dict) else {}
+        escalation = model.get("escalation") if isinstance(model, dict) else {}
+        budget = config.get("budget") if isinstance(config, dict) else {}
+        max_escalations = (
+            escalation.get("max_escalations", 1)
+            if isinstance(escalation, dict)
+            else 1
+        )
+        run_remaining = (
+            budget.get("max_llm_calls_per_run", 0)
+            if isinstance(budget, dict)
+            else 0
+        )
+        return StepLLMBudget.create(
+            max_escalations=int(max_escalations),
+            max_iterations=reviewed_target_iterations.get(target_step.id, 0),
+            run_llm_calls_remaining=int(run_remaining),
+        ).as_state()
+
     for step in body.steps:
         if step.agent_id == "agent.reviewer.v1":
             from app.agents.reviewer_agent import ReviewerAgent
@@ -941,17 +970,38 @@ def _workflow_runtime_executors(
                     (int(loop.max_iterations) for _index, loop in loops),
                     default=0,
                 )
-                result = await ReviewerAgent().run({
+                retry_target = loops[0][1].to if loops else None
+                budgets = dict(state.get("_workflow_step_llm_budgets") or {})
+                reviewer_state = {
                     **state,
                     "reviewer_input": reviewer_input,
                     "review_retry_count": retry_count,
                     "review_max_iterations": max_iterations,
-                })
+                }
+                if retry_target is not None:
+                    reviewer_state["step_llm_budget"] = dict(
+                        budgets.get(retry_target)
+                        or initial_step_budget(steps[retry_target])
+                    )
+                result = await ReviewerAgent().run(reviewer_state)
                 supervisor = result.get("supervisor")
                 if isinstance(supervisor, dict) and supervisor.get("route") == "finalize":
                     raise ValueError(str(supervisor.get("error_code") or "validation_failed"))
                 if isinstance(supervisor, dict) and supervisor.get("route") == "retry" and not loops:
                     raise ValueError("validation_failed: reviewer retry loop missing")
+                result = dict(result)
+                updated_budget = result.pop("step_llm_budget", None)
+                if retry_target is not None and isinstance(updated_budget, dict):
+                    result["_workflow_step_llm_budgets"] = {
+                        retry_target: updated_budget
+                    }
+                if (
+                    retry_target is not None
+                    and isinstance(supervisor, dict)
+                    and supervisor.get("route") == "retry"
+                    and supervisor.get("tier_override") == "llm"
+                ):
+                    result["_workflow_tier_overrides"] = {retry_target: "llm"}
                 return result
 
             executors[step.id] = _make_checkpointed_node(
@@ -965,6 +1015,41 @@ def _workflow_runtime_executors(
         # wrapper with their own durable checkpoint identity around the raw
         # capability function.
         stage_name = step.agent_id.removeprefix("agent.").removesuffix(".v1")
+        if step.id in reviewed_target_iterations:
+            raw = getattr(canonical, "__workflow_original_node__", None) or canonical
+
+            async def reviewed_target_node(
+                state: WorkflowState,
+                *,
+                target_step: Any = step,
+                target_executor: Any = raw,
+            ) -> dict[str, Any]:
+                budgets = dict(state.get("_workflow_step_llm_budgets") or {})
+                overrides = dict(state.get("_workflow_tier_overrides") or {})
+                target_state = {
+                    **state,
+                    "step_llm_budget": dict(
+                        budgets.get(target_step.id)
+                        or initial_step_budget(target_step)
+                    ),
+                    "review_max_iterations": reviewed_target_iterations[target_step.id],
+                }
+                override = overrides.get(target_step.id)
+                if override == "llm":
+                    target_state["model_tier_override"] = "llm"
+                result = dict(await target_executor(target_state))
+                updated_budget = result.pop(
+                    "step_llm_budget", target_state["step_llm_budget"]
+                )
+                result["_workflow_step_llm_budgets"] = {
+                    target_step.id: updated_budget
+                }
+                return result
+
+            executors[step.id] = _make_checkpointed_node(
+                reviewed_target_node, step.id, capability_stage=stage_name
+            )
+            continue
         if step.id == stage_name:
             executors[step.id] = canonical
             continue
@@ -2488,6 +2573,8 @@ async def run_offline_pipeline(
             "analysis_mode_resolution": mode_snapshot,
             "_workflow_route_decisions": [],
             "_workflow_loop_iterations": {},
+            "_workflow_step_llm_budgets": {},
+            "_workflow_tier_overrides": {},
             "_workflow_step_outputs": {},
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
@@ -2771,6 +2858,8 @@ async def run_deep_pipeline(
             "analysis_mode_resolution": mode_snapshot,
             "_workflow_route_decisions": [],
             "_workflow_loop_iterations": {},
+            "_workflow_step_llm_budgets": {},
+            "_workflow_tier_overrides": {},
             "_workflow_step_outputs": {},
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},

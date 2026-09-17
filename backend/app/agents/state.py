@@ -168,6 +168,8 @@ class WorkflowState(TypedDict):
     review_verdict: dict  # generic reviewer contract used by typed branches
     supervisor: dict  # deterministic reviewer routing decision
     step_llm_budget: dict  # shared serialisable reviewer/loop/escalation budget
+    _workflow_step_llm_budgets: Annotated[dict[str, dict], _merge_dicts]
+    _workflow_tier_overrides: Annotated[dict[str, str], _merge_dicts]
     review_retry_count: int
     review_max_iterations: int
     _workflow_step_outputs: Annotated[dict[str, dict], _merge_dicts]
