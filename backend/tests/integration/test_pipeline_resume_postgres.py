@@ -181,3 +181,47 @@ async def test_resume_claim_without_authority_is_fail_closed_and_non_mutating(mo
     finally:
         await _cleanup(factory, pipeline_id)
         await engine.dispose()
+
+
+async def test_queued_resume_cannot_claim_a_review_rejected_row(monkeypatch):
+    from app.agents import workflow
+
+    engine = create_async_engine(_dsn(), pool_size=2, max_overflow=0)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: factory())
+    pipeline_id = uuid.uuid4()
+    try:
+        async with engine.begin() as db:
+            run = (
+                await db.execute(
+                    text("SELECT id FROM test_runs ORDER BY created_at LIMIT 1")
+                )
+            ).scalar_one_or_none()
+            if run is None:
+                pytest.skip("homelab database has no test run fixture")
+            await db.execute(
+                text(
+                    "INSERT INTO agent_pipeline_runs "
+                    "(id,test_run_id,workflow_type,status,error,execution_metadata) "
+                    "VALUES (:id,:run,'deep','failed','review_rejected: stale_data',"
+                    "CAST(:metadata AS json))"
+                ),
+                {"id": pipeline_id, "run": run, "metadata": _metadata()},
+            )
+
+        assert await workflow._claim_pipeline_resume(str(pipeline_id)) is None  # noqa: SLF001
+        async with factory() as db:
+            status, error, metadata = (
+                await db.execute(
+                    text(
+                        "SELECT status,error,execution_metadata "
+                        "FROM agent_pipeline_runs WHERE id=:id"
+                    ),
+                    {"id": pipeline_id},
+                )
+            ).one()
+        assert (status, error) == ("failed", "review_rejected: stale_data")
+        assert "resume_attempt" not in metadata
+    finally:
+        await _cleanup(factory, pipeline_id)
+        await engine.dispose()
