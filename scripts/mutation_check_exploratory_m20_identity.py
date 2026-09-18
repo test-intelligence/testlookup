@@ -36,7 +36,7 @@ MUTATIONS = (
         "one-time-key-role-downgrade",
         "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`",
         "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:fixed-role`",
-        "drops key UI and ignores in-flight creation",
+        "removes a displayed one-time key secret when the role is downgraded",
     ),
     Mutation(
         "one-time-key-session-boundary",

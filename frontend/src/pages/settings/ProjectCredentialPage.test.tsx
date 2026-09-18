@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ApiKeysPage, { CreatedKeyModal } from './ApiKeysPage'
@@ -79,9 +79,25 @@ describe('ApiKeysPage identity safety', () => {
     await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())
   })
 
+  it('removes a displayed one-time key secret when the role is downgraded', async () => {
+    create.mockResolvedValue(created)
+    const view = render(<ApiKeysPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
+    fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('qai_secret_once')
+
+    permissionsState = { isAdmin: false, role: 'VIEWER' }
+    view.rerender(<ApiKeysPage />)
+
+    await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())
+  })
+
   it('drops key UI and ignores in-flight creation when authority is downgraded', async () => {
     let resolveCreate!: (value: typeof created) => void
+    let resolveRefresh!: () => void
     create.mockImplementation(() => new Promise(resolve => { resolveCreate = resolve }))
+    refresh.mockImplementation(() => new Promise<void>(resolve => { resolveRefresh = resolve }))
     const view = render(<ApiKeysPage />)
     fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
     fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
@@ -92,8 +108,16 @@ describe('ApiKeysPage identity safety', () => {
     expect(screen.queryByRole('button', { name: 'Generate streaming key' })).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText('ci-runner-prod')).not.toBeInTheDocument()
 
-    resolveCreate(created)
-    await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())
+    await act(async () => {
+      resolveCreate(created)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      resolveRefresh()
+      await Promise.resolve()
+    })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument()
   })
 
   it('removes a one-time key secret when the authenticated session changes', async () => {
