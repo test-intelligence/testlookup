@@ -45,7 +45,7 @@
     --color-border:#262d38; --color-border-light:#333c49;
     --color-text:#e8ebef; --color-text-secondary:#b9bfc9; --color-text-muted:#7f8794; --color-text-faint:#575f6b;
     --color-accent:#3b82f6; --color-accent-ink:#6ba3f8;
-    --color-btn-primary-bg:#3b82f6; --color-btn-primary-text:#ffffff;
+    --color-btn-primary-bg:#1d4ed8; --color-btn-primary-text:#ffffff;
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);

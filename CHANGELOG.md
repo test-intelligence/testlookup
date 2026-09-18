@@ -2,6 +2,11 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+The Projects page now meets WCAG AA contrast for its primary action and
+creation timestamp in the default Signal theme. The primary button uses a
+darker blue and the timestamp uses the readable secondary-text token, closing
+the hermetic accessibility gate found by the consolidated release PR.
+
 M22 client parity packages the Python streaming SDK with its required
 `ci_context` and `commit_range` modules plus install metadata, so the public
 download imports in a clean environment. CLI commands now preserve the shared
