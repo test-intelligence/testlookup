@@ -64,16 +64,22 @@ test.describe('EXJ-2026-09-18 fixes, live', () => {
       return {
         table: table.getBoundingClientRect().width,
         build: (row.children[0] as HTMLElement).getBoundingClientRect().width,
+        container: (table.parentElement as HTMLElement).getBoundingClientRect().width,
         passClient: cell.clientWidth,
         passNeeds: meter ? meter.scrollWidth + 28 : 0,
       }
     })
     // eslint-disable-next-line no-console
     console.log(`LIVE_GEO table=${Math.round(geo.table)} build=${Math.round(geo.build)} ` +
-      `share=${((geo.build / geo.table) * 100).toFixed(1)}% passClient=${geo.passClient} passNeeds=${Math.round(geo.passNeeds)}`)
+      `share=${((geo.build / geo.table) * 100).toFixed(1)}% fill=${((geo.table / geo.container) * 100).toFixed(1)}% passClient=${geo.passClient} passNeeds=${Math.round(geo.passNeeds)}`)
 
     expect(geo.passNeeds, 'the pass-rate percentage is clipped').toBeLessThanOrEqual(geo.passClient + 28)
     expect(geo.build / geo.table, 'Build is absorbing the row').toBeLessThan(0.5)
+    // The follow-up defect: capping the table stopped Build growing but left
+    // the table short of its panel, moving the empty band to the right edge.
+    const fill = geo.table / geo.container
+    expect(fill, 'the table overflows its panel').toBeLessThanOrEqual(1.01)
+    expect(fill, 'the table falls short of its panel — empty band at the right edge').toBeGreaterThan(0.97)
   })
 
   test('BUG-008: the AI report leads and Agent Stages collapses', async ({ page, request }) => {
