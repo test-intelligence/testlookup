@@ -138,7 +138,18 @@ Product_Plan
 frontend/playwright-report/
 frontend/test-results
 LintFailures
-docs/
+# Keep local scratch docs ignored; publish the maintained handoff suite.
+/docs/*
+!/docs/README.md
+!/docs/product/
+!/docs/architecture/
+!/docs/pipelines/
+!/docs/api/
+!/docs/operations/
+!/docs/handoff/
+!/docs/reference/
+!/docs/wiki/
+!/docs/reviews/
 BuildFailures/
 CSS_Samples/
 backend/celerybeat-schedule

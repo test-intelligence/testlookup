@@ -1,0 +1,215 @@
+# Non-OpenAPI routes and contract gaps
+
+[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+
+Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+
+Swagger/ReDoc/schema routes are framework-generated. `/metrics` is installed only when `METRICS_ENABLED=true`; generation deliberately disables metrics and telemetry. WebSocket and excluded HTTP routes below need their handler-level auth even when outside `/api/v1`.
+
+| Kind | Path | Source |
+|---|---|---|
+| WebSocket | `/ws/live/{project_id}` | [backend/app/routers/live.py:313](../../backend/app/routers/live.py#L313) |
+| GET, HEAD | `/api-docs/openapi.json` | FastAPI framework-generated route |
+| GET, HEAD | `/api-docs` | FastAPI framework-generated route |
+| GET, HEAD | `/docs/oauth2-redirect` | FastAPI framework-generated route |
+| GET, HEAD | `/api-docs/redoc` | FastAPI framework-generated route |
+
+## Responses without complete structured declarations
+
+This is a documentation/typing limitation observed in source, not evidence that these endpoints fail. Prefer a typed response model when extending them.
+
+- `GET /`
+- `GET /api/v1/admin/dlq`
+- `POST /api/v1/admin/dlq/{entry_id}/replay`
+- `GET /api/v1/admin/maintenance/ai-cache`
+- `POST /api/v1/admin/maintenance/backfill-placeholder-test-cases`
+- `POST /api/v1/admin/maintenance/backfill-unassigned-failures`
+- `GET /api/v1/admin/maintenance/dlq`
+- `POST /api/v1/admin/maintenance/drain-active-live-sessions`
+- `POST /api/v1/admin/maintenance/outbox/requeue`
+- `GET /api/v1/agents/active-runs`
+- `GET /api/v1/agents/active-runs/{run_id}`
+- `POST /api/v1/agents/defect-command`
+- `GET /api/v1/agents/invocations/{invocation_id}/events`
+- `POST /api/v1/agents/pipelines/trigger`
+- `POST /api/v1/agents/pipelines/{pipeline_id}/cancel`
+- `POST /api/v1/agents/pipelines/{pipeline_id}/retry`
+- `POST /api/v1/agents/regression-watch`
+- `GET /api/v1/agents/runs/{run_id}/pipeline-status`
+- `POST /api/v1/ai-eval/agent-stack-release-gate`
+- `GET /api/v1/ai-eval/baselines`
+- `POST /api/v1/ai-eval/baselines`
+- `GET /api/v1/ai-eval/drift`
+- `POST /api/v1/ai-eval/golden-datasets/seed`
+- `GET /api/v1/ai-eval/label-health`
+- `POST /api/v1/ai-eval/pre-release-gate`
+- `GET /api/v1/ai-eval/report-cycles`
+- `POST /api/v1/ai-eval/report-cycles`
+- `GET /api/v1/ai-eval/report-cycles/readiness`
+- `POST /api/v1/ai-eval/reviewer-quality`
+- `POST /api/v1/ai-eval/tier-comparison`
+- `GET /api/v1/analytics/ai-summary`
+- `GET /api/v1/analytics/coverage`
+- `GET /api/v1/analytics/defects`
+- `GET /api/v1/analytics/failure-categories`
+- `GET /api/v1/analytics/flake-load`
+- `GET /api/v1/analytics/flaky-scores`
+- `GET /api/v1/analytics/flaky-tests`
+- `GET /api/v1/analytics/kind-evidence`
+- `GET /api/v1/analytics/suite-detail`
+- `GET /api/v1/analytics/systemic-clusters`
+- `GET /api/v1/analytics/top-failing`
+- `GET /api/v1/audit-dashboard/categories`
+- `GET /api/v1/audit-dashboard/events`
+- `GET /api/v1/audit-dashboard/export`
+- `GET /api/v1/audit-dashboard/observability/{project_id}`
+- `GET /api/v1/canonical-test-cases/{canonical_id}/runs`
+- `GET /api/v1/chat/run-summaries`
+- `GET /api/v1/compliance-packs/{pack_id}/download`
+- `POST /api/v1/debug/generate-test-run`
+- `GET /api/v1/deep-investigate/defects/pending-review`
+- `GET /api/v1/deep-investigate/{run_id}/clusters/ranked`
+- `GET /api/v1/deep-investigate/{run_id}/clusters/{cluster_id}/duplicate-check`
+- `DELETE /api/v1/dev/seed`
+- `POST /api/v1/dev/seed`
+- `POST /api/v1/dev/seed/reset`
+- `GET /api/v1/dev/seed/status`
+- `GET /api/v1/feature-flags/{key}/status`
+- `POST /api/v1/feedback/jira-webhook`
+- `GET /api/v1/feedback/stats`
+- `POST /api/v1/feedback/{analysis_id}`
+- `PUT /api/v1/feedback/{analysis_id}`
+- `GET /api/v1/integration-health/history/{provider}`
+- `POST /api/v1/integration-health/probe`
+- `GET /api/v1/integration-health/status`
+- `GET /api/v1/integration-health/trends`
+- `GET /api/v1/knowledge-sources/governance/domain-allowlist`
+- `PUT /api/v1/knowledge-sources/governance/domain-allowlist`
+- `GET /api/v1/me/assigned-failures/count`
+- `GET /api/v1/me/assigned-failures/{test_case_id}/reassign-options`
+- `GET /api/v1/metrics/detection-timing`
+- `GET /api/v1/metrics/flaky-readiness`
+- `GET /api/v1/metrics/summary`
+- `GET /api/v1/metrics/tia-readiness`
+- `GET /api/v1/metrics/trends`
+- `GET /api/v1/notifications/history/unread-count`
+- `POST /api/v1/notifications/test`
+- `POST /api/v1/observability/frontend`
+- `GET /api/v1/onboarding/events`
+- `POST /api/v1/onboarding/track`
+- `POST /api/v1/onboarding/{project_id}/complete`
+- `POST /api/v1/onboarding/{project_id}/detect`
+- `POST /api/v1/onboarding/{project_id}/restore`
+- `POST /api/v1/onboarding/{project_id}/skip`
+- `GET /api/v1/onboarding/{project_id}/status`
+- `GET /api/v1/performance/budgets`
+- `GET /api/v1/performance/search-config`
+- `GET /api/v1/projects/{project_id}/activity/export`
+- `GET /api/v1/projects/{project_id}/agent-actions`
+- `PATCH /api/v1/projects/{project_id}/agent-actions/{action_id}`
+- `GET /api/v1/projects/{project_id}/attribution-rules`
+- `POST /api/v1/projects/{project_id}/attribution-rules`
+- `POST /api/v1/projects/{project_id}/attribution-rules/preview`
+- `PUT /api/v1/projects/{project_id}/attribution-rules/{rule_id}`
+- `POST /api/v1/projects/{project_id}/default-qa-lead/reset-password`
+- `POST /api/v1/projects/{project_id}/fix-outcomes`
+- `POST /api/v1/projects/{project_id}/flaky-coach/refresh`
+- `GET /api/v1/projects/{project_id}/reports/analysis`
+- `GET /api/v1/releases`
+- `POST /api/v1/releases`
+- `POST /api/v1/releases/sync`
+- `GET /api/v1/releases/{release_id}`
+- `PUT /api/v1/releases/{release_id}`
+- `POST /api/v1/releases/{release_id}/activate`
+- `GET /api/v1/releases/{release_id}/gate`
+- `GET /api/v1/releases/{release_id}/gate/baseline`
+- `POST /api/v1/releases/{release_id}/gate/evaluate`
+- `POST /api/v1/releases/{release_id}/outcomes`
+- `POST /api/v1/releases/{release_id}/phases`
+- `GET /api/v1/releases/{release_id}/phases/gate`
+- `PUT /api/v1/releases/{release_id}/phases/{phase_id}`
+- `POST /api/v1/releases/{release_id}/phases/{phase_id}/gate/evaluate`
+- `POST /api/v1/releases/{release_id}/test-runs`
+- `POST /api/v1/reports/email-trends`
+- `GET /api/v1/reports/runs/{run_id}/evidence-bundle`
+- `GET /api/v1/reports/runs/{run_id}/pdf`
+- `GET /api/v1/reports/summary/pdf`
+- `GET /api/v1/runs`
+- `GET /api/v1/runs/failed-ids`
+- `GET /api/v1/runs/{run_id}`
+- `GET /api/v1/runs/{run_id}/attribution`
+- `GET /api/v1/runs/{run_id}/baseline-diff`
+- `GET /api/v1/runs/{run_id}/commit-range`
+- `GET /api/v1/runs/{run_id}/decision-reports`
+- `POST /api/v1/runs/{run_id}/decision-reports/{report_id}/feedback`
+- `GET /api/v1/runs/{run_id}/downstream-status`
+- `GET /api/v1/runs/{run_id}/export`
+- `GET /api/v1/runs/{run_id}/intelligence`
+- `POST /api/v1/runs/{run_id}/intelligence/refresh`
+- `POST /api/v1/runs/{run_id}/recover-live`
+- `GET /api/v1/runs/{run_id}/regression-diff`
+- `POST /api/v1/runs/{run_id}/release`
+- `GET /api/v1/runs/{run_id}/step-flips`
+- `GET /api/v1/runs/{run_id}/summary`
+- `GET /api/v1/runs/{run_id}/suspects`
+- `GET /api/v1/runs/{run_id}/tests/{test_id}`
+- `GET /api/v1/runs/{run_id}/tests/{test_id}/step-flips`
+- `GET /api/v1/runs/{run_id}/tests/{test_id}/steps`
+- `GET /api/v1/scim/v2/ResourceTypes`
+- `GET /api/v1/scim/v2/ResourceTypes/{resource_type}`
+- `GET /api/v1/scim/v2/Schemas`
+- `GET /api/v1/scim/v2/Schemas/{schema_uri}`
+- `GET /api/v1/scim/v2/ServiceProviderConfig`
+- `GET /api/v1/scim/v2/Users`
+- `POST /api/v1/scim/v2/Users`
+- `GET /api/v1/scim/v2/Users/{user_id}`
+- `PATCH /api/v1/scim/v2/Users/{user_id}`
+- `PUT /api/v1/scim/v2/Users/{user_id}`
+- `GET /api/v1/scoring-model`
+- `GET /api/v1/sdk`
+- `GET /api/v1/sdk/{lang}`
+- `GET /api/v1/search`
+- `GET /api/v1/search/entity-counts`
+- `GET /api/v1/search/global`
+- `GET /api/v1/search/index-status`
+- `POST /api/v1/search/reindex`
+- `GET /api/v1/search/similar/{test_case_id}`
+- `GET /api/v1/settings/audit-log`
+- `GET /api/v1/settings/flags`
+- `PUT /api/v1/settings/flags/{flag_key}`
+- `GET /api/v1/settings/integrations/health`
+- `GET /api/v1/shared/reports/{token}/pdf`
+- `GET /api/v1/stream/sessions/{session_id}`
+- `GET /api/v1/stream/sse/{project_id}`
+- `POST /api/v1/test-management/batches/{batch_id}/accept`
+- `POST /api/v1/test-management/batches/{batch_id}/cases/{case_id}/accept`
+- `GET /api/v1/test-management/batches/{batch_id}/eval`
+- `GET /api/v1/test-management/cases/export/excel`
+- `GET /api/v1/test-management/cases/needs-review`
+- `GET /api/v1/test-management/cases/stale`
+- `GET /api/v1/test-management/cases/{case_id}/citations`
+- `GET /api/v1/test-management/plans/{plan_id}/export/pdf`
+- `GET /api/v1/test-management/plans/{plan_id}/export/word`
+- `GET /api/v1/test-management/strategies/{strategy_id}/export/pdf`
+- `GET /api/v1/test-management/strategies/{strategy_id}/export/word`
+- `GET /api/v1/test-management/suites`
+- `GET /api/v1/test-management/suites/{suite_name}/cases`
+- `GET /api/v1/test-management/suites/{suite_name}/changes`
+- `GET /api/v1/test-management/suites/{suite_name}/deleted`
+- `GET /api/v1/test-management/suites/{suite_name}/membership`
+- `GET /api/v1/test-management/suites/{suite_name}/trend`
+- `POST /api/v1/training/export`
+- `POST /api/v1/training/finetune`
+- `POST /api/v1/training/promote`
+- `GET /api/v1/training/status`
+- `GET /api/v1/users/{user_id}/access-audit`
+- `GET /api/v1/users/{user_id}/memberships`
+- `GET /api/v1/value-metrics`
+- `GET /api/v1/value-metrics/by-team`
+- `GET /api/v1/value-metrics/export`
+- `GET /api/v1/value-metrics/methodology`
+- `GET /health/details`
+- `GET /health/live`
+- `GET /health/ready`
+- `GET /health/version`
+- `POST /ws/events/{run_id}`
