@@ -1,192 +1,90 @@
 # TestLookup
 
-**Local-first test failure intelligence for CI pipelines and QA teams.**
+**Local-first test result ingestion, failure intelligence, and release decision support.**
 
-Turn raw automated test results into actionable failure intelligence and release-risk signals -- locally, offline, and through API / CLI / UI / MCP.
+TestLookup collects results from test frameworks and CI, preserves execution evidence, and helps teams investigate failures, review AI findings, manage tests, and evaluate release readiness. It provides a React web application, FastAPI REST API, CLI, client SDKs, and an MCP server.
 
-> 📖 **This README is the short, evaluator-facing pitch.** For the deep marketing/product walkthrough (architecture diagrams, full feature inventory, framework matrix, integrations), see [`README_FULL.md`](README_FULL.md). Contributors should also read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Test frameworks and CI systems execute the tests. TestLookup receives their results and runs the intelligence and reporting workflows described below.
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
-[![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com)
-[![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
+## Start here
 
-<!-- TODO (OS-3): replace with screenshot/GIF of ingestion → triage → release gate flow -->
+| Audience | Guide |
+|---|---|
+| Evaluating the product | [Product overview](docs/product/overview.md) and [user journeys](docs/product/workflows.md) |
+| Joining the engineering team | [Developer handoff](docs/handoff/README.md) and [local development](docs/operations/development.md) |
+| Integrating CI or a client | [API guide](docs/api/README.md), [all endpoints](docs/reference/api-index.md), [SDK/CLI/MCP](docs/architecture/integrations.md) |
+| Understanding the system | [Architecture](docs/architecture/overview.md), [codebase map](docs/architecture/codebase-map.md), [data model](docs/architecture/data-model.md) |
+| Operating an installation | [Deployment](docs/operations/deployment.md), [testing](docs/operations/testing.md), [limits and troubleshooting](docs/handoff/limitations.md) |
 
-## What it does
+The [documentation suite](docs/README.md) is based on GitHub `main` commit `44be1f2023d50bbbd9554bc91ce668c5c0789db5` (2026-09-18). It includes **550 HTTP operations across 460 paths, 471 OpenAPI schemas, and 139 SQLAlchemy tables**. Counts describe the source snapshot, not a running installation. [Verification and scope](docs/handoff/verification.md) distinguish generated contracts, reviewed flows, and checks not run.
 
-1. **Ingest test results** from JUnit, pytest, TestNG, Allure, Cypress, Playwright, NUnit, xUnit, TRX, and more
-2. **Cluster failures** and surface regressions vs flaky recurrences vs infra anomalies
-3. **Explain likely root causes** using rules, ML classifiers, or a local LLM (Ollama) -- no cloud calls required
-4. **Provide release-risk signals** -- GO / CONDITIONAL_GO / NO_GO with reasons and override audit trail
-5. **Expose everything** through UI, REST API, CLI, and [MCP server](https://modelcontextprotocol.io) (48 tools, 9 resources, 6 prompt workflows)
-6. **Run fully offline** when required -- air-gapped mode blocks all outbound network calls
+## Quick start
 
-## Quick Start
-
-Three run modes. Pick the one that fits.
-
-| Mode | Command | What you get | Time |
-|------|---------|-------------|------|
-| **Demo** ⭐ | `make quickstart` | Zero config: auto-generates `.env` with local secrets, starts the core stack, loads sample data | ~3 min |
-| **Core** (no LLM) | `make dev` | Rules/ML analysis, dashboards, CLI, MCP | ~5 min |
-| **Full** (local LLM) | `make dev-llm` | Core + AI-assisted triage via Ollama + ChromaDB; pulls the pinned SLM/LLM pair | ~10 min + first model download |
+Prerequisites: Docker with Compose v2, Git, GNU Make and Bash. On Windows, use Git Bash or WSL for these commands. The deployment has multiple databases and workers; see [resource and model considerations](docs/operations/deployment.md) before enabling local models.
 
 ```bash
-git clone https://github.com/anandtopu/testlookup.git
+git clone https://github.com/test-intelligence/testlookup.git
 cd testlookup
-make quickstart          # generates .env (random local secrets) + loads demo data
+make quickstart
 ```
 
-That's it — no manual secret editing. `make quickstart` / `make dev` run `scripts/gen-dev-env.sh`, which fills every required secret in `.env` with a random value and keeps `DATABASE_URL` / `MONGO_URI` in sync, so the stack starts on the first try. Prefer to configure by hand? `cp .env.example .env`, edit the secrets, then `make dev`.
+The Makefile creates `.env` with local development secrets if it is absent, builds the core stack and seeds demo data. Inspect the generated environment before using it outside development. Existing `.env` values are retained. Demo login is a development-only capability.
 
-Dashboard: http://localhost:3000 | API docs: http://localhost:8000/api-docs | MCP SSE: http://localhost:8002/sse
+| Mode | Command | Behavior |
+|---|---|---|
+| Demo | `make quickstart` | Core services and sample data |
+| Core | `make dev` | Ingestion, API, UI, workers and rules/available ML analysis |
+| Local LLM | `make dev-llm` | Adds Ollama and ChromaDB; pulls the Makefile's pinned models |
 
-Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode with the default local pair: 16 GB RAM / 4 vCPU and about 14 GB of free model storage.
+Open the dashboard at [localhost:3000](http://localhost:3000), Swagger at [localhost:8000/api-docs](http://localhost:8000/api-docs), and the schema at [localhost:8000/api-docs/openapi.json](http://localhost:8000/api-docs/openapi.json). MCP SSE is served on port 8002 and requires the caller's bearer credentials. The frontend `/docs` page is the in-app user guide.
 
-### Run without cloning (pre-built images)
+Default local model tags in the Makefile are `qwen2.5:3b-instruct-q5_K_M`, `qwen2.5:14b-instruct-q5_K_M`, and `nomic-embed-text:v1.5`. Download time and inference latency depend on hardware and model availability; this documentation does not promise benchmark timings. Model weights reside in Docker volumes. [AI pipeline](docs/pipelines/ai.md).
 
-Don't want the source? One command pulls the pinned release images, writes a local `.env`, and starts the stack:
+## What is implemented
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
-```
+| Area | Capabilities and qualification |
+|---|---|
+| Ingestion | JSON batches, live SDK events, object-storage sentinel events, file uploads and bounded ZIP archives; JUnit, TestNG, Allure, Cypress, Playwright, pytest, Robot, Cucumber, NUnit, TRX and xUnit parsers |
+| Investigation | Rules/ML/LLM/auto routing; failure clusters, regression comparisons, anomaly evidence, optional deep workflow and bounded cluster investigations |
+| Governance | Agent configuration and versioned workflows, decision trails, human report review, typed action proposals, release policies and override history |
+| Test operations | Canonical suites/tests, authored test lifecycle, plans and strategies, failure assignment, flaky quarantine, ownership and retention |
+| Reports | Run intelligence, project summaries, HTML/PDF reports, evidence bundles, share links and compliance packs with policy controls |
+| Integrations | Jira, GitHub/GitLab, knowledge sources, notifications, CLI, Python/JS/Java/Go client code, MCP |
+| Identity | JWT and API keys, project membership and role checks, MFA, SAML SSO and SCIM provisioning |
+| Operations | Health probes, Prometheus metrics, optional tracing/monitoring, backups, migrations, Compose and Kubernetes deployment assets |
 
-This downloads [`docker-compose.release.yml`](docker-compose.release.yml) (which pulls `ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}` instead of building) into `./testlookup` and brings it up. Add demo data with `TL_PROFILE=demo curl ... | bash`; pin a specific build with `TESTLOOKUP_VERSION=<sha-or-tag>`. `latest` tracks `main` — pin a commit SHA or a published release tag for a reproducible deploy. See the header of `docker-compose.release.yml` for the by-hand steps and all overrides.
-
-Pushing a `v*.*.*` git tag publishes immutable, versioned images via [`.github/workflows/release.yml`](.github/workflows/release.yml): tag `v1.2.3` ships `:v1.2.3`, `:1.2.3`, `:1.2`, `:1`, and `:sha-<sha>` to GHCR, so `TESTLOOKUP_VERSION=v1.2.3` (or `1.2`, to float on patches) pins a real release.
-
-### Secrets
-
-For **local / demo** use, `make quickstart` / `make dev` auto-generate strong random secrets into `.env` — nothing to do. For a **production** deployment, generate your own values and set these (Docker Compose refuses to start until they're non-empty):
-
-| Variable | Example generation |
-|----------|--------------------|
-| `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
-| `MONGO_PASSWORD` | `openssl rand -hex 24` |
-| `MINIO_ACCESS_KEY` | `openssl rand -hex 12` |
-| `MINIO_SECRET_KEY` | `openssl rand -base64 32` |
-| `FLOWER_PASSWORD` | `openssl rand -hex 24` |
-| `APP_SECRET_KEY` | `openssl rand -hex 32` |
-| `JWT_SECRET_KEY` | `openssl rand -hex 32` |
-| `WEBHOOK_SECRET` | `openssl rand -hex 32` |
-
-Keep `DATABASE_URL` and `MONGO_URI` in sync with the database passwords you choose.
-
-### Ollama model storage
-
-Ollama model files are stored in Docker's named volume for this Compose project, normally `testlookup_ollama_models`, not in the repository directory. The volume name is prefixed by the Compose project name. Verify installed models with:
-
-```bash
-docker compose exec ollama ollama list
-```
-
-`make dev-llm` waits for Ollama and pulls this tested, exact-tag local pair:
-
-| Tier | Ollama tag | Download | Intended work |
-|------|------------|----------|---------------|
-| SLM | `qwen2.5:3b-instruct-q5_K_M` | 2.2 GB | Summary, classification, extraction, and JSON shaping |
-| LLM | `qwen2.5:14b-instruct-q5_K_M` | 11 GB | Causal reasoning, synthesis, and escalation |
-
-It also pulls the pinned `nomic-embed-text:v1.5` embedding model. Fresh `.env`
-files use the installed SLM for legacy single-model calls and the same pinned
-embedding tag. Existing layers in the named volume are reused on later starts.
-Override either tier for local hardware experiments without editing the
-Makefile:
-
-```bash
-make dev-llm OLLAMA_SLM_MODEL=qwen2.5:3b-instruct-q4_K_M \
-  OLLAMA_LLM_MODEL=qwen2.5:14b-instruct-q4_K_M
-```
-
-Project agent configuration still selects which installed tag each tier uses.
-Keep explicit tags in that configuration; do not use `latest` or an omitted
-tag.
-
-## Feature matrix
-
-Every feature is labelled **Core** (on by default in OSS), **Experimental** (in-repo but flag-off, may change), or **Enterprise** (future / commercial).
-
-### Core
-
-| Feature | Description |
-|---------|-------------|
-| Multi-framework ingestion | JUnit XML, TestNG, Allure JSON, Cypress, Playwright, pytest, Robot Framework, Cucumber, NUnit3, xUnit.net, Visual Studio TRX, and zipped archives -- format is detected from the file's content, not its extension |
-| Analysis modes | Rules (pattern match, ~0.2ms) / ML (HistGradientBoosting, ~2ms) / LLM (Ollama ReAct, ~300ms) / Auto (smart fallback) |
-| Run Intelligence | Single-pane summary: failure clusters, regression diff, risk score, role actions |
-| Release gate | GO / CONDITIONAL_GO / NO_GO with explainable reasons and QA Lead override audit |
-| Failure clustering | Regression Watchman: new_regression / known_flaky_recurrence / environmental_anomaly |
-| Jira integration | Auto-promote failure clusters to Jira with 7-dimension severity scoring + duplicate dedup |
-| Decision trail | Per-run "why did the AI do that" drawer with per-stage filter and full-text search |
-| Two-run compare | Side-by-side diff with classification (new failures, regressions, duration spikes, renamed tests) |
-| Flaky quarantine | Detection, QA Lead approval, active quarantine, nightly recheck, release/re-quarantine state machine |
-| Perf regression | Per-test duration baselines (Welford algorithm) with 3-sigma spike detection at release-gate time |
-| CLI | 12 command groups, multi-profile auth, table/JSON/YAML output |
-| MCP server | 48 tools, 9 resources, 6 prompts -- query test health from IDE or CI agents ([reference](mcp/README.md)) |
-| Dashboards | 30+ customizable analytics widgets, drag-and-drop layout |
-| Live streaming | Real-time WebSocket dashboard during test execution via Redis Streams |
-| User management | RBAC (VIEWER / TESTER / QA_ENGINEER / QA_LEAD / ADMIN), JWT + API key auth |
-| PII redaction | Auto-scrub at all system boundaries (persistence, logging, LLM prompts, reports) |
-| Email notifications | Async SMTP with daily/weekly digest subscriptions |
-| Observability | Deep health checks and Prometheus metrics built in; OpenTelemetry traces, Jaeger, Prometheus and Grafana ship in `docker-compose.monitoring.yml` (opt-in) |
-| Feature flags | Per-project / per-role / rollout-percent gates with audit history |
-| Global search | Multi-entity keyword search across runs, tests, suites, defects |
-
-### Experimental (flag-off by default)
-
-| Feature | Flag key | Description |
-|---------|----------|-------------|
-| Deep investigation | -- | Multi-agent LangGraph pipeline (semantic clustering, distributed traces, log anomaly, API contract validation) |
-| RAG test generation | `knowledge_rag` | Knowledge-grounded test case generation from Jira, Confluence, URLs, documents |
-| RAG faithfulness | `rag_faithfulness` | Pluggable Ollama/Ragas evaluator gates auto-accept on citation quality |
-| LLM cost budget | `llm_cost_budget` | Per-project quota with auto-downgrade to ML/rules when budget is exhausted |
-| GitHub Checks | `github_checks` | Post a check run to the commit SHA on every ingested run |
-| Outbound webhooks | `outbound_webhooks` | HMAC-signed event fan-out with retry + DLQ + replay |
-| Compliance pack | `release_compliance_pack` | One-click audit ZIP for a release decision (SOX/HIPAA/SOC 2) |
-| Weekly retro digest | `weekly_retro_digest` | Monday-morning automated retrospective per project |
-| Team value metrics | -- | Ownership-rule-aware team attribution |
-| Continuous fine-tuning | -- | Self-improving models trained on verified failure data |
-| Semantic search | -- | ChromaDB-backed hybrid keyword + vector search |
-
-### Enterprise (future)
-
-| Feature | Notes |
-|---------|-------|
-| SSO / SAML / SCIM | Enterprise identity federation |
-| Cloud LLM routing | OpenAI / Gemini with cost controls (requires `AI_OFFLINE_MODE=false`) |
-| Multi-cloud K8s overlays | Staging / production Kustomize overlays |
-| Project-scoped API keys | Admin-only creation for CI service accounts |
-| Report share links | Public token-authenticated PDF/evidence downloads |
-
-The running instance is the source of truth for flags: **Settings -> Feature Flags** lists every flag with its default, current value and rollout percentage.
+Presence in the repository does not mean every feature is enabled. Feature flags, project policies, role, provider availability and configuration determine behavior. `AI_OFFLINE_MODE=true` is the default AI egress ceiling; it allows approved local/private endpoints and is not a substitute for network isolation. `REVIEW_GATE_ENFORCED=false` defaults to observation mode for report distribution. [Security and policy boundaries](docs/architecture/security.md).
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  CI[CI and SDK producers] --> API[FastAPI]
+  UI[React web app] --> API
+  Clients[CLI and MCP] --> API
+  API --> PG[(PostgreSQL)]
+  API --> Redis[(Redis)]
+  API --> Objects[(Object storage)]
+  Redis --> Workers[Celery workers]
+  Beat[Celery beat] --> Redis
+  Workers --> PG
+  Workers --> Mongo[(MongoDB)]
+  Workers --> Objects
+  Workers --> Models[Configured model provider]
+  Workers --> Vectors[(Optional ChromaDB)]
 ```
-React SPA (port 3000)  -->  FastAPI backend (port 8000)  -->  PostgreSQL + MongoDB + Redis + MinIO
-                                    |
-                              Celery workers  -->  Ollama (optional) + ChromaDB (optional)
-                                    |
-                              MCP server (port 8002)
-```
 
-For the full architecture diagram, component descriptions, and deployment matrix, see [ARCHITECTURE.md](ARCHITECTURE.md).
+See [deployment](docs/operations/deployment.md) for queue topology, migration order, production secrets, homelab storage and air-gap packaging. Do not point a second Compose checkout at the same host stack without isolating its fixed container names, ports and volumes.
 
-## Documentation
+## Documentation and contribution
 
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, component diagram, deployment matrix |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, code style, PR process, DCO |
-| [SECURITY.md](SECURITY.md) | Vulnerability reporting and disclosure policy |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant v2.1 |
-| [GETTING_STARTED.md](GETTING_STARTED.md) | Step-by-step walkthrough: clone to first failure clustered in under 15 minutes |
-| [THREAT_MODEL.md](THREAT_MODEL.md) | Data flow, offline guarantees, auth boundaries, PII redaction scope |
-| [benchmarks/](benchmarks/) | Classification accuracy + throughput benchmarks with methodology (`make benchmark`) |
-| [README_FULL.md](README_FULL.md) | Full feature documentation (SDK setup, ingestion options, MCP config, CLI reference, etc.) |
-| [k8s/](k8s/) | Kustomize base and per-cloud overlays (AWS EKS / GCP GKE / Azure AKS / OpenShift / self-hosted K3s) |
+- [Complete documentation and suggested structure](docs/README.md)
+- [Design decisions and trade-offs](docs/architecture/design-decisions.md)
+- [Ingestion](docs/pipelines/ingestion.md), [test-run lifecycle](docs/pipelines/test-runs.md), [AI](docs/pipelines/ai.md), [reporting](docs/pipelines/reporting.md)
+- [Generated OpenAPI JSON](docs/reference/openapi.json), [data dictionary](docs/reference/data-dictionary.md), [configuration](docs/reference/configuration.md)
+- [Wiki publication instructions](docs/wiki/README.md)
+- [Existing architecture deep dives](architecture/README.md), [user guide](user-guide/README.md), [contributing](CONTRIBUTING.md), [security reporting](SECURITY.md), [code of conduct](CODE_OF_CONDUCT.md)
 
-## License
+Regenerate references with `python scripts/generate_handoff_reference.py` in an environment containing the backend dependencies. Check documentation with `python scripts/check_handoff_docs.py` and `python scripts/generate_handoff_reference.py --check`. [Maintenance workflow](docs/handoff/maintenance.md).
 
-Apache 2.0 -- see [LICENSE](LICENSE).
+Apache 2.0 — [LICENSE](LICENSE).
