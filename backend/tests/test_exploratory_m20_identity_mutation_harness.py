@@ -18,4 +18,4 @@ def test_m20_identity_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M20 identity mutation check: 3 mutations killed"
+    assert run.stdout.strip() == "M20 identity mutation check: 5 mutations killed"
