@@ -1177,11 +1177,11 @@ def require_run_access():
         if not project_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
 
-        _enforce_api_key_project_binding(
-            current_user,
-            project_id,
-            detail="This API key is restricted to a different project",
-        )
+        if bound_project_id is not None and bound_project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Test run not found",
+            )
         if _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
 
@@ -1193,8 +1193,8 @@ def require_run_access():
         )
         if not membership.scalar_one_or_none():
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this run's project",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Test run not found",
             )
         return current_user
 

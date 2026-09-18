@@ -17,4 +17,4 @@ def test_m22_client_mutations_are_applied_and_killed() -> None:
         timeout=240,
     )
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M22 client mutation check: 2 mutations killed"
+    assert run.stdout.strip() == "M22 client mutation check: 5 mutations killed"

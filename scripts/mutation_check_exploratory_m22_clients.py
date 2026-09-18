@@ -44,6 +44,54 @@ MUTATIONS = (
         ),
         ".",
     ),
+    Mutation(
+        "cli-bad-request-is-validation",
+        "cli/testlookup_cli/errors.py",
+        "    if status_code in (400, 422):\n",
+        "    if status_code == 422:\n",
+        (
+            "-m", "pytest", "-q",
+            "cli/tests/test_client_connection_errors.py::test_bad_request_uses_the_validation_exit_code",
+            "--basetemp=.pytest-tmp-m22-cli-validation-mutation",
+        ),
+        ".",
+    ),
+    Mutation(
+        "opaque-run-membership-denial",
+        "backend/app/core/deps.py",
+        (
+            "        if not membership.scalar_one_or_none():\n"
+            "            raise HTTPException(\n"
+            "                status_code=status.HTTP_404_NOT_FOUND,\n"
+            "                detail=\"Test run not found\",\n"
+            "            )\n"
+        ),
+        (
+            "        if not membership.scalar_one_or_none():\n"
+            "            raise HTTPException(\n"
+            "                status_code=status.HTTP_403_FORBIDDEN,\n"
+            "                detail=\"Test run not found\",\n"
+            "            )\n"
+        ),
+        (
+            "-m", "pytest", "-q",
+            "tests/test_authorization_guards.py::TestRequireRunAccess::test_non_member_gets_404_without_confirming_the_run",
+            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-run-denial-mutation",
+        ),
+        "backend",
+    ),
+    Mutation(
+        "opaque-run-api-key-binding",
+        "backend/app/core/deps.py",
+        "        if bound_project_id is not None and bound_project_id != project_id:\n",
+        "        if False and bound_project_id is not None and bound_project_id != project_id:\n",
+        (
+            "-m", "pytest", "-q",
+            "tests/test_authorization_guards.py::TestRequireRunAccess::test_foreign_project_key_gets_404_without_confirming_the_run",
+            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-key-denial-mutation",
+        ),
+        "backend",
+    ),
 )
 
 

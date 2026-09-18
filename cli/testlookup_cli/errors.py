@@ -31,7 +31,7 @@ def map_http_error(status_code: int, detail: str = "") -> CLIError:
         return CLIError(f"Permission denied. {detail}".strip(), EXIT_PERMISSION)
     if status_code == 404:
         return CLIError(f"Not found. {detail}".strip(), EXIT_NOT_FOUND)
-    if status_code == 422:
+    if status_code in (400, 422):
         return CLIError(f"Validation error. {detail}".strip(), EXIT_VALIDATION)
     if status_code == 408 or status_code == 504:
         return CLIError(f"Request timed out. {detail}".strip(), EXIT_TIMEOUT)
