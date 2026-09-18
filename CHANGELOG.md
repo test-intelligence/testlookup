@@ -9,7 +9,9 @@ workflow-definition race coverage. Full-suite regressions were repaired for
 JWT clock independence, opaque foreign-run responses, notification test
 isolation, digest discovery shape, workflow-finalization query order, and
 current mutation targets. Project-bound administrator API keys are now checked
-before the chat helper grants its administrator exception.
+before the chat helper grants its administrator exception. The protected
+deletion/report lock test now snapshots its ORM identity before rolling back,
+so rollback expiry cannot turn a successful lock assertion into async I/O.
 
 Fixed workflow-backed pipeline retries to rehydrate their project authority before validating the frozen replay snapshot, and made the PostgreSQL/Mongo integration suite self-contained across per-test event loops and current authorization/configuration routes.
 

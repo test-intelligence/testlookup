@@ -199,8 +199,9 @@ async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
                     .with_for_update()
                 )
             ).scalar_one()
+            locked_run_id = row.id
             await db.rollback()
-            return row.id
+            return locked_run_id
 
     try:
         publishing = asyncio.create_task(publish())
