@@ -1273,7 +1273,7 @@ jobs:
         run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Cache the Trivy vulnerability database (refreshed daily)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
@@ -1395,7 +1395,7 @@ jobs:
 
       - name: Cache the Trivy vulnerability database (refreshed daily)
         if: steps.scope.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
