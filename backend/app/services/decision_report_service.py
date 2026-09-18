@@ -61,6 +61,13 @@ async def _lock_report_subject(test_run_id: str):
             raise
 
 
+@asynccontextmanager
+async def lock_decision_report_subject(test_run_id: str):
+    """Serialize every terminal report write with deletion of its run."""
+    async with _lock_report_subject(test_run_id):
+        yield
+
+
 class DecisionReportV1(BaseModel):
     """Immutable, tenant/run/pipeline-bound published report."""
 

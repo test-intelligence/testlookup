@@ -27,6 +27,8 @@ from app.models.agent_contracts import (
 )
 from app.services.decision_evidence_snapshot import load_decision_evidence_snapshot
 from app.services.decision_report_service import (
+    DecisionReportSubjectUnavailable,
+    lock_decision_report_subject,
     publish_decision_report,
     record_decision_report_attempt,
 )
@@ -825,52 +827,67 @@ class DecisionReportCriticAgent(BaseAgent):
         """Expose critic failure without publishing an unverified decision draft."""
         db = get_mongo_db()
         safe_error = sanitize_for_persistence(error)
-        attempt = await record_decision_report_attempt(
-            db,
-            state=state,
-            status="failed" if (verification or {}).get("status") == "failed" else "rejected",
-            reason=safe_error,
-            verification=verification or {
-                "schema_version": CRITIC_SCHEMA_VERSION,
-                "status": "failed",
-                "unresolved_failures": ["critic_exception"],
-            },
-        )
         try:
-            await db[Collections.RUN_SUMMARIES].update_one(
-                {"test_run_id": str(state["test_run_id"])},
-                {"$set": {
-                    "test_run_id": str(state["test_run_id"]),
-                    "project_id": str(state["project_id"]),
-                    "build_number": state.get("build_number"),
-                    "schema_version": SUMMARY_DOCUMENT_SCHEMA_VERSION,
-                    "decision_report_verification": verification or {
+            async with lock_decision_report_subject(
+                str(state["test_run_id"])
+            ):
+                attempt = await record_decision_report_attempt(
+                    db,
+                    state=state,
+                    status=(
+                        "failed"
+                        if (verification or {}).get("status") == "failed"
+                        else "rejected"
+                    ),
+                    reason=safe_error,
+                    verification=verification or {
                         "schema_version": CRITIC_SCHEMA_VERSION,
                         "status": "failed",
                         "unresolved_failures": ["critic_exception"],
-                        "error": safe_error,
-                        "verified_at": datetime.now(timezone.utc),
                     },
-                    "verification_failed_at": datetime.now(timezone.utc),
-                    "verification_failed_by": self.stage_name,
-                    "verification_failure_reason": safe_error,
-                    "latest_decision_attempt": {
-                        "pipeline_run_id": str(state["pipeline_run_id"]),
-                        "status": "rejected",
-                        "verification_status": "failed",
-                        "at": datetime.now(timezone.utc),
-                    },
-                    "decision_report_attempt": {
-                        "attempt_id": attempt["attempt_id"],
-                        "status": attempt["status"],
-                        "attempted_at": attempt["attempted_at"],
-                        "supersedes_report_id": attempt.get("supersedes_report_id"),
-                    },
-                }},
-                upsert=True,
-            )
-        except Exception as exc:
-            logger.warning(
-                "decision_report_failure_projection_failed",
-                error_type=type(exc).__name__,
+                )
+                try:
+                    await db[Collections.RUN_SUMMARIES].update_one(
+                        {"test_run_id": str(state["test_run_id"])},
+                        {"$set": {
+                            "test_run_id": str(state["test_run_id"]),
+                            "project_id": str(state["project_id"]),
+                            "build_number": state.get("build_number"),
+                            "schema_version": SUMMARY_DOCUMENT_SCHEMA_VERSION,
+                            "decision_report_verification": verification or {
+                                "schema_version": CRITIC_SCHEMA_VERSION,
+                                "status": "failed",
+                                "unresolved_failures": ["critic_exception"],
+                                "error": safe_error,
+                                "verified_at": datetime.now(timezone.utc),
+                            },
+                            "verification_failed_at": datetime.now(timezone.utc),
+                            "verification_failed_by": self.stage_name,
+                            "verification_failure_reason": safe_error,
+                            "latest_decision_attempt": {
+                                "pipeline_run_id": str(state["pipeline_run_id"]),
+                                "status": "rejected",
+                                "verification_status": "failed",
+                                "at": datetime.now(timezone.utc),
+                            },
+                            "decision_report_attempt": {
+                                "attempt_id": attempt["attempt_id"],
+                                "status": attempt["status"],
+                                "attempted_at": attempt["attempted_at"],
+                                "supersedes_report_id": attempt.get(
+                                    "supersedes_report_id"
+                                ),
+                            },
+                        }},
+                        upsert=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "decision_report_failure_projection_failed",
+                        error_type=type(exc).__name__,
+                    )
+        except DecisionReportSubjectUnavailable:
+            logger.info(
+                "decision_report_failure_subject_deleted",
+                test_run_id=str(state["test_run_id"]),
             )

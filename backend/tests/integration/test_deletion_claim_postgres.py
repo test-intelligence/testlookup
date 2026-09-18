@@ -126,6 +126,35 @@ class _Mongo:
         return self.reports
 
 
+class _RecordingCollection:
+    def __init__(self):
+        self.inserts = []
+        self.updates = []
+
+    def find(self, *_args):
+        return _Cursor([])
+
+    async def insert_one(self, document):
+        self.inserts.append(document)
+
+    async def update_one(self, *args, **kwargs):
+        self.updates.append((args, kwargs))
+
+
+class _RecordingMongo:
+    def __init__(self):
+        self.collections = {}
+
+    def __getitem__(self, name):
+        return self.collections.setdefault(name, _RecordingCollection())
+
+    def write_count(self):
+        return sum(
+            len(collection.inserts) + len(collection.updates)
+            for collection in self.collections.values()
+        )
+
+
 async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
     from app.services import decision_report_service
 
@@ -184,6 +213,79 @@ async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
         published = await publishing
         assert await deleting == run_id
         assert reports.docs[0]["report_id"] == published["report_id"]
+    finally:
+        async with sessions() as cleanup:
+            await cleanup.execute(delete(DbTestRun).where(DbTestRun.id == run_id))
+            await cleanup.execute(delete(Project).where(Project.id == project_id))
+            await cleanup.commit()
+        await engine.dispose()
+
+
+async def test_deletion_winning_the_run_lock_suppresses_failure_evidence(
+    monkeypatch,
+):
+    from app.agents import decision_report_critic_agent as critic_module
+    from app.agents.decision_report_critic_agent import DecisionReportCriticAgent
+
+    engine = create_async_engine(_dsn(), pool_size=3, max_overflow=0)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    project_id, run_id = uuid.uuid4(), uuid.uuid4()
+    slug = f"failure-delete-lock-{project_id.hex}"
+    mongo = _RecordingMongo()
+
+    async with sessions() as setup:
+        setup.add(Project(id=project_id, name=slug, slug=slug))
+        await setup.flush()
+        setup.add(
+            DbTestRun(
+                id=run_id,
+                project_id=project_id,
+                build_number=f"m21-{run_id.hex[:12]}",
+            )
+        )
+        await setup.commit()
+
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions)
+    monkeypatch.setattr(critic_module, "get_mongo_db", lambda: mongo)
+    delete_locked = asyncio.Event()
+    allow_delete = asyncio.Event()
+
+    async def delete_first():
+        async with sessions() as db:
+            run = (
+                await db.execute(
+                    select(DbTestRun)
+                    .where(DbTestRun.id == run_id)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            delete_locked.set()
+            await allow_delete.wait()
+            await db.delete(run)
+            await db.commit()
+
+    async def persist_failure():
+        agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
+        await agent._persist_failure(
+            {
+                "project_id": str(project_id),
+                "test_run_id": str(run_id),
+                "pipeline_run_id": str(uuid.uuid4()),
+            },
+            "publication lost deletion race",
+        )
+
+    try:
+        deleting = asyncio.create_task(delete_first())
+        await delete_locked.wait()
+        failing = asyncio.create_task(persist_failure())
+        await asyncio.sleep(0.05)
+        assert not failing.done(), "failure persistence bypassed the deletion lock"
+
+        allow_delete.set()
+        await deleting
+        await failing
+        assert mongo.write_count() == 0
     finally:
         async with sessions() as cleanup:
             await cleanup.execute(delete(DbTestRun).where(DbTestRun.id == run_id))

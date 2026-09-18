@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +17,52 @@ from app.agents.decision_report_critic_agent import (
     review_and_repair_decision_report,
 )
 from app.services.run_evidence_bundle import build_run_evidence_bundle
+
+
+@pytest.mark.asyncio
+async def test_failure_attempt_and_summary_hold_the_subject_lock(monkeypatch):
+    from app.agents import decision_report_critic_agent as critic_module
+
+    locked = False
+
+    @asynccontextmanager
+    async def subject_lock(_test_run_id):
+        nonlocal locked
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+
+    async def record_attempt(*_args, **_kwargs):
+        assert locked, "failure attempt escaped the TestRun share lock"
+        return {
+            "attempt_id": "attempt-1",
+            "status": "rejected",
+            "attempted_at": "2026-09-18T00:00:00+00:00",
+            "supersedes_report_id": None,
+        }
+
+    class Collection:
+        async def update_one(self, *_args, **_kwargs):
+            assert locked, "failure summary escaped the TestRun share lock"
+
+    class Mongo:
+        def __getitem__(self, _name):
+            return Collection()
+
+    monkeypatch.setattr(critic_module, "lock_decision_report_subject", subject_lock)
+    monkeypatch.setattr(critic_module, "get_mongo_db", lambda: Mongo())
+    monkeypatch.setattr(
+        critic_module,
+        "record_decision_report_attempt",
+        AsyncMock(side_effect=record_attempt),
+    )
+
+    agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
+    await agent._persist_failure(_state(), "critic failed closed")
+
+    assert locked is False
 
 
 def _state(**overrides):

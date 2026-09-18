@@ -97,12 +97,21 @@ MUTATIONS = (
         "                statement = statement.where(DeletionJob.id == job_id)",
         "test_close_job_compare_and_set_refuses_a_stale_writer",
     ),
+    Mutation(
+        "failure-evidence-skips-subject-lock",
+        "backend/app/agents/decision_report_critic_agent.py",
+        "        try:\n            async with lock_decision_report_subject(\n                str(state[\"test_run_id\"])\n            ):\n                attempt = await record_decision_report_attempt(",
+        "        try:\n            if True:  # unsafe: write after a deletion-first race\n                attempt = await record_decision_report_attempt(",
+        "test_failure_attempt_and_summary_hold_the_subject_lock",
+    ),
 )
 
 
 def run_test(mutation: Mutation) -> subprocess.CompletedProcess[str]:
     if "preflight" in mutation.name or "protection" in mutation.name:
         test_file = "backend/tests/test_delete_run_task.py"
+    elif "failure-subject" in mutation.name:
+        test_file = "backend/tests/test_decision_report_critic_agent.py"
     elif "report-subject" in mutation.name:
         test_file = "backend/tests/services/test_decision_report_service.py"
     elif "relay" in mutation.name or "terminal-close" in mutation.name:
