@@ -21,5 +21,5 @@ def test_m11_configuration_authority_mutation_harness() -> None:
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert run.stdout.strip() == (
-        "M11 configuration-authority mutation check: 9 mutations killed"
+        "M11 configuration-authority mutation check: 25 mutations killed"
     )
