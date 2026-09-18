@@ -138,7 +138,7 @@ async def test_a_blocked_run_is_reported_and_excluded_from_the_frozen_set(mocker
         "app.services.deletion_criteria.resolve_criteria_candidates",
         mocker.AsyncMock(return_value=[ok_run, cited_run]),
     )
-    mocker.patch("app.db.mongo.get_mongo_db", mocker.AsyncMock(return_value={}))
+    mocker.patch("app.db.mongo.get_mongo_db", mocker.Mock(return_value={}))
     mocker.patch(
         "app.services.run_deletion_service.citation_blockers",
         mocker.AsyncMock(side_effect=[[], ["cited by 1 compliance pack(s)"]]),
@@ -182,7 +182,7 @@ async def test_an_in_flight_run_is_blocked_at_preview(mocker):
         "app.services.deletion_criteria.resolve_criteria_candidates",
         mocker.AsyncMock(return_value=[run_id]),
     )
-    mocker.patch("app.db.mongo.get_mongo_db", mocker.AsyncMock(return_value={}))
+    mocker.patch("app.db.mongo.get_mongo_db", mocker.Mock(return_value={}))
     mocker.patch(
         "app.services.run_deletion_service.citation_blockers",
         mocker.AsyncMock(return_value=[]),
@@ -217,7 +217,7 @@ async def test_a_prefix_outside_the_project_is_reported_at_preview(mocker):
         "app.services.deletion_criteria.resolve_criteria_candidates",
         mocker.AsyncMock(return_value=[run_id]),
     )
-    mocker.patch("app.db.mongo.get_mongo_db", mocker.AsyncMock(return_value={}))
+    mocker.patch("app.db.mongo.get_mongo_db", mocker.Mock(return_value={}))
     mocker.patch(
         "app.services.run_deletion_service.citation_blockers",
         mocker.AsyncMock(return_value=[]),
