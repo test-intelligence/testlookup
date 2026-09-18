@@ -11,26 +11,34 @@
  * That is exactly what `tests/probe-route-sweep.spec.ts` did with
  * `/failure-analysis`: the declared route is `/failures` (App.tsx) and the
  * sidebar links to `/failures`, so the sweep's Failure Analysis entry resolved
- * to `/overview`. Confirmed live against the homelab on 2026-09-18 — the final
- * pathname after navigation was `/overview`.
+ * to `/overview`. `probe-exploratory.spec.ts` did the same with `/tests`
+ * (labelled "Test management") and `/flaky` (labelled "Flaky coach").
+ * Confirmed live against the homelab on 2026-09-18 — the final pathname after
+ * navigating to `/failure-analysis` was `/overview`.
  *
- * This test is the class fix. The instance fix (spelling the route correctly)
+ * This test is the class fix. The instance fix (spelling the routes correctly)
  * would not stop the next one, because nothing else compares the two lists.
  *
- * It reads source text rather than importing the specs: the Playwright files
- * import `@playwright/test`, which cannot load inside the Vitest/jsdom run.
+ * Sources are loaded with `import.meta.glob(..., '?raw')`, the pattern
+ * `routeScope.ratchet.test.ts` and `formLabels.test.ts` already use here.
+ * `node:fs` would need `@types/node`, which this tsconfig does not carry — and
+ * `npm run type-check` is a CI gate.
  */
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { describe, expect, it } from 'vitest'
 
-const FRONTEND_ROOT = join(__dirname, '..')
+const APP_SOURCE = Object.values(
+  import.meta.glob('./App.tsx', { query: '?raw', import: 'default', eager: true }),
+)[0] as string
+
+const PROBE_SOURCES = import.meta.glob('../tests/probe-*.spec.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>
 
 /** Route paths declared in `App.tsx`'s two route tables, as `/`-prefixed. */
 function declaredRoutes(): string[] {
-  const source = readFileSync(join(FRONTEND_ROOT, 'src', 'App.tsx'), 'utf-8')
-  const matches = [...source.matchAll(/\{ path: '([^']+)', component: \w+ \}/g)]
+  const matches = [...APP_SOURCE.matchAll(/\{ path: '([^']+)', component: \w+ \}/g)]
   expect(
     matches.length,
     'App.tsx route tables could not be parsed — the entry shape changed',
@@ -46,7 +54,9 @@ function declaredRoutes(): string[] {
 function toMatcher(route: string): RegExp {
   const pattern = route
     .split('/')
-    .map((segment) => (segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .map((segment) =>
+      segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    )
     .join('/')
   return new RegExp(`^${pattern}$`)
 }
@@ -54,13 +64,8 @@ function toMatcher(route: string): RegExp {
 /** Absolute-path route literals a spec navigates to. */
 function routeLiteralsIn(source: string): string[] {
   const found = new Set<string>()
-  // Bare string entries in a ROUTES-style array, plus goto()/URL templates.
-  for (const m of source.matchAll(/['"`](\/[a-z0-9][a-z0-9/:-]*)['"`]/gi)) {
-    found.add(m[1])
-  }
-  for (const m of source.matchAll(/\$\{BASE\}(\/[a-z0-9][a-z0-9/:-]*)/gi)) {
-    found.add(m[1])
-  }
+  for (const m of source.matchAll(/['"`](\/[a-z0-9][a-z0-9/:-]*)['"`]/gi)) found.add(m[1])
+  for (const m of source.matchAll(/\$\{BASE\}(\/[a-z0-9][a-z0-9/:-]*)/gi)) found.add(m[1])
   return [...found]
 }
 
@@ -86,12 +91,13 @@ function isNonRoute(path: string): boolean {
 describe('Playwright route targets resolve to declared routes', () => {
   const routes = declaredRoutes()
   const matchers = routes.map(toMatcher)
+
   /**
    * A literal ending in `/` is a prefix a template interpolates onto
    * (`${BASE}/runs/${runId}`), not a destination. Judge it by the route it
    * prefixes — a genuine typo like `/runz/` still prefixes nothing and fails.
    */
-  const resolves = (path: string) => {
+  const resolves = (path: string): boolean => {
     if (matchers.some((matcher) => matcher.test(path))) return true
     if (!path.endsWith('/')) return false
     const trimmed = path.slice(0, -1)
@@ -109,37 +115,23 @@ describe('Playwright route targets resolve to declared routes', () => {
     expect(routes).not.toContain('/failure-analysis')
   })
 
-  it('every route literal in probe-route-sweep.spec.ts is declared', () => {
-    const source = readFileSync(
-      join(FRONTEND_ROOT, 'tests', 'probe-route-sweep.spec.ts'),
-      'utf-8',
-    )
-    const offenders = routeLiteralsIn(source)
-      .filter((path) => !isNonRoute(path))
-      .filter((path) => !resolves(path))
-    expect(
-      offenders,
-      'these paths are not declared in App.tsx, so the SPA catch-all sends them ' +
-        'to /overview and the sweep asserts against the wrong page',
-    ).toEqual([])
+  it('found the probe specs to check', () => {
+    // Without this the suite below passes vacuously if the glob ever misses.
+    expect(Object.keys(PROBE_SOURCES).length).toBeGreaterThan(10)
   })
 
-  it('every route literal in the probe suite is declared', () => {
-    const testsDir = join(FRONTEND_ROOT, 'tests')
-    const specs = readdirSync(testsDir).filter(
-      (name) => name.startsWith('probe-') && name.endsWith('.spec.ts'),
-    )
-    expect(specs.length, 'no probe specs found — the glob is wrong').toBeGreaterThan(10)
-
+  it('every route literal in every probe spec is declared', () => {
     const offenders: string[] = []
-    for (const spec of specs) {
-      const source = readFileSync(join(testsDir, spec), 'utf-8')
+    for (const [file, source] of Object.entries(PROBE_SOURCES)) {
+      const name = file.split('/').pop()
       for (const path of routeLiteralsIn(source)) {
-        if (!isNonRoute(path) && !resolves(path)) {
-          offenders.push(`${spec}: ${path}`)
-        }
+        if (!isNonRoute(path) && !resolves(path)) offenders.push(`${name}: ${path}`)
       }
     }
-    expect(offenders.sort()).toEqual([])
+    expect(
+      offenders.sort(),
+      'these paths are not declared in App.tsx, so the SPA catch-all sends them ' +
+        'to /overview and the spec asserts against the wrong page',
+    ).toEqual([])
   })
 })
