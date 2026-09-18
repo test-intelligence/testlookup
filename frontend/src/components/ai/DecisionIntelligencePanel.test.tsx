@@ -148,11 +148,15 @@ describe('DecisionIntelligencePanel', () => {
     expect(screen.getByText('2 of 10 tests failed.')).toBeTruthy()
     expect(screen.getByText('Investigate release blocker')).toBeTruthy()
     expect(screen.getByText(/release_owner/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect evidence for fact-1' }))
+    const evidenceTrigger = screen.getByRole('button', { name: 'Inspect evidence for fact-1' })
+    evidenceTrigger.focus()
+    fireEvent.click(evidenceTrigger)
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(screen.getByText('bundle-1')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Close evidence' }))
+    expect(screen.getByRole('button', { name: 'Close evidence' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
+    expect(evidenceTrigger).toHaveFocus()
   })
 
   it('does not call missing specialists an analysis gap', () => {

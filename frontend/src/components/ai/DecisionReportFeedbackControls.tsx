@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DecisionClaim, DecisionReportVersion, DecisionReportCorrectionType, DecisionReportUtilityRating } from '@/services/runIntelligenceService'
 import { submitDecisionReportFeedback } from '@/services/runIntelligenceService'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 type Props = {
   runId: string
@@ -35,6 +36,11 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
   const [evidenceId, setEvidenceId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const correctionDialogRef = useModalFocus<HTMLFormElement>({
+    onClose: () => setSelectedClaim(null),
+    canClose: !submitting,
+    open: selectedClaim !== null,
+  })
 
   const evidenceOptions = useMemo(() => {
     if (!selectedClaim) return []
@@ -120,7 +126,7 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
       {error && <p role="alert" className="mb-0 mt-2 text-[11px] text-[var(--status-failed)]">{error}</p>}
       {selectedClaim && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onClick={() => setSelectedClaim(null)}>
-          <form role="dialog" aria-modal="true" aria-labelledby="claim-correction-heading" className="w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()} onSubmit={submitCorrection}>
+          <form ref={correctionDialogRef} role="dialog" aria-modal="true" aria-labelledby="claim-correction-heading" className="w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()} onSubmit={submitCorrection}>
             <h3 id="claim-correction-heading" className="m-0 text-[16px] font-semibold">Correct claim</h3>
             <p className="mt-2 text-[12px] text-[var(--color-text-secondary)]">{selectedClaim.text}</p>
             <label className="mt-3 block text-[12px] font-semibold">Correction type

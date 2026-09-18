@@ -18,6 +18,7 @@ import { useReleases, useRelease } from '@/hooks/useReleases'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { releasesService } from '@/services/releasesService'
 import { useRuns } from '@/hooks/useRuns'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
 import VerdictBand from '@/components/releases/VerdictBand'
@@ -60,7 +61,7 @@ interface ReleaseModalProps {
   initial?: Release
 }
 
-function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProps) {
+export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProps) {
   const [name, setName]           = useState(initial?.name ?? '')
   const [version, setVersion]     = useState(initial?.version ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
@@ -69,6 +70,7 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
     initial?.planned_date ? initial.planned_date.slice(0, 10) : '',
   )
   const [saving, setSaving] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function save() {
     if (!name.trim()) { toast.error('Release name is required'); return }
@@ -104,11 +106,11 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="release-form-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-form-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 id="release-form-title" className="text-base font-semibold text-[var(--color-text)]">{initial ? 'Edit Release' : 'New Release'}</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close release dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
           <div>
@@ -165,7 +167,7 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
 
 // ── Link Run Modal ──────────────────────────────────────────────────────────
 
-function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
+export function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   releaseId: string
   phases: ReleasePhase[]
   onClose: () => void
@@ -176,6 +178,7 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   const [selectedRun, setSelectedRun] = useState('')
   const [selectedPhase, setSelectedPhase] = useState('')
   const [saving, setSaving] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function link() {
     if (!selectedRun) { toast.error('Select a test run'); return }
@@ -193,11 +196,11 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="link-test-run-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="link-test-run-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 id="link-test-run-title" className="text-base font-semibold text-[var(--color-text)]">Link Test Run</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close link test run dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
           <div>

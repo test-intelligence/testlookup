@@ -2,6 +2,13 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M19 accessibility hardening gives release editor, release run linking, claim
+correction, and evidence inspection dialogs one shared keyboard contract:
+focus enters and remains in the dialog, Escape closes it, and focus returns to
+the invoking control. Icon-only release dialog close buttons now have accessible
+names, and the critical-route Playwright checks include serious/critical axe
+scans for Projects and Reviews.
+
 M18 integration settings now resolve saved encrypted credentials for Jira,
 Splunk, OpenShift, GitHub, Slack, and Teams health probes instead of silently
 testing stale environment values. Global connector secrets support an explicit

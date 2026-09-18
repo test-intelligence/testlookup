@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000101'
 const REVIEW_ID = '00000000-0000-4000-8000-000000000201'
@@ -125,4 +126,18 @@ test.describe('hermetic keyboard and landmark journeys', () => {
     await expect(dialog).toHaveCount(0)
     await expect(newProject).toBeFocused()
   })
+
+  for (const path of ['/reviews', '/projects']) {
+    test(`${path} has no serious or critical automated accessibility violations`, async ({ page }) => {
+      await page.goto(path)
+      await expect(page.getByRole('main')).toBeVisible()
+
+      const result = await new AxeBuilder({ page }).analyze()
+      const blocking = result.violations.filter(
+        (violation) => violation.impact === 'serious' || violation.impact === 'critical',
+      )
+
+      expect(blocking).toEqual([])
+    })
+  }
 })
