@@ -28,9 +28,21 @@ MUTATIONS = (
     ),
     Mutation(
         "one-time-key-project-reset",
-        "  return <ApiKeysPageContent key={activeProjectId ?? 'no-project'} />",
-        "  return <ApiKeysPageContent />",
-        "removes a one-time key secret",
+        "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`",
+        "  const authorityKey = `fixed-project:${authSessionKey}:${role}`",
+        "removes a one-time key secret when the active project changes",
+    ),
+    Mutation(
+        "one-time-key-role-downgrade",
+        "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`",
+        "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:fixed-role`",
+        "drops key UI and ignores in-flight creation",
+    ),
+    Mutation(
+        "one-time-key-session-boundary",
+        "  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`",
+        "  const authorityKey = `${activeProjectId ?? 'no-project'}:fixed-session:${role}`",
+        "removes a one-time key secret when the authenticated session changes",
     ),
     Mutation(
         "created-key-dialog-focus-contract",

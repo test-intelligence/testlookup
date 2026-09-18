@@ -11,6 +11,8 @@ let projectState = {
   activeProjectId: 'project-a',
   activeProject: { id: 'project-a', name: 'Project A' },
 }
+let permissionsState = { isAdmin: true, role: 'ADMIN' }
+let authState = { sessionGeneration: 1, user: { id: 'admin-1' } }
 
 vi.mock('@/services/apiKeyService', () => ({
   apiKeyService: { create: (...args: unknown[]) => create(...args), revoke: vi.fn() },
@@ -19,7 +21,10 @@ vi.mock('@/hooks/useApiKeys', () => ({
   useApiKeys: () => hookState,
   refreshApiKeys: () => refresh(),
 }))
-vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: true }) }))
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissionsState }))
+vi.mock('@/store/authStore', () => ({
+  useAuthStore: (selector: (state: typeof authState) => unknown) => selector(authState),
+}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: (selector: (state: typeof projectState) => unknown) => selector(projectState),
@@ -41,6 +46,8 @@ beforeEach(() => {
     activeProjectId: 'project-a',
     activeProject: { id: 'project-a', name: 'Project A' },
   }
+  permissionsState = { isAdmin: true, role: 'ADMIN' }
+  authState = { sessionGeneration: 1, user: { id: 'admin-1' } }
 })
 
 describe('ApiKeysPage identity safety', () => {
@@ -67,6 +74,37 @@ describe('ApiKeysPage identity safety', () => {
       activeProjectId: 'project-b',
       activeProject: { id: 'project-b', name: 'Project B' },
     }
+    view.rerender(<ApiKeysPage />)
+
+    await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())
+  })
+
+  it('drops key UI and ignores in-flight creation when authority is downgraded', async () => {
+    let resolveCreate!: (value: typeof created) => void
+    create.mockImplementation(() => new Promise(resolve => { resolveCreate = resolve }))
+    const view = render(<ApiKeysPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
+    fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+
+    permissionsState = { isAdmin: false, role: 'VIEWER' }
+    view.rerender(<ApiKeysPage />)
+    expect(screen.queryByRole('button', { name: 'Generate streaming key' })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('ci-runner-prod')).not.toBeInTheDocument()
+
+    resolveCreate(created)
+    await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())
+  })
+
+  it('removes a one-time key secret when the authenticated session changes', async () => {
+    create.mockResolvedValue(created)
+    const view = render(<ApiKeysPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
+    fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('qai_secret_once')
+
+    authState = { sessionGeneration: 2, user: { id: 'admin-1' } }
     view.rerender(<ApiKeysPage />)
 
     await waitFor(() => expect(screen.queryByText('qai_secret_once')).not.toBeInTheDocument())

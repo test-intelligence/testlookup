@@ -9,6 +9,7 @@ import DataUnavailable from '@/components/ui/DataUnavailable'
 import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAuthStore } from '@/store/authStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
@@ -284,8 +285,7 @@ asyncio.run(main())`,
   )
 }
 
-function ApiKeysPageContent() {
-  const { isAdmin } = usePermissions()
+function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const project = useProjectStore(s => s.activeProject)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
@@ -460,8 +460,15 @@ function ApiKeysPageContent() {
 
 export default function ApiKeysPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const { isAdmin, role } = usePermissions()
+  const authSessionKey = useAuthStore(
+    s => `${s.sessionGeneration}:${s.user?.id ?? 'anonymous'}`,
+  )
 
   // API-key form and one-time secret state is project-bound. Remounting the
-  // content on an authority change prevents either from crossing projects.
-  return <ApiKeysPageContent key={activeProjectId ?? 'no-project'} />
+  // content on an authority change prevents either from crossing projects,
+  // users, sessions, or permission changes. It also fences late create results
+  // because the component that initiated the request is no longer mounted.
+  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`
+  return <ApiKeysPageContent key={authorityKey} isAdmin={isAdmin} />
 }
