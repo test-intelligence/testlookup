@@ -209,7 +209,7 @@ function getInstallSnippet(lang: SDKLang): string {
     case 'python':
       return `# Download and extract the Python ZIP from SDK Downloads above
 cd python
-pip install .
+pip install ".[yaml]"
 # Then add testlookup.yaml to your project root (see Step 2)`
     case 'java':
       return `# Option 1: Download the fat JAR from the SDK Downloads button above

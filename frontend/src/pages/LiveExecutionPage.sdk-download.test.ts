@@ -11,7 +11,8 @@ describe('LiveExecutionPage — Python SDK download contract', () => {
 
   it('tells users to extract and install the bundled project', () => {
     expect(pageSource).toContain('Download and extract the Python ZIP')
-    expect(pageSource).toMatch(/cd python\s+pip install \./)
+    expect(pageSource).toMatch(/cd python\s+pip install "\.\[yaml\]"/)
+    expect(pageSource).not.toMatch(/cd python\s+pip install \.(?:\s|\\n)/)
     expect(pageSource).not.toContain('Copy the reporter from the SDK Downloads')
   })
 })

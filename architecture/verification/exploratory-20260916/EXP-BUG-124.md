@@ -10,10 +10,11 @@ copy only the reporter, which fails at import time.
 ## Fix and regression
 
 The guide labels the artifact `Python (.zip)` and tells users to extract it and
-run `pip install .` in the bundled `python` directory. A raw-source consumer
-contract test pins the label and instructions. The M22 mutation harness
-restores the obsolete copy-only instructions and requires that test to fail
-with status 1.
+run `pip install ".[yaml]"` in the bundled `python` directory so the immediately
+recommended `testlookup.yaml` configuration is loaded. A raw-source consumer
+contract test pins the label and instructions. The M22 mutation harness removes
+the YAML extra from the install command and requires that test to fail with
+status 1.
 
 ## Verification
 

@@ -143,11 +143,12 @@ MUTATIONS = (
         (
             "      return `# Download and extract the Python ZIP from SDK Downloads above\n"
             "cd python\n"
-            "pip install .\n"
+            "pip install \".[yaml]\"\n"
         ),
         (
-            "      return `pip install httpx pyyaml\n"
-            "# Copy the reporter from the SDK Downloads button above\n"
+            "      return `# Download and extract the Python ZIP from SDK Downloads above\n"
+            "cd python\n"
+            "pip install .\n"
         ),
         (
             "node_modules/vitest/vitest.mjs", "run",

@@ -3,10 +3,10 @@
 ## Result
 
 **PARTIAL — five client-contract defects are fixed and the exact executable
-was deployed before final testing.** Candidate `96f56b6b` was deployed as
-`build-20260918-105610`. Every application deployment was ready on that tag,
+was deployed before final testing.** Candidate `711caa02b18faddf513e83f992c673c610b74f12` was deployed as
+`build-20260918-114919`. Every application deployment was ready on that tag,
 the backend and workers used digest
-`sha256:0c8cc5d3941d1f90f9e47fd256930e9610c663d091923f268b5a9bf0d985b94f`,
+`sha256:7cd9aea5ae39ba031be83224a1a732ea08ef6a6ceec378dd1892400052da80be`,
 `/health/version` returned the full revision, all health endpoints were green,
 and Alembic reported `0191 (head)`.
 
@@ -49,7 +49,8 @@ and Alembic reported `0191 (head)`.
   1. Both paths now raise mapped `CLIError` instances.
 - **EXP-BUG-124:** the live execution guide still described the Python SDK as
   one `.py` file after the endpoint became a required-module ZIP. It now tells
-  users to extract and install the bundled project.
+  users to extract the bundle and install its YAML extra, so the guide's next
+  step can load `testlookup.yaml`.
 
 ## Verification
 
@@ -59,9 +60,10 @@ and Alembic reported `0191 (head)`.
 - Backend Ruff passed. The mypy ratchet held at **367/367**. All **43 guards**
   passed and **238** guard self-tests passed. Agent API artifacts matched the
   current OpenAPI schema and TypeScript compiled cleanly.
-- **448** agent/review/authorization/transaction key tests, **36** focused M22
-  tests, **149** CLI tests, and **177** MCP tests passed; optional CLI suites
-  skipped two environment-dependent cases.
+- **502** backend agent/review/authorization/transaction/client-contract tests,
+  **163** CLI tests, **177** MCP tests, and all **1,812** frontend tests passed;
+  optional CLI suites skipped two environment-dependent cases. ESLint completed
+  with zero errors.
 - The M22 harness killed **10** asserted mutations covering the missing Python
   sibling and real package metadata, stable CLI code propagation, HTTP 400
   classification, upload POST and poll mappings, UI installation guidance,

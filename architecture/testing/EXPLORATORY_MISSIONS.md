@@ -698,7 +698,7 @@ explicitly declined.
 **Observe/capture:** sanitized command and exit code, MCP tool inventory/result,
 request IDs and backend effects. SDK unit tests alone are not this live proof.
 
-**Execution 2026-09-18 (shipped, PARTIAL):** exact candidate `96f56b6b` was
+**Execution 2026-09-18 (shipped, PARTIAL):** exact candidate `711caa02b18faddf513e83f992c673c610b74f12` was
 deployed before final testing. Live CLI, MCP, REST, and Python streaming checks
 fixed incomplete Python SDK packaging, stale UI installation guidance, lost
 CLI exit classifications (including upload), and a foreign-run existence
