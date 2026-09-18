@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import difflib
 import inspect
 import io
 import json
@@ -65,8 +66,17 @@ def write(name: str, data: str) -> None:
     path = OUT / name
     data = data.rstrip() + "\n"
     if CHECK:
-        if not path.exists() or path.read_text(encoding="utf-8") != data:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if existing != data:
             ERRORS.append(str(path.relative_to(ROOT)))
+            difference = difflib.unified_diff(
+                existing.splitlines(keepends=True),
+                data.splitlines(keepends=True),
+                fromfile=str(path.relative_to(ROOT)),
+                tofile="regenerated/" + name,
+                n=2,
+            )
+            print("".join(difference)[:6000])
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(data, encoding="utf-8", newline="\n")
