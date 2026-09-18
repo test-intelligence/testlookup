@@ -269,8 +269,8 @@ describe('buildCoverageCsv', () => {
       isLoading: false,
     })
     const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
-    const currentStart = shiftDayIso(utcDayIso(), -6)
-    const priorStart = shiftDayIso(currentStart, -7)
+    const currentStart = shiftDayIso(utcDayIso(), -29)
+    const priorStart = shiftDayIso(currentStart, -30)
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         data: [
@@ -317,7 +317,10 @@ describe('buildCoverageCsv', () => {
     const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
     const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: { summary: {}, suites: [] },
+      data: {
+        summary: { unique_tests: 1, suite_count: 1, total_executions: 10, avg_pass_rate: 100, days_with_runs: 2 },
+        suites: [{ suite_name: 'Sparse', unique_tests: 1, passed: 10, failed: 0, skipped: 0, pass_rate: 100 }],
+      },
       isLoading: false,
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({

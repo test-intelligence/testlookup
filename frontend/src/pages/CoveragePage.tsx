@@ -1564,7 +1564,7 @@ export default function CoveragePage() {
       return { passed, failed, skipped, total, passRate, days: pts.length, daysWithRuns }
     }
     return { prior: summarise(prior), current: summarise(current) }
-  }, [comparing, compareTrendData])
+  }, [comparing, compareTrendData, days])
 
   const model = useMemo(() => computeHealthModel(summary, suites, days), [summary, suites, days])
   const verdict: Verdict = verdictForScore(model.composite)
