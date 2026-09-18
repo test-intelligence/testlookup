@@ -100,6 +100,32 @@ def reconcile_outputs() -> None:
             ERRORS.append(f"Unexpected output: {path.relative_to(ROOT)}")
 
 
+def verify_tracked_outputs() -> None:
+    """A clean checkout must contain every generated reference, even on Windows."""
+    tracked = set(
+        subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "docs/reference"], cwd=ROOT
+        )
+        .decode("utf-8")
+        .split("\0")
+    )
+    for name in sorted(GENERATED):
+        relative = "docs/reference/" + name
+        if relative not in tracked:
+            ERRORS.append(
+                f"Untracked generated output: {relative}; add it to Git before checking"
+            )
+
+
+def api_domain_filename(group: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", group.lower()).strip("-")
+    # AGENTS.md is intentionally ignored at every depth. On case-insensitive
+    # Git checkouts that also ignores agents.md, leaving CI without the page.
+    if slug == "agents":
+        slug = "agent-operations"
+    return f"api/{slug}.md"
+
+
 def cell(value: object) -> str:
     return str(value).replace("|", "&#124;").replace("\n", "<br>").replace("\r", "")
 
@@ -176,8 +202,7 @@ def generate_api() -> tuple[int, int, int]:
                 continue
             operations += 1
             group = (operation.get("tags") or ["Other"])[0]
-            slug = re.sub(r"[^a-z0-9]+", "-", group.lower()).strip("-")
-            filename = f"api/{slug}.md"
+            filename = api_domain_filename(group)
             route = route_lookup.get((path, method))
             parts = [
                 f"## {method.upper()} `{path}`\n",
@@ -651,6 +676,8 @@ def main() -> None:
     )
     write("inventory-counts.json", json.dumps(counts, indent=2, sort_keys=True))
     reconcile_outputs()
+    if CHECK:
+        verify_tracked_outputs()
     print(json.dumps(counts, indent=2))
     if ERRORS:
         print("Generated reference drift:\n" + "\n".join(ERRORS))

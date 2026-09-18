@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import difflib
 import importlib.util
 import io
 import re
 import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -83,6 +85,108 @@ class CheckerTests(unittest.TestCase):
 
 
 class GenerationTests(unittest.TestCase):
+    def test_generated_agents_page_survives_case_insensitive_git_checkout(self):
+        tree = ast.parse(
+            (ROOT / "scripts/generate_handoff_reference.py").read_text(encoding="utf-8")
+        )
+        functions = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and n.name in {"api_domain_filename", "verify_tracked_outputs"}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(
+                ["git", "init", "-q", str(root)], check=True, capture_output=True
+            )
+            (root / ".gitignore").write_text(
+                (ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            out = root / "docs/reference/api"
+            out.mkdir(parents=True)
+            (out / "agents.md").write_text("Old generated page", encoding="utf-8")
+            ignored = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.ignorecase=true",
+                    "check-ignore",
+                    "--quiet",
+                    "docs/reference/api/agents.md",
+                ],
+                cwd=root,
+                check=False,
+            )
+            self.assertEqual(ignored.returncode, 0)
+            namespace = {
+                "ROOT": root,
+                "GENERATED": {"api/agents.md"},
+                "ERRORS": [],
+                "subprocess": subprocess,
+                "re": re,
+            }
+            exec(  # noqa: S102 - trusted local functions isolated from application imports
+                compile(
+                    ast.Module(body=functions, type_ignores=[]), "tracking", "exec"
+                ),
+                namespace,
+            )
+            namespace["verify_tracked_outputs"]()
+            self.assertIn(
+                "Untracked generated output: docs/reference/api/agents.md",
+                namespace["ERRORS"][0],
+            )
+            name = namespace["api_domain_filename"]("Agents")
+            self.assertEqual(name, "api/agent-operations.md")
+            relative = "docs/reference/" + name
+            (root / relative).write_text("Renamed generated page", encoding="utf-8")
+            subprocess.run(
+                ["git", "-c", "core.ignorecase=true", "add", "--", relative],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            namespace.update(GENERATED={name}, ERRORS=[])
+            namespace["verify_tracked_outputs"]()
+            self.assertEqual(namespace["ERRORS"], [])
+
+    def test_drift_check_reports_difference_without_rewriting(self):
+        tree = ast.parse(
+            (ROOT / "scripts/generate_handoff_reference.py").read_text(encoding="utf-8")
+        )
+        function = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "write"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / "docs/reference"
+            out.mkdir(parents=True)
+            target = out / "example.md"
+            target.write_text("old content\n", encoding="utf-8")
+            original = target.read_bytes()
+            namespace = {
+                "ROOT": root,
+                "OUT": out,
+                "GENERATED": set(),
+                "CHECK": True,
+                "ERRORS": [],
+                "difflib": difflib,
+            }
+            exec(  # noqa: S102 - trusted local function isolated from application imports
+                compile(ast.Module(body=[function], type_ignores=[]), "write", "exec"),
+                namespace,
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                namespace["write"]("example.md", "new content")
+            self.assertEqual(
+                namespace["ERRORS"], [str(Path("docs/reference/example.md"))]
+            )
+            self.assertIn("-old content", output.getvalue())
+            self.assertIn("+new content", output.getvalue())
+            self.assertEqual(target.read_bytes(), original)
+
     def test_obsolete_and_unowned_outputs(self):
         # Load the real reconciliation function without importing FastAPI or
         # generating the entire reference. Exercise real temporary files.

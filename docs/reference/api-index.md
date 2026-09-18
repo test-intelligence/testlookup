@@ -19,30 +19,30 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/admin/maintenance/drain-active-live-sessions` | Trigger Drain Active Sessions | [Admin Maintenance](api/admin-maintenance.md) |
 | POST | `/api/v1/admin/maintenance/outbox/requeue` | Requeue Failed Outbox Operations | [Admin Maintenance](api/admin-maintenance.md) |
 | GET | `/api/v1/admin/storage/deleted-projects` | Get Deleted Project Storage | [Admin Storage](api/admin-storage.md) |
-| GET | `/api/v1/agents/active-runs` | Get Active Live Runs | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/active-runs/{run_id}` | Get Live Run State | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/catalog` | List Agent Catalog | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/catalog/{agent_id}` | Get Agent Catalog Entry | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/defect-command` | Defect Command | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/event-log/health` | Get Pipeline Event Log Health | [Agents](api/agents.md) |
+| GET | `/api/v1/agents/active-runs` | Get Active Live Runs | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/active-runs/{run_id}` | Get Live Run State | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/catalog` | List Agent Catalog | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/catalog/{agent_id}` | Get Agent Catalog Entry | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/defect-command` | Defect Command | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/event-log/health` | Get Pipeline Event Log Health | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}` | Get Invocation | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/cancel` | Cancel Invocation | [Agent Invocations](api/agent-invocations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}/events` | Stream Invocation Events | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/events/ticket` | Issue Invocation Stream Ticket | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/retry` | Retry Invocation | [Agent Invocations](api/agent-invocations.md) |
-| GET | `/api/v1/agents/pipelines` | List Pipelines | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/pipelines/bulk-trigger` | Bulk Trigger Pipelines | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/pipelines/trigger` | Trigger Pipeline | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/pipelines/{pipeline_id}` | Get Pipeline | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/pipelines/{pipeline_id}/agentic-runtime` | Get Agentic Runtime | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/pipelines/{pipeline_id}/cancel` | Cancel Pipeline | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/pipelines/{pipeline_id}/replay` | Get Pipeline Replay | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/pipelines/{pipeline_id}/retry` | Retry Pipeline | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/pipelines/{pipeline_id}/stages` | Get Pipeline Stages | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/pipelines/{pipeline_id}/timeline` | Get Pipeline Timeline | [Agents](api/agents.md) |
-| POST | `/api/v1/agents/regression-watch` | Regression Watch | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/runs/{run_id}/pipeline-status` | Get Pipeline Status | [Agents](api/agents.md) |
-| GET | `/api/v1/agents/runs/{run_id}/summary` | Get Run Summary | [Agents](api/agents.md) |
+| GET | `/api/v1/agents/pipelines` | List Pipelines | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/pipelines/bulk-trigger` | Bulk Trigger Pipelines | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/pipelines/trigger` | Trigger Pipeline | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/{pipeline_id}` | Get Pipeline | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/{pipeline_id}/agentic-runtime` | Get Agentic Runtime | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/pipelines/{pipeline_id}/cancel` | Cancel Pipeline | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/{pipeline_id}/replay` | Get Pipeline Replay | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/pipelines/{pipeline_id}/retry` | Retry Pipeline | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/{pipeline_id}/stages` | Get Pipeline Stages | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/{pipeline_id}/timeline` | Get Pipeline Timeline | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/regression-watch` | Regression Watch | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/runs/{run_id}/pipeline-status` | Get Pipeline Status | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/runs/{run_id}/summary` | Get Run Summary | [Agents](api/agent-operations.md) |
 | POST | `/api/v1/agents/{agent_id}/invoke` | Invoke Agent | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/ai-eval/agent-stack-release-gate` | Run Agent Stack Release Gate | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/agent-stack-release-gate/runs` | List Agent Stack Gate Runs | [AI Evaluation](api/ai-evaluation.md) |
