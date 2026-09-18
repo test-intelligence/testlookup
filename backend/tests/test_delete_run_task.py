@@ -258,3 +258,42 @@ def test_the_task_purges_the_index_for_the_RUN_not_the_project():
     assert "purge_project_documents" not in source, (
         "the single-run path must never call the project-wide index purge"
     )
+
+
+@pytest.mark.asyncio
+async def test_execution_rechecks_mutable_protections(mocker):
+    """A preview is not permission to delete evidence protected afterwards."""
+    from app.services import run_deletion_service as service
+
+    run = type(
+        "Run",
+        (),
+        {"id": uuid.uuid4(), "status": "IN_PROGRESS"},
+    )()
+    citations = mocker.patch(
+        "app.services.run_deletion_service.citation_blockers",
+        mocker.AsyncMock(return_value=["linked to 1 release(s)"]),
+    )
+
+    blockers = await service.execution_blockers(
+        object(), run=run, mongo=object()
+    )
+
+    assert blockers == ["run is still executing", "linked to 1 release(s)"]
+    citations.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "task_name", ["delete_run_everywhere", "execute_criteria_deletion_task"]
+)
+def test_workers_recheck_protection_before_touching_the_search_index(task_name):
+    """Fail before the first irreversible cross-store side effect."""
+    from app.worker import tasks
+
+    source = inspect.getsource(getattr(tasks, task_name))
+    lock = source.find("with_for_update()")
+    guard = source.find("execution_blockers(")
+    purge = source.find("purge_run_documents(")
+    assert -1 not in (lock, guard, purge)
+    assert lock < guard < purge
+    assert "RunDeletionBlocked" in source

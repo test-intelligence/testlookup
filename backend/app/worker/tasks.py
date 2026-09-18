@@ -6142,7 +6142,9 @@ def delete_run_everywhere(
 
         async with AsyncSessionLocal() as db:
             run = (
-                await db.execute(select(TestRun).where(TestRun.id == run_uuid))
+                await db.execute(
+                    select(TestRun).where(TestRun.id == run_uuid).with_for_update()
+                )
             ).scalar_one_or_none()
             if run is None:
                 # Already gone — a duplicate delivery, not a failure. Celery
@@ -6151,6 +6153,12 @@ def delete_run_everywhere(
                 return {"deleted": False, "reason": "already_absent"}
 
             project_uuid = run.project_id
+            mongo = get_mongo_db()
+            blockers = await run_deletion_service.execution_blockers(
+                db, run=run, mongo=mongo
+            )
+            if blockers:
+                raise run_deletion_service.RunDeletionBlocked(run.id, blockers)
 
             # Scoped to the RUN, never the project (RET-D8). None means the
             # store could not be reached — it must not be reported as 0.
@@ -6161,7 +6169,7 @@ def delete_run_everywhere(
             counts = await run_deletion_service.perform_run_deletion(
                 db,
                 run=run,
-                mongo=get_mongo_db(),
+                mongo=mongo,
                 storage=get_storage_provider(),
                 search_index_documents=index_documents,
                 reason=reason,
@@ -6243,9 +6251,10 @@ def execute_criteria_deletion_task(
 
         async with AsyncSessionLocal() as db:
             try:
-                run_ids = await deletion_job_service.claim_frozen_set(
+                run_ids = await deletion_job_service.start_frozen_set(
                     db, job_id=job_uuid, project_id=project_uuid
                 )
+                await db.commit()
             except deletion_job_service.FrozenSetRejected as rejected:
                 # The route already validated this; reaching here means a
                 # duplicate delivery or a race, and re-deleting would be worse
@@ -6255,10 +6264,6 @@ def execute_criteria_deletion_task(
                     job_id, rejected.detail,
                 )
                 return {"executed": False, "reason": rejected.detail}
-
-        await deletion_job_service.close_job(
-            job_uuid, status=deletion_job_service.RUNNING
-        )
 
         mongo = get_mongo_db()
         storage = get_storage_provider()
@@ -6271,13 +6276,23 @@ def execute_criteria_deletion_task(
                 async with AsyncSessionLocal() as db:
                     run = (
                         await db.execute(
-                            select(TestRun).where(TestRun.id == run_id)
+                            select(TestRun)
+                            .where(TestRun.id == run_id)
+                            .with_for_update()
                         )
                     ).scalar_one_or_none()
                     if run is None:
                         # Already gone. Idempotent, not an error.
                         deleted.append(str(run_id))
                         continue
+
+                    blockers = await run_deletion_service.execution_blockers(
+                        db, run=run, mongo=mongo
+                    )
+                    if blockers:
+                        raise run_deletion_service.RunDeletionBlocked(
+                            run.id, blockers
+                        )
 
                     index_documents = await semantic_search.purge_run_documents(
                         str(project_uuid), str(run_id), execute=True

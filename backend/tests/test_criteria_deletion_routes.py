@@ -296,7 +296,13 @@ async def test_a_foreign_job_is_404_and_indistinguishable_from_a_missing_one(moc
 async def test_a_job_that_is_not_previewed_is_refused(mocker):
     """What stops a double-submitted form deleting twice."""
     project_id = uuid.uuid4()
-    for status in (jobs.RUNNING, jobs.COMPLETED, jobs.FAILED, jobs.PARTIAL):
+    for status in (
+        jobs.QUEUED,
+        jobs.RUNNING,
+        jobs.COMPLETED,
+        jobs.FAILED,
+        jobs.PARTIAL,
+    ):
         mocker.patch(
             "app.services.deletion_job_service.get_job",
             mocker.AsyncMock(
@@ -350,16 +356,15 @@ async def test_a_matching_hash_is_accepted(mocker):
     that can never be executed."""
     project_id = uuid.uuid4()
     ids = [str(uuid.uuid4()) for _ in range(3)]
-    mocker.patch(
+    job = SimpleNamespace(
+        project_id=project_id,
+        status=jobs.PREVIEWED,
+        resolved_run_ids=ids,
+        candidate_hash=jobs.candidate_hash(ids),
+    )
+    get_job = mocker.patch(
         "app.services.deletion_job_service.get_job",
-        mocker.AsyncMock(
-            return_value=SimpleNamespace(
-                project_id=project_id,
-                status=jobs.PREVIEWED,
-                resolved_run_ids=ids,
-                candidate_hash=jobs.candidate_hash(ids),
-            )
-        ),
+        mocker.AsyncMock(return_value=job),
     )
 
     out = await jobs.claim_frozen_set(
@@ -367,6 +372,46 @@ async def test_a_matching_hash_is_accepted(mocker):
     )
 
     assert [str(r) for r in out] == ids
+    assert job.status == jobs.QUEUED
+    assert get_job.await_args.kwargs["for_update"] is True
+
+    with pytest.raises(jobs.FrozenSetRejected) as exc:
+        await jobs.claim_frozen_set(
+            _DB(), job_id=uuid.uuid4(), project_id=project_id
+        )
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_queued_set_can_be_started_once(mocker):
+    project_id = uuid.uuid4()
+    ids = [str(uuid.uuid4()) for _ in range(2)]
+    job = SimpleNamespace(
+        project_id=project_id,
+        status=jobs.QUEUED,
+        resolved_run_ids=ids,
+        candidate_hash=jobs.candidate_hash(ids),
+        started_at=None,
+    )
+    get_job = mocker.patch(
+        "app.services.deletion_job_service.get_job",
+        mocker.AsyncMock(return_value=job),
+    )
+
+    out = await jobs.start_frozen_set(
+        _DB(), job_id=uuid.uuid4(), project_id=project_id
+    )
+
+    assert [str(r) for r in out] == ids
+    assert job.status == jobs.RUNNING
+    assert job.started_at is not None
+    assert get_job.await_args.kwargs["for_update"] is True
+
+    with pytest.raises(jobs.FrozenSetRejected) as exc:
+        await jobs.start_frozen_set(
+            _DB(), job_id=uuid.uuid4(), project_id=project_id
+        )
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -431,3 +476,25 @@ def test_the_task_reports_the_outcome_rather_than_assuming_success():
         "the criteria path must share the single-run deletion transaction, "
         "not re-implement the cross-store ordering"
     )
+
+
+def test_execute_claim_is_committed_before_dispatch():
+    """The row lock only prevents double queueing if QUEUED is durable first."""
+    source = inspect.getsource(execute_criteria_deletion)
+    claim = source.find("claim_frozen_set(")
+    commit = source.find("await db.commit()", claim)
+    dispatch = source.find("execute_criteria_deletion_task.delay(", claim)
+    assert -1 not in (claim, commit, dispatch)
+    assert claim < commit < dispatch
+
+
+def test_the_worker_atomically_starts_the_frozen_set():
+    source = inspect.getsource(
+        __import__("app.worker.tasks", fromlist=["tasks"]).execute_criteria_deletion_task
+    )
+    start = source.find("start_frozen_set(")
+    commit = source.find("await db.commit()", start)
+    destructive = source.find("purge_run_documents(", start)
+    assert -1 not in (start, commit, destructive)
+    assert start < commit < destructive
+    assert "claim_frozen_set(" not in source

@@ -393,7 +393,9 @@ async def execute_criteria_deletion(
 
     Refusals come from :func:`claim_frozen_set` — 404 for a missing or foreign
     job, 409 for one that is not ``previewed`` (which is what stops a
-    double-submitted form deleting twice) and 409 on hash drift.
+    double-submitted form deleting twice) and 409 on hash drift. The queued
+    transition is committed before dispatch so a second request cannot race
+    through the same preview.
     """
     from app.worker.tasks import execute_criteria_deletion_task
 
@@ -419,9 +421,21 @@ async def execute_criteria_deletion(
             status_code=rejected.status_code, detail=rejected.detail
         ) from rejected
 
-    execute_criteria_deletion_task.delay(
-        str(body.job_id), str(project_id), str(current_user.id)
-    )
+    await db.commit()
+    try:
+        execute_criteria_deletion_task.delay(
+            str(body.job_id), str(project_id), str(current_user.id)
+        )
+    except Exception as exc:
+        await deletion_job_service.close_job(
+            body.job_id,
+            status=deletion_job_service.FAILED,
+            error=f"criteria deletion dispatch failed: {str(exc)[:400]}",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Deletion could not be queued; the job was marked failed",
+        ) from exc
 
     return DeletionExecuteAcceptedResponse(
         job_id=body.job_id, run_count=len(run_ids)
