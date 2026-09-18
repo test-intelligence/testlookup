@@ -416,6 +416,16 @@ human acceptance or exceed shared budget.
 trace, reviewer verdict and call ledger. Treat advertised but unsupported
 behavior as a documented discrepancy; do not weaken compiler to make it run.
 
+**Executed 2026-09-17 (partial):** safe local, mounted-router, frontend and real-
+PostgreSQL variants passed after fixing EXP-BUG-089 through EXP-BUG-095. The
+exact candidate `78ccd6b3` was deployed before final tests; 262 focused backend
+tests, seven frontend tests, all 43 quality guards and 46 asserted mutations
+passed. The live credentialed fork/publish/execute journey is blocked because
+the shared homelab has no disposable workflow project or scoped non-production
+credential; automatic approval review refused mutating an arbitrary existing
+project with admin authority. Full evidence and precise replay limitations are
+in `architecture/verification/exploratory-20260916/M13-workflow-governance.md`.
+
 ## M14 — Worker death, stale writes and recovery (P0, reliability QA)
 
 **Preconditions:** F5 dedicated stack with long-running synthetic job; actual
