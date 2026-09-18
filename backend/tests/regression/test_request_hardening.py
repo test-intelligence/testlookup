@@ -247,7 +247,9 @@ async def test_the_real_python_sdk_archive_imports_in_an_isolated_directory(
         "commit_range",
     ]
 
-    site_packages = site.getsitepackages()[0]
+    site_packages = next(
+        path for path in site.getsitepackages() if (Path(path) / "httpx").is_dir()
+    )
     isolated = subprocess.run(
         [
             sys.executable,
