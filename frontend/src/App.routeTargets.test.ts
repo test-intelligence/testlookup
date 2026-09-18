@@ -61,12 +61,19 @@ function toMatcher(route: string): RegExp {
   return new RegExp(`^${pattern}$`)
 }
 
+/**
+ * A backtick-quoted regex literal in a comment looks exactly like a quoted
+ * route: `` `/pipeline/i` `` matched and was reported as an undeclared route.
+ * A real route never ends in regex flags.
+ */
+const REGEX_LITERAL = /\/[gimsuy]{1,4}$/
+
 /** Absolute-path route literals a spec navigates to. */
 function routeLiteralsIn(source: string): string[] {
   const found = new Set<string>()
   for (const m of source.matchAll(/['"`](\/[a-z0-9][a-z0-9/:-]*)['"`]/gi)) found.add(m[1])
   for (const m of source.matchAll(/\$\{BASE\}(\/[a-z0-9][a-z0-9/:-]*)/gi)) found.add(m[1])
-  return [...found]
+  return [...found].filter((path) => !REGEX_LITERAL.test(path))
 }
 
 /**

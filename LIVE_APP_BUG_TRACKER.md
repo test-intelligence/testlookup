@@ -111,12 +111,31 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   replacing it with a real max-width stopped it shrinking to fit and pushed the
   1345px table to 692px against a ~645px panel, i.e. a scrollbar where there
   had been none.
+- **The first fix shipped a second gap, reported the same day.** Capping the
+  table at 860px stopped Build growing but left the table short of its panel at
+  1920px (860 of 946) — the empty band moved from the middle of the row to the
+  right-hand edge. Nothing caught it because every assertion was about the
+  COLUMNS and none about the table against the space it was given.
+- **Final shape:** percentage widths with floors, plus `max-w-0` on the columns
+  that must shrink past their content. Measured:
+
+  | | table | container | Build | Suite | Status | Pass | Timing |
+  |---|---|---|---|---|---|---|---|
+  | 1345px | 645 | 645 | 169 | 110 | 88 | 120 | 158 |
+  | 1920px | 946 | 946 | 378 | 142 | 104 | 142 | 180 |
+
+  The table fills its panel exactly at both widths and the slack is **shared** —
+  at 1920px every column grows instead of it all pooling in Build (40.0%).
 - **Tests:** `frontend/tests/ci-e2e/intelligence-table-geometry.spec.ts` (runs
-  in CI) measures computed geometry at both widths and asserts the pass-rate
-  cell is not clipped and Build stays under half the row. The existing
-  class-string test `IntelligenceHubPage.timing.test.tsx` was **updated, not
-  deleted** — its invariant (the cap must land on cells, not just headers) is
-  still right; only the numbers moved.
+  in CI) measures computed geometry at both widths: the pass-rate cell is not
+  clipped, Build stays under half the row, and the table neither overflows its
+  panel (scrollbar) nor falls short of it (the band). Re-applying the 860px cap
+  fails that last one with `fill at 1920 = 90.9%`.
+- `IntelligenceHubPage.timing.test.tsx` was **reframed, not re-pinned.** It had
+  hard-coded the pixel budget; those numbers have now moved twice. It asserts
+  the invariants instead — the cell budget matches the header budget, every
+  column has a floor, Build keeps `max-w-0` — and leaves the numbers to the
+  geometry test.
 - **Symptom (user-reported 2026-09-18, with screenshot, on a ~2000px display):**
   the Build column occupies a large, mostly empty band while Suite shows `—`,
   Pass rate is cut mid-glyph (`0'` and `1(` where `0%` and `100%` belong), and

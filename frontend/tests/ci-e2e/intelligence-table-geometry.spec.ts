@@ -103,6 +103,7 @@ async function seedAuth(page: Page) {
 
 type Geometry = {
   table: number
+  container: number
   columns: number[]
   passRateClient: number
   passRateScroll: number
@@ -124,8 +125,10 @@ async function measure(page: Page): Promise<Geometry> {
     const passCell = firstBodyRow.children[passIndex] as HTMLTableCellElement
     const meter = passCell.firstElementChild as HTMLElement
 
+    const container = table.parentElement as HTMLElement
     return {
       table: table.getBoundingClientRect().width,
+      container: container.getBoundingClientRect().width,
       columns: [...row.children].map((th) => th.getBoundingClientRect().width),
       // clientWidth is the cell's visible content box; the meter's scrollWidth
       // is what it actually needs. The cell sets `overflow-hidden`, so an
@@ -152,13 +155,42 @@ test.describe('Recent runs analyzed — column geometry', () => {
 
       const geo = await measure(page)
       // eslint-disable-next-line no-console
-      console.log(`GEO ${vp.width} table=${Math.round(geo.table)} cols=${geo.columns.map(Math.round).join(',')} passClient=${geo.passRateClient} passNeeds=${Math.round(geo.passRateScroll)}`)
+      console.log(`GEO ${vp.width} table=${Math.round(geo.table)} container=${Math.round(geo.container)} cols=${geo.columns.map(Math.round).join(',')} passClient=${geo.passRateClient} passNeeds=${Math.round(geo.passRateScroll)}`)
 
       expect(
         geo.passRateScroll,
         'the pass-rate cell is narrower than the meter plus its percentage, so ' +
           'the number is cut mid-glyph behind overflow-hidden',
       ).toBeLessThanOrEqual(geo.passRateClient + 28)
+    })
+  }
+
+  for (const vp of VIEWPORTS) {
+    test(`the table fills its panel without overflowing it at ${vp.name}`, async ({ page }) => {
+      // Both directions are real defects and both were shipped during this fix.
+      //
+      // OVERFLOWING gives a horizontal scrollbar — the state the original
+      // column budget was written to escape.
+      //
+      // FALLING SHORT leaves an empty band at the right-hand edge. The first
+      // version of this fix capped the table at 860px to stop Build growing,
+      // and the user reported the gap that produced: the Build band had simply
+      // moved to the other side of the row. Nothing here caught it, because
+      // every assertion was about the COLUMNS and none about the table against
+      // the space it was given.
+      await installApi(page)
+      await seedAuth(page)
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await page.goto('/intelligence')
+      await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 20_000 })
+
+      const geo = await measure(page)
+      const ratio = geo.table / geo.container
+      // eslint-disable-next-line no-console
+      console.log(`GEO fill at ${vp.width} = ${(ratio * 100).toFixed(1)}% (table ${Math.round(geo.table)} / container ${Math.round(geo.container)})`)
+
+      expect(ratio, 'the table overflows its panel — horizontal scrollbar').toBeLessThanOrEqual(1.01)
+      expect(ratio, 'the table falls short of its panel — empty band at the right edge').toBeGreaterThan(0.97)
     })
   }
 

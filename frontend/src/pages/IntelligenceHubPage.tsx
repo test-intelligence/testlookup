@@ -712,12 +712,7 @@ function RunsTable({
       ) : (
         <>
           <div className="overflow-x-auto">
-            {/* Capped so Build stops growing. `max-w-0` on Build is what
-                makes it yield (see the header comment), and the flip side is
-                that it absorbs ALL slack — 509px of a 946px table at 1920px.
-                Capping the table bounds the band without touching the
-                mechanism; below the cap nothing changes. */}
-            <table className="w-full max-w-[860px] text-[13px] border-collapse">
+            <table className="w-full text-[13px] border-collapse">
               <thead>
                 <tr className="bg-[var(--color-bg-secondary)] text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                   {/* w-full + max-w-0 is what actually makes an auto-layout
@@ -739,30 +734,38 @@ function RunsTable({
                       number was cut mid-glyph behind `overflow-hidden`, which
                       is the "values are hidden" half of the same report.
 
-                      So: Pass rate is sized to its own content (120px), and
-                      the table itself is capped so Build stops growing. Build
-                      keeps `max-w-0` — that is what makes it yield, and
-                      replacing it with a real max-width stopped it shrinking to
-                      fit and pushed the 1345px table to 692px against a ~645px
-                      panel, i.e. a horizontal scrollbar where there had been
-                      none. Suite stays hard-capped for the same reason.
+                      Third shape, and the reasons the first two failed:
+
+                        a) `max-w-0` on Build + hard caps elsewhere — Build is
+                           then the ONLY absorber, so all slack pools there.
+                        b) same, plus a `max-w` on the TABLE — bounds Build but
+                           leaves the table short of its panel, which is just
+                           the same empty band moved to the right-hand edge
+                           (reported by the user after the first fix shipped).
+
+                      So: PERCENTAGE widths with floors. Every column takes a
+                      share of the slack, none can fall below what its content
+                      needs, and the table still fills its panel. The floors are
+                      the measured minimums — Pass rate's 120px is the meter
+                      (56px) + gap (8px) + the percentage, inside 28px of
+                      padding.
                       Floors keep the 1345px layout unchanged.
                       Held by tests/ci-e2e/intelligence-table-geometry.spec.ts,
                       which asserts computed geometry at BOTH widths. */}
-                  <Th className="w-full max-w-0 min-w-[150px]">Build</Th>
-                  <Th className="w-[110px] max-w-[110px]">Suite</Th>
-                  <Th className="w-[88px] max-w-[88px]">Status</Th>
+                  <Th className="w-[40%] max-w-0 min-w-[150px]">Build</Th>
+                  <Th className="w-[15%] max-w-0 min-w-[110px]">Suite</Th>
+                  <Th className="w-[11%] max-w-0 min-w-[88px]">Status</Th>
                   {/* US-15.1 honesty fix: this column has always rendered the
                       run's pass rate. It was labelled "AI confidence", which
                       it never was — no AI confidence is wired here. */}
-                  <Th className="w-[120px] min-w-[120px] max-w-[120px]">Pass rate</Th>
+                  <Th className="w-[15%] min-w-[120px] max-w-[170px]">Pass rate</Th>
                   {/* Timing is the SORT KEY here. It was previously two
                       `hidden md:table-cell` columns, so below 768px the table
                       dropped the field it was ordered by. Merged and always
                       visible — see TimingCell. */}
                   <Th
                     align="right"
-                    className="w-[158px] min-w-[158px] max-w-[230px]"
+                    className="w-[19%] min-w-[158px] max-w-[230px]"
                     onClick={onToggleDatetimeSort}
                     sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
                   >
@@ -823,7 +826,7 @@ function RunRow({
       onClick={() => onOpen(run.id)}
       className="cursor-pointer hover:bg-[var(--color-bg-hover)] transition-colors border-b border-[var(--color-border)] last:border-b-0"
     >
-      <td className="px-3.5 py-2.5 w-full max-w-0 min-w-[150px]">
+      <td className="px-3.5 py-2.5 w-[40%] max-w-0 min-w-[150px]">
         <div className="flex items-baseline gap-2 min-w-0">
           {/* Prefer the per-(project, suite) human-readable Run #N — server-
               computed via ROW_NUMBER() so the same value appears on
@@ -857,15 +860,15 @@ function RunRow({
           )}
         </div>
       </td>
-      <td className="px-3.5 py-2.5 w-[110px] max-w-[110px] overflow-hidden">
+      <td className="px-3.5 py-2.5 w-[15%] max-w-0 min-w-[110px] overflow-hidden">
         <SuiteBadge
           primary={run.primary_suite_name}
           all={run.suite_names}
           linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
         />
       </td>
-      <td className="px-3.5 py-2.5 w-[88px] max-w-[88px] overflow-hidden"><RunStatusPill run={run} /></td>
-      <td className="px-3.5 py-2.5 w-[120px] min-w-[120px] max-w-[120px]">
+      <td className="px-3.5 py-2.5 w-[11%] max-w-0 min-w-[88px] overflow-hidden"><RunStatusPill run={run} /></td>
+      <td className="px-3.5 py-2.5 w-[15%] min-w-[120px] max-w-[170px]">
         {passRatePct != null
           ? <PassRateMeter pct={passRatePct} />
           : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
@@ -874,7 +877,7 @@ function RunRow({
         started={run.start_time ?? run.created_at}
         end={run.end_time}
         durationMs={run.duration_ms}
-        className="w-[158px] min-w-[158px] max-w-[230px]"
+        className="w-[19%] min-w-[158px] max-w-[230px]"
       />
     </tr>
   )

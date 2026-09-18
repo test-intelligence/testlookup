@@ -10,8 +10,11 @@ column budget behind those numbers was taken at a single viewport, and
 Build was the only flexible column, so every pixel past that width landed
 in Build: 53.8% of the row at 1920px, which is the large empty band
 beside the run label. Pass rate is sized to its own content and the table
-is capped, which bounds Build without disturbing the `max-w-0` trick that
-makes it yield in the first place.
+takes a percentage share of the slack with a floor beneath it, so the
+table fills its panel at every width and no single column pools the
+spare space. An earlier attempt capped the table instead; that bounded
+Build but left the table short of its panel, which is the same empty
+band moved to the right-hand edge.
 
 On `/agents`, the AI report now leads the column and Agent Stages sits
 below it behind a Show/Hide control. The report is the pipeline's

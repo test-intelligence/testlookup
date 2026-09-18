@@ -63,19 +63,31 @@ describe('IntelligenceHubPage timing column', () => {
     })
   })
 
-  it('makes Build the flexible column so Timing cannot be pushed off-screen', async () => {
+  it('keeps Build shrinkable and Timing floored so Timing cannot be pushed off-screen', async () => {
     await renderPage()
     const build = await screen.findByRole('columnheader', { name: /Build/i })
     // `min-w-0` on a cell does NOT shrink an auto-layout table column — it
     // still sizes to content. On the live deployment that left Build at 376px
     // and the table at 1007px inside a 641px panel, so Pass rate and Timing
-    // were scrolled out of view at a normal laptop width. `w-full max-w-0` is
-    // the pair that actually lets the column shrink and truncate.
-    expect(build.className.split(' ')).toContain('w-full')
+    // were scrolled out of view at a normal laptop width. `max-w-0` is what
+    // actually lets a column shrink past its content and truncate, and Build
+    // is the column that must give.
     expect(build.className.split(' ')).toContain('max-w-0')
-    // Only Build flexes; the rest must stay content-sized.
+
+    // This used to also assert `w-full` on Build and `not max-w-0` on
+    // everything else — i.e. Build as the SOLE flexible column. That design is
+    // what pooled every spare pixel into Build (53.8% of the row at 1920px) and
+    // then, when the table was capped to stop it, left an empty band at the
+    // right-hand edge instead. Columns now take a percentage share of the slack
+    // and carry floors.
+    //
+    // What still has to hold is the concern this test was written for: Timing
+    // keeps a floor, so it cannot be squeezed out of view.
     const timing = screen.getByRole('columnheader', { name: /Timing/i })
-    expect(timing.className.split(' ')).not.toContain('max-w-0')
+    expect(timing.className).toMatch(/min-w-\[\d+px\]/)
+    // That the table never actually overflows OR falls short of its panel is
+    // measured, at two viewports, in
+    // `tests/ci-e2e/intelligence-table-geometry.spec.ts`.
   })
 
   it('no longer renders a full toLocaleString datetime in the row', async () => {
@@ -111,63 +123,77 @@ describe('IntelligenceHubPage timing column', () => {
  * defect that produced these numbers.
  */
 describe('IntelligenceHubPage column budget', () => {
-  const CAPPED = [
-    { name: /Suite/i, cap: 'max-w-[110px]' },
-    { name: /Status/i, cap: 'max-w-[88px]' },
-    { name: /Pass rate/i, cap: 'max-w-[120px]' },
-    { name: /Timing/i, cap: 'max-w-[230px]' },
-  ]
+  const RUN = {
+    id: 'r1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 1,
+    broken_tests: 0, skipped_tests: 0, total_tests: 1, pass_rate: 100, branch: 'main',
+    created_at: '2026-04-03T15:00:00Z', start_time: '2026-04-03T15:00:00Z',
+    end_time: '2026-04-03T15:08:12Z', duration_ms: 492000,
+  }
 
-  it('caps every fixed column so Build keeps a readable share', async () => {
+  /** The width-shaping classes on an element, in a stable order. */
+  const widthClasses = (el: Element): string[] =>
+    el.className
+      .split(' ')
+      .filter((c) => /^(w-|min-w-|max-w-)/.test(c))
+      .sort()
+
+  async function renderTable() {
     const { useRuns } = await import('@/hooks/useRuns')
-    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: { items: [{
-        id: 'r1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 1,
-        broken_tests: 0, skipped_tests: 0, total_tests: 1, pass_rate: 100, branch: 'main',
-        created_at: '2026-04-03T15:00:00Z', start_time: '2026-04-03T15:00:00Z',
-        end_time: '2026-04-03T15:08:12Z', duration_ms: 492000,
-      }] },
-      isLoading: false,
-    })
-    render(
-      <MemoryRouter initialEntries={['/intelligence']}>
-        <Routes><Route path="/intelligence" element={<IntelligenceHubPage />} /></Routes>
-      </MemoryRouter>,
-    )
-    await screen.findByRole('columnheader', { name: /Timing/i })
-
-    for (const { name, cap } of CAPPED) {
-      const th = screen.getByRole('columnheader', { name })
-      expect(th.className.split(' ')).toContain(cap)
-    }
-    // Build floors so it can never collapse to an unreadable sliver.
-    const build = screen.getByRole('columnheader', { name: /Build/i })
-    expect(build.className.split(' ')).toContain('min-w-[150px]')
-  })
-
-  it('caps the CELLS too, not just the headers', async () => {
-    const { useRuns } = await import('@/hooks/useRuns')
-    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: { items: [{
-        id: 'r1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 1,
-        broken_tests: 0, skipped_tests: 0, total_tests: 1, pass_rate: 100, branch: 'main',
-        created_at: '2026-04-03T15:00:00Z', start_time: '2026-04-03T15:00:00Z',
-        end_time: '2026-04-03T15:08:12Z', duration_ms: 492000,
-      }] },
-      isLoading: false,
-    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [RUN] }, isLoading: false })
     const { container } = render(
       <MemoryRouter initialEntries={['/intelligence']}>
         <Routes><Route path="/intelligence" element={<IntelligenceHubPage />} /></Routes>
       </MemoryRouter>,
     )
     await screen.findByRole('columnheader', { name: /Timing/i })
+    return container
+  }
+
+  it('applies the same width budget to the cells as to the headers', async () => {
+    // THE invariant, and the only one worth pinning as class strings: an
+    // auto-layout column cannot shrink below its CELLS' min-content width, so a
+    // budget applied to the <th> alone does nothing. That is what left the
+    // table 35px over its wrapper on the deployment.
+    //
+    // Deliberately NOT asserting the numbers. They have now moved twice — the
+    // 86px Pass rate clipped its own percentage, and the 860px table cap left
+    // an empty band at the right edge — and a test that re-pins them just has
+    // to be edited again next time. The behaviour is owned by
+    // `tests/ci-e2e/intelligence-table-geometry.spec.ts`, which measures
+    // computed geometry at two viewports.
+    const container = await renderTable()
+    const headers = [...container.querySelectorAll('thead th')]
     const cells = [...container.querySelectorAll('tbody tr td')]
+    expect(headers).toHaveLength(5)
     expect(cells).toHaveLength(5)
-    // Header-only caps left the table 35px over its wrapper on the deployment.
-    expect(cells[1].className).toContain('max-w-[110px]')
-    expect(cells[2].className).toContain('max-w-[88px]')
-    expect(cells[3].className).toContain('max-w-[120px]')
-    expect(cells[4].className).toContain('max-w-[230px]')
+
+    for (let i = 0; i < headers.length; i += 1) {
+      expect(
+        widthClasses(cells[i]),
+        `column ${i} (${headers[i].textContent?.trim()}): the cell's width budget ` +
+          'does not match its header, so the column cannot shrink to it',
+      ).toEqual(widthClasses(headers[i]))
+    }
+  })
+
+  it('floors every column so none can collapse to an unreadable sliver', async () => {
+    // Floors, not caps, are what the current budget is built on: each column
+    // takes a percentage share of the slack and may not fall below what its
+    // content needs. Build additionally carries `max-w-0`, which is what lets a
+    // column shrink past its content min-width at all.
+    const container = await renderTable()
+    const headers = [...container.querySelectorAll('thead th')]
+
+    for (const th of headers) {
+      expect(
+        widthClasses(th).some((c) => c.startsWith('min-w-')),
+        `column "${th.textContent?.trim()}" has no floor, so it can collapse`,
+      ).toBe(true)
+    }
+    const build = screen.getByRole('columnheader', { name: /Build/i })
+    expect(
+      widthClasses(build),
+      'Build needs max-w-0 to shrink past its content min-width',
+    ).toContain('max-w-0')
   })
 })
