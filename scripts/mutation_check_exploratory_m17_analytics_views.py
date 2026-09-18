@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -270,6 +271,18 @@ def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def restore_source(path: Path, content: bytes) -> None:
+    """Retry transient Windows file-handle races after a test subprocess exits."""
+    for attempt in range(10):
+        try:
+            path.write_bytes(content)
+            return
+        except OSError:
+            if attempt == 9:
+                raise
+            time.sleep(0.1)
+
+
 def main() -> int:
     originals: dict[Path, bytes] = {}
     for mutation in MUTATIONS:
@@ -296,7 +309,7 @@ def main() -> int:
                     f"{mutated.stdout}{mutated.stderr}"
                 )
         finally:
-            path.write_bytes(originals[path])
+            restore_source(path, originals[path])
     print(f"M17 mutation check passed: {len(MUTATIONS)} unsafe changes were killed")
     return 0
 
