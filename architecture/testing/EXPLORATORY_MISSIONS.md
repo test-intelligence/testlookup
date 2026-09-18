@@ -589,6 +589,18 @@ user edits not falsely reported saved. Automated scan is not complete WCAG proof
 **Observe/capture:** role/name/focus order, viewport screenshots, axe findings,
 screen-reader observations and navigation/asset responses, each linked to bug ID.
 
+**Execution 2026-09-18 (shipped, partial):** Exact executable candidate
+`7cf85143` was deployed as `build-20260918-064519` before tests. Release editor,
+release run linking, claim correction, and evidence inspection now share the
+focus-entry, Tab/Shift+Tab containment, Escape, and focus-return contract;
+icon-only release close controls are named. Focused Vitest (**51 passed**),
+Chromium keyboard/landmark plus serious/critical axe checks (**4 passed**),
+TypeScript, ESLint (0 errors), Ruff, mypy (**367/367**), all **43** guards,
+**238** guard self-tests, and six applied/killed mutations passed. Independent
+review approved the executable. EXP-BUG-114 and EXP-BUG-115 shipped. Firefox,
+WebKit, screen-reader, full authenticated keyboard, duplicate-tab, cached-chunk,
+RTL, theme, and complete viewport/zoom evidence remain open, so M19 is PARTIAL.
+
 ## M20 — Keys, MFA/SSO/SCIM and permission changes (P0, identity QA)
 
 **Preconditions:** dedicated IdP/test tenant where supported, F1, key issuance
