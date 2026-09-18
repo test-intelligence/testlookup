@@ -14,7 +14,7 @@ The [generated data dictionary](../reference/data-dictionary.md) lists all 139 S
 | MinIO/S3/local provider | Queued report bodies, attachments/evidence, exports, knowledge/training files | Metadata/payload writes can fail separately; storage provider and retention must be configured coherently |
 | ChromaDB | Retrieval/search embeddings and derived indexes | Optional/derived data; embedding model/version affects compatibility and offline packaging |
 
-Mongo collections and index keys are declared in [db/mongo.py](../../backend/app/db/mongo.py). Index creation is best-effort at startup; inspect logs for failures. Storage interface/provider selection is in [db/storage.py](../../backend/app/db/storage.py). Never infer global atomicity from a successful write to one store.
+Core Mongo collection constants and startup index keys are declared in [db/mongo.py](../../backend/app/db/mongo.py); this is not an exhaustive collection registry. Some services select their own collection names, such as [pipeline_event_log](../../backend/app/services/pipeline_event_log.py#L27). Published decision documents are read from Mongo by [decision_report_service](../../backend/app/services/decision_report_service.py#L113), so Mongo evidence/report data must be included in backup and restore. Index creation is best-effort at startup; inspect logs for failures. Storage interface/provider selection is in [db/storage.py](../../backend/app/db/storage.py). Never infer global atomicity from a successful write to one store.
 
 ## Core relational concepts
 

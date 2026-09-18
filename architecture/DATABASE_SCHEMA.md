@@ -3,24 +3,21 @@
 # TestLookup — Database & Schema Design
 
 > Originally generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
-> `backend/migrations/versions/`) and updated incrementally through migration 0191.
+> `backend/migrations/versions/`). Current table-inventory pointers were added through migration 0191; legacy field descriptions and domain diagrams were not fully regenerated.
 > Regenerate the ER diagrams and the schema
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (139 declared tables, Alembic head `0191`). MongoDB, Redis, MinIO and
-ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
-relational store. This document covers all of them, but the relational schema is
-the focus.
+PostgreSQL is the **relational system of record** (139 declared tables, Alembic head `0191`). Authority is distributed by data type: published decision-report bodies and evidence are also stored in MongoDB, and original uploads/artifacts in object storage. These stores are not all disposable caches. See the current [data architecture](../docs/architecture/data-model.md) and [backup guidance](../docs/operations/deployment.md); this historical document focuses on relational structure.
 
 ## Storage responsibilities at a glance
 
 | Store | Holds | Source of truth? |
 |-------|-------|------------------|
 | **PostgreSQL** | Users, projects, runs, test cases, AI pipeline results, defects, releases, authored test cases, audit | **Yes** — relational system of record |
-| **MongoDB** | Raw ingest blobs (Allure JSON, TestNG XML), REST payloads, OCP pod events, LLM chain-of-thought, run summaries, live event timelines | No — immutable logs / large blobs keyed back to PG ids |
+| **MongoDB** | Raw/sanitized evidence, API and AI payloads, pod events, run summaries, published decision reports/attempts and live timelines | Authoritative for stored document bodies/evidence; relational authority remains in PostgreSQL |
 | **Redis** | Celery broker + result backend, live-session state (hashes/sorted-sets), live-event Streams, the AI-pipeline debounce queue, feature-flag + analysis-mode cache | No — ephemeral / in-flight |
-| **MinIO (S3)** | Raw uploaded report files, generated report PDFs, compliance-pack ZIPs, RAG knowledge docs, training-data exports | No — object/artifact storage |
+| **MinIO (S3)** | Raw uploaded report files, generated report PDFs, compliance-pack ZIPs, RAG knowledge docs, training-data exports | Authoritative payload/artifact storage; some derived objects can be regenerated |
 | **ChromaDB** | Per-project embeddings for semantic search (optional) | No — derived index |
 
 See [`architecture/README.md`](./README.md) for which services write to each store.

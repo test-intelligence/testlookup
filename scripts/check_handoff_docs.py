@@ -7,6 +7,10 @@ import json
 import os
 import re
 import sys
+import tempfile
+import unicodedata
+from collections import Counter
+from functools import cache
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -14,7 +18,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 sys.dont_write_bytecode = True
 errors: list[str] = []
-pages = [ROOT / "README.md", DOCS / "README.md"]
+pages = [
+    ROOT / name
+    for name in (
+        "README.md",
+        "README_FULL.md",
+        "GETTING_STARTED.md",
+        "ARCHITECTURE.md",
+        "docs/README.md",
+    )
+]
 for folder in (
     "product",
     "architecture",
@@ -26,23 +39,59 @@ for folder in (
     "wiki",
 ):
     pages.extend((DOCS / folder).rglob("*.md"))
-pages.extend((DOCS / "reviews").glob("2026-09-18-*.md"))
+pages.extend((DOCS / "reviews").glob("*.md"))
+
+
+def prose_only(raw: str) -> str:
+    return re.sub(r"^```[^\n]*\n.*?^```\s*$", "", raw, flags=re.MULTILINE | re.DOTALL)
+
+
+@cache
+def markdown_anchors(path: Path) -> set[str]:
+    """ATX heading slugs used by this suite, plus explicit HTML anchors."""
+    prose = prose_only(path.read_text(encoding="utf-8"))
+    anchors = set(re.findall(r'(?:id|name)=["\']([^"\']+)', prose))
+    for heading in re.findall(r"^#{1,6}\s+(.+)", prose, re.MULTILINE):
+        heading = re.sub(r"<[^>]+>", "", heading).strip().rstrip("#").strip().lower()
+        heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", heading)
+        slug = "".join(
+            c for c in heading if c in " _-" or unicodedata.category(c)[0] in "LN"
+        ).replace(" ", "-")
+        candidate, duplicate = slug, 0
+        while candidate in anchors:
+            duplicate += 1
+            candidate = f"{slug}-{duplicate}"
+        anchors.add(candidate)
+    return anchors
+
 
 links = 0
 for page in sorted(set(pages)):
     raw = page.read_text(encoding="utf-8")
-    prose = re.sub(r"^```[^\n]*\n.*?^```\s*$", "", raw, flags=re.MULTILINE | re.DOTALL)
+    prose = prose_only(raw)
     for target in re.findall(r"\[[^\]\n]*\]\(([^)\n]+)\)", prose):
         target = target.strip().strip("<>")
         split = urlsplit(target)
-        if split.scheme or split.netloc or not split.path:
+        if split.scheme or split.netloc:
             continue
         links += 1
-        resolved = (page.parent / unquote(split.path)).resolve()
+        resolved = (
+            (page.parent / unquote(split.path)).resolve()
+            if split.path
+            else page.resolve()
+        )
         if not resolved.exists():
             errors.append(f"{page.relative_to(ROOT)}: missing link {target}")
         if (
-            split.fragment.startswith("L")
+            resolved.is_file()
+            and resolved.suffix == ".md"
+            and split.fragment
+            and unquote(split.fragment) not in markdown_anchors(resolved)
+        ):
+            errors.append(f"{page.relative_to(ROOT)}: missing heading {target}")
+        if (
+            resolved.suffix != ".md"
+            and split.fragment.startswith("L")
             and split.fragment[1:].isdigit()
             and resolved.is_file()
         ):
@@ -93,7 +142,7 @@ documented = set(
         re.MULTILINE,
     )
 )
-domain_operations = set()
+domain_operations = Counter()
 for domain in (DOCS / "reference/api").glob("*.md"):
     domain_operations.update(
         re.findall(
@@ -104,7 +153,8 @@ for domain in (DOCS / "reference/api").glob("*.md"):
     )
 for name, actual, expected in (
     ("endpoint index", documented, operations),
-    ("domain operation coverage", domain_operations, operations),
+    ("domain operation coverage", set(domain_operations), operations),
+    ("domain operation multiplicity", set(domain_operations.values()), {1}),
     ("HTTP operation count", len(operations), counts["http_operations"]),
     ("HTTP path count", len(spec["paths"]), counts["http_paths"]),
     ("schema count", len(spec["components"]["schemas"]), counts["openapi_schemas"]),
@@ -131,25 +181,28 @@ os.environ.update(
     OTEL_ENABLED="false",
     METRICS_ENABLED="false",
 )
-from app.models.schemas import IngestPayload, IngestResponse
-from pydantic import ValidationError
+# Import from an empty directory so local .env files cannot affect checks.
+previous_cwd = Path.cwd()
+with tempfile.TemporaryDirectory(prefix="testlookup-docs-check-") as directory:
+    try:
+        os.chdir(directory)
+        from app.models.schemas import IngestPayload, IngestResponse
+        from pydantic import ValidationError
+    finally:
+        os.chdir(previous_cwd)
 
-payload = {
-    "project_id": "00000000-0000-0000-0000-000000000001",
-    "build_number": "docs-example-1",
-    "framework": "pytest",
-    "environment": "staging",
-    "results": [
-        {
-            "test_name": "test_checkout",
-            "status": "FAILED",
-            "duration_ms": 120,
-            "error_message": "Expected 200, received 500",
-        }
-    ],
-}
-IngestPayload.model_validate(payload)
 api_guide = (DOCS / "api/README.md").read_text(encoding="utf-8")
+request_example = re.search(
+    r"--data-binary @- <<JSON\n(.*?)\nJSON", api_guide, re.DOTALL
+)
+if request_example is None:
+    raise SystemExit("API guide lacks the ingest request heredoc")
+payload = json.loads(
+    request_example.group(1).replace(
+        "$TL_PROJECT", "00000000-0000-0000-0000-000000000001"
+    )
+)
+IngestPayload.model_validate(payload)
 response_example = re.search(r"```json\n(.*?)\n```", api_guide, re.DOTALL)
 if response_example is None:
     errors.append("API guide lacks accepted-ingest JSON example")

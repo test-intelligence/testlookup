@@ -28,12 +28,20 @@ def main() -> None:
         parser.error(
             "Output must be absent or an empty directory; existing files are never overwritten."
         )
-    docs_ref = (
-        args.docs_ref
-        or subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-        ).strip()
-    )
+
+    def git(*arguments: str) -> str:
+        return subprocess.check_output(["git", *arguments], cwd=ROOT, text=True).strip()
+
+    docs_ref = git("rev-parse", "--verify", (args.docs_ref or "HEAD") + "^{commit}")
+    if docs_ref != git("rev-parse", "HEAD"):
+        parser.error(
+            "Check out --docs-ref first so page contents and links use the same commit."
+        )
+    if git("status", "--porcelain", "--untracked-files=all"):
+        parser.error(
+            "Commit documentation changes before exporting immutable wiki links."
+        )
+    changed = set(git("diff", "--name-only", SOURCE_SHA, docs_ref, "--").splitlines())
     pages = [ROOT / "docs/README.md", ROOT / "docs/wiki/Home.md"]
     for folder in (
         "product",
@@ -70,20 +78,7 @@ def main() -> None:
         if path in names:
             return f"[{label}]({names[path]}{suffix})"
         rel = path.relative_to(ROOT).as_posix()
-        sha = (
-            docs_ref
-            if rel.startswith(
-                (
-                    "docs/",
-                    "scripts/generate_handoff",
-                    "scripts/check_handoff",
-                    "scripts/export_handoff",
-                )
-            )
-            or rel
-            in {"README.md", "ARCHITECTURE.md", "GETTING_STARTED.md", "README_FULL.md"}
-            else SOURCE_SHA
-        )
+        sha = docs_ref if rel in changed else SOURCE_SHA
         kind = "tree" if path.is_dir() else "blob"
         return f"[{label}]({REPOSITORY}/{kind}/{quote(sha, safe='')}/{quote(rel, safe='/')}{suffix})"
 

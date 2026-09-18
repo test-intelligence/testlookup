@@ -16,7 +16,19 @@
 
 ## Aggregation and evidence
 
-Project summary `window` mode includes selected-window runs; `latest` chooses the latest per suite. Weighting is by test counts, not an average of run percentages. The evaluated-test denominator is passed + failed + broken, so skipped tests do not inflate pass rate. Distribution percentages and unique-test metrics can use other explicitly labeled bases. Preserve the response's denominator/basis rather than reconstructing percentages in each client.
+Project summary has two populations. `window` counts each non-null test fingerprint once, using its most recent status within the window; only when there are no fingerprinted case rows does it fall back to summed run aggregates. `latest` sums run aggregates from the latest run per `primary_suite_name` within the window; a missing suite name groups by run ID. Neither is an average of run percentages. [Window query](../../backend/app/services/summary_report_service.py#L302), [latest query](../../backend/app/services/summary_report_service.py#L405).
+
+| Response field | Calculation | Consumer meaning |
+|---|---|---|
+| `totals.pass_rate_pct` | passed / total × 100 | UI **Pass %** headline; total includes skipped and any unknown outcomes |
+| `totals.weighted_pass_rate_pct` | passed / (passed + failed + broken) × 100 | Evaluated-only percentage; skips and unknowns are excluded |
+| `totals.pass_rate_basis` | Currently always `unique_tests` | Describes the usual window path, but is misleading for `latest` and the aggregate fallback |
+
+Both percentages round to one decimal and return zero for a zero denominator. For 70 passed, 15 failed, 5 broken and 10 skipped, the headline is **70.0%** and the weighted field is **77.8%**. [Service assembly](../../backend/app/services/summary_report_service.py#L176), [UI tiles](../../frontend/src/pages/SummaryReportPage.tsx#L335), [behavior tests](../../backend/tests/test_summary_report_service.py#L310).
+
+**Known baseline defect:** the summary routes accept and authorize `release_id`, but `build_summary_report` forwards it only to the top-failing-tests query. Headline totals, suite breakdowns and step metrics are called without the release argument, while flaky count is project-wide/recent-history. The screen and PDF can therefore mix scopes. Do not treat this report as uniformly release-filtered. This was confirmed with isolated service-call probes in both modes; fixing application filtering and basis labels remains open in the [documentation review action register](../reviews/2026-09-18-documentation-action-register.md). [Route](../../backend/app/routers/summary_report.py#L84), [service call sites](../../backend/app/services/summary_report_service.py#L134).
+
+Flaky count uses the most recent ten executions per fingerprint, with minimum-history, mixed-outcome and transition requirements; it has no selected calendar-window or release filter. Flaky rate divides that count by the selected total and caps it at 100%. It is not an all-time cumulative count or a window-only rate. [Flaky calculation](../../backend/app/services/metrics_service.py#L780). Retain the field names, selected mode and population when presenting these metrics. The overview dashboard counts executions and can legitimately differ from the summary's unique-test population.
 
 Run aggregates may precede live detail rows; per-suite breakdown reads cases while headline totals can use run aggregates. Mixed visibility during finalization is expected and should not be mistaken for a durable equality invariant. A stored accepted report and the latest failed generation attempt are separate objects; displaying the latest attempt must not silently replace a valid report's authority.
 

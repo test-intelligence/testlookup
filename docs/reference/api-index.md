@@ -4,7 +4,7 @@
 
 Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
 
-This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and declared responses are in the linked domain pages and [OpenAPI JSON](openapi.json). Authentication dependencies and handler-raised errors supplement OpenAPI: absence of `security` does **not** imply anonymous access. See [authentication and errors](../api/README.md).
+This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and declared responses are in the linked domain pages and [OpenAPI JSON](openapi.json). Source descriptions are declarations; see [known summary-report behavior gaps](../pipelines/reporting.md#aggregation-and-evidence). Authentication dependencies and handler-raised errors supplement OpenAPI: absence of `security` does **not** imply anonymous access. See [authentication and errors](../api/README.md).
 
 | Method | Path | Summary | Reference |
 |---|---|---|---|

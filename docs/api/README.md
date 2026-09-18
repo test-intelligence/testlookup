@@ -2,7 +2,9 @@
 
 [Documentation home](../README.md)
 
-The complete contract is the [endpoint index](../reference/api-index.md), its 81 domain pages, [schemas](../reference/schemas.md), and [OpenAPI JSON](../reference/openapi.json). This snapshot contains 550 HTTP operations across 460 paths. Swagger is `/api-docs`, ReDoc `/api-docs/redoc`, and the runtime schema `/api-docs/openapi.json`. `/docs` belongs to the frontend user guide.
+The declared HTTP contract is indexed by the [endpoint index](../reference/api-index.md), its 81 domain pages, [schemas](../reference/schemas.md), and [OpenAPI JSON](../reference/openapi.json). This snapshot contains 550 HTTP operations across 460 paths. Swagger is `/api-docs`, ReDoc `/api-docs/redoc`, and the runtime schema `/api-docs/openapi.json`. `/docs` belongs to the frontend user guide.
+
+Source annotations can overstate implemented behavior: the [summary-report release filter and basis limitations](../pipelines/reporting.md#aggregation-and-evidence) are confirmed examples. Generated descriptions are preserved declarations, not a runtime certification.
 
 ## Authentication and scope
 
@@ -24,7 +26,9 @@ curl --fail-with-body "$TL_URL/api/v1/projects" \
 
 curl --fail-with-body "$TL_URL/api/v1/ingest" \
   -H "X-API-Key: $TL_API_KEY" -H 'Content-Type: application/json' \
-  --data "{\"project_id\":\"$TL_PROJECT\",\"build_number\":\"docs-example-1\",\"framework\":\"pytest\",\"environment\":\"staging\",\"results\":[{\"test_name\":\"test_checkout\",\"status\":\"FAILED\",\"duration_ms\":120,\"error_message\":\"Expected 200, received 500\"}]}"
+  --data-binary @- <<JSON
+{"project_id":"$TL_PROJECT","build_number":"docs-example-1","framework":"pytest","environment":"staging","results":[{"test_name":"test_checkout","status":"FAILED","duration_ms":120,"error_message":"Expected 200, received 500"}]}
+JSON
 
 curl --fail-with-body "$TL_URL/api/v1/ingest/file" \
   -H "X-API-Key: $TL_API_KEY" \

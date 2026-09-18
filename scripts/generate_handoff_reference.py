@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "reference"
 CHECK = "--check" in sys.argv
 ERRORS: list[str] = []
+GENERATED: set[str] = set()
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "backend"))
 # Clear application settings from this process and import from an empty cwd so
@@ -39,12 +40,12 @@ for _class in _config_tree.body:
                 os.environ.pop(_field.target.id, None)
                 if isinstance(_field.value, ast.Call):
                     for _kw in _field.value.keywords:
-                        if (
-                            _kw.arg in {"alias", "validation_alias"}
-                            and isinstance(_kw.value, ast.Constant)
-                            and isinstance(_kw.value.value, str)
-                        ):
-                            os.environ.pop(_kw.value.value, None)
+                        if _kw.arg in {"alias", "validation_alias"}:
+                            for _alias in ast.walk(_kw.value):
+                                if isinstance(_alias, ast.Constant) and isinstance(
+                                    _alias.value, str
+                                ):
+                                    os.environ.pop(_alias.value, None)
 _import_directory = tempfile.TemporaryDirectory(prefix="testlookup-docs-import-")
 _original_cwd = Path.cwd()
 os.chdir(_import_directory.name)
@@ -60,6 +61,7 @@ os.environ.update(
 
 
 def write(name: str, data: str) -> None:
+    GENERATED.add(name)
     path = OUT / name
     data = data.rstrip() + "\n"
     if CHECK:
@@ -68,6 +70,24 @@ def write(name: str, data: str) -> None:
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(data, encoding="utf-8", newline="\n")
+
+
+def reconcile_outputs() -> None:
+    """Reject drift in the file set; prune only explicitly generator-owned files."""
+    for path in sorted(OUT.rglob("*")):
+        if not path.is_file() or path.relative_to(OUT).as_posix() in GENERATED:
+            continue
+        if OUT.resolve() not in path.resolve().parents:
+            ERRORS.append(f"Refusing output outside reference directory: {path}")
+            continue
+        owned = path.suffix == ".md" and (
+            "Generated from tracked source by `scripts/generate_handoff_reference.py`."
+            in path.read_text(encoding="utf-8", errors="replace")[:500]
+        )
+        if not CHECK and owned:
+            path.unlink()
+        else:
+            ERRORS.append(f"Unexpected output: {path.relative_to(ROOT)}")
 
 
 def cell(value: object) -> str:
@@ -121,7 +141,7 @@ def generate_api() -> tuple[int, int, int]:
     )
     by_group: dict[str, list[str]] = {}
     index = header("REST endpoint index")
-    index += "This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and declared responses are in the linked domain pages and [OpenAPI JSON](openapi.json). Authentication dependencies and handler-raised errors supplement OpenAPI: absence of `security` does **not** imply anonymous access. See [authentication and errors](../api/README.md).\n\n"
+    index += "This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and declared responses are in the linked domain pages and [OpenAPI JSON](openapi.json). Source descriptions are declarations; see [known summary-report behavior gaps](../pipelines/reporting.md#aggregation-and-evidence). Authentication dependencies and handler-raised errors supplement OpenAPI: absence of `security` does **not** imply anonymous access. See [authentication and errors](../api/README.md).\n\n"
     index += "| Method | Path | Summary | Reference |\n|---|---|---|---|\n"
     route_lookup = {
         (r.path, m.lower()): r
@@ -359,7 +379,7 @@ def generate_static() -> dict:
         p
         for p in tracked
         if p
-        and not p.startswith("docs/reference/")
+        and not p.startswith(("docs/reference/", "docs/reviews/"))
         and p != "scripts/generate_handoff_reference.py"
     ]
     rows = []
@@ -620,6 +640,7 @@ def main() -> None:
         sqlalchemy_tables=tables,
     )
     write("inventory-counts.json", json.dumps(counts, indent=2, sort_keys=True))
+    reconcile_outputs()
     print(json.dumps(counts, indent=2))
     if ERRORS:
         print("Generated reference drift:\n" + "\n".join(ERRORS))

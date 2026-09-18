@@ -12,14 +12,15 @@ The generator imports FastAPI to produce OpenAPI and SQLAlchemy metadata without
 python scripts/generate_handoff_reference.py
 python scripts/generate_handoff_reference.py --check
 python scripts/check_handoff_docs.py
+python scripts/test_handoff_docs.py
 python scripts/gen_schema_docs.py --check
 python scripts/release/check_image_drift.py
 python scripts/quality_gate.py
 ```
 
-Generated files live under `docs/reference`. Do not hand-edit them; improve source contracts or the generator. `--check` compares regeneration without rewriting. The inventory uses `git ls-files`, so add newly created source files to the index before regenerating when they should be included. Generator itself is excluded to avoid self-description churn.
+Generated files live under `docs/reference`. Do not hand-edit them; improve source contracts or the generator. `--check` compares regeneration and detects obsolete/unexpected files without rewriting. Normal generation removes only obsolete files carrying the generator ownership banner; unexpected unowned files cause a failure and are retained. The inventory uses `git ls-files`, so add newly created source files to the index before regenerating when they should be included. Generator itself is excluded to avoid self-description churn.
 
-`check_handoff_docs.py` validates new-suite local link targets, JSON `$ref` targets in OpenAPI, endpoint/schema/table inventory consistency and representative documented request examples. It does not prove every business rule or deploy a stack. Mermaid syntax is validated with the existing checker:
+`check_handoff_docs.py` validates maintained-suite local file links, Markdown heading fragments and source line bounds, JSON `$ref` targets in OpenAPI, endpoint/schema/table inventory consistency, and the actual request/response examples in the API guide. It includes the four top-level entrypoints and all dated review pages. External URL availability and historical deep-dive page contents are not validated. It does not prove every business rule or deploy a stack. Mermaid syntax is validated with the existing checker:
 
 ```bash
 cd scripts/mermaid-check
@@ -28,6 +29,8 @@ npm run check
 ```
 
 This scans tracked Markdown. Stage new pages before checking so they are included. The documentation-only change does not require rerunning unrelated live/mutation deployments; select relevant checks based on changes.
+
+The backend job in [CI](../../.github/workflows/ci.yml) now executes the generation check, documentation checker and tool regression suite as a blocking step using its installed backend dependencies.
 
 ## Update workflow
 

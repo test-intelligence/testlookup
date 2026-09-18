@@ -337,6 +337,15 @@ jobs:
           AI_OFFLINE_MODE: "true"
         run: python -m app.services.agent_api_docs --check
 
+      - name: Handoff references and documentation tests
+        working-directory: .
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python scripts/generate_handoff_reference.py --check
+          python scripts/check_handoff_docs.py
+          python -m pytest scripts/test_handoff_docs.py -q -p no:cacheprovider
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
