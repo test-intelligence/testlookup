@@ -34,15 +34,19 @@ from app.models.postgres import (
     TestCaseReview as ReviewModel,
     TestRun as RunModel,
     TestCaseVersion as VersionModel,
+    TestPlan,
+    TestPlanItem,
     TestSuite as SuiteModel,
     User,
     UserRole,
 )
 from app.services.test_case_lifecycle_service import transition
 from app.services.test_management_service import (
+    add_test_plan_item,
     list_combined_test_case_identities,
     list_managed_test_cases,
 )
+from app.models.schemas import TestPlanItemCreate
 from app.services.test_suite_service import promote_canonical_test_case
 
 asyncpg = pytest.importorskip("asyncpg")
@@ -940,4 +944,96 @@ async def test_concurrent_promotion_of_one_canonical_creates_one_managed_case(
                 await session.execute(
                     delete(ManagedTestCase).where(ManagedTestCase.id.in_(managed_ids))
                 )
+            await session.commit()
+
+
+async def test_concurrent_plan_membership_serializes_aggregate_counts(
+    pg_engine,
+    pg_seed,
+):
+    """A second plan mutation waits for the first aggregate transaction."""
+    factory = async_sessionmaker(pg_engine, expire_on_commit=False)
+    plan_id = uuid.uuid4()
+    case_ids = [uuid.uuid4(), uuid.uuid4()]
+    async with factory() as session:
+        session.add(
+            TestPlan(
+                id=plan_id,
+                project_id=pg_seed.project.id,
+                name="Concurrent membership proof",
+                created_by_id=pg_seed.author.id,
+            )
+        )
+        session.add_all(
+            [
+                ManagedTestCase(
+                    id=case_id,
+                    project_id=pg_seed.project.id,
+                    title=f"Concurrent case {index}",
+                    author_id=pg_seed.author.id,
+                )
+                for index, case_id in enumerate(case_ids, start=1)
+            ]
+        )
+        await session.commit()
+
+    first_locked = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def add_first():
+        async with factory() as session:
+            await add_test_plan_item(
+                session,
+                plan_id,
+                TestPlanItemCreate(test_case_id=case_ids[0]),
+                pg_seed.author,
+            )
+            first_locked.set()
+            await release_first.wait()
+            await session.commit()
+
+    async def add_second():
+        await first_locked.wait()
+        async with factory() as session:
+            await add_test_plan_item(
+                session,
+                plan_id,
+                TestPlanItemCreate(test_case_id=case_ids[1]),
+                pg_seed.author,
+            )
+            await session.commit()
+
+    first = asyncio.create_task(add_first())
+    second = asyncio.create_task(add_second())
+    try:
+        await first_locked.wait()
+        await asyncio.sleep(0.15)
+        assert not second.done(), "the second mutation bypassed the plan row lock"
+        release_first.set()
+        await asyncio.gather(first, second)
+
+        async with factory() as session:
+            plan = await session.get(TestPlan, plan_id)
+            item_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(TestPlanItem)
+                    .where(TestPlanItem.plan_id == plan_id)
+                )
+                or 0
+            )
+            assert plan is not None
+            assert item_count == 2
+            assert plan.total_cases == 2
+            assert plan.executed_cases == 0
+    finally:
+        release_first.set()
+        await asyncio.gather(first, second, return_exceptions=True)
+        async with factory() as session:
+            await session.execute(
+                delete(AuditLogModel).where(AuditLogModel.project_id == pg_seed.project.id)
+            )
+            await session.execute(
+                delete(ManagedTestCase).where(ManagedTestCase.id.in_(case_ids))
+            )
             await session.commit()

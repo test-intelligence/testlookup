@@ -2317,7 +2317,7 @@ class TestCaseTransitionRequest(BaseModel):
     ]
     reason: Optional[str] = Field(None, max_length=500)
     notes: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    expected_version: Optional[int] = Field(None, ge=1)
+    expected_version: int = Field(..., ge=1)
 
 
 class TestCaseDeprecateRequest(BaseModel):

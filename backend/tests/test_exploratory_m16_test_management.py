@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 from fastapi import HTTPException
@@ -119,6 +119,11 @@ def test_plan_execution_status_is_a_closed_vocabulary() -> None:
         schemas.ExecuteTestPlanItemRequest(execution_status="green")
 
 
+def test_transition_request_requires_expected_version() -> None:
+    with pytest.raises(ValidationError):
+        schemas.TestCaseTransitionRequest(action="deprecate")
+
+
 def _actor() -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -136,11 +141,16 @@ async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> No
         plan_id=plan.id,
         test_case_id=case_id,
         execution_status="not_run",
+        execution_notes=None,
+        actual_duration_minutes=None,
+        executed_by_id=None,
+        executed_at=None,
     )
     actor = _actor()
     db = AsyncMock()
 
-    monkeypatch.setattr(service, "get_plan_or_404", AsyncMock(return_value=plan))
+    get_plan = AsyncMock(return_value=plan)
+    monkeypatch.setattr(service, "get_plan_or_404", get_plan)
     monkeypatch.setattr(service, "get_plan_item_or_404", AsyncMock(return_value=item))
     monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
     audit = AsyncMock()
@@ -154,7 +164,10 @@ async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> No
         plan.project_id,
         "removed",
         actor,
-        old_values={"test_case_id": str(case_id)},
+        old_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(case_id),
+        },
     )
 
     audit.reset_mock()
@@ -174,6 +187,67 @@ async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> No
         plan.project_id,
         "executed",
         actor,
-        old_values={"execution_status": "not_run"},
-        new_values={"execution_status": "passed"},
+        old_values={
+            "execution_status": "not_run",
+            "execution_notes": None,
+            "actual_duration_minutes": None,
+            "executed_by_id": None,
+            "executed_at": None,
+        },
+        new_values={
+            "execution_status": "passed",
+            "execution_notes": "verified",
+            "actual_duration_minutes": 3,
+            "executed_by_id": str(actor.id),
+            "executed_at": item.executed_at.isoformat(),
+        },
+    )
+    assert get_plan.await_args_list == [
+        call(db, plan.id, for_update=True),
+        call(db, plan.id, for_update=True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adding_plan_membership_writes_attributable_audit(monkeypatch) -> None:
+    plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    case_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        plan_id=plan.id,
+        test_case_id=case_id,
+        order_index=0,
+        priority_override=None,
+    )
+    actor = _actor()
+    db = AsyncMock()
+    db.scalar.side_effect = [case_id, None]
+
+    get_plan = AsyncMock(return_value=plan)
+    monkeypatch.setattr(service, "get_plan_or_404", get_plan)
+    monkeypatch.setattr(service, "TestPlanItem", lambda **_kwargs: item)
+    monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "audit_event", audit)
+
+    result = await service.add_test_plan_item(
+        db,
+        plan.id,
+        schemas.TestPlanItemCreate(test_case_id=case_id),
+        actor,
+    )
+
+    assert result is item
+    get_plan.assert_awaited_once_with(db, plan.id, for_update=True)
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "added",
+        actor,
+        new_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(case_id),
+        },
     )

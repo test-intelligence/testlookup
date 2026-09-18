@@ -788,7 +788,10 @@ async def add_test_plan_item(
         plan.project_id,
         "added",
         current_user,
-        new_values={"test_case_id": str(item.test_case_id)},
+        new_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(item.test_case_id),
+        },
     )
     return item
 
@@ -811,7 +814,10 @@ async def remove_test_plan_item(
         plan.project_id,
         "removed",
         current_user,
-        old_values={"test_case_id": str(test_case_id)},
+        old_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(test_case_id),
+        },
     )
 
 
@@ -826,10 +832,21 @@ async def record_test_plan_execution(
 ) -> TestPlanItem:
     plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
-    previous_status = item.execution_status
+    old_values = {
+        "execution_status": item.execution_status,
+        "execution_notes": item.execution_notes,
+        "actual_duration_minutes": item.actual_duration_minutes,
+        "executed_by_id": (
+            str(item.executed_by_id) if item.executed_by_id is not None else None
+        ),
+        "executed_at": (
+            item.executed_at.isoformat() if item.executed_at is not None else None
+        ),
+    }
+    executed_at = datetime.now(timezone.utc)
     item.execution_status = execution_status
     item.executed_by_id = current_user.id
-    item.executed_at = datetime.now(timezone.utc)
+    item.executed_at = executed_at
     item.execution_notes = execution_notes
     item.actual_duration_minutes = actual_duration_minutes
     await recompute_plan_counts(db, plan)
@@ -840,7 +857,13 @@ async def record_test_plan_execution(
         plan.project_id,
         "executed",
         current_user,
-        old_values={"execution_status": previous_status},
-        new_values={"execution_status": execution_status},
+        old_values=old_values,
+        new_values={
+            "execution_status": execution_status,
+            "execution_notes": execution_notes,
+            "actual_duration_minutes": actual_duration_minutes,
+            "executed_by_id": str(current_user.id),
+            "executed_at": executed_at.isoformat(),
+        },
     )
     return item

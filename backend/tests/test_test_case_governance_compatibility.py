@@ -42,8 +42,12 @@ async def test_ai_plan_eligibility_includes_approved_and_active_only():
 def test_transition_and_deprecation_request_schemas_pin_wire_compatibility():
     from app.models.schemas import TestCaseDeprecateRequest, TestCaseTransitionRequest
 
-    assert TestCaseTransitionRequest(action="withdraw_review").action == "withdraw_review"
-    assert TestCaseTransitionRequest(action="unclaim").action == "unclaim"
+    assert TestCaseTransitionRequest(
+        action="withdraw_review", expected_version=1
+    ).action == "withdraw_review"
+    assert TestCaseTransitionRequest(
+        action="unclaim", expected_version=1
+    ).action == "unclaim"
     assert TestCaseDeprecateRequest(reason="Intentional retirement").reason == (
         "Intentional retirement"
     )

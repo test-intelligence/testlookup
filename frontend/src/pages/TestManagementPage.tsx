@@ -1083,6 +1083,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         const updated = await testManagementService.transitionCase(pendingDeprecation.id, {
           action: 'deprecate',
           reason,
+          expected_version: pendingDeprecation.version,
         })
         setSelectedCase((current) => current?.id === updated.id ? updated : current)
       } else {
@@ -4187,6 +4188,7 @@ export function ReviewsTab({ projectId: _projectId, lifecycleV2 }: ReviewsTabPro
       if (lifecycleV2) {
         updated = await testManagementService.transitionCase(tc.id, {
           action,
+          expected_version: tc.version,
           ...(notes ? { notes } : {}),
         })
       } else {

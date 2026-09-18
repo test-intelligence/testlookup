@@ -9,7 +9,10 @@ foreign-project case identifiers without disclosing them, serializes membership
 and execution changes through the plan row so aggregate counts share one
 authority, returns a stable conflict for duplicate membership, and validates
 execution status as a closed API vocabulary. Plan membership and execution
-changes now also leave append-only audit rows in the same transaction.
+changes now also leave attributable append-only audit rows in the same
+transaction, including the complete execution evidence change. Every public
+direct-transition request now requires the rendered version, including the
+catalog deprecation and review-queue flows.
 
 M13 workflow governance now refuses registered capabilities that lack a runtime
 executor, treats missing conditional facts as an unmet branch, narrows custom

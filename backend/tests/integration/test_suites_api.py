@@ -924,7 +924,11 @@ async def test_transition_endpoint_preserves_reason_and_returns_allowed_actions(
         ):
             response = await client.post(
                 f"/api/v1/test-management/cases/{managed.id}/transition",
-                json={"action": "deprecate", "reason": "Obsolete workflow"},
+                json={
+                    "action": "deprecate",
+                    "reason": "Obsolete workflow",
+                    "expected_version": managed.version,
+                },
             )
     finally:
         app.dependency_overrides.pop(require_case_access, None)
@@ -934,6 +938,7 @@ async def test_transition_endpoint_preserves_reason_and_returns_allowed_actions(
     assert response.json()["allowed_actions"]
     assert do_transition.await_args.args[1] == managed.id
     assert do_transition.await_args.kwargs["reason"] == "Obsolete workflow"
+    assert do_transition.await_args.kwargs["expected_version"] == managed.version
     require_flag.assert_awaited_once()
     assert require_flag.await_args.args[1:] == (managed, actor)
 
@@ -966,6 +971,40 @@ async def test_transition_endpoint_rejects_unknown_action_before_service(
     do_transition.assert_not_awaited()
 
 
+async def test_transition_endpoint_requires_expected_version_before_service(
+    client, auth_as
+):
+    from app.main import app
+    from app.routers.test_management_shared import require_case_access
+
+    project_id = uuid.uuid4()
+    auth_as(role=UserRole.QA_LEAD, accessible_projects={project_id})
+    managed = _managed_obj(project_id=project_id, status="active")
+
+    async def _case_access():
+        return managed
+
+    app.dependency_overrides[require_case_access] = _case_access
+    try:
+        with patch(
+            "app.routers.test_management_cases.transition", AsyncMock()
+        ) as do_transition:
+            response = await client.post(
+                f"/api/v1/test-management/cases/{managed.id}/transition",
+                json={"action": "deprecate", "reason": "Obsolete"},
+            )
+    finally:
+        app.dependency_overrides.pop(require_case_access, None)
+
+    assert response.status_code == 422
+    assert any(
+        error["loc"][-1] == "expected_version"
+        and error["type"] == "missing"
+        for error in response.json()["detail"]
+    )
+    do_transition.assert_not_awaited()
+
+
 async def test_direct_lifecycle_flag_off_hides_transition_without_mutation(
     client, auth_as
 ):
@@ -989,7 +1028,11 @@ async def test_direct_lifecycle_flag_off_hides_transition_without_mutation(
         ) as do_transition:
             response = await client.post(
                 f"/api/v1/test-management/cases/{managed.id}/transition",
-                json={"action": "deprecate", "reason": "Obsolete"},
+                json={
+                    "action": "deprecate",
+                    "reason": "Obsolete",
+                    "expected_version": managed.version,
+                },
             )
     finally:
         app.dependency_overrides.pop(require_case_access, None)
