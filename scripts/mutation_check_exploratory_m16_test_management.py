@@ -58,8 +58,8 @@ MUTATIONS = (
     Mutation(
         "transition-version-required",
         "backend/app/models/schemas.py",
-        "    expected_version: int = Field(..., ge=1)\n",
-        "    expected_version: Optional[int] = Field(None, ge=1)\n",
+        "    expected_version: int = Field(..., ge=1)\n\n\nclass TestCaseDeprecateRequest",
+        "    expected_version: Optional[int] = Field(None, ge=1)\n\n\nclass TestCaseDeprecateRequest",
         "backend/tests/test_exploratory_m16_test_management.py::test_transition_request_requires_expected_version",
     ),
     Mutation(

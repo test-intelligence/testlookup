@@ -212,20 +212,18 @@ async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> No
 async def test_adding_plan_membership_writes_attributable_audit(monkeypatch) -> None:
     plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
     case_id = uuid.uuid4()
-    item = SimpleNamespace(
-        id=uuid.uuid4(),
-        plan_id=plan.id,
-        test_case_id=case_id,
-        order_index=0,
-        priority_override=None,
-    )
     actor = _actor()
     db = AsyncMock()
     db.scalar.side_effect = [case_id, None]
+    item_id = uuid.uuid4()
+
+    def add_with_identity(item) -> None:
+        item.id = item_id
+
+    db.add = add_with_identity
 
     get_plan = AsyncMock(return_value=plan)
     monkeypatch.setattr(service, "get_plan_or_404", get_plan)
-    monkeypatch.setattr(service, "TestPlanItem", lambda **_kwargs: item)
     monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
     audit = AsyncMock()
     monkeypatch.setattr(service, "audit_event", audit)
@@ -237,12 +235,12 @@ async def test_adding_plan_membership_writes_attributable_audit(monkeypatch) -> 
         actor,
     )
 
-    assert result is item
+    assert result.id == item_id
     get_plan.assert_awaited_once_with(db, plan.id, for_update=True)
     audit.assert_awaited_once_with(
         db,
         "test_plan_item",
-        item.id,
+        item_id,
         plan.project_id,
         "added",
         actor,
