@@ -7,4 +7,5 @@ the runtime email resolver returned only non-secret `app_settings` metadata.
 Notification and digest delivery could therefore attempt unauthenticated SMTP
 after a successful settings test. Runtime delivery now resolves the encrypted
 password through the same secret authority, with legacy and environment
-fallbacks retained for existing deployments.
+fallbacks retained for existing deployments. Encryption-key failures propagate
+instead of silently selecting a stale environment credential.

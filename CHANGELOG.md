@@ -7,7 +7,8 @@ Splunk, OpenShift, GitHub, Slack, and Teams health probes instead of silently
 testing stale environment values. Global connector secrets support an explicit
 keep, replace, or clear contract, and connector reads remain redacted.
 Runtime email and digest delivery now use the saved encrypted SMTP password
-that the settings test endpoint validates.
+that the settings test endpoint validates. Encryption-key failures stop
+delivery instead of silently selecting stale environment credentials.
 Scheduled digest provider failures retain the previous successful watermark
 and delivery count while scheduling a bounded retry; only a successful send
 advances delivery history. First-delivery retries retain their original

@@ -57,6 +57,10 @@ async def _get_smtp_cfg() -> dict[str, Any]:
                     secret_value or cfg.get("password") or settings.SMTP_PASSWORD
                 )
                 return cfg
+    except RuntimeError:
+        # Secret decryption/key failures are security configuration errors.
+        # Do not turn them into a stale environment-credential fallback.
+        raise
     except Exception as exc:
         logger.debug("Could not load SMTP config from DB, falling back to env: %s", exc)
 

@@ -2,7 +2,7 @@
 
 ## Result
 
-**PARTIAL — five production defects are fixed and the exact executable was
+**PARTIAL — six production defects are fixed and the exact executable was
 deployed before testing; secret migration, local-time scheduling, draft tests,
 seed isolation, and credentialed provider exercises remain open.** Candidate
 `feb72376` was deployed as `build-20260918-053936`. `/health/version` returned
@@ -19,7 +19,8 @@ tag and expected digest, all health endpoints were green, and Alembic reported
   retain the existing healthy, authentication, degraded, timeout, and down
   distinctions without returning credentials.
 - Runtime email and digest delivery resolve the encrypted SMTP password from
-  the same secret authority as the settings test endpoint.
+  the same secret authority as the settings test endpoint, and encryption-key
+  failures stop delivery instead of selecting stale environment credentials.
 - Global integration writes implement the established tri-state contract:
   omission preserves a secret, a non-empty value rotates it, and an empty value
   expires it. Reloaded responses expose only the corresponding set flags.
@@ -49,12 +50,12 @@ tag and expected digest, all health endpoints were green, and Alembic reported
   **11 passed**.
 - Quality gate: all **43 guards** green. Quality-gate self-tests: **238
   passed**.
-- Mutation harness: **11 unsafe changes killed**. Every mutation selector was
+- Mutation harness: **12 unsafe changes killed**. Every mutation selector was
   asserted to apply exactly once and the original bytes were restored.
 
 ## Defects fixed
 
-EXP-BUG-108 through EXP-BUG-112.
+EXP-BUG-108 through EXP-BUG-113.
 
 ## Deviations and remaining gaps
 

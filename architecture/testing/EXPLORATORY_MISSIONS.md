@@ -554,15 +554,16 @@ count, scheduler timezone and delivery/audit IDs. Never copy real credentials.
 persisted metadata and encrypted credentials as the settings API; empty secret
 values explicitly clear stored credentials while omitted values remain
 unchanged, and runtime email delivery resolves the saved encrypted SMTP
-password used by the settings test. Scheduled digest failures keep their last
+password used by the settings test; encryption-key failures stop delivery
+instead of falling back to stale environment credentials. Scheduled digest failures keep their last
 successful watermark and count and become due for a bounded retry, and
 feature-flag project/role lists can be cleared. Digest retries preserve the initial selection window, treat
 disabled SMTP as a failure, and use compare-and-swap finalization so concurrent
 schedule edits survive. The exact executable candidate `feb72376` was deployed
 as `build-20260918-053936` and verified healthy at schema head `0191` before any
 tests ran. Focused and broad M18 backend suites, TypeScript, ESLint, focused
-frontend tests, all 43 quality guards, the 367-error mypy ratchet and eleven
-asserted mutations passed. Fixed defects: EXP-BUG-108 through EXP-BUG-112.
+frontend tests, all 43 quality guards, the 367-error mypy ratchet and twelve
+asserted mutations passed. Fixed defects: EXP-BUG-108 through EXP-BUG-113.
 Remaining gaps are encrypted personal notification webhooks, timezone and
 wall-clock digest scheduling, draft connector tests, GitHub load/dirty-state
 safety, seed ownership, Jira runtime client authority, and live provider/error

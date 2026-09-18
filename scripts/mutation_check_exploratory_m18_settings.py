@@ -98,6 +98,13 @@ MUTATIONS = (
         'cfg["password"] = cfg.get("password") or settings.SMTP_PASSWORD',
         "backend/tests/regression/test_smtp_secret_tristate.py::test_runtime_smtp_resolver_reads_encrypted_secret_ref",
     ),
+    Mutation(
+        "smtp-secret-failure-fail-closed",
+        "backend/app/services/notification/email_service.py",
+        "except RuntimeError:\n        # Secret decryption/key failures are security configuration errors.\n        # Do not turn them into a stale environment-credential fallback.\n        raise",
+        "except RuntimeError:\n        pass",
+        "backend/tests/regression/test_smtp_secret_tristate.py::test_runtime_smtp_resolver_fails_closed_on_secret_key_error",
+    ),
 )
 
 
