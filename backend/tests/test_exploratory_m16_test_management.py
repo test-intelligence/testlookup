@@ -117,3 +117,63 @@ async def test_plan_item_refuses_a_case_from_another_project(monkeypatch) -> Non
 def test_plan_execution_status_is_a_closed_vocabulary() -> None:
     with pytest.raises(ValidationError):
         schemas.ExecuteTestPlanItemRequest(execution_status="green")
+
+
+def _actor() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        full_name="Plan Operator",
+        username="operator",
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> None:
+    plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    case_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        plan_id=plan.id,
+        test_case_id=case_id,
+        execution_status="not_run",
+    )
+    actor = _actor()
+    db = AsyncMock()
+
+    monkeypatch.setattr(service, "get_plan_or_404", AsyncMock(return_value=plan))
+    monkeypatch.setattr(service, "get_plan_item_or_404", AsyncMock(return_value=item))
+    monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "audit_event", audit)
+
+    await service.remove_test_plan_item(db, plan.id, item.id, actor)
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "removed",
+        actor,
+        old_values={"test_case_id": str(case_id)},
+    )
+
+    audit.reset_mock()
+    await service.record_test_plan_execution(
+        db,
+        plan.id,
+        item.id,
+        "passed",
+        "verified",
+        3,
+        actor,
+    )
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "executed",
+        actor,
+        old_values={"execution_status": "not_run"},
+        new_values={"execution_status": "passed"},
+    )

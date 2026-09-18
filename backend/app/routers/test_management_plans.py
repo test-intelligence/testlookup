@@ -133,7 +133,7 @@ async def remove_plan_item(
     current_user: User = Depends(get_current_active_user),
     _plan=Depends(require_plan_access),
 ):
-    await remove_test_plan_item(db, plan_id, item_id)
+    await remove_test_plan_item(db, plan_id, item_id, current_user)
     await db.commit()
 
 

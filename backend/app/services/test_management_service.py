@@ -781,14 +781,38 @@ async def add_test_plan_item(
     db.add(item)
     await db.flush()  # materialize item.id and expose it to recompute_plan_counts
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "added",
+        current_user,
+        new_values={"test_case_id": str(item.test_case_id)},
+    )
     return item
 
 
-async def remove_test_plan_item(db: AsyncSession, plan_id: uuid.UUID, item_id: uuid.UUID) -> None:
+async def remove_test_plan_item(
+    db: AsyncSession,
+    plan_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: User,
+) -> None:
     plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
+    test_case_id = item.test_case_id
     await db.delete(item)
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "removed",
+        current_user,
+        old_values={"test_case_id": str(test_case_id)},
+    )
 
 
 async def record_test_plan_execution(
@@ -802,10 +826,21 @@ async def record_test_plan_execution(
 ) -> TestPlanItem:
     plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
+    previous_status = item.execution_status
     item.execution_status = execution_status
     item.executed_by_id = current_user.id
     item.executed_at = datetime.now(timezone.utc)
     item.execution_notes = execution_notes
     item.actual_duration_minutes = actual_duration_minutes
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "executed",
+        current_user,
+        old_values={"execution_status": previous_status},
+        new_values={"execution_status": execution_status},
+    )
     return item

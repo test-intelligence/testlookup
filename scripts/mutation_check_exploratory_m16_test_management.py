@@ -55,6 +55,13 @@ MUTATIONS = (
         "",
         "frontend/src/components/testManagement/LifecyclePanel.test.tsx",
     ),
+    Mutation(
+        "plan-item-audit",
+        "backend/app/services/test_management_service.py",
+        '    await audit_event(\n        db,\n        "test_plan_item",\n        item.id,\n        plan.project_id,\n        "executed",\n',
+        '    if False:\n        await audit_event(\n            db,\n            "test_plan_item",\n            item.id,\n            plan.project_id,\n            "executed",\n',
+        "backend/tests/test_exploratory_m16_test_management.py::test_plan_membership_and_execution_write_audit_rows",
+    ),
 )
 
 

@@ -8,7 +8,8 @@ applying a stale-tab decision to changed content. Test-plan membership refuses
 foreign-project case identifiers without disclosing them, serializes membership
 and execution changes through the plan row so aggregate counts share one
 authority, returns a stable conflict for duplicate membership, and validates
-execution status as a closed API vocabulary.
+execution status as a closed API vocabulary. Plan membership and execution
+changes now also leave append-only audit rows in the same transaction.
 
 M13 workflow governance now refuses registered capabilities that lack a runtime
 executor, treats missing conditional facts as an unmet branch, narrows custom
