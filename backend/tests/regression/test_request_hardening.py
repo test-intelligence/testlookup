@@ -8,8 +8,10 @@ until the FastAPI/Starlette upgrade.
 """
 from __future__ import annotations
 
+import io
 import time
 import uuid
+import zipfile
 
 import httpx
 import pytest
@@ -192,13 +194,28 @@ async def test_range_is_ignored_so_the_sdk_download_is_always_whole(tmp_path, mo
     from app.routers import sdk as sdk_router
 
     payload = b"#" * 1000
-    (tmp_path / "testlookup_reporter.py").write_bytes(payload)
+    for filename in sdk_router._SDK_CONFIGS["python"]["files"]:
+        (tmp_path / filename).write_bytes(
+            payload if filename == "testlookup_reporter.py" else filename.encode()
+        )
     monkeypatch.setattr(sdk_router, "SDK_BASE_PATH", str(tmp_path))
     async with _client() as client:
         response = await client.get("/api/v1/sdk/python",
                                     headers={"Range": "bytes=0-9,20-29,40-49"})
     assert response.status_code == 200
-    assert response.content == payload
+    assert response.headers["content-disposition"].endswith(
+        'filename="testlookup-python-sdk.zip"'
+    )
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.read("python/testlookup_reporter.py") == payload
+        assert set(archive.namelist()) == {
+            "python/testlookup_reporter.py",
+            "python/ci_context.py",
+            "python/commit_range.py",
+            "python/pyproject.toml",
+            "python/README.md",
+            "python/testlookup.yaml.example",
+        }
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,12 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M22 client parity packages the Python streaming SDK with its required
+`ci_context` and `commit_range` modules plus install metadata, so the public
+download imports in a clean environment. CLI commands now preserve the shared
+client's stable authentication, permission, not-found, validation, and timeout
+exit codes instead of collapsing mapped failures to exit code 1.
+
 M21 retention hardening serializes criteria-deletion claims through durable
 `previewed -> queued -> running` transitions, so repeated API submits and
 duplicate worker deliveries cannot execute the same frozen set twice. Deletion

@@ -18,6 +18,11 @@ class CLIError(Exception):
         self.exit_code = exit_code
 
 
+def exit_code_for(exc: Exception) -> int:
+    """Preserve stable automation codes while generic failures remain code 1."""
+    return exc.exit_code if isinstance(exc, CLIError) else EXIT_ERROR
+
+
 def map_http_error(status_code: int, detail: str = "") -> CLIError:
     """Map an HTTP status code to a CLIError with appropriate exit code."""
     if status_code == 401:

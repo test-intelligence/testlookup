@@ -1,8 +1,10 @@
 """Test case commands — list, get."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 tests_app = typer.Typer(name="tests", help="Inspect test cases")
 
@@ -37,7 +39,7 @@ def list_tests(
         )
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 def _flatten_steps(nodes: list) -> list[dict]:
@@ -64,7 +66,7 @@ def get_test(
         data = asyncio.run(client.request("GET", f"/api/v1/runs/{run_id}/tests/{test_id}", profile_name=profile_name))
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
     if not show_steps:
         output.render(data, output_format)

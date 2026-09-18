@@ -1,8 +1,10 @@
 """Search command — global search across entities."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 search_app = typer.Typer(name="search", help="Search across TestLookup", invoke_without_command=True)
 
@@ -39,4 +41,4 @@ def search(
         )
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

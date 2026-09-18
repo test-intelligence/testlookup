@@ -1,9 +1,11 @@
 """Report commands — pdf, share."""
 import asyncio
 from pathlib import Path
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 reports_app = typer.Typer(name="reports", help="Export and share reports")
 
@@ -22,7 +24,7 @@ def pdf(
         output.print_success(f"Report saved to {out} ({len(data):,} bytes)")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @reports_app.command("share")
@@ -43,4 +45,4 @@ def share(
         output.render(data, output_format)
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

@@ -13,7 +13,7 @@ from testlookup_cli import client, output
 from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
-from testlookup_cli.errors import map_connection_error
+from testlookup_cli.errors import exit_code_for, map_connection_error
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
 
@@ -252,7 +252,7 @@ def upload_file(
             output.print_success(f"{verb} — run_id={run_id}")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @upload_app.command("dir")

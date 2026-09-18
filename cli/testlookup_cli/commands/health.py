@@ -1,8 +1,10 @@
 """Health check command."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 health_app = typer.Typer(name="health", help="Check server health", invoke_without_command=True)
 
@@ -46,7 +48,7 @@ def health(
                 "Service and a proxy answers instead. Check the pods and the "
                 "dependency itself, not just the API."
             )
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
     output.render(data, output_format)
     # "ready" ⇒ all critical dependencies up. Anything else (a 503 not_ready

@@ -1,8 +1,10 @@
 """API key commands — create, list, revoke."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 keys_app = typer.Typer(name="keys", help="Manage API keys")
 
@@ -26,7 +28,7 @@ def create(
             output.print_warning("Save this key now — it cannot be retrieved again.")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @keys_app.command("list")
@@ -41,7 +43,7 @@ def list_keys(
         output.render(items, output_format, columns=["id", "key_hint", "name", "is_active", "created_at", "expires_at"], title="API Keys")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @keys_app.command("revoke")
@@ -60,4 +62,4 @@ def revoke(
         output.print_success(f"API key {key_id} revoked")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

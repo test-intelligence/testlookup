@@ -1,8 +1,10 @@
 """Run commands — list, get."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 runs_app = typer.Typer(name="runs", help="Inspect test runs")
 
@@ -33,7 +35,7 @@ def list_runs(
         )
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @runs_app.command("get")
@@ -48,4 +50,4 @@ def get_run(
         output.render(data, output_format)
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

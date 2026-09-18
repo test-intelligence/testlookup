@@ -1,8 +1,10 @@
 """Deep analysis commands — start, status, clusters, findings."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 deep_app = typer.Typer(name="deep", help="Deep investigation analysis")
 
@@ -20,7 +22,7 @@ def start(
             output.console.print(f"  Task ID: {data['task_id']}")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @deep_app.command("status")
@@ -35,7 +37,7 @@ def status(
         output.render(data, output_format)
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @deep_app.command("clusters")
@@ -51,7 +53,7 @@ def clusters(
         output.render(items, output_format, columns=["cluster_id", "label", "size", "representative_error"], title="Failure Clusters")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @deep_app.command("findings")
@@ -67,4 +69,4 @@ def findings(
         output.render(items, output_format, columns=["cluster_id", "failure_category", "severity", "root_cause_summary"], title="Deep Findings")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
