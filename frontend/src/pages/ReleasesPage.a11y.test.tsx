@@ -69,7 +69,7 @@ describe.each(MODALS)('%s modal accessibility', (_name, modal) => {
 
     focusable[0].focus()
     fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true })
-    expect(focusable.at(-1)).toHaveFocus()
+    expect(focusable[focusable.length - 1]).toHaveFocus()
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab' })
     expect(focusable[0]).toHaveFocus()
