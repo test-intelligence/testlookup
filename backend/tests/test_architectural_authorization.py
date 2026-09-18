@@ -414,13 +414,37 @@ NONPATH_KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
 })
 
 
+def _body_model(field) -> object | None:
+    """The Pydantic model behind a body/query param, across FastAPI versions.
+
+    This is the line on which half of this guard silently died. The original
+    read ``field.type_``, which the FastAPI in use here does not define on its
+    ``ModelField`` at all — ``getattr(..., "type_", None)`` returned ``None``,
+    ``model_fields`` was never reached, and **no request body was inspected by
+    this scan for as long as that was true**. It fails green: a guard that
+    stops looking reports no violations, which is indistinguishable from a
+    codebase with none.
+
+    Found on 2026-09-18 because ``POST /api/v1/stream/events/batch`` was
+    reported as a *stale* exemption. Its body model carries ``session_id``,
+    ``run_id`` and ``batch_id`` — three entries of ``SCOPED_IDS`` — so it
+    should always have been examined. It had simply stopped being visible.
+
+    Both spellings are tried so this keeps working if the accessor moves again.
+    """
+    annotation = getattr(field, "type_", None)
+    if annotation is None:
+        annotation = getattr(getattr(field, "field_info", None), "annotation", None)
+    return annotation
+
+
 def _non_path_scoped_ids(route: APIRoute) -> set[str]:
     """Scoped ids the route accepts as a query param or body field."""
     found: set[str] = set()
     for field in list(route.dependant.query_params) + list(route.dependant.body_params):
         if field.name in SCOPED_IDS:
             found.add(field.name)
-        model_fields = getattr(getattr(field, "type_", None), "model_fields", None)
+        model_fields = getattr(_body_model(field), "model_fields", None)
         if model_fields:
             found |= {n for n in model_fields if n in SCOPED_IDS}
     return found
@@ -735,6 +759,49 @@ def test_a_role_guard_is_never_scope_evidence() -> None:
     )
     found = [m for m in _SCOPE_EVIDENCE if m in _authorization_names(route)]
     assert not found, f"a role guard's source was read as scope evidence: {found}"
+
+
+def test_the_body_scan_can_actually_see_into_a_request_body() -> None:
+    """Guards the guard: prove the body half of the scan is alive.
+
+    ``_non_path_scoped_ids`` reads the Pydantic model behind each body param.
+    It used to do that through ``field.type_``, which the FastAPI in use here
+    does not define — so the lookup silently returned nothing and **no request
+    body was scanned at all**. Only query params were still being checked.
+
+    That failure is invisible from the outside: a scan that stops looking
+    reports zero offenders, exactly like a codebase with none. The only symptom
+    was ``POST /api/v1/stream/events/batch`` turning up as a *stale* exemption
+    in 2026-09 — the route had not become safe, it had become unexaminable.
+
+    This test fixes a concrete subject rather than asserting on the accessor's
+    name, so it keeps holding if FastAPI moves the attribute again.
+    """
+    route = next(
+        (r for r in _collect_api_routes() if r.path == "/api/v1/stream/events/batch"),
+        None,
+    )
+    if route is None:
+        pytest.skip("route retired; pick another body model carrying SCOPED_IDS")
+
+    body_params = list(route.dependant.body_params)
+    assert body_params, "precondition gone: this route no longer takes a body"
+
+    model_fields = getattr(_body_model(body_params[0]), "model_fields", None)
+    assert model_fields, (
+        "the body scan cannot reach this route's Pydantic model, so every "
+        "request body in the app is invisible to "
+        "test_a_scoped_id_outside_the_path_is_still_checked. Teach "
+        "_body_model() how this FastAPI version exposes the annotation."
+    )
+
+    assert SCOPED_IDS & set(model_fields), (
+        "precondition gone: this body model no longer carries any SCOPED_IDS "
+        "entry, so it cannot prove the scan sees into bodies"
+    )
+    assert _non_path_scoped_ids(route) & SCOPED_IDS, (
+        "the scan reached the model but reported no scoped ids from it"
+    )
 
 
 def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
