@@ -344,6 +344,9 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 ready=True,
             )
             await db.commit()
+            from app.services.cache_service import invalidate_analytics_cache
+
+            await invalidate_analytics_cache(str(run.project_id))
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
 
             # Publish through Redis so every API process can reach its local

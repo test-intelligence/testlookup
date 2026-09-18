@@ -2673,7 +2673,7 @@ export default function FailureAnalysisPage() {
 
       <CoverageRibbon stages={ribbonStages} />
 
-      {(analyticsView.widgetIds.length === 0 || analyticsView.widgetIds.includes('failure_kpis')) && (
+      {analyticsView.widgetIds.includes('failures_kpis') && (
         <section aria-label="Failure metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
           <KpiCell
             Icon={TriangleAlert}
@@ -2730,25 +2730,27 @@ export default function FailureAnalysisPage() {
 
       <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
-          <WhatsFailingCard
-            topFailingTest={model.topFailingTest}
-            totalRuns={model.totalRuns}
-            trend={trend}
-            onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
-            muteDisabledReason={muteDisabledReason}
-            onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
-            createJiraDisabledReason={createJiraDisabledReason}
-            onShowSuspects={() => {
-              document
-                .getElementById('suspects-panel')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }}
-            showSuspectsDisabledReason={
-              latestFailedRun?.id
-                ? null
-                : 'No failed run in this window to attribute commits against.'
-            }
-          />
+          {analyticsView.widgetIds.includes('top_failing_bar') && (
+            <WhatsFailingCard
+              topFailingTest={model.topFailingTest}
+              totalRuns={model.totalRuns}
+              trend={trend}
+              onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
+              muteDisabledReason={muteDisabledReason}
+              onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
+              createJiraDisabledReason={createJiraDisabledReason}
+              onShowSuspects={() => {
+                document
+                  .getElementById('suspects-panel')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
+              showSuspectsDisabledReason={
+                latestFailedRun?.id
+                  ? null
+                  : 'No failed run in this window to attribute commits against.'
+              }
+            />
+          )}
           {/* Epic 8 US-8.2 — the bisect surface: ranked suspect commits for the
               latest failing run. Honest empty state when no commit range. */}
           <SuspectsPanel
@@ -2756,13 +2758,15 @@ export default function FailureAnalysisPage() {
             fingerprint={model.topFailingTest?.test_fingerprint ?? null}
             panelId="suspects-panel"
           />
-          <FailureCategoryCard
-            categories={kindFilteredCategories}
-            totalFailures={model.failedRuns}
-            uncategorizedPct={model.uncategorizedPct}
-            onCorrect={openCorrection}
-            kindFilter={kindFilter}
-          />
+          {analyticsView.widgetIds.includes('failure_category_pie') && (
+            <FailureCategoryCard
+              categories={kindFilteredCategories}
+              totalFailures={model.failedRuns}
+              uncategorizedPct={model.uncategorizedPct}
+              onCorrect={openCorrection}
+              kindFilter={kindFilter}
+            />
+          )}
           {comparing && (
             comparison ? (
               <ComparisonStrip
@@ -2784,7 +2788,9 @@ export default function FailureAnalysisPage() {
           <FailureTimeline trend={trend} days={days} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
-          <FlakinessCard flaky={flaky} repeatFailures={model.repeatFailures} />
+          {analyticsView.widgetIds.includes('flaky_leaderboard_table') && (
+            <FlakinessCard flaky={flaky} repeatFailures={model.repeatFailures} />
+          )}
           <RecommendedActions recs={recs} />
         </div>
       </div>
@@ -2795,7 +2801,7 @@ export default function FailureAnalysisPage() {
         <WidgetPicker
           page="failures"
           enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
           onClose={() => setShowPicker(false)}
         />
       )}

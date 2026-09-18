@@ -410,7 +410,14 @@ async def get_trend_data(
     release_id: str | None = None,
 ) -> list:
     """Return daily pass/fail/skip breakdown for the trend chart."""
-    period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    # The wire contract is UTC calendar-day buckets. A rolling ``now - N days``
+    # cutoff can touch N+1 dates (the partial cutoff day plus today), while the
+    # clients render exactly N cells and then sum every returned bucket. Start
+    # at UTC midnight N-1 days ago so period_days and the payload agree.
+    now = datetime.now(timezone.utc)
+    period_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=days - 1
+    )
     suite_key = _normalize_suite_name(suite_name)
     # Soft-deleted projects are excluded UNCONDITIONALLY, and the pin is added
     # on top when a project is named.

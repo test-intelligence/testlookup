@@ -39,15 +39,19 @@ import type {
 
 let overview: BillingOverviewResponse | undefined
 let isAdmin = true
+let billingError: unknown
+let billingIsError = false
+const refreshBilling = vi.fn()
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/hooks/useLlmBudget', () => ({
   useBillingOverview: () => ({
     overview,
+    error: billingError,
     isLoading: false,
-    isError: false,
-    refresh: vi.fn(),
+    isError: billingIsError,
+    refresh: refreshBilling,
   }),
   useProjectQuota: () => ({ quota: null, isLoading: false, refresh: vi.fn() }),
 }))
@@ -88,6 +92,8 @@ function renderWith(projects: BillingOverviewProject[], totals: Partial<BillingO
 beforeEach(() => {
   vi.clearAllMocks()
   isAdmin = true
+  billingError = undefined
+  billingIsError = false
 })
 
 describe('a project with no quota is not reported as 0% used', () => {
@@ -143,6 +149,30 @@ describe('money is rendered at a precision that does not hide spend', () => {
     // single project those must agree — a total that does not reconcile with
     // the rows beneath it is the "figures that cannot all be true" class.
     expect(screen.getAllByText('$0.0037')).toHaveLength(2)
+  })
+})
+
+describe('billing period and outage truthfulness', () => {
+  it('renders the backend UTC half-open month as inclusive UTC calendar dates', () => {
+    renderWith([], {
+      period_start: '2026-09-01T00:00:00Z',
+      period_end: '2026-10-01T00:00:00Z',
+    })
+
+    expect(screen.getByText(/Current period: Sep 1 — Sep 30/)).toBeInTheDocument()
+    expect(screen.queryByText(/Aug 31/)).toBeNull()
+    expect(screen.queryByText(/Oct 1/)).toBeNull()
+  })
+
+  it('renders a retryable error instead of an empty billing state', () => {
+    overview = undefined
+    billingError = new Error('network unavailable')
+    billingIsError = true
+    render(<MemoryRouter><BillingPage /></MemoryRouter>)
+
+    expect(screen.getByTestId('billing-data-unavailable')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(refreshBilling).toHaveBeenCalledTimes(1)
   })
 })
 

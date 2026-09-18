@@ -619,6 +619,9 @@ async def finalize_run(
                 ready=False,
             )
             await db.commit()
+            from app.services.cache_service import invalidate_analytics_cache
+
+            await invalidate_analytics_cache(str(pid))
         except Exception:
             await db.rollback()
             raise

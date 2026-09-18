@@ -4236,23 +4236,70 @@ class TeamChannelResponse(BaseModel):
 # ── Saved Views & Digest Schemas (ENT-05) ────────────────────────────────────
 
 
+SAVED_VIEW_PAGES = Literal["dashboard", "trends", "coverage", "defects", "failures"]
+MAX_SAVED_VIEW_INSTANCES = 12
+
+
+def _validate_saved_view_filters(filters: dict) -> dict:
+    """Reject malformed analytics layouts while preserving legacy filters."""
+    for key in ("instances", "widgets"):
+        if key not in filters:
+            continue
+        value = filters[key]
+        if not isinstance(value, list):
+            raise ValueError(f"filters.{key} must be a list")
+        if len(value) > MAX_SAVED_VIEW_INSTANCES:
+            raise ValueError(
+                f"filters.{key} cannot contain more than {MAX_SAVED_VIEW_INSTANCES} widgets"
+            )
+        if key == "widgets" and any(
+            not isinstance(item, str) or not item for item in value
+        ):
+            raise ValueError("filters.widgets entries must be non-empty strings")
+        if key == "instances":
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError("filters.instances entries must be objects")
+                if (
+                    not isinstance(item.get("instanceId"), str)
+                    or not item["instanceId"]
+                ):
+                    raise ValueError("each saved widget instance requires instanceId")
+                if (
+                    not isinstance(item.get("templateId"), str)
+                    or not item["templateId"]
+                ):
+                    raise ValueError("each saved widget instance requires templateId")
+    return filters
+
+
 class SavedViewCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    page: Optional[str] = Field(None, max_length=50)  # dashboard | trends | coverage | defects
+    page: Optional[SAVED_VIEW_PAGES] = None
     filters: dict = Field(default_factory=dict)
     is_shared: bool = False
     is_default: bool = False
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value: dict) -> dict:
+        return _validate_saved_view_filters(value)
 
 
 class SavedViewUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    page: Optional[str] = Field(None, max_length=50)
+    page: Optional[SAVED_VIEW_PAGES] = None
     filters: Optional[dict] = None
     is_shared: Optional[bool] = None
     is_default: Optional[bool] = None
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value: Optional[dict]) -> Optional[dict]:
+        return _validate_saved_view_filters(value) if value is not None else value
 
 
 class SavedViewRelease(BaseModel):

@@ -87,7 +87,7 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/SSOSettingsPage': 'own-error-ui',
   'settings/SeedDataPage': 'own-error-ui',
   'settings/FeatureFlagsPage': 'own-error-ui',
-  'settings/BillingPage': 'own-error-ui',
+  'settings/BillingPage': 'data-unavailable',
   'settings/GitLabIntegrationPage': 'own-error-ui',
   'settings/RetentionPage': 'own-error-ui',
   'settings/MfaPolicyPage': 'own-error-ui',
@@ -108,7 +108,7 @@ const REVIEWED: Record<string, ErrorState> = {
   ProjectsPage: 'known-silent',
   SearchPage: 'known-silent',
   FlakyCoachPage: 'known-silent',
-  ValueMetricsPage: 'known-silent',
+  ValueMetricsPage: 'data-unavailable',
   UserManagementPage: 'known-silent',
   OnboardingPage: 'known-silent', // useOnboardingStatus drops the SWR error
   SuiteCasesPage: 'known-silent',
@@ -132,7 +132,7 @@ const REVIEWED: Record<string, ErrorState> = {
 }
 
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
-const KNOWN_SILENT_CEILING = 29
+const KNOWN_SILENT_CEILING = 28
 
 // Tolerant of spacing and quote style: a route written differently must not
 // fall out of the guard.

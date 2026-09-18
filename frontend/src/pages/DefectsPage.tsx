@@ -1730,7 +1730,7 @@ export default function DefectsPage() {
 
       <WorkflowRibbon stages={ribbonStages} />
 
-      {(analyticsView.widgetIds.length === 0 || analyticsView.widgetIds.includes('defect_kpis')) && (
+      {analyticsView.widgetIds.includes('defect_kpis') && (
         <section aria-label="Defect KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
           <KpiCell
             Icon={XCircle}
@@ -1816,7 +1816,9 @@ export default function DefectsPage() {
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <JiraBridgeCard model={model} />
-          <ComponentBreakdown model={model} />
+          {analyticsView.widgetIds.includes('defect_category_bar') && (
+            <ComponentBreakdown model={model} />
+          )}
           <RecommendedActions recs={recs} />
         </div>
       </div>
@@ -1827,7 +1829,7 @@ export default function DefectsPage() {
         <WidgetPicker
           page="defects"
           enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
           onClose={() => setShowPicker(false)}
         />
       )}

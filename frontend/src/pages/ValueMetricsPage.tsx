@@ -11,6 +11,7 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
 import { valueMetricsService } from '@/services/valueMetricsService'
@@ -378,10 +379,13 @@ export default function ValueMetricsPage() {
   const days = snapToAllowed(storedDays, VALUE_OPTIONS)
   const setDays = setStoredDays
 
-  const { metrics, isLoading, refresh } = useValueMetrics(projectId, days)
+  const { metrics, error, isLoading, refresh } = useValueMetrics(projectId, days)
   const [showMethodology, setShowMethodology] = useState(false)
 
   if (isLoading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
+  if (error) {
+    return <DataUnavailable error={error} onRetry={() => void refresh()} testId="value-metrics-data-unavailable" />
+  }
   if (!metrics) return null
   const workflow = buildValueMetricsWorkflow(metrics, days, project?.name ?? 'All Projects')
 

@@ -32,6 +32,7 @@ export function useValueMetrics(projectId: string | undefined, days = 30, months
 
   return {
     metrics: data,
+    error,
     isLoading,
     isError: !!error,
     /** Bound revalidate for THIS key (survives scoped SWR caches in tests). */

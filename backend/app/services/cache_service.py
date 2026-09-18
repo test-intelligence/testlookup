@@ -72,13 +72,18 @@ async def invalidate_analytics_cache(project_id: str | None = None) -> None:
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
-        pattern = f"analytics:*:{project_id or 'all'}:*" if project_id else "analytics:*"
-        cursor = 0
-        while True:
-            cursor, keys = await redis.scan(cursor, match=pattern, count=100)
-            if keys:
-                await redis.delete(*keys)
-            if cursor == 0:
-                break
+        patterns = (
+            (f"analytics:*:{project_id}:*", "analytics:*:all:*")
+            if project_id
+            else ("analytics:*",)
+        )
+        for pattern in patterns:
+            cursor = 0
+            while True:
+                cursor, keys = await redis.scan(cursor, match=pattern, count=100)
+                if keys:
+                    await redis.delete(*keys)
+                if cursor == 0:
+                    break
     except Exception:
         pass

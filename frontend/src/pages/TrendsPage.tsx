@@ -1779,7 +1779,7 @@ export default function TrendsPage() {
 
       <TrendsRibbon totalEvidence={totalEvidence} confidencePct={91} />
 
-      {(analyticsView.widgetIds.length === 0 || analyticsView.widgetIds.includes('trends_kpis')) && (
+      {analyticsView.widgetIds.includes('trends_kpis') && (
         <section aria-label="Trend metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
           <KpiCell
             Icon={TrendingUp}
@@ -1857,8 +1857,12 @@ export default function TrendsPage() {
       <div className="grid gap-3.5 trends-body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
           <CadenceHeatmap model={model} />
-          <DailyBreakdown trend={trend} days={days} model={model} />
-          <PassRateTrend model={model} days={days} />
+          {analyticsView.widgetIds.includes('daily_breakdown') && (
+            <DailyBreakdown trend={trend} days={days} model={model} />
+          )}
+          {analyticsView.widgetIds.includes('pass_rate_trend') && (
+            <PassRateTrend model={model} days={days} />
+          )}
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <SchedulePausedCallout model={model} />
@@ -1873,7 +1877,7 @@ export default function TrendsPage() {
         <WidgetPicker
           page="trends"
           enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
           onClose={() => setShowPicker(false)}
         />
       )}

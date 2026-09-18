@@ -1538,12 +1538,13 @@ export default function CoveragePage() {
       (a, b) => a.date.localeCompare(b.date),
     )
     if (points.length < 2) return null
-    // Split at the midpoint. Odd counts give the extra day to the
-    // current window — feels more honest when the user is asking
-    // "is coverage trending right now".
-    const mid = Math.floor(points.length / 2)
-    const prior   = points.slice(0, mid)
-    const current = points.slice(mid)
+    // Sparse series contain only days with runs, so splitting by row count can
+    // put old dates in the current window. Partition by the UTC calendar
+    // boundary the API promises instead.
+    const currentStart = shiftDayIso(utcDayIso(), -(days - 1))
+    const priorStart = shiftDayIso(currentStart, -days)
+    const prior = points.filter(point => point.date >= priorStart && point.date < currentStart)
+    const current = points.filter(point => point.date >= currentStart)
     const summarise = (pts: TrendPoint[]) => {
       const passed   = pts.reduce((s, p) => s + (p.passed || 0), 0)
       const failed   = pts.reduce((s, p) => s + (p.failed || 0), 0)
@@ -1746,11 +1747,8 @@ export default function CoveragePage() {
 
           <CoverageRibbon totalEvidence={totalEvidence} coverageScorePct={coverageScorePct} />
 
-          {/* KPI strip — 5 cells. The "Customize" widget picker still gates
-              individual cells via the existing `coverage_kpis` widget id so
-              users can hide them; widget visibility falls back to all-on
-              when the analytics view hasn't been initialised. */}
-          {(analyticsView.widgetIds.length === 0 || analyticsView.widgetIds.includes('coverage_kpis')) && (
+          {/* KPI strip — 5 cells. */}
+          {analyticsView.widgetIds.includes('coverage_kpis') && (
             <section aria-label="Coverage metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
               <KpiCell
                 Icon={TestTube}
@@ -1815,7 +1813,9 @@ export default function CoveragePage() {
           {/* Body grid — 1.65fr | 1fr (collapses to single column under 1100 px) */}
           <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
             <div className="flex flex-col gap-3.5 min-w-0">
-              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
+              {analyticsView.widgetIds.includes('pass_rate_by_suite') && (
+                <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
+              )}
               <UntaggedCallout untaggedRuns={model.untaggedRuns} totalRuns={model.totalRuns} suites={suites.filter(isUntaggedRow)} />
             </div>
             <div className="flex flex-col gap-3.5 min-w-0">
@@ -1833,7 +1833,7 @@ export default function CoveragePage() {
         <WidgetPicker
           page="coverage"
           enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
           onClose={() => setShowPicker(false)}
         />
       )}

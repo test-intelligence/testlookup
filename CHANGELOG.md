@@ -2,6 +2,24 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M17 analytics saved views now enforce project membership on direct reads and
+owner mutations, keep project-less shared rows private to their creator, and
+scope all-project lists to accessible projects plus the caller's global views.
+New and updated analytics layouts reject unknown pages, malformed widget
+structures and more than 12 instances while legacy filter-only views remain
+valid. The client asks the API for only its current page, repairs stale stored
+widget definitions, bounds layouts, prefers the caller's view over a shared
+one, and resets persistence authority on project changes. Applying widget
+choices now persists the newly selected layout rather than the previous React
+render, and every widget offered by the picker controls a rendered panel.
+
+Analytics periods now use exact UTC calendar buckets and coverage comparisons
+split sparse data at calendar boundaries instead of by row count. Completed
+ingestion invalidates both project and all-project analytics caches after the
+database commit. Value Metrics and Billing expose retryable outage states;
+Billing also renders the backend's half-open UTC month as an inclusive date
+range instead of shifting or overstating its final day.
+
 M16 test-management hardening now binds direct lifecycle actions to the case
 version rendered by the client, returning a refreshable conflict instead of
 applying a stale-tab decision to changed content. Test-plan membership refuses

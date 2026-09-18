@@ -6,15 +6,20 @@
 import { useState, useCallback, useMemo } from 'react'
 import useSWR from 'swr'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
 import {
   getDefaultInstances,
   createInstance,
   MAX_INSTANCES_PER_PAGE,
+  normalizeInstances,
 } from '@/components/analytics/widgetRegistry'
 import type { VisualizationInstance } from '@/components/analytics/widgetRegistry'
 
 interface SavedViewData {
   id: string
+  user_id?: string
+  project_id?: string | null
+  page?: string | null
   filters: {
     instances?: VisualizationInstance[]
     page?: string
@@ -29,6 +34,8 @@ export interface AnalyticsViewResult {
   /** Derived widget IDs — used by pages that render from ID-based conditionals. */
   widgetIds: string[]
   loading: boolean
+  error: unknown
+  retry: () => Promise<unknown>
   /** Add a new instance from a template. */
   addInstance: (templateId: string, config?: Partial<Omit<VisualizationInstance, 'instanceId' | 'templateId'>>) => void
   /** Update an existing instance's config. */
@@ -38,7 +45,7 @@ export interface AnalyticsViewResult {
   /** Duplicate an instance with a new UUID. */
   duplicateInstance: (instanceId: string) => void
   /** Replace all instances with a new template-ID selection (used by WidgetPicker). */
-  setWidgets: (ids: string[]) => void
+  setWidgets: (ids: string[]) => Promise<void>
   /** Reset to page defaults. */
   resetToDefaults: () => void
   /** Persist current state to server. */
@@ -48,39 +55,53 @@ export interface AnalyticsViewResult {
 
 export function useAnalyticsView(page: string): AnalyticsViewResult {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const currentUserId = useAuthStore(s => s.user?.id ?? null)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
 
-  const defaults = getDefaultInstances(page)
+  const defaults = useMemo(() => getDefaultInstances(page), [page])
   const [instances, setInstances] = useState<VisualizationInstance[]>(defaults)
   const [savedViewId, setSavedViewId] = useState<string | null>(null)
+  const [stateScope, setStateScope] = useState<string | null>(null)
+  const [hydratedScope, setHydratedScope] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
-  const [initialized, setInitialized] = useState(false)
+  const scopeKey = `${projectId ?? 'all'}:${page}`
 
   const widgetIds = useMemo(() => instances.map(i => i.templateId), [instances])
 
-  const { data: savedViews, isLoading } = useSWR<SavedViewData[]>(
+  const { data: savedViews, error, isLoading, mutate } = useSWR<SavedViewData[]>(
     projectId !== undefined ? ['saved-views', projectId, page] : null,
     async () => {
       const { getData } = await import('@/services/http')
       return getData<SavedViewData[]>('/api/v1/saved-views', {
-        params: { ...(projectId ? { project_id: projectId } : {}) },
+        params: { ...(projectId ? { project_id: projectId } : {}), page },
       })
     },
     { revalidateOnFocus: false },
   )
 
-  // One-time seed from the saved view once SWR resolves. Applied during render
-  // (the React-recommended way to derive state from freshly-loaded data) rather
-  // than a cascading setState-in-effect.
-  if (!isLoading && !initialized) {
-    setInitialized(true)
-    const pageView = savedViews?.find(v => v.filters?.page === page)
-    if (pageView?.filters.instances && Array.isArray(pageView.filters.instances)) {
-      setSavedViewId(pageView.id)
-      setInstances(pageView.filters.instances)
-    } else {
-      setInstances(defaults)
-    }
+  // A project/page change is a new persistence scope. Reset synchronously so a
+  // click during the next paint cannot PATCH the previous project's view.
+  if (stateScope !== scopeKey) {
+    setStateScope(scopeKey)
+    setHydratedScope(null)
+    setSavedViewId(null)
+    setInstances(defaults)
+    setDirty(false)
+  } else if (!isLoading && !error && hydratedScope !== scopeKey) {
+    const scopedViews = (savedViews ?? []).filter(view => (
+      (view.page === page || view.filters?.page === page)
+      && (projectId ? view.project_id === projectId : view.project_id == null)
+    ))
+    const ownedView = currentUserId
+      ? scopedViews.find(view => view.user_id === currentUserId)
+      : undefined
+    const layoutView = ownedView ?? scopedViews[0]
+    const stored = layoutView?.filters.instances ?? layoutView?.filters.widgets
+    // Shared views may seed the layout, but never become a PATCH target.
+    setSavedViewId(ownedView?.id ?? null)
+    setInstances(layoutView ? normalizeInstances(page, stored) : defaults)
+    setDirty(false)
+    setHydratedScope(scopeKey)
   }
 
   const addInstance = useCallback((
@@ -125,41 +146,53 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
     setDirty(true)
   }, [])
 
-  const setWidgets = useCallback((ids: string[]) => {
-    setInstances(ids.map(id => createInstance(id)))
-    setDirty(true)
-  }, [])
-
   const resetToDefaults = useCallback(() => {
     setInstances(getDefaultInstances(page))
     setDirty(true)
   }, [page])
 
-  const save = useCallback(async () => {
+  const persist = useCallback(async (nextInstances: VisualizationInstance[]) => {
     const { postData, patchData } = await import('@/services/http')
     const payload = {
       name: `${page} view`,
       page,
       filters: {
         page,
-        instances,
+        instances: nextInstances,
         version: 2,
       },
       ...(projectId ? { project_id: projectId } : {}),
     }
-    if (savedViewId) {
-      await patchData(`/api/v1/saved-views/${savedViewId}`, payload)
+    const scopedSavedViewId = hydratedScope === scopeKey ? savedViewId : null
+    if (scopedSavedViewId) {
+      await patchData(`/api/v1/saved-views/${scopedSavedViewId}`, payload)
     } else {
       const created = await postData<SavedViewData>('/api/v1/saved-views', payload)
       setSavedViewId(created.id)
     }
+  }, [hydratedScope, page, projectId, savedViewId, scopeKey])
+
+  const save = useCallback(async () => {
+    if (hydratedScope !== scopeKey) return
+    await persist(instances)
     setDirty(false)
-  }, [page, instances, savedViewId, projectId])
+  }, [hydratedScope, instances, persist, scopeKey])
+
+  const setWidgets = useCallback(async (ids: string[]) => {
+    if (hydratedScope !== scopeKey) return
+    const next = normalizeInstances(page, ids)
+    setInstances(next)
+    setDirty(true)
+    await persist(next)
+    setDirty(false)
+  }, [hydratedScope, page, persist, scopeKey])
 
   return {
     instances,
     widgetIds,
     loading: isLoading,
+    error,
+    retry: mutate,
     addInstance,
     updateInstance,
     removeInstance,

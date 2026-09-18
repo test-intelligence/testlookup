@@ -221,6 +221,17 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByTestId('monthly-chart')).toBeNull()
   })
 
+  it('renders a retryable request error instead of a blank page', async () => {
+    mockGet.mockRejectedValueOnce(new Error('temporary outage')).mockResolvedValue(baseMetrics())
+    await renderPage()
+
+    expect(await screen.findByTestId('value-metrics-data-unavailable')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    expect(await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)).toBeInTheDocument()
+    expect(mockGet).toHaveBeenCalledTimes(2)
+  })
+
   it('opens the methodology panel showing legs, formulas, caveats and research notes', async () => {
     await renderPage()
 

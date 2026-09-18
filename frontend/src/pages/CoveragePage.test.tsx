@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CoveragePage, { buildCoverageCsv, CoverageComparisonStrip } from './CoveragePage'
 
@@ -29,9 +29,13 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: () => ({ data: { items: [] }, isLoading: false }),
 }))
+const analyticsControls = vi.hoisted(() => ({
+  widgetIds: ['coverage_kpis', 'pass_rate_by_suite'],
+}))
+
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
-    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    instances: [], widgetIds: analyticsControls.widgetIds, addInstance: vi.fn(), removeInstance: vi.fn(),
     save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
     activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
     updateInstance: vi.fn(), moveInstance: vi.fn(),
@@ -45,6 +49,10 @@ vi.mock('@/store/projectStore', () => ({
 }))
 
 describe('CoveragePage', () => {
+  beforeEach(() => {
+    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+  })
+
   it('renders the coverage workflow strip above the suite breakdown', async () => {
     const { useCoverage } = await import('@/hooks/useMetrics')
 
@@ -83,6 +91,27 @@ describe('CoveragePage', () => {
     expect(screen.queryByText(/85% confidence/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/% confidence/i)).not.toBeInTheDocument()
     expect(screen.getAllByText(/% coverage score/i).length).toBeGreaterThan(0)
+  })
+
+  it('removes the suite panel when its saved widget is deselected', async () => {
+    const { useCoverage } = await import('@/hooks/useMetrics')
+    analyticsControls.widgetIds = []
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 1, suite_count: 1, total_executions: 5, avg_pass_rate: 80, days_with_runs: 1 },
+        suites: [{ suite_name: 'Payments', unique_tests: 1, passed: 4, failed: 1, skipped: 0, pass_rate: 80 }],
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
+    expect(screen.queryByText('Suite coverage breakdown')).not.toBeInTheDocument()
   })
 
   it('Export button triggers a CSV download with the in-window coverage data', async () => {
@@ -239,15 +268,16 @@ describe('buildCoverageCsv', () => {
       },
       isLoading: false,
     })
-    // 4 trend points so the midpoint split is deterministic — first 2
-    // become "prior", last 2 become "current".
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    const currentStart = shiftDayIso(utcDayIso(), -6)
+    const priorStart = shiftDayIso(currentStart, -7)
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         data: [
-          { date: '2026-05-12', passed: 5,  failed: 5, skipped: 0, broken: 0, total: 10, pass_rate: 50 },
-          { date: '2026-05-13', passed: 6,  failed: 4, skipped: 0, broken: 0, total: 10, pass_rate: 60 },
-          { date: '2026-05-14', passed: 9,  failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 },
-          { date: '2026-05-15', passed: 10, failed: 0, skipped: 0, broken: 0, total: 10, pass_rate: 100 },
+          { date: priorStart, passed: 5,  failed: 5, skipped: 0, broken: 0, total: 10, pass_rate: 50 },
+          { date: shiftDayIso(currentStart, -1), passed: 6,  failed: 4, skipped: 0, broken: 0, total: 10, pass_rate: 60 },
+          { date: currentStart, passed: 9,  failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 },
+          { date: utcDayIso(), passed: 10, failed: 0, skipped: 0, broken: 0, total: 10, pass_rate: 100 },
         ],
       },
       isLoading: false,
@@ -281,6 +311,35 @@ describe('buildCoverageCsv', () => {
     // Toggle off — strip disappears, CTA text flips back.
     fireEvent.click(screen.getByRole('button', { name: /Hide comparison/i }))
     expect(screen.queryByLabelText(/Coverage comparison/i)).toBeNull()
+  })
+
+  it('does not invent a prior period by splitting sparse current-window rows', async () => {
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { summary: {}, suites: [] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { date: shiftDayIso(utcDayIso(), -2), passed: 4, failed: 0, skipped: 0, broken: 0, total: 4, pass_rate: 100 },
+          { date: utcDayIso(), passed: 6, failed: 0, skipped: 0, broken: 0, total: 6, pass_rate: 100 },
+        ],
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Compare to previous window/i }))
+
+    const strip = await screen.findByLabelText(/Coverage comparison/i)
+    expect(strip.textContent).toContain('vs prior 0')
+    expect(strip.textContent).toContain('10')
   })
 
   it('falls back to safe defaults for missing summary fields and empty data', () => {
