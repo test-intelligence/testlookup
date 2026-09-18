@@ -4,10 +4,23 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def restore(path: Path, content: bytes) -> None:
+    """Restore a mutation target despite transient Windows file locks."""
+    for attempt in range(10):
+        try:
+            path.write_bytes(content)
+            return
+        except OSError:
+            if attempt == 9:
+                raise
+            time.sleep(0.1)
 
 
 @dataclass(frozen=True)
@@ -257,7 +270,7 @@ def main() -> int:
                     f"{mutated.stdout}{mutated.stderr}"
                 )
         finally:
-            path.write_bytes(originals[path])
+            restore(path, originals[path])
     for path, original in originals.items():
         if path.read_bytes() != original:
             raise AssertionError(f"mutation harness did not restore {path}")
