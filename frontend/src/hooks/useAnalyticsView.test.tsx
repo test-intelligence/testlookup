@@ -200,4 +200,38 @@ describe('useAnalyticsView persistence authority', () => {
       expect.objectContaining({ project_id: 'project-b' }),
     )
   })
+
+  it('discards a create response that resolves after the project changes', async () => {
+    http.getData.mockResolvedValue([])
+    let resolveCreate: (value: { id: string }) => void = () => undefined
+    http.postData.mockReturnValueOnce(new Promise(resolve => { resolveCreate = resolve }))
+    const { result, rerender } = renderHook(() => useAnalyticsView('dashboard'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    let oldSave!: Promise<void>
+    act(() => {
+      oldSave = result.current.setWidgets(['total_executions_kpi'])
+    })
+    await waitFor(() => expect(http.postData).toHaveBeenCalledTimes(1))
+
+    controls.projectId = 'project-b'
+    rerender()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => {
+      resolveCreate({ id: 'late-project-a-view' })
+      await oldSave
+    })
+
+    vi.clearAllMocks()
+    http.postData.mockResolvedValue({ id: 'project-b-view' })
+    await act(async () => {
+      await result.current.setWidgets(['avg_pass_rate_kpi'])
+    })
+
+    expect(http.patchData).not.toHaveBeenCalled()
+    expect(http.postData).toHaveBeenCalledWith(
+      '/api/v1/saved-views',
+      expect.objectContaining({ project_id: 'project-b' }),
+    )
+  })
 })

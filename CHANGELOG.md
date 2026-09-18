@@ -12,11 +12,15 @@ widget definitions, bounds layouts, prefers the caller's view over a shared
 one, and resets persistence authority on project changes. Applying widget
 choices now persists the newly selected layout rather than the previous React
 render, and every widget offered by the picker controls a rendered panel.
+Legacy layouts whose page predates the indexed column remain discoverable, and
+late create responses cannot restore a view ID after the user changes project.
 
 Analytics periods now use exact UTC calendar buckets and coverage comparisons
 split sparse data at calendar boundaries instead of by row count. Completed
 ingestion invalidates both project and all-project analytics caches after the
-database commit. Value Metrics and Billing expose retryable outage states;
+database commit and again after terminal finalization, while trend SQL groups
+explicitly in UTC regardless of the database session timezone. Value Metrics
+and Billing expose retryable outage states;
 Billing also renders the backend's half-open UTC month as an inclusive date
 range instead of shifting or overstating its final day.
 

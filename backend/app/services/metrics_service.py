@@ -500,7 +500,7 @@ async def get_trend_data(
     """
     query = text(f"""
         SELECT
-            DATE_TRUNC('day', tr.created_at) AS day,
+            DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC') AS day,
             {select_values}
         FROM test_runs tr
         WHERE tr.created_at >= :period_start

@@ -891,6 +891,14 @@ async def finalize_run(
     # owning Celery task retries finalization and activates the same unique rows.
     await _activate_finalize_children(rid)
 
+    # Release linking and the remaining isolated poststeps can change
+    # analytics after the early aggregate invalidation. Clear both project and
+    # all-project entries again only after the terminal readiness commit so a
+    # reader in the middle cannot leave a freshly refilled stale value behind.
+    from app.services.cache_service import invalidate_analytics_cache
+
+    await invalidate_analytics_cache(str(pid))
+
     logger.info(
         "post_ingestion_operations_staged",
         run_id=run_id,

@@ -160,6 +160,29 @@ async def test_all_projects_scope_queries_accessible_and_owned_global_views(monk
 
 
 @pytest.mark.asyncio
+async def test_page_filter_keeps_pre_0049_filter_only_layouts_discoverable(monkeypatch):
+    async def all_projects_scope(_db, _user, requested_project_id):
+        assert requested_project_id is None
+        return None, set()
+
+    monkeypatch.setattr("app.core.deps.resolve_project_scope", all_projects_scope)
+    db = SimpleNamespace(execute=AsyncMock(return_value=_EmptyScalars()))
+
+    await saved_views.list_saved_views(
+        project_id=None,
+        page="dashboard",
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement)
+    assert "saved_views.page IS NULL" in sql
+    assert "saved_views.filters" in sql
+    assert "dashboard" in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["update", "delete"])
 async def test_removed_member_cannot_mutate_an_owned_project_view(monkeypatch, operation):
     owner_id = uuid.uuid4()
@@ -218,6 +241,7 @@ async def test_trend_window_starts_at_utc_midnight_and_covers_exactly_n_days(mon
 
     params = db.execute.await_args.args[1]
     assert params["period_start"] == datetime(2026, 10, 26, tzinfo=timezone.utc)
+    assert "tr.created_at AT TIME ZONE 'UTC'" in str(db.execute.await_args.args[0])
 
 
 @pytest.mark.asyncio
@@ -244,3 +268,7 @@ def test_file_and_unified_ingestion_invalidate_analytics_only_after_commit():
         commit = source.index("await db.commit()")
         invalidate = source.index("await invalidate_analytics_cache")
         assert commit < invalidate
+
+    terminal_activation = unified_source.index("await _activate_finalize_children")
+    assert unified_source.count("await invalidate_analytics_cache") == 2
+    assert terminal_activation < unified_source.rindex("await invalidate_analytics_cache")

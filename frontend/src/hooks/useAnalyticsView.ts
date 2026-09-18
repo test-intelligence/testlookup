@@ -3,7 +3,7 @@
  *
  * Loads from: server saved view → page defaults. Saves instance-based views (v2 format).
  */
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import useSWR from 'swr'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useAuthStore } from '@/store/authStore'
@@ -65,6 +65,8 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
   const [hydratedScope, setHydratedScope] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const scopeKey = `${projectId ?? 'all'}:${page}`
+  const currentScopeRef = useRef(scopeKey)
+  currentScopeRef.current = scopeKey
 
   const widgetIds = useMemo(() => instances.map(i => i.templateId), [instances])
 
@@ -168,7 +170,7 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
       await patchData(`/api/v1/saved-views/${scopedSavedViewId}`, payload)
     } else {
       const created = await postData<SavedViewData>('/api/v1/saved-views', payload)
-      setSavedViewId(created.id)
+      if (currentScopeRef.current === scopeKey) setSavedViewId(created.id)
     }
   }, [hydratedScope, page, projectId, savedViewId, scopeKey])
 

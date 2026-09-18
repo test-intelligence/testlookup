@@ -3,7 +3,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user
@@ -138,7 +138,18 @@ async def list_saved_views(
     # live before the fix: ?page=trends and ?page=zzz-no-such-page both returned
     # all rows. Declaring it here makes the promise real rather than removing it.
     if page:
-        query = query.where(SavedView.page == page)
+        # Rows created before migration 0049 stored the page only inside the
+        # JSON filters object. Keep those layouts discoverable while new rows
+        # use the indexed column.
+        query = query.where(
+            or_(
+                SavedView.page == page,
+                and_(
+                    SavedView.page.is_(None),
+                    SavedView.filters["page"].as_string() == page,
+                ),
+            )
+        )
     query = query.order_by(SavedView.is_default.desc(), SavedView.name)
     result = await db.execute(query)
     views = result.scalars().all()

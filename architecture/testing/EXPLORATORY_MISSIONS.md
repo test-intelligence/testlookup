@@ -514,6 +514,21 @@ NaN/Infinity; retry recovers without losing the user's valid selection.
 **Observe/capture:** expected calculation worksheet, request filters, saved-view
 JSON with synthetic data, before/after layout and console errors.
 
+**Shipped 2026-09-18 (partial):** saved-view reads and mutations now enforce
+current tenant membership and owner authority; analytics layouts have a closed
+page vocabulary, structural validation and a 12-instance ceiling. Project/page
+hydration, shared-view seeding, failed-load retry, stale-layout repair and
+persistence use one scoped frontend authority. Shipping picker IDs now map to
+rendered panels, UTC calendar boundaries govern trend/comparison periods,
+committed ingestion clears project and aggregate caches, and Value Metrics plus
+Billing expose retryable outages. The exact executable candidate `e637346d` was
+deployed and verified before tests; 300 broad backend tests, 1,798 full frontend
+tests, all 43 quality guards and 30 asserted mutations passed. Fixed defects:
+EXP-BUG-102 through EXP-BUG-107. Remaining gaps are interactive mutation and
+outage variants on the shared homelab, plus product UI for reordering/duplicate
+instances and server-side multi-tab first-save concurrency. Evidence:
+`architecture/verification/exploratory-20260916/M17-analytics-saved-views.md`.
+
 ## M18 — Integration, digest and notification settings (P1, integration QA)
 
 **Preconditions:** F4 sinks; supported connector fields, masked-secret update

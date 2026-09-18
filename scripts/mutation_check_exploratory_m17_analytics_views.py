@@ -85,6 +85,13 @@ MUTATIONS = (
         "frontend/src/hooks/useAnalyticsView.test.tsx#requests one page",
     ),
     Mutation(
+        "legacy-saved-view-page-query",
+        "backend/app/routers/saved_views.py",
+        '                    SavedView.filters["page"].as_string() == page,\n',
+        '                    SavedView.filters["page"].as_string() == "never-match",\n',
+        "backend/tests/test_exploratory_m17_analytics_views.py::test_page_filter_keeps_pre_0049_filter_only_layouts_discoverable",
+    ),
+    Mutation(
         "widget-selection-persisted-value",
         "frontend/src/hooks/useAnalyticsView.ts",
         "    await persist(next)\n    setDirty(false)\n",
@@ -97,6 +104,13 @@ MUTATIONS = (
         "  const scopeKey = `${projectId ?? 'all'}:${page}`\n",
         "  const scopeKey = page // unsafe: project changes retain the previous PATCH target\n",
         "frontend/src/hooks/useAnalyticsView.test.tsx#never patches the previous project",
+    ),
+    Mutation(
+        "late-create-response-scope",
+        "frontend/src/hooks/useAnalyticsView.ts",
+        "      if (currentScopeRef.current === scopeKey) setSavedViewId(created.id)\n",
+        "      setSavedViewId(created.id)\n",
+        "frontend/src/hooks/useAnalyticsView.test.tsx#discards a create response",
     ),
     Mutation(
         "owned-view-persistence-authority",
@@ -211,6 +225,13 @@ MUTATIONS = (
         "backend/tests/test_exploratory_m17_analytics_views.py::test_trend_window_starts_at_utc_midnight_and_covers_exactly_n_days",
     ),
     Mutation(
+        "trend-utc-bucket",
+        "backend/app/services/metrics_service.py",
+        "DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC') AS day",
+        "DATE_TRUNC('day', tr.created_at) AS day",
+        "backend/tests/test_exploratory_m17_analytics_views.py::test_trend_window_starts_at_utc_midnight_and_covers_exactly_n_days",
+    ),
+    Mutation(
         "all-project-cache-invalidation",
         "backend/app/services/cache_service.py",
         "            (f\"analytics:*:{project_id}:*\", \"analytics:*:all:*\")\n",
@@ -229,6 +250,13 @@ MUTATIONS = (
         "backend/app/services/ingestion_pipeline.py",
         "            await invalidate_analytics_cache(str(pid))\n",
         "            pass  # unsafe: stale analytics caches survive ingestion\n",
+        "backend/tests/test_exploratory_m17_analytics_views.py::test_file_and_unified_ingestion_invalidate_analytics_only_after_commit",
+    ),
+    Mutation(
+        "terminal-cache-invalidation",
+        "backend/app/services/ingestion_pipeline.py",
+        '    await invalidate_analytics_cache(str(pid))\n\n    logger.info(\n        "post_ingestion_operations_staged",\n',
+        '    logger.info(\n        "post_ingestion_operations_staged",\n',
         "backend/tests/test_exploratory_m17_analytics_views.py::test_file_and_unified_ingestion_invalidate_analytics_only_after_commit",
     ),
 )
