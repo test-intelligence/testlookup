@@ -119,12 +119,12 @@ async def test_is_jti_revoked_fails_CLOSED_when_redis_missing(monkeypatch):
 @pytest.mark.asyncio
 async def test_revoke_all_user_tokens_sets_cutoff(fake_redis):
     uid = uuid.uuid4()
-    before = int(datetime.now(timezone.utc).timestamp())
+    before = datetime.now(timezone.utc).timestamp()
     await token_revocation.revoke_all_user_tokens(uid)
-    after = int(datetime.now(timezone.utc).timestamp())
+    after = datetime.now(timezone.utc).timestamp()
     key = f"auth:tokens_valid_from:{uid}"
     assert key in fake_redis.store
-    stored = int(fake_redis.store[key])
+    stored = float(fake_redis.store[key])
     assert before <= stored <= after
 
 
@@ -132,7 +132,7 @@ async def test_revoke_all_user_tokens_sets_cutoff(fake_redis):
 async def test_token_before_cutoff_rejects_old_iat(fake_redis):
     uid = uuid.uuid4()
     await token_revocation.revoke_all_user_tokens(uid)
-    cutoff = int(fake_redis.store[f"auth:tokens_valid_from:{uid}"])
+    cutoff = float(fake_redis.store[f"auth:tokens_valid_from:{uid}"])
 
     # Token issued one second before the cutoff → rejected
     assert await token_revocation.is_token_before_cutoff(uid, cutoff - 1) is True
@@ -143,9 +143,59 @@ async def test_token_after_cutoff_accepted(fake_redis):
     """Brand-new token issued after the cutoff must NOT be rejected."""
     uid = uuid.uuid4()
     await token_revocation.revoke_all_user_tokens(uid)
-    cutoff = int(fake_redis.store[f"auth:tokens_valid_from:{uid}"])
+    cutoff = float(fake_redis.store[f"auth:tokens_valid_from:{uid}"])
 
     assert await token_revocation.is_token_before_cutoff(uid, cutoff + 10) is False
+
+
+@pytest.mark.asyncio
+async def test_same_second_cutoff_uses_subsecond_ordering(fake_redis):
+    """A new token later in the cutoff second is valid; an older one is not."""
+    uid = uuid.uuid4()
+    key = f"auth:tokens_valid_from:{uid}"
+    fake_redis.store[key] = "1700000000.125"
+
+    assert await token_revocation.is_token_before_cutoff(uid, 1700000000.100) is True
+    assert await token_revocation.is_token_before_cutoff(uid, 1700000000.750) is False
+
+
+@pytest.mark.asyncio
+async def test_cutoff_writer_preserves_subsecond_precision(fake_redis, monkeypatch):
+    cutoff = datetime(2026, 9, 16, 15, 30, 0, 125000, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cutoff
+
+    monkeypatch.setattr(token_revocation, "datetime", FixedDateTime)
+    uid = uuid.uuid4()
+    await token_revocation.revoke_all_user_tokens(uid)
+
+    stored = float(fake_redis.store[f"auth:tokens_valid_from:{uid}"])
+    assert stored == cutoff.timestamp()
+    assert stored != int(cutoff.timestamp())
+
+
+@pytest.mark.asyncio
+async def test_legacy_cutoff_migration_preserves_subsecond_precision(
+    fake_redis, monkeypatch
+):
+    uid = uuid.uuid4()
+    fake_redis.store[f"auth:tokens_valid_from:{uid}"] = "1700000000.125"
+    writes = []
+
+    async def durable(statement, params):
+        if statement.startswith("SELECT"):
+            return []
+        writes.append(params)
+        return []
+
+    monkeypatch.setattr(token_revocation, "_durable_execute", durable)
+
+    assert await token_revocation.is_token_before_cutoff(uid, 1700000000.100) is True
+    assert await token_revocation.is_token_before_cutoff(uid, 1700000000.750) is False
+    assert writes[0]["cutoff"] == 1700000000.125
 
 
 @pytest.mark.asyncio

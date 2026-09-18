@@ -11,17 +11,19 @@ Transaction model (pilot of the target "one commit per request" pattern):
   * Ownership checks live in the ``require_session_access`` dependency so
     the handler receives an already-authorized :class:`ChatSession`.
 """
-from typing import Optional
+import uuid
+from typing import Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _enforce_api_key_project_binding,
     get_current_active_user,
     require_session_access,
 )
 from app.db.postgres import get_db
-from app.models.postgres import ChatSession, User
+from app.models.postgres import ChatSession, User, UserRole
 from app.models.schemas import (
     ChatMessageResponse,
     ChatSessionCreate,
@@ -32,6 +34,16 @@ from app.models.schemas import (
 from app.services import chat_service
 
 router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
+
+
+def _require_chat_project(user: User, project_id: object | None) -> None:
+    """Keep non-admin chat inside one budgeted, tenant-scoped project."""
+    _enforce_api_key_project_binding(user, cast(uuid.UUID | None, project_id))
+    if project_id is None and user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=422,
+            detail="Select a project before starting or continuing a chat",
+        )
 
 
 # ── Pre-computed run summaries ─────────────────────────────────────────────
@@ -78,6 +90,7 @@ async def create_session(
     # is not inert — send_message hands its project to the ConversationAgent,
     # which is what fetches the data to answer with, so an unverified binding
     # is a standing handle on another tenant's project.
+    _require_chat_project(current_user, payload.project_id)
     if payload.project_id:
         from app.core.deps import resolve_project_scope  # noqa: PLC0415
 
@@ -126,6 +139,7 @@ async def send_message(
     # (creator-only); the project named inside it was not.
     if payload.project_id and session.project_id and str(session.project_id) != str(payload.project_id):
         raise HTTPException(status_code=422, detail="message project_id must match the session project")
+    _require_chat_project(current_user, session.project_id or payload.project_id)
     if payload.project_id and not session.project_id:
         from app.core.deps import resolve_project_scope  # noqa: PLC0415
 

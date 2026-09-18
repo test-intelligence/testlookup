@@ -27,6 +27,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REGISTRY="registry.local:30500"
 NAMESPACE="testlookup"
+BACKEND_POD_SELECTOR="app=testlookup-backend,app.kubernetes.io/component=api"
 NODES=("192.168.0.101" "192.168.0.102" "192.168.0.103")
 NODE_USER="labadmin"
 CONTROL_NODE="${NODES[0]}"
@@ -76,6 +77,81 @@ header()  { echo -e "\n${CYAN}════════════════�
 
 check_command() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required but not installed."
+}
+
+cleanup_generated_build_inputs() {
+  local repo_root=$1
+  rm -rf -- "$repo_root/backend/__client_sdks_staged"
+  rm -f -- \
+    "$repo_root/backend/certs/mitm-ca.crt" \
+    "$repo_root/frontend/certs/mitm-ca.crt" \
+    "$repo_root/mcp/certs/mitm-ca.crt"
+}
+
+require_clean_build_inputs() {
+  local repo_root=$1 extra_inputs
+  git -C "$repo_root" diff --quiet --ignore-submodules -- \
+    || { echo "Tracked working-tree changes exist." >&2; return 1; }
+  git -C "$repo_root" diff --cached --quiet --ignore-submodules -- \
+    || { echo "Staged changes exist." >&2; return 1; }
+  extra_inputs="$(git -C "$repo_root" status --porcelain \
+    --untracked-files=all --ignored=matching -- \
+    backend frontend mcp client)"
+  [ -z "$extra_inputs" ] \
+    || { echo "Untracked or ignored application build inputs exist." >&2; return 1; }
+}
+
+registry_manifest_digest() {
+  local registry=$1 image=$2 tag=$3 headers media_type digest
+  headers=$(curl -fsSI \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+    "http://${registry}/v2/testlookup/${image}/manifests/${tag}" 2>/dev/null) \
+    || return 1
+  headers=$(printf '%s' "$headers" | tr -d '\r')
+  media_type=$(printf '%s\n' "$headers" \
+    | awk 'tolower($1) == "content-type:" { print tolower($2); exit }' \
+    | cut -d';' -f1)
+  case "$media_type" in
+    application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json) ;;
+    *) return 1 ;;
+  esac
+  digest=$(printf '%s\n' "$headers" \
+    | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }')
+  printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
+  printf '%s\n' "$digest"
+}
+
+verify_deployment_image() {
+  local deployment=$1 expected_image=$2 expected_digest=$3 component pod_rows
+  local image ready image_id deleting extra actual_digest active_pods=0
+  component=$(kubectl -n "$NAMESPACE" get deployment "$deployment" \
+    -o jsonpath='{.spec.template.metadata.labels.app\.kubernetes\.io/component}' \
+    2>/dev/null) || return 1
+  [ -n "$component" ] || return 1
+  pod_rows=$(kubectl -n "$NAMESPACE" get pod \
+    -l "app=${deployment},app.kubernetes.io/component=${component}" \
+    -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID,DELETING:.metadata.deletionTimestamp' \
+    --no-headers 2>/dev/null) || return 1
+  [ -n "$pod_rows" ] || return 1
+  while read -r image ready image_id deleting extra; do
+    [ -z "${extra:-}" ] || return 1
+    [ "$deleting" = "<none>" ] || continue
+    active_pods=$((active_pods + 1))
+    [ "$image" = "$expected_image" ] || return 1
+    [ "$ready" = "true" ] || return 1
+    actual_digest="${image_id##*@}"
+    [ "$actual_digest" = "$expected_digest" ] || return 1
+  done <<< "$pod_rows"
+  [ "$active_pods" -gt 0 ]
+}
+
+verify_serving_revision() {
+  local ingress_ip=$1 expected_revision=$2 payload revision
+  payload=$(curl -fsS --max-time 10 -H "Host: testlookup.local" \
+    "http://${ingress_ip}/health/version") || return 1
+  revision=$(printf '%s\n' "$payload" \
+    | sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  [ "$revision" = "$expected_revision" ]
 }
 
 wait_for_pods() {
@@ -395,6 +471,19 @@ if [ "$SKIP_BUILD" = false ]; then
 
   cd "$REPO_ROOT"
 
+  # The runtime /health/version response is the authority for which source
+  # commit is serving.  A commit label would be misleading if tracked files
+  # differ from that commit, so refuse such a build before staging any files.
+  # Untracked files under an application build input could also change the
+  # image, even though Git has no object for them. Allow unrelated local
+  # evidence, but refuse untracked backend/frontend/MCP/client inputs.
+  cleanup_generated_build_inputs "$REPO_ROOT"
+  require_clean_build_inputs "$REPO_ROOT" \
+    || error "Build inputs do not match HEAD. Use a clean worktree before deployment."
+  BUILD_REVISION="$(git rev-parse HEAD)"
+  BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  log "Embedding build provenance: revision=${BUILD_REVISION}, built_at=${BUILD_DATE}"
+
   # Stage a TLS-interception root CA into the build contexts when the host
   # runs an HTTPS-inspecting middlebox (Norton/NordVPN/corporate proxy), so
   # in-container pip/npm don't fail with "unable to get local issuer
@@ -426,7 +515,7 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Staging client SDKs into backend build context..."
   rm -rf "$STAGED_SDK"
   mkdir -p "$STAGED_SDK"
-  trap 'rm -rf "$STAGED_SDK"' EXIT INT TERM
+  trap 'cleanup_generated_build_inputs "$REPO_ROOT"' EXIT INT TERM
 
   SDK_EXCLUDES=(
     '.pytest_cache' '__pycache__' '*.pyc' '.venv' 'venv'
@@ -447,10 +536,9 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Building backend image (${BUILD_TAG})..."
   "$CONTAINER_ENGINE" build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
+    --build-arg BUILD_REVISION="$BUILD_REVISION" \
+    --build-arg BUILD_DATE="$BUILD_DATE" \
     --target production -f backend/Dockerfile backend/
-
-  rm -rf "$STAGED_SDK"
-  trap - EXIT INT TERM
 
   log "Building frontend image (${BUILD_TAG}, same-origin relative API URLs)..."
   # --pull guarantees the base node:20-alpine and nginx:alpine layers are
@@ -466,41 +554,23 @@ if [ "$SKIP_BUILD" = false ]; then
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     -f mcp/Dockerfile mcp/
 
+  cleanup_generated_build_inputs "$REPO_ROOT"
+  trap - EXIT INT TERM
+
   log "Pushing images to registry..."
   "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}"
   "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}"
   "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}"
 
-  # Capture the registry's manifest digest so we can compare the same digest
-  # type Kubernetes reports in containerStatuses[*].imageID. Podman inspect can
-  # expose a locally cached/config digest that differs from the pushed manifest
-  # digest even when the pod is running the correct immutable image.
-  FRONTEND_MANIFEST_HEADERS=$(curl -fsSI \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-    "http://${PUSH_REGISTRY}/v2/testlookup/frontend/manifests/${BUILD_TAG}" \
-    2>/dev/null | tr -d '\r') \
-    || error "Could not read the pushed frontend manifest from the registry."
-  FRONTEND_MANIFEST_TYPE=$(printf '%s\n' "$FRONTEND_MANIFEST_HEADERS" \
-    | awk 'tolower($1) == "content-type:" { print tolower($2); exit }' \
-    | cut -d';' -f1)
-  case "$FRONTEND_MANIFEST_TYPE" in
-    application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json)
-      ;;
-    application/vnd.oci.image.index.v1+json|application/vnd.docker.distribution.manifest.list.v2+json)
-      error "Frontend tag resolved to a multi-platform index; platform-manifest verification is required before deployment."
-      ;;
-    *)
-      error "Registry returned an unsupported frontend manifest Content-Type: ${FRONTEND_MANIFEST_TYPE:-missing}."
-      ;;
-  esac
-  FRONTEND_DIGEST=$(printf '%s\n' "$FRONTEND_MANIFEST_HEADERS" \
-    | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }' \
-    || echo "")
-  printf '%s\n' "$FRONTEND_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
-    || error "Registry response omitted a valid sha256 frontend manifest digest."
-  if [ -n "$FRONTEND_DIGEST" ]; then
-    log "Frontend image digest just pushed: ${FRONTEND_DIGEST}"
-  fi
+  # Capture the registry manifest digests so every serving application pod can
+  # be compared with the exact immutable manifest that was just pushed.
+  BACKEND_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" backend "$BUILD_TAG") \
+    || error "Could not resolve a single-platform backend manifest digest."
+  FRONTEND_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" frontend "$BUILD_TAG") \
+    || error "Could not resolve a single-platform frontend manifest digest."
+  MCP_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" mcp "$BUILD_TAG") \
+    || error "Could not resolve a single-platform MCP manifest digest."
+  log "Pushed manifest digests: backend=${BACKEND_DIGEST}, frontend=${FRONTEND_DIGEST}, mcp=${MCP_DIGEST}"
 
   log "Images pushed. Registry catalog:"
   curl -s "http://${PUSH_REGISTRY}/v2/_catalog" 2>/dev/null || warn "Could not query registry catalog"
@@ -874,24 +944,34 @@ if [ "$SKIP_BUILD" = false ]; then
   done
   log "App deployments rolled to image ${BUILD_TAG}."
 
-  # ── Authority check: every Ready pod on the expected immutable tag must run
-  # the exact manifest digest the registry returned after the push.
-  if [ -n "${FRONTEND_DIGEST:-}" ]; then
-    EXPECTED_FRONTEND_IMAGE="${REGISTRY}/testlookup/frontend:${BUILD_TAG}"
-    POD_DIGESTS=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-frontend \
-      -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID' \
-      --no-headers 2>/dev/null \
-      | awk -v expected="$EXPECTED_FRONTEND_IMAGE" \
-          '$1 == expected && $2 == "true" { sub(/^.*@/, "", $3); print $3 }' \
-      | sort -u || echo "")
-    if [ -z "$POD_DIGESTS" ]; then
-      error "No Ready frontend pod is running the expected image tag ${EXPECTED_FRONTEND_IMAGE}."
-    elif [ "$POD_DIGESTS" = "$FRONTEND_DIGEST" ]; then
-      log "Frontend pod is running the just-pushed image (digest match)."
-    else
-      error "Frontend authority mismatch: registry=${FRONTEND_DIGEST}, ready-pod digest(s)=${POD_DIGESTS}."
-    fi
-  fi
+  # ── Authority check: every Ready application pod on the expected immutable
+  # tag must run the exact registry manifest just pushed. Workers and beat use
+  # the backend image and therefore must match its digest too.
+  APP_IMAGE_AUTHORITIES=(
+    "testlookup-backend|backend|${BACKEND_DIGEST}"
+    "testlookup-frontend|frontend|${FRONTEND_DIGEST}"
+    "testlookup-mcp|mcp|${MCP_DIGEST}"
+    "testlookup-worker-critical|backend|${BACKEND_DIGEST}"
+    "testlookup-worker-ingestion|backend|${BACKEND_DIGEST}"
+    "testlookup-worker-ai|backend|${BACKEND_DIGEST}"
+    "testlookup-worker-children|backend|${BACKEND_DIGEST}"
+    "testlookup-worker-default|backend|${BACKEND_DIGEST}"
+    "testlookup-beat|backend|${BACKEND_DIGEST}"
+  )
+  for authority in "${APP_IMAGE_AUTHORITIES[@]}"; do
+    IFS='|' read -r deployment image digest <<< "$authority"
+    expected_image="${REGISTRY}/testlookup/${image}:${BUILD_TAG}"
+    verify_deployment_image "$deployment" "$expected_image" "$digest" \
+      || error "Image authority mismatch for ${deployment}: expected ${expected_image}@${digest}."
+  done
+
+  TRAEFIK_IP=$(kubectl -n kube-system get svc traefik \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  [ -n "$TRAEFIK_IP" ] \
+    || error "Cannot verify serving revision: Traefik has no external IP."
+  verify_serving_revision "$TRAEFIK_IP" "$BUILD_REVISION" \
+    || error "Serving backend revision does not match ${BUILD_REVISION}."
+  log "Every application pod digest and the serving backend revision match this build."
 else
   log "Skipping rollout-restart (--skip-build): keeping current images."
 fi
@@ -969,7 +1049,7 @@ fi
 
 # Wait a bit more for the backend after the explicit migration Job completed.
 log "Waiting for backend (may take a minute)..."
-wait_for_pods "app=testlookup-backend" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
+wait_for_pods "$BACKEND_POD_SELECTOR" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
 
 # ── Step 7: Create MinIO Buckets ───────────────────────────
 header "Step 7 — Create MinIO Buckets"
@@ -1132,8 +1212,8 @@ ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
 log "Waiting for backend to be ready..."
 ADMIN_OUTPUT=""
 ADMIN_RAN=false
-if wait_for_pods "app=testlookup-backend" 120; then
-  BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
+  BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
   if [ -n "$BACKEND_POD" ]; then
     log "Running scripts/createAdmin.py inside backend pod (idempotent)..."
@@ -1214,7 +1294,7 @@ if [ -n "$LEGACY_MCP_USER" ]; then
 fi
 
 if [ -n "$LEGACY_MCP_USER" ] && [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" != "true" ]; then
-    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" \
       --field-selector=status.phase=Running \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     if [ -z "$LEGACY_BACKEND_POD" ]; then

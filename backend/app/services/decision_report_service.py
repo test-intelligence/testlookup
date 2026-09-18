@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -13,6 +14,58 @@ from app.db.mongo import Collections
 from app.services.privacy_service import sanitize_for_persistence
 
 REPORT_SCHEMA_VERSION = 1
+
+
+class DecisionReportSubjectUnavailable(RuntimeError):
+    """Publication lost the run-level serialization race with deletion."""
+
+
+@asynccontextmanager
+async def _lock_report_subject(test_run_id: str):
+    """Hold a PostgreSQL share lock until the Mongo publication completes.
+
+    Deletion takes ``FOR UPDATE`` on the same TestRun row. Whichever operation
+    locks first therefore finishes its Mongo check/write before the other can
+    proceed: deletion either sees the new report and refuses, or publication
+    wakes after the run was deleted and refuses to create an orphan.
+    """
+    from sqlalchemy import select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import TestRun
+
+    try:
+        run_id = uuid.UUID(test_run_id)
+    except (TypeError, ValueError) as exc:
+        raise DecisionReportSubjectUnavailable(
+            "decision report subject is not a valid run id"
+        ) from exc
+
+    async with AsyncSessionLocal() as pg:
+        subject = (
+            await pg.execute(
+                select(TestRun.id)
+                .where(TestRun.id == run_id)
+                .with_for_update(read=True)
+            )
+        ).scalar_one_or_none()
+        if subject is None:
+            raise DecisionReportSubjectUnavailable(
+                "decision report subject no longer exists"
+            )
+        try:
+            yield
+            await pg.commit()
+        except Exception:
+            await pg.rollback()
+            raise
+
+
+@asynccontextmanager
+async def lock_decision_report_subject(test_run_id: str):
+    """Serialize every terminal report write with deletion of its run."""
+    async with _lock_report_subject(test_run_id):
+        yield
 
 
 class DecisionReportV1(BaseModel):
@@ -89,6 +142,19 @@ async def load_latest_decision_report(db: Any, test_run_id: str) -> dict[str, An
     return await load_decision_report(db, test_run_id)
 
 
+async def load_decision_report_for_pipeline(
+    db: Any,
+    test_run_id: str,
+    pipeline_run_id: str,
+) -> dict[str, Any] | None:
+    """Read the immutable report produced by one exact pipeline subject."""
+    return await _published_for_pipeline(
+        db,
+        str(test_run_id),
+        str(pipeline_run_id),
+    )
+
+
 async def load_decision_report(
     db: Any,
     test_run_id: str,
@@ -129,6 +195,8 @@ async def list_decision_report_versions(
         {
             "_id": 0,
             "report_id": 1,
+            "pipeline_run_id": 1,
+            "evidence_bundle_sha256": 1,
             "report_version": 1,
             "supersedes_report_id": 1,
             "generated_at": 1,
@@ -139,6 +207,8 @@ async def list_decision_report_versions(
     return [
         {
             "report_id": row.get("report_id"),
+            "pipeline_run_id": row.get("pipeline_run_id"),
+            "evidence_bundle_sha256": row.get("evidence_bundle_sha256"),
             "report_version": row.get("report_version"),
             "supersedes_report_id": row.get("supersedes_report_id"),
             "generated_at": row.get("generated_at"),
@@ -165,44 +235,53 @@ async def publish_decision_report(
     if existing is not None:
         return deepcopy(existing)
 
-    snapshot = decision.get("decision_evidence_snapshot") or {}
-    for attempt in range(3):
-        previous = await _latest_published(db, test_run_id)
-        version = int(previous.get("report_version", 0)) + 1 if previous else 1
-        report = DecisionReportV1(
-            report_id=str(uuid.uuid4()),
-            project_id=str(state["project_id"]),
-            test_run_id=test_run_id,
-            pipeline_run_id=pipeline_run_id,
-            report_version=version,
-            generated_at=_now(),
-            supersedes_report_id=previous.get("report_id") if previous else None,
-            decision_intelligence=deepcopy(decision),
-            verification=deepcopy(dict(decision.get("verification") or {})),
-            markdown_report=markdown,
-            evidence_snapshot_id=(
-                str(snapshot.get("snapshot_id"))
-                if snapshot.get("snapshot_id")
-                else None
-            ),
-            evidence_bundle_sha256=(
-                snapshot.get("content_sha256")
-                or decision.get("evidence_bundle_sha256")
-            ),
-        )
-        document = report.model_dump(mode="json")
-        try:
-            await db[Collections.DECISION_REPORTS].insert_one(document)
-            return document
-        except DuplicateKeyError:
-            # Another terminal critic won the version race. If it was this
-            # pipeline, publication is idempotently complete; otherwise loop
-            # and allocate from the new latest version.
-            existing = await _published_for_pipeline(db, test_run_id, pipeline_run_id)
-            if existing is not None:
-                return deepcopy(existing)
-            if attempt == 2:
-                raise
+    async with _lock_report_subject(test_run_id):
+        # The lock may have waited behind another publisher. Re-check the
+        # idempotency key while serialization is held.
+        existing = await _published_for_pipeline(db, test_run_id, pipeline_run_id)
+        if existing is not None:
+            return deepcopy(existing)
+
+        snapshot = decision.get("decision_evidence_snapshot") or {}
+        for attempt in range(3):
+            previous = await _latest_published(db, test_run_id)
+            version = int(previous.get("report_version", 0)) + 1 if previous else 1
+            report = DecisionReportV1(
+                report_id=str(uuid.uuid4()),
+                project_id=str(state["project_id"]),
+                test_run_id=test_run_id,
+                pipeline_run_id=pipeline_run_id,
+                report_version=version,
+                generated_at=_now(),
+                supersedes_report_id=previous.get("report_id") if previous else None,
+                decision_intelligence=deepcopy(decision),
+                verification=deepcopy(dict(decision.get("verification") or {})),
+                markdown_report=markdown,
+                evidence_snapshot_id=(
+                    str(snapshot.get("snapshot_id"))
+                    if snapshot.get("snapshot_id")
+                    else None
+                ),
+                evidence_bundle_sha256=(
+                    snapshot.get("content_sha256")
+                    or decision.get("evidence_bundle_sha256")
+                ),
+            )
+            document = report.model_dump(mode="json")
+            try:
+                await db[Collections.DECISION_REPORTS].insert_one(document)
+                return document
+            except DuplicateKeyError:
+                # Another terminal critic won the version race. If it was this
+                # pipeline, publication is idempotently complete; otherwise loop
+                # and allocate from the new latest version.
+                existing = await _published_for_pipeline(
+                    db, test_run_id, pipeline_run_id
+                )
+                if existing is not None:
+                    return deepcopy(existing)
+                if attempt == 2:
+                    raise
     raise RuntimeError("decision_report_publication_retry_exhausted")
 
 

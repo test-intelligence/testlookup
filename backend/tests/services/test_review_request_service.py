@@ -25,8 +25,12 @@ class _Session:
     def __init__(self, rows=None):
         self.rows = list(rows or [])
         self.flushes = 0
+        self.statements = []
 
     async def execute(self, stmt):
+        self.statements.append(stmt)
+        if "FROM test_runs" in str(stmt.compile()):
+            return SimpleNamespace(scalar_one_or_none=lambda: TEST_RUN)
         p = stmt.compile().params
         if "test_run_id_1" in p:  # the "older pending in this scope" query
             found = [
@@ -130,15 +134,19 @@ async def test_an_unknown_project_gets_none_rather_than_a_guess():
 
 
 @pytest.mark.asyncio
-async def test_refinalizing_the_same_run_keeps_one_request_and_refreshes_its_payload():
+async def test_refinalizing_changed_evidence_supersedes_the_stale_pending_request():
     session, run = _Session(), _run()
     first = await _create(session, run, evidence=HASH_A)
 
     second = await _create(session, run, evidence=HASH_B)
 
-    assert second is first
-    assert len(session.rows) == 1
-    assert first.evidence_bundle_sha256 == HASH_B
+    assert second is not first
+    assert len(session.rows) == 2
+    assert first.evidence_bundle_sha256 == HASH_A
+    assert first.state == "superseded"
+    assert first.superseded_by == second.id
+    assert second.state == "pending_review"
+    assert second.evidence_bundle_sha256 == HASH_B
 
 
 @pytest.mark.asyncio
@@ -209,6 +217,54 @@ async def test_a_newer_run_never_overwrites_an_accepted_review():
 
 
 @pytest.mark.asyncio
+async def test_distinct_investigations_keep_distinct_pending_reviews():
+    session = _Session()
+    first_run = _run(workflow="investigation")
+    second_run = _run(workflow="investigation")
+
+    first = await _create(session, first_run)
+    second = await _create(session, second_run)
+
+    assert first.state == "pending_review"
+    assert second.state == "pending_review"
+    assert first.subject_id != second.subject_id
+
+
+@pytest.mark.asyncio
+async def test_review_creation_locks_live_rows_before_refresh_or_supersession():
+    session, run = _Session(), _run()
+    await _create(session, run)
+
+    await _create(session, run)
+
+    assert session.statements[-1]._for_update_arg is not None
+
+
+@pytest.mark.asyncio
+async def test_review_creation_locks_the_stable_parent_before_inserting():
+    session = _Session()
+
+    await _create(session, _run())
+
+    first = session.statements[0]
+    assert "FROM test_runs" in str(first.compile())
+    assert first._for_update_arg is not None
+
+
+@pytest.mark.asyncio
+async def test_newer_run_locks_older_pending_scope_before_supersession():
+    session = _Session()
+    await _create(session, _run())
+
+    before = len(session.statements)
+    await _create(session, _run())
+
+    new_statements = session.statements[before:]
+    assert len(new_statements) == 3
+    assert all(stmt._for_update_arg is not None for stmt in new_statements)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("other", [{"workflow": "deep"}, {"test_run": uuid.uuid4()}])
 async def test_a_run_over_a_different_subject_supersedes_nothing(other):
     session = _Session()
@@ -243,6 +299,26 @@ def test_report_stages_counts_only_completed_report_producers():
 )
 def test_evidence_hash_is_taken_only_when_valid(final_state, expected):
     assert svc.evidence_hash_from(final_state) == expected
+
+
+def test_reviewer_evidence_hash_binds_verdict_and_reviewed_outputs():
+    state = {
+        "review_verdict": {
+            "reviewed_steps": ["named_summary"],
+            "verdict": "pass_with_flags",
+            "requires_human_review": True,
+        },
+        "_workflow_step_outputs": {
+            "named_summary": {"summary_markdown": "first"},
+            "unreviewed": {"ignored": True},
+        },
+    }
+    first = svc.reviewer_evidence_hash_from(state)
+    assert isinstance(first, str) and len(first) == 64
+    assert svc.reviewer_evidence_hash_from(state) == first
+
+    state["_workflow_step_outputs"]["named_summary"]["summary_markdown"] = "changed"
+    assert svc.reviewer_evidence_hash_from(state) != first
 
 
 @pytest.mark.asyncio

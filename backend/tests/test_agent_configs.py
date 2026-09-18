@@ -317,20 +317,24 @@ def _row(**over):
 
 
 async def test_put_is_one_upsert_that_bumps_the_version():
-    seen = {}
+    seen = {"sql_calls": []}
 
     class _DB:
         async def execute(self, statement, execution_options=None):
-            seen["sql"] = str(statement.compile(dialect=postgresql.dialect()))
-            seen["params"] = statement.compile(dialect=postgresql.dialect()).params
-            return SimpleNamespace(scalar_one=lambda: "row")
+            compiled = statement.compile(dialect=postgresql.dialect())
+            seen["sql_calls"].append(str(compiled))
+            seen["sql"] = str(compiled)
+            seen["params"] = compiled.params
+            return SimpleNamespace(scalar_one_or_none=lambda: "row")
 
     config = svc.default_config(SUMMARY)
-    assert await svc.put_config(_DB(), PROJECT_ID, config, updated_by=None) == "row"
+    assert await svc.put_config(_DB(), PROJECT_ID, config, updated_by=None, expected_version=3) == "row"
     sql = seen["sql"]
     assert "ON CONFLICT ON CONSTRAINT uq_agent_configs_project_agent DO UPDATE" in sql
     assert "config_version = (agent_configs.config_version +" in sql
+    assert "agent_configs.config_version =" in sql
     assert "RETURNING" in sql
+    assert "pg_advisory_xact_lock" in seen["sql_calls"][0]
     assert seen["params"]["config_version"] == 1
     assert not {"agent_id", "enabled", "mode"} & set(seen["params"]["config"]), "mode has one home: its column"
 
@@ -378,11 +382,11 @@ async def test_put_refuses_a_mismatched_agent_and_an_offline_cloud_provider(monk
     monkeypatch.setattr(svc, "put_config", put)
     body = svc.default_config(SUMMARY)
     with pytest.raises(HTTPException) as exc:
-        await router_mod.put_agent_config(PROJECT_ID, TRIAGE, body, db=None, current_user=_user(), _lead=None)
+        await router_mod.put_agent_config(PROJECT_ID, TRIAGE, body, if_match="0", db=None, current_user=_user(), _lead=None)
     assert exc.value.status_code == 422 and "does not match" in exc.value.detail
     cloud = svc.AgentConfigV1.model_validate(_config(model={"tier": "llm", "llm": {"provider": "openai", "model": "gpt"}}))
     with pytest.raises(HTTPException) as exc:
-        await router_mod.put_agent_config(PROJECT_ID, SUMMARY, cloud, db=None, current_user=_user(), _lead=None)
+        await router_mod.put_agent_config(PROJECT_ID, SUMMARY, cloud, if_match="0", db=None, current_user=_user(), _lead=None)
     assert exc.value.status_code == 422 and "not a local provider" in exc.value.detail[0]
     put.assert_not_awaited()
 
@@ -399,10 +403,13 @@ async def test_put_writes_records_activity_and_commits(monkeypatch):
     monkeypatch.setattr(router_mod, "record_activity", activity)
     db = SimpleNamespace(commit=AsyncMock())
 
-    out = await router_mod.put_agent_config(PROJECT_ID, SUMMARY, body, db=db, current_user=user, _lead=user)
+    out = await router_mod.put_agent_config(
+        PROJECT_ID, SUMMARY, body, if_match='W/"0"', db=db, current_user=user, _lead=user
+    )
 
     assert out["config_version"] == 1 and out["config"]["timeout_seconds"] == 45
     assert put.await_args.kwargs["updated_by"] == user.id
+    assert put.await_args.kwargs["expected_version"] == 0
     kwargs = activity.await_args.kwargs
     assert kwargs["event_type"] == "agent_config.updated" and kwargs["entity_label"] == SUMMARY
     assert kwargs["changed_fields"] == ["timeout_seconds"]
@@ -426,6 +433,7 @@ async def test_compatibility_config_put_skips_registry_tier_gate(monkeypatch):
         PROJECT_ID,
         "fixer",
         body,
+        if_match="0",
         db=db,
         current_user=user,
         _lead=user,
@@ -433,6 +441,41 @@ async def test_compatibility_config_put_skips_registry_tier_gate(monkeypatch):
 
     assert out["agent_id"] == "fixer"
     db.commit.assert_awaited_once()
+
+
+async def test_put_requires_a_fresh_if_match_version(monkeypatch):
+    user = _user()
+    body = svc.default_config(SUMMARY)
+    monkeypatch.setattr(router_mod, "get_effective_ai_config", AsyncMock(return_value={"offline_mode": True}))
+    monkeypatch.setattr(svc, "get_config_row", AsyncMock(return_value=_row(config_version=4)))
+
+    with pytest.raises(HTTPException) as missing:
+        await router_mod.put_agent_config(
+            PROJECT_ID, SUMMARY, body, if_match=None, db=None, current_user=user, _lead=user
+        )
+    assert missing.value.status_code == 428
+
+    with pytest.raises(HTTPException) as stale:
+        await router_mod.put_agent_config(
+            PROJECT_ID, SUMMARY, body, if_match='"3"', db=None, current_user=user, _lead=user
+        )
+    assert stale.value.status_code == 409
+    assert stale.value.detail["current_version"] == 4
+
+
+async def test_put_reports_an_atomic_version_race(monkeypatch):
+    user = _user()
+    body = svc.default_config(SUMMARY)
+    monkeypatch.setattr(router_mod, "get_effective_ai_config", AsyncMock(return_value={"offline_mode": True}))
+    monkeypatch.setattr(svc, "get_config_row", AsyncMock(return_value=_row(config_version=4)))
+    monkeypatch.setattr(svc, "put_config", AsyncMock(side_effect=svc.ConfigVersionConflict(4)))
+
+    with pytest.raises(HTTPException) as race:
+        await router_mod.put_agent_config(
+            PROJECT_ID, SUMMARY, body, if_match="4", db=None, current_user=user, _lead=user
+        )
+    assert race.value.status_code == 409
+    assert race.value.detail["code"] == "agent_config_version_conflict"
 
 
 def test_put_requires_qa_lead():
@@ -451,9 +494,10 @@ def test_put_requires_qa_lead():
 async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     from app.agents import workflow
     from app.models.postgres import AgentPipelineRun
-    from app.services import agent_investigation_service, feature_flags
+    from app.services import agent_config_resolver, agent_investigation_service, feature_flags
 
     added = []
+    lock_keys = []
 
     class _Session:
         async def __aenter__(self):
@@ -462,6 +506,11 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
+        async def execute(self, _stmt, params=None):
+            if params and "key" in params:
+                lock_keys.append(params["key"])
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
         def add(self, row):
             added.append(row)
 
@@ -469,10 +518,26 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
             return None
 
     monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value={}),
+    )
     monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(agent_investigation_service, "get_effective_policy", AsyncMock(return_value={"budgets": {}}))
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
-    monkeypatch.setattr(svc, "list_config_rows", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "has_active_drift_pin",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "resolve_for_project",
+        AsyncMock(side_effect=lambda _db, _project_id, agent_id, **_kwargs: agent_config_resolver.resolve(
+            agent_id, global_ai_config={}
+        )),
+    )
 
     requester = uuid.uuid4()
     await workflow._create_pipeline_run(
@@ -485,6 +550,10 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
 
     (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
     assert run.execution_metadata["agent_config_versions"] == {SUMMARY: 4}
+    assert lock_keys[:2] == [
+        "agent-authority:global",
+        f"agent-config-authority:{PROJECT_ID}",
+    ]
     assert run.requested_by == requester
     from app.services.eval_provenance_service import current_eval_manifest_checksum
 
@@ -504,6 +573,9 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
 
         async def __aexit__(self, *exc):
             return False
+
+        async def execute(self, _stmt, params=None):
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
 
         def add(self, row):
             added.append(row)
@@ -532,6 +604,11 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
     # A ceiling tightened after request acceptance still wins at worker start.
     monkeypatch.setattr(settings, "AGENT_MAX_ATTEMPTS_CEILING", 1)
     monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value={}),
+    )
     monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(
         agent_investigation_service,
@@ -539,7 +616,18 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         AsyncMock(return_value={"budgets": {}}),
     )
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
-    monkeypatch.setattr(svc, "list_config_rows", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "has_active_drift_pin",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        agent_config_resolver,
+        "resolve_for_project",
+        AsyncMock(side_effect=lambda _db, _project_id, agent_id, **_kwargs: agent_config_resolver.resolve(
+            agent_id, global_ai_config={}
+        )),
+    )
 
     await workflow._create_pipeline_run(
         str(uuid.uuid4()),
@@ -557,7 +645,11 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         "human_required_plus_auto_reviewer",
     )
     assert metadata["agent_config_versions"][SUMMARY] == 9
-    assert metadata["resolved_agent_configs"][SUMMARY] == snapshot
+    persisted = metadata["resolved_agent_configs"][SUMMARY]
+    assert persisted["config_version"] == snapshot["config_version"]
+    assert persisted["config"]["retry"]["max_attempts"] == 1
+    assert persisted["config"]["timeout_seconds"] == snapshot["config"]["timeout_seconds"]
+    assert persisted["config"]["budget"] == snapshot["config"]["budget"]
     assert metadata["run_budget"] == {
         "max_llm_calls": 3,
         "max_tokens": 4000,

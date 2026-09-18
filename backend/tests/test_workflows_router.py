@@ -50,6 +50,22 @@ def _allow_semantic(monkeypatch) -> None:
     monkeypatch.setattr(workflows, "_require_semantic_validity", AsyncMock())
 
 
+def _publish_body(
+    row: WorkflowDefinition,
+    *,
+    accept_regression: bool = False,
+    reason: str | None = None,
+    eval_manifest_checksum: str | None = None,
+) -> svc.WorkflowPublishV1:
+    return svc.WorkflowPublishV1(
+        version=row.version,
+        definition_sha256=svc.definition_checksum(row.definition),
+        accept_regression=accept_regression,
+        reason=reason,
+        eval_manifest_checksum=eval_manifest_checksum,
+    )
+
+
 def test_every_route_is_project_scoped_and_mutations_require_qa_lead() -> None:
     for route in workflows.router.routes:
         assert "{project_id}" in route.path
@@ -121,12 +137,17 @@ async def test_publish_refuses_measured_regression_without_override(monkeypatch)
     actor = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
     _allow_semantic(monkeypatch)
+    monkeypatch.setattr(
+        eval_svc,
+        "evaluate_definition",
+        AsyncMock(return_value={"verdict": "fail", "coverage": 1.0, "sample_count": 20, "manifest_checksum": "a" * 64}),
+    )
 
     with pytest.raises(HTTPException) as exc:
         await workflows.publish_workflow(
             row.project_id,
             row.workflow_id,
-            svc.WorkflowPublishV1(),
+            _publish_body(row),
             db,
             actor,
             actor,
@@ -144,15 +165,22 @@ async def test_publish_records_reasoned_regression_acceptance(monkeypatch) -> No
     actor = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
     _allow_semantic(monkeypatch)
+    monkeypatch.setattr(
+        eval_svc,
+        "evaluate_definition",
+        AsyncMock(return_value={"verdict": "fail", "coverage": 1.0, "sample_count": 20, "manifest_checksum": "a" * 64}),
+    )
     activity = AsyncMock()
     monkeypatch.setattr(workflows, "_activity", activity)
 
     response = await workflows.publish_workflow(
         row.project_id,
         row.workflow_id,
-        svc.WorkflowPublishV1(
+        _publish_body(
+            row,
             accept_regression=True,
             reason="Accepted for a time-critical release",
+            eval_manifest_checksum="a" * 64,
         ),
         db,
         actor,
@@ -184,6 +212,7 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
             "verdict": "insufficient_samples",
             "coverage": 0.25,
             "sample_count": 20,
+            "manifest_checksum": "b" * 64,
         }
 
     evaluate_mock = AsyncMock(side_effect=evaluate)
@@ -193,7 +222,7 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
     response = await workflows.publish_workflow(
         row.project_id,
         row.workflow_id,
-        svc.WorkflowPublishV1(),
+        _publish_body(row),
         db,
         actor,
         actor,
@@ -203,6 +232,94 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
     assert response["status"] == "published"
     assert response["eval_verdict"] == "insufficient_samples"
     assert response["eval_coverage"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_publish_reevaluates_existing_verdict_before_enforcement(monkeypatch) -> None:
+    row = _row(verdict="pass")
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
+
+    async def stale_now_fails(*_args, **_kwargs):
+        row.eval_verdict = "fail"
+        row.eval_coverage = 0.0
+        return {"verdict": "fail", "coverage": 0.0, "sample_count": 20, "manifest_checksum": "c" * 64}
+
+    evaluate = AsyncMock(side_effect=stale_now_fails)
+    monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows.publish_workflow(
+            row.project_id, row.workflow_id, _publish_body(row), db, actor, actor
+        )
+
+    assert exc.value.status_code == 409
+    evaluate.assert_awaited_once()
+    assert row.status == "draft"
+
+
+@pytest.mark.asyncio
+async def test_publish_refuses_acceptance_for_a_stale_eval_manifest(monkeypatch) -> None:
+    row = _row(verdict="fail")
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
+    monkeypatch.setattr(
+        eval_svc,
+        "evaluate_definition",
+        AsyncMock(return_value={
+            "verdict": "fail",
+            "coverage": 1.0,
+            "sample_count": 100,
+            "manifest_checksum": "f" * 64,
+        }),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows.publish_workflow(
+            row.project_id,
+            row.workflow_id,
+            _publish_body(
+                row,
+                accept_regression=True,
+                reason="Accepted known result",
+                eval_manifest_checksum="e" * 64,
+            ),
+            db,
+            actor,
+            actor,
+        )
+
+    assert exc.value.status_code == 409
+    assert "fresh result" in exc.value.detail
+    assert row.status == "draft"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_the_full_authoritative_replay_window(monkeypatch) -> None:
+    row = _row(verdict="pass")
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
+    evaluate = AsyncMock(return_value={
+        "verdict": "pass",
+        "coverage": 1.0,
+        "sample_count": 100,
+        "manifest_checksum": "d" * 64,
+    })
+    monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
+    monkeypatch.setattr(workflows, "_activity", AsyncMock())
+
+    await workflows.publish_workflow(
+        row.project_id, row.workflow_id, _publish_body(row), db, actor, actor
+    )
+
+    assert evaluate.await_args.kwargs["sample_limit"] == 100
 
 
 @pytest.mark.asyncio
@@ -223,7 +340,7 @@ async def test_publish_refuses_semantically_invalid_workflow_before_evaluation(m
         await workflows.publish_workflow(
             row.project_id,
             row.workflow_id,
-            svc.WorkflowPublishV1(),
+            _publish_body(row),
             db,
             actor,
             actor,
@@ -233,3 +350,57 @@ async def test_publish_refuses_semantically_invalid_workflow_before_evaluation(m
     assert exc.value.detail["errors"] == ["cycle"]
     evaluate.assert_not_awaited()
     assert row.status == "draft"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_refuses_to_mutate_a_published_version(monkeypatch) -> None:
+    row = _row(verdict="pass")
+    row.status = "published"
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    evaluate = AsyncMock()
+    monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows.evaluate_workflow(
+            row.project_id,
+            row.workflow_id,
+            svc.WorkflowEvaluateV1(version=row.version),
+            db,
+            actor,
+            actor,
+        )
+
+    assert exc.value.status_code == 409
+    evaluate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_publish_is_bound_to_selected_version_digest_and_exact_repeats_are_read_only(
+    monkeypatch,
+) -> None:
+    row = _row(verdict="pass")
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    semantic = AsyncMock()
+    monkeypatch.setattr(workflows, "_require_semantic_validity", semantic)
+
+    stale = _publish_body(row).model_copy(update={"definition_sha256": "0" * 64})
+    with pytest.raises(HTTPException) as exc:
+        await workflows.publish_workflow(
+            row.project_id, row.workflow_id, stale, db, actor, actor
+        )
+    assert exc.value.status_code == 409
+    assert "changed after validation" in exc.value.detail
+    semantic.assert_not_awaited()
+
+    row.status = "published"
+    original_evidence = (row.eval_verdict, row.eval_regression_accepted, row.evaluated_at)
+    response = await workflows.publish_workflow(
+        row.project_id, row.workflow_id, _publish_body(row), db, actor, actor
+    )
+    assert response["status"] == "published"
+    assert (row.eval_verdict, row.eval_regression_accepted, row.evaluated_at) == original_evidence
+    semantic.assert_not_awaited()

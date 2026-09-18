@@ -20,7 +20,7 @@ Usage:
     summary = await generate_summary(run_data, classifications, anomalies)
 """
 import uuid
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import structlog
 
@@ -34,6 +34,7 @@ from app.services.model_router import (
     decide_escalation,
     provenance,
 )
+from app.services.step_llm_budget import StepLLMBudget
 
 logger = structlog.get_logger("services.analysis_router")
 
@@ -118,6 +119,8 @@ async def classify_root_cause_tiered(
     resolved: ResolvedAgentConfig,
     budget_remaining_usd: float | None,
     step_llm_calls_remaining: int,
+    step_budget: StepLLMBudget | None = None,
+    tier_override: Literal["llm"] | None = None,
 ) -> dict:
     """Use SLM for the verdict and LLM only for explanations that need it."""
     from app.services.agent import run_triage_agent
@@ -134,6 +137,7 @@ async def classify_root_cause_tiered(
         resolved,
         budget_remaining_usd=budget_remaining_usd,
         promoted_classifier=promoted,
+        tier_override=tier_override,
     )
     if choice.endpoint is None:
         return _record_tier_fallback(
@@ -191,13 +195,13 @@ async def classify_root_cause_tiered(
     except Exception as exc:  # noqa: BLE001
         logger.debug("classifier_evidence_attach_failed", error=str(exc))
 
-    if trigger is None:
+    if trigger is None or choice.tier == "llm":
         classification["_routing"] = {
             "mode_used": "llm",
             "mode_resolved": "llm",
             "execution_path": "tiered_root_cause",
-            "classification_tier": "slm",
-            "explanation_tier": "slm",
+            "classification_tier": choice.tier,
+            "explanation_tier": choice.tier,
             "classification_provider": choice.endpoint.provider,
             "classification_model": choice.endpoint.model,
             "artifact_types": sorted(artifact_types),
@@ -221,6 +225,7 @@ async def classify_root_cause_tiered(
                 budget_remaining_usd - get_capability(stage).expected_cost_usd,
             )
         ),
+        step_budget=step_budget,
     )
     if decision.action != "escalate" or decision.choice.endpoint is None:
         fallback = _record_tier_fallback(

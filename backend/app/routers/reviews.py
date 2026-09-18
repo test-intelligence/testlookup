@@ -36,7 +36,7 @@ from app.core.deps import (
     require_role,
 )
 from app.db.postgres import get_db
-from app.models.postgres import ProjectMember, ReviewRequest, User, UserRole
+from app.models.postgres import AgentPipelineRun, ProjectMember, ReviewRequest, User, UserRole
 from app.services import review_request_service
 from app.services.access_audit_service import log_access_change
 from app.services.activity.service import ActorRef, record as record_activity
@@ -156,9 +156,26 @@ def require_review_access():
 
 
 async def _load_for_update(db: AsyncSession, review_id: uuid.UUID) -> ReviewRequest:
+    # Finalization owns the pipeline row before it stages or supersedes a
+    # review. Settlement must take the same pipeline -> review lock order or a
+    # concurrent evidence refresh can deadlock and leave stale authority.
+    review = (
+        await db.execute(select(ReviewRequest).where(ReviewRequest.id == review_id))
+    ).scalar_one_or_none()
+    if review is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if review.pipeline_run_id is not None:
+        await db.execute(
+            select(AgentPipelineRun.id)
+            .where(AgentPipelineRun.id == review.pipeline_run_id)
+            .with_for_update()
+        )
     review = (
         await db.execute(
-            select(ReviewRequest).where(ReviewRequest.id == review_id).with_for_update()
+            select(ReviewRequest)
+            .where(ReviewRequest.id == review_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if review is None:

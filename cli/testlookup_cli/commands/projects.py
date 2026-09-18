@@ -1,8 +1,10 @@
 """Project commands — list, get."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 projects_app = typer.Typer(name="projects", help="Manage projects")
 
@@ -19,7 +21,7 @@ def list_projects(
         output.render(items, output_format, columns=["id", "name", "description", "created_at"], title="Projects")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @projects_app.command("get")
@@ -34,4 +36,4 @@ def get_project(
         output.render(data, output_format)
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

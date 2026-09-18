@@ -11,6 +11,7 @@ import type { ExecutivePanel } from '@/services/runIntelligenceService'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AppLogo from '@/components/ui/AppLogo'
+import EmptyState from '@/components/ui/EmptyState'
 import { useChat, useChatSessions, useRunSummaries } from '@/hooks/useChat'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import AssistantMessageExtras from '@/components/chat/AssistantMessageExtras'
@@ -258,6 +259,16 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  if (!activeProject) {
+    return (
+      <EmptyState
+        icon={<MessageSquare className="h-8 w-8" />}
+        title="Select a project"
+        description="Choose a project before using AI chat so every answer and model call stays in that project scope."
+      />
+    )
+  }
 
   const handleNewSession = async () => {
     try {

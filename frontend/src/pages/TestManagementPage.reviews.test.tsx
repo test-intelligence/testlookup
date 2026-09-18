@@ -152,6 +152,7 @@ describe('ReviewsTab lifecycle queue', () => {
     await waitFor(() => {
       expect(testManagementService.transitionCase).toHaveBeenCalledWith('case-1', {
         action: 'request_changes',
+        expected_version: 1,
         notes: 'Clarify the expected error state',
       })
     })

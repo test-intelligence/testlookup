@@ -6,8 +6,10 @@ a subject never has two live requests. CI runs ``alembic upgrade head`` first.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -29,11 +31,24 @@ def _dsn() -> str:
 @pytest.fixture
 async def ctx():
     engine = create_async_engine(_dsn(), pool_size=2, max_overflow=0)
+    reviewer_id = uuid.uuid4()
     async with engine.begin() as db:
         row = (await db.execute(text("SELECT id, project_id FROM test_runs ORDER BY created_at LIMIT 1"))).first()
     if row is None:
         await engine.dispose()
         pytest.skip("database has no test run fixture")
+    async with engine.begin() as db:
+        await db.execute(
+            text(
+                "INSERT INTO users (id, email, username, full_name, hashed_password, role) "
+                "VALUES (:id, :email, :username, 'Review integration', '!unusable', 'QA_LEAD')"
+            ),
+            {
+                "id": reviewer_id,
+                "email": f"review-integration-{reviewer_id.hex}@example.com",
+                "username": f"review_integration_{reviewer_id.hex}",
+            },
+        )
     pipelines: list[uuid.UUID] = []
 
     async def new_pipeline(workflow="offline"):
@@ -52,6 +67,7 @@ async def ctx():
         for pid in pipelines:
             await db.execute(text("DELETE FROM review_requests WHERE subject_id = :s"), {"s": str(pid)})
             await db.execute(text("DELETE FROM agent_pipeline_runs WHERE id = :id"), {"id": pid})
+        await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": reviewer_id})
     await engine.dispose()
 
 
@@ -69,6 +85,34 @@ async def _insert(engine, project_id, subject_id, **cols):
             values,
         )
     return values["id"]
+
+
+async def _insert_bound(
+    engine, project_id, test_run_id, pipeline_id, *, evidence="a" * 64,
+    workflow="offline",
+):
+    review_id = uuid.uuid4()
+    async with engine.begin() as db:
+        await db.execute(
+            text(
+                "INSERT INTO review_requests "
+                "(id, project_id, kind, subject_type, subject_id, pipeline_run_id, "
+                "test_run_id, workflow_type, state, evidence_bundle_sha256, "
+                "ai_disclaimer_version) VALUES "
+                "(:id, :project, 'report', 'pipeline_run', :subject, :pipeline, "
+                ":test_run, :workflow, 'pending_review', :evidence, 'test')"
+            ),
+            {
+                "id": review_id,
+                "project": project_id,
+                "subject": str(pipeline_id),
+                "pipeline": pipeline_id,
+                "test_run": test_run_id,
+                "evidence": evidence,
+                "workflow": workflow,
+            },
+        )
+    return review_id
 
 
 async def test_a_rejection_without_a_reason_is_refused(ctx):
@@ -139,6 +183,336 @@ async def test_the_service_supersedes_through_the_real_index(ctx):
     states = {r[0]: (r[1], r[2]) for r in rows}
     assert states[first.id] == ("superseded", replacement.id)
     assert states[replacement.id] == ("pending_review", None)
+
+
+async def test_accept_reject_race_has_one_settlement_and_matching_pipeline(ctx):
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+    from app.routers.reviews import _load_for_update
+    from app.services.review_request_service import ReviewDecisionRefused, settle_review
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    pipeline_id = await new_pipeline()
+    review_id = await _insert_bound(engine, project_id, test_run_id, pipeline_id)
+    async with engine.begin() as db:
+        reviewer_id = (await db.execute(text("SELECT id FROM users ORDER BY created_at LIMIT 1"))).scalar_one()
+    reviewer = _bind_credential_kind(
+        SimpleNamespace(id=reviewer_id, is_synthetic=False), CREDENTIAL_KIND_JWT
+    )
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def decide(decision: str):
+        async with session() as db:
+            review = await _load_for_update(db, review_id)
+            try:
+                await settle_review(
+                    db,
+                    review=review,
+                    reviewer=reviewer,
+                    decision=decision,
+                    reason_code="missing_evidence" if decision == "rejected" else None,
+                )
+            except ReviewDecisionRefused as exc:
+                await db.rollback()
+                return exc.code
+            await db.commit()
+            return decision
+
+    outcomes = await asyncio.gather(decide("accepted"), decide("rejected"))
+    assert sorted(outcomes) in (
+        ["accepted", "review_not_pending"],
+        ["rejected", "review_not_pending"],
+    )
+    async with engine.begin() as db:
+        review_state, reason = (
+            await db.execute(
+                text("SELECT state, reason_code FROM review_requests WHERE id=:id"),
+                {"id": review_id},
+            )
+        ).one()
+        pipeline_state, error = (
+            await db.execute(
+                text("SELECT status, error FROM agent_pipeline_runs WHERE id=:id"),
+                {"id": pipeline_id},
+            )
+        ).one()
+    if review_state == "accepted":
+        assert (pipeline_state, error, reason) == ("passed", None, None)
+    else:
+        assert review_state == "rejected"
+        assert pipeline_state == "failed"
+        assert error == "review_rejected: missing_evidence"
+        assert reason == "missing_evidence"
+
+
+async def test_lock_wait_refreshes_a_preloaded_loser_before_settlement(ctx):
+    from sqlalchemy import select
+
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+    from app.models.postgres import ReviewRequest
+    from app.routers.reviews import _load_for_update
+    from app.services.review_request_service import ReviewDecisionRefused, settle_review
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    pipeline_id = await new_pipeline()
+    review_id = await _insert_bound(engine, project_id, test_run_id, pipeline_id)
+    async with engine.begin() as db:
+        reviewer_id = (
+            await db.execute(text("SELECT id FROM users ORDER BY created_at LIMIT 1"))
+        ).scalar_one()
+    reviewer = _bind_credential_kind(
+        SimpleNamespace(id=reviewer_id, is_synthetic=False), CREDENTIAL_KIND_JWT
+    )
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as loser:
+        preloaded = (
+            await loser.execute(select(ReviewRequest).where(ReviewRequest.id == review_id))
+        ).scalar_one()
+        assert preloaded.state == "pending_review"
+
+        async with session() as winner:
+            accepted = await _load_for_update(winner, review_id)
+            await settle_review(
+                winner, review=accepted, reviewer=reviewer, decision="accepted"
+            )
+            await winner.commit()
+
+        refreshed = await _load_for_update(loser, review_id)
+        assert refreshed is preloaded
+        assert refreshed.state == "accepted"
+        with pytest.raises(ReviewDecisionRefused) as exc:
+            await settle_review(
+                loser,
+                review=refreshed,
+                reviewer=reviewer,
+                decision="rejected",
+                reason_code="missing_evidence",
+            )
+        assert exc.value.code == "review_not_pending"
+        await loser.rollback()
+
+
+async def test_accept_wins_over_concurrent_newer_run_supersession(ctx):
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+    from app.routers.reviews import _load_for_update
+    from app.services.review_request_service import create_run_review_request, settle_review
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    older_pipeline = await new_pipeline()
+    newer_pipeline = await new_pipeline()
+    old_review_id = await _insert_bound(
+        engine, project_id, test_run_id, older_pipeline, evidence="a" * 64
+    )
+    async with engine.begin() as db:
+        reviewer_id = (await db.execute(text("SELECT id FROM users ORDER BY created_at LIMIT 1"))).scalar_one()
+    reviewer = _bind_credential_kind(
+        SimpleNamespace(id=reviewer_id, is_synthetic=False), CREDENTIAL_KIND_JWT
+    )
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as accepting:
+        old_review = await _load_for_update(accepting, old_review_id)
+        await settle_review(
+            accepting, review=old_review, reviewer=reviewer, decision="accepted"
+        )
+
+        async def create_newer():
+            async with session() as creating:
+                request = await create_run_review_request(
+                    creating,
+                    run=SimpleNamespace(
+                        id=newer_pipeline,
+                        test_run_id=test_run_id,
+                        workflow_type="offline",
+                        execution_metadata={},
+                    ),
+                    project_id=project_id,
+                    report_stage_names=["summary"],
+                    evidence_bundle_sha256="b" * 64,
+                )
+                await creating.commit()
+                return request.id
+
+        creator = asyncio.create_task(create_newer())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(creator), timeout=0.2)
+        await accepting.commit()
+        new_review_id = await asyncio.wait_for(creator, timeout=5)
+
+    async with engine.begin() as db:
+        states = dict(
+            (await db.execute(
+                text("SELECT id, state FROM review_requests WHERE id IN (:old, :new)"),
+                {"old": old_review_id, "new": new_review_id},
+            )).all()
+        )
+        old_pipeline_state = (
+            await db.execute(
+                text("SELECT status FROM agent_pipeline_runs WHERE id=:id"),
+                {"id": older_pipeline},
+            )
+        ).scalar_one()
+    assert states == {old_review_id: "accepted", new_review_id: "pending_review"}
+    assert old_pipeline_state == "passed"
+
+
+async def test_concurrent_same_scope_finalizers_leave_one_pending_review(ctx):
+    from app.services.review_request_service import create_run_review_request
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    first_pipeline = await new_pipeline()
+    second_pipeline = await new_pipeline()
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as first_db:
+        first = await create_run_review_request(
+            first_db,
+            run=SimpleNamespace(
+                id=first_pipeline,
+                test_run_id=test_run_id,
+                workflow_type="offline",
+                execution_metadata={},
+            ),
+            project_id=project_id,
+            report_stage_names=["summary"],
+            evidence_bundle_sha256="a" * 64,
+        )
+
+        async def finalize_second():
+            async with session() as second_db:
+                second = await create_run_review_request(
+                    second_db,
+                    run=SimpleNamespace(
+                        id=second_pipeline,
+                        test_run_id=test_run_id,
+                        workflow_type="offline",
+                        execution_metadata={},
+                    ),
+                    project_id=project_id,
+                    report_stage_names=["summary"],
+                    evidence_bundle_sha256="b" * 64,
+                )
+                await second_db.commit()
+                return second.id
+
+        second_task = asyncio.create_task(finalize_second())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(second_task), timeout=0.2)
+        await first_db.commit()
+        second_id = await asyncio.wait_for(second_task, timeout=5)
+
+    async with engine.begin() as db:
+        states = dict(
+            (
+                await db.execute(
+                    text(
+                        "SELECT id, state FROM review_requests "
+                        "WHERE id IN (:first, :second)"
+                    ),
+                    {"first": first.id, "second": second_id},
+                )
+            ).all()
+        )
+    assert states == {first.id: "superseded", second_id: "pending_review"}
+
+
+async def test_distinct_investigator_subjects_stay_pending_in_postgres(ctx):
+    from app.services.review_request_service import create_run_review_request
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    first_pipeline = await new_pipeline("investigation")
+    second_pipeline = await new_pipeline("investigation")
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as db:
+        first = await create_run_review_request(
+            db,
+            run=SimpleNamespace(
+                id=first_pipeline,
+                test_run_id=test_run_id,
+                workflow_type="investigation",
+                execution_metadata={},
+            ),
+            project_id=project_id,
+            report_stage_names=["investigator_synthesis"],
+            evidence_bundle_sha256="a" * 64,
+        )
+        second = await create_run_review_request(
+            db,
+            run=SimpleNamespace(
+                id=second_pipeline,
+                test_run_id=test_run_id,
+                workflow_type="investigation",
+                execution_metadata={},
+            ),
+            project_id=project_id,
+            report_stage_names=["investigator_synthesis"],
+            evidence_bundle_sha256="b" * 64,
+        )
+        await db.commit()
+
+    async with engine.begin() as db:
+        states = dict(
+            (await db.execute(
+                text("SELECT id, state FROM review_requests WHERE id IN (:first, :second)"),
+                {"first": first.id, "second": second.id},
+            )).all()
+        )
+    assert states == {first.id: "pending_review", second.id: "pending_review"}
+
+
+async def test_one_investigator_acceptance_authorizes_only_its_exact_subject(ctx):
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+    from app.routers.reviews import _load_for_update
+    from app.services.review_envelope import (
+        review_envelope_for_pipeline,
+        review_envelope_for_run,
+    )
+    from app.services.review_request_service import settle_review
+
+    engine, test_run_id, project_id, new_pipeline = ctx
+    parent_pipeline = await new_pipeline("deep")
+    first_pipeline = await new_pipeline("investigation")
+    second_pipeline = await new_pipeline("investigation")
+    await _insert_bound(
+        engine, project_id, test_run_id, parent_pipeline, workflow="deep"
+    )
+    first_review = await _insert_bound(
+        engine,
+        project_id,
+        test_run_id,
+        first_pipeline,
+        workflow="investigation",
+    )
+    await _insert_bound(
+        engine,
+        project_id,
+        test_run_id,
+        second_pipeline,
+        workflow="investigation",
+    )
+    async with engine.begin() as db:
+        reviewer_id = (
+            await db.execute(text("SELECT id FROM users ORDER BY created_at LIMIT 1"))
+        ).scalar_one()
+    reviewer = _bind_credential_kind(
+        SimpleNamespace(id=reviewer_id, is_synthetic=False), CREDENTIAL_KIND_JWT
+    )
+    session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session() as db:
+        review = await _load_for_update(db, first_review)
+        await settle_review(db, review=review, reviewer=reviewer, decision="accepted")
+        await db.commit()
+
+    async with session() as db:
+        first = await review_envelope_for_pipeline(db, first_pipeline)
+        second = await review_envelope_for_pipeline(db, second_pipeline)
+        parent = await review_envelope_for_run(db, test_run_id)
+
+    assert first.state == "accepted"
+    assert second.state == "pending_review"
+    assert parent.state == "pending_review"
 
 
 async def test_the_new_columns_default_to_off(ctx):

@@ -293,8 +293,21 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Set up Node.js 22 for cross-surface mutation harnesses
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -e ../cli
+
+      - name: Install frontend dependencies for mutation harnesses
+        working-directory: ./frontend
+        run: npm install
 
       - name: Lint with ruff
         run: ruff check app/ tests/
@@ -620,6 +633,7 @@ jobs:
           tests/integration/test_outbox_requeue_postgres.py
           tests/integration/test_durable_agent_pipeline_postgres.py
           tests/integration/test_dead_search_vector_removed_postgres.py
+          tests/integration/test_deletion_claim_postgres.py
           tests/integration/test_search_step_index_postgres.py
           tests/integration/test_search_step_scope_postgres.py
           tests/integration/test_search_statement_cache_postgres.py
@@ -632,8 +646,10 @@ jobs:
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
           tests/integration/test_migration_singleton_lock_postgres.py
+          tests/integration/test_password_change_login_serialization_postgres.py
           tests/integration/test_ws_events_persist_postgres_redis.py
           tests/integration/test_worker_pool_survives_tasks_postgres.py
+          tests/integration/test_workflow_definition_races_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
           tests/integration/test_db_connection_budget_postgres.py
           tests/integration/test_engine_hides_parameters_postgres.py

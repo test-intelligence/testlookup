@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models.postgres import ReviewRequest
 from app.services.review_request_service import AI_DISCLAIMER, AI_DISCLAIMER_VERSION
@@ -47,6 +47,7 @@ __all__ = [
     "not_ai_generated",
     "review_envelope_for_run",
     "review_envelope_for_pipeline",
+    "review_envelope_for_pipeline_subject",
 ]
 
 HEADER_AI_GENERATED = "X-TestLookup-AI-Generated"
@@ -159,6 +160,16 @@ async def review_envelope_for_run(
     )
     if workflow_type:
         stmt = stmt.where(ReviewRequest.workflow_type == workflow_type)
+    else:
+        # Investigator narratives have exact pipeline-scoped reviews. They
+        # share their parent test_run_id, so they must never authorize a parent
+        # summary/export that asks for the run's ordinary report envelope.
+        stmt = stmt.where(
+            or_(
+                ReviewRequest.workflow_type.is_(None),
+                ReviewRequest.workflow_type != "investigation",
+            )
+        )
     row: Optional[ReviewRequest] = (
         await db.execute(stmt.order_by(ReviewRequest.created_at.desc()).limit(1))
     ).scalars().first()
@@ -199,6 +210,53 @@ async def review_envelope_for_pipeline(
                 ReviewRequest.kind == "report",
                 ReviewRequest.state != "superseded",
             )
+            .order_by(ReviewRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    return envelope_from_review(row) if row is not None else _unreviewed()
+
+
+async def review_envelope_for_pipeline_subject(
+    db: Any,
+    pipeline_run_id: Any,
+    *,
+    ai_generated: bool = True,
+    evidence_bundle_sha256: str | None = None,
+) -> ReviewEnvelope:
+    """Return the historical envelope for one immutable pipeline artifact.
+
+    Unlike the live-subject lookup above, this includes a superseded review.
+    Immutable report versions must retain that terminal state instead of being
+    relabelled by whichever deep pipeline happened to run most recently.
+    """
+    if not ai_generated:
+        return not_ai_generated()
+    try:
+        pipeline_uuid = (
+            pipeline_run_id
+            if isinstance(pipeline_run_id, uuid.UUID)
+            else uuid.UUID(str(pipeline_run_id))
+        )
+    except (TypeError, ValueError):
+        return _unreviewed()
+    if db is None:
+        return _unreviewed()
+    conditions = [
+        ReviewRequest.pipeline_run_id == pipeline_uuid,
+        ReviewRequest.kind == "report",
+    ]
+    if evidence_bundle_sha256 is not None:
+        normalized_hash = str(evidence_bundle_sha256).lower()
+        if len(normalized_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized_hash
+        ):
+            return _unreviewed()
+        conditions.append(ReviewRequest.evidence_bundle_sha256 == normalized_hash)
+    row: Optional[ReviewRequest] = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(*conditions)
             .order_by(ReviewRequest.created_at.desc())
             .limit(1)
         )

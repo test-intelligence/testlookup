@@ -43,7 +43,13 @@ describe('workflowService', () => {
     await validateWorkflow('p1', 'wf.fast', 2)
     await forkWorkflow('p1', 'offline', { workflow_id: 'wf.fast', name: 'Fast' }, 1)
     await evaluateWorkflow('p1', 'wf.fast', 2)
-    await publishWorkflow('p1', 'wf.fast', { accept_regression: true, reason: 'approved' })
+    await publishWorkflow('p1', 'wf.fast', {
+      version: 2,
+      definition_sha256: 'a'.repeat(64),
+      accept_regression: true,
+      reason: 'approved',
+      eval_manifest_checksum: 'b'.repeat(64),
+    })
 
     expect(getData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows')
     expect(putData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows/wf.fast', body)
@@ -56,11 +62,17 @@ describe('workflowService', () => {
       { params: { version: 1 } },
     )
     expect(postData).toHaveBeenCalledWith(
-      '/api/v1/projects/p1/workflows/wf.fast/evaluate', { version: 2, sample_limit: 20 },
+      '/api/v1/projects/p1/workflows/wf.fast/evaluate', { version: 2, sample_limit: 100 },
     )
     expect(postData).toHaveBeenCalledWith(
       '/api/v1/projects/p1/workflows/wf.fast/publish',
-      { accept_regression: true, reason: 'approved' },
+      {
+        version: 2,
+        definition_sha256: 'a'.repeat(64),
+        accept_regression: true,
+        reason: 'approved',
+        eval_manifest_checksum: 'b'.repeat(64),
+      },
     )
   })
 })

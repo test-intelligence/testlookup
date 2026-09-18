@@ -13,6 +13,7 @@ from app.agents.workflow_compiler import (
     validate_workflow,
 )
 from app.services import workflow_definition_service as definitions
+from app.services.agent_capability_registry import WORKFLOW_ELIGIBLE
 from app.services.agent_config_service import default_config
 
 
@@ -65,6 +66,14 @@ def test_builtin_definitions_compile_to_the_live_graph_topology(
     assert _topology(compiled.graph) == _topology(legacy_builder())
 
 
+def test_workflow_eligibility_matches_every_concrete_runtime_executor() -> None:
+    runtime = {
+        capability_id.removeprefix("agent.").removesuffix(".v1")
+        for capability_id in workflow.workflow_node_executors()
+    }
+    assert WORKFLOW_ELIGIBLE == runtime | {"reviewer"}
+
+
 def test_compiler_rejects_unknown_capability_and_missing_dependency() -> None:
     document = _body().model_dump(mode="json", by_alias=True)
     document["steps"][1]["agent_id"] = "agent.unknown.v1"
@@ -84,6 +93,96 @@ def test_compiler_rejects_unknown_capability_and_missing_dependency() -> None:
     errors = validate_workflow(missing).errors
     assert any("summary requires upstream capability 'ingestion'" in error for error in errors)
     assert any("triage requires upstream capability 'root_cause_analysis'" in error for error in errors)
+
+
+def test_semantic_validation_rejects_ignored_step_model_override() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"][1]["model"] = {"tier": "llm"}
+    body = definitions.WorkflowBodyV1.model_validate(document)
+
+    assert any(
+        "model overrides are not supported by the workflow runtime" in error
+        for error in validate_workflow(body).errors
+    )
+
+
+def test_validation_rejects_registered_capability_without_workflow_executor() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"] = [
+        {"id": "plan", "agent_id": "agent.investigator_plan.v1"},
+    ]
+    document["edges"] = []
+    body = definitions.WorkflowBodyV1.model_validate(document)
+
+    result = validate_workflow(body)
+
+    assert result.valid is False
+    assert result.errors == (
+        "step plan: capability 'agent.investigator_plan.v1' has no workflow runtime executor",
+    )
+
+
+def test_reviewer_requires_one_bounded_supervisor_retry_loop() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"].append({
+        "id": "review", "agent_id": "agent.reviewer.v1", "reviews": ["summary"],
+    })
+    document["edges"].append({"from": "summary", "to": "review"})
+    body = definitions.WorkflowBodyV1.model_validate(document)
+    assert any("reviewer requires exactly one bounded retry loop" in error
+               for error in validate_workflow(body).errors)
+
+    document["loops"] = [{
+        "from": "review",
+        "to": "summary",
+        "when": {"field": "supervisor_route", "op": "eq", "value": "retry"},
+        "max_iterations": 1,
+    }]
+    valid = definitions.WorkflowBodyV1.model_validate(document)
+    assert validate_workflow(valid).valid is True
+
+    document["loops"].append({
+        "from": "review",
+        "to": "summary",
+        "when": {"field": "supervisor_route", "op": "eq", "value": "continue"},
+        "max_iterations": 1,
+    })
+    extra = definitions.WorkflowBodyV1.model_validate(document)
+    assert any("exactly one bounded retry loop" in error
+               for error in validate_workflow(extra).errors)
+
+
+def test_parallel_reviewer_steps_are_rejected() -> None:
+    document = _body().model_dump(mode="json", by_alias=True)
+    document["steps"].extend([
+        {"id": "review_a", "agent_id": "agent.reviewer.v1", "reviews": ["summary"]},
+        {"id": "review_b", "agent_id": "agent.reviewer.v1", "reviews": ["summary"]},
+    ])
+    document["edges"].extend([
+        {"from": "summary", "to": "review_a"},
+        {"from": "summary", "to": "review_b"},
+    ])
+    document["loops"] = [
+        {
+            "from": reviewer,
+            "to": "summary",
+            "when": {"field": "supervisor_route", "op": "eq", "value": "retry"},
+            "max_iterations": 1,
+        }
+        for reviewer in ("review_a", "review_b")
+    ]
+    body = definitions.WorkflowBodyV1.model_validate(document)
+
+    assert any("parallel reviewers" in error for error in validate_workflow(body).errors)
+
+
+@pytest.mark.parametrize("op", ["lt", "lte", "gt", "gte"])
+def test_relational_condition_treats_missing_runtime_fact_as_false(op: str) -> None:
+    assert evaluate_condition(
+        {"field": "total_tests", "op": op, "value": 1},
+        state={},
+        config={},
+    ) is False
 
 
 def test_dependency_must_dominate_every_path() -> None:

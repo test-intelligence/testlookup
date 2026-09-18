@@ -12,6 +12,7 @@ import typer
 
 from testlookup_cli import client, output
 from testlookup_cli.config import get_profile
+from testlookup_cli.errors import exit_code_for
 
 reviews_app = typer.Typer(name="reviews", help="Human review of AI-generated reports")
 
@@ -57,7 +58,7 @@ def list_reviews(
         output.render(rows, output_format, columns=_COLUMNS, title=f"Reviews ({state})")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @reviews_app.command("accept")
@@ -80,7 +81,7 @@ def accept(
             output.print_success(f"Review {review_id} accepted.")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @reviews_app.command("reject")
@@ -109,4 +110,4 @@ def reject(
             output.print_success(f"Review {review_id} rejected ({reason}).")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

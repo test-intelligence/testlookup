@@ -108,7 +108,7 @@ fails if a *second* deleter appears.
 
 | Gate id | Requires | How to satisfy |
 |---|---|---|
-| `database.single-alembic-head` | a linear migration chain (one head) | Set your `down_revision` to the current head; rebase on conflict |
+| `database.single-alembic-head` | a linear migration chain (one head) | Set a new revision's `down_revision` to the current head; merge main on conflict, never rebase or edit historical migrations |
 | `database.downgrade-implemented` | a real `downgrade()` (no empty stubs) | Implement the inverse, or a documented no-op with a reason |
 
 ### Agents

@@ -26,7 +26,7 @@ pytestmark = pytest.mark.asyncio
 async def test_decision_trail_requires_project_membership(
     client, auth_as, override_db, fake_db,
 ):
-    """A non-admin without access to the run's project gets 403."""
+    """A non-admin cannot distinguish a foreign run from a missing one."""
     victim_project_id = uuid.uuid4()
     run_id = uuid.uuid4()
 
@@ -38,7 +38,8 @@ async def test_decision_trail_requires_project_membership(
     auth_as(accessible_projects={uuid.uuid4()})
 
     resp = await client.get(f"/api/v1/runs/{run_id}/decision-trail")
-    assert resp.status_code == 403
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Test run not found"
 
 
 async def test_decision_trail_returns_404_for_unknown_run(

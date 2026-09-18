@@ -160,6 +160,7 @@ async def delete_workflow(
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> Response:
     _mutable(workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
     row = await _get(db, project_id, workflow_id)
     assert isinstance(row, WorkflowDefinition)
     item = svc.serialize(row)
@@ -194,8 +195,11 @@ async def evaluate_workflow(
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     _mutable(workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
     row = await _get(db, project_id, workflow_id, body.version)
     assert isinstance(row, WorkflowDefinition)
+    if row.status == "published":
+        raise _conflict(svc.WorkflowConflict("published workflow versions are immutable"))
     await _require_semantic_validity(db, project_id, row)
     try:
         result = await eval_svc.evaluate_definition(
@@ -228,36 +232,60 @@ async def evaluate_workflow(
 async def publish_workflow(
     project_id: uuid.UUID,
     workflow_id: str,
-    body: svc.WorkflowPublishV1 = Body(default_factory=svc.WorkflowPublishV1),
+    body: svc.WorkflowPublishV1,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     _mutable(workflow_id)
-    row = await _get(db, project_id, workflow_id)
+    await svc.lock_definition(db, project_id, workflow_id)
+    row = await _get(db, project_id, workflow_id, body.version)
     assert isinstance(row, WorkflowDefinition)
+    if svc.definition_checksum(row.definition) != body.definition_sha256:
+        raise _conflict(
+            svc.WorkflowConflict(
+                "workflow definition changed after validation; reload and validate the selected version"
+            )
+        )
+    if row.status == "published":
+        # An exact repeat is idempotent and cannot rewrite evaluation or
+        # acceptance evidence on the immutable published row.
+        return svc.serialize(row)
     await _require_semantic_validity(db, project_id, row)
-    if row.status != "published" and row.eval_verdict is None:
-        result = await eval_svc.evaluate_definition(
-            db,
-            project_id=project_id,
-            row=row,
-            sample_limit=eval_svc.MIN_REPLAY_RUNS,
-            evaluated_by=current_user.id,
-        )
-        item = svc.serialize(row)
-        await _activity(
-            db,
-            project_id=project_id,
-            event_type="workflow.evaluated",
-            user=current_user,
-            item=item,
-            extra_context={
-                "verdict": result["verdict"],
-                "coverage": result["coverage"],
-                "sample_count": result["sample_count"],
-            },
-        )
+    # Evaluation evidence is mutable authority: configs, prompts, runtime, and
+    # the replay corpus can change while the draft definition does not. Always
+    # re-evaluate under the publication lock instead of trusting denormalized
+    # verdict fields copied onto the draft by an earlier request.
+    result = await eval_svc.evaluate_definition(
+        db,
+        project_id=project_id,
+        row=row,
+        sample_limit=eval_svc.PUBLISH_REPLAY_RUNS,
+        evaluated_by=current_user.id,
+    )
+    if (
+        body.accept_regression
+        and body.eval_manifest_checksum != result["manifest_checksum"]
+    ):
+        # Keep the new evidence visible, but never apply an approval written
+        # for a different corpus or authority snapshot.
+        await db.commit()
+        raise _conflict(svc.WorkflowConflict(
+            "workflow evaluation changed; inspect the fresh result and explicitly accept its manifest checksum"
+        ))
+    item = svc.serialize(row)
+    await _activity(
+        db,
+        project_id=project_id,
+        event_type="workflow.evaluated",
+        user=current_user,
+        item=item,
+        extra_context={
+            "verdict": result["verdict"],
+            "coverage": result["coverage"],
+            "sample_count": result["sample_count"],
+        },
+    )
     try:
         eval_svc.enforce_publish_gate(
             row,
@@ -297,6 +325,7 @@ async def fork_workflow(
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
+    await svc.lock_definition(db, project_id, workflow_id)
     source = await _get(db, project_id, workflow_id, version)
     try:
         row = await svc.fork_definition(db, project_id, source, body, actor_id=current_user.id)

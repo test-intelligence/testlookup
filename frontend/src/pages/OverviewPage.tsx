@@ -1496,7 +1496,7 @@ export default function OverviewPage() {
         <WidgetPicker
           page="dashboard"
           enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
           onClose={() => setShowPicker(false)}
         />
       )}

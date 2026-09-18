@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import { useBillingOverview, useProjectQuota } from '@/hooks/useLlmBudget'
 import {
   llmBudgetService,
@@ -15,6 +15,7 @@ import {
   type UsageStatus,
 } from '@/services/llmBudgetService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatDayIso, shiftDayIso } from '@/utils/calendarDay'
 
 /**
  * Workspace billing overview — Tier 1 item 2.
@@ -31,12 +32,12 @@ import { usePermissions } from '@/hooks/usePermissions'
  */
 export default function BillingPage() {
   const { isAdmin } = usePermissions()
-  const { overview, isLoading, isError, refresh } = useBillingOverview()
+  const { overview, error, isLoading, isError, refresh } = useBillingOverview()
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
 
   if (isLoading) return <LoadingSpinner size="lg" />
   if (isError || !overview) {
-    return <EmptyState title="Failed to load billing overview" />
+    return <DataUnavailable error={error} onRetry={() => void refresh()} testId="billing-data-unavailable" />
   }
 
   return (
@@ -49,7 +50,7 @@ export default function BillingPage() {
       <PageHeader
         title="LLM Cost Budget"
         actions={<ExperimentalBadge />}
-        subtitle={`Current period: ${formatDate(overview.period_start)} — ${formatDate(overview.period_end)}`}
+        subtitle={`Current period: ${formatDate(overview.period_start)} — ${formatPeriodEnd(overview.period_end)}`}
       />
 
       {/* Workspace tiles */}
@@ -211,15 +212,11 @@ function StatusPill({ status }: { status: UsageStatus }) {
 }
 
 function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
-  } catch {
-    return iso
-  }
+  return formatDayIso(iso.slice(0, 10))
+}
+
+function formatPeriodEnd(iso: string): string {
+  return formatDayIso(shiftDayIso(iso.slice(0, 10), -1))
 }
 
 // ── Quota editor modal ─────────────────────────────────────────────────────

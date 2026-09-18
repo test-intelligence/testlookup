@@ -49,14 +49,20 @@ export function evaluateWorkflow(
 ): Promise<WorkflowEvaluation> {
   return postData(`${base(projectId)}/${workflowId}/evaluate`, {
     version,
-    sample_limit: 20,
+    sample_limit: 100,
   })
 }
 
 export function publishWorkflow(
   projectId: string,
   workflowId: string,
-  body: { accept_regression: boolean; reason?: string | null },
+  body: {
+    version: number
+    definition_sha256: string
+    accept_regression: boolean
+    reason?: string | null
+    eval_manifest_checksum?: string | null
+  },
 ): Promise<WorkflowItem> {
   return postData(`${base(projectId)}/${workflowId}/publish`, body)
 }

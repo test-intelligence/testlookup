@@ -155,7 +155,6 @@ async def test_legacy_fixer_put_is_read_only():
     with pytest.raises(HTTPException) as exc:
         await fixer_router.put_fixer_config(
             PROJECT_ID,
-            fixer_router.FixerConfigUpdate(),
             db=_StageDB(),
             current_user=object(),
             _lead=object(),

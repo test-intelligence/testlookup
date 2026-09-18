@@ -37,7 +37,10 @@ from app.services.run_diff_service import get_baseline_diff
 from app.services.run_intelligence_service import get_run_intelligence, get_run_mode_summary
 from app.services.intelligence_snapshot_service import get_cached_snapshot, get_stale_snapshot, invalidate, save_snapshot
 from app.models.postgres import TestRun
-from app.services.review_envelope import review_envelope_for_run
+from app.services.review_envelope import (
+    review_envelope_for_pipeline_subject,
+    review_envelope_for_run,
+)
 from app.services.report_distribution_policy import (
     decide_run_distribution,
     record_distribution,
@@ -154,9 +157,23 @@ async def get_run_intelligence_endpoint(
             except Exception as cache_err:
                 logger.warning("Failed to save intelligence snapshot: %s", cache_err)
 
+        pipeline_subject = None
+        evidence_subject = None
         if isinstance(result, dict):
+            pipeline_subject = result.pop("_decision_report_pipeline_run_id", None)
+            evidence_subject = result.pop(
+                "_decision_report_evidence_bundle_sha256", None
+            )
             result["_snapshot"] = {"cached": False, "stale": False}
         # After save_snapshot above: the envelope is never written into the cache.
+        if report_version is not None and pipeline_subject is not None:
+            envelope = await review_envelope_for_pipeline_subject(
+                db,
+                pipeline_subject,
+                evidence_bundle_sha256=evidence_subject,
+            )
+            envelope.apply_headers(response)
+            return {**result, **envelope.fields()}
         return await _with_review(db, response, run_id, result)
     except ValueError as exc:
         run_intelligence_requests_total.labels(status="failure").inc()
@@ -184,13 +201,30 @@ async def list_run_decision_reports(
         # Do not turn a transient Mongo outage into an unbounded error surface;
         # callers receive a truthful unavailable response.
         raise HTTPException(status_code=503, detail="decision_report_versions_unavailable") from None
-    # E8.3: decision reports come from the deep pipeline, and every version of
-    # the run's report inherits that run's one review (section 8.1). The list
-    # stays a list -- a top-level wrapper would break every existing client --
-    # so each version carries the envelope.
-    envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")
-    envelope.apply_headers(response)
-    return [{**version, **envelope.fields()} for version in versions]
+    # Each immutable version is bound to its producing pipeline. Preserve that
+    # exact review, including superseded, rather than inheriting the newest
+    # deep pipeline's review state.
+    result = []
+    first_envelope = None
+    for version in versions:
+        public_version = dict(version)
+        pipeline_subject = public_version.pop("pipeline_run_id", None)
+        evidence_subject = public_version.get("evidence_bundle_sha256")
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_subject,
+            evidence_bundle_sha256=evidence_subject,
+        )
+        if first_envelope is None:
+            first_envelope = envelope
+        result.append({**public_version, **envelope.fields()})
+    if first_envelope is not None:
+        first_envelope.apply_headers(response)
+    else:
+        (await review_envelope_for_run(db, run_id, workflow_type="deep")).apply_headers(
+            response
+        )
+    return result
 
 
 @router.get("/{run_id}/summary")
@@ -366,9 +400,16 @@ async def export_intelligence_report(
         project_id=project_id,
         actor=_,
     )
+    # The request session rolls back on close unless this audit record is
+    # committed. Persist both allowed and refused decisions before returning.
+    await db.commit()
     if not distribution.allowed:
-        await db.commit()
         raise HTTPException(status_code=409, detail=refusal_detail(distribution))
+    if distribution.watermark:
+        # JSON exports cannot rely on a renderer to add the visible DRAFT
+        # banner. Carry the same watermark field as HTML/PDF exports so a
+        # downloaded pending report never loses its review status.
+        report["draft_watermark"] = distribution.watermark
 
     # E8.6: the export is a downloadable copy of AI report content, so it says
     # whether a person has accepted that content (review envelope, E8.3).

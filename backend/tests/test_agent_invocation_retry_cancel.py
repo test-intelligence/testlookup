@@ -45,9 +45,11 @@ class _Db:
             "test_runs": build,
         }
         self.order: list[str] = []
+        self.statements: list = []
         self.commit = AsyncMock(side_effect=lambda: self.order.append("commit"))
 
     async def execute(self, stmt):
+        self.statements.append(stmt)
         sql = str(stmt)
         for table, value in self.rows.items():
             if f"FROM {table}" in sql:
@@ -61,6 +63,7 @@ def _invocation(**overrides):
         "id": uuid.uuid4(), "project_id": uuid.uuid4(), "agent_id": "agent.summary.v1",
         "stage_name": "summary", "test_run_id": uuid.uuid4(), "pipeline_run_id": uuid.uuid4(),
         "workflow_type": "offline", "mode": "async", "created_at": now, "dispatched_at": now,
+        "cancel_requested": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -94,13 +97,21 @@ def harness(monkeypatch):
     monkeypatch.setattr(router, "record_activity", AsyncMock())
     monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _u: "actor"))
     monkeypatch.setattr(router, "_current_mode_snapshot", AsyncMock(return_value={}))
+    original_config_changed = router._invocation_config_changed
+    monkeypatch.setattr(router, "_invocation_config_changed", AsyncMock(return_value=False))
     monkeypatch.setattr(router, "decide_retry_mode", lambda _meta, _snap: SimpleNamespace(is_rerun=False, reason="config_unchanged"))
 
     def _use(db):
         holder["db"] = db
         return db
 
-    return SimpleNamespace(router=router, tasks=tasks, dispatched=dispatched, use=_use)
+    return SimpleNamespace(
+        router=router,
+        tasks=tasks,
+        dispatched=dispatched,
+        use=_use,
+        original_config_changed=original_config_changed,
+    )
 
 
 def _user():
@@ -133,6 +144,49 @@ async def test_retry_refuses_review_rejected_invocation_without_side_effects(har
     assert db.order == []
     harness.router.record_activity.assert_not_awaited()
     harness.dispatched["resume"].assert_not_called()
+    harness.dispatched["invocation"].assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_fields",
+    [
+        {"cancel_requested": True, "error": "boom"},
+        {"cancel_requested": False, "error": "cancelled: by qa@example.com"},
+    ],
+)
+async def test_retry_refuses_cancelled_invocation_without_side_effects(harness, cancel_fields):
+    invocation = _invocation()
+    pipeline = _pipeline(invocation, **cancel_fields)
+    before = vars(pipeline).copy()
+    db = harness.use(_Db(invocation=invocation, pipeline=pipeline))
+
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(
+            invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "cancelled"
+    assert exc.value.detail["links"]["rerun"].endswith("/invoke")
+    assert vars(pipeline) == before
+    assert db.order == []
+    harness.router.record_activity.assert_not_awaited()
+    harness.dispatched["resume"].assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_refuses_an_invocation_cancelled_before_its_pipeline_exists(harness):
+    invocation = _invocation(cancel_requested=True)
+    db = harness.use(_Db(invocation=invocation, pipeline=None))
+
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(
+            invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+        )
+
+    assert exc.value.status_code == 409 and exc.value.detail["reason"] == "cancelled"
+    assert db.order == []
     harness.dispatched["invocation"].assert_not_called()
 
 
@@ -176,17 +230,81 @@ async def test_retry_is_refused_when_the_configuration_changed(harness, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_retry_resumes_the_same_run_after_the_commit(harness):
+async def test_retry_is_refused_when_the_frozen_agent_config_changed(harness):
     invocation = _invocation()
     db = harness.use(_Db(invocation=invocation, pipeline=_pipeline(invocation)))
+    harness.router._invocation_config_changed.return_value = True
 
-    await harness.router.retry_invocation(invocation_id=invocation.id, db=db, current_user=_user(), _=None)
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(
+            invocation_id=invocation.id,
+            db=db,
+            current_user=_user(),
+            _=None,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "agent_config_changed"
+    assert exc.value.detail["links"]["rerun"].endswith("/invoke")
+    assert db.order == []
+
+
+@pytest.mark.asyncio
+async def test_config_change_check_reapplies_live_safety_policy(harness, monkeypatch):
+    snapshot = {
+        "schema_version": 1,
+        "agent_id": "agent.summary.v1",
+        "source": "project",
+        "config_version": 7,
+        "patched": False,
+        "config": {},
+        "unavailable_tiers": [],
+        "clamps": [],
+    }
+    invocation = _invocation(resolved_config_snapshot=snapshot)
+    db = object()
+    monkeypatch.setattr(
+        harness.router,
+        "get_config_row",
+        AsyncMock(return_value=SimpleNamespace(config_version=7)),
+    )
+    restored = SimpleNamespace()
+    resolve = AsyncMock(return_value=restored)
+    monkeypatch.setattr(harness.router, "resolve_frozen_for_project", resolve)
+    monkeypatch.setattr(
+        harness.router,
+        "freeze_for_invocation",
+        lambda _resolved: {**snapshot, "clamps": [{"layer": "eval_drift"}]},
+    )
+
+    assert await harness.original_config_changed(db, invocation) is True
+    resolve.assert_awaited_once_with(
+        snapshot,
+        expected_agent_id=invocation.agent_id,
+        db=db,
+        project_id=invocation.project_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_resumes_the_same_run_after_the_commit(harness):
+    invocation = _invocation()
+    pipeline = _pipeline(invocation, attempt=2)
+    db = harness.use(_Db(invocation=invocation, pipeline=pipeline))
+
+    view = await harness.router.retry_invocation(
+        invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+    )
 
     assert db.order == ["commit", "dispatch:resume"]
     call = harness.dispatched["resume"].call_args.kwargs
     assert call["kwargs"]["pipeline_run_id"] == str(invocation.pipeline_run_id)
+    assert call["kwargs"]["expected_attempt"] == 3
     assert call["queue"] == "ai_analysis"
     inspect.signature(harness.tasks.resume_agent_pipeline.run).bind(**call["kwargs"])
+    assert pipeline.status == "retry_wait" and view["status"] == "in_progress"
+    pipeline_select = next(s for s in db.statements if "FROM agent_pipeline_runs" in str(s))
+    assert "FOR UPDATE" in str(pipeline_select)
     activity = harness.router.record_activity.await_args.kwargs
     assert activity["event_type"] == "analysis.retried" and activity["context"]["mode"] == "resume"
 
@@ -207,6 +325,8 @@ async def test_a_lost_dispatch_is_sent_again_with_a_fresh_dispatch_clock(harness
     assert invocation.dispatched_at > old
     assert view["status"] == "in_progress"
     assert harness.router.record_activity.await_args.kwargs["context"]["mode"] == "redispatch"
+    invocation_select = next(s for s in db.statements if "FROM agent_invocations" in str(s))
+    assert "FOR UPDATE" in str(invocation_select)
 
 
 @pytest.mark.asyncio
@@ -223,13 +343,20 @@ async def test_retry_is_refused_for_an_invocation_that_has_simply_not_started_ye
 
 
 @pytest.mark.asyncio
-async def test_cancel_is_refused_before_the_run_exists(harness):
+async def test_cancel_before_the_run_exists_persists_terminal_intent(harness):
     invocation = _invocation()
     db = harness.use(_Db(invocation=invocation, pipeline=None))
 
-    with pytest.raises(HTTPException) as exc:
-        await harness.router.cancel_invocation(invocation_id=invocation.id, db=db, current_user=_user(), _=None)
-    assert exc.value.status_code == 409 and db.order == []
+    view = await harness.router.cancel_invocation(
+        invocation_id=invocation.id, db=db, current_user=_user(), _=None,
+    )
+
+    assert invocation.cancel_requested is True
+    assert view["status"] == "failed" and view["error"].startswith("cancelled: ")
+    assert db.order == ["commit"]
+    invocation_select = next(s for s in db.statements if "FROM agent_invocations" in str(s))
+    assert "FOR UPDATE" in str(invocation_select)
+    assert harness.router.record_activity.await_args.kwargs["context"]["reason"] == "cancelled_before_start"
 
 
 @pytest.mark.asyncio

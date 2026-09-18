@@ -17,9 +17,10 @@ Two revocation scopes
 
 * **Per-user cutoff** — password change / compromise response revokes
   **every** access token issued before the cutoff timestamp, including ones
-  we've never seen. Key: ``auth:tokens_valid_from:{user_id}``, value: unix
-  seconds. ``get_current_user`` rejects any access token whose ``iat`` is
-  earlier than that cutoff. TTL matches ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES``
+  we've never seen. Key: ``auth:tokens_valid_from:{user_id}``, value: a unix
+  timestamp with subsecond precision. ``get_current_user`` rejects any access
+  token whose ``iat`` is not later than that cutoff. TTL matches
+  ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES``
   because tokens older than that max lifetime are already expired anyway.
 
 Fail-CLOSED semantics (changed 2026-08-03)
@@ -83,6 +84,12 @@ logger = structlog.get_logger("core.token_revocation")
 
 _JTI_KEY = "auth:revoked_jti:{jti}"
 _USER_CUTOFF_KEY = "auth:tokens_valid_from:{user_id}"
+_UPSERT_USER_CUTOFF = (
+    "INSERT INTO auth_token_revocations (jti, user_id, valid_from) "
+    "VALUES (:jti, :uid, clock_timestamp()) "
+    "ON CONFLICT (jti) DO UPDATE SET valid_from=clock_timestamp() "
+    "RETURNING valid_from"
+)
 
 
 async def _durable_execute(statement: str, params: dict) -> list:
@@ -239,16 +246,26 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
     The TTL matches the access-token max lifetime so the marker self-prunes
     once it can no longer possibly invalidate a still-live token.
     """
+    cutoff = datetime.now(timezone.utc).timestamp()
     try:
+        params = {"jti": f"cutoff:{user_id}", "uid": user_id}
         if db is not None:
             from sqlalchemy import text
-            await db.execute(text("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()"), {"jti": f"cutoff:{user_id}", "uid": user_id})
+            result = await db.execute(text(_UPSERT_USER_CUTOFF), params)
+            result.scalar_one()
         else:
-            await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()", {"jti": f"cutoff:{user_id}", "uid": user_id})
+            rows = await _durable_execute(_UPSERT_USER_CUTOFF, params)
+            cutoff = rows[0][0].timestamp()
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="revoke_all_user_tokens", error=str(exc))
         if _durable_required():
             raise RevocationUnavailable("durable revocation store unavailable") from exc
+    # A caller-owned transaction can still roll back. Publishing its cutoff to
+    # Redis here would let the legacy-cache migration path resurrect a cutoff
+    # whose password change never committed. PostgreSQL is queried first on
+    # every read, so caller-transaction writes need no pre-commit cache copy.
+    if db is not None:
+        return
     redis = await _redis()
     if redis is None:
         _count("revocation_write_failed")
@@ -260,12 +277,11 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
             detail="Password change did not write a cutoff; existing access tokens stay valid.",
         )
         return
-    now = int(datetime.now(timezone.utc).timestamp())
     ttl = max(60, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     try:
         await redis.set(
             _USER_CUTOFF_KEY.format(user_id=str(user_id)),
-            str(now),
+            str(cutoff),
             ex=ttl,
         )
     except Exception as exc:  # noqa: BLE001
@@ -278,11 +294,10 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
         )
 
 
-async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -> bool:
+async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[float]) -> bool:
     """
-    Return True iff the user has a revocation cutoff and ``token_iat`` is
-    earlier than it (i.e., the token was issued before the cutoff and must
-    be rejected).
+    Return True iff the user has a revocation cutoff and ``token_iat`` is not
+    later than it (i.e., the token cannot be proved to postdate the cutoff).
 
     ``token_iat`` is the unix timestamp from the JWT's ``iat`` claim. When
     ``None`` (legacy tokens issued before we added ``iat``) we conservatively
@@ -295,7 +310,7 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
         rows = await _durable_execute("SELECT valid_from FROM auth_token_revocations WHERE jti=:jti AND user_id=:uid", {"jti": f"cutoff:{user_id}", "uid": user_id})
         cutoff_value = rows[0][0] if rows else None
         if cutoff_value is not None:
-            return token_iat is None or token_iat <= int(cutoff_value.timestamp())
+            return token_iat is None or token_iat <= cutoff_value.timestamp()
         # During the bounded migration window, honor legacy Redis markers too.
         redis = await _redis()
         if redis is None:
@@ -305,8 +320,9 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
             return False
         if isinstance(legacy, bytes):
             legacy = legacy.decode()
-        await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": int(legacy)})
-        return token_iat is None or token_iat <= int(legacy)
+        precise_cutoff = float(legacy)
+        await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": precise_cutoff})
+        return token_iat is None or token_iat <= precise_cutoff
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="is_token_before_cutoff", error=str(exc))
         if _durable_required():
@@ -324,7 +340,7 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
         # A cutoff we cannot parse is also "cannot verify" — the store is in a
         # state we can't reason about, so it takes the 503 path rather than
         # being rounded down to "not revoked".
-        cutoff = int(cutoff_str)
+        cutoff = float(cutoff_str)
         if token_iat is None:
             return True  # legacy token, any cutoff invalidates it
         return token_iat <= cutoff

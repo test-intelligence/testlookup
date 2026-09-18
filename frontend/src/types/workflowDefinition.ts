@@ -58,6 +58,7 @@ export interface WorkflowItem {
   description: string | null
   base: WorkflowBody['base']
   definition: WorkflowDefinition
+  definition_sha256: string
   status: 'draft' | 'published'
   published_at: string | null
   eval_verdict: 'pass' | 'fail' | 'insufficient_samples' | null
@@ -93,5 +94,7 @@ export interface WorkflowEvaluation {
   measured_steps: number
   expected_steps: number
   coverage: number
+  topology_measured: boolean
+  manifest_checksum: string
   regressions: Array<Record<string, unknown>>
 }

@@ -14,6 +14,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import structlog
 from sqlalchemy import case, cast, func, select, or_, String, Text, union
@@ -32,6 +33,14 @@ logger = structlog.get_logger("services.global_search")
 
 # Supported entity types
 ALL_ENTITY_TYPES = {"test_case", "test_run", "suite", "defect", "flaky_test", "release"}
+_DEFAULT_ADAPTER_LIMITS = {
+    "test_case": 50,
+    "test_run": 20,
+    "suite": 15,
+    "defect": 20,
+    "flaky_test": 15,
+    "release": 10,
+}
 
 
 async def global_search(
@@ -67,6 +76,8 @@ async def global_search(
         return {
             "items": [], "total": 0, "query": q, "search_type": "keyword",
             "entity_counts": {}, "page": page, "size": size, "pages": 0,
+            "result_status": "complete", "failed_entity_types": [],
+            "counts_are_exact": True,
         }
 
     # When the caller narrows to a single entity type (Tests, Runs, …),
@@ -89,7 +100,9 @@ async def global_search(
 
     # Fan out to adapters
     all_results: list[dict] = []
-    for entity_type in types:
+    failed_entity_types: list[str] = []
+    capped_entity_types: list[str] = []
+    for entity_type in sorted(types):
         adapter = _ADAPTERS.get(entity_type)
         if adapter:
             try:
@@ -98,8 +111,14 @@ async def global_search(
                     override_limit=adapter_override_limit,
                 )
                 all_results.extend(results)
+                effective_limit = adapter_override_limit or _DEFAULT_ADAPTER_LIMITS.get(
+                    entity_type
+                )
+                if effective_limit is not None and len(results) >= effective_limit:
+                    capped_entity_types.append(entity_type)
             except Exception as exc:
                 logger.warning("search_adapter_failed", entity_type=entity_type, error=str(exc))
+                failed_entity_types.append(entity_type)
 
     # Sort by relevance descending
     all_results.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
@@ -111,6 +130,7 @@ async def global_search(
     total = len(all_results)
     start = (page - 1) * size
     page_results = all_results[start:start + size]
+    counts_are_exact = not failed_entity_types and not capped_entity_types
 
     return {
         "items": page_results,
@@ -121,6 +141,11 @@ async def global_search(
         "page": page,
         "size": size,
         "pages": math.ceil(total / size) if size > 0 else 0,
+        # Adapters intentionally use bounded samples. Disclose failures and
+        # cap hits so consumers never present a lower bound as an exact total.
+        "result_status": "complete" if counts_are_exact else "partial",
+        "failed_entity_types": failed_entity_types,
+        "counts_are_exact": counts_are_exact,
     }
 
 
@@ -296,6 +321,7 @@ async def _search_suites(
     stmt = (
         select(
             effective_suite.label("suite_name"),
+            TestRun.project_id.label("project_id"),
             func.count().label("test_count"),
         )
         # The selected expression references both tables, so make TestCase
@@ -310,7 +336,7 @@ async def _search_suites(
             effective_suite.isnot(None),
             Project.is_active.is_(True),
         )
-        .group_by(effective_suite)
+        .group_by(effective_suite, TestRun.project_id)
         .order_by(func.count().desc())
         .limit(override_limit or 15)
     )
@@ -322,10 +348,15 @@ async def _search_suites(
     return [
         {
             "entity_type": "suite",
-            "entity_id": row.suite_name,
+            # Suite names are unique only within a project. The composite key
+            # keeps same-name rows distinct in API consumers and React lists.
+            "entity_id": f"{row.project_id}:{row.suite_name}",
             "title": row.suite_name,
             "subtitle": f"{row.test_count} test executions",
-            "navigation_url": f"/coverage/suite?name={row.suite_name}",
+            "project_id": str(row.project_id),
+            "navigation_url": "/coverage/suite?" + urlencode(
+                {"name": row.suite_name, "project_id": str(row.project_id)}
+            ),
             "relevance_score": 0.6,
             "match_reasons": ["Matched suite name"],
             "metadata": {"test_count": row.test_count},
@@ -391,14 +422,18 @@ async def _search_flaky_tests(
     # ``(fingerprint, project_id)`` so each project's flaky test is its own,
     # correctly-scoped entry. (For a single pinned project the tenant filter
     # already restricts to one project, so this is a no-op there.)
+    total_runs = func.count()
+    fail_count = func.count().filter(
+        TestCaseHistory.status.in_(["FAILED", "BROKEN"])
+    )
     stmt = (
         select(
             TestCaseHistory.test_fingerprint,
             TestRun.project_id.label("project_id"),
             func.max(TestCase.test_name).label("test_name"),
             func.max(TestCase.suite_name).label("suite_name"),
-            func.count().label("total_runs"),
-            func.count().filter(TestCaseHistory.status.in_(["FAILED", "BROKEN"])).label("fail_count"),
+            total_runs.label("total_runs"),
+            fail_count.label("fail_count"),
         )
         .join(TestCase, TestCaseHistory.test_case_id == TestCase.id)
         .join(TestRun, TestCaseHistory.test_run_id == TestRun.id)
@@ -408,7 +443,14 @@ async def _search_flaky_tests(
             Project.is_active.is_(True),
         )
         .group_by(TestCaseHistory.test_fingerprint, TestRun.project_id)
-        .having(func.count() >= 5)
+        # Filter the flaky-rate range before LIMIT. Filtering in Python after
+        # LIMIT could return fewer than the cap while eligible groups existed
+        # below it, making global search falsely mark the sample exact.
+        .having(
+            total_runs >= 5,
+            fail_count * 100 >= total_runs * 10,
+            fail_count * 100 <= total_runs * 90,
+        )
         .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
@@ -420,18 +462,19 @@ async def _search_flaky_tests(
     for row in rows:
         if row.total_runs > 0:
             rate = (row.fail_count / row.total_runs) * 100
-            if 10 <= rate <= 90:  # flaky range
-                results.append({
-                    "entity_type": "flaky_test",
-                    "entity_id": row.test_fingerprint,
-                    "title": row.test_name or row.test_fingerprint,
-                    "subtitle": f"{rate:.0f}% failure rate over {row.total_runs} runs",
-                    "project_id": str(row.project_id) if row.project_id else None,
-                    "navigation_url": "/failures",
-                    "relevance_score": 0.55,
-                    "match_reasons": ["Flaky test matching query"],
-                    "metadata": {"failure_rate": round(rate, 1), "total_runs": row.total_runs, "suite_name": row.suite_name},
-                })
+            results.append({
+                "entity_type": "flaky_test",
+                # Fingerprints are not project-salted. Keep same-test rows
+                # from two authorized projects distinct for consumer keys.
+                "entity_id": f"{row.project_id}:{row.test_fingerprint}",
+                "title": row.test_name or row.test_fingerprint,
+                "subtitle": f"{rate:.0f}% failure rate over {row.total_runs} runs",
+                "project_id": str(row.project_id) if row.project_id else None,
+                "navigation_url": "/failures",
+                "relevance_score": 0.55,
+                "match_reasons": ["Flaky test matching query"],
+                "metadata": {"failure_rate": round(rate, 1), "total_runs": row.total_runs, "suite_name": row.suite_name},
+            })
     return results
 
 

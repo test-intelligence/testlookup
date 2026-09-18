@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 
 const PROJECT_A = '00000000-0000-4000-8000-000000000101'
 const PROJECT_B = '00000000-0000-4000-8000-000000000102'
@@ -54,14 +54,18 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
   let betaRecovered = false
 
   await page.addInitScript(({ seedUser, projectId }) => {
-    localStorage.setItem('auth-storage', JSON.stringify({
-      state: { token: 'access', refreshToken: 'refresh', user: seedUser, isAuthenticated: true },
-      version: 0,
-    }))
-    localStorage.setItem('testlookup-active-project', JSON.stringify({
-      state: { activeProjectId: projectId },
-      version: 0,
-    }))
+    if (!localStorage.getItem('auth-storage')) {
+      localStorage.setItem('auth-storage', JSON.stringify({
+        state: { token: 'access', refreshToken: 'refresh', user: seedUser, isAuthenticated: true },
+        version: 0,
+      }))
+    }
+    if (!localStorage.getItem('testlookup-active-project')) {
+      localStorage.setItem('testlookup-active-project', JSON.stringify({
+        state: { activeProjectId: projectId },
+        version: 0,
+      }))
+    }
   }, { seedUser: user, projectId: PROJECT_A })
 
   await page.route('**/api/v1/**', async (route) => {
@@ -83,7 +87,10 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
       }
       if (projectId === PROJECT_B) {
         betaAttempts += 1
-        if (!betaRecovered) return json(route, { detail: 'temporary outage' }, 503)
+        if (!betaRecovered) {
+          await new Promise(resolve => setTimeout(resolve, 150))
+          return json(route, { detail: 'temporary outage' }, 503)
+        }
         return json(route, { items: [run('run-b', PROJECT_B, 'Beta Project', 'B-202')], total: 1, page: 1, size: 500, pages: 1 })
       }
       return json(route, { detail: 'project_id required' }, 400)
@@ -103,6 +110,20 @@ test('a project switch cannot reveal stale data and recovers from a scoped outag
   betaRecovered = true
   await page.getByRole('button', { name: 'Retry' }).click()
   await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+
+  await page.goto('/runs?m02-history=forward')
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
+
+  await page.goBack()
+  await expect(page).toHaveURL(/\/runs$/)
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
+
+  await page.goForward()
+  await expect(page).toHaveURL(/m02-history=forward/)
+  await expect(page.getByRole('checkbox', { name: 'Select #B-202' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select #A-101' })).toHaveCount(0)
 
   expect(runProjectIds).toContain(PROJECT_A)
   expect(betaAttempts).toBeGreaterThanOrEqual(2)

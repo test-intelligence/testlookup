@@ -16,7 +16,7 @@ import json
 import structlog
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -50,6 +50,7 @@ from app.services.pipeline_budget_service import (
     get_pipeline_budget_context,
     remaining_cost_usd,
 )
+from app.services.step_llm_budget import StepLLMBudget
 from app.services.prompt_registry import get_prompt, get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.resilience import truncate_to_token_budget, truncate_with_report
@@ -195,6 +196,12 @@ class SummaryAgent(BaseAgent):
         # which is how 765 "Event loop is closed" rows accumulated on the
         # homelab with no way to tell WHICH await raised.
         current_op = "read_state"
+        step_budget: StepLLMBudget | None = None
+        if state.get("step_llm_budget") is not None:
+            try:
+                step_budget = StepLLMBudget.from_state(state["step_llm_budget"])
+            except ValueError:
+                step_budget = StepLLMBudget(limit=0)
         try:
             run_data = state.get("test_run_data") or {}
             anomalies = state.get("anomalies") or []
@@ -249,6 +256,10 @@ class SummaryAgent(BaseAgent):
                         project_id=project_id,
                         test_run_id=test_run_id,
                         failed_test_ids=state.get("failed_test_ids") or [],
+                        step_budget=step_budget,
+                        tier_override=(
+                            "llm" if state.get("model_tier_override") == "llm" else None
+                        ),
                     )
                     summary_provenance.update(routing_provenance)
                 except Exception as exc:
@@ -314,7 +325,7 @@ class SummaryAgent(BaseAgent):
                 if fallback_reason else "structured_summary_generated"
             ) + consistency_report.decision_suffix()
 
-            return validate_agent_contract(
+            contracted = validate_agent_contract(
                 SummaryAgentOutput,
                 {
                     "executive_summary": executive_summary,
@@ -341,6 +352,9 @@ class SummaryAgent(BaseAgent):
                 ],
                 decision_reason=summary_decision_reason,
             )
+            if step_budget is not None:
+                contracted["step_llm_budget"] = step_budget.as_state()
+            return contracted
 
         except Exception as exc:
             # Name the operation AND the exception type. "Summary agent error:
@@ -353,7 +367,7 @@ class SummaryAgent(BaseAgent):
             )
             logger.error(error_msg, exc_info=True)
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
-            return validate_agent_contract(
+            contracted = validate_agent_contract(
                 SummaryAgentOutput,
                 {
                     "executive_summary": None,
@@ -368,6 +382,9 @@ class SummaryAgent(BaseAgent):
                 confidence=0,
                 decision_reason="summary_agent_exception",
             )
+            if step_budget is not None:
+                contracted["step_llm_budget"] = step_budget.as_state()
+            return contracted
 
     # ── Context builder ───────────────────────────────────────────────────────
 
@@ -675,6 +692,8 @@ class SummaryAgent(BaseAgent):
         project_id: str,
         test_run_id: str,
         failed_test_ids: list[str],
+        step_budget: StepLLMBudget | None = None,
+        tier_override: Literal["llm"] | None = None,
     ) -> tuple[dict, dict[str, Any]]:
         """Run summary on SLM, repair once, then escalate or fall back."""
         from app.services.tier_comparison_service import enqueue_shadow_pair  # noqa: PLC0415
@@ -688,6 +707,7 @@ class SummaryAgent(BaseAgent):
             self.stage_name,
             resolved,
             budget_remaining_usd=budget_remaining,
+            tier_override=tier_override,
         )
         initial_provenance = provenance(
             requested, choice, escalations=0, fallback_used=choice.tier == "deterministic"
@@ -773,6 +793,7 @@ class SummaryAgent(BaseAgent):
             escalations=0,
             step_llm_calls_remaining=step_calls,
             budget_remaining_usd=budget_remaining,
+            step_budget=step_budget,
         )
         if decision.action != "escalate" or decision.choice.endpoint is None:
             fallback_provenance = provenance(

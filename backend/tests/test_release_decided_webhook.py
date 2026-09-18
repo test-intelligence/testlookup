@@ -5,9 +5,11 @@ The defect
 ``webhook_service.SUPPORTED_EVENTS`` listed ``release.decided``, and the webhook
 API accepted subscriptions to it, but no code path ever called ``emit_event``
 with it. A subscriber got a success response and then never received a delivery.
-A release decision is written in two places, and both now emit after their commit:
+A release decision is published in two places, and both now emit after the
+durable source artifact exists:
 
-* ``ReleaseRiskAgent._persist_decision`` (``trigger="agent"``);
+* ``DecisionReportCriticAgent`` after immutable report publication
+  (``trigger="agent"``);
 * ``POST /api/v1/release-readiness/{run_id}/override`` (``trigger="override"``).
 
 What is pinned
@@ -17,7 +19,8 @@ What is pinned
   payload a receiver is promised; a retried write stages nothing more;
 * a decision whose commit fails is never announced;
 * an override emits after the route's commit, marked ``overridden``, with no
-  reviewer or overrider identity; each override is its own delivery;
+  reviewer or overrider identity; each override carries its committed audit
+  ordinal, timestamp, and frozen council snapshot as its own delivery;
 * while ``REVIEW_GATE_ENFORCED`` is on, an unreviewed AI decision leaves as
   ``PENDING_REVIEW`` with the model's value in ``draft_recommendation``, and the
   webhook and the release-readiness response apply one rule;
@@ -50,6 +53,7 @@ from app.services.review_envelope import ReviewEnvelope
 RUN = uuid.uuid4()
 PROJECT = uuid.uuid4()
 PIPELINE = uuid.uuid4()
+EVIDENCE_HASH = "e" * 64
 CREATED = datetime(2026, 9, 12, 18, 30, tzinfo=timezone.utc)
 UPDATED = datetime(2026, 9, 12, 19, 5, tzinfo=timezone.utc)
 REVIEW_ID = str(uuid.uuid4())
@@ -171,15 +175,39 @@ def world(monkeypatch):
         task_signature.bind(*args, **kwargs)
         published.append(kwargs)
 
-    state = SimpleNamespace(log=log, table=table, published=published, review="pending_review", decision=None)
+    state = SimpleNamespace(
+        log=log,
+        table=table,
+        published=published,
+        review="pending_review",
+        decision=None,
+        seen_subjects=[],
+        decision_select_for_update=False,
+    )
 
     async def _envelope_for(db, run_id, workflow_type=None, ai_generated=True):
         assert workflow_type == "deep"
         if state.review == "accepted":
             return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
-        return ReviewEnvelope(True, "pending_review", "pending", REVIEW_ID)
+        return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
 
-    async def _decision_lookup(_statement):
+    async def _envelope_for_subject(
+        db,
+        pipeline_run_id,
+        *,
+        ai_generated=True,
+        evidence_bundle_sha256=None,
+    ):
+        assert pipeline_run_id == PIPELINE
+        state.seen_subjects.append((pipeline_run_id, evidence_bundle_sha256))
+        if evidence_bundle_sha256 == "":
+            return ReviewEnvelope(True, "pending_review", "pending_review", None)
+        if state.review == "accepted":
+            return ReviewEnvelope(True, "accepted", "accepted", REVIEW_ID, REVIEWED_AT)
+        return ReviewEnvelope(True, state.review, state.review, REVIEW_ID)
+
+    async def _decision_lookup(statement):
+        state.decision_select_for_update = statement._for_update_arg is not None
         found = (state.decision, PROJECT) if state.decision is not None else None
         return _Result(first=found)
 
@@ -203,13 +231,29 @@ def world(monkeypatch):
         emitter, "AsyncSessionLocal", lambda: _Session(_decision_lookup, log=log, name="emitter")
     )
     monkeypatch.setattr(emitter, "get_release_council", _council)
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: object())
+    report_loader = AsyncMock(
+        return_value={
+            "evidence_bundle_sha256": EVIDENCE_HASH,
+            "decision_intelligence": {"release_decision": dict(AGENT_DECISION)},
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.decision_report_service.load_decision_report_for_pipeline",
+        report_loader,
+    )
+    state.report_loader = report_loader
     monkeypatch.setattr(policy, "review_envelope_for_run", _envelope_for)
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline_subject", _envelope_for_subject)
+    monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=False))
     monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", False)
     state.enforce = lambda on: monkeypatch.setattr(settings, "REVIEW_GATE_ENFORCED", on)
     return state
 
 
-async def _persist_agent_decision(monkeypatch, world, *, fail_commit=False):
+async def _persist_agent_decision(
+    monkeypatch, world, *, fail_commit=False, publish_report=True
+):
     from app.agents import release_risk_agent as agent_module
 
     def _on_add(row):
@@ -229,6 +273,13 @@ async def _persist_agent_decision(monkeypatch, world, *, fail_commit=False):
     await agent._persist_decision(
         str(RUN), str(PIPELINE), dict(AGENT_DECISION), input_snapshot={"pass_rate": 0.97}
     )
+    if not fail_commit and publish_report:
+        await emitter.emit_release_decided(
+            RUN,
+            trigger=emitter.TRIGGER_AGENT,
+            pipeline_run_id=PIPELINE,
+            evidence_bundle_sha256=EVIDENCE_HASH,
+        )
 
 
 def _only_delivery(world) -> dict:
@@ -240,6 +291,16 @@ def _only_delivery(world) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_release_risk_write_waits_for_immutable_report_publication(
+    monkeypatch, world,
+):
+    await _persist_agent_decision(monkeypatch, world, publish_report=False)
+
+    assert world.log == ["decision_commit"]
+    assert world.table.rows == {}
+
+
+@pytest.mark.asyncio
 async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(monkeypatch, world):
     await _persist_agent_decision(monkeypatch, world)
 
@@ -247,9 +308,12 @@ async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(mo
     assert world.log == ["decision_commit", "stage", "webhook_commit"]
     assert row["event_type"] == "release.decided"
     assert row["subscription_id"] == world.table.subscription.id
+    assert row["run_id"] == RUN
     assert row["event_payload"] == {
         "run_id": str(RUN),
         "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
+        "evidence_bundle_sha256": EVIDENCE_HASH,
         "trigger": "agent",
         "recommendation": "GO",
         "draft_recommendation": None,
@@ -268,9 +332,118 @@ async def test_an_agent_decision_stages_exactly_one_delivery_after_its_commit(mo
     assert world.published == [{"delivery_id": str(row["id"])}]
 
     # A retried write for the same pipeline run is the same event.
-    assert await emitter.emit_release_decided(RUN, trigger=emitter.TRIGGER_AGENT) == 0
+    assert await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    ) == 0
     assert len(world.table.rows) == 1
     assert len(world.published) == 1
+
+
+@pytest.mark.asyncio
+async def test_critic_emitter_refuses_a_concurrent_pipeline_replacement(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=uuid.uuid4(),
+        recommendation="NO_GO",
+        risk_score=99,
+        blocking_issues=["newer pipeline"],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
+    world.report_loader.assert_not_awaited()
+    assert world.decision_select_for_update is True
+
+
+@pytest.mark.asyncio
+async def test_delayed_agent_event_cannot_follow_a_human_override(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=14,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="QA accepted the release",
+        override_audit=[{"timestamp": "2026-09-12T19:00:00+00:00"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
+    world.report_loader.assert_not_awaited()
+    assert world.decision_select_for_update is True
+
+
+@pytest.mark.asyncio
+async def test_agent_webhook_uses_immutable_report_decision_bytes(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=99,
+        blocking_issues=["mutable retry value"],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert emitted == 1
+    payload = _only_delivery(world)["event_payload"]
+    assert payload["recommendation"] == AGENT_DECISION["recommendation"]
+    assert payload["risk_score"] == AGENT_DECISION["risk_score"]
+    assert "mutable retry value" not in payload["blocking_issues"]
+
+
+@pytest.mark.asyncio
+async def test_agent_webhook_refuses_a_report_hash_mismatch(world):
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=14,
+        blocking_issues=[],
+        conditions_for_go=[],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_AGENT,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256="f" * 64,
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
 
 
 @pytest.mark.asyncio
@@ -290,6 +463,8 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     from app.routers import release_readiness as route
 
     reason = "accepting the known payments flake for this hotfix"
+    override_one_at = "2026-09-12T19:05:00+00:00"
+    override_two_at = "2026-09-12T19:06:00+00:00"
     overrider = SimpleNamespace(id=uuid.uuid4(), username="dana.qa", full_name="Dana Q")
     world.enforce(True)  # an override is a person's decision; the gate leaves it alone
     world.decision = ReleaseDecision(
@@ -303,12 +478,50 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
         overridden_by=overrider.id,
         original_recommendation="NO_GO",
         original_risk_score=71,
-        override_audit=[{"actor_id": str(overrider.id), "actor_name": "dana.qa", "reason": reason}],
+        override_audit=[
+            {
+                "timestamp": override_one_at,
+                "actor_id": str(overrider.id),
+                "actor_name": "dana.qa",
+                "before_recommendation": "NO_GO",
+                "before_risk_score": 71,
+                "after_recommendation": "GO",
+                "reason": reason,
+            }
+        ],
         created_at=CREATED,
         updated_at=UPDATED,
     )
-    council = SimpleNamespace(recommendation="GO")
-    monkeypatch.setattr(route, "apply_override", AsyncMock(return_value=council))
+    first_audit = dict(world.decision.override_audit[0])
+    second_audit = {
+        **first_audit,
+        "timestamp": override_two_at,
+        "before_recommendation": "GO",
+        "reason": "re-confirmed",
+    }
+    council = ReleaseCouncilResponse(
+        run_id=str(RUN),
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=["payments suite 3 failures"],
+        conditions_for_go=[],
+        human_override=reason,
+        override_audit=[first_audit],
+    )
+    council_two = ReleaseCouncilResponse(
+        run_id=str(RUN),
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=["payments suite 3 failures"],
+        conditions_for_go=[],
+        human_override="re-confirmed",
+        override_audit=[first_audit, second_audit],
+    )
+    monkeypatch.setattr(
+        route,
+        "apply_override",
+        AsyncMock(side_effect=[council, council_two]),
+    )
     monkeypatch.setattr(
         "app.services.intelligence_snapshot_service.mark_stale", AsyncMock(return_value=None)
     )
@@ -333,16 +546,151 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     assert payload["draft_recommendation"] is None
     assert payload["review_gate_enforced"] is True
     assert payload["created_at"] == CREATED.isoformat()
-    assert payload["updated_at"] == UPDATED.isoformat()
+    assert payload["updated_at"] == override_one_at
     sent = json.dumps(payload)
     for identity in (str(overrider.id), "dana.qa", "Dana Q", reason):
         assert identity not in sent
 
     # A second override is a second decision, and a second delivery.
-    world.decision.override_audit = [*world.decision.override_audit, {"reason": "re-confirmed"}]
+    world.decision.override_audit = [*world.decision.override_audit, second_audit]
     await route.override_release_decision(run_id=RUN, body=body, current_user=overrider, _=overrider)
     assert len(world.table.rows) == 2
     assert len(world.published) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_override_emitters_keep_each_committed_snapshot(world):
+    first_at = "2026-09-12T19:05:00+00:00"
+    second_at = "2026-09-12T19:06:00+00:00"
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="NO_GO",
+        risk_score=82,
+        blocking_issues=["current second override"],
+        conditions_for_go=[],
+        human_override="second override",
+        override_audit=[
+            {"timestamp": first_at, "after_recommendation": "GO"},
+            {"timestamp": second_at, "after_recommendation": "NO_GO"},
+        ],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    first = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp=first_at,
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": ["first override snapshot"],
+            "conditions_for_go": ["monitor checkout"],
+            "synthesized": False,
+        },
+    )
+    second = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=2,
+        override_audit_timestamp=second_at,
+        override_snapshot={
+            "recommendation": "NO_GO",
+            "risk_score": 82,
+            "blocking_issues": ["current second override"],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
+    )
+
+    assert (first, second) == (1, 1)
+    payloads = [row["event_payload"] for row in world.table.rows.values()]
+    assert [payload["recommendation"] for payload in payloads] == ["GO", "NO_GO"]
+    assert payloads[0]["blocking_issues"] == ["first override snapshot"]
+    assert payloads[0]["updated_at"] == first_at
+    assert payloads[1]["updated_at"] == second_at
+    assert world.decision_select_for_update is True
+
+
+@pytest.mark.asyncio
+async def test_override_emitter_refuses_a_mismatched_audit_timestamp(world):
+    committed_at = "2026-09-12T19:05:00+00:00"
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="authorized hotfix",
+        override_audit=[{"timestamp": committed_at, "after_recommendation": "GO"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp="2026-09-12T19:04:59+00:00",
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": [],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
+    )
+
+    assert emitted == 0
+    assert world.table.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_override_webhook_does_not_require_an_immutable_agent_report(
+    monkeypatch, world,
+):
+    from app.services import decision_report_service
+
+    override_at = "2026-09-12T19:05:00+00:00"
+    world.decision = ReleaseDecision(
+        test_run_id=RUN,
+        pipeline_run_id=PIPELINE,
+        recommendation="GO",
+        risk_score=71,
+        blocking_issues=[],
+        conditions_for_go=[],
+        human_override="authorized hotfix",
+        override_audit=[{"timestamp": override_at, "reason": "authorized hotfix"}],
+        created_at=CREATED,
+        updated_at=UPDATED,
+    )
+    unavailable = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        decision_report_service,
+        "load_decision_report_for_pipeline",
+        unavailable,
+    )
+
+    emitted = await emitter.emit_release_decided(
+        RUN,
+        trigger=emitter.TRIGGER_OVERRIDE,
+        override_ordinal=1,
+        override_audit_timestamp=override_at,
+        override_snapshot={
+            "recommendation": "GO",
+            "risk_score": 71,
+            "blocking_issues": [],
+            "conditions_for_go": [],
+            "synthesized": False,
+        },
+    )
+
+    assert emitted == 1
+    assert _only_delivery(world)["event_payload"]["recommendation"] == "GO"
+    unavailable.assert_not_awaited()
 
 
 # ── The human-review gate (E8.4) ─────────────────────────────────────────────
@@ -370,6 +718,187 @@ async def test_while_enforced_an_accepted_ai_decision_leaves_unchanged(monkeypat
     assert payload["recommendation"] == "GO"
     assert payload["draft_recommendation"] is None
     assert payload["review"] == {"state": "accepted", "review_id": REVIEW_ID, "reviewed_at": REVIEWED_AT}
+
+
+@pytest.mark.asyncio
+async def test_webhook_retry_rechecks_review_and_restores_the_original_decision(monkeypatch):
+    """A queued payload is a source artifact, not a frozen authorization decision."""
+    stored = {
+        "run_id": str(RUN),
+        "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
+        "evidence_bundle_sha256": EVIDENCE_HASH,
+        "recommendation": "PENDING_REVIEW",
+        "draft_recommendation": "GO",
+        "risk_score": 14,
+        "blocking_issues": ["latency regression"],
+        "conditions_for_go": ["rerun staging"],
+        "synthesized": False,
+        "overridden": False,
+        "requires_human_review": True,
+        "review": {"state": "pending_review", "review_id": REVIEW_ID, "reviewed_at": None},
+        "review_gate_enforced": True,
+    }
+    pending = dict(stored)
+    accepted = {
+        **stored,
+        "recommendation": "GO",
+        "draft_recommendation": None,
+        "review": {"state": "accepted", "review_id": REVIEW_ID, "reviewed_at": REVIEWED_AT},
+    }
+    gate = AsyncMock(side_effect=[(pending, object()), (accepted, object())])
+    monkeypatch.setattr(policy, "gate_release_decided_delivery", gate)
+    delivery = SimpleNamespace(
+        event_type="release.decided",
+        run_id=RUN,
+        event_payload=stored,
+    )
+
+    first = await webhook_service._refresh_review_gated_payload(None, delivery)
+    second = await webhook_service._refresh_review_gated_payload(None, delivery)
+
+    assert first["recommendation"] == "PENDING_REVIEW"
+    assert second["recommendation"] == "GO"
+    assert gate.await_count == 2
+    for call in gate.await_args_list:
+        source = call.args[1]
+        assert source["recommendation"] == "GO"
+        assert "draft_recommendation" not in source
+        assert "requires_human_review" not in source
+        assert "review" not in source
+        assert "review_gate_enforced" not in source
+        assert call.kwargs["pipeline_run_id"] == PIPELINE
+        assert call.kwargs["evidence_bundle_sha256"] == EVIDENCE_HASH
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_honours_the_project_draft_setting(monkeypatch, world):
+    world.enforce(True)
+    monkeypatch.setattr(policy, "_project_allows_drafts", AsyncMock(return_value=True))
+
+    payload, decision = await policy.gate_release_decided_delivery(
+        None,
+        {
+            "project_id": str(PROJECT),
+            "recommendation": "GO",
+            "blocking_issues": ["draft blocker"],
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+        project_id=PROJECT,
+    )
+
+    assert decision.reason == policy.PROJECT_ALLOWS_DRAFTS
+    assert payload["recommendation"] == "GO"
+    assert payload["draft_recommendation"] is None
+    assert payload["draft_watermark"] == policy.DRAFT_WATERMARK
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_reports_would_refuse_while_enforcement_is_off(world):
+    world.enforce(False)
+
+    payload, decision = await policy.gate_release_decided_delivery(
+        None,
+        {"project_id": str(PROJECT), "recommendation": "NO_GO"},
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+        project_id=PROJECT,
+    )
+
+    assert decision.reason == policy.WOULD_REFUSE
+    assert decision.audit_action == "ai_report.distribution_would_refuse"
+    assert payload["recommendation"] == "NO_GO"
+    assert "draft_watermark" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["rejected", "superseded"])
+async def test_terminal_review_never_leaves_in_release_webhook_content(world, review):
+    world.enforce(True)
+    world.review = review
+
+    payload = await policy.gate_release_decided_payload(
+        None,
+        {
+            "recommendation": "NO_GO",
+            "original_recommendation": "GO",
+            "blocking_issues": ["rejected blocker narrative"],
+            "conditions_for_go": ["rejected condition narrative"],
+            "reasoning": "rejected reasoning narrative",
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+    )
+
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert payload["draft_recommendation"] is None
+    assert payload["blocking_issues"] == []
+    assert payload["conditions_for_go"] == []
+    assert payload["reasoning"] is None
+    assert payload["original_recommendation"] is None
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_uses_its_exact_pipeline_review(monkeypatch, world):
+    world.enforce(True)
+
+    async def _wrong_newer_review(*_args, **_kwargs):
+        return ReviewEnvelope(True, "accepted", "accepted", str(uuid.uuid4()), REVIEWED_AT)
+
+    monkeypatch.setattr(policy, "review_envelope_for_run", _wrong_newer_review)
+    world.review = "rejected"
+    payload = await policy.gate_release_decided_payload(
+        None,
+        {
+            "recommendation": "NO_GO",
+            "blocking_issues": ["pipeline-specific blocker"],
+            "conditions_for_go": ["pipeline-specific condition"],
+        },
+        run_id=RUN,
+        synthesized=False,
+        human_override=None,
+        pipeline_run_id=PIPELINE,
+        evidence_bundle_sha256=EVIDENCE_HASH,
+    )
+
+    assert payload["review"]["state"] == "rejected"
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert payload["draft_recommendation"] is None
+    assert payload["blocking_issues"] == []
+    assert payload["conditions_for_go"] == []
+    assert world.seen_subjects[-1] == (PIPELINE, EVIDENCE_HASH)
+
+
+@pytest.mark.asyncio
+async def test_release_webhook_retry_without_evidence_hash_fails_closed(
+    monkeypatch, world,
+):
+    world.enforce(True)
+    world.review = "accepted"
+    stored = {
+        "run_id": str(RUN),
+        "project_id": str(PROJECT),
+        "pipeline_run_id": str(PIPELINE),
+        "recommendation": "GO",
+        "synthesized": False,
+        "overridden": False,
+    }
+    delivery = SimpleNamespace(
+        event_type="release.decided",
+        run_id=RUN,
+        event_payload=stored,
+    )
+
+    payload = await webhook_service._refresh_review_gated_payload(None, delivery)
+
+    assert payload["recommendation"] == "PENDING_REVIEW"
+    assert world.seen_subjects[-1] == (PIPELINE, "")
 
 
 @pytest.mark.asyncio

@@ -69,7 +69,7 @@ class TestGroundedPromptBuilding:
             relevance_score=0.95, requirement_id="AC-1",
         )]
         prompt = _build_grounded_prompt("Generate login tests", chunks)
-        assert "Evidence 1" in prompt
+        assert '"id": "EVIDENCE-1"' in prompt
         assert "Jira PROJ-1" in prompt
         assert "AC-1" in prompt
         assert "Acceptance Criteria" in prompt
@@ -99,7 +99,10 @@ class TestCitationBuilding:
     def test_build_citations(self):
         from app.services.rag_generation_service import _build_citations
         from app.services.rag_retrieval_service import RetrievedChunk
-        cases = [{"title": "Test 1"}, {"title": "Test 2"}]
+        cases = [
+            {"title": "Test 1", "evidence_ids": ["EVIDENCE-1"]},
+            {"title": "Test 2", "evidence_ids": ["EVIDENCE-1"]},
+        ]
         chunks = [RetrievedChunk(
             vector_id="v1", source_id=uuid.uuid4(), source_title="Source A",
             section_heading="S1", chunk_text="text", relevance_score=0.9,

@@ -48,7 +48,9 @@ export const agentGovernanceService = {
         investigator: { ...extension, budgets: { ...extension.budgets, ...update.budgets } },
       },
     }
-    const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config)
+    const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config, {
+      headers: { 'If-Match': `"${view.config_version}"` },
+    })
     const savedExtension = saved.config.extensions?.investigator
     if (!savedExtension) throw new Error('Saved Investigator AgentConfig extension is missing')
     return {
@@ -67,10 +69,11 @@ export const agentGovernanceService = {
     getData<AgentConfigListResponse>(`/api/v1/projects/${projectId}/agent-configs`),
 
   /** Replaces the whole document (QA_LEAD+); the server bumps config_version. */
-  updateAgentConfig: (projectId: string, agentId: string, config: AgentConfigDocument) =>
+  updateAgentConfig: (projectId: string, agentId: string, config: AgentConfigDocument, configVersion: number) =>
     putData<AgentConfigView, AgentConfigDocument>(
       `/api/v1/projects/${projectId}/agent-configs/${agentId}`,
       config,
+      { headers: { 'If-Match': `"${configVersion}"` } },
     ),
 
   listAgentRuns: (

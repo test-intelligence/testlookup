@@ -9,6 +9,8 @@ sys.modules.setdefault("aiosmtplib", MagicMock())
 
 from app.routers import app_settings as router  # noqa: E402
 from app.models.schemas import SmtpConfigUpdate  # noqa: E402
+from app.services import secret_service  # noqa: E402
+from app.services.notification import email_service  # noqa: E402
 
 
 def _payload(password):
@@ -68,3 +70,76 @@ async def test_smtp_secret_tristate(
     assert expire.await_count == expire_calls
     changed_fields = audit.await_args.kwargs["changed_fields"]
     assert ("password" in changed_fields) is audits_password
+
+
+@pytest.mark.asyncio
+async def test_runtime_smtp_resolver_reads_encrypted_secret_ref(monkeypatch):
+    """The delivery resolver must use the same saved password as Test SMTP."""
+    row = SimpleNamespace(
+        value={
+            "enabled": True,
+            "host": "smtp.saved.test",
+            "port": 587,
+            "user": "mailer",
+            "from_address": "qa@example.test",
+            "tls": False,
+        }
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = row
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, *_args, **_kwargs):
+            return result
+
+    import app.db.postgres as postgres
+
+    read_secret = AsyncMock(return_value="saved-encrypted-password")
+    monkeypatch.setattr(postgres, "get_session_factory", lambda: _Session)
+    monkeypatch.setattr(secret_service, "read_secret", read_secret)
+    monkeypatch.setattr(
+        email_service.settings, "SMTP_PASSWORD", "stale-environment-password"
+    )
+
+    resolved = await email_service._get_smtp_cfg()
+
+    assert resolved["password"] == "saved-encrypted-password"
+    read_secret.assert_awaited_once()
+    assert read_secret.await_args.args[1:] == ("smtp_config", "password")
+
+
+@pytest.mark.asyncio
+async def test_runtime_smtp_resolver_fails_closed_on_secret_key_error(monkeypatch):
+    """Invalid encryption-key configuration must never restore stale env auth."""
+    row = SimpleNamespace(value={"enabled": True, "host": "smtp.saved.test"})
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = row
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, *_args, **_kwargs):
+            return result
+
+    import app.db.postgres as postgres
+
+    monkeypatch.setattr(postgres, "get_session_factory", lambda: _Session)
+    monkeypatch.setattr(
+        secret_service,
+        "read_secret",
+        AsyncMock(side_effect=RuntimeError("APP_SECRET_KEY is invalid")),
+    )
+    monkeypatch.setattr(email_service.settings, "SMTP_PASSWORD", "stale-env-password")
+
+    with pytest.raises(RuntimeError, match="APP_SECRET_KEY is invalid"):
+        await email_service._get_smtp_cfg()

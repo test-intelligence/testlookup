@@ -19,11 +19,13 @@ describe('lifecycle API contracts', () => {
     testManagementService.transitionCase('case-1', {
       action: 'request_changes',
       notes: 'Missing boundary coverage',
+      expected_version: 3,
     })
 
     expect(postData).toHaveBeenCalledWith('/api/v1/test-management/cases/case-1/transition', {
       action: 'request_changes',
       notes: 'Missing boundary coverage',
+      expected_version: 3,
     })
   })
 

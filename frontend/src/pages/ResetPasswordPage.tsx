@@ -19,7 +19,7 @@ export default function ResetPasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const user = useAuthStore((s) => s.user);
-  const clearMustChangePassword = useAuthStore((s) => s.clearMustChangePassword);
+  const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -41,9 +41,9 @@ export default function ResetPasswordPage() {
         confirm_password: confirmPassword,
       });
 
-      clearMustChangePassword();
-      toast.success('Password updated successfully. Welcome!');
-      navigate('/overview', { replace: true });
+      logout();
+      toast.success('Password updated. Sign in with your new password.');
+      navigate('/login', { replace: true, state: null });
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       toast.error(detail ?? 'Failed to update password. Please try again.');

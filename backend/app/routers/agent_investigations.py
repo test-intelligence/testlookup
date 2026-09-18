@@ -321,21 +321,15 @@ async def list_agent_policies(
 async def update_agent_policy(
     project_id: uuid.UUID,
     agent_id: str,
-    body: AgentPolicyUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     """Retired write alias; agent-configs is the single writable resource."""
-    if agent_id not in svc.KNOWN_AGENT_IDS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown agent_id {agent_id!r} — known agents: {list(svc.KNOWN_AGENT_IDS)}",
-        )
     raise HTTPException(
         status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
         detail="agent-policies is read-only; write /agent-configs/investigator",
-        headers={"Location": f"/api/v1/projects/{project_id}/agent-configs/{agent_id}"},
+        headers={"Location": f"/api/v1/projects/{project_id}/agent-configs/investigator"},
     )
 
 

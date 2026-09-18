@@ -33,6 +33,7 @@ export interface RetrievedChunk {
   chunk_text: string
   relevance_score: number
   requirement_id: string | null
+  canonical_url?: string | null
 }
 
 export interface RagRetrieveResponse {
@@ -48,6 +49,7 @@ export interface Citation {
   section_heading: string | null
   chunk_text_preview: string | null
   relevance_score: number | null
+  canonical_url?: string | null
 }
 
 export interface RagGenerateResponse {
@@ -68,6 +70,7 @@ export interface GeneratedCase {
   priority: string
   severity: string
   grounding_notes?: string
+  evidence_ids?: string[]
 }
 
 export interface GenerationBatch {

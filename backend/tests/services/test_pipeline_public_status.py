@@ -129,10 +129,14 @@ class _Result:
 
 
 class _Session:
-    """First execute loads the run, second its stages, the rest are empty."""
+    """First execute locks the parent, second the run, third its stages."""
 
     def __init__(self, pipeline, stages):
-        self._results = [_Result(scalar=pipeline), _Result(scalars=stages)]
+        self._results = [
+            _Result(scalar=pipeline.test_run_id),
+            _Result(scalar=pipeline),
+            _Result(scalars=stages),
+        ]
         self.committed = False
 
     async def __aenter__(self):
@@ -324,6 +328,113 @@ async def test_finalize_preserves_the_frozen_eval_manifest(monkeypatch):
     )
 
     assert pipeline.execution_metadata["eval_manifest_checksum"] == checksum
+
+
+@pytest.mark.asyncio
+async def test_finalize_preserves_the_invocation_config_authority(monkeypatch):
+    from app.agents import workflow
+    from app.services import agent_action_ledger_service, run_downstream_outbox
+
+    capability = "agent.decision_report.v1"
+    accepted_snapshot = {
+        capability: {
+            "agent_id": capability,
+            "config": {"mode": "act"},
+        }
+    }
+    pipeline = _pipeline()
+    authority_metadata = {
+        "workflow_agent_configs": {capability: {"mode": "suggest"}},
+        "resolved_agent_configs": accepted_snapshot,
+        "endpoint_authority_fingerprints": {capability: "b" * 64},
+        "agent_config_versions": {capability: 9},
+        "workflow_behavior_plan_sha256": "c" * 64,
+        "prompt_versions": {"summary_system": "v1:abc"},
+        "runtime_versions": {"langgraph": "1.2.3"},
+        "cluster_child_settings": {"enabled": False, "max_members": 50},
+        "async_decision_report_supersession_enabled": True,
+        "contract_agent_settings": {"enabled": True},
+        "log_intelligence_settings": {"enabled": False},
+        "regression_watchman_settings": {"enabled": True},
+        "change_ownership_settings": {"enabled": False},
+        "defect_commander_settings": {"enabled": False},
+    }
+    pipeline.execution_metadata = authority_metadata
+    monkeypatch.setattr(
+        workflow, "AsyncSessionLocal", lambda: _Session(pipeline, [_stage("summary")])
+    )
+    monkeypatch.setattr(
+        agent_action_ledger_service, "persist_report_action_proposals", AsyncMock()
+    )
+    monkeypatch.setattr(
+        run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock()
+    )
+
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=True,
+        final_state={
+            "project_id": str(uuid.uuid4()),
+            "test_run_id": str(pipeline.test_run_id),
+        },
+    )
+
+    assert pipeline.execution_metadata["resolved_agent_configs"] == accepted_snapshot
+    for key in (
+        "endpoint_authority_fingerprints",
+        "agent_config_versions",
+        "workflow_behavior_plan_sha256",
+        "prompt_versions",
+        "runtime_versions",
+        "cluster_child_settings",
+        "async_decision_report_supersession_enabled",
+        "contract_agent_settings",
+        "log_intelligence_settings",
+        "regression_watchman_settings",
+        "change_ownership_settings",
+        "defect_commander_settings",
+    ):
+        assert pipeline.execution_metadata[key] == authority_metadata[key]
+
+
+@pytest.mark.asyncio
+async def test_finalize_persists_reviewer_authority(monkeypatch):
+    from app.agents import workflow
+    from app.services import agent_action_ledger_service, run_downstream_outbox
+
+    pipeline = _pipeline()
+    monkeypatch.setattr(
+        workflow, "AsyncSessionLocal", lambda: _Session(pipeline, [_stage("ingestion")])
+    )
+    monkeypatch.setattr(
+        agent_action_ledger_service, "persist_report_action_proposals", AsyncMock()
+    )
+    monkeypatch.setattr(
+        run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock()
+    )
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=True,
+        final_state={
+            "project_id": str(uuid.uuid4()),
+            "test_run_id": str(pipeline.test_run_id),
+            "review_verdict": {
+                "reviewed_steps": ["ingestion"],
+                "verdict": "pass_with_flags",
+                "requires_human_review": True,
+            },
+            "supervisor": {
+                "route": "continue",
+                "requires_human_review": True,
+                "retry_count": 0,
+            },
+            "step_llm_budget": {"limit": 2, "used": 1, "remaining": 1},
+        },
+    )
+
+    assert pipeline.execution_metadata["review_verdict"]["verdict"] == "pass_with_flags"
+    assert pipeline.execution_metadata["review_supervisor"]["route"] == "continue"
+    assert pipeline.execution_metadata["step_llm_budget"]["remaining"] == 1
 
 
 # ── the agentic-runtime projection (GET /pipelines/{id}/agentic-runtime) ─────

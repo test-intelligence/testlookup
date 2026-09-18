@@ -2149,6 +2149,7 @@ class ManagedTestCaseCreate(BaseModel):
 
 
 class ManagedTestCaseUpdate(BaseModel):
+    expected_version: int = Field(..., ge=1)
     title: Optional[str] = Field(None, min_length=3, max_length=500)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
@@ -2316,6 +2317,7 @@ class TestCaseTransitionRequest(BaseModel):
     ]
     reason: Optional[str] = Field(None, max_length=500)
     notes: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    expected_version: int = Field(..., ge=1)
 
 
 class TestCaseDeprecateRequest(BaseModel):
@@ -2431,7 +2433,7 @@ class TestPlanItemResponse(BaseModel):
 
 
 class ExecuteTestPlanItemRequest(BaseModel):
-    execution_status: str  # passed|failed|blocked|skipped
+    execution_status: Literal["passed", "failed", "blocked", "skipped"]
     execution_notes: Optional[str] = None
     actual_duration_minutes: Optional[int] = None
 
@@ -4234,23 +4236,70 @@ class TeamChannelResponse(BaseModel):
 # ── Saved Views & Digest Schemas (ENT-05) ────────────────────────────────────
 
 
+SAVED_VIEW_PAGES = Literal["dashboard", "trends", "coverage", "defects", "failures"]
+MAX_SAVED_VIEW_INSTANCES = 12
+
+
+def _validate_saved_view_filters(filters: dict) -> dict:
+    """Reject malformed analytics layouts while preserving legacy filters."""
+    for key in ("instances", "widgets"):
+        if key not in filters:
+            continue
+        value = filters[key]
+        if not isinstance(value, list):
+            raise ValueError(f"filters.{key} must be a list")
+        if len(value) > MAX_SAVED_VIEW_INSTANCES:
+            raise ValueError(
+                f"filters.{key} cannot contain more than {MAX_SAVED_VIEW_INSTANCES} widgets"
+            )
+        if key == "widgets" and any(
+            not isinstance(item, str) or not item for item in value
+        ):
+            raise ValueError("filters.widgets entries must be non-empty strings")
+        if key == "instances":
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError("filters.instances entries must be objects")
+                if (
+                    not isinstance(item.get("instanceId"), str)
+                    or not item["instanceId"]
+                ):
+                    raise ValueError("each saved widget instance requires instanceId")
+                if (
+                    not isinstance(item.get("templateId"), str)
+                    or not item["templateId"]
+                ):
+                    raise ValueError("each saved widget instance requires templateId")
+    return filters
+
+
 class SavedViewCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    page: Optional[str] = Field(None, max_length=50)  # dashboard | trends | coverage | defects
+    page: Optional[SAVED_VIEW_PAGES] = None
     filters: dict = Field(default_factory=dict)
     is_shared: bool = False
     is_default: bool = False
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value: dict) -> dict:
+        return _validate_saved_view_filters(value)
 
 
 class SavedViewUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    page: Optional[str] = Field(None, max_length=50)
+    page: Optional[SAVED_VIEW_PAGES] = None
     filters: Optional[dict] = None
     is_shared: Optional[bool] = None
     is_default: Optional[bool] = None
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value: Optional[dict]) -> Optional[dict]:
+        return _validate_saved_view_filters(value) if value is not None else value
 
 
 class SavedViewRelease(BaseModel):
@@ -4747,6 +4796,7 @@ class RetrievedChunkSchema(BaseModel):
     chunk_text: str
     relevance_score: float
     requirement_id: Optional[str] = None
+    canonical_url: Optional[str] = None
 
 
 class RagRetrieveResponse(BaseModel):
@@ -4773,6 +4823,7 @@ class CitationSchema(BaseModel):
     section_heading: Optional[str] = None
     chunk_text_preview: Optional[str] = None
     relevance_score: Optional[float] = None
+    canonical_url: Optional[str] = None
 
 
 class RagGenerateResponse(BaseModel):
@@ -4888,7 +4939,11 @@ class FeatureFlagCreate(BaseModel):
 
 
 class FeatureFlagUpdate(BaseModel):
-    """All fields optional — partial update. None means keep existing."""
+    """Partial update.
+
+    Omitted fields keep their value. Explicit null clears project/role
+    allow-lists; for the scalar fields null is ignored.
+    """
     description: Optional[str] = Field(None, max_length=2000)
     enabled_global: Optional[bool] = None
     enabled_projects: Optional[List[uuid.UUID]] = None

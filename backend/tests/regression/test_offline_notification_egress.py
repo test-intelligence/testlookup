@@ -1148,7 +1148,7 @@ def test_a_digest_uses_the_allow_list_for_the_global_webhook_only(
     ]
     added: list = []
     answers = [
-        [(uuid.uuid4(), "DAILY", None, True, False)],  # the due subscription
+        [(uuid.uuid4(), "DAILY", None, None, True, False)],  # the due subscription
         (user_id, project_id, channel),  # the claim
         SimpleNamespace(id=user_id, role="QA_ENGINEER", email="qa@example.com", is_active=True),
         # Re-audit N33: the owner may still read the project -- an active member.

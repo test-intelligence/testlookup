@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TrendsPage from './TrendsPage'
 
@@ -15,9 +15,13 @@ vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
 
+const analyticsControls = vi.hoisted(() => ({
+  widgetIds: ['trends_kpis', 'daily_breakdown', 'pass_rate_trend'],
+}))
+
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
-    widgetIds: [],
+    widgetIds: analyticsControls.widgetIds,
     setWidgets: vi.fn(),
     save: vi.fn(),
   }),
@@ -30,6 +34,10 @@ vi.mock('@/store/projectStore', () => ({
 }))
 
 describe('TrendsPage', () => {
+  beforeEach(() => {
+    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+  })
+
   it('renders the trend workflow strip above the charts', async () => {
     const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
@@ -66,6 +74,30 @@ describe('TrendsPage', () => {
     expect(await screen.findByText(/Trends workflow/i)).toBeInTheDocument()
     expect(screen.getByText(/Trend capture/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Trends/i).length).toBeGreaterThan(0)
+  })
+
+  it('removes deselected trend panels from the rendered layout', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    analyticsControls.widgetIds = []
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-04-01', passed: 4, failed: 1, skipped: 0, broken: 0, pass_rate: 80 }] },
+      isLoading: false,
+    })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Trends' })).toBeInTheDocument()
+    expect(screen.queryByText('Daily breakdown')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pass rate trend')).not.toBeInTheDocument()
   })
 
   // Regression: the headline pass rate used to divide by every execution,

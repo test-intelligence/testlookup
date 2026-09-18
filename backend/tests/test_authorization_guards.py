@@ -5,7 +5,7 @@ The architectural ratchet (``test_architectural_authorization.py``) asserts
 that every scoped route has a guard wired into its dependency chain. That's
 a **structural** check. This file is the **behavioral** half:
 
-    * non-members get 403
+    * non-members get 403, except opaque run subjects which return 404
     * owners / project members get through
     * admin bypasses
     * missing/invalid path params fail loud
@@ -112,7 +112,7 @@ class TestRequireProjectAccess:
 
 class TestRequireRunAccess:
     @pytest.mark.asyncio
-    async def test_non_member_gets_403(self):
+    async def test_non_member_gets_404_without_confirming_the_run(self):
         guard = require_run_access()
         db = _db_returning(
             _scalar(uuid.uuid4()),  # TestRun.project_id
@@ -121,7 +121,23 @@ class TestRequireRunAccess:
         req = _request(run_id=str(uuid.uuid4()))
         with pytest.raises(HTTPException) as exc:
             await guard(req, db, _user())
-        assert exc.value.status_code == 403
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_foreign_project_key_gets_404_without_confirming_the_run(self):
+        guard = require_run_access()
+        foreign_project_id = uuid.uuid4()
+        db = _db_returning(
+            _scalar(foreign_project_id),
+            _scalar(uuid.uuid4()),  # user also happens to be a member there
+        )
+        req = _request(run_id=str(uuid.uuid4()))
+        user = _user()
+        setattr(user, "_testlookup_api_key_project_id", uuid.uuid4())
+        with pytest.raises(HTTPException) as exc:
+            await guard(req, db, user)
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Test run not found"
 
     @pytest.mark.asyncio
     async def test_run_not_found_returns_404(self):

@@ -570,6 +570,9 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
             return self.value
 
     class _Session:
+        def __init__(self):
+            self.statements = []
+
         async def __aenter__(self):
             return self
 
@@ -577,6 +580,7 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
             return None
 
         async def execute(self, statement):
+            self.statements.append(statement)
             sql = str(statement)
             if "agent_investigations" in sql:
                 return _Result(row)
@@ -744,6 +748,9 @@ async def test_completed_investigator_stages_review_for_its_narrative(monkeypatc
             return self.value
 
     class _Session:
+        def __init__(self):
+            self.statements = []
+
         async def __aenter__(self):
             return self
 
@@ -751,6 +758,7 @@ async def test_completed_investigator_stages_review_for_its_narrative(monkeypatc
             return False
 
         async def execute(self, statement):
+            self.statements.append(statement)
             sql = str(statement)
             if "agent_investigations" in sql:
                 return _Result(row)
@@ -762,7 +770,8 @@ async def test_completed_investigator_stages_review_for_its_narrative(monkeypatc
             return None
 
     stage_review = AsyncMock(return_value=None)
-    monkeypatch.setattr(workflow_mod, "AsyncSessionLocal", lambda: _Session())
+    session = _Session()
+    monkeypatch.setattr(workflow_mod, "AsyncSessionLocal", lambda: session)
     monkeypatch.setattr(investigation_service, "record_agent_run", AsyncMock())
     monkeypatch.setattr(
         "app.services.agent_config_service.increment_investigator_shadow_runs",
@@ -789,6 +798,9 @@ async def test_completed_investigator_stages_review_for_its_narrative(monkeypatc
         review_request_service.investigation_evidence_hash(verdict)
     )
     assert pipeline.status == "completed"
+    assert "JOIN agent_investigations" in str(session.statements[0])
+    assert session.statements[0]._for_update_arg is not None
+    assert session.statements[1]._for_update_arg is not None
 
 
 @pytest.mark.asyncio

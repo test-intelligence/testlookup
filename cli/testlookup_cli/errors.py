@@ -18,6 +18,11 @@ class CLIError(Exception):
         self.exit_code = exit_code
 
 
+def exit_code_for(exc: Exception) -> int:
+    """Preserve stable automation codes while generic failures remain code 1."""
+    return exc.exit_code if isinstance(exc, CLIError) else EXIT_ERROR
+
+
 def map_http_error(status_code: int, detail: str = "") -> CLIError:
     """Map an HTTP status code to a CLIError with appropriate exit code."""
     if status_code == 401:
@@ -26,7 +31,7 @@ def map_http_error(status_code: int, detail: str = "") -> CLIError:
         return CLIError(f"Permission denied. {detail}".strip(), EXIT_PERMISSION)
     if status_code == 404:
         return CLIError(f"Not found. {detail}".strip(), EXIT_NOT_FOUND)
-    if status_code == 422:
+    if status_code in (400, 422):
         return CLIError(f"Validation error. {detail}".strip(), EXIT_VALIDATION)
     if status_code == 408 or status_code == 504:
         return CLIError(f"Request timed out. {detail}".strip(), EXIT_TIMEOUT)

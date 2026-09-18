@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DefectsPage from './DefectsPage'
 import { useReleaseStore } from '@/store/releaseStore'
@@ -40,9 +40,13 @@ vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => {
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
+const analyticsControls = vi.hoisted(() => ({
+  widgetIds: ['defect_kpis', 'defect_category_bar'],
+}))
+
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
-    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    instances: [], widgetIds: analyticsControls.widgetIds, addInstance: vi.fn(), removeInstance: vi.fn(),
     save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
     activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
     updateInstance: vi.fn(), moveInstance: vi.fn(),
@@ -56,6 +60,10 @@ vi.mock('@/store/projectStore', () => ({
 }))
 
 describe('DefectsPage', () => {
+  beforeEach(() => {
+    analyticsControls.widgetIds = ['defect_kpis', 'defect_category_bar']
+  })
+
   it('renders the defect workflow strip above the defect table', async () => {
     const { useDefects } = await import('@/hooks/useMetrics')
 
@@ -91,6 +99,32 @@ describe('DefectsPage', () => {
     // KPI labels) — use ``getAllByText`` to assert presence without
     // tying to a specific surface.
     expect(screen.getAllByText(/Defects/i).length).toBeGreaterThan(0)
+  })
+
+  it('removes the category panel when its saved widget is deselected', async () => {
+    const { useDefects } = await import('@/hooks/useMetrics')
+    analyticsControls.widgetIds = ['defect_kpis']
+    ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [{
+          id: 'def-1', test_name: 'payment fails', suite_name: 'Payments',
+          resolution_status: 'OPEN', ai_confidence_score: 80,
+          created_at: '2026-04-01T10:00:00Z',
+        }],
+        total: 1,
+        pages: 1,
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/defects']}>
+        <Routes><Route path="/defects" element={<DefectsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Defects' })).toBeInTheDocument()
+    expect(screen.queryByText('Where defects live')).not.toBeInTheDocument()
   })
 
   // Regression: the Jira bridge card was static chrome. It rendered a green

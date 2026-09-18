@@ -50,5 +50,19 @@ export function extractErrorMessage(detail: unknown, fallback: string): string {
       .filter(Boolean)
     if (parts.length) return `Validation error: ${parts.join('; ')}`
   }
+  if (detail && typeof detail === 'object') {
+    const report = detail as Record<string, unknown>
+    const preferred = ['message', 'reason', 'verdict', 'candidate_tier', 'gate_run_id']
+      .flatMap((key) => {
+        const value = report[key]
+        return value == null || value === '' ? [] : [`${key}: ${String(value)}`]
+      })
+    if (preferred.length) return preferred.join('; ')
+    const bounded = Object.entries(report)
+      .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+      .slice(0, 6)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+    if (bounded.length) return bounded.join('; ')
+  }
   return fallback || 'Request failed'
 }

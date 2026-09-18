@@ -1,0 +1,27 @@
+mission,priority,state,record,defects,blocker
+M01,P0,PASSED,M01-authentication.md,EXP-BUG-005;EXP-BUG-006;EXP-BUG-008;EXP-BUG-009;EXP-BUG-011,
+M02,P0,PASSED,M02-project-isolation.md,EXP-BUG-010,
+M03,P0,PASSED,M03-ingestion.md,EXP-BUG-012,
+M04,P0,PASSED,M04-intelligence-release.md,EXP-BUG-013,
+M05,P0,BLOCKED,M05-defect-deduplication.md,,Dedicated Jira sandbox and fault-capable request journal are unavailable; all local and real-PostgreSQL variants passed
+M06,P0,PASSED,M06-release-decisions.md,EXP-BUG-014;EXP-BUG-015;EXP-BUG-016;EXP-BUG-017,
+M07,P0,PARTIAL,M07-review-authority.md,EXP-BUG-018;EXP-BUG-019;EXP-BUG-020;EXP-BUG-021;EXP-BUG-022,Dedicated enforcement-on stack unavailable; shared review enforcement remains off per owner rollout decision
+M08,P0,PARTIAL,M08-distribution-replay.md,EXP-BUG-023;EXP-BUG-024;EXP-BUG-025;EXP-BUG-026;EXP-BUG-027;EXP-BUG-028;EXP-BUG-029;EXP-BUG-030;EXP-BUG-031;EXP-BUG-032;EXP-BUG-033;EXP-BUG-034;EXP-BUG-035;EXP-BUG-036;EXP-BUG-037;EXP-BUG-038;EXP-BUG-039;EXP-BUG-040;EXP-BUG-041;EXP-BUG-042;EXP-BUG-043;EXP-BUG-044;EXP-BUG-045;EXP-BUG-046;EXP-BUG-047;EXP-BUG-048,"Shared enforcement remains off and no dedicated external delivery receivers are available for real-sink payload verification"
+M09,P1,PASS,M09-search-evidence.md,EXP-BUG-049;EXP-BUG-050;EXP-BUG-051;EXP-BUG-052;EXP-BUG-053;EXP-BUG-054;EXP-BUG-055;EXP-BUG-056,"Exact arbitrary-depth semantic and mixed-entity pagination remains a disclosed bounded lower-bound contract"
+M10,P1,PARTIAL,M10-rag-trust.md,EXP-BUG-057;EXP-BUG-058;EXP-BUG-059;EXP-BUG-060;EXP-BUG-061;EXP-BUG-062;EXP-BUG-063;EXP-BUG-064;EXP-BUG-065;EXP-BUG-066;EXP-BUG-067;EXP-BUG-068;EXP-BUG-069,"Positive ingest/generation and real-provider timeout blocked by zero homelab knowledge sources and no installed model; CLI/MCP RAG surfaces remain absent"
+M11,P0,PARTIAL,M11-config-authority.md,EXP-BUG-070;EXP-BUG-071;EXP-BUG-072;EXP-BUG-073;EXP-BUG-074;EXP-BUG-075;EXP-BUG-076;EXP-BUG-077;EXP-BUG-078;EXP-BUG-079;EXP-BUG-080;EXP-BUG-081,"Several accepted config fields remain capability-specific no-ops; no durable specialist tool ledger or CLI config/invoke surface; no real PostgreSQL write race"
+M12,P0,PASS,M12-invoke-streams.md,EXP-BUG-082;EXP-BUG-083;EXP-BUG-084;EXP-BUG-085;EXP-BUG-086;EXP-BUG-087;EXP-BUG-088,"Stream tickets are bearer capabilities authorized at issue time; structured payload invocation remains deferred"
+M13,P1,PARTIAL,M13-workflow-governance.md,EXP-BUG-089;EXP-BUG-090;EXP-BUG-091;EXP-BUG-092;EXP-BUG-093;EXP-BUG-094;EXP-BUG-095,"Credentialed live mutation journey is blocked because no disposable workflow project and scoped non-production credential are available"
+M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive outage injection
+M15,P1,NOT_RUN,,,
+M16,P1,PARTIAL,M16-test-management.md,EXP-BUG-096;EXP-BUG-097;EXP-BUG-098;EXP-BUG-099;EXP-BUG-100;EXP-BUG-101,"Credentialed live mutations and outage injection are blocked because the shared homelab has no disposable Test Management project or scoped non-production credential"
+M17,P1,PARTIAL,M17-analytics-saved-views.md,EXP-BUG-102;EXP-BUG-103;EXP-BUG-104;EXP-BUG-105;EXP-BUG-106;EXP-BUG-107,Shared homelab has no disposable analytics project or scoped test credential; reorder/duplicate controls and multi-tab optimistic concurrency are not shipped
+M18,P1,PARTIAL,M18-integration-digest-settings.md,EXP-BUG-108;EXP-BUG-109;EXP-BUG-110;EXP-BUG-111;EXP-BUG-112;EXP-BUG-113,"Shared homelab has no disposable provider credentials/sinks/project; encrypted personal webhooks, timezone scheduling, draft tests, seed ownership, GitHub load safety and Jira runtime authority remain open"
+M19,P1,PARTIAL,M19-accessibility-browser-lifecycle.md,EXP-BUG-114;EXP-BUG-115,"Firefox, WebKit, screen-reader, full authenticated keyboard journey, duplicate-tab, cached-chunk, RTL, theme and complete viewport/zoom evidence remain open"
+M20,P0,PARTIAL,M20-identity-keys.md,EXP-BUG-116;EXP-BUG-117,"No dedicated IdP/test tenant, disposable identity accounts, or notification sink for live MFA, SAML, SCIM, invitation, concurrent revoke/use, and old-tab permission-change exercises"
+M21,P0,PARTIAL,M21-retention-deletion-export.md,EXP-BUG-118;EXP-BUG-119,"Shared homelab lacks dedicated stores and a successful disposable backup/restore rehearsal, so destructive cross-store delete/interruption/restore and live export reconciliation were not run; legal holds remain future work"
+M22,P1,PARTIAL,M22-cli-mcp-sdk-parity.md,EXP-BUG-120;EXP-BUG-121;EXP-BUG-122;EXP-BUG-123;EXP-BUG-124,"CLI and streaming SDKs have no agent-invoke surface; Go Java and JavaScript archives were not each compiled and run live; no browser UI comparison"
+M23,P0,BLOCKED,,,Requires an isolated disposable environment and a second worker process for stale-writer injection
+M24,P1,BLOCKED,,,Requires an isolated full ingestion environment and production benchmark access token
+M25,P0,BLOCKED,,,Homelab has no installed Ollama models and no fresh paired-inference producer
+M26,P0,BLOCKED,M26-preflight.md,EXP-BUG-001;EXP-BUG-002;EXP-BUG-003;EXP-BUG-004;EXP-BUG-007,Rollback rehearsal requires a disposable environment; the only available homelab namespace is shared and restore replaces PostgreSQL MongoDB and MinIO data

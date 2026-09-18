@@ -282,6 +282,10 @@ async def _proposing_run_review_accepted(db: AsyncSession, action: AgentActionLe
 
     result = await db.execute(
         select(ReviewRequest.id).where(
+            ReviewRequest.project_id == action.project_id,
+            ReviewRequest.kind == "report",
+            ReviewRequest.subject_type == "pipeline_run",
+            ReviewRequest.subject_id == str(pipeline_run_id),
             ReviewRequest.pipeline_run_id == pipeline_run_id,
             ReviewRequest.state == "accepted",
         ).limit(1)
@@ -446,7 +450,7 @@ async def persist_report_action_proposals(
             target_id=action_id,
             idempotency_key=idempotency_key,
             request_payload={
-                "proposing_agent_id": "decision_report",
+                "proposing_agent_id": "agent.decision_report.v1",
                 "action_id": action_id,
                 "title": action.get("title"),
                 "owner": action.get("owner"),

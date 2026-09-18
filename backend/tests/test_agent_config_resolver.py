@@ -65,6 +65,33 @@ def test_no_row_resolves_to_defaults_with_the_global_model_on_both_tiers():
         assert endpoint.base_url == "http://localhost:11434"
 
 
+def test_endpoint_authority_fingerprint_binds_url_without_exposing_it():
+    first = resolver.resolve(SUMMARY, global_ai_config=_ai(base_url="http://model-a:11434"))
+    second = resolver.resolve(SUMMARY, global_ai_config=_ai(base_url="http://model-b:11434"))
+
+    fingerprint = resolver.endpoint_authority_fingerprint(first)
+    assert fingerprint != resolver.endpoint_authority_fingerprint(second)
+    assert "model-a" not in fingerprint
+
+
+@pytest.mark.asyncio
+async def test_project_resolution_uses_the_supplied_global_snapshot(monkeypatch):
+    monkeypatch.setattr(configs, "get_config_row", AsyncMock(return_value=None))
+    live_read = AsyncMock(side_effect=AssertionError("must not re-read global config"))
+    monkeypatch.setattr(resolver, "get_effective_ai_config", live_read)
+    monkeypatch.setattr(resolver, "_apply_endpoint_residency", AsyncMock())
+
+    resolved = await resolver.resolve_for_project(
+        object(),
+        PROJECT_ID,
+        SUMMARY,
+        global_ai_config=_ai(model="frozen-model"),
+    )
+
+    assert resolved.endpoints["slm"].model == "frozen-model"
+    live_read.assert_not_awaited()
+
+
 # -- env > ai_config ---------------------------------------------------------------------------
 
 
@@ -238,6 +265,8 @@ async def test_an_invocation_snapshot_freezes_values_without_base_urls_or_keys(m
     restored = await resolver.resolve_frozen_for_project(
         snapshot,
         expected_agent_id=SUMMARY,
+        db=object(),
+        project_id=PROJECT_ID,
     )
 
     assert restored.patched and restored.config_version == 7
@@ -263,8 +292,41 @@ async def test_a_tier_refused_at_acceptance_stays_unavailable(monkeypatch):
     restored = await resolver.resolve_frozen_for_project(
         snapshot,
         expected_agent_id=SUMMARY,
+        db=object(),
+        project_id=PROJECT_ID,
     )
     assert restored.endpoints == {"slm": None, "llm": None}
+
+
+async def test_a_refused_endpoint_clamp_is_sanitized_before_freezing(monkeypatch):
+    accepted = resolver.resolve(SUMMARY, global_ai_config=_ai())
+    refused_url = "http://secret-host.internal:11434"
+    accepted.endpoints["slm"].base_url = refused_url
+
+    async def _enforce(_provider, *, offline, base_url):
+        if base_url == refused_url:
+            raise resolver.LLMPolicyViolation(
+                "LLM base_url host 'secret-host.internal' is not permitted"
+            )
+
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", _enforce)
+    await resolver._apply_endpoint_residency(accepted)
+
+    assert accepted.endpoints["slm"] is None
+    assert accepted.endpoints["llm"] is not None
+    snapshot = resolver.freeze_for_invocation(accepted)
+    encoded = json.dumps(snapshot)
+    assert "base_url" not in encoded
+    assert "secret-host.internal" not in encoded
+    assert "secret-host" not in encoded
+    assert "api_key" not in encoded
+    assert snapshot["clamps"][-1] == {
+        "field": "model.slm.endpoint",
+        "layer": "env",
+        "requested": "ollama",
+        "effective": None,
+        "reason": "endpoint refused by live provider policy",
+    }
 
 
 async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
@@ -280,7 +342,37 @@ async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
     monkeypatch.setattr(resolver, "resolve_for_project", live)
 
     assert await resolver.resolve_for_pipeline("db", pipeline, PROJECT_ID, SUMMARY) == "frozen"
-    frozen.assert_awaited_once_with(snapshot, expected_agent_id=SUMMARY)
+    frozen.assert_awaited_once_with(
+        snapshot,
+        expected_agent_id=SUMMARY,
+        db="db",
+        project_id=PROJECT_ID,
+    )
+    live.assert_not_awaited()
+
+
+async def test_an_ordinary_pipeline_uses_its_frozen_workflow_config(monkeypatch):
+    frozen_config = configs.default_config(SUMMARY).model_dump(mode="json")
+    frozen_config["timeout_seconds"] = 19
+    pipeline = SimpleNamespace(execution_metadata={
+        "workflow_agent_configs": {SUMMARY: frozen_config},
+        "agent_config_versions": {SUMMARY: 6},
+        "resolved_agent_configs": {},
+    })
+    monkeypatch.setattr(
+        resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value=_ai()),
+    )
+    live = AsyncMock(side_effect=AssertionError("live project row read"))
+    monkeypatch.setattr(resolver, "resolve_for_project", live)
+
+    resolved = await resolver.resolve_for_pipeline(
+        None, pipeline, PROJECT_ID, SUMMARY
+    )
+
+    assert resolved.config.timeout_seconds == 19
+    assert resolved.config_version == 6
     live.assert_not_awaited()
 
 
@@ -292,7 +384,47 @@ async def test_a_frozen_snapshot_cannot_be_replayed_for_another_agent():
         await resolver.resolve_frozen_for_project(
             snapshot,
             expected_agent_id="agent.root_cause_analysis.v1",
+            db=object(),
+            project_id=PROJECT_ID,
         )
+
+
+async def test_frozen_restore_reapplies_a_new_eval_drift_pin(monkeypatch):
+    stored = _stored(review={
+        "policy": "human_required_plus_auto_reviewer",
+        "auto_reviewer": True,
+        "second_model_check": True,
+    })
+    accepted = resolver.resolve(
+        SUMMARY,
+        global_ai_config=_ai(),
+        stored=stored,
+    )
+    snapshot = resolver.freeze_for_invocation(accepted)
+    drift = AsyncMock(return_value=True)
+    monkeypatch.setattr(resolver, "has_active_drift_pin", drift)
+    monkeypatch.setattr(resolver, "get_effective_ai_config", AsyncMock(return_value=_ai()))
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", AsyncMock())
+    db = object()
+
+    restored = await resolver.resolve_frozen_for_project(
+        snapshot,
+        expected_agent_id=SUMMARY,
+        db=db,
+        project_id=PROJECT_ID,
+    )
+
+    drift.assert_awaited_once_with(db, PROJECT_ID, SUMMARY)
+    assert restored.config.review.policy == "human_required"
+    assert restored.config.review.auto_reviewer is False
+    assert restored.config.review.second_model_check is False
+    assert restored.config.override_policy.allow_tier_downgrade is False
+    assert {clamp.field for clamp in restored.clamps if clamp.layer == "eval_drift"} == {
+        "review.policy",
+        "review.auto_reviewer",
+        "review.second_model_check",
+        "override_policy.allow_tier_downgrade",
+    }
 
 
 # -- the async project resolver ---------------------------------------------------------------------------
@@ -314,7 +446,7 @@ async def test_resolve_for_project_reads_the_row_and_checks_endpoint_residency(m
     get_row.assert_awaited_once_with("db", PROJECT_ID, SUMMARY)
     assert (out.source, out.config_version, out.config.enabled, out.config.mode) == ("project", 6, False, "suggest")
     assert out.endpoints == {"slm": None, "llm": None}
-    assert {c.field for c in out.clamps} == {"model.slm.base_url", "model.llm.base_url"}
+    assert {c.field for c in out.clamps} == {"model.slm.endpoint", "model.llm.endpoint"}
 
 
 async def test_resolve_for_project_keeps_an_endpoint_that_passes_residency(monkeypatch):

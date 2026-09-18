@@ -195,18 +195,29 @@ class ReviewVerdictV1(BaseModel):
         if self.verdict == "pass":
             if any(not check.passed for check in self.checks):
                 raise ValueError("pass requires every deterministic check to pass")
-            if any(item.severity == "blocking" for item in self.disagreements):
-                raise ValueError("pass is incompatible with a blocking disagreement")
-            if self.hallucination_risk == "high":
-                raise ValueError("pass is incompatible with high hallucination risk")
-        elif not self.requires_human_review:
-            raise ValueError("a non-pass verdict requires human review")
+        if self.verdict in {"pass", "pass_with_flags"} and any(
+            not check.passed
+            and check.severity == "blocking"
+            and check.family in {1, 2, 5}
+            for check in self.checks
+        ):
+            raise ValueError(
+                "pass_with_flags cannot continue after a blocking deterministic check fails"
+            )
+        if self.verdict in {"pass", "pass_with_flags"} and any(
+            item.severity == "blocking" for item in self.disagreements
+        ):
+            raise ValueError("a continuing verdict is incompatible with a blocking disagreement")
+        if self.verdict in {"pass", "pass_with_flags"} and self.hallucination_risk == "high":
+            raise ValueError("a continuing verdict is incompatible with high hallucination risk")
         if (
-            self.second_model is not None
+            self.verdict == "pass"
+            and self.second_model is not None
             and self.second_model.agreement_score < 0.7
-            and self.verdict == "pass"
         ):
             raise ValueError("pass requires second-model agreement of at least 0.7")
+        if self.verdict != "pass" and not self.requires_human_review:
+            raise ValueError("a non-pass verdict requires human review")
         return self
 
 

@@ -2,9 +2,10 @@
 
 Pins section 8.3's enforcement: API keys and synthetic accounts cannot decide,
 a rejection needs a reason, only a pending review can be settled, the requester
-cannot review their own run, and the run moves ``completed -> passed | failed``
-through the state machine or the decision is refused. Also: non-members get
-404, reviewer identity stays out of responses, and notes are redacted.
+cannot review their own act-mode proposal, and the run moves
+``completed -> passed | failed`` through the state machine or the decision is
+refused. Also: non-members get 404, reviewer identity stays out of responses,
+and notes are redacted.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from app.models.postgres import REVIEW_REASON_CODES, UserRole
 from app.services import review_request_service as svc
 
 PROJECT = uuid.uuid4()
+DECISION_REPORT = "agent.decision_report.v1"
 
 
 def _user(kind=CREDENTIAL_KIND_JWT, *, role=UserRole.QA_LEAD.value, synthetic=False):
@@ -45,20 +47,23 @@ def _review(**kw):
 
 
 class _DB:
-    def __init__(self, row=None, *, action_payloads=()):
+    def __init__(self, row=None, *, action_payloads=(), pipeline_metadata=None):
         self.row = row
         self.action_payloads = list(action_payloads)
+        self.pipeline_metadata = pipeline_metadata or {}
         self.flushed = False
         self.committed = False
+        self.statements = []
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt, *args, **kwargs):
+        self.statements.append(stmt)
         return SimpleNamespace(
             scalar_one_or_none=lambda: self.row,
             scalars=lambda: SimpleNamespace(all=lambda: list(self.action_payloads)),
         )
 
     async def get(self, _model, _row_id):
-        return SimpleNamespace(execution_metadata={})
+        return SimpleNamespace(execution_metadata=self.pipeline_metadata)
 
     async def flush(self):
         self.flushed = True
@@ -77,6 +82,32 @@ def transitions(monkeypatch):
 
     monkeypatch.setattr("app.services.workflow_run_state.guarded_transition", _guarded)
     return calls
+
+
+@pytest.mark.asyncio
+async def test_settling_drift_review_takes_project_authority_lock(
+    monkeypatch, transitions
+):
+    lock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.agent_authority_lock.lock_project_agent_authority",
+        lock,
+    )
+    review = _review(
+        kind="eval_drift",
+        subject_type="capability",
+        pipeline_run_id=None,
+    )
+    db = _DB()
+
+    await svc.settle_review(
+        db,
+        review=review,
+        reviewer=_user(),
+        decision="accepted",
+    )
+
+    lock.assert_awaited_once_with(db, PROJECT)
 
 
 # ── settle_review: the refusals, in order ────────────────────────────────────
@@ -135,12 +166,43 @@ async def test_the_requester_cannot_review_their_own_act_mode_run(monkeypatch, t
     )
     with pytest.raises(svc.ReviewDecisionRefused) as exc:
         await svc.settle_review(
-            _DB(action_payloads=[{"proposing_agent_id": "decision_report"}]),
+            _DB(
+                action_payloads=[{"proposing_agent_id": "decision_report"}],
+                pipeline_metadata={
+                    "workflow_agent_configs": {DECISION_REPORT: {"mode": "act"}}
+                },
+            ),
             review=_review(requested_by=reviewer.id),
             reviewer=reviewer,
             decision="accepted",
         )
     assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+
+
+@pytest.mark.asyncio
+async def test_frozen_act_proposal_cannot_self_review_after_live_mode_is_lowered(
+    monkeypatch, transitions
+):
+    reviewer = _user()
+    live = AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(mode="suggest")))
+    monkeypatch.setattr("app.services.agent_config_resolver.resolve_for_pipeline", live)
+    db = _DB(
+        action_payloads=[{"proposing_agent_id": "decision_report"}],
+        pipeline_metadata={
+            "workflow_agent_configs": {DECISION_REPORT: {"mode": "act"}}
+        },
+    )
+
+    with pytest.raises(svc.ReviewDecisionRefused) as exc:
+        await svc.settle_review(
+            db,
+            review=_review(requested_by=reviewer.id),
+            reviewer=reviewer,
+            decision="accepted",
+        )
+
+    assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+    live.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -176,13 +238,76 @@ async def test_the_requester_may_review_when_the_run_has_no_act_mode_proposal(
 
     review = _review(requested_by=reviewer.id)
     await svc.settle_review(
-        _DB(action_payloads=action_payloads),
+        _DB(
+            action_payloads=action_payloads,
+            pipeline_metadata={
+                "workflow_agent_configs": {DECISION_REPORT: {"mode": mode}}
+            },
+        ),
         review=review,
         reviewer=reviewer,
         decision="accepted",
     )
 
     assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "accepted_mode, worker_mode, refused",
+    [("act", "suggest", True), ("suggest", "act", False)],
+)
+async def test_invocation_separation_prefers_the_api_accepted_snapshot(
+    transitions, accepted_mode, worker_mode, refused
+):
+    reviewer = _user()
+    review = _review(requested_by=reviewer.id)
+    db = _DB(
+        action_payloads=[{"proposing_agent_id": "decision_report"}],
+        pipeline_metadata={
+            "workflow_agent_configs": {
+                DECISION_REPORT: {"mode": worker_mode},
+            },
+            "resolved_agent_configs": {
+                DECISION_REPORT: {
+                    "agent_id": DECISION_REPORT,
+                    "config": {"mode": accepted_mode},
+                }
+            },
+        },
+    )
+
+    if refused:
+        with pytest.raises(svc.ReviewDecisionRefused) as exc:
+            await svc.settle_review(
+                db, review=review, reviewer=reviewer, decision="accepted"
+            )
+        assert exc.value.code == "separation_of_duties"
+    else:
+        await svc.settle_review(
+            db, review=review, reviewer=reviewer, decision="accepted"
+        )
+        assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_settlement_locks_pipeline_before_review_to_match_finalization_order():
+    from app.routers.reviews import _load_for_update
+
+    review = _review()
+    db = _DB(review)
+
+    assert await _load_for_update(db, review.id) is review
+
+    sql = [str(stmt.compile()) for stmt in db.statements]
+    assert len(sql) == 3
+    assert "FROM review_requests" in sql[0]
+    assert "FROM agent_pipeline_runs" in sql[1]
+    assert "FROM review_requests" in sql[2]
+    assert db.statements[0]._for_update_arg is None
+    assert db.statements[1]._for_update_arg is not None
+    assert db.statements[2]._for_update_arg is not None
+    assert db.statements[2].get_execution_options()["populate_existing"] is True
 
 
 @pytest.mark.asyncio

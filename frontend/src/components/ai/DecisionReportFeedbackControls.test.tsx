@@ -63,4 +63,27 @@ describe('DecisionReportFeedbackControls', () => {
       evidence_ids: ['artifact-1'],
     }))
   })
+
+  it('keeps keyboard focus in the correction dialog and restores the claim trigger', () => {
+    render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
+    const trigger = screen.getByRole('button', { name: 'claim-1' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('dialog')
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+    ))
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    focusable[0].focus()
+    fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true })
+    expect(focusable[focusable.length - 1]).toHaveFocus()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab' })
+    expect(focusable[0]).toHaveFocus()
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
 })

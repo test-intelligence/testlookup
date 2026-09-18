@@ -268,6 +268,10 @@ celery_app.conf.update(
             "task": "app.worker.tasks.relay_run_downstream_outbox",
             "schedule": crontab(minute="*"),
         },
+        "relay-queued-criteria-deletions": {
+            "task": "app.worker.tasks.relay_queued_criteria_deletions",
+            "schedule": crontab(minute="*"),
+        },
         "recover-waiting-run-finalizations": {
             "task": "app.worker.tasks.recover_waiting_run_finalizations",
             "schedule": crontab(minute="*"),

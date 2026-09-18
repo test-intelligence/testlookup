@@ -5,6 +5,8 @@ validation to ``agents.workflow_compiler`` before evaluation or publication.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -92,13 +94,27 @@ class WorkflowEvaluateV1(_Strict):
 
 
 class WorkflowPublishV1(_Strict):
+    version: int = Field(ge=1)
+    definition_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     accept_regression: bool = False
     reason: Optional[str] = Field(default=None, max_length=2000)
+    eval_manifest_checksum: Optional[str] = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
     @model_validator(mode="after")
     def regression_reason_required(self) -> "WorkflowPublishV1":
         if self.accept_regression and not (self.reason or "").strip():
             raise ValueError("accept_regression requires a non-empty reason")
+        if self.accept_regression and self.eval_manifest_checksum is None:
+            raise ValueError("accept_regression requires eval_manifest_checksum")
         return self
 
 
@@ -132,6 +148,12 @@ class WorkflowNotPublished(ValueError):
 
 def is_builtin(workflow_id: str) -> bool:
     return workflow_id in BUILTIN_WORKFLOW_IDS
+
+
+def definition_checksum(definition: dict[str, Any]) -> str:
+    """Return the stable digest clients use for compare-and-publish."""
+    canonical = json.dumps(definition, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _step(stage: str) -> dict[str, Any]:
@@ -214,6 +236,7 @@ def _builtin_definition(name: str) -> dict[str, Any]:
 def builtin(workflow_id: str) -> dict[str, Any]:
     if not is_builtin(workflow_id):
         raise WorkflowNotFound(workflow_id)
+    definition = _builtin_definition(workflow_id)
     return {
         "id": workflow_id,
         "workflow_id": workflow_id,
@@ -222,7 +245,8 @@ def builtin(workflow_id: str) -> dict[str, Any]:
         "name": f"{workflow_id.title()} workflow",
         "description": "Built-in TestLookup workflow template.",
         "base": workflow_id,
-        "definition": _builtin_definition(workflow_id),
+        "definition": definition,
+        "definition_sha256": definition_checksum(definition),
         "status": "published",
         "published_at": None,
         "eval_verdict": None,
@@ -247,6 +271,7 @@ def serialize(row: WorkflowDefinition) -> dict[str, Any]:
         "description": row.description,
         "base": row.base,
         "definition": row.definition,
+        "definition_sha256": definition_checksum(row.definition),
         "status": row.status,
         "published_at": row.published_at,
         "eval_verdict": row.eval_verdict,
@@ -334,6 +359,20 @@ async def get_published_definition(
 async def _lock_version(db: AsyncSession, project_id: uuid.UUID, workflow_id: str) -> None:
     key = f"workflow-definition:{project_id}:{workflow_id}"
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
+
+
+async def lock_definition(
+    db: AsyncSession, project_id: uuid.UUID, workflow_id: str
+) -> None:
+    """Serialize every mutation of one project's version chain.
+
+    Evaluation, publication, deletion, and forking a mutable source must use
+    the same transaction-scoped lock as create/update.  Otherwise a request can
+    validate or evaluate one draft while a concurrent request commits different
+    bytes into that version, then publish evidence for the stale document.
+    """
+    if not is_builtin(workflow_id):
+        await _lock_version(db, project_id, workflow_id)
 
 
 def _definition(body: WorkflowBodyV1, project_id: uuid.UUID, version: int) -> dict[str, Any]:
@@ -474,8 +513,9 @@ def validation_result(
 __all__ = [
     "BUILTIN_WORKFLOW_IDS", "WorkflowBodyV1", "WorkflowConflict", "WorkflowNotPublished",
     "WorkflowEvaluateV1", "WorkflowForkV1", "WorkflowNotFound", "WorkflowPublishV1",
-    "body_from_item", "create_definition",
+    "body_from_item", "create_definition", "definition_checksum",
     "delete_definition", "fork_definition", "get_definition", "get_published_definition", "is_builtin",
+    "lock_definition",
     "list_definitions", "publish_definition", "serialize", "update_definition",
     "validation_result",
 ]

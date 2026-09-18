@@ -470,8 +470,14 @@ async def update_ai_config(
 ) -> AIConfigRead:
     from sqlalchemy import select
 
-    from app.services.ai_config_resolver import env_offline_pinned, resolve_offline_mode
+    from app.services.agent_authority_lock import lock_global_agent_authority
+    from app.services.ai_config_resolver import (
+        env_offline_pinned,
+        invalidate_ai_config_cache,
+        resolve_offline_mode,
+    )
 
+    await lock_global_agent_authority(db)
     existing = await _load_ai_config(db)
     updates = payload.model_dump(exclude_none=True)
 
@@ -556,6 +562,7 @@ async def update_ai_config(
     # Audit log
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
+    await invalidate_ai_config_cache()
     # Cache in Redis for fast sync reads by analysis_router / knowledge services
     try:
         from app.db.redis_client import get_redis
@@ -618,41 +625,13 @@ _INTEGRATIONS_KEY = "integrations_config"
 
 async def _load_integrations_config(db: AsyncSession) -> dict:
     from sqlalchemy import select
-    from app.services.secret_service import read_secret
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
-    # Updates strip these values from app_settings and persist them encrypted in
-    # secret_refs. Read that authority before falling back to legacy inline
-    # values or environment configuration.
-    jira_token = await read_secret(db, _INTEGRATIONS_KEY, "jira_api_token")
-    splunk_token = await read_secret(db, _INTEGRATIONS_KEY, "splunk_api_token")
-    ocp_token = await read_secret(db, _INTEGRATIONS_KEY, "ocp_sa_token")
-    github_token = await read_secret(db, _INTEGRATIONS_KEY, "github_token")
-    from app.services.integration_config_service import resolve_global_notification_webhooks
-    notification_cfg = await resolve_global_notification_webhooks(db, overrides=overrides)
-    return {
-        "jira_enabled": overrides.get("jira_enabled", settings.JIRA_ENABLED),
-        "jira_domain": overrides.get("jira_domain", settings.JIRA_DOMAIN),
-        "jira_email": overrides.get("jira_email", settings.JIRA_EMAIL),
-        "jira_api_token": jira_token or overrides.get("jira_api_token") or settings.JIRA_API_TOKEN,
-        "jira_default_project_key": overrides.get("jira_default_project_key", settings.JIRA_DEFAULT_PROJECT_KEY),
-        "splunk_enabled": overrides.get("splunk_enabled", settings.SPLUNK_ENABLED),
-        "splunk_base_url": overrides.get("splunk_base_url", settings.SPLUNK_BASE_URL),
-        "splunk_api_token": splunk_token or overrides.get("splunk_api_token") or settings.SPLUNK_API_TOKEN,
-        "ocp_enabled": overrides.get("ocp_enabled", settings.OCP_ENABLED),
-        "ocp_api_url": overrides.get("ocp_api_url", settings.OCP_API_URL),
-        "ocp_sa_token": ocp_token or overrides.get("ocp_sa_token") or settings.OCP_SA_TOKEN,
-        "ocp_default_namespace": overrides.get("ocp_default_namespace", settings.OCP_DEFAULT_NAMESPACE),
-        "slack_enabled": notification_cfg["slack_enabled"],
-        "slack_webhook_url": notification_cfg["slack_webhook_url"],
-        "slack_default_channel": overrides.get("slack_default_channel", settings.SLACK_DEFAULT_CHANNEL),
-        "teams_enabled": notification_cfg["teams_enabled"],
-        "teams_webhook_url": notification_cfg["teams_webhook_url"],
-        "github_repo": overrides.get("github_repo", settings.GITHUB_REPO),
-        "github_token": github_token or overrides.get("github_token") or settings.GITHUB_TOKEN,
-    }
+    from app.services.integration_config_service import resolve_global_integrations
+
+    return await resolve_global_integrations(db, overrides=overrides)
 
 
 @router.get("/integrations", response_model=IntegrationsConfigRead)
@@ -693,14 +672,39 @@ async def update_integrations_config(
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationsConfigRead:
     from sqlalchemy import select
+    from app.services.secret_service import expire_secret, has_secret
     existing = await _load_integrations_config(db)
     updates = payload.model_dump(exclude_none=True)
     merged = {**existing, **updates}
 
     # Store secrets separately
-    secrets = extract_secrets_from_config(_INTEGRATIONS_KEY, updates)
-    for key_name, raw_value in secrets.items():
-        await store_secret(db, _INTEGRATIONS_KEY, key_name, raw_value, actor_id=current_user.id)
+    secret_fields = {
+        "jira_api_token",
+        "splunk_api_token",
+        "ocp_sa_token",
+        "slack_webhook_url",
+        "teams_webhook_url",
+        "github_token",
+    }
+    for key_name in secret_fields.intersection(updates):
+        raw_value = updates[key_name]
+        if raw_value == "":
+            await expire_secret(db, _INTEGRATIONS_KEY, key_name)
+        elif raw_value is not None:
+            await store_secret(
+                db,
+                _INTEGRATIONS_KEY,
+                key_name,
+                raw_value,
+                actor_id=current_user.id,
+            )
+
+    # Session factory uses autoflush=False. Flush secret upserts/expirations so
+    # the SELECTs below observe the post-update state rather than stale rows.
+    await db.flush()
+    secret_backed = any(
+        [await has_secret(db, _INTEGRATIONS_KEY, key_name) for key_name in secret_fields]
+    )
 
     store_value = strip_secrets_from_config(_INTEGRATIONS_KEY, merged)
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
@@ -708,35 +712,36 @@ async def update_integrations_config(
     if row:
         row.value = store_value
         row.updated_by = current_user.id
-        row.is_secret_backed = bool(secrets)
+        row.is_secret_backed = secret_backed
     else:
-        db.add(AppSetting(key=_INTEGRATIONS_KEY, value=store_value, updated_by=current_user.id, is_secret_backed=bool(secrets)))
+        db.add(AppSetting(key=_INTEGRATIONS_KEY, value=store_value, updated_by=current_user.id, is_secret_backed=secret_backed))
 
     await log_settings_change(db, _INTEGRATIONS_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
     logger.info("Integrations configuration updated by user_id=%s", current_user.id)
+    effective = await _load_integrations_config(db)
     return IntegrationsConfigRead(
-        jira_enabled=merged["jira_enabled"],
-        jira_domain=merged["jira_domain"],
-        jira_email=merged["jira_email"],
-        jira_token_set=bool(merged.get("jira_api_token")),
-        jira_default_project_key=merged["jira_default_project_key"],
-        splunk_enabled=merged["splunk_enabled"],
-        splunk_base_url=merged["splunk_base_url"],
-        splunk_token_set=bool(merged.get("splunk_api_token")),
-        ocp_enabled=merged["ocp_enabled"],
-        ocp_api_url=merged["ocp_api_url"],
-        ocp_token_set=bool(merged.get("ocp_sa_token")),
-        ocp_default_namespace=merged["ocp_default_namespace"],
-        slack_enabled=merged["slack_enabled"],
+        jira_enabled=effective["jira_enabled"],
+        jira_domain=effective["jira_domain"],
+        jira_email=effective["jira_email"],
+        jira_token_set=bool(effective.get("jira_api_token")),
+        jira_default_project_key=effective["jira_default_project_key"],
+        splunk_enabled=effective["splunk_enabled"],
+        splunk_base_url=effective["splunk_base_url"],
+        splunk_token_set=bool(effective.get("splunk_api_token")),
+        ocp_enabled=effective["ocp_enabled"],
+        ocp_api_url=effective["ocp_api_url"],
+        ocp_token_set=bool(effective.get("ocp_sa_token")),
+        ocp_default_namespace=effective["ocp_default_namespace"],
+        slack_enabled=effective["slack_enabled"],
         slack_webhook_url=None,
-        slack_webhook_set=bool(merged["slack_webhook_url"]),
-        slack_default_channel=merged["slack_default_channel"],
-        teams_enabled=merged["teams_enabled"],
+        slack_webhook_set=bool(effective["slack_webhook_url"]),
+        slack_default_channel=effective["slack_default_channel"],
+        teams_enabled=effective["teams_enabled"],
         teams_webhook_url=None,
-        teams_webhook_set=bool(merged["teams_webhook_url"]),
-        github_repo=merged["github_repo"],
-        github_token_set=bool(merged.get("github_token")),
+        teams_webhook_set=bool(effective["teams_webhook_url"]),
+        github_repo=effective["github_repo"],
+        github_token_set=bool(effective.get("github_token")),
     )
 
 

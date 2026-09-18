@@ -19,9 +19,13 @@ vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
 
+const analyticsControls = vi.hoisted(() => ({
+  widgetIds: ['failures_kpis', 'failure_category_pie', 'top_failing_bar', 'flaky_leaderboard_table'],
+}))
+
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
-    widgetIds: [],
+    widgetIds: analyticsControls.widgetIds,
     setWidgets: vi.fn(),
     save: vi.fn(),
   }),
@@ -54,6 +58,9 @@ vi.mock('@/hooks/useAnalysisLookup', () => ({
 
 describe('FailureAnalysisPage', () => {
   beforeEach(() => {
+    analyticsControls.widgetIds = [
+      'failures_kpis', 'failure_category_pie', 'top_failing_bar', 'flaky_leaderboard_table',
+    ]
     // The page reads its window from the shared ``useTimeWindowStore``
     // (Zustand). Reset to the documented default so each test starts
     // from a known state — picking 30d in one test would otherwise
@@ -95,6 +102,27 @@ describe('FailureAnalysisPage', () => {
     expect(await screen.findByText(/Failure analysis workflow/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Flaky Detection/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Failure Analysis/i).length).toBeGreaterThan(0)
+  })
+
+  it('removes deselected failure panels from the rendered layout', async () => {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    analyticsControls.widgetIds = ['failures_kpis']
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Failure Analysis' })).toBeInTheDocument()
+    expect(screen.queryByText('Failure category distribution')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Flakiness analysis')).not.toBeInTheDocument()
   })
 
   it('treats a manually-triaged flake as a flake (not a "hard regression") and labels it "Flagged"', async () => {

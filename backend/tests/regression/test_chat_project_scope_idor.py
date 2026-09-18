@@ -212,8 +212,8 @@ class TestSessionCreationRefusesAnotherTenantsProject:
         created.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_session_with_no_project_is_still_allowed(self):
-        """Project-less sessions are legitimate — general chat."""
+    async def test_non_admin_session_without_project_is_rejected(self):
+        """Unscoped chat must not turn a non-admin request into all-project access."""
         payload = MagicMock()
         payload.project_id = None
         payload.title = None
@@ -225,9 +225,11 @@ class TestSessionCreationRefusesAnotherTenantsProject:
             AsyncMock(return_value={_MINE}),
         ):
             db = AsyncMock()
-            await chat_router.create_session(
-                payload=payload, db=db, current_user=_user()
-            )
+            with pytest.raises(HTTPException) as excinfo:
+                await chat_router.create_session(
+                    payload=payload, db=db, current_user=_user()
+                )
+        assert excinfo.value.status_code == 422
 
 
 class TestPerMessageProjectOverride:

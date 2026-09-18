@@ -1,5 +1,351 @@
 # Changelog
 
+## Unreleased - Exploratory testing execution plan
+
+The consolidated release candidate now runs every committed mutation harness
+with its declared frontend and CLI runtime in backend CI, and the protected
+PostgreSQL job includes deletion-claim, password-change serialization, and
+workflow-definition race coverage. Full-suite regressions were repaired for
+JWT clock independence, opaque foreign-run responses, notification test
+isolation, digest discovery shape, workflow-finalization query order, and
+current mutation targets. Project-bound administrator API keys are now checked
+before the chat helper grants its administrator exception. The protected
+deletion/report lock test now snapshots its ORM identity before rolling back,
+so rollback expiry cannot turn a successful lock assertion into async I/O.
+
+Fixed workflow-backed pipeline retries to rehydrate their project authority before validating the frozen replay snapshot, and made the PostgreSQL/Mongo integration suite self-contained across per-test event loops and current authorization/configuration routes.
+
+The Projects page now meets WCAG AA contrast for its primary action and
+creation timestamp in the default Signal theme. The primary button uses a
+darker blue and the timestamp uses the readable secondary-text token, closing
+the hermetic accessibility gate found by the consolidated release PR.
+
+M22 client parity packages the Python streaming SDK with its required
+`ci_context` and `commit_range` modules plus install metadata, so the public
+download imports in a clean environment. CLI commands now preserve the shared
+client's stable authentication, permission, not-found, validation, and timeout
+exit codes instead of collapsing mapped failures to exit code 1.
+The upload and upload-status paths now use the same HTTP-to-exit-code mapping,
+and the live execution guide describes the Python download as a ZIP that must
+be extracted and installed with its YAML extra rather than as a standalone
+reporter file, so the guide's recommended `testlookup.yaml` is actually read.
+Malformed requests now use the validation code, and direct run lookups return
+the same not-found response for missing and foreign subjects so IDs cannot be
+used as a cross-project existence oracle.
+
+M21 retention hardening serializes criteria-deletion claims through durable
+`previewed -> queued -> running` transitions, so repeated API submits and
+duplicate worker deliveries cannot execute the same frozen set twice. Deletion
+workers now lock each run and recheck in-progress status, release links,
+compliance packs, and decision-report citations before the first search or
+cross-store side effect. Queued work is durably relayed after broker failures,
+terminal writes use compare-and-set status checks, and decision-report
+publication and failure evidence share the run lock with deletion. If deletion
+wins, later critic failure handling suppresses its attempt and summary writes
+instead of recreating orphan Mongo evidence. A run protected after preview is
+preserved and the job records a failed or partial outcome instead of deleting
+newly protected evidence.
+
+M20 identity hardening makes API-key load failures visibly retryable instead
+of presenting them as an empty credential list. One-time generated key secrets
+are removed when the active project changes, remain labelled with the project
+that minted them until removal, and use the shared modal keyboard contract.
+
+M19 accessibility hardening gives release editor, release run linking, claim
+correction, and evidence inspection dialogs one shared keyboard contract:
+focus enters and remains in the dialog, Escape closes it, and focus returns to
+the invoking control. Icon-only release dialog close buttons now have accessible
+names, and the critical-route Playwright checks include serious/critical axe
+scans for Projects and Reviews.
+
+M18 integration settings now resolve saved encrypted credentials for Jira,
+Splunk, OpenShift, GitHub, Slack, and Teams health probes instead of silently
+testing stale environment values. Global connector secrets support an explicit
+keep, replace, or clear contract, and connector reads remain redacted.
+Runtime email and digest delivery now use the saved encrypted SMTP password
+that the settings test endpoint validates. Encryption-key failures stop
+delivery instead of silently selecting stale environment credentials.
+Scheduled digest provider failures retain the previous successful watermark
+and delivery count while scheduling a bounded retry; only a successful send
+advances delivery history. First-delivery retries retain their original
+selection window, disabled SMTP is reported as a failed delivery, and
+compare-and-swap finalization preserves concurrent schedule edits. Feature-flag
+project and role allow-lists can be cleared back to the documented unrestricted
+state.
+
+M17 analytics saved views now enforce project membership on direct reads and
+owner mutations, keep project-less shared rows private to their creator, and
+scope all-project lists to accessible projects plus the caller's global views.
+New and updated analytics layouts reject unknown pages, malformed widget
+structures and more than 12 instances while legacy filter-only views remain
+valid. The client asks the API for only its current page, repairs stale stored
+widget definitions, bounds layouts, prefers the caller's view over a shared
+one, and resets persistence authority on project changes. Applying widget
+choices now persists the newly selected layout rather than the previous React
+render, and every widget offered by the picker controls a rendered panel.
+Legacy layouts whose page predates the indexed column remain discoverable, and
+late create responses cannot restore a view ID after the user changes project.
+
+Analytics periods now use exact UTC calendar buckets and coverage comparisons
+split sparse data at calendar boundaries instead of by row count. Completed
+ingestion invalidates both project and all-project analytics caches after the
+database commit and again after terminal finalization, while trend SQL groups
+explicitly in UTC regardless of the database session timezone. Value Metrics
+and Billing expose retryable outage states;
+Billing also renders the backend's half-open UTC month as an inclusive date
+range instead of shifting or overstating its final day.
+
+M16 test-management hardening now binds direct lifecycle actions to the case
+version rendered by the client, returning a refreshable conflict instead of
+applying a stale-tab decision to changed content. Test-plan membership refuses
+foreign-project case identifiers without disclosing them, serializes membership
+and execution changes through the plan row so aggregate counts share one
+authority, returns a stable conflict for duplicate membership, and validates
+execution status as a closed API vocabulary. Plan membership and execution
+changes now also leave attributable append-only audit rows in the same
+transaction, including the complete execution evidence change. Every public
+direct-transition request now requires the rendered version, including the
+catalog deprecation and review-queue flows.
+
+M13 workflow governance now refuses registered capabilities that lack a runtime
+executor, treats missing conditional facts as an unmet branch, narrows custom
+step tools to the published declaration, and binds project, version, plan,
+definition, and frozen configurations into one resume-authority digest. Reviewer
+steps have one explicit bounded retry loop; final rejection stops execution,
+and blocking deterministic failures cannot be converted into
+`pass_with_flags`. Low second-model agreement remains a valid
+`pass_with_flags` result that pins human review. Runtime reviewer inputs now use
+unique workflow step ids plus frozen model identity, and those frozen configs
+are present in executable graph state. Named-step results retain their instance
+identity, pipeline-bound outputs cannot replay under aliases, and checkpoints
+must match the full runtime authority and deployed runtime versions. Reviewer
+flags force a content-bound `ReviewRequest` even when no report stage ran, and
+the verdict, supervisor decision, and shared-budget snapshot remain in durable
+execution metadata. The compiler also refuses extra reviewer loops and parallel
+reviewers that would race scalar supervisor state. The custom runtime now keeps
+one per-step budget across producer escalation and its reviewer retry, and
+applies the supervisor's `llm` override to the retried Summary or Root Cause
+producer. Reviewer family 3/4 checks remain governed by the run-level atomic
+model budget and no longer spend the separate loop/escalation counter. Workflow
+publication now carries the selected version and
+definition digest, rejects stale drafts, keeps published evaluation evidence
+immutable, and makes exact repeat publication read-only. Replay evaluation
+marks control-flow topology as unmeasured instead of inferring it from cached
+step outputs. The workflow guide now matches the architecture's existing rule
+that insufficient samples may publish with visible low coverage. Re-review found
+that G4 replay/publish authority was too weak for model, tool, config, prompt,
+runtime, topology, and corpus changes. Replay input identity now binds all of
+those inputs and the runtime's tamper-evident stage-input receipt. Missing or
+invalid receipts remain unmeasured, duplicate attempts select one terminal
+latest result, and the evaluation manifest digests the evidence itself. The
+authority snapshot covers the compiled plan, feature and policy inputs, frozen
+configs, and a credential-free endpoint fingerprint; config writes share its
+transaction lock. Authority mismatches are publish-blocking regressions and
+corpus population is serialized per project and base workflow. Publish always
+re-evaluates the authoritative 100-run window, and regression acceptance must
+name the fresh manifest checksum. Arbitrary per-step model metadata is rejected
+until the runtime supports it. Candidate cost, latency, and reviewer metrics
+still reuse exact historical outputs; live candidate execution remains an
+optional follow-up rather than a claimed measurement.
+The final G4 authority review now separates executable behavior from workflow
+identity, so behavior-identical forks and new versions can reuse exact replay
+evidence while workflow ids, versions, names, and descriptions remain
+provenance. Runtime metadata preserves that behavior-plan digest through
+finalization. Evaluation freezes global AI settings, project configuration,
+drift pins, policy, and fresh feature-flag values under shared transaction
+locks, and every corresponding writer participates in the same lock domains.
+The workflow editor evaluates the same authoritative 100-run window used by
+publish, so a manifest-bound regression acceptance can succeed.
+
+M12 invocation hardening now serializes creation per stored subject, keeps
+explicit idempotency keys from being silently discarded, and aligns durable
+key uniqueness with the documented user/project/agent route scope. Manual
+retry persists admission before dispatch, carries an attempt fence, and refuses
+cancelled runs. Cancellation is durable even before a worker creates its
+pipeline. Sync waiting reads immediately, OpenAPI publishes every bounded
+outcome, stream tickets retry token collisions, and SSE emits every public
+response change. The EventSource route now sits outside the global header-auth
+wrapper so its short-lived single-use ticket can actually authenticate it.
+Lost-dispatch retry now locks the invocation before checking for its pipeline,
+so concurrent retry requests enqueue once. The scoped idempotency migration's
+downgrade preserves every invocation while deterministically clearing keys that
+the legacy narrower unique index cannot represent, and a real PostgreSQL
+upgrade/use/downgrade regression exercises the migration itself. Upgrade also
+drops stale same-name index residue before its concurrent rebuild, preventing
+an interrupted build retry from removing the last valid uniqueness authority.
+
+M11 configuration-authority hardening now freezes the full sanitized resolved
+configuration before execution, reapplies live safety ceilings and eval-drift
+pins when restoring it, and refuses retry when project configuration has
+changed. Runtime tool permissions now constrain Root Cause ReAct, Contract,
+Log Intelligence, Flaky Sentinel, and Cluster tool calls; Root Cause cache reuse
+also requires the current frozen tool grant. Root Cause honors its configured
+failure-analysis cap. AgentConfig writes use optimistic concurrency throughout
+the API, web adapters, and automatic reviewer-quality writer. Mutation approval
+requires the exact accepted report subject and current `act` mode. Legacy
+Investigator/Fixer writes return 405 before body parsing, structured validation
+errors reach the UI, and MCP invocation views show the sanitized frozen config.
+Refused endpoint clamps use a bounded policy reason, so frozen and returned
+snapshots cannot disclose a base URL or hostname through diagnostic metadata.
+
+Knowledge-grounded generation now requires project scope for non-admin chat,
+rechecks revoked session membership, filters every selected source regardless
+of list size, scopes session listings to current memberships, and requires an
+exact active PostgreSQL chunk row for every vector returned by the index.
+Prompts are redacted before persistence, retrieved instructions are sanitized
+and JSON-serialized as inert evidence, citations require explicit model evidence IDs, and prompt/output
+hashes plus source/citation provenance are recorded. Provider, object-storage
+and vector-index failures remain explicit instead of producing complete-looking
+stub cases or synced sources. Archived sources preserve citation lineage while
+retiring vectors, citation links permit only HTTP(S), notification HTML escapes
+untrusted values, and the browser clears stale generation state across projects.
+
+Search retrieval now preserves project identity for suite results, labels
+keyword fallback after vector-provider failure, serializes count queries on one
+request session, and propagates similar-search database failures. Hybrid search
+uses one stable bounded candidate universe across pages. Global, semantic and
+hybrid responses disclose bounded or failed-source totals as lower bounds.
+Same-fingerprint flaky results now carry project-bound identities, and
+the web, CLI and MCP consumers render that status instead of claiming exact
+counts. M09 records eight fixed defects with deployed, regression and mutation
+evidence.
+
+Distribution review authority now follows the exact immutable report subject
+through export, notification retry, and `release.decided` webhook retry. JSON
+draft exports carry their watermark and persist their distribution audit;
+rejected and superseded narratives are redacted; advisory release values require
+QA Lead or Admin authority and commit an actor-bound distribution audit. Queued
+notification and webhook deliveries recheck review state immediately before
+each provider attempt, audit only successful token-fenced delivery, and persist
+the exact bytes represented in delivery history. Immutable report and
+Investigator excerpts bind authority to pipeline plus evidence hash. Release
+readiness and webhooks use the persisted decision pipeline, terminal projections
+clear the original verdict, and withheld notifications no longer invent a
+release signal. Release webhooks also honour the project draft setting,
+watermark permitted drafts, and commit the distribution audit with a successful
+delivery transition. Queued summaries now carry their producing pipeline and
+evidence hash, and legacy rows without that identity fail closed under
+enforcement. Release events wait for the immutable DecisionReport and retain its
+evidence hash through retries. The relay rebuilds a neutral withheld prefix for
+legacy rows, while the summary worker no longer writes a pre-delivery audit.
+Queued summaries also freeze their original narrative bytes and AI provenance,
+so a later pipeline cannot replace the text authorized by the queued subject.
+Agent release events now originate only after immutable report publication,
+carry the critic's exact pipeline and evidence hash, and build their decision
+fields from that report. Human override events remain independent of agent
+report availability. Release-event staging now serializes on the decision row:
+an intervening human override suppresses a delayed model event, while concurrent
+overrides keep their own audit ordinal, timestamp and frozen council payload.
+Self-contained summary notifications no longer query Mongo before delivery.
+
+Human review authority now stays bound to the exact evidence and proposal-time
+mode a reviewer inspected. Changed evidence mints a new pending review instead
+of silently reusing an old ID; distinct Investigator subjects no longer
+supersede each other or authorize parent-run reports. Pipeline and review
+settlement use one lock order, review creation locks the stable parent run so
+concurrent first inserts for the same scope cannot both remain pending,
+supersession rechecks locked rows, and queued workers cannot resurrect a
+review-rejected run.
+
+Concurrent release-readiness overrides now lock the persisted decision while
+appending its audit trail. Two QA decisions racing from stale pages therefore
+remain visible instead of the last commit silently erasing the first audit row.
+Agent recomputation now locks the same decision and refreshes the automated
+risk and evidence without replacing an active human override or rewriting its
+immutable pre-override snapshot. Release read-axis source regressions now strip
+function docstrings by AST location, so the explanatory prose cannot make the
+correct executable predicate fail its own test.
+
+Added a repository-grounded GPT-5.6 Sol execution package with 26 live missions,
+specialized QA/developer/reviewer assignments, mandatory unit and deployed E2E
+regressions for every defect, evidence templates, homelab deployment/rollback
+verification and a single-branch/PR/merge workflow. Corrected stale coverage,
+Investigator review-subject and homelab Redis documentation. This is planning
+only; it does not claim new test, deployment or release results.
+
+The first M26 preflight found that homelab images built by the supported deploy
+script reported an unknown revision and build date. Homelab backend builds now
+refuse tracked uncommitted changes and embed the exact Git revision and UTC
+build time, allowing `/health/version` to prove which candidate is serving.
+Live validation also found that the authority check included retained migration
+Job pods when verifying the backend Deployment. It now derives the component
+label from each Deployment and verifies only that workload's ready pods. The
+migration runner no longer lets shell command substitution execute text in its
+generated YAML comments. The MCP Deployment now propagates its component label
+to pods so it participates in the same fail-closed authority verification.
+
+First-time password reset now clears the deliberately revoked bootstrap
+session and sends the user directly to sign-in with the permanent password.
+This prevents a misleading transition through the overview before the first
+protected request discovers the revoked tokens.
+
+Bulk access-token revocation now preserves subsecond cutoff and JWT issuance
+times. An immediate sign-in after a password reset can therefore use its new
+token without weakening rejection of tokens issued at or before the cutoff.
+
+Login return-path handling now discards an obsolete `/reset-password` target
+after the bootstrap session is cleared, while preserving normal protected
+deep-link resume behavior.
+
+Password changes and every session-issuance path now serialize on the user's
+PostgreSQL row. Revocation cutoffs use statement-time wall clock values, and
+MFA interstitials issued before a password change are rejected. Caller-owned
+transactions keep cutoffs in PostgreSQL until commit, preventing a rollback
+from leaving a Redis marker that could resurrect the revoked state. This closes
+races where an old-password login, refresh, or MFA exchange could otherwise
+create a session after revoke-all.
+Access and MFA JWT issuance now uses PostgreSQL's clock while that lock is held,
+so ordering does not depend on clock synchronization between application nodes
+and the revocation database. MFA `iat` claims also preserve subsecond precision.
+
+Homelab deployment readiness and backend maintenance commands now select only
+the serving API pods. Retained completed migration Jobs no longer cause two
+false readiness timeouts or skip idempotent admin creation during a healthy
+rollout.
+
+Added a live-deployment project-isolation journey that creates synthetic A/B tenants,
+checks list, detail, search, suite, activity, export, ingestion, and scoped-key
+boundaries, then proves a browser cannot retain or display an inaccessible
+project from persisted local state.
+
+Project-scoped feature-flag status checks now authorize the requested project
+before evaluating the flag. A stale or substituted project ID can no longer
+receive a successful rollout answer outside the caller's tenant membership.
+
+Admin-created users now receive the forced-reset flag together with their
+one-time password. Their first login is routed through the existing
+first-time-reset flow instead of silently treating the disclosed bootstrap
+credential as permanent.
+
+The project-isolation outage journey now holds the failing scoped request long
+enough to exercise an in-flight scope change, then verifies retry and browser
+back/forward navigation never restore rows from the prior project.
+
+Release detail deep links now render the Releases page instead of falling
+through to the Dashboard. The production router now registers the same
+`/releases/:releaseId` path already used by release cards and page tests, and
+the requested release opens its inline details on arrival even when another
+project is persisted in the project picker. Phase links now expose and scroll
+to their `#phase-…` target after the async detail response renders.
+
+Added a live cross-browser ingestion recovery journey that uploads a report
+through the UI, reloads immediately after acceptance, then reconciles the same
+task and verifies the durable run and parsed test result.
+
+Added a live cross-browser read journey for a completed ingest-to-intelligence
+flow. It reloads the run intelligence page, checks the pipeline cluster and
+review warning, then follows the same run through Defects and Releases while
+rechecking the public run, defect and stored-gate contracts.
+
+Homelab image-authority verification now excludes old ReplicaSet pods already
+marked for deletion while still requiring at least one active pod. This keeps a
+successful rollout fail-closed without rejecting it during normal termination.
+
+Release compliance packs now keep release-level gate history separate from
+phase gate history. A phase verdict for the same release can no longer appear
+as though it were a superseded release shipping decision in the exported audit
+trail.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

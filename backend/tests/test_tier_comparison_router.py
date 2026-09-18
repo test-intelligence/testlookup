@@ -94,6 +94,7 @@ async def test_agent_config_put_surfaces_unmeasured_downgrade_as_422(monkeypatch
             uuid.uuid4(),
             body.agent_id,
             body,
+            if_match="0",
             db=db,
             current_user=SimpleNamespace(id=uuid.uuid4()),
             _lead=SimpleNamespace(id=uuid.uuid4()),

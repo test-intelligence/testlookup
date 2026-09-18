@@ -26,12 +26,17 @@ describe('agentGovernanceService agent configs', () => {
 
   it('PUTs one agent configuration document to its agent', async () => {
     const document = { agent_id: 'agent.summary.v1', mode: 'suggest' } as unknown as AgentConfigDocument
-    await agentGovernanceService.updateAgentConfig('proj-1', 'agent.summary.v1', document)
-    expect(putData).toHaveBeenCalledWith('/api/v1/projects/proj-1/agent-configs/agent.summary.v1', document)
+    await agentGovernanceService.updateAgentConfig('proj-1', 'agent.summary.v1', document, 7)
+    expect(putData).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/agent-configs/agent.summary.v1',
+      document,
+      { headers: { 'If-Match': '"7"' } },
+    )
   })
 
   it('projects and updates Investigator policy through agent-configs only', async () => {
     const view = {
+      config_version: 7,
       config: {
         agent_id: 'investigator', enabled: true, mode: 'shadow',
         extensions: {
@@ -62,15 +67,19 @@ describe('agentGovernanceService agent configs', () => {
 
     const path = '/api/v1/projects/proj-1/agent-configs/investigator'
     expect(getData).toHaveBeenCalledWith(path)
-    expect(putData).toHaveBeenCalledWith(path, expect.objectContaining({
-      enabled: false,
-      mode: 'suggest',
-      extensions: expect.objectContaining({ investigator: expect.objectContaining({
-        shadow_runs_completed: 7,
-        promotion_note: 'observed',
-        budgets: expect.objectContaining({ max_runs_per_day: 5, max_seconds_per_run: 120 }),
-      }) }),
-    }))
+    expect(putData).toHaveBeenCalledWith(
+      path,
+      expect.objectContaining({
+        enabled: false,
+        mode: 'suggest',
+        extensions: expect.objectContaining({ investigator: expect.objectContaining({
+          shadow_runs_completed: 7,
+          promotion_note: 'observed',
+          budgets: expect.objectContaining({ max_runs_per_day: 5, max_seconds_per_run: 120 }),
+        }) }),
+      }),
+      { headers: { 'If-Match': '"7"' } },
+    )
     expect(String((putData as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).not.toContain('agent-policies')
   })
 })

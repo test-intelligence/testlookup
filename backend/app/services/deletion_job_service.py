@@ -5,11 +5,16 @@ it is never purged. But it is written *after* the purge commits, so it can only
 describe work that finished. Nothing could see that a destructive job was
 running, and nothing could record that one failed.
 
-**Every write here opens its own session, and that is the whole design.** A
-``failed`` or ``partial`` status written on the caller's session is erased by
-the rollback that produced the failure — the only outcomes a same-session
-writer can record are the successful ones, which is precisely the wrong half.
-The purge-audit row is written after its commit for the same reason.
+Outcome writes open their own session. A ``failed`` or ``partial`` status
+written on the caller's session is erased by the rollback that produced the
+failure — the only outcomes a same-session writer can record are the
+successful ones, which is precisely the wrong half. The purge-audit row is
+written after its commit for the same reason.
+
+The preview -> queued -> running hand-off is deliberately different. Those
+transitions run on the request/worker transaction while holding the job row
+``FOR UPDATE``. That makes a double submit wait for the first claim and then
+observe ``queued`` instead of dispatching the same destructive job twice.
 
 That independence is also why these functions swallow their own errors: a
 bookkeeping failure must not turn a completed purge into a reported failure, or
@@ -125,7 +130,8 @@ async def close_job(
     resolved_run_ids: Optional[list[str]] = None,
     bytes_reclaimed: Optional[int] = None,
     error: Optional[str] = None,
-) -> None:
+    expected_status: Optional[str] = None,
+) -> bool:
     """Finish a job record, on its own session.
 
     ``job_id`` may be None when :func:`open_job` could not write — the call is
@@ -137,14 +143,14 @@ async def close_job(
     worth running.
     """
     if job_id is None:
-        return
+        return False
     if status not in REACHABLE_STATUSES:
         # A typo'd status is a row that no filter will ever match — the same
         # silent-forever failure as a mismatched enum vocabulary.
         logger.warning(
             "deletion_job_unknown_status", job_id=str(job_id), status=status
         )
-        return
+        return False
 
     from app.db.postgres import AsyncSessionLocal
 
@@ -166,21 +172,35 @@ async def close_job(
 
     try:
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                update(DeletionJob).where(DeletionJob.id == job_id).values(**values)
-            )
+            statement = update(DeletionJob).where(DeletionJob.id == job_id)
+            if expected_status is not None:
+                statement = statement.where(DeletionJob.status == expected_status)
+            result = await db.execute(statement.values(**values))
             await db.commit()
+            updated = bool(result.rowcount == 1)
+            if expected_status is not None and not updated:
+                logger.warning(
+                    "deletion_job_stale_close_refused",
+                    job_id=str(job_id),
+                    expected_status=expected_status,
+                    requested_status=status,
+                )
+            return updated
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "deletion_job_close_failed", job_id=str(job_id), error=str(exc)
         )
+        return False
 
 
-async def get_job(db, job_id: uuid.UUID) -> Optional[DeletionJob]:
-    """Read one job. Read-only; the caller owns its session."""
-    return (
-        await db.execute(select(DeletionJob).where(DeletionJob.id == job_id))
-    ).scalar_one_or_none()
+async def get_job(
+    db, job_id: uuid.UUID, *, for_update: bool = False
+) -> Optional[DeletionJob]:
+    """Read one job, optionally locking it for a caller-owned transition."""
+    statement = select(DeletionJob).where(DeletionJob.id == job_id)
+    if for_update:
+        statement = statement.with_for_update()
+    return (await db.execute(statement)).scalar_one_or_none()
 
 
 async def list_jobs(db, project_id: uuid.UUID, *, limit: int = 50) -> list[DeletionJob]:
@@ -250,7 +270,7 @@ async def claim_frozen_set(
     job_id: uuid.UUID,
     project_id: uuid.UUID,
 ) -> list[uuid.UUID]:
-    """Validate a previewed job and return its frozen run ids.
+    """Atomically claim a previewed job for queueing and return its run ids.
 
     Refuses, with the status the caller should return:
 
@@ -265,7 +285,7 @@ async def claim_frozen_set(
       row was edited underneath the preview, and the set is no longer the one
       that was authorised.
     """
-    job = await get_job(db, job_id)
+    job = await get_job(db, job_id, for_update=True)
     if job is None or job.project_id != project_id:
         raise FrozenSetRejected(404, "Deletion job not found")
 
@@ -289,7 +309,98 @@ async def claim_frozen_set(
             "preview rather than executing a set that changed underneath it",
         )
 
+    # The caller commits this transition before dispatch. Because the row is
+    # locked until then, a concurrent execute request cannot also observe
+    # PREVIEWED and queue a second destructive task.
+    job.status = QUEUED
     return [uuid.UUID(str(r)) for r in resolved]
+
+
+async def start_frozen_set(
+    db,
+    *,
+    job_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> list[uuid.UUID]:
+    """Atomically move a queued frozen set to running.
+
+    Celery is at-least-once. A duplicate delivery waits on the row lock and
+    then sees ``running`` (or a final state), so only one worker can cross the
+    destructive boundary.
+    """
+    job = await get_job(db, job_id, for_update=True)
+    if job is None or job.project_id != project_id:
+        raise FrozenSetRejected(404, "Deletion job not found")
+
+    if job.status != QUEUED:
+        raise FrozenSetRejected(
+            409,
+            f"job is {job.status}, not {QUEUED} — a queued set can be "
+            "started once, and this one already was",
+        )
+
+    resolved = list(job.resolved_run_ids or [])
+    if not resolved:
+        raise FrozenSetRejected(409, "the queued set is empty; nothing to execute")
+    if job.candidate_hash != candidate_hash(resolved):
+        raise FrozenSetRejected(
+            409,
+            "the frozen candidate set no longer matches its hash — refusing "
+            "a queued set that changed underneath the worker",
+        )
+
+    job.status = RUNNING
+    job.started_at = datetime.now(timezone.utc)
+    return [uuid.UUID(str(r)) for r in resolved]
+
+
+async def relay_queued_criteria_deletions(*, limit: int = 100) -> dict[str, int]:
+    """Publish durable queued criteria jobs; duplicate deliveries are safe.
+
+    ``DeletionJob`` is the outbox row. The API commits QUEUED before its
+    best-effort fast-path publish, while this beat-driven relay recovers a
+    process or broker failure in that gap. The worker's QUEUED -> RUNNING row
+    lock is the consumer-side deduplication boundary.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.worker.tasks import execute_criteria_deletion_task
+
+    async with AsyncSessionLocal() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(
+                        DeletionJob.id,
+                        DeletionJob.project_id,
+                        DeletionJob.requested_by_id,
+                    )
+                    .where(
+                        DeletionJob.job_kind == KIND_CRITERIA,
+                        DeletionJob.status == QUEUED,
+                    )
+                    .order_by(DeletionJob.requested_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    published = failed = 0
+    for job_id, project_id, requested_by_id in rows:
+        try:
+            execute_criteria_deletion_task.delay(
+                str(job_id),
+                str(project_id),
+                str(requested_by_id) if requested_by_id else None,
+            )
+            published += 1
+        except Exception as exc:  # noqa: BLE001 - relay retries next minute
+            failed += 1
+            logger.warning(
+                "criteria_deletion_relay_publish_failed",
+                job_id=str(job_id),
+                error_type=type(exc).__name__,
+            )
+    return {"found": len(rows), "published": published, "failed": failed}
 
 
 def outcome_status(*, requested: int, deleted: int) -> str:

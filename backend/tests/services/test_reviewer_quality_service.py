@@ -214,6 +214,45 @@ async def test_auto_disable_uses_the_single_agent_config_writer(monkeypatch) -> 
     written = write.await_args.args[2]
     assert written.review.second_model_check is False
     assert written.review.auto_reviewer is True
+    assert write.await_args.kwargs["expected_version"] == 7
+    assert "FOR UPDATE" in str(db.execute.await_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_auto_disable_loses_a_concurrent_config_update_without_overwriting_it(monkeypatch) -> None:
+    config = default_config(svc.REVIEWER_AGENT_ID)
+    config = config.model_copy(update={
+        "review": config.review.model_copy(update={"second_model_check": True})
+    })
+    row = SimpleNamespace(config_version=7)
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalar_one_or_none=lambda: row)
+        )
+    )
+    monkeypatch.setattr(
+        svc,
+        "serialize",
+        lambda *_: {"config": config.model_dump(mode="json")},
+    )
+    monkeypatch.setattr(
+        svc,
+        "put_config",
+        AsyncMock(side_effect=svc.ConfigVersionConflict(7)),
+    )
+    result = _evaluate(mutations=_mutations(families=frozenset({1, 3})))
+
+    applied = await svc.disable_second_model_if_eligible(
+        db,
+        project_id=uuid.uuid4(),
+        agent_id=svc.REVIEWER_AGENT_ID,
+        result=result,
+        updated_by=None,
+    )
+
+    assert applied is False
+    assert result["auto_disable_applied"] is False
+    assert "auto_disable_config_version" not in result
 
 
 @pytest.mark.asyncio

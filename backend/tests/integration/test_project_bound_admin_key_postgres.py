@@ -343,7 +343,8 @@ async def test_the_bound_key_deletes_its_own_projects_run_and_no_other(world):
         "DELETE", f"/api/v1/runs/{world.run_a}", headers=world.key, json=body
     )
 
-    assert foreign.status_code == 403, foreign.text
+    assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["detail"] == "Test run not found"
     assert own.status_code == 202, own.text
     assert [args[0] for args in world.queued] == [str(world.run_a)]
     TestRun = world.models.TestRun

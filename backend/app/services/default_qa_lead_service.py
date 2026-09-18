@@ -203,29 +203,20 @@ async def reset_default_qa_lead_password(
     revocations live here rather than in the endpoint so they cannot be
     skipped by a second caller.
 
-    Ordering: the refresh-family revocation is a DB write in the caller's
-    transaction, so it lands with the new hash or not at all. The Redis
-    cutoff is written before the caller commits, which means a failed commit
-    leaves sessions revoked for a password that did not change — the safe
-    direction for a security control, and the only one available without
-    taking commit ownership away from the caller.
-
-    ``routers/auth.py`` writes its cutoff *after* commit, which this cannot
-    do without becoming skippable. The cost of the difference is that an
-    unreachable Redis holds this transaction open for one connect timeout
-    (~4s) instead of failing after the commit. That is bounded, it only
-    happens on an admin endpoint, and during a Redis outage the deployment
-    is already answering 503 on every authenticated request because the
-    revocation read path fails closed — so there is no window in which this
-    delay is the thing keeping the product down.
+    Ordering: the refresh-family revocation and durable access-token cutoff
+    are DB writes in the caller's transaction, so they land with the new hash
+    or not at all. Caller-owned transactions do not publish the cutoff to Redis
+    before commit; PostgreSQL is the first authority on every cutoff read.
     """
     user = await ensure_default_qa_lead(db, project)
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
     chosen = new_password if new_password else _unguessable_password()
     user.hashed_password = get_password_hash(chosen)
     user.must_change_password = False
     await _revoke_refresh_family(db, user.id, reason="password_reset")
     await db.flush()
-    await revoke_all_user_tokens(user.id)
+    await revoke_all_user_tokens(user.id, db)
     logger.info(
         "default_qa_lead_password_reset",
         project_id=str(project.id),

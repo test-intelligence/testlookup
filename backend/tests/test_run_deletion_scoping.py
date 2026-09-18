@@ -439,11 +439,10 @@ def test_the_tombstone_is_staged_not_committed():
     from app.services import run_tombstone_service as svc
 
     source = _inspect.getsource(svc.stage_tombstone)
-    # Strip the docstring first: it EXPLAINS why the caller commits, and
-    # matching that text made this assertion read prose instead of code.
-    body = source.replace(svc.stage_tombstone.__doc__ or "", "")
-    assert "db.add(" in body
-    assert "commit" not in body, "the tombstone writer must not own a commit"
+    assert "db.add(" in source
+    assert ".commit(" not in source, (
+        "the tombstone writer must not own a commit"
+    )
 
 
 def test_the_tombstone_has_no_foreign_key_to_test_runs():

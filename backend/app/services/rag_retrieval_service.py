@@ -10,7 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import KnowledgeSource
+from app.models.postgres import KnowledgeChunk, KnowledgeSource
 from app.services.knowledge_chunking_service import _get_or_create_knowledge_collection
 
 logger = structlog.get_logger(__name__)
@@ -26,6 +26,7 @@ class RetrievedChunk:
     relevance_score: float
     requirement_id: Optional[str]
     chunk_text_preview: Optional[str] = None
+    canonical_url: Optional[str] = None
 
 
 async def retrieve_chunks(
@@ -64,7 +65,7 @@ async def retrieve_chunks(
         pass  # handled below
 
     # Query ChromaDB
-    if source_ids and len(source_ids) <= 10:
+    if source_ids:
         # Per-source queries merged for precise filtering
         all_results: list[RetrievedChunk] = []
         for sid in source_ids:
@@ -103,15 +104,46 @@ async def retrieve_chunks(
     # Enrich with source titles and classification from PostgreSQL
     source_id_set = {c.source_id for c in chunks}
     if source_id_set:
+        vector_id_set = {c.vector_id for c in chunks}
         result = await db.execute(
-            select(KnowledgeSource.id, KnowledgeSource.title, KnowledgeSource.classification).where(
+            select(
+                KnowledgeSource.id,
+                KnowledgeSource.title,
+                KnowledgeSource.classification,
+                KnowledgeSource.canonical_url,
+                KnowledgeChunk.vector_id,
+            ).join(
+                KnowledgeChunk,
+                KnowledgeChunk.source_id == KnowledgeSource.id,
+            ).where(
                 KnowledgeSource.id.in_(source_id_set),
+                KnowledgeSource.project_id == project_id,
+                KnowledgeSource.is_archived.is_(False),
+                KnowledgeChunk.project_id == project_id,
+                KnowledgeChunk.vector_id.in_(vector_id_set),
+                KnowledgeChunk.is_active.is_(True),
             )
         )
-        source_meta = {row.id: (row.title, row.classification or "internal") for row in result.all()}
+        active_rows = result.all()
+        source_meta = {
+            row.id: (row.title, row.classification or "internal", row.canonical_url)
+            for row in active_rows
+        }
+        active_pairs = {(row.id, row.vector_id) for row in active_rows}
+        # PostgreSQL is authoritative for source lifecycle and tenancy. Stale
+        # or corrupted vectors must not survive a source archive/delete,
+        # failed partial upsert, failed vector retirement, or borrow metadata
+        # from another project. Every returned vector must have its own active
+        # relational KnowledgeChunk row.
+        chunks = [
+            chunk
+            for chunk in chunks
+            if (chunk.source_id, chunk.vector_id) in active_pairs
+        ]
         for chunk in chunks:
-            title, classification = source_meta.get(chunk.source_id, ("Unknown Source", "internal"))
+            title, classification, canonical_url = source_meta[chunk.source_id]
             chunk.source_title = title
+            chunk.canonical_url = canonical_url
 
             # RAG-13: Apply redaction to chunk text before it reaches the UI or LLM
             from app.services.rag_redaction_service import redact_chunk_text

@@ -1,5 +1,4 @@
 """Search endpoint — keyword, semantic (ChromaDB), hybrid, and global modes."""
-import asyncio
 import time
 import uuid
 from typing import Optional
@@ -233,14 +232,16 @@ async def get_entity_counts(
         Release.project_id,
     )
 
-    test_run, test_case, suite, defect, flaky_test, release = await asyncio.gather(
-        _count(test_runs_q),
-        _count(test_cases_q),
-        _count(suites_q),
-        _count(defects_q),
-        _count(flaky_q),
-        _count(releases_q),
-    )
+    # AsyncSession permits only one operation at a time. These counts share
+    # the request-scoped session, so execute them sequentially; ``gather`` can
+    # overlap driver operations and fail with "another operation is in
+    # progress" under real network latency.
+    test_run = await _count(test_runs_q)
+    test_case = await _count(test_cases_q)
+    suite = await _count(suites_q)
+    defect = await _count(defects_q)
+    flaky_test = await _count(flaky_q)
+    release = await _count(releases_q)
 
     return {
         "test_case":  test_case,
@@ -265,18 +266,20 @@ async def find_similar_failures(
     import uuid as _uuid
 
     try:
-        tc_result = await db.execute(
-            select(
-                TestCase.test_name,
-                TestCase.error_message,
-                TestRun.project_id,
-            )
-            .join(TestRun, TestCase.test_run_id == TestRun.id)
-            .where(TestCase.id == _uuid.UUID(test_case_id))
+        source_id = _uuid.UUID(test_case_id)
+    except (TypeError, ValueError, AttributeError):
+        return {"items": [], "total": 0, "query": test_case_id}
+
+    tc_result = await db.execute(
+        select(
+            TestCase.test_name,
+            TestCase.error_message,
+            TestRun.project_id,
         )
-        row = tc_result.first()
-    except Exception:
-        row = None
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .where(TestCase.id == source_id)
+    )
+    row = tc_result.first()
 
     if not row:
         return {"items": [], "total": 0, "query": test_case_id}
@@ -424,6 +427,12 @@ async def search_test_cases(
         "page": page,
         "size": size,
         "pages": pages,
+        # Semantic and hybrid totals are derived from a bounded Chroma
+        # candidate window. Keep the wire shape additive while making that
+        # lower-bound contract explicit to API consumers.
+        "result_status": "complete" if actual_type == "keyword" else "partial",
+        "counts_are_exact": actual_type == "keyword",
+        "failed_entity_types": [],
         "scope": dict(RELEASE_SCOPE_DECLARATION),
     }
 

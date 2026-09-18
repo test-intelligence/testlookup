@@ -17,6 +17,7 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import ClusterAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase
 from app.services.evidence_sanitizer import sanitize_reference_text
+from app.services.workflow_step_context import tool_allowed
 
 logger = structlog.get_logger("agents.cluster")
 
@@ -73,6 +74,8 @@ class ClusterAgent(BaseAgent):
         # Call the clustering tool
         fallback_reason = None
         try:
+            if not tool_allowed("embed_and_cluster"):
+                raise PermissionError("embed_and_cluster is not allowed by the frozen agent configuration")
             from app.tools.embed_and_cluster import embed_and_cluster
 
             result_json = await embed_and_cluster.ainvoke({

@@ -18,9 +18,10 @@ Two layers hold that together:
 
 * a Redis lock (``pending:<fingerprint>``, then ``done:<fingerprint>:<id>``) gives
   the in-flight 409;
-* a unique index on ``agent_invocations (requested_by, idempotency_key)`` is the
-  authority. When Redis is unavailable the lock is skipped, and a concurrent
-  duplicate loses at the index instead.
+* a unique index on ``agent_invocations (requested_by, project_id, agent_id,
+  idempotency_key)`` is the authority. When Redis is unavailable the lock is
+  skipped, and a concurrent duplicate in the same route scope loses at the
+  index instead.
 
 Deviation from section 3.1: the stored invocation keeps answering for its key
 after the lock's 24 h, because the unique index does not expire. A key is never

@@ -38,7 +38,7 @@ from app.services.review_envelope import (
     ReviewEnvelope,
     not_ai_generated,
     review_envelope_for_run,
-    review_envelope_for_pipeline,
+    review_envelope_for_pipeline_subject,
 )
 
 __all__ = [
@@ -52,6 +52,7 @@ __all__ = [
     "gate_enforced",
     "gate_kind_labels",
     "gate_investigation_excerpt",
+    "gate_release_decided_delivery",
     "gate_release_decided_payload",
     "gate_release_verdict",
     "record_distribution",
@@ -77,6 +78,8 @@ _AUDIT_ACTIONS = {
     REFUSED: "ai_report.distribution_refused",
     WOULD_REFUSE: "ai_report.distribution_would_refuse",
 }
+
+_TERMINAL_REVIEW_STATES = frozenset({"rejected", "superseded"})
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,9 @@ async def apply_release_review_gate(
     *,
     run_id: Any,
     allow_advisory: bool = False,
+    pipeline_run_id: Any = None,
+    project_id: Any = None,
+    actor: Any = None,
 ) -> Any:
     """Project the human-review gate onto a release-readiness response.
 
@@ -216,6 +222,7 @@ async def apply_release_review_gate(
         run_id=run_id,
         synthesized=bool(getattr(council, "synthesized", False)),
         human_override=getattr(council, "human_override", None),
+        pipeline_run_id=pipeline_run_id,
     )
     update: dict[str, Any] = {
         "requires_human_review": envelope.ai_generated,
@@ -224,10 +231,38 @@ async def apply_release_review_gate(
     }
     if withhold:
         recommendation = str(council.recommendation)
-        update["draft_recommendation"] = recommendation
-        update["recommendation"] = (
-            f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
-        )
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            # Rejected and superseded content is no longer a draft. Preserve
+            # only the terminal review envelope; no model narrative may leave.
+            update.update(
+                recommendation="PENDING_REVIEW",
+                draft_recommendation=None,
+                blocking_issues=[],
+                conditions_for_go=[],
+                reasoning=None,
+                original_recommendation=None,
+            )
+        else:
+            update["draft_recommendation"] = recommendation
+            update["recommendation"] = (
+                f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
+            )
+            if allow_advisory and actor is not None:
+                advisory = DistributionDecision(
+                    True,
+                    INCLUDE_UNREVIEWED,
+                    envelope,
+                    watermark="ADVISORY",
+                    enforced=enforced,
+                )
+                await record_distribution(
+                    db,
+                    advisory,
+                    channel="release_readiness_advisory",
+                    run_id=run_id,
+                    project_id=project_id,
+                    actor=actor,
+                )
     return council.model_copy(update=update)
 
 
@@ -237,6 +272,8 @@ async def release_review_projection(
     run_id: Any,
     synthesized: bool,
     human_override: Any,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
 ) -> tuple[ReviewEnvelope, bool, bool]:
     """The one rule for a release value, shared by the release-readiness response
     and the ``release.decided`` webhook so the two can never disagree.
@@ -245,11 +282,18 @@ async def release_review_projection(
     must not leave as-is: an AI decision no human accepted and no human overrode,
     while the gate is enforced.
     """
-    envelope = (
-        not_ai_generated()
-        if synthesized
-        else await review_envelope_for_run(db, run_id, workflow_type="deep")
-    )
+    if synthesized:
+        envelope = not_ai_generated()
+    elif pipeline_run_id is None:
+        envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")
+    elif evidence_bundle_sha256 is None:
+        envelope = await review_envelope_for_pipeline_subject(db, pipeline_run_id)
+    else:
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
+        )
     enforced = gate_enforced()
     unreviewed = (
         envelope.ai_generated
@@ -266,20 +310,61 @@ async def gate_release_decided_payload(
     run_id: Any,
     synthesized: bool,
     human_override: Any,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
+    project_id: Any = None,
 ) -> dict[str, Any]:
     """Project the review gate onto a ``release.decided`` webhook payload.
 
-    Same rule as :func:`apply_release_review_gate`, without the advisory variant:
-    a webhook has no caller to ask for one. While enforced, an unreviewed AI
-    decision is sent as ``PENDING_REVIEW`` with the model's value in
-    ``draft_recommendation``; otherwise the value is unchanged. Either way the
-    payload gains ``review`` ``{state, review_id, reviewed_at}``, which says that
+    A pending value is sent as a watermarked draft only when the project opted
+    in. Otherwise enforcement replaces it with ``PENDING_REVIEW``. The payload
+    always gains ``review`` ``{state, review_id, reviewed_at}``, which says that
     a human reviewed it and when, never who.
     """
-    envelope, enforced, withhold = await release_review_projection(
-        db, run_id=run_id, synthesized=synthesized, human_override=human_override
+    projected, _decision = await gate_release_decided_delivery(
+        db,
+        payload,
+        run_id=run_id,
+        synthesized=synthesized,
+        human_override=human_override,
+        pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
+        project_id=project_id,
+    )
+    return projected
+
+
+async def gate_release_decided_delivery(
+    db: Any,
+    payload: dict[str, Any],
+    *,
+    run_id: Any,
+    synthesized: bool,
+    human_override: Any,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
+    project_id: Any = None,
+) -> tuple[dict[str, Any], DistributionDecision]:
+    """Gate one webhook attempt and return its auditable decision."""
+    envelope, enforced, _withhold = await release_review_projection(
+        db,
+        run_id=run_id,
+        synthesized=synthesized,
+        human_override=human_override,
+        pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
+    )
+    decision = (
+        DistributionDecision(True, REVIEWED, envelope, enforced=enforced)
+        if human_override
+        else await _decide_envelope_distribution(
+            db,
+            envelope=envelope,
+            project_id=project_id,
+        )
     )
     projected = dict(payload)
+    projected.pop("draft_watermark", None)
     projected["requires_human_review"] = envelope.ai_generated
     projected["review"] = {
         "state": envelope.state,
@@ -288,10 +373,18 @@ async def gate_release_decided_payload(
     }
     projected["review_gate_enforced"] = enforced
     projected["draft_recommendation"] = None
-    if withhold:
-        projected["draft_recommendation"] = projected.get("recommendation")
+    if decision.watermark:
+        projected["draft_watermark"] = decision.watermark
+    elif not decision.allowed:
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            projected["blocking_issues"] = []
+            projected["conditions_for_go"] = []
+            projected["reasoning"] = None
+            projected["original_recommendation"] = None
+        else:
+            projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
-    return projected
+    return projected, decision
 
 
 # ── AI summary text in notifications and digests (E8.4 slice 2) ─────────────
@@ -343,6 +436,7 @@ async def gate_investigation_excerpt(
     project_id: Any,
     excerpt: str,
     channel: str,
+    evidence_bundle_sha256: str | None = None,
 ) -> tuple[str, Optional[DistributionDecision]]:
     """Gate one stored Investigator narrative excerpt by its own review.
 
@@ -359,7 +453,11 @@ async def gate_investigation_excerpt(
     pipeline_id = uuid.uuid5(
         uuid.NAMESPACE_URL, f"testlookup:investigation:{subject_id}"
     )
-    envelope = await review_envelope_for_pipeline(db, pipeline_id)
+    envelope = await review_envelope_for_pipeline_subject(
+        db,
+        pipeline_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
+    )
     decision = await _decide_envelope_distribution(
         db, envelope=envelope, project_id=project_id
     )
@@ -378,6 +476,8 @@ async def gate_ai_summary_text(
     summary_text: str,
     ai_generated: bool,
     channel: str,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
 ) -> tuple[str, Optional[DistributionDecision]]:
     """Return the summary text a notification may carry, and the decision.
 
@@ -391,9 +491,21 @@ async def gate_ai_summary_text(
     """
     if not ai_generated or not summary_text:
         return summary_text, None
-    decision = await decide_run_distribution(
-        db, run_id=run_id, project_id=project_id, channel=channel
-    )
+    if pipeline_run_id is not None and evidence_bundle_sha256 is not None:
+        envelope = await review_envelope_for_pipeline_subject(
+            db,
+            pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
+        )
+        decision = await _decide_envelope_distribution(
+            db,
+            envelope=envelope,
+            project_id=project_id,
+        )
+    else:
+        decision = await decide_run_distribution(
+            db, run_id=run_id, project_id=project_id, channel=channel
+        )
     if not decision.allowed:
         return REVIEW_PENDING_NOTICE, decision
     if decision.watermark:
@@ -428,7 +540,14 @@ async def gate_release_verdict(
         projected["draft_watermark"] = DRAFT_WATERMARK
         return projected
     if gate_enforced():
-        projected["draft_recommendation"] = projected.get("recommendation")
+        if envelope.state in _TERMINAL_REVIEW_STATES:
+            projected["draft_recommendation"] = None
+            projected["blocking_issues"] = []
+            projected["conditions_for_go"] = []
+            projected["reasoning"] = None
+            projected["original_recommendation"] = None
+        else:
+            projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
     return projected
 

@@ -1,0 +1,160 @@
+{
+  "attested_at": "2026-09-17T21:54:45.758589+00:00",
+  "change_id": "M13-reviewer-runtime-authority",
+  "eval_gate_run_id": null,
+  "eval_manifest_checksum": "d3c953d69a53a1673778fd02b539ffa3b496430855b88c5af0b9f20a7eaada57",
+  "gate_results": [
+    {
+      "agent_name": "AnalysisAgent",
+      "metrics": {
+        "accuracy": 0.8333,
+        "f1_score": 0.9013,
+        "total": 12
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8333 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 12 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "classification"
+    },
+    {
+      "agent_name": "AnalysisAgent",
+      "metrics": {
+        "accuracy": 0.8,
+        "f1_score": 0.8,
+        "total": 5
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 5 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "root_cause"
+    },
+    {
+      "agent_name": "DefectPromotionAgent",
+      "metrics": {
+        "accuracy": 0.5,
+        "f1_score": 0.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.5000 (no baseline \u2014 using 0.70 default)",
+          "passed": false,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "insufficient_samples",
+      "task_type": "duplicate_detection"
+    },
+    {
+      "agent_name": "ReleaseRiskAgent",
+      "metrics": {
+        "accuracy": 1.0,
+        "f1_score": 1.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 1.0000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "release_decision"
+    },
+    {
+      "agent_name": "ReviewerAgent",
+      "metrics": {
+        "focused_tests": 51,
+        "mutations_applied_and_killed": 22
+      },
+      "rule_results": [
+        {
+          "detail": "51 routing, workflow, and reviewer regressions passed on the deployed candidate",
+          "passed": true,
+          "rule": "m13_focused_regressions"
+        },
+        {
+          "detail": "all 22 asserted source mutations were killed",
+          "passed": true,
+          "rule": "m13_mutation_check"
+        }
+      ],
+      "status": "pass",
+      "task_type": "workflow_reviewer_runtime_authority"
+    }
+  ],
+  "manifest_digest": "47dbe7f7d1396d2999700f6bb50b99d1c58706a5810afcc99c6939761116b1c7",
+  "mode": "source_review",
+  "notes": "M13 changed reviewer and model-routing authority without changing prompts. Source review is backed by 51 focused tests and 22 exact-once mutations; candidate-inference recordings remain a known gap.",
+  "prompt_versions": {
+    "anomaly_narrative": "v1:0298a3b5009f",
+    "chat_compression": "v1:68e08a32dff5",
+    "chat_copilot_react": "v1:e23fd1532d25",
+    "chat_system": "v2:5052234131d8",
+    "defect_promotion_ticket": "v1:45d88cc4d33b",
+    "fast_classifier_system": "v1:9d46ffbbed7b",
+    "finetune_reasoning_system": "v1:3ea37c087b6b",
+    "fixer_generate_patch": "v1:a9267b59f0a0",
+    "investigator_hypothesis_weigh": "v1:44a0c89134b9",
+    "investigator_synthesis_narrative": "v1:f7d92dd09981",
+    "react_triage": "v3:e71c26f0ad74",
+    "regression_watchman_classify": "v1:2ac1510063fd",
+    "release_risk_reasoning": "v1:a152fb254091",
+    "reviewer_claim_extraction": "v1:657326161d7b",
+    "reviewer_second_model": "v1:7714b62aff2c",
+    "run_compare_report": "v1:5272dd391090",
+    "run_compare_system": "v1:bbba41240c3f",
+    "summary_action_plan": "v2:a554d240b844",
+    "summary_evidence_pack": "v2:531118f798af",
+    "summary_executive": "v1:9885ab3d7268",
+    "summary_incident_view": "v2:674423db4627",
+    "summary_renderer_developer": "v1:58d153d90e99",
+    "summary_renderer_manager": "v1:fb02a6a74429",
+    "summary_renderer_system": "v1:42fc12956d2f",
+    "summary_system": "v1:3b2f2b5fde10",
+    "test_case_coverage": "v1:16988c2ae516",
+    "test_case_generate": "v1:fb6a09db0b78",
+    "test_case_plan_optimizer": "v1:97d09e4d78eb",
+    "test_case_review": "v1:43f1dfbc6c86",
+    "test_case_strategy": "v1:2070533050ae"
+  },
+  "schema_version": 1,
+  "verdict": "pass",
+  "watched_sources": {
+    "backend/app/agents/reviewer_agent.py": "9a68e8508d3fbd78620bf1f290482438618bc66676a21fc31bae797ab222bf47",
+    "backend/app/services/agent_capability_registry.py": "cd7574054793b43c875b2210535005fe93eaf662fd2deb40b165dbd724922438",
+    "backend/app/services/llm_factory.py": "b4676eaae9d54da9b8d6ac1437644f7a46b24cbdcbc111931dec1d3312a89058",
+    "backend/app/services/model_router.py": "65048cdf67c973ca7413acf0c7e4be61282476d657d9c3ce38036911ba8ac87d"
+  }
+}

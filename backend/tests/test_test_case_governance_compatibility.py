@@ -42,8 +42,12 @@ async def test_ai_plan_eligibility_includes_approved_and_active_only():
 def test_transition_and_deprecation_request_schemas_pin_wire_compatibility():
     from app.models.schemas import TestCaseDeprecateRequest, TestCaseTransitionRequest
 
-    assert TestCaseTransitionRequest(action="withdraw_review").action == "withdraw_review"
-    assert TestCaseTransitionRequest(action="unclaim").action == "unclaim"
+    assert TestCaseTransitionRequest(
+        action="withdraw_review", expected_version=1
+    ).action == "withdraw_review"
+    assert TestCaseTransitionRequest(
+        action="unclaim", expected_version=1
+    ).action == "unclaim"
     assert TestCaseDeprecateRequest(reason="Intentional retirement").reason == (
         "Intentional retirement"
     )
@@ -106,7 +110,10 @@ async def test_change_summary_only_patch_is_a_true_noop_without_version_or_audit
         returned = await test_management_service.update_managed_test_case(
             db,
             test_case.id,
-            ManagedTestCaseUpdate(change_summary="label only"),
+            ManagedTestCaseUpdate(
+                expected_version=test_case.version,
+                change_summary="label only",
+            ),
             SimpleNamespace(id=uuid.uuid4()),
         )
 

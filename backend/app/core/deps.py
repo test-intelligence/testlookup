@@ -410,14 +410,14 @@ async def get_current_user(
     )
     jti = payload.get("jti")
     iat = payload.get("iat")
-    iat_int: Optional[int] = None
+    iat_value: Optional[float] = None
     if isinstance(iat, (int, float)):
-        iat_int = int(iat)
+        iat_value = float(iat)
     try:
         if jti and await is_jti_revoked(str(jti)):
             _count_auth_failure("invalid_token")
             raise credentials_exception
-        if await is_token_before_cutoff(uid, iat_int):
+        if await is_token_before_cutoff(uid, iat_value):
             _count_auth_failure("invalid_token")
             raise credentials_exception
     except RevocationUnavailable:
@@ -1177,11 +1177,11 @@ def require_run_access():
         if not project_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
 
-        _enforce_api_key_project_binding(
-            current_user,
-            project_id,
-            detail="This API key is restricted to a different project",
-        )
+        if bound_project_id is not None and bound_project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Test run not found",
+            )
         if _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
 
@@ -1193,8 +1193,8 @@ def require_run_access():
         )
         if not membership.scalar_one_or_none():
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this run's project",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Test run not found",
             )
         return current_user
 
@@ -1499,6 +1499,13 @@ def require_session_access():
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this chat session",
             )
+        if not is_admin and session.project_id is not None:
+            accessible = await get_accessible_project_ids(db, current_user)
+            if accessible is not None and session.project_id not in accessible:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You no longer have access to this chat session's project",
+                )
         return session
 
     return _check

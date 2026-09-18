@@ -20,6 +20,7 @@ export interface SavedView {
   project_id: string | null;
   name: string;
   description: string | null;
+  page: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | null;
   filters: Record<string, unknown>;
   is_shared: boolean;
   is_default: boolean;
@@ -64,6 +65,7 @@ export async function createSavedView(payload: {
   project_id?: string | null;
   name: string;
   description?: string;
+  page?: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures';
   filters: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;
@@ -75,6 +77,7 @@ export async function createSavedView(payload: {
 export async function updateSavedView(id: string, payload: {
   name?: string;
   description?: string;
+  page?: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures';
   filters?: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;

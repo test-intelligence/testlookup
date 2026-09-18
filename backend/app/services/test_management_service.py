@@ -486,9 +486,21 @@ async def update_managed_test_case(
     test_case = await get_test_case_or_404(db, case_id, for_update=True)
     if test_case.status in ("deprecated", "archived"):
         raise HTTPException(status_code=409, detail=f"Cannot edit a {test_case.status} test case")
+    if test_case.version != payload.expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "current_version": test_case.version,
+                "expected_version": payload.expected_version,
+                "message": "Test case changed; refresh before saving edits",
+            },
+        )
 
     old = {"title": test_case.title, "status": test_case.status, "version": test_case.version}
-    update_data = payload.model_dump(exclude_unset=True, exclude={"change_summary"})
+    update_data = payload.model_dump(
+        exclude_unset=True,
+        exclude={"change_summary", "expected_version"},
+    )
     if not update_data:
         return test_case
 
@@ -633,8 +645,23 @@ async def add_test_case_comment(
     return comment
 
 
-async def get_plan_or_404(db: AsyncSession, plan_id: uuid.UUID) -> TestPlan:
-    return cast(TestPlan, await get_or_404(db, TestPlan, plan_id, "Test plan not found"))
+async def get_plan_or_404(
+    db: AsyncSession,
+    plan_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> TestPlan:
+    if not for_update:
+        return cast(
+            TestPlan,
+            await get_or_404(db, TestPlan, plan_id, "Test plan not found"),
+        )
+    statement = select(TestPlan).where(TestPlan.id == plan_id)
+    statement = statement.with_for_update()
+    plan = (await db.execute(statement)).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Test plan not found")
+    return cast(TestPlan, plan)
 
 
 async def get_plan_item_or_404(db: AsyncSession, plan_id: uuid.UUID, item_id: uuid.UUID) -> TestPlanItem:
@@ -717,7 +744,7 @@ async def update_test_plan(
     payload: TestPlanUpdate,
     current_user: User,
 ) -> TestPlan:
-    plan = await get_plan_or_404(db, plan_id)
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     apply_model_updates(plan, payload.model_dump(exclude_unset=True))
     await audit_event(db, "test_plan", plan.id, plan.project_id, "updated", current_user)
     return plan
@@ -729,19 +756,69 @@ async def add_test_plan_item(
     payload: TestPlanItemCreate,
     current_user: User,
 ) -> TestPlanItem:
-    plan = await get_plan_or_404(db, plan_id)
+    # The plan row is the aggregate and membership serialization point. This
+    # prevents concurrent add/remove/execute requests from publishing counts
+    # calculated from different snapshots.
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
+    case_id = await db.scalar(
+        select(ManagedTestCase.id).where(
+            ManagedTestCase.id == payload.test_case_id,
+            ManagedTestCase.project_id == plan.project_id,
+        )
+    )
+    if case_id is None:
+        # Do not disclose whether an identifier belongs to another project.
+        raise HTTPException(status_code=404, detail="Test case not found")
+    existing_item_id = await db.scalar(
+        select(TestPlanItem.id).where(
+            TestPlanItem.plan_id == plan_id,
+            TestPlanItem.test_case_id == payload.test_case_id,
+        )
+    )
+    if existing_item_id is not None:
+        raise HTTPException(status_code=409, detail="Test case is already in this plan")
     item = TestPlanItem(plan_id=plan_id, **payload.model_dump(exclude_unset=True))
     db.add(item)
     await db.flush()  # materialize item.id and expose it to recompute_plan_counts
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "added",
+        current_user,
+        new_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(item.test_case_id),
+        },
+    )
     return item
 
 
-async def remove_test_plan_item(db: AsyncSession, plan_id: uuid.UUID, item_id: uuid.UUID) -> None:
-    plan = await get_plan_or_404(db, plan_id)
+async def remove_test_plan_item(
+    db: AsyncSession,
+    plan_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: User,
+) -> None:
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
+    test_case_id = item.test_case_id
     await db.delete(item)
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "removed",
+        current_user,
+        old_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(test_case_id),
+        },
+    )
 
 
 async def record_test_plan_execution(
@@ -753,12 +830,40 @@ async def record_test_plan_execution(
     actual_duration_minutes: Optional[int],
     current_user: User,
 ) -> TestPlanItem:
-    plan = await get_plan_or_404(db, plan_id)
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
+    old_values = {
+        "execution_status": item.execution_status,
+        "execution_notes": item.execution_notes,
+        "actual_duration_minutes": item.actual_duration_minutes,
+        "executed_by_id": (
+            str(item.executed_by_id) if item.executed_by_id is not None else None
+        ),
+        "executed_at": (
+            item.executed_at.isoformat() if item.executed_at is not None else None
+        ),
+    }
+    executed_at = datetime.now(timezone.utc)
     item.execution_status = execution_status
     item.executed_by_id = current_user.id
-    item.executed_at = datetime.now(timezone.utc)
+    item.executed_at = executed_at
     item.execution_notes = execution_notes
     item.actual_duration_minutes = actual_duration_minutes
     await recompute_plan_counts(db, plan)
+    await audit_event(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "executed",
+        current_user,
+        old_values=old_values,
+        new_values={
+            "execution_status": execution_status,
+            "execution_notes": execution_notes,
+            "actual_duration_minutes": actual_duration_minutes,
+            "executed_by_id": str(current_user.id),
+            "executed_at": executed_at.isoformat(),
+        },
+    )
     return item

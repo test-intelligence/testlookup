@@ -406,8 +406,7 @@ async def test_resolver_returns_none_for_wrong_run():
 
 @pytest.mark.asyncio
 async def test_require_run_access_rejects_inaccessible_run():
-    """The endpoint guard verifies the PROVIDED run_id — a non-member is 403'd
-    BEFORE any history read (IDOR ratchet)."""
+    """The endpoint guard hides a foreign run behind the missing-run response."""
     from fastapi import HTTPException
     from app.core.deps import require_run_access
 
@@ -427,4 +426,5 @@ async def test_require_run_access_rejects_inaccessible_run():
 
     with pytest.raises(HTTPException) as ei:
         await guard(request=request, db=access_db, current_user=user)
-    assert ei.value.status_code == 403
+    assert ei.value.status_code == 404
+    assert ei.value.detail == "Test run not found"

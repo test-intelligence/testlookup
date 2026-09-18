@@ -219,3 +219,32 @@ class TestTheReleaseLevelLookupUsesIsNull:
         # returns nothing and every caller reads "no verdict yet" for a release
         # that has one.
         assert "ReleaseGateDecision.phase_id.is_(None)" in src
+
+
+class TestDecisionHistoryKeepsReleaseAndPhaseScopesSeparate:
+    def test_release_history_excludes_phase_verdicts(self):
+        import asyncio
+
+        statements = []
+
+        class _Scalars:
+            @staticmethod
+            def all():
+                return []
+
+        class _Result:
+            @staticmethod
+            def scalars():
+                return _Scalars()
+
+        class _Session:
+            async def execute(self, statement):
+                statements.append(statement)
+                return _Result()
+
+        asyncio.run(svc.decision_history(_Session(), uuid.uuid4()))
+
+        sql = str(statements[0])
+        assert "release_gate_decisions.phase_id IS NULL" in sql, (
+            "release-level history included phase verdicts from the same release"
+        )

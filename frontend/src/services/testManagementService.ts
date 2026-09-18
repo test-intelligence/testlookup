@@ -59,7 +59,7 @@ export const testManagementService = {
   getCase: (id: string): Promise<ManagedTestCase> =>
     getData(`/api/v1/test-management/cases/${id}`),
 
-  updateCase: (id: string, data: Partial<ManagedTestCase> & { change_summary?: string }): Promise<ManagedTestCase> =>
+  updateCase: (id: string, data: Partial<ManagedTestCase> & { expected_version: number; change_summary?: string }): Promise<ManagedTestCase> =>
     patchData(`/api/v1/test-management/cases/${id}`, data),
 
   deleteCase: (id: string, reason?: string): Promise<void> =>

@@ -1,0 +1,251 @@
+"""M16 regressions for stale lifecycle actions and test-plan integrity."""
+from __future__ import annotations
+
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, call
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+from app.models import schemas
+from app.services import test_case_lifecycle_service as lifecycle
+from app.services import test_management_service as service
+
+
+@pytest.mark.asyncio
+async def test_case_edit_refuses_a_stale_case_version(monkeypatch) -> None:
+    case = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="Current title",
+        status="draft",
+        version=8,
+    )
+    monkeypatch.setattr(
+        service,
+        "get_test_case_or_404",
+        AsyncMock(return_value=case),
+    )
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await service.update_managed_test_case(
+            db,
+            case.id,
+            schemas.ManagedTestCaseUpdate(
+                expected_version=7,
+                title="Stale replacement",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "current_version": 8,
+        "expected_version": 7,
+        "message": "Test case changed; refresh before saving edits",
+    }
+    assert case.title == "Current title"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_transition_refuses_a_stale_case_version(monkeypatch) -> None:
+    case = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        status="draft",
+        version=8,
+        author_id=uuid.uuid4(),
+        reviewer_id=None,
+    )
+    actor = SimpleNamespace(id=case.author_id, role="qa_engineer")
+    monkeypatch.setattr(lifecycle, "_lock_case", AsyncMock(return_value=case))
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await lifecycle.transition(
+            db,
+            case.id,
+            lifecycle.LifecycleAction.REQUEST_REVIEW,
+            actor,
+            expected_version=7,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "current_version": 8,
+        "expected_version": 7,
+        "message": "Test case changed; refresh before applying this action",
+    }
+    db.add.assert_not_called()
+    db.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_plan_item_refuses_a_case_from_another_project(monkeypatch) -> None:
+    plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    foreign_case_id = uuid.uuid4()
+    get_plan = AsyncMock(return_value=plan)
+    monkeypatch.setattr(service, "get_plan_or_404", get_plan)
+    db = AsyncMock()
+    async def scalar(statement):
+        sql = str(statement)
+        if "managed_test_cases.project_id" in sql:
+            return None
+        if "managed_test_cases" in sql:
+            return foreign_case_id
+        return None
+
+    db.scalar.side_effect = scalar
+
+    with pytest.raises(HTTPException) as exc:
+        await service.add_test_plan_item(
+            db,
+            plan.id,
+            schemas.TestPlanItemCreate(test_case_id=foreign_case_id),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Test case not found"
+    get_plan.assert_awaited_once_with(db, plan.id, for_update=True)
+    db.add.assert_not_called()
+
+
+def test_plan_execution_status_is_a_closed_vocabulary() -> None:
+    with pytest.raises(ValidationError):
+        schemas.ExecuteTestPlanItemRequest(execution_status="green")
+
+
+def test_transition_request_requires_expected_version() -> None:
+    with pytest.raises(ValidationError):
+        schemas.TestCaseTransitionRequest(action="deprecate")
+
+
+def _actor() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        full_name="Plan Operator",
+        username="operator",
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_membership_and_execution_write_audit_rows(monkeypatch) -> None:
+    plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    case_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        plan_id=plan.id,
+        test_case_id=case_id,
+        execution_status="not_run",
+        execution_notes=None,
+        actual_duration_minutes=None,
+        executed_by_id=None,
+        executed_at=None,
+    )
+    actor = _actor()
+    db = AsyncMock()
+
+    get_plan = AsyncMock(return_value=plan)
+    monkeypatch.setattr(service, "get_plan_or_404", get_plan)
+    monkeypatch.setattr(service, "get_plan_item_or_404", AsyncMock(return_value=item))
+    monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "audit_event", audit)
+
+    await service.remove_test_plan_item(db, plan.id, item.id, actor)
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "removed",
+        actor,
+        old_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(case_id),
+        },
+    )
+
+    audit.reset_mock()
+    await service.record_test_plan_execution(
+        db,
+        plan.id,
+        item.id,
+        "passed",
+        "verified",
+        3,
+        actor,
+    )
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item.id,
+        plan.project_id,
+        "executed",
+        actor,
+        old_values={
+            "execution_status": "not_run",
+            "execution_notes": None,
+            "actual_duration_minutes": None,
+            "executed_by_id": None,
+            "executed_at": None,
+        },
+        new_values={
+            "execution_status": "passed",
+            "execution_notes": "verified",
+            "actual_duration_minutes": 3,
+            "executed_by_id": str(actor.id),
+            "executed_at": item.executed_at.isoformat(),
+        },
+    )
+    assert get_plan.await_args_list == [
+        call(db, plan.id, for_update=True),
+        call(db, plan.id, for_update=True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adding_plan_membership_writes_attributable_audit(monkeypatch) -> None:
+    plan = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    case_id = uuid.uuid4()
+    actor = _actor()
+    db = AsyncMock()
+    db.scalar.side_effect = [case_id, None]
+    item_id = uuid.uuid4()
+
+    def add_with_identity(item) -> None:
+        item.id = item_id
+
+    db.add = add_with_identity
+
+    get_plan = AsyncMock(return_value=plan)
+    monkeypatch.setattr(service, "get_plan_or_404", get_plan)
+    monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "audit_event", audit)
+
+    result = await service.add_test_plan_item(
+        db,
+        plan.id,
+        schemas.TestPlanItemCreate(test_case_id=case_id),
+        actor,
+    )
+
+    assert result.id == item_id
+    get_plan.assert_awaited_once_with(db, plan.id, for_update=True)
+    audit.assert_awaited_once_with(
+        db,
+        "test_plan_item",
+        item_id,
+        plan.project_id,
+        "added",
+        actor,
+        new_values={
+            "plan_id": str(plan.id),
+            "test_case_id": str(case_id),
+        },
+    )

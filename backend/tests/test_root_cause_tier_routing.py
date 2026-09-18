@@ -9,6 +9,7 @@ from app.services.agent_config_resolver import ResolvedAgentConfig, ResolvedEndp
 from app.services.agent_config_service import default_config
 from app.services.analysis_router import classify_root_cause_tiered
 from app.agents.analysis_agent import AnalysisAgent
+from app.services.step_llm_budget import StepLLMBudget
 
 
 def _endpoint(model: str) -> ResolvedEndpoint:
@@ -99,6 +100,36 @@ async def test_default_root_cause_uses_slm_without_llm_for_accepted_single_artif
     assert result["_routing"]["classification_tier"] == "slm"
     assert result["_routing"]["explanation_tier"] == "slm"
     assert result["_routing"]["escalations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reviewer_retry_override_runs_classifier_on_llm_without_reescalating(
+    monkeypatch, tier_stubs
+):
+    import app.services.agent as agent_service
+
+    tier_stubs.return_value = (_classification(30), "low_confidence")
+    react = AsyncMock()
+    monkeypatch.setattr(agent_service, "run_triage_agent", react)
+    budget = StepLLMBudget(limit=2, used=1, reasons=["review_retry"])
+
+    result = await classify_root_cause_tiered(
+        {"test_case_id": "tc-retry", "test_name": "checkout", "error_message": "boom"},
+        None,
+        None,
+        resolved=_resolved(tier="slm"),
+        budget_remaining_usd=1.0,
+        step_llm_calls_remaining=2,
+        step_budget=budget,
+        tier_override="llm",
+    )
+
+    assert tier_stubs.await_args.kwargs["endpoint"].model == "large"
+    react.assert_not_awaited()
+    assert result["_routing"]["classification_tier"] == "llm"
+    assert result["_routing"]["tier_used"] == "llm"
+    assert result["_routing"]["escalations"] == 0
+    assert budget.as_state()["reasons"] == ["review_retry"]
 
 
 @pytest.mark.asyncio

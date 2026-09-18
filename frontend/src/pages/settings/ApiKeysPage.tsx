@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check, Copy, Key, Loader2, Plus, ShieldAlert, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAuthStore } from '@/store/authStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
 import { streamIngestCommand } from './apiKeysCurl'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 const STREAM_WRITE_SCOPE = 'stream:write'
 
@@ -155,7 +158,7 @@ function GenerateKeyForm({
   )
 }
 
-function CreatedKeyModal({
+export function CreatedKeyModal({
   created,
   baseUrl,
   projectLabel,
@@ -166,6 +169,7 @@ function CreatedKeyModal({
   projectLabel: string
   onClose: () => void
 }) {
+  const dialogRef = useModalFocus({ onClose })
   const propertiesSnippet = useMemo(
     () =>
       `# testlookup.properties — drop into src/test/resources/ (Java/TestNG/JUnit)
@@ -209,7 +213,7 @@ asyncio.run(main())`,
   )
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
       {/* max-h + overflow-y-auto are load-bearing. This dialog grew three
           ready-to-paste snippets, which pushed it past a 720px-tall viewport.
           Centred with `items-center` and no scroll container of its own, the
@@ -225,7 +229,7 @@ asyncio.run(main())`,
               Copy the key now — it won't be shown again. Store it in your CI secret manager.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -281,25 +285,23 @@ asyncio.run(main())`,
   )
 }
 
-export default function ApiKeysPage() {
-  const { isAdmin } = usePermissions()
+function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const project = useProjectStore(s => s.activeProject)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const projectId = isAllProjects ? null : (activeProjectId ?? null)
   const projectLabel = project?.name ?? 'this project'
 
-  const { data: keys, isLoading, error } = useApiKeys(projectId)
+  const { data: keys, isLoading, error, mutate } = useApiKeys(projectId)
   const [showForm, setShowForm] = useState(false)
-  const [created, setCreated] = useState<ApiKeyCreatedResponse | null>(null)
+  const [created, setCreated] = useState<{
+    key: ApiKeyCreatedResponse
+    projectLabel: string
+  } | null>(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
 
   // Same-origin base URL is what clients will hit; useful for snippet generation.
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-
-  useEffect(() => {
-    if (error) toast.error('Failed to load API keys')
-  }, [error])
 
   const onRevoke = async (key: ApiKey) => {
     if (!window.confirm(`Revoke "${key.name}"? Active clients using this key will start failing immediately.`)) return
@@ -366,7 +368,7 @@ export default function ApiKeysPage() {
           projectLabel={projectLabel}
           onCreated={(key) => {
             setShowForm(false)
-            setCreated(key)
+            setCreated({ key, projectLabel })
           }}
           onCancel={() => setShowForm(false)}
         />
@@ -375,6 +377,8 @@ export default function ApiKeysPage() {
       <div className="card p-0 overflow-hidden">
         {isLoading ? (
           <div className="flex justify-center py-10"><LoadingSpinner size="lg" /></div>
+        ) : error ? (
+          <DataUnavailable error={error} onRetry={() => { void mutate() }} testId="api-keys-unavailable" />
         ) : !keys || keys.length === 0 ? (
           <div className="px-4 py-10">
             <EmptyState
@@ -444,12 +448,27 @@ export default function ApiKeysPage() {
 
       {created && (
         <CreatedKeyModal
-          created={created}
+          created={created.key}
           baseUrl={baseUrl}
-          projectLabel={projectLabel}
+          projectLabel={created.projectLabel}
           onClose={() => setCreated(null)}
         />
       )}
     </div>
   )
+}
+
+export default function ApiKeysPage() {
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const { isAdmin, role } = usePermissions()
+  const authSessionKey = useAuthStore(
+    s => `${s.sessionGeneration}:${s.user?.id ?? 'anonymous'}`,
+  )
+
+  // API-key form and one-time secret state is project-bound. Remounting the
+  // content on an authority change prevents either from crossing projects,
+  // users, sessions, or permission changes. It also fences late create results
+  // because the component that initiated the request is no longer mounted.
+  const authorityKey = `${activeProjectId ?? 'no-project'}:${authSessionKey}:${role}`
+  return <ApiKeysPageContent key={authorityKey} isAdmin={isAdmin} />
 }

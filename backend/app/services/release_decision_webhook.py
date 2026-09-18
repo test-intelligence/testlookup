@@ -2,11 +2,11 @@
 
 ``webhook_service.SUPPORTED_EVENTS`` offered ``release.decided`` to subscribers,
 and nothing ever sent it: a subscription was accepted and then never received a
-delivery. A release decision is written in two places, and both emit AFTER their
-transaction commits, so a receiver is never told about a decision that rolled back:
+delivery. A release decision is published from two places, both only after its
+authoritative source has committed:
 
-* ``trigger="agent"``: ``ReleaseRiskAgent._persist_decision`` inserted or
-  rewrote the row at the end of a deep pipeline run;
+* ``trigger="agent"``: ``DecisionReportCriticAgent._persist`` published the
+  immutable decision report for the deep pipeline run;
 * ``trigger="override"``: a QA lead overrode it through
   ``POST /api/v1/release-readiness/{run_id}/override``. An override changes the
   value CI pipelines gate on, which is exactly what a subscriber listens for, so
@@ -19,10 +19,12 @@ The value is the one ``GET /api/v1/release-readiness/{run_id}`` returns: the
 E8.4 review-gate rule (``release_review_projection``). While
 ``REVIEW_GATE_ENFORCED`` is on, an unreviewed AI decision is sent as
 ``PENDING_REVIEW`` with the model's value in ``draft_recommendation``. Otherwise
-the value is unchanged. Either way a ``review`` block says whether a human
-reviewed the decision and when, never who. ``overridden_by`` and the override
-reason stay out for the same reason: the reason is free text that routinely
-names people.
+the value is unchanged. Each delivery attempt rechecks the exact pipeline
+subject so a queued retry reflects acceptance, rejection, or supersession that
+happened while the receiver was unavailable. Either way a ``review`` block says
+whether a human reviewed the decision and when, never who. ``overridden_by`` and
+the override reason stay out for the same reason: the reason is free text that
+routinely names people.
 
 Delivery
 --------
@@ -60,10 +62,17 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value is not None else None
 
 
-def delivery_scope(decision: ReleaseDecision, trigger: str) -> str:
+def delivery_scope(
+    decision: ReleaseDecision,
+    trigger: str,
+    *,
+    override_ordinal: int | None = None,
+) -> str:
     """The idempotency scope for one decision write."""
     if trigger == TRIGGER_OVERRIDE:
-        marker = f"override:{len(decision.override_audit or [])}"
+        if override_ordinal is None:
+            raise ValueError("override delivery scope requires its committed ordinal")
+        marker = f"override:{override_ordinal}"
     else:
         marker = f"pipeline:{decision.pipeline_run_id}"
     return f"release-decided:{decision.test_run_id}:{marker}:v1"
@@ -76,33 +85,119 @@ async def build_release_decided_payload(
     project_id: uuid.UUID,
     decision: ReleaseDecision,
     trigger: str,
+    evidence_bundle_sha256: str | None = None,
+    override_snapshot: dict[str, Any] | None = None,
+    override_audit_timestamp: str | None = None,
 ) -> Optional[dict[str, Any]]:
-    council = await get_release_council(run_id, db)
-    if council is None:
+    report: dict[str, Any] | None = None
+    if (
+        trigger == TRIGGER_AGENT
+        and decision.pipeline_run_id is not None
+        and evidence_bundle_sha256 is None
+    ):
+        from app.db.mongo import get_mongo_db
+        from app.services.decision_report_service import (
+            load_decision_report_for_pipeline,
+        )
+
+        report = await load_decision_report_for_pipeline(
+            get_mongo_db(),
+            str(run_id),
+            str(decision.pipeline_run_id),
+        )
+        if report is None:
+            return None
+        raw_hash = report.get("evidence_bundle_sha256")
+        evidence_bundle_sha256 = str(raw_hash) if raw_hash is not None else None
+    if (
+        trigger == TRIGGER_AGENT
+        and decision.pipeline_run_id is not None
+        and not evidence_bundle_sha256
+    ):
         return None
+    if trigger == TRIGGER_AGENT and decision.pipeline_run_id is not None:
+        if report is None:
+            from app.db.mongo import get_mongo_db
+            from app.services.decision_report_service import (
+                load_decision_report_for_pipeline,
+            )
+
+            report = await load_decision_report_for_pipeline(
+                get_mongo_db(), str(run_id), str(decision.pipeline_run_id)
+            )
+        report_hash = (report or {}).get("evidence_bundle_sha256")
+        if not report_hash or (
+            evidence_bundle_sha256 is not None
+            and str(evidence_bundle_sha256) != str(report_hash)
+        ):
+            return None
+        evidence_bundle_sha256 = str(report_hash)
+        intelligence = (report or {}).get("decision_intelligence") or {}
+        source = intelligence.get("release_decision") or {}
+        if not source:
+            return None
+        recommendation = source.get("recommendation")
+        risk_score = source.get("risk_score")
+        blocking_issues = list(source.get("blocking_issues") or [])
+        conditions_for_go = list(source.get("conditions_for_go") or [])
+        synthesized = False
+        human_override = None
+    elif trigger == TRIGGER_OVERRIDE and override_snapshot is not None:
+        recommendation = override_snapshot.get("recommendation")
+        risk_score = override_snapshot.get("risk_score")
+        blocking_issues = list(override_snapshot.get("blocking_issues") or [])
+        conditions_for_go = list(override_snapshot.get("conditions_for_go") or [])
+        synthesized = bool(override_snapshot.get("synthesized"))
+        human_override = True
+    else:
+        council = await get_release_council(run_id, db)
+        if council is None:
+            return None
+        recommendation = council.recommendation
+        risk_score = council.risk_score
+        blocking_issues = list(council.blocking_issues or [])
+        conditions_for_go = list(council.conditions_for_go or [])
+        synthesized = bool(council.synthesized)
+        human_override = bool(council.human_override)
     payload: dict[str, Any] = {
         "run_id": str(run_id),
         "project_id": str(project_id),
+        "pipeline_run_id": (
+            str(decision.pipeline_run_id) if decision.pipeline_run_id is not None else None
+        ),
+        "evidence_bundle_sha256": evidence_bundle_sha256,
         "trigger": trigger,
-        "recommendation": council.recommendation,
-        "risk_score": council.risk_score,
-        "blocking_issues": list(council.blocking_issues or []),
-        "conditions_for_go": list(council.conditions_for_go or []),
-        "synthesized": bool(council.synthesized),
-        "overridden": bool(council.human_override),
+        "recommendation": recommendation,
+        "risk_score": risk_score,
+        "blocking_issues": blocking_issues,
+        "conditions_for_go": conditions_for_go,
+        "synthesized": synthesized,
+        "overridden": bool(human_override),
         "created_at": _iso(decision.created_at),
-        "updated_at": _iso(decision.updated_at),
+        "updated_at": override_audit_timestamp or _iso(decision.updated_at),
     }
     return await report_distribution_policy.gate_release_decided_payload(
         db,
         payload,
         run_id=run_id,
-        synthesized=bool(council.synthesized),
-        human_override=council.human_override,
+        synthesized=synthesized,
+        human_override=human_override,
+        pipeline_run_id=decision.pipeline_run_id,
+        evidence_bundle_sha256=evidence_bundle_sha256,
+        project_id=project_id,
     )
 
 
-async def emit_release_decided(run_id: Any, *, trigger: str) -> int:
+async def emit_release_decided(
+    run_id: Any,
+    *,
+    trigger: str,
+    pipeline_run_id: Any = None,
+    evidence_bundle_sha256: str | None = None,
+    override_ordinal: int | None = None,
+    override_audit_timestamp: str | None = None,
+    override_snapshot: dict[str, Any] | None = None,
+) -> int:
     """Send ``release.decided`` for the committed decision on ``run_id``.
 
     Call only after the write's transaction has committed. Returns the number of
@@ -122,6 +217,7 @@ async def emit_release_decided(run_id: Any, *, trigger: str) -> int:
                     select(ReleaseDecision, TestRun.project_id)
                     .join(TestRun, TestRun.id == ReleaseDecision.test_run_id)
                     .where(ReleaseDecision.test_run_id == run_uuid)
+                    .with_for_update()
                 )
             ).first()
             if found is None:
@@ -132,22 +228,54 @@ async def emit_release_decided(run_id: Any, *, trigger: str) -> int:
                 )
                 return 0
             decision, project_id = found
+            if pipeline_run_id is not None and str(decision.pipeline_run_id) != str(
+                pipeline_run_id
+            ):
+                return 0
+            if trigger == TRIGGER_AGENT and decision.human_override is not None:
+                return 0
+            if trigger == TRIGGER_OVERRIDE:
+                if (
+                    override_ordinal is None
+                    or override_ordinal < 1
+                    or override_snapshot is None
+                    or override_audit_timestamp is None
+                ):
+                    return 0
+                audit = list(decision.override_audit or [])
+                if override_ordinal > len(audit):
+                    return 0
+                committed_entry = audit[override_ordinal - 1]
+                if str(committed_entry.get("timestamp")) != str(
+                    override_audit_timestamp
+                ):
+                    return 0
             payload = await build_release_decided_payload(
                 db,
                 run_id=run_uuid,
                 project_id=project_id,
                 decision=decision,
                 trigger=trigger,
+                evidence_bundle_sha256=evidence_bundle_sha256,
+                override_snapshot=override_snapshot,
+                override_audit_timestamp=override_audit_timestamp,
             )
-            scope = delivery_scope(decision, trigger)
-        if payload is None:
-            return 0
-        return await webhook_service.emit_event(
-            "release.decided",
-            project_id=project_id,
-            payload=payload,
-            delivery_scope=scope,
-        )
+            scope = delivery_scope(
+                decision,
+                trigger,
+                override_ordinal=override_ordinal,
+            )
+            if payload is None:
+                return 0
+            # Keep the decision row locked through durable staging. An override
+            # that wins the lock first suppresses a delayed agent event; an
+            # agent event that wins is staged before the later override event.
+            return await webhook_service.emit_event(
+                "release.decided",
+                project_id=project_id,
+                payload=payload,
+                delivery_scope=scope,
+            )
     except Exception as exc:  # noqa: BLE001 — the release gate must not fail on a webhook
         logger.warning(
             "release_decided_emit_failed",

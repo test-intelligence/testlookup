@@ -322,6 +322,7 @@ async def test_collector_withholds_pending_narrative_before_report_render(
     assert "Sensitive unreviewed" not in str(item)
     assert gate.await_args.kwargs["investigation_id"] == inv.id
     assert gate.await_args.kwargs["channel"] == "digest_attachment"
+    assert len(gate.await_args.kwargs["evidence_bundle_sha256"]) == 64
     audit.assert_awaited_once()
 
 

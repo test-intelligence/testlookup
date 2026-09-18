@@ -148,3 +148,27 @@ async def test_clean_token_still_resolves_when_redis_is_healthy(monkeypatch):
     db = _fake_db(user=user)
 
     assert await deps.get_current_user(db=db, token="tok") is user
+
+
+@pytest.mark.asyncio
+async def test_fractional_iat_reaches_cutoff_check(monkeypatch):
+    observed = []
+
+    async def clean_jti(_jti):
+        return False
+
+    async def capture_cutoff(_user_id, token_iat):
+        observed.append(token_iat)
+        return False
+
+    monkeypatch.setattr(
+        deps,
+        "decode_token",
+        lambda _token: {**_PAYLOAD, "iat": 1_900_000_000.75},
+    )
+    monkeypatch.setattr(token_revocation, "is_jti_revoked", clean_jti)
+    monkeypatch.setattr(token_revocation, "is_token_before_cutoff", capture_cutoff)
+    user = MagicMock()
+
+    assert await deps.get_current_user(db=_fake_db(user=user), token="tok") is user
+    assert observed == [1_900_000_000.75]

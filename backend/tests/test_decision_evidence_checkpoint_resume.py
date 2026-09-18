@@ -7,6 +7,7 @@ from app.agents.workflow import (
     _canonical_checksum,
     _claim_pipeline_resume,
     _load_checkpoint,
+    _runtime_version_snapshot,
 )
 
 
@@ -73,17 +74,34 @@ def _stage(stage_name, checkpoint_data, *, pipeline_run_id="old-pipeline", check
     return SimpleNamespace(
         pipeline_run_id=pipeline_run_id,
         stage_name=stage_name,
+        capability_id=f"agent.{stage_name}.v1",
         checkpoint_data=checkpoint_data,
         result_data={
             "_replay": {
                 "input_checksum_sha256": "0" * 64,
                 "output_checksum_sha256": output_checksum,
-                "runtime_versions": {"prompt_registry": "abc123"},
+                "runtime_versions": _runtime_version_snapshot(),
                 "attempt": 1,
                 "attempt_idempotency_key": attempt_key
             }
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_named_pipeline_bound_stage_is_never_restored_cross_pipeline(monkeypatch):
+    previous = SimpleNamespace(id="old-pipeline")
+    named_report = _stage(
+        "custom_report",
+        {"decision_evidence_snapshot": {"pipeline_run_id": "old-pipeline"}},
+    )
+    named_report.capability_id = "agent.decision_report.v1"
+    monkeypatch.setattr(
+        "app.agents.workflow.AsyncSessionLocal",
+        lambda: _Session(previous, [named_report]),
+    )
+
+    assert await _load_checkpoint("run-1", "deep") is None
 
 
 @pytest.mark.asyncio
@@ -121,7 +139,7 @@ async def test_cross_pipeline_retry_reruns_snapshot_bound_terminal_chain(monkeyp
                 "output_checksum_sha256": _canonical_checksum(
                     {"structured_summary": {"source": "old-summary"}}
                 ),
-                "runtime_versions": {"prompt_registry": "abc123"},
+                "runtime_versions": _runtime_version_snapshot(),
                 "attempt": 1,
                 "attempt_idempotency_key": _canonical_checksum({
                     "pipeline_run_id": "old-pipeline",
@@ -228,6 +246,30 @@ async def test_same_pipeline_resume_claim_is_idempotent_for_running_pipeline(mon
 
     assert await _claim_pipeline_resume("pipeline-1") is None
     assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_resume_cannot_resurrect_a_review_rejected_pipeline(monkeypatch):
+    pipeline = SimpleNamespace(
+        id="pipeline-1",
+        status="failed",
+        test_run_id="run-1",
+        workflow_type="deep",
+        execution_metadata={
+            "initial_workflow_plan": {"schema_version": 2, "stages": []},
+            "analysis_mode_resolution": {"requested": "rules", "resolved": "rules"},
+        },
+        error="review_rejected: missing_evidence",
+        cancel_requested=False,
+    )
+    session = _ResumeSession(pipeline, "project-1", [])
+    monkeypatch.setattr("app.agents.workflow.AsyncSessionLocal", lambda: session)
+
+    assert await _claim_pipeline_resume("pipeline-1") is None
+    assert pipeline.status == "failed"
+    assert session.commit_count == 0
+
+
 @pytest.mark.asyncio
 async def test_partial_replay_metadata_is_not_restored(monkeypatch):
     previous = SimpleNamespace(id="old-pipeline")
@@ -313,6 +355,19 @@ async def test_checkpoint_with_mismatched_output_checksum_is_not_restored(monkey
     monkeypatch.setattr(
         "app.agents.workflow.AsyncSessionLocal",
         lambda: _Session(previous, stages),
+    )
+
+    assert await _load_checkpoint("run-1", "deep") is None
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_from_a_different_runtime_is_not_restored(monkeypatch):
+    previous = SimpleNamespace(id="old-pipeline")
+    stage = _stage("summary", {"structured_summary": {"source": "old-runtime"}})
+    stage.result_data["_replay"]["runtime_versions"] = {"prompt_registry": "stale"}
+    monkeypatch.setattr(
+        "app.agents.workflow.AsyncSessionLocal",
+        lambda: _Session(previous, [stage]),
     )
 
     assert await _load_checkpoint("run-1", "deep") is None

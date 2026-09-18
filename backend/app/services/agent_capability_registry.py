@@ -147,6 +147,34 @@ SYNC_ELIGIBLE: frozenset[str] = frozenset({
     "cluster_investigation_join",
 })
 
+# Capabilities that have a concrete top-level executor in
+# ``agents.workflow.workflow_node_executors``.  Keep this runtime contract
+# beside the other capability maps instead of changing CapabilitySpecV1's
+# pinned wire shape.  Reviewer is bound specially for each workflow step.
+WORKFLOW_ELIGIBLE: frozenset[str] = frozenset({
+    "ingestion",
+    "anomaly_detection",
+    "failure_clustering",
+    "cluster_investigation_dispatch",
+    "cluster_investigation_join",
+    "root_cause_analysis",
+    "summary",
+    "triage",
+    "contract_validation",
+    "log_intelligence",
+    "regression_watchman",
+    "change_ownership",
+    "defect_commander",
+    "gap_detection",
+    "report_refinement",
+    "flaky_sentinel",
+    "test_health",
+    "release_risk",
+    "decision_report",
+    "decision_report_critic",
+    "reviewer",
+})
+
 # Model routing metadata is deliberately kept out of CapabilitySpecV1. Frozen
 # workflow-plan snapshots serialize that public model, so adding these fields
 # there would change retry authority for every existing run (T6 / E5.1).

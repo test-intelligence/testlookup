@@ -189,13 +189,17 @@ class TestInvalidateAnalyticsCache:
     async def test_invalidate_scans_and_deletes(self):
         from app.services.cache_service import invalidate_analytics_cache
         mock_redis = AsyncMock()
-        mock_redis.scan.return_value = (0, ["analytics:dashboard:proj-1:days=7"])
+        mock_redis.scan.side_effect = [
+            (0, ["analytics:dashboard:proj-1:days=7"]),
+            (0, []),
+        ]
         mock_redis.delete = AsyncMock()
 
         with patch("app.db.redis_client.get_redis", return_value=mock_redis):
             await invalidate_analytics_cache("proj-1")
 
         mock_redis.delete.assert_called_once()
+        assert mock_redis.scan.await_count == 2
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

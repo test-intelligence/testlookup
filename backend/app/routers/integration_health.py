@@ -62,13 +62,13 @@ async def trigger_probe(
         )
 
     if provider and provider in ALL_PROBES:
-        if provider in ("slack", "teams"):
+        if provider in {"jira", "splunk", "github", "ocp", "slack", "teams"}:
             from app.services.integration_config_service import (
-                resolve_global_notification_webhooks,
+                resolve_global_integrations,
             )
 
-            notification_cfg = await resolve_global_notification_webhooks(db)
-            results = [await ALL_PROBES[provider](notification_cfg)]
+            integration_cfg = await resolve_global_integrations(db)
+            results = [await ALL_PROBES[provider](integration_cfg)]
         else:
             results = [await ALL_PROBES[provider]()]
     else:

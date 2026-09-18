@@ -1309,6 +1309,122 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
 
 
 @pytest.mark.asyncio
+async def test_notification_retry_rechecks_review_before_sending_accepted_narrative(
+    monkeypatch,
+):
+    from app.models.postgres import NotificationChannel, NotificationEventType
+    from app.services.notification import manager
+
+    pref = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        channel=NotificationChannel.EMAIL,
+        email_override=None,
+    )
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=pref.project_id,
+        run_id=uuid.uuid4(),
+        preference_id=pref.id,
+        delivery_attempts=1,
+        delivery_token=uuid.uuid4(),
+        event_type=NotificationEventType.AI_ANALYSIS_COMPLETE.value,
+        title="AI summary",
+        body="stale pending draft",
+        delivery_metadata={
+            "pass_rate": 80.0,
+            "_review_gate_v1": {"original_summary": "accepted narrative"},
+        },
+        delivery_key=hashlib.sha256(b"review-aware-notification").hexdigest(),
+    )
+
+    claim_dbs = [MagicMock(), MagicMock()]
+    outcome_dbs = [MagicMock(), MagicMock()]
+    for db in claim_dbs:
+        preferences = MagicMock()
+        preferences.all.return_value = [(pref, "qa@example.test")]
+        recipient = MagicMock()
+        recipient.all.return_value = [(pref.user_id, True, "QA_ENGINEER")]
+        membership = MagicMock()
+        membership.all.return_value = [(pref.user_id, pref.project_id)]
+        db.execute = AsyncMock(side_effect=[preferences, recipient, membership])
+        db.commit = AsyncMock()
+    for db in outcome_dbs:
+        db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+        db.commit = AsyncMock()
+    sessions = iter(
+        [claim_dbs[0], outcome_dbs[0], claim_dbs[1], outcome_dbs[1]]
+    )
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return next(sessions)
+
+        async def __aexit__(self, *_args):
+            return False
+
+    first_decision = object()
+    second_decision = object()
+    refresh = AsyncMock(
+        side_effect=[
+            (
+                "AI summary",
+                "awaiting human review",
+                {"pass_rate": 80.0},
+                first_decision,
+            ),
+            (
+                "AI summary",
+                "accepted narrative",
+                {"pass_rate": 80.0},
+                second_decision,
+            ),
+        ]
+    )
+    send = AsyncMock(side_effect=[("failed", "provider timeout"), ("sent", None)])
+    record_distribution = AsyncMock()
+    monkeypatch.setattr(manager, "AsyncSessionLocal", lambda: _SessionContext())
+    monkeypatch.setattr(
+        manager,
+        "claim_pending_notification_deliveries",
+        AsyncMock(side_effect=[[row], [row]]),
+    )
+    monkeypatch.setattr(
+        manager, "_refresh_review_gated_delivery", refresh, raising=False
+    )
+    monkeypatch.setattr(manager, "_dispatch_to_channel", send)
+    monkeypatch.setattr(
+        "app.services.report_distribution_policy.record_distribution",
+        record_distribution,
+    )
+    monkeypatch.setattr(
+        manager.email_service,
+        "_get_smtp_cfg",
+        AsyncMock(return_value={"enabled": True}),
+    )
+
+    first = await manager.relay_pending_notification_deliveries()
+    row.delivery_attempts = 2
+    row.delivery_token = uuid.uuid4()
+    second = await manager.relay_pending_notification_deliveries()
+
+    assert first == {"claimed": 1, "sent": 0, "retrying": 1, "failed": 0}
+    assert second == {"claimed": 1, "sent": 1, "retrying": 0, "failed": 0}
+    assert [call.args[3] for call in send.await_args_list] == [
+        "awaiting human review",
+        "accepted narrative",
+    ]
+    assert refresh.await_count == 2
+    record_distribution.assert_awaited_once()
+    assert record_distribution.await_args.args[1] is second_decision
+    successful_update = outcome_dbs[1].execute.await_args_list[0].args[0]
+    successful_values = successful_update.compile().params
+    assert "accepted narrative" in successful_values.values()
+    assert "stale pending draft" not in successful_values.values()
+
+
+@pytest.mark.asyncio
 async def test_explicit_digest_delivery_retries_then_updates_subscription_once(
     monkeypatch,
 ):
@@ -1686,7 +1802,13 @@ async def test_terminal_success_repair_uses_completed_summary_stage(
     terminal_result.scalar_one_or_none.return_value = terminal_status
     summary_result = MagicMock()
     summary_result.scalar_one_or_none.return_value = uuid.uuid4()
-    db = SimpleNamespace(execute=AsyncMock(side_effect=[terminal_result, summary_result]))
+    evidence_result = MagicMock()
+    evidence_result.scalar_one_or_none.return_value = "e" * 64
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[terminal_result, summary_result, evidence_result]
+        )
+    )
     stage = AsyncMock(return_value=True)
     monkeypatch.setattr(service, "stage_ai_summary_notification_operation", stage)
 
@@ -1708,6 +1830,8 @@ async def test_terminal_success_repair_uses_completed_summary_stage(
         run_id=run_id,
         project_id=project_id,
         build_number="42",
+        pipeline_run_id=pipeline_run_id,
+        evidence_bundle_sha256="e" * 64,
     )
 
 
@@ -2071,13 +2195,28 @@ async def test_every_staged_payload_binds_to_its_task(monkeypatch):
         MagicMock(), run=run, project=SimpleNamespace(name="payments"), run_ai=True
     )
     await service.stage_ai_summary_notification_operation(
-        MagicMock(), run_id=run.id, project_id=run.project_id, build_number="build-42"
+        MagicMock(),
+        run_id=run.id,
+        project_id=run.project_id,
+        build_number="build-42",
+        pipeline_run_id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
+        evidence_bundle_sha256="a" * 64,
+        source_executive_summary="immutable pipeline summary",
+        source_executive_panel={"status_signal": "NO_GO"},
+        source_summary_is_ai=True,
     )
     await service.stage_live_persist_operation(
         MagicMock(), canonical_run_id=run.id, session=session, final_state={"passed": 1}
     )
 
     payloads = {call.kwargs["operation"]: call.kwargs["payload"] for call in staged.await_args_list}
+    assert payloads["ai_summary_notifications"]["pipeline_run_id"] == (
+        "11111111-1111-4111-8111-111111111111"
+    )
+    assert payloads["ai_summary_notifications"]["evidence_bundle_sha256"] == "a" * 64
+    assert payloads["ai_summary_notifications"]["source_executive_summary"] == (
+        "immutable pipeline summary"
+    )
     assert set(payloads) == set(service._OPERATIONS), (
         "an operation the outbox publishes is not staged here, so its payload is unchecked"
     )

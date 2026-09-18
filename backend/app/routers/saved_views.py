@@ -3,13 +3,14 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import SavedView, User
 from app.models.schemas import (
+    SAVED_VIEW_PAGES,
     SavedViewCreate,
     SavedViewRelease,
     SavedViewResponse,
@@ -20,6 +21,24 @@ from app.services import saved_view_release
 logger = logging.getLogger("routers.saved_views")
 
 router = APIRouter(prefix="/api/v1/saved-views", tags=["Saved Views"])
+
+
+async def _require_view_project_access(
+    db: AsyncSession,
+    current_user: User,
+    view: SavedView,
+) -> None:
+    """Keep direct UUID reads and owner mutations inside current membership."""
+    if view.project_id is None:
+        if view.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            )
+        return
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    await resolve_project_scope(db, current_user, str(view.project_id))
 
 
 def _reader_scope(scoped, allowed):
@@ -77,7 +96,7 @@ async def _with_release(
 @router.get("", response_model=list[SavedViewResponse])
 async def list_saved_views(
     project_id: uuid.UUID | None = None,
-    page: str | None = None,
+    page: SAVED_VIEW_PAGES | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -93,14 +112,23 @@ async def list_saved_views(
     scoped_project_id, allowed = await resolve_project_scope(
         db, current_user, str(project_id) if project_id else None
     )
-    if scoped_project_id is None and allowed is not None:
-        return []
+    owned = SavedView.user_id == current_user.id
+    shared_in_project = (SavedView.is_shared == True) & (  # noqa: E712
+        SavedView.project_id.is_not(None)
+    )
     query = select(SavedView).where(
-        (SavedView.user_id == current_user.id) | (SavedView.is_shared == True)  # noqa: E712
+        owned | shared_in_project
     )
     if project_id:
         query = query.where(
-            (SavedView.project_id == project_id) | (SavedView.project_id.is_(None))
+            (SavedView.project_id == project_id)
+            | (owned & SavedView.project_id.is_(None))
+        )
+    elif allowed is not None:
+        global_owned = owned & SavedView.project_id.is_(None)
+        query = query.where(
+            global_owned
+            | (SavedView.project_id.in_(allowed) if allowed else global_owned)
         )
     # The MCP tool ``list_saved_views`` advertises "page: Optional — restrict to
     # a specific dashboard page" and sent it as a query param. FastAPI ignores
@@ -110,7 +138,18 @@ async def list_saved_views(
     # live before the fix: ?page=trends and ?page=zzz-no-such-page both returned
     # all rows. Declaring it here makes the promise real rather than removing it.
     if page:
-        query = query.where(SavedView.page == page)
+        # Rows created before migration 0049 stored the page only inside the
+        # JSON filters object. Keep those layouts discoverable while new rows
+        # use the indexed column.
+        query = query.where(
+            or_(
+                SavedView.page == page,
+                and_(
+                    SavedView.page.is_(None),
+                    SavedView.filters["page"].as_string() == page,
+                ),
+            )
+        )
     query = query.order_by(SavedView.is_default.desc(), SavedView.name)
     result = await db.execute(query)
     views = result.scalars().all()
@@ -213,6 +252,12 @@ async def get_saved_view(
     view = result.scalar_one_or_none()
     if not view:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+
+    # A shared row is visible only inside its project. ``is_shared`` is not a
+    # workspace-wide capability: without this check, anybody who learned a
+    # shared view UUID could read its name and stored filters across tenants.
+    await _require_view_project_access(db, current_user, view)
+
     # Access check: owner or shared
     if view.user_id != current_user.id and not view.is_shared:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
@@ -245,6 +290,7 @@ async def update_saved_view(
     view = result.scalar_one_or_none()
     if not view:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+    await _require_view_project_access(db, current_user, view)
     if view.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can edit")
 
@@ -280,6 +326,7 @@ async def delete_saved_view(
     view = result.scalar_one_or_none()
     if not view:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+    await _require_view_project_access(db, current_user, view)
     if view.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete")
     await db.delete(view)

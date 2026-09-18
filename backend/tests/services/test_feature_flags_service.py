@@ -13,6 +13,7 @@ import pytest
 
 
 from app.services import feature_flags as ff
+from app.services import feature_flag_service as legacy_ff
 
 
 def _make_user(role: str = "QA_ENGINEER", user_id: str | None = None) -> SimpleNamespace:
@@ -274,6 +275,37 @@ def test_deserialize_flag_handles_missing_keys_with_safe_defaults():
     assert rt["rollout_percent"] == 0
 
 
+@pytest.mark.asyncio
+async def test_update_flag_explicit_null_clears_scope_allowlists(monkeypatch):
+    flag = SimpleNamespace(
+        id=uuid.uuid4(),
+        key="scoped_flag",
+        description=None,
+        enabled_global=True,
+        enabled_projects=[str(uuid.uuid4())],
+        enabled_roles=["ADMIN"],
+        rollout_percent=100,
+        updated_by_user_id=None,
+        created_at=None,
+        updated_at=None,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), add=lambda _row: None)
+    actor = _make_user(role="ADMIN")
+    monkeypatch.setattr(ff, "lock_global_agent_authority", AsyncMock())
+    monkeypatch.setattr(ff, "get_flag", AsyncMock(return_value=flag))
+    monkeypatch.setattr(ff, "_write_audit_entry", lambda *args, **kwargs: None)
+
+    await ff.update_flag(
+        db,
+        key=flag.key,
+        updates={"enabled_projects": None, "enabled_roles": None},
+        actor=actor,
+    )
+
+    assert flag.enabled_projects is None
+    assert flag.enabled_roles is None
+
+
 # ── _legacy_env_fallback ────────────────────────────────────────────────────
 
 
@@ -347,3 +379,105 @@ async def test_is_enabled_redis_none_non_legacy_key_is_false(monkeypatch):
     """A Redis-cached 'no row' for a non-legacy key fails closed."""
     monkeypatch.setattr(ff, "_load_from_redis", AsyncMock(return_value={"__none__": True}))
     assert await ff.is_enabled("random_flag") is False
+
+
+@pytest.mark.asyncio
+async def test_fresh_authority_read_bypasses_shared_cache(monkeypatch):
+    redis_read = AsyncMock(side_effect=AssertionError("must bypass Redis"))
+    redis_write = AsyncMock(side_effect=AssertionError("must not refresh Redis"))
+    db_read = AsyncMock(return_value={
+        "key": "contract_validation",
+        "enabled_global": True,
+        "enabled_projects": [],
+        "enabled_roles": [],
+        "rollout_percent": 100,
+    })
+    monkeypatch.setattr(ff, "_load_from_redis", redis_read)
+    monkeypatch.setattr(ff, "_store_in_redis", redis_write)
+    monkeypatch.setattr(ff, "_load_from_db", db_read)
+    db = object()
+
+    assert await ff.is_enabled(
+        "contract_validation", db=db, project_id=uuid.uuid4(), fresh=True
+    ) is True
+    db_read.assert_awaited_once_with(db, "contract_validation")
+    redis_read.assert_not_awaited()
+    redis_write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_feature_flag_writers_share_the_global_authority_lock(monkeypatch):
+    lock = AsyncMock()
+    monkeypatch.setattr(ff, "lock_global_agent_authority", lock)
+    monkeypatch.setattr(ff, "_write_audit_entry", lambda *_args, **_kwargs: None)
+    actor = SimpleNamespace(id=uuid.uuid4(), username="admin", email="admin@example.test")
+
+    class _DB:
+        def add(self, _row):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def delete(self, _row):
+            return None
+
+    db = _DB()
+    get_flag = AsyncMock(return_value=None)
+    monkeypatch.setattr(ff, "get_flag", get_flag)
+    flag = await ff.create_flag(
+        db,
+        key="contract_validation",
+        description=None,
+        enabled_global=True,
+        enabled_projects=None,
+        enabled_roles=None,
+        rollout_percent=100,
+        actor=actor,
+    )
+    get_flag.return_value = flag
+    await ff.update_flag(
+        db,
+        key=flag.key,
+        updates={"enabled_global": False},
+        actor=actor,
+    )
+    await ff.delete_flag(db, key=flag.key, actor=actor)
+
+    assert lock.await_count == 3
+    assert all(call.args == (db,) for call in lock.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_legacy_feature_flag_writers_share_the_global_authority_lock(monkeypatch):
+    lock = AsyncMock()
+    monkeypatch.setattr(legacy_ff, "lock_global_agent_authority", lock)
+    existing = SimpleNamespace(enabled_global=True, description=None)
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _DB:
+        def __init__(self):
+            self.value = None
+
+        async def execute(self, _statement):
+            return _Result(self.value)
+
+        def add(self, _row):
+            return None
+
+        async def delete(self, _row):
+            return None
+
+    db = _DB()
+    await legacy_ff.set_flag(db, "contract_validation", True)
+    db.value = existing
+    assert await legacy_ff.delete_flag(db, "contract_validation") is True
+
+    assert lock.await_count == 2
+    assert all(call.args == (db,) for call in lock.await_args_list)

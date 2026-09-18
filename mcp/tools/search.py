@@ -30,6 +30,37 @@ def _step_match_note(result: dict, query: str) -> str:
     return ""
 
 
+def _render_global_search(data: dict, query: str) -> str:
+    """Render partial metadata before interpreting an empty item list."""
+    items = data.get("items", [])
+    counts = data.get("entity_counts", {})
+    exact = data.get("counts_are_exact", True)
+    partial = data.get("result_status") == "partial"
+    failed = ", ".join(data.get("failed_entity_types", []))
+    detail = f" Unavailable sources: {failed}." if failed else ""
+
+    if not items:
+        if partial:
+            return (
+                f"No returned results for '{query}', but search was incomplete. "
+                f"Totals are lower bounds.{detail}"
+            )
+        return f"No results for '{query}'."
+
+    suffix = "" if exact else "+"
+    lines = [f"## Global Search: '{query}' ({data.get('total', 0)}{suffix} results)"]
+    if partial:
+        lines.append(f"> Search totals are lower bounds.{detail}")
+    if counts:
+        lines.append("**Entity counts:** " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
+    for result in items[:10]:
+        lines.append(
+            f"- [{result.get('entity_type', '?')}] **{result.get('title', '?')}** "
+            f"— {result.get('subtitle', '')}"
+        )
+    return "\n".join(lines)
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -71,15 +102,4 @@ def register(mcp) -> None:  # noqa: ANN001
             params["project_id"] = project_id
 
         data = await api.get("/api/v1/search/global", params=params)
-        items = data.get("items", [])
-        counts = data.get("entity_counts", {})
-
-        if not items:
-            return f"No results for '{query}'."
-
-        lines = [f"## Global Search: '{query}' ({data.get('total', 0)} results)"]
-        if counts:
-            lines.append("**Entity counts:** " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
-        for r in items[:10]:
-            lines.append(f"- [{r.get('entity_type', '?')}] **{r.get('title', '?')}** — {r.get('subtitle', '')}")
-        return "\n".join(lines)
+        return _render_global_search(data, query)

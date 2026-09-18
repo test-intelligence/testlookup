@@ -6,6 +6,7 @@ import { getData, putData } from './http'
 import { fixerService } from './fixerService'
 
 const view = {
+  config_version: 4,
   config: {
     agent_id: 'fixer', enabled: false, mode: 'shadow',
     extensions: {
@@ -39,13 +40,17 @@ describe('fixerService AgentConfig adapter', () => {
 
     const path = '/api/v1/projects/proj-1/agent-configs/fixer'
     expect(getData).toHaveBeenCalledWith(path)
-    expect(putData).toHaveBeenCalledWith(path, expect.objectContaining({
-      enabled: true,
-      mode: 'suggest',
-      extensions: expect.objectContaining({ fixer: expect.objectContaining({
-        runner: expect.objectContaining({ runner_image: 'python:3.12' }),
-      }) }),
-    }))
+    expect(putData).toHaveBeenCalledWith(
+      path,
+      expect.objectContaining({
+        enabled: true,
+        mode: 'suggest',
+        extensions: expect.objectContaining({ fixer: expect.objectContaining({
+          runner: expect.objectContaining({ runner_image: 'python:3.12' }),
+        }) }),
+      }),
+      { headers: { 'If-Match': '"4"' } },
+    )
     expect(String((putData as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).not.toContain('/fixer/config')
   })
 })

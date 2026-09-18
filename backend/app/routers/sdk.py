@@ -35,14 +35,33 @@ def _zip_directory(dir_path: str, zip_root: str) -> io.BytesIO:
     return buf
 
 
+def _zip_files(base_path: str, filenames: list[str], zip_root: str) -> io.BytesIO:
+    """Zip an explicit SDK manifest without pulling unrelated clients in."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename in filenames:
+            zf.write(
+                os.path.join(base_path, filename),
+                os.path.join(zip_root, filename),
+            )
+    buf.seek(0)
+    return buf
+
+
 _SDK_CONFIGS: dict[str, dict] = {
     "python": {
         "label": "Python",
-        "type": "file",
+        "type": "files",
         "path": "testlookup_reporter.py",
-        "filename": "testlookup_reporter.py",
-        # Use octet-stream so browsers don't rename .py → .txt on Windows
-        "media_type": "application/octet-stream",
+        "files": [
+            "testlookup_reporter.py",
+            "ci_context.py",
+            "commit_range.py",
+            "pyproject.toml",
+            "README.md",
+            "testlookup.yaml.example",
+        ],
+        "filename": "testlookup-python-sdk.zip",
     },
     "go": {
         "label": "Go",
@@ -76,6 +95,11 @@ async def list_sdks() -> JSONResponse:
     for lang, cfg in _SDK_CONFIGS.items():
         full_path = os.path.join(SDK_BASE_PATH, cfg["path"])
         exists = os.path.exists(full_path)
+        if cfg["type"] == "files":
+            exists = all(
+                os.path.isfile(os.path.join(SDK_BASE_PATH, filename))
+                for filename in cfg["files"]
+            )
 
         # For JAR-type SDKs, report whether the built JAR is available
         filename = cfg["filename"]
@@ -102,7 +126,7 @@ async def download_sdk(lang: str):
     """
     Download the SDK for the specified language.
 
-    - **python** — returns `testlookup_reporter.py` directly
+    - **python** — returns a ZIP containing the reporter and its required sibling modules
     - **java** — returns `testlookup-reporter-1.0.0-all.jar` (fat JAR) if built,
       otherwise falls back to a ZIP archive of the source directory
     - **go / js** — returns a ZIP archive of the SDK directory
@@ -130,12 +154,28 @@ async def download_sdk(lang: str):
         "Pragma": "no-cache",
     }
 
-    if cfg["type"] == "file":
-        return FileResponse(
-            path=full_path,
-            filename=cfg["filename"],
-            media_type=cfg["media_type"],
-            headers=_no_cache_headers,
+    if cfg["type"] == "files":
+        missing = [
+            filename
+            for filename in cfg["files"]
+            if not os.path.isfile(os.path.join(SDK_BASE_PATH, filename))
+        ]
+        if missing:
+            logger.warning("sdk_file_not_found", lang=lang, files=missing)
+            raise HTTPException(
+                status_code=503,
+                detail="Python SDK files are incomplete in this environment.",
+            )
+        buf = _zip_files(SDK_BASE_PATH, cfg["files"], zip_root=lang)
+        data = buf.read()
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{cfg["filename"]}"',
+                "Content-Length": str(len(data)),
+                **_no_cache_headers,
+            },
         )
 
     if cfg["type"] == "jar":

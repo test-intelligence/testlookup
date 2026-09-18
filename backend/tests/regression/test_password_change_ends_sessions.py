@@ -175,11 +175,11 @@ async def test_qa_lead_reset_revokes_both_scopes_for_that_user(monkeypatch):
     """
     import app.services.default_qa_lead_service as svc
 
-    access_calls: list[uuid.UUID] = []
+    access_calls: list[tuple[object, uuid.UUID]] = []
     refresh_calls: list[tuple[object, uuid.UUID]] = []
 
-    async def fake_access(user_id):
-        access_calls.append(user_id)
+    async def fake_access(user_id, db=None):
+        access_calls.append((db, user_id))
 
     async def fake_refresh(db, user_id, reason="revoked"):
         refresh_calls.append((db, user_id))
@@ -207,9 +207,11 @@ async def test_qa_lead_reset_revokes_both_scopes_for_that_user(monkeypatch):
 
     await svc.reset_default_qa_lead_password(db, project)
 
-    assert access_calls == [user_id]
+    assert [uid for _, uid in access_calls] == [user_id]
     assert [uid for _, uid in refresh_calls] == [user_id]
-    # The refresh-family revocation must ride the CALLER's transaction, so it
-    # commits with the new hash or not at all.
+    # Both durable revocations must ride the CALLER's transaction, so they
+    # commit with the new hash or not at all. A separate cutoff transaction can
+    # also self-block on the user row this session holds FOR UPDATE.
+    assert access_calls[0][0] is db
     assert refresh_calls[0][0] is db
     assert existing_user.hashed_password != "legacy-hash"

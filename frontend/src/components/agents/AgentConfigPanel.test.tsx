@@ -158,7 +158,7 @@ describe('AgentConfigPanel', () => {
         retry: { ...base.retry, max_attempts: 3 },
         tools: { allowlist: ['check_test_flakiness', 'fetch_app_metrics'] },
         budget: { ...base.budget, max_cost_usd_per_run: 1.25 },
-      }),
+      }, 0),
     )
     await waitFor(() => expect(mutate).toHaveBeenCalled())
   })

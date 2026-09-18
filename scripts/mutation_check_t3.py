@@ -65,8 +65,8 @@ MUTATIONS = (
     ),
     (
         "backend/app/services/review_request_service.py",
-        'if resolved.config.mode == "act":',
-        'if resolved.config.mode == "suggest":',
+        'if mode == "act":',
+        'if mode == "suggest":',
         1,
     ),
     (

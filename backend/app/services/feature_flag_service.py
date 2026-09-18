@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import FeatureFlag
+from app.services.agent_authority_lock import lock_global_agent_authority
 
 logger = logging.getLogger("services.feature_flags")
 
@@ -87,6 +88,7 @@ async def set_flag(
     description: Optional[str] = None,
 ) -> dict:
     """Create or toggle the global on/off state of a flag. Handler commits."""
+    await lock_global_agent_authority(db)
     result = await db.execute(
         select(FeatureFlag).where(FeatureFlag.key == flag_key)
     )
@@ -109,6 +111,7 @@ async def set_flag(
 
 async def delete_flag(db: AsyncSession, flag_key: str) -> bool:
     """Stage deletion of a feature flag. Returns True if a row was found."""
+    await lock_global_agent_authority(db)
     result = await db.execute(
         select(FeatureFlag).where(FeatureFlag.key == flag_key)
     )

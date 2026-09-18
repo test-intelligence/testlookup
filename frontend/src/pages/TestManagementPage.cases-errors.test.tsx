@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
+import { testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
 import { TestCasesTab } from './TestManagementPage'
 
@@ -19,6 +20,17 @@ vi.mock('@/hooks/useNow', () => ({
 vi.mock('@/hooks/useDataFreshness', () => ({
   useDataFreshness: () => Date.parse('2026-09-16T00:00:00Z'),
 }))
+
+vi.mock('@/services/testManagementService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/testManagementService')>()
+  return {
+    ...actual,
+    testManagementService: {
+      ...actual.testManagementService,
+      transitionCase: vi.fn(),
+    },
+  }
+})
 
 vi.mock('react-hot-toast', () => ({
   default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
@@ -137,5 +149,36 @@ describe('TestCasesTab request failures and retries', () => {
     expect(mutateHealth).toHaveBeenCalledTimes(1)
     resolveRetry?.()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry case data' })).toBeEnabled())
+  })
+
+  it('binds deprecation to the rendered case version', async () => {
+    vi.mocked(useTestCases).mockImplementation((params) => ({
+      data: page([testCase()]),
+      error: undefined,
+      isLoading: false,
+      isValidating: false,
+      mutate: params?.size === 200 ? mutateHealth : mutateCases,
+    } as unknown as ReturnType<typeof useTestCases>))
+    vi.mocked(testManagementService.transitionCase).mockResolvedValue({
+      ...testCase(),
+      status: 'deprecated',
+      version: 2,
+    })
+    renderTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deprecate Checkout preserves cart' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deprecate test case' })
+    fireEvent.change(within(dialog).getByRole('textbox'), {
+      target: { value: 'Superseded by checkout v2' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Deprecate' }))
+
+    await waitFor(() => {
+      expect(testManagementService.transitionCase).toHaveBeenCalledWith('case-1', {
+        action: 'deprecate',
+        reason: 'Superseded by checkout v2',
+        expected_version: 1,
+      })
+    })
   })
 })

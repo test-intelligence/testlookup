@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import FeatureFlag, User
+from app.services.agent_authority_lock import lock_global_agent_authority
 
 logger = structlog.get_logger("services.feature_flags")
 
@@ -198,6 +199,7 @@ async def is_enabled(
     db: Optional[AsyncSession] = None,
     project_id: Optional[uuid.UUID] = None,
     user: Optional[User] = None,
+    fresh: bool = False,
 ) -> bool:
     """Resolve a feature flag — the single public entry point.
 
@@ -211,7 +213,7 @@ async def is_enabled(
     # be invalidated reliably across API replicas and prefork Celery workers;
     # it allowed one process to serve an old gate for 30 seconds after another
     # process committed and invalidated the shared Redis entry.
-    redis_flag = await _load_from_redis(key)
+    redis_flag = None if fresh else await _load_from_redis(key)
     if redis_flag is not None:
         if redis_flag.get("__none__"):
             fallback = _legacy_env_fallback(key)
@@ -229,7 +231,8 @@ async def is_enabled(
     else:
         flag_dict = await _load_from_db(db, key)
 
-    await _store_in_redis(key, flag_dict)
+    if not fresh:
+        await _store_in_redis(key, flag_dict)
 
     if flag_dict is None:
         fallback = _legacy_env_fallback(key)
@@ -293,6 +296,7 @@ async def create_flag(
     rollout_percent: int,
     actor: User,
 ) -> FeatureFlag:
+    await lock_global_agent_authority(db)
     existing = await get_flag(db, key)
     if existing is not None:
         from fastapi import HTTPException, status
@@ -327,6 +331,7 @@ async def update_flag(
     actor: User,
 ) -> FeatureFlag:
     from fastapi import HTTPException, status
+    await lock_global_agent_authority(db)
     flag = await get_flag(db, key)
     if flag is None:
         raise HTTPException(
@@ -339,10 +344,14 @@ async def update_flag(
         flag.description = updates["description"]
     if "enabled_global" in updates and updates["enabled_global"] is not None:
         flag.enabled_global = bool(updates["enabled_global"])
-    if "enabled_projects" in updates and updates["enabled_projects"] is not None:
-        flag.enabled_projects = [str(p) for p in updates["enabled_projects"]] or None
-    if "enabled_roles" in updates and updates["enabled_roles"] is not None:
-        flag.enabled_roles = list(updates["enabled_roles"]) or None
+    # Omitted means keep; explicit null or [] means clear the allow-list. The
+    # settings UI uses null for its documented "empty = all" state.
+    if "enabled_projects" in updates:
+        projects = updates["enabled_projects"] or []
+        flag.enabled_projects = [str(p) for p in projects] or None
+    if "enabled_roles" in updates:
+        roles = updates["enabled_roles"] or []
+        flag.enabled_roles = list(roles) or None
     if "rollout_percent" in updates and updates["rollout_percent"] is not None:
         flag.rollout_percent = int(updates["rollout_percent"])
     flag.updated_by_user_id = actor.id
@@ -356,6 +365,7 @@ async def update_flag(
 
 async def delete_flag(db: AsyncSession, *, key: str, actor: User) -> None:
     from fastapi import HTTPException, status
+    await lock_global_agent_authority(db)
     flag = await get_flag(db, key)
     if flag is None:
         raise HTTPException(

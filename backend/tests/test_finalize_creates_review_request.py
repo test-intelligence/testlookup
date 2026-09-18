@@ -35,11 +35,16 @@ class _Result:
 
 
 class _Session:
-    """Execute order in _mark_pipeline_done: the run, its stages, then (for a
-    report run with no final_state) the owning project. Everything after is empty."""
+    """Execute order: parent lock, run lock, stages, then owning project."""
 
     def __init__(self, pipeline, stages, project_id=PROJECT):
-        self._results = [_Result(scalar=pipeline), _Result(scalars=stages), _Result(scalar=project_id)]
+        self._results = [
+            _Result(scalar=pipeline.test_run_id),
+            _Result(scalar=pipeline),
+            _Result(scalars=stages),
+            _Result(scalar=project_id),
+        ]
+        self.statements = []
         self.committed = False
 
     async def __aenter__(self):
@@ -49,6 +54,7 @@ class _Session:
         return False
 
     async def execute(self, _statement):
+        self.statements.append(_statement)
         return self._results.pop(0) if self._results else _Result()
 
     def add(self, _row):
@@ -76,7 +82,9 @@ def _stage(name, status="completed"):
     return SimpleNamespace(stage_name=name, status=status)
 
 
-async def _finalize(monkeypatch, stages, *, success=True, stage_review=None):
+async def _finalize(
+    monkeypatch, stages, *, success=True, stage_review=None, final_state=None
+):
     from app.agents import workflow
     from app.services import agent_action_ledger_service, review_request_service, run_downstream_outbox
 
@@ -87,7 +95,12 @@ async def _finalize(monkeypatch, stages, *, success=True, stage_review=None):
     monkeypatch.setattr(review_request_service, "stage_run_review_request", stage_review)
     monkeypatch.setattr(agent_action_ledger_service, "persist_report_action_proposals", AsyncMock())
     monkeypatch.setattr(run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock())
-    await workflow._mark_pipeline_done(str(pipeline.id), success=success, error=None if success else "boom")
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=success,
+        error=None if success else "boom",
+        final_state=final_state,
+    )
     return pipeline, session, stage_review
 
 
@@ -108,6 +121,17 @@ async def test_a_completed_report_run_stages_its_review_request(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_finalize_locks_test_run_before_pipeline(monkeypatch):
+    _, session, _ = await _finalize(monkeypatch, [_stage("summary")])
+
+    first, second = session.statements[:2]
+    assert "JOIN agent_pipeline_runs" in str(first)
+    assert first._for_update_arg is not None
+    assert second._for_update_arg is not None
+    assert "JOIN agent_pipeline_runs" not in str(second)
+
+
+@pytest.mark.asyncio
 async def test_a_degraded_run_that_still_produced_a_report_is_reviewed(monkeypatch):
     pipeline, _, stage_review = await _finalize(
         monkeypatch, [_stage("summary"), _stage("anomaly_detection", status="failed")]
@@ -123,6 +147,30 @@ async def test_a_run_that_passed_without_a_report_gets_no_request(monkeypatch):
     )
     assert pipeline.status == "passed"
     stage_review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reviewer_flag_forces_review_even_without_a_report_stage(monkeypatch):
+    pipeline, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("ingestion"), _stage("reviewer")],
+        final_state={
+            "project_id": str(PROJECT),
+            "test_run_id": str(uuid.uuid4()),
+            "review_verdict": {
+                "reviewed_steps": ["ingestion"],
+                "verdict": "pass_with_flags",
+                "requires_human_review": True,
+            },
+            "supervisor": {"route": "continue", "requires_human_review": True},
+        },
+    )
+
+    assert pipeline.status == "completed"
+    stage_review.assert_awaited_once()
+    assert stage_review.await_args.kwargs["report_stage_names"] == ["ingestion"]
+    evidence_hash = stage_review.await_args.kwargs["evidence_bundle_sha256"]
+    assert isinstance(evidence_hash, str) and len(evidence_hash) == 64
 
 
 @pytest.mark.asyncio

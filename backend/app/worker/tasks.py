@@ -1,6 +1,6 @@
 """Celery background tasks for ingestion and AI analysis."""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 import uuid
 from typing import Any, cast
@@ -21,6 +21,51 @@ from app.worker.celery_app import celery_app
 #: from the enum and asserted only that each one was accepted, so three
 #: members could be stored and never delivered.
 EVENT_DRIVEN_SCHEDULES = ("PER_RUN", "PER_SUITE", "PER_RELEASE")
+DIGEST_RETRY_DELAY = timedelta(minutes=15)
+
+
+def digest_delivery_updates(
+    *,
+    status: str,
+    now: datetime,
+    scheduled_next: datetime,
+) -> dict:
+    """Return scheduler fields to persist after a delivery attempt.
+
+    The atomic claim moves only ``next_delivery_at``.  A successful send owns
+    the watermark and counter; a provider failure keeps the previous watermark
+    and makes the row due for a bounded retry.  This preserves the failed
+    window without making concurrent beat workers send it twice.
+    """
+    if status == "sent":
+        return {
+            "last_delivered_at": now,
+            "increment_delivery_count": True,
+        }
+    if status == "failed":
+        return {"next_delivery_at": now + DIGEST_RETRY_DELAY}
+    return {}
+
+
+def digest_window_start(
+    *,
+    last_delivered_at: datetime | None,
+    created_at: datetime | None,
+    now: datetime,
+    delta: timedelta,
+) -> datetime:
+    """Anchor first-delivery retries to subscription creation.
+
+    ``next_delivery_at`` is a claim/retry field and therefore cannot define the
+    content window. A first failed attempt has no successful watermark yet;
+    using the current retry time would silently trim the oldest retry delay.
+    """
+    return last_delivered_at or created_at or (now - delta)
+
+
+def digest_email_config_error(smtp_cfg: dict[str, Any]) -> str | None:
+    """Return a delivery error when SMTP would silently skip the message."""
+    return None if smtp_cfg.get("enabled") else "SMTP is disabled"
 
 
 def run_matches_digest_scope(sub, run) -> bool:
@@ -2463,6 +2508,21 @@ def relay_run_downstream_outbox(self):
 
 
 @celery_app.task(
+    name="app.worker.tasks.relay_queued_criteria_deletions",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_queued_criteria_deletions(self):
+    """Recover criteria deletions committed before broker publication."""
+    _bind_task_context(self)
+    from app.services.deletion_job_service import relay_queued_criteria_deletions
+
+    return _run_async(relay_queued_criteria_deletions())
+
+
+@celery_app.task(
     name="app.worker.tasks.recover_waiting_run_finalizations",
     bind=True,
     max_retries=0,
@@ -2991,6 +3051,11 @@ def dispatch_ai_summary_email(
     test_run_id: str,
     project_id: str,
     build_number: str,
+    pipeline_run_id: str | None = None,
+    evidence_bundle_sha256: str | None = None,
+    source_executive_summary: str | None = None,
+    source_executive_panel: dict | None = None,
+    source_summary_is_ai: bool | None = None,
 ):
     """
     EM-1: Send AI executive-summary email after the pipeline completes.
@@ -3017,22 +3082,30 @@ def dispatch_ai_summary_email(
             project = (await db.execute(select(_Project).where(_Project.id == run.project_id))).scalar_one_or_none()
             project_name = project.name if project else str(run.project_id)
 
-        # Load summary from MongoDB
-        mongo = get_mongo_db()
-        doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
-        if not doc:
-            try:
-                doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
-            except (ValueError, TypeError):
-                doc = None
+        # Legacy operations did not freeze their source bytes and still need
+        # the run-wide Mongo document. New operations are self-contained, so a
+        # Mongo outage cannot block their already-durable notification.
+        doc = None
+        if source_executive_summary is None:
+            mongo = get_mongo_db()
+            doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
+            if not doc:
+                try:
+                    doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
+                except (ValueError, TypeError):
+                    doc = None
 
-        executive_summary = ""
-        executive_panel = None
-        if doc:
+        executive_summary = source_executive_summary or ""
+        executive_panel = source_executive_panel
+        if source_executive_summary is None and doc:
             executive_summary = doc.get("executive_summary") or doc.get("layer1_executive_summary") or ""
             executive_panel = doc.get("executive_panel")
         # E8.4: only the Mongo summary is AI-written; the fallback below is not.
-        summary_is_ai = bool(executive_summary)
+        summary_is_ai = (
+            bool(executive_summary)
+            if source_summary_is_ai is None
+            else bool(source_summary_is_ai and executive_summary)
+        )
 
         if not executive_summary:
             # Fallback to deterministic summary
@@ -3043,8 +3116,12 @@ def dispatch_ai_summary_email(
                     executive_summary = fallback.executive_summary
                     executive_panel = fallback.executive_panel
 
+        original_executive_summary = executive_summary
+        original_executive_panel = executive_panel
+
         from app.core.config import settings
         from app.services.notification.manager import (
+            _REVIEW_GATE_METADATA_KEY,
             dispatch_ai_summary_notifications,
             stage_explicit_notification_deliveries,
         )
@@ -3061,37 +3138,39 @@ def dispatch_ai_summary_email(
         # enforced (the event still reaches people, pointing at the review),
         # drafted when the project allows drafts, and audited either way.
         from app.services.report_distribution_policy import (
+            REVIEW_PENDING_NOTICE,
             gate_ai_summary_text,
-            record_distribution,
+            gate_enforced,
         )
 
         summary_withheld = False
         try:
             async with AsyncSessionLocal() as db:
-                executive_summary, summary_decision = await gate_ai_summary_text(
-                    db,
-                    run_id=test_run_id,
-                    project_id=project_id,
-                    summary_text=executive_summary,
-                    ai_generated=summary_is_ai,
-                    channel="ai_summary_notification",
-                )
-                if summary_decision is not None:
-                    await record_distribution(
-                        db, summary_decision, channel="ai_summary_notification",
-                        run_id=test_run_id, project_id=project_id,
+                if summary_is_ai and gate_enforced() and (
+                    not pipeline_run_id
+                    or not evidence_bundle_sha256
+                    or source_executive_summary is None
+                ):
+                    executive_summary = REVIEW_PENDING_NOTICE
+                    summary_decision = None
+                else:
+                    executive_summary, summary_decision = await gate_ai_summary_text(
+                        db,
+                        run_id=test_run_id,
+                        project_id=project_id,
+                        summary_text=executive_summary,
+                        ai_generated=summary_is_ai,
+                        channel="ai_summary_notification",
+                        pipeline_run_id=pipeline_run_id,
+                        evidence_bundle_sha256=evidence_bundle_sha256,
                     )
-                    await db.commit()
             summary_withheld = summary_decision is not None and not summary_decision.allowed
+            if summary_is_ai and executive_summary == REVIEW_PENDING_NOTICE:
+                summary_withheld = True
         except Exception as gate_exc:
             # The gate must never stop the notification itself. If it cannot
             # decide: while enforced, fail CLOSED (send the review notice, not
             # the AI text); while not enforced, behave exactly as before E8.4.
-            from app.services.report_distribution_policy import (
-                REVIEW_PENDING_NOTICE,
-                gate_enforced,
-            )
-
             logger.warning(
                 "[AI Email] review gate unavailable for run %s (%s)",
                 test_run_id, type(gate_exc).__name__,
@@ -3116,6 +3195,13 @@ def dispatch_ai_summary_email(
             failed_tests=_failed_tests,
             dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
             delivery_scope=f"{delivery_scope}:preferences",
+            original_executive_summary=(
+                original_executive_summary if summary_is_ai else None
+            ),
+            original_executive_panel=original_executive_panel,
+            summary_is_ai=summary_is_ai,
+            pipeline_run_id=pipeline_run_id,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         )
 
         # 2. EM-4 + F9: dispatch every EVENT-DRIVEN digest subscription.
@@ -3180,6 +3266,21 @@ def dispatch_ai_summary_email(
                             "failed_tests": _failed_tests,
                             "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
                             "executive_panel": executive_panel,
+                            **(
+                                {
+                                    _REVIEW_GATE_METADATA_KEY: {
+                                        "original_summary": original_executive_summary,
+                                        "accepted_body_prefix": "",
+                                        "withheld_body_prefix": "",
+                                        "original_executive_panel": original_executive_panel,
+                                        "ai_generated": True,
+                                        "pipeline_run_id": pipeline_run_id,
+                                        "evidence_bundle_sha256": evidence_bundle_sha256,
+                                    }
+                                }
+                                if summary_is_ai
+                                else {}
+                            ),
                         },
                     }
                 )
@@ -3965,14 +4066,14 @@ def dispatch_scheduled_digests(self):
         # claim happens per-row via an atomic UPDATE so concurrent invocations
         # of this task (beat hiccup, worker retry, manual trigger) cannot
         # double-dispatch the same email. ``last_delivered_at`` is captured
-        # NOW (pre-claim) because it is the delta-window watermark (US-7.4)
-        # and the claim UPDATE advances it.
+        # before the claim because it is the last successful delta watermark.
         async with AsyncSessionLocal() as db:
             discovery = await db.execute(
                 select(
                     DigestSubscription.id,
                     DigestSubscription.schedule,
                     DigestSubscription.last_delivered_at,
+                    DigestSubscription.created_at,
                     DigestSubscription.send_when_unchanged,
                     DigestSubscription.report_attachment,
                 ).where(
@@ -3994,18 +4095,29 @@ def dispatch_scheduled_digests(self):
         # concurrent worker that already claimed the row will find its WHERE
         # clause false and get rowcount=0 — we skip those.
         #
-        # We deliberately advance next_delivery_at BEFORE sending the email.
-        # If the send fails later we log the failure but do NOT revert the
-        # claim: missing a digest (which the user can manually re-trigger) is
-        # always better than spamming users with duplicates because a crash
-        # between send and commit left the row "still due".
-        for sub_id, schedule, last_delivered_at, send_when_unchanged, report_attachment in due:
+        # We advance only next_delivery_at before sending. The successful
+        # watermark and delivery counter are finalized after the provider call;
+        # a known provider failure moves next_delivery_at to a short retry.
+        for (
+            sub_id,
+            schedule,
+            last_delivered_at,
+            created_at,
+            send_when_unchanged,
+            report_attachment,
+        ) in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
+            scheduled_next = now + delta
             period = "daily" if schedule == "DAILY" else "weekly"
             is_retro = schedule == "WEEKLY_RETRO"
             # Delta window (US-7.4): since the previous successful send,
             # falling back to one schedule period for first-ever deliveries.
-            window_start = last_delivered_at or (now - delta)
+            window_start = digest_window_start(
+                last_delivered_at=last_delivered_at,
+                created_at=created_at,
+                now=now,
+                delta=delta,
+            )
 
             # Each claim runs in its own short transaction so the UPDATE is
             # visible to sibling workers immediately.
@@ -4019,9 +4131,7 @@ def dispatch_scheduled_digests(self):
                         DigestSubscription.next_delivery_at <= now,
                     )
                     .values(
-                        last_delivered_at=now,
-                        next_delivery_at=now + delta,
-                        delivery_count=DigestSubscription.delivery_count + 1,
+                        next_delivery_at=scheduled_next,
                     )
                     .returning(
                         DigestSubscription.user_id,
@@ -4124,6 +4234,7 @@ def dispatch_scheduled_digests(self):
                                 append_digest_html_note,
                             )
                             from app.services.notification.email_service import (
+                                get_smtp_config,
                                 send_html_email_with_attachments,
                             )
 
@@ -4150,12 +4261,19 @@ def dispatch_scheduled_digests(self):
                                     html_body = append_digest_html_note(
                                         html_body, REPORT_BUILD_FAILED_NOTE,
                                     )
-                            await send_html_email_with_attachments(
-                                to_email=user.email,
-                                subject=f"TestLookup — {period.title()} Quality Digest",
-                                html_body=html_body,
-                                attachments=attachments,
-                            )
+                            smtp_cfg = await get_smtp_config()
+                            smtp_error = digest_email_config_error(smtp_cfg)
+                            if smtp_error:
+                                status = "failed"
+                                error_detail = smtp_error
+                            else:
+                                await send_html_email_with_attachments(
+                                    to_email=user.email,
+                                    subject=f"TestLookup — {period.title()} Quality Digest",
+                                    html_body=html_body,
+                                    attachments=attachments,
+                                    smtp_cfg=smtp_cfg,
+                                )
                         except Exception as e:
                             status = "failed"
                             error_detail = str(e)
@@ -4270,6 +4388,26 @@ def dispatch_scheduled_digests(self):
                         status=status,
                         error_detail=error_detail,
                     ))
+                    outcome = digest_delivery_updates(
+                        status=status,
+                        now=now,
+                        scheduled_next=scheduled_next,
+                    )
+                    increment_count = outcome.pop("increment_delivery_count", False)
+                    if increment_count:
+                        outcome["delivery_count"] = DigestSubscription.delivery_count + 1
+                    if outcome:
+                        final_update = update(DigestSubscription).where(
+                            DigestSubscription.id == sub_id
+                        )
+                        # A failed delivery may shorten only the slot this
+                        # attempt claimed. A concurrent pause/resume or schedule
+                        # edit owns its newly calculated next-delivery value.
+                        if status == "failed":
+                            final_update = final_update.where(
+                                DigestSubscription.next_delivery_at == scheduled_next
+                            )
+                        await db.execute(final_update.values(**outcome))
                     await db.commit()
             except Exception as exc:
                 logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
@@ -6019,7 +6157,9 @@ def delete_run_everywhere(
 
         async with AsyncSessionLocal() as db:
             run = (
-                await db.execute(select(TestRun).where(TestRun.id == run_uuid))
+                await db.execute(
+                    select(TestRun).where(TestRun.id == run_uuid).with_for_update()
+                )
             ).scalar_one_or_none()
             if run is None:
                 # Already gone — a duplicate delivery, not a failure. Celery
@@ -6028,6 +6168,12 @@ def delete_run_everywhere(
                 return {"deleted": False, "reason": "already_absent"}
 
             project_uuid = run.project_id
+            mongo = get_mongo_db()
+            blockers = await run_deletion_service.execution_blockers(
+                db, run=run, mongo=mongo
+            )
+            if blockers:
+                raise run_deletion_service.RunDeletionBlocked(run.id, blockers)
 
             # Scoped to the RUN, never the project (RET-D8). None means the
             # store could not be reached — it must not be reported as 0.
@@ -6038,7 +6184,7 @@ def delete_run_everywhere(
             counts = await run_deletion_service.perform_run_deletion(
                 db,
                 run=run,
-                mongo=get_mongo_db(),
+                mongo=mongo,
                 storage=get_storage_provider(),
                 search_index_documents=index_documents,
                 reason=reason,
@@ -6120,9 +6266,10 @@ def execute_criteria_deletion_task(
 
         async with AsyncSessionLocal() as db:
             try:
-                run_ids = await deletion_job_service.claim_frozen_set(
+                run_ids = await deletion_job_service.start_frozen_set(
                     db, job_id=job_uuid, project_id=project_uuid
                 )
+                await db.commit()
             except deletion_job_service.FrozenSetRejected as rejected:
                 # The route already validated this; reaching here means a
                 # duplicate delivery or a race, and re-deleting would be worse
@@ -6132,10 +6279,6 @@ def execute_criteria_deletion_task(
                     job_id, rejected.detail,
                 )
                 return {"executed": False, "reason": rejected.detail}
-
-        await deletion_job_service.close_job(
-            job_uuid, status=deletion_job_service.RUNNING
-        )
 
         mongo = get_mongo_db()
         storage = get_storage_provider()
@@ -6148,13 +6291,23 @@ def execute_criteria_deletion_task(
                 async with AsyncSessionLocal() as db:
                     run = (
                         await db.execute(
-                            select(TestRun).where(TestRun.id == run_id)
+                            select(TestRun)
+                            .where(TestRun.id == run_id)
+                            .with_for_update()
                         )
                     ).scalar_one_or_none()
                     if run is None:
                         # Already gone. Idempotent, not an error.
                         deleted.append(str(run_id))
                         continue
+
+                    blockers = await run_deletion_service.execution_blockers(
+                        db, run=run, mongo=mongo
+                    )
+                    if blockers:
+                        raise run_deletion_service.RunDeletionBlocked(
+                            run.id, blockers
+                        )
 
                     index_documents = await semantic_search.purge_run_documents(
                         str(project_uuid), str(run_id), execute=True
@@ -6189,6 +6342,7 @@ def execute_criteria_deletion_task(
         await deletion_job_service.close_job(
             job_uuid,
             status=status,
+            expected_status=deletion_job_service.RUNNING,
             counts=totals or None,
             resolved_run_ids=deleted or None,
             error="; ".join(failures[:5]) if failures else None,
@@ -6460,6 +6614,7 @@ def run_agent_invocation(self, invocation_id: str):
     from app.agents.workflow import run_deep_pipeline, run_offline_pipeline
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import AgentInvocation, TestRun
+    from app.services.pipeline_cancellation import PipelineCancelled
 
     async def _load() -> dict | None:
         async with AsyncSessionLocal() as db:
@@ -6478,12 +6633,15 @@ def run_agent_invocation(self, invocation_id: str):
                 "build_number": str(build_number or "invocation"),
                 "config_snapshot": getattr(invocation, "resolved_config_snapshot", None),
                 "requested_by": str(invocation.requested_by) if invocation.requested_by else None,
+                "cancel_requested": bool(invocation.cancel_requested),
             }
 
     loaded = _run_async(_load())
     if loaded is None:
         logger.warning("[Task %s] Invocation %s not found", self.request.id, invocation_id)
         return {"invocation_id": invocation_id, "status": "not_found"}
+    if loaded["cancel_requested"]:
+        return {"invocation_id": invocation_id, "status": "cancelled"}
 
     dedup_key = f"testlookup:dedup:invocation:{invocation_id}"
     dedup_owner = str(self.request.id)
@@ -6509,6 +6667,8 @@ def run_agent_invocation(self, invocation_id: str):
             "invocation_id": invocation_id,
             "completed_stages": list(final_state.get("completed_stages", [])),
         }
+    except PipelineCancelled:
+        return {"invocation_id": invocation_id, "status": "cancelled"}
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent invocation failed"
         logger.error(

@@ -22,6 +22,15 @@ import httpx
 import pytest
 from testlookup_cli.app import app
 from testlookup_cli.commands import upload
+from testlookup_cli.errors import (
+    EXIT_AUTH,
+    EXIT_NOT_FOUND,
+    EXIT_PERMISSION,
+    EXIT_TIMEOUT,
+    EXIT_VALIDATION,
+    CLIError,
+    map_http_error,
+)
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -152,9 +161,54 @@ def test_a_503_without_retry_after_backs_off_from_the_base(fake, tmp_path):
 
 def test_a_client_error_is_not_retried(fake, tmp_path):
     fake.install(_Resp(400, {"detail": "unsupported format"}))
-    with pytest.raises(Exception, match="HTTP 400: unsupported format"):
+    with pytest.raises(CLIError, match="Validation error.*unsupported format") as error:
         _upload(tmp_path)
+    assert error.value.exit_code == EXIT_VALIDATION
     assert fake.sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code"),
+    [
+        (400, EXIT_VALIDATION),
+        (401, EXIT_AUTH),
+        (403, EXIT_PERMISSION),
+        (404, EXIT_NOT_FOUND),
+        (408, EXIT_TIMEOUT),
+        (504, EXIT_TIMEOUT),
+    ],
+)
+def test_upload_http_errors_keep_the_stable_exit_code(fake, tmp_path, status, exit_code):
+    fake.install(_Resp(status, {"detail": "refused"}))
+    with pytest.raises(CLIError) as error:
+        _upload(tmp_path)
+    assert error.value.exit_code == exit_code
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code"),
+    [
+        (400, EXIT_VALIDATION),
+        (401, EXIT_AUTH),
+        (403, EXIT_PERMISSION),
+        (404, EXIT_NOT_FOUND),
+        (408, EXIT_TIMEOUT),
+        (504, EXIT_TIMEOUT),
+    ],
+)
+def test_upload_file_command_preserves_http_exit_codes(
+    monkeypatch, tmp_path, status, exit_code
+):
+    monkeypatch.setattr(upload, "resolve_commit_range", lambda **_kw: None)
+
+    async def fail(**_kw):
+        raise map_http_error(status, "refused")
+
+    monkeypatch.setattr(upload, "_upload_file", fail)
+    result = runner.invoke(
+        app, ["upload", "file", str(_report(tmp_path)), "-p", "p", "-b", "1"]
+    )
+    assert result.exit_code == exit_code, result.output
 
 
 def test_retries_stop_at_the_total_budget(fake, tmp_path):
@@ -203,8 +257,9 @@ def test_a_status_not_yet_written_is_waited_for(fake):
 
 def test_an_unknown_upload_fails_after_the_grace_period(fake):
     fake.install(*[_Resp(404, {"detail": "Upload task not found or expired"}) for _ in range(40)])
-    with pytest.raises(Exception, match="HTTP 404"):
+    with pytest.raises(CLIError, match="Not found.*Upload task not found") as error:
         asyncio.run(upload._wait_for_upload("t1"))
+    assert error.value.exit_code == EXIT_NOT_FOUND
 
 
 # ── --wait rides out what a rollout does to a poll (code review of N15) ──
@@ -266,12 +321,30 @@ def test_the_last_poll_comes_at_the_deadline_not_after_it(fake):
     assert fake.sleeps == [10.0]
 
 
-@pytest.mark.parametrize("code", [400, 401, 403, 409, 422])
-def test_an_answer_that_cannot_change_fails_the_wait_at_once(fake, code):
+@pytest.mark.parametrize(
+    ("code", "exit_code"),
+    [
+        (400, EXIT_VALIDATION),
+        (401, EXIT_AUTH),
+        (403, EXIT_PERMISSION),
+        (404, EXIT_NOT_FOUND),
+        (408, EXIT_TIMEOUT),
+        (409, 1),
+        (422, EXIT_VALIDATION),
+    ],
+)
+def test_an_answer_that_cannot_change_fails_the_wait_at_once(
+    fake, monkeypatch, code, exit_code
+):
+    if code == 404:
+        # Move past the creation grace period so this is a terminal not-found.
+        fake.sleeps.append(upload.WAIT_NOT_FOUND_GRACE_SECONDS)
+        monkey_clock = iter([0.0, upload.WAIT_NOT_FOUND_GRACE_SECONDS])
+        monkeypatch.setattr(upload, "_clock", lambda: next(monkey_clock))
     fake.install(_Resp(code, {"detail": "refused"}))
-    with pytest.raises(Exception, match=f"HTTP {code} while waiting for upload t1: refused"):
+    with pytest.raises(CLIError) as error:
         asyncio.run(upload._wait_for_upload("t1"))
-    assert fake.sleeps == []
+    assert error.value.exit_code == exit_code
 
 
 def test_transient_answers_until_the_deadline_fail_with_the_last_one(fake):

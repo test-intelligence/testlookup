@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 pytest.importorskip("httpx")
 pytest.importorskip("jose")
@@ -184,3 +185,36 @@ async def test_flag_status_invalid_project_id_rejected(client, auth_as):
         params={"project_id": "not-a-uuid"},
     )
     assert resp.status_code == 400
+
+
+async def test_flag_status_rejects_inaccessible_project_before_evaluation(
+    client,
+    auth_as,
+):
+    """A project-scoped rollout answer must not bypass tenant authorization."""
+    auth_as(role=UserRole.QA_ENGINEER)
+    project_id = uuid.uuid4()
+    denied = HTTPException(
+        status_code=403,
+        detail="You do not have access to this project",
+    )
+    with (
+        patch(
+            "app.routers.feature_flags.resolve_project_scope",
+            AsyncMock(side_effect=denied),
+        ) as authorize,
+        patch(
+            "app.services.feature_flags.is_enabled",
+            AsyncMock(return_value=True),
+        ) as evaluate,
+    ):
+        resp = await client.get(
+            "/api/v1/feature-flags/manual_upload/status",
+            params={"project_id": str(project_id)},
+        )
+
+    assert resp.status_code == 403
+    assert resp.json() == {"detail": "You do not have access to this project"}
+    authorize.assert_awaited_once()
+    assert authorize.await_args.args[2] == str(project_id)
+    evaluate.assert_not_awaited()

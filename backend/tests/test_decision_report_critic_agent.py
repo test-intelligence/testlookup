@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +17,52 @@ from app.agents.decision_report_critic_agent import (
     review_and_repair_decision_report,
 )
 from app.services.run_evidence_bundle import build_run_evidence_bundle
+
+
+@pytest.mark.asyncio
+async def test_failure_attempt_and_summary_hold_the_subject_lock(monkeypatch):
+    from app.agents import decision_report_critic_agent as critic_module
+
+    locked = False
+
+    @asynccontextmanager
+    async def subject_lock(_test_run_id):
+        nonlocal locked
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+
+    async def record_attempt(*_args, **_kwargs):
+        assert locked, "failure attempt escaped the TestRun share lock"
+        return {
+            "attempt_id": "attempt-1",
+            "status": "rejected",
+            "attempted_at": "2026-09-18T00:00:00+00:00",
+            "supersedes_report_id": None,
+        }
+
+    class Collection:
+        async def update_one(self, *_args, **_kwargs):
+            assert locked, "failure summary escaped the TestRun share lock"
+
+    class Mongo:
+        def __getitem__(self, _name):
+            return Collection()
+
+    monkeypatch.setattr(critic_module, "lock_decision_report_subject", subject_lock)
+    monkeypatch.setattr(critic_module, "get_mongo_db", lambda: Mongo())
+    monkeypatch.setattr(
+        critic_module,
+        "record_decision_report_attempt",
+        AsyncMock(side_effect=record_attempt),
+    )
+
+    agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
+    await agent._persist_failure(_state(), "critic failed closed")
+
+    assert locked is False
 
 
 def _state(**overrides):
@@ -75,6 +122,53 @@ def test_clean_report_passes_all_critic_checks():
 
     assert checks
     assert all(item["status"] == "pass" for item in checks)
+
+
+@pytest.mark.asyncio
+async def test_published_report_emits_release_webhook_with_exact_evidence(
+    monkeypatch,
+):
+    from app.agents import decision_report_critic_agent as critic_module
+    from app.services import release_decision_webhook
+
+    evidence_hash = "e" * 64
+    collection = type(
+        "Collection",
+        (),
+        {"update_one": AsyncMock(return_value=None)},
+    )()
+
+    class _Mongo:
+        def __getitem__(self, _name):
+            return collection
+
+    monkeypatch.setattr(critic_module, "get_mongo_db", lambda: _Mongo())
+    monkeypatch.setattr(
+        critic_module,
+        "publish_decision_report",
+        AsyncMock(
+            return_value={
+                "report_id": "report-1",
+                "report_version": 1,
+                "supersedes_report_id": None,
+                "status": "published",
+                "generated_at": "2026-09-17T00:00:00+00:00",
+                "evidence_bundle_sha256": evidence_hash,
+            }
+        ),
+    )
+    emit = AsyncMock(return_value=1)
+    monkeypatch.setattr(release_decision_webhook, "emit_release_decided", emit)
+
+    agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
+    await agent._persist(_state(), {"verification": {"status": "passed"}}, "# report")
+
+    emit.assert_awaited_once_with(
+        "run-1",
+        trigger=release_decision_webhook.TRIGGER_AGENT,
+        pipeline_run_id="pipeline-1",
+        evidence_bundle_sha256=evidence_hash,
+    )
 
 
 def test_bounded_repair_restores_metrics_release_disclosures_and_hash():

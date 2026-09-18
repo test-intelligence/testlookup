@@ -336,6 +336,7 @@ def _invocation(**overrides):
         "id": uuid.uuid4(), "project_id": uuid.uuid4(), "agent_id": "agent.summary.v1",
         "stage_name": "summary", "test_run_id": uuid.uuid4(), "pipeline_run_id": uuid.uuid4(),
         "workflow_type": "offline", "mode": "async", "created_at": datetime.now(timezone.utc),
+        "cancel_requested": False, "requested_by": None,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -367,6 +368,25 @@ def test_status_and_attempts_are_read_from_the_pipeline_run():
     view = project_invocation(invocation, _pipeline(invocation, status="retry_wait", attempt=2), None)
     assert (view["status"], view["attempt"], view["max_attempts"]) == ("in_progress", 2, 5)
     assert view["links"]["pipeline"] == f"/api/v1/agents/pipelines/{invocation.pipeline_run_id}"
+
+
+def test_invocation_view_discloses_only_its_sanitized_frozen_config():
+    from app.routers.agent_invoke import project_invocation
+
+    snapshot = {
+        "schema_version": 1,
+        "agent_id": "agent.summary.v1",
+        "source": "project",
+        "config_version": 7,
+        "patched": True,
+        "config": {"mode": "shadow", "tools": {"allowlist": []}},
+        "unavailable_tiers": ["llm"],
+    }
+    invocation = _invocation(resolved_config_snapshot=snapshot)
+    view = project_invocation(invocation, _pipeline(invocation), None)
+    assert view["config_snapshot"] == snapshot
+    assert "api_key" not in str(view["config_snapshot"])
+    assert "base_url" not in str(view["config_snapshot"])
 
 
 def test_a_settled_review_is_carried_with_its_link():
@@ -469,6 +489,66 @@ def test_the_worker_runs_the_invocation_as_a_restricted_pipeline_under_the_minte
     assert out["completed_stages"] == ["ingestion", "summary"]
 
 
+def test_the_worker_does_not_start_an_invocation_cancelled_while_queued(monkeypatch):
+    pytest.importorskip("celery")
+    import app.agents.workflow as workflow
+    from app.worker import tasks
+
+    invocation = _invocation(cancel_requested=True)
+
+    class _Session:
+        async def get(self, _model, _id):
+            return invocation
+
+        async def execute(self, _stmt):
+            return _Result("build-7")
+
+    @asynccontextmanager
+    async def _factory():
+        yield _Session()
+
+    offline = AsyncMock()
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
+    monkeypatch.setattr(workflow, "run_offline_pipeline", offline)
+    monkeypatch.setattr(tasks, "_run_async", asyncio.run)
+
+    out = tasks.run_agent_invocation.run(str(invocation.id))
+
+    assert out == {"invocation_id": str(invocation.id), "status": "cancelled"}
+    offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_creation_rechecks_queued_cancellation_under_the_invocation_lock(monkeypatch):
+    import app.agents.workflow as workflow
+    from app.services.pipeline_cancellation import PipelineCancelled
+
+    invocation = _invocation(cancel_requested=True)
+    statements = []
+
+    class _Session:
+        async def execute(self, stmt):
+            statements.append(stmt)
+            return _Result(invocation)
+
+    @asynccontextmanager
+    async def _factory():
+        yield _Session()
+
+    monkeypatch.setattr(workflow, "AsyncSessionLocal", _factory)
+
+    with pytest.raises(PipelineCancelled):
+        await workflow._create_pipeline_run(
+            str(invocation.pipeline_run_id),
+            str(invocation.test_run_id),
+            str(invocation.project_id),
+            "offline",
+            invocation_stage="summary",
+        )
+
+    assert len(statements) == 1 and "FOR UPDATE" in str(statements[0])
+
+
 def test_deep_pipeline_accepts_the_invocation_arguments():
     import app.agents.workflow as workflow
 
@@ -501,6 +581,7 @@ def test_the_migration_and_model_agree():
         MIGRATION.with_name("0177_agent_invocation_dispatched_at.py"),
         MIGRATION.with_name("0178_agent_invocation_idempotency.py"),
         MIGRATION.with_name("0181_agent_invocation_config_snapshot.py"),
+        MIGRATION.with_name("0191_agent_invocation_cancel_intent.py"),
     ):
         migrated |= {
             call.args[0].value

@@ -24,6 +24,7 @@ pytest.importorskip("aiosmtplib")  # manager → email_service imports it; runs 
 
 from app.models.postgres import NotificationChannel, NotificationEventType  # noqa: E402
 from app.services.notification import manager as mgr  # noqa: E402
+from app.services.notification import email_service  # noqa: E402
 
 
 class _FakeDB:
@@ -61,7 +62,8 @@ async def _dispatched_event(pass_rate: float, threshold: float):
     rows = [(_pref(threshold), "u@x.com")]
     sent = AsyncMock(return_value=("sent", None))
     with patch.object(mgr, "AsyncSessionLocal", lambda: _FakeDB(rows)), \
-         patch.object(mgr, "_dispatch_to_channel", sent):
+         patch.object(mgr, "_dispatch_to_channel", sent), \
+         patch.object(email_service, "_get_smtp_cfg", AsyncMock(return_value=None)):
         await mgr.dispatch_run_notifications(
             project_id=uuid.uuid4(), run_id=uuid.uuid4(), build_number="42",
             pass_rate=pass_rate, total_tests=100, failed_tests=10,

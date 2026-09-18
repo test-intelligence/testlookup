@@ -822,6 +822,8 @@ async def semantic_search(
     status: Optional[str] = None,
     days: Optional[int] = None,
     allowed_project_ids: Optional[set] = None,
+    *,
+    raise_on_provider_error: bool = False,
 ) -> tuple[list[dict], int, int]:
     """
     Vector-similarity search against ChromaDB.
@@ -851,7 +853,11 @@ async def semantic_search(
 
         query_kwargs: dict = {
             "query_texts": [q],
-            "n_results": min((page + 1) * size, 200),
+            # Date filtering happens after Chroma retrieval because its ISO
+            # string comparison is unreliable. Use the full bounded window
+            # when a date filter is active so older high-ranked hits do not
+            # crowd out recent eligible evidence from the tiny page window.
+            "n_results": 200 if days else min((page + 1) * size, 200),
             "include": ["documents", "distances", "metadatas"],
         }
         if where:
@@ -860,6 +866,8 @@ async def semantic_search(
         results = await asyncio.to_thread(collection.query, **query_kwargs)
 
     except Exception as exc:
+        if raise_on_provider_error:
+            raise
         logger.warning("ChromaDB query failed — returning empty semantic results: %s", exc)
         return [], 0, 0
 
@@ -996,14 +1004,21 @@ async def hybrid_search(
     # timing-dependent). The two reads are independent, so serialising them
     # gives identical results without the concurrency hazard. (A genuinely
     # parallel version would need a second, isolated session.)
+    # Every page must rank the SAME candidate universe. Expanding the pool by
+    # page lets newly fetched candidates re-rank ahead of earlier pages, which
+    # duplicates or skips rows as a user advances. Use the fixed 200-result
+    # bounded universe for stable pagination and disclose the lower-bound total
+    # in the router response.
+    candidate_size = 200
     keyword_results, kw_total, _ = await search_test_cases_query(
-        db, q=q, page=1, size=size * 2,
+        db, q=q, page=1, size=candidate_size,
         project_id=project_id, status=status, days=days,
         allowed_project_ids=allowed_project_ids,
     )
     sem_results, _, _ = await semantic_search(
-        db, q, 1, size * 2, project_id, status, days,
+        db, q, 1, candidate_size, project_id, status, days,
         allowed_project_ids=allowed_project_ids,
+        raise_on_provider_error=True,
     )
 
     from app.services.search_ranking import compute_hybrid_score, build_match_reasons

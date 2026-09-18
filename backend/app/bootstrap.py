@@ -95,6 +95,10 @@ from starlette.routing import request_response
 
 
 PUBLIC_ROUTERS: Sequence[APIRouter] = (
+    # EventSource cannot send Authorization. The only route on this router
+    # redeems a short-lived, single-use invocation ticket issued by the
+    # protected agent-invocation router.
+    agent_invoke.stream_router,
     auth.router,
     # MFA is public for the same reason auth is: /mfa/verify and the forced
     # enrollment path carry an interstitial MFA token, not an access token, so

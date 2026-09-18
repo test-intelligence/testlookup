@@ -1,8 +1,10 @@
 """Intelligence commands — show, refresh."""
 import asyncio
+
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.errors import exit_code_for
 
 intelligence_app = typer.Typer(name="intelligence", help="Run intelligence and AI analysis")
 
@@ -40,7 +42,7 @@ def show(
         output.print_review_notice(data)
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))
 
 
 @intelligence_app.command("refresh")
@@ -54,4 +56,4 @@ def refresh(
         output.print_success(f"Intelligence refreshed for run {run_id}")
     except Exception as e:
         output.print_error(str(e))
-        raise typer.Exit(1)
+        raise typer.Exit(exit_code_for(e))

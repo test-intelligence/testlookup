@@ -70,6 +70,19 @@ def test_auto_uses_the_g2_unlocked_summary_slm_default():
     assert choice.reason == "tier"
 
 
+def test_supervisor_retry_override_selects_llm_over_configured_slm():
+    choice = choose_model(
+        "summary",
+        _resolved("summary", tier="slm"),
+        budget_remaining_usd=1.0,
+        tier_override="llm",
+    )
+
+    assert choice.tier == "llm"
+    assert choice.endpoint is not None and choice.endpoint.model == "large"
+    assert choice.reason == "supervisor_retry"
+
+
 def test_router_refuses_unbudgeted_and_over_budget_model_calls():
     unbudgeted = choose_model(
         "ingestion",

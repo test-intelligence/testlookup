@@ -875,9 +875,7 @@ def _member_user(role="QA_ENGINEER"):
 
 @pytest.mark.asyncio
 async def test_require_run_access_rejects_inaccessible_run():
-    """IDOR enforcement: a non-admin who is NOT a member of the run's owning
-    project must be denied (403) even with a valid, existing run_id — the guard
-    verifies the PROVIDED run_id, not merely the None path."""
+    """A non-member must receive the same response as an unknown run."""
     from app.core.deps import require_run_access
 
     owning_project = uuid.uuid4()
@@ -888,7 +886,8 @@ async def test_require_run_access_rejects_inaccessible_run():
 
     with pytest.raises(HTTPException) as ei:
         await check(_fake_request(run_id), db=db, current_user=user)
-    assert ei.value.status_code == 403
+    assert ei.value.status_code == 404
+    assert ei.value.detail == "Test run not found"
 
 
 @pytest.mark.asyncio

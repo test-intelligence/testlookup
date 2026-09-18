@@ -23,7 +23,9 @@ satisfy, so a route already carrying ``project_id`` passes it with
 """
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 
 import pytest
 
@@ -55,8 +57,20 @@ def _code_only(fn) -> str:
     wrong reason. Assert against the executable body only.
     """
     src = inspect.getsource(fn)
-    doc = fn.__doc__
-    return src.replace(doc, "", 1) if doc else src
+    tree = ast.parse(textwrap.dedent(src))
+    function = tree.body[0]
+    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        raise AssertionError("expected function source")
+    if not function.body or not isinstance(function.body[0], ast.Expr):
+        return src
+    doc_node = function.body[0]
+    if not isinstance(doc_node.value, ast.Constant) or not isinstance(
+        doc_node.value.value, str
+    ):
+        return src
+    lines = src.splitlines(keepends=True)
+    del lines[doc_node.lineno - 1 : doc_node.end_lineno]
+    return "".join(lines)
 
 
 # ── NFR1 ─────────────────────────────────────────────────────────────────────

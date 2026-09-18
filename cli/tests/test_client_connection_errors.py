@@ -160,6 +160,21 @@ def test_status_errors_still_flow_through_map_http_error(monkeypatch, tmp_path):
     assert ei.value.exit_code == EXIT_NOT_FOUND
 
 
+def test_bad_request_uses_the_validation_exit_code(monkeypatch, tmp_path):
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: _StatusClient(
+            400, body={"detail": "Invalid run ID"}, **kw
+        ),
+    )
+    with pytest.raises(CLIError) as ei:
+        asyncio.run(client.request("GET", "/api/v1/runs/not-a-uuid"))
+    assert ei.value.exit_code == 2
+    assert "Invalid run ID" in str(ei.value)
+
+
 # ── the server's ``detail`` reaches the user on both paths ─────────────────
 
 

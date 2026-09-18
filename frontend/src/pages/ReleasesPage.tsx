@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
@@ -18,6 +18,7 @@ import { useReleases, useRelease } from '@/hooks/useReleases'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { releasesService } from '@/services/releasesService'
 import { useRuns } from '@/hooks/useRuns'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
 import VerdictBand from '@/components/releases/VerdictBand'
@@ -60,7 +61,7 @@ interface ReleaseModalProps {
   initial?: Release
 }
 
-function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProps) {
+export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProps) {
   const [name, setName]           = useState(initial?.name ?? '')
   const [version, setVersion]     = useState(initial?.version ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
@@ -69,6 +70,7 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
     initial?.planned_date ? initial.planned_date.slice(0, 10) : '',
   )
   const [saving, setSaving] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function save() {
     if (!name.trim()) { toast.error('Release name is required'); return }
@@ -104,11 +106,11 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="release-form-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-form-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 id="release-form-title" className="text-base font-semibold text-[var(--color-text)]">{initial ? 'Edit Release' : 'New Release'}</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close release dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
           <div>
@@ -165,7 +167,7 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
 
 // ── Link Run Modal ──────────────────────────────────────────────────────────
 
-function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
+export function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   releaseId: string
   phases: ReleasePhase[]
   onClose: () => void
@@ -176,6 +178,7 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   const [selectedRun, setSelectedRun] = useState('')
   const [selectedPhase, setSelectedPhase] = useState('')
   const [saving, setSaving] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function link() {
     if (!selectedRun) { toast.error('Select a test run'); return }
@@ -193,11 +196,11 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="link-test-run-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="link-test-run-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 id="link-test-run-title" className="text-base font-semibold text-[var(--color-text)]">Link Test Run</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close link test run dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
           <div>
@@ -346,6 +349,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   onEdit: (r: Release) => void
 }) {
   const navigate = useNavigate()
+  const { hash } = useLocation()
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
@@ -356,6 +360,12 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   // run because it reads ``detail.metrics`` from the API, not this slice.
   const LINKED_PAGE_SIZE = 25
   const [linkedPage, setLinkedPage] = useState(1)
+
+  useEffect(() => {
+    if (!detail || !hash.startsWith('#phase-')) return
+    const targetId = decodeURIComponent(hash.slice(1))
+    document.getElementById(targetId)?.scrollIntoView({ block: 'center' })
+  }, [detail, hash])
 
   async function updatePhaseStatus(phaseId: string, status: string) {
     try {
@@ -548,7 +558,11 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Release Phases</h3>
         <div className="space-y-2">
           {(detail.phases ?? []).map((phase, i) => (
-            <div key={phase.id} className="flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group">
+            <div
+              id={`phase-${phase.id}`}
+              key={phase.id}
+              className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
+            >
               <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
                 {i + 1}
               </div>
@@ -678,18 +692,36 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function ReleasesPage() {
+  const { releaseId } = useParams<{ releaseId: string }>()
   const project   = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
+  const projects = useProjectStore(s => s.projects)
 
-  const { data, isLoading, error: releasesError, mutate: refetch } = useReleases()
+  const { data, isLoading: listLoading, error: releasesError, mutate: refetch } = useReleases()
+  const {
+    data: routedRelease,
+    isLoading: routedReleaseLoading,
+    error: routedReleaseError,
+    mutate: refetchRoutedRelease,
+  } = useRelease(releaseId ?? null)
   // Memoize so the array identity is stable across renders — the downstream
-  // `derived` useMemo keys on it, and a fresh `data?.items ?? []` literal each
-  // render would defeat that memo (exhaustive-deps).
-  const releases: Release[] = useMemo(() => data?.items ?? [], [data])
+  // `derived` useMemo keys on it. A detail URL resolves through its own
+  // authorized fetch, independently of whichever project is persisted in the
+  // global picker; the list route remains scoped by that picker.
+  const releases: Release[] = useMemo(
+    () => releaseId ? (routedRelease ? [routedRelease] : []) : (data?.items ?? []),
+    [data, releaseId, routedRelease],
+  )
+  const isLoading = releaseId ? routedReleaseLoading : listLoading
+  const pageError = releaseId ? routedReleaseError : releasesError
+  const routedProjectName = projects.find(item => item.id === routedRelease?.project_id)?.name
+  const scopeName = releaseId
+    ? (routedRelease?.project_name ?? routedProjectName ?? 'the linked project')
+    : (project?.name ?? 'this project')
 
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
-  const [expandedId, setExpandedId]   = useState<string | null>(null)
+  const [expandedId, setExpandedId]   = useState<string | null>(releaseId ?? null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
 
@@ -743,11 +775,12 @@ export default function ReleasesPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   // M21: an outage used to render "No releases yet" and a create-release CTA.
-  if (releasesError && !data) {
-    return <DataUnavailable error={releasesError} onRetry={() => void refetch()} testId="releases-data-unavailable" />
+  if (pageError && releases.length === 0) {
+    const retry = releaseId ? refetchRoutedRelease : refetch
+    return <DataUnavailable error={pageError} onRetry={() => void retry()} testId="releases-data-unavailable" />
   }
 
-  if (!project && !isAllProjects) {
+  if (!releaseId && !project && !isAllProjects) {
     return (
       <EmptyState
         icon={<Package className="h-10 w-10" />}
@@ -772,9 +805,11 @@ export default function ReleasesPage() {
         <PageHeader
           title="Releases"
           subtitle={
-            isAllProjects
-              ? `${stageCounts.all} active across all projects`
-              : `${stageCounts.all} active across ${project?.name ?? 'this project'}`
+            releaseId
+              ? `${stageCounts.all} active across ${scopeName}`
+              : isAllProjects
+                ? `${stageCounts.all} active across all projects`
+                : `${stageCounts.all} active across ${scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
           actions={
@@ -793,7 +828,7 @@ export default function ReleasesPage() {
               >
                 <Calendar className="h-3.5 w-3.5" /> Calendar view
               </button>
-              {!isAllProjects && (
+              {!isAllProjects && !releaseId && (
                 <button
                   onClick={() => { setEditRelease(undefined); setShowModal(true) }}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
@@ -896,9 +931,8 @@ export default function ReleasesPage() {
                       release={r}
                       onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
                     />
-                    {/* Inline detail panel — preserves the existing
-                        expand-to-view-runs flow without forcing a per-release
-                        route this redesign explicitly defers. */}
+                    {/* Inline detail panel — release detail URLs initialize
+                        this expansion while list clicks keep the same flow. */}
                     {expandedId === r.id && (
                       <div
                         className="mt-2 rounded-xl border p-4"
@@ -923,7 +957,7 @@ export default function ReleasesPage() {
                         </div>
                         <ReleaseDetailPanel
                           releaseId={r.id}
-                          projectId={projectId ?? ''}
+                          projectId={r.source.project_id || projectId || ''}
                           onEdit={src => { setEditRelease(src); setShowModal(true) }}
                         />
                       </div>

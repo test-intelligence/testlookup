@@ -165,11 +165,20 @@ class WorkflowState(TypedDict):
     _cost_budget_block: bool
     _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
     _workflow_loop_iterations: dict[str, int]  # bounded custom-workflow loop counters
+    review_verdict: dict  # generic reviewer contract used by typed branches
+    supervisor: dict  # deterministic reviewer routing decision
+    step_llm_budget: dict  # shared serialisable reviewer/loop/escalation budget
+    _workflow_step_llm_budgets: Annotated[dict[str, dict], _merge_dicts]
+    _workflow_tier_overrides: Annotated[dict[str, str], _merge_dicts]
+    review_retry_count: int
+    review_max_iterations: int
     _workflow_step_outputs: Annotated[dict[str, dict], _merge_dicts]
     _checkpoint_stages: list[str]  # stage outputs restored from a previous authorized checkpoint
     _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages
     workflow_plan: dict  # deterministic planner output for expected stage path
     initial_workflow_plan: dict  # immutable planner snapshot captured before execution
+    workflow_agent_configs: dict[str, dict]  # frozen compiler/runtime authority per capability
+    resolved_agent_configs: dict[str, dict]  # credential-free effective snapshots per capability
     workflow_verification: dict  # verifier checks comparing final state to plan
     agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)

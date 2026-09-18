@@ -166,7 +166,7 @@ function AgentConfigForm({
     if (!dirty || invalidFields.length > 0 || saving) return
     setSaving(true)
     try {
-      await agentGovernanceService.updateAgentConfig(projectId, view.agent_id, doc)
+      await agentGovernanceService.updateAgentConfig(projectId, view.agent_id, doc, view.config_version)
       setServerErrors([])
       toast.success(`${title} configuration saved`)
       onSaved()

@@ -266,49 +266,40 @@ async def chunk_and_index(
     # Retire existing active chunks for this source
     await retire_chunks_for_source(db, source.id)
 
-    # Upsert into ChromaDB
-    try:
-        collection = await _get_or_create_knowledge_collection()
-        ids = []
-        documents = []
-        metadatas = []
+    # A source is searchable only when every chunk was accepted by ChromaDB.
+    # Let failures reach ``run_sync`` so it records FAILED rather than claiming
+    # the source is synced while only PostgreSQL metadata exists.
+    collection = await _get_or_create_knowledge_collection()
+    ids = []
+    documents = []
+    metadatas = []
 
-        for chunk in chunks:
-            chunk_id = str(uuid.uuid4())
-            ids.append(chunk_id)
-            documents.append(chunk.text)
-            metadatas.append({
-                "source_id": str(source.id),
-                "project_id": str(source.project_id),
-                "source_type": source.source_type,
-                "section_heading": chunk.section_heading or "",
-                "requirement_id": chunk.requirement_id or "",
-                "chunk_index": chunk.chunk_index,
-                "sync_version": sync_version,
-                "is_active": 1,
-                "synced_at": datetime.now(timezone.utc).isoformat(),
-            })
+    for chunk in chunks:
+        chunk_id = str(uuid.uuid4())
+        ids.append(chunk_id)
+        documents.append(chunk.text)
+        metadatas.append({
+            "source_id": str(source.id),
+            "project_id": str(source.project_id),
+            "source_type": source.source_type,
+            "section_heading": chunk.section_heading or "",
+            "requirement_id": chunk.requirement_id or "",
+            "chunk_index": chunk.chunk_index,
+            "sync_version": sync_version,
+            "is_active": 1,
+            "synced_at": datetime.now(timezone.utc).isoformat(),
+        })
 
-        # Batch upsert
-        batch_size = 100
-        for i in range(0, len(ids), batch_size):
-            batch_ids = ids[i:i + batch_size]
-            batch_docs = documents[i:i + batch_size]
-            batch_meta = metadatas[i:i + batch_size]
-            await asyncio.to_thread(
-                collection.upsert,
-                ids=batch_ids,
-                documents=batch_docs,
-                metadatas=batch_meta,
-            )
-
-        logger.info("chromadb_chunks_indexed", chunk_count=len(chunks), source_id=str(source.id))
-    except Exception as exc:
-        logger.warning(
-            "chromadb_indexing_failed_chunks_saved_to_pg",
-            source_id=str(source.id),
-            error=str(exc),
+    batch_size = 100
+    for i in range(0, len(ids), batch_size):
+        await asyncio.to_thread(
+            collection.upsert,
+            ids=ids[i:i + batch_size],
+            documents=documents[i:i + batch_size],
+            metadatas=metadatas[i:i + batch_size],
         )
+
+    logger.info("chromadb_chunks_indexed", chunk_count=len(chunks), source_id=str(source.id))
 
     # Persist chunk metadata to PostgreSQL
     for i, chunk in enumerate(chunks):

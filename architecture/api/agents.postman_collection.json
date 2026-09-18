@@ -171,21 +171,14 @@
                 "cancel"
               ]
             },
-            "description": "Cancel an invocation cooperatively, exactly as its pipeline run is cancelled.\n\nA run with no live worker stops now; a running one is asked to stop and\nterminalises at its next stage boundary. Cancellation is sticky: an\nautomatic retry never brings it back. An invocation whose run has not been\ncreated yet has nothing to cancel (409)."
+            "description": "Cancel an invocation cooperatively, exactly as its pipeline run is cancelled.\n\nA run with no live worker stops now; a running one is asked to stop and\nterminalises at its next stage boundary. Cancellation is sticky: an\nautomatic retry never brings it back. Cancellation before the worker\ncreates a run is stored on the invocation and rechecked under a row lock."
           }
         },
         {
           "name": "Stream Invocation Events",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-API-Key",
-                "value": "{{api_key}}",
-                "disabled": true,
-                "description": "Instead of the bearer token: a project API key."
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}/events?ticket={{ticket}}",
               "host": [
@@ -281,7 +274,7 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{$guid}}",
-                "description": "Client-generated key (UUID or ULID). The same key with the same request returns the invocation it created (200); with a different request, 422; while the first request is still being handled, 409. Scoped to your user and project."
+                "description": "Client-generated key (UUID or ULID). The same key with the same request returns the invocation it created (200); with a different request, 422; while the first request is still being handled, 409. Scoped to your user, project, and agent route."
               },
               {
                 "key": "X-API-Key",

@@ -22,6 +22,7 @@ from app.services.ml.flaky_confidence import (
     FlakyConfidenceModel,
     build_flaky_feature_vector,
 )
+from app.services.workflow_step_context import tool_allowed
 from app.tools.fetch_build_changes import fetch_build_changes
 
 logger = structlog.get_logger("agents.flaky_sentinel")
@@ -241,7 +242,11 @@ class FlakySentinelAgent(BaseAgent):
 
         # Fetch build changes around onset
         change_summary = "Build change lookup skipped."
-        if flaky_since_build != "unknown" and last_stable_build != "unknown":
+        if (
+            flaky_since_build != "unknown"
+            and last_stable_build != "unknown"
+            and tool_allowed("fetch_build_changes")
+        ):
             try:
                 changes_json = await fetch_build_changes.ainvoke({
                     "params_json": json.dumps({

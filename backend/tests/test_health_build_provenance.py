@@ -138,3 +138,28 @@ def test_ci_backend_image_receives_exact_build_provenance():
     assert 'ARG BUILD_DATE=""' in dockerfile
     assert "BUILD_REVISION=$BUILD_REVISION" in dockerfile
     assert "BUILD_DATE=$BUILD_DATE" in dockerfile
+
+
+def test_homelab_backend_image_receives_exact_build_provenance():
+    """A homelab build must identify the commit that its image contains.
+
+    The health endpoint cannot prove that the requested candidate is serving
+    when the deploy script leaves both Docker build arguments empty.  Refuse a
+    tracked dirty tree, derive the values once, and pass both arguments to the
+    backend production build.
+    """
+    root = Path(__file__).resolve().parents[2]
+    deploy = (root / "homelabsetup/deploy-homelab.sh").read_text(encoding="utf-8")
+
+    assert 'BUILD_REVISION="$(git rev-parse HEAD)"' in deploy
+    assert 'BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in deploy
+    assert 'git -C "$repo_root" diff --quiet --ignore-submodules --' in deploy
+    assert 'git -C "$repo_root" diff --cached --quiet --ignore-submodules --' in deploy
+    assert 'git -C "$repo_root" status --porcelain' in deploy
+    assert '--untracked-files=all --ignored=matching --' in deploy
+
+    backend_build = deploy.split('log "Building backend image', 1)[1].split(
+        'log "Building frontend image', 1
+    )[0]
+    assert '--build-arg BUILD_REVISION="$BUILD_REVISION"' in backend_build
+    assert '--build-arg BUILD_DATE="$BUILD_DATE"' in backend_build

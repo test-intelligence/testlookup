@@ -37,8 +37,6 @@ export interface VisualizationInstance {
 // so the catalog itself is not part of this registry's public surface.
 const WIDGET_CATALOG: WidgetDef[] = [
   // ── Dashboard widgets ────────────────────────────────────────
-  { id: 'pass_fail_trend',     label: 'Pass/Fail Trend',          description: 'Execution trend showing passed, failed, and skipped tests over time',              pages: ['dashboard', 'trends'], chartType: 'line',        dataSource: 'trends',   defaultEnabled: true },
-  { id: 'execution_volume',    label: 'Test Volume Growth',       description: 'Cumulative test execution volume as area chart',                                   pages: ['dashboard', 'trends'], chartType: 'area',        dataSource: 'trends',   defaultEnabled: true },
   { id: 'total_executions_kpi', label: 'Total Executions',        description: 'Total test executions in the selected period',                                     pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
   { id: 'avg_pass_rate_kpi',   label: 'Avg Pass Rate',            description: 'Average pass rate across all runs',                                                pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
   { id: 'active_defects_kpi',  label: 'Active Defects',           description: 'Number of unresolved defects',                                                     pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
@@ -46,35 +44,23 @@ const WIDGET_CATALOG: WidgetDef[] = [
   { id: 'new_failures_kpi',    label: 'New Failures (24h)',       description: 'New test failures in the last 24 hours',                                           pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
   { id: 'infra_failures_kpi',  label: 'Infra-Caused Failures',    description: 'Share of window failures AI-classified as infrastructure-caused (failure-kind triad)', pages: ['dashboard'],      chartType: 'metric',      dataSource: 'failure_categories', defaultEnabled: true },
   { id: 'avg_duration_kpi',    label: 'Avg Run Duration',         description: 'Average test run execution time',                                                  pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
-  { id: 'readiness_summary',   label: 'Release Readiness',        description: 'Current release readiness signal (GO/AMBER/RED)',                                  pages: ['dashboard'],           chartType: 'metric',      dataSource: 'summary',  defaultEnabled: true },
-  { id: 'pass_rate_gauge',     label: 'Pass Rate Gauge',          description: 'Radial gauge showing current pass rate',                                           pages: ['dashboard'],           chartType: 'gauge',       dataSource: 'summary',  defaultEnabled: false },
-
   // ── Trends widgets ───────────────────────────────────────────
   { id: 'daily_breakdown',     label: 'Daily Breakdown',          description: 'Stacked bar of passed/failed/skipped per day',                                     pages: ['trends'],              chartType: 'stacked_bar', dataSource: 'trends',   defaultEnabled: true },
+  { id: 'trends_kpis',         label: 'Trend Metrics',            description: 'Pass rate, cadence, execution, suite, and latest-run metrics',                    pages: ['trends'],              chartType: 'metric',      dataSource: 'trends',   defaultEnabled: true },
   { id: 'pass_rate_trend',     label: 'Pass Rate Trend',          description: 'Daily pass rate % line chart',                                                     pages: ['trends'],              chartType: 'line',        dataSource: 'trends',   defaultEnabled: true },
-  { id: 'cumulative_volume',   label: 'Cumulative Volume',        description: 'Total test volume growth area chart',                                              pages: ['trends'],              chartType: 'area',        dataSource: 'trends',   defaultEnabled: true },
-  { id: 'failure_rate',        label: 'Failure Rate',             description: 'Daily failure rate % over time',                                                   pages: ['trends'],              chartType: 'line',        dataSource: 'trends',   defaultEnabled: false },
-  { id: 'broken_trend',        label: 'Broken Tests',             description: 'Broken test count trend bar chart',                                                pages: ['trends'],              chartType: 'bar',         dataSource: 'trends',   defaultEnabled: false },
-  { id: 'skipped_trend',       label: 'Skipped Trend',            description: 'Skipped test count trend over time',                                               pages: ['trends'],              chartType: 'line',        dataSource: 'trends',   defaultEnabled: false },
-  { id: 'status_pie',          label: 'Status Distribution',      description: 'Pie chart of overall status distribution',                                         pages: ['trends'],              chartType: 'pie',         dataSource: 'trends',   defaultEnabled: false },
-
   // ── Coverage widgets ─────────────────────────────────────────
-  { id: 'top_suites_bar',      label: 'Top Suites by Volume',     description: 'Horizontal bar chart of top test suites by execution count',                       pages: ['coverage'],            chartType: 'bar',         dataSource: 'coverage', defaultEnabled: true },
-  { id: 'pass_rate_by_suite',  label: 'Pass Rate by Suite',       description: 'Suite-level pass rates as horizontal bars',                                        pages: ['coverage'],            chartType: 'bar',         dataSource: 'coverage', defaultEnabled: true },
+  { id: 'pass_rate_by_suite',  label: 'Suite Coverage Breakdown', description: 'Suite-level volume and pass-rate bars',                                             pages: ['coverage'],            chartType: 'bar',         dataSource: 'coverage', defaultEnabled: true },
   { id: 'coverage_kpis',       label: 'Coverage Summary',         description: 'Key coverage metrics: unique tests, suites, executions, avg pass rate',            pages: ['coverage'],            chartType: 'metric',      dataSource: 'coverage', defaultEnabled: true },
 
   // ── Defects widgets ──────────────────────────────────────────
-  { id: 'open_vs_resolved_pie', label: 'Open vs Resolved',        description: 'Pie chart showing defect resolution status distribution',                          pages: ['defects'],             chartType: 'pie',         dataSource: 'defect_summary', defaultEnabled: true },
+  { id: 'defect_kpis',          label: 'Defect Summary',          description: 'Key defect totals and resolution metrics',                                          pages: ['defects'],             chartType: 'metric',      dataSource: 'defect_summary', defaultEnabled: true },
   { id: 'defect_category_bar',  label: 'Category Breakdown',      description: 'Bar chart of defect counts by failure category',                                   pages: ['defects'],             chartType: 'bar',         dataSource: 'defect_summary', defaultEnabled: true },
-  { id: 'ai_confidence_dist',   label: 'AI Confidence Distribution', description: 'Distribution of AI analysis confidence scores across defects',                  pages: ['defects'],             chartType: 'bar',         dataSource: 'defect_summary', defaultEnabled: false },
 
   // ── Failures widgets ─────────────────────────────────────────
   { id: 'failure_category_pie',    label: 'Failure Categories',       description: 'Pie chart of failure category distribution',                                     pages: ['failures'],            chartType: 'pie',         dataSource: 'failure_categories', defaultEnabled: true },
   { id: 'top_failing_bar',         label: 'Top Failing Tests',        description: 'Bar chart of tests with highest failure counts',                                 pages: ['failures'],            chartType: 'bar',         dataSource: 'top_failing',        defaultEnabled: true, allowedChartTypes: ['bar', 'table'] },
   { id: 'flaky_leaderboard_table', label: 'Flaky Test Leaderboard',   description: 'Ranked list of flaky tests with failure rate',                                  pages: ['failures'],            chartType: 'table',       dataSource: 'flaky_tests',        defaultEnabled: true },
   { id: 'failures_kpis',           label: 'Failure Summary',          description: 'Key failure metrics: flaky count, top failing, categories, worst flakiness',    pages: ['failures'],            chartType: 'metric',      dataSource: 'failures_summary',   defaultEnabled: true },
-  { id: 'failure_hotspot_bar',     label: 'Failure Hotspots',         description: 'Most common error patterns across test failures',                                pages: ['failures'],            chartType: 'bar',         dataSource: 'top_failing',        defaultEnabled: false },
-  { id: 'flaky_trend_line',        label: 'Flaky Test Trend',         description: 'Flaky test count trend over time',                                              pages: ['failures'],            chartType: 'line',        dataSource: 'flaky_tests',        defaultEnabled: false },
 ]
 
 /** Get widget definitions for a specific page. */
@@ -130,3 +116,65 @@ export function getDefaultInstances(page: string): VisualizationInstance[] {
 
 /** Max visualization instances per page. */
 export const MAX_INSTANCES_PER_PAGE = 12
+
+const CHART_TYPES = new Set<ChartType>([
+  'line', 'bar', 'area', 'pie', 'gauge', 'metric', 'table', 'stacked_bar', 'donut',
+])
+
+/**
+ * Turn stored layout JSON into renderable instances for one page.
+ *
+ * Existing rows predate the v2 instance format, and stored JSON can outlive a
+ * removed widget. Keep valid entries, drop foreign templates, repair duplicate
+ * or missing instance IDs, and enforce the same limit as the picker. A wholly
+ * malformed non-empty layout falls back to defaults instead of making a healthy
+ * dashboard look empty. An intentional empty array remains empty.
+ */
+export function normalizeInstances(page: string, raw: unknown): VisualizationInstance[] {
+  if (!Array.isArray(raw)) return getDefaultInstances(page)
+
+  const catalog = new Map(getPageWidgets(page).map(widget => [widget.id, widget]))
+  const seen = new Set<string>()
+  const normalized: VisualizationInstance[] = []
+
+  for (const entry of raw.slice(0, MAX_INSTANCES_PER_PAGE)) {
+    const value = typeof entry === 'string'
+      ? { templateId: entry }
+      : entry && typeof entry === 'object'
+        ? entry as Record<string, unknown>
+        : null
+    if (!value || typeof value.templateId !== 'string') continue
+
+    const template = catalog.get(value.templateId)
+    if (!template) continue
+
+    let instanceId = typeof value.instanceId === 'string' && value.instanceId
+      ? value.instanceId
+      : randomUUID()
+    if (seen.has(instanceId)) instanceId = randomUUID()
+    seen.add(instanceId)
+
+    const allowedChartTypes = new Set<ChartType>([
+      template.chartType,
+      ...(template.allowedChartTypes ?? []),
+    ])
+    const chartType = typeof value.chartType === 'string' && CHART_TYPES.has(value.chartType as ChartType)
+      && allowedChartTypes.has(value.chartType as ChartType)
+      ? value.chartType as ChartType
+      : undefined
+    const filters = value.filters && typeof value.filters === 'object' && !Array.isArray(value.filters)
+      ? value.filters as Record<string, unknown>
+      : undefined
+
+    normalized.push({
+      instanceId,
+      templateId: value.templateId,
+      ...(typeof value.title === 'string' ? { title: value.title } : {}),
+      ...(chartType ? { chartType } : {}),
+      ...(typeof value.metricVariant === 'string' ? { metricVariant: value.metricVariant } : {}),
+      ...(filters ? { filters } : {}),
+    })
+  }
+
+  return normalized.length > 0 || raw.length === 0 ? normalized : getDefaultInstances(page)
+}

@@ -17,7 +17,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.state import WorkflowState
 from app.models.enums import ExecutionPath
-from app.services.agent_capability_registry import CAPABILITY_REGISTRY
+from app.services.agent_capability_registry import CAPABILITY_REGISTRY, WORKFLOW_ELIGIBLE
 from app.services.agent_config_service import (
     AGENT_TOOL_PERMISSIONS,
     AgentConfigV1,
@@ -264,16 +264,22 @@ def _compare(op: str, left: Any, right: Any = None) -> bool:
         return bool(left == right)
     if op == "ne":
         return bool(left != right)
-    if op == "lt":
-        return bool(left < right)
-    if op == "lte":
-        return bool(left <= right)
-    if op == "gt":
-        return bool(left > right)
-    if op == "gte":
-        return bool(left >= right)
-    if op == "in":
-        return left in right
+    if op in {"lt", "lte", "gt", "gte", "in"}:
+        try:
+            if op == "lt":
+                return bool(left < right)
+            if op == "lte":
+                return bool(left <= right)
+            if op == "gt":
+                return bool(left > right)
+            if op == "gte":
+                return bool(left >= right)
+            return bool(left in right)
+        except (TypeError, ValueError):
+            # Missing/null runtime facts are an unmet branch condition.  A
+            # published graph must not crash merely because optional evidence
+            # was absent from this run.
+            return False
     if op == "is_null":
         return left is None
     if op == "is_true":
@@ -390,6 +396,10 @@ def validate_workflow(
         )
 
     for step in body.steps:
+        if step.model is not None:
+            errors.append(
+                f"step {step.id}: model overrides are not supported by the workflow runtime"
+            )
         matches = [stage for stage, spec in CAPABILITY_REGISTRY.items() if spec.capability_id == step.agent_id]
         if not matches:
             errors.append(f"step {step.id}: unknown capability {step.agent_id!r}")
@@ -398,6 +408,10 @@ def validate_workflow(
         spec = CAPABILITY_REGISTRY[stage]
         if spec.execution in {"child_spawned", "runtime"}:
             errors.append(f"step {step.id}: capability {step.agent_id!r} cannot be a top-level workflow step")
+        elif stage not in WORKFLOW_ELIGIBLE:
+            errors.append(
+                f"step {step.id}: capability {step.agent_id!r} has no workflow runtime executor"
+            )
         stage_by_id[step.id] = stage
         steps_by_stage[stage].append(step.id)
         if step.config_ref is not None and step.config_ref != step.agent_id:
@@ -572,6 +586,35 @@ def validate_workflow(
             loop.when, config=config_doc, path=f"loop[{index}].when"
         )
         errors.extend(condition_errors)
+
+    reviewer_steps = [step for step in body.steps if step.agent_id == "agent.reviewer.v1"]
+    for left_index, left in enumerate(reviewer_steps):
+        for right in reviewer_steps[left_index + 1:]:
+            if (
+                left.id not in dominators.get(right.id, set())
+                and right.id not in dominators.get(left.id, set())
+            ):
+                errors.append(
+                    f"reviewer steps {left.id!r} and {right.id!r} must be ordered; "
+                    "parallel reviewers cannot safely update supervisor state"
+                )
+
+    for step in reviewer_steps:
+        source_loops = [loop for loop in body.loops if loop.source == step.id]
+        retry_loops = [
+            loop
+            for loop in source_loops
+            if loop.source == step.id
+            and loop.to in step.reviews
+            and loop.when
+            == {"field": "supervisor_route", "op": "eq", "value": "retry"}
+            and loop.max_iterations == 1
+        ]
+        if len(retry_loops) != 1 or len(source_loops) != 1:
+            errors.append(
+                f"step {step.id}: reviewer requires exactly one bounded retry loop "
+                "to a reviewed step using supervisor_route == 'retry' and max_iterations=1"
+            )
 
     return WorkflowValidation(valid=not errors, errors=tuple(dict.fromkeys(errors)))
 

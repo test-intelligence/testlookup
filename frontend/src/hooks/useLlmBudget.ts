@@ -13,7 +13,7 @@ export function useBillingOverview() {
     () => llmBudgetService.overview(),
     { revalidateOnFocus: false, refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
-  return { overview: data, isLoading, isError: !!error, refresh: mutate }
+  return { overview: data, error, isLoading, isError: !!error, refresh: mutate }
 }
 
 export function useProjectQuota(projectId: string | null) {

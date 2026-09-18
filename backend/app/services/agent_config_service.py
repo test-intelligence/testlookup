@@ -46,6 +46,10 @@ from app.services.llm_policy_service import (
     configured_provider_allowlist,
 )
 from app.services.retry_policy import DEFAULT_RETRYABLE
+from app.services.agent_authority_lock import (
+    lock_project_agent_authority,
+    project_agent_authority_lock_key,
+)
 
 Mode = Literal["shadow", "suggest", "act"]
 Tier = Literal["auto", "deterministic", "slm", "llm"]
@@ -501,6 +505,14 @@ class OverrideRejected(ValueError):
         super().__init__("; ".join(reasons))
 
 
+class ConfigVersionConflict(RuntimeError):
+    """A conditional config replacement lost a concurrent-write race."""
+
+    def __init__(self, expected_version: int):
+        self.expected_version = expected_version
+        super().__init__(f"agent config version {expected_version} is stale")
+
+
 def _lower_only(reasons: list[str], field: str, requested: Any, base: Any) -> None:
     if requested is not None and requested > base:
         reasons.append(f"{field}={requested} loosens the project value {base}; a request may only lower it")
@@ -592,6 +604,16 @@ def provider_environment_errors(config: AgentConfigV1, *, offline: bool) -> list
 _COLUMN_FIELDS = frozenset({"agent_id", "enabled", "mode"})
 
 
+def agent_config_authority_lock_key(project_id: uuid.UUID) -> str:
+    """Return the transaction-lock domain shared by config writes and G4."""
+    return project_agent_authority_lock_key(project_id)
+
+
+async def lock_agent_config_authority(db: AsyncSession, project_id: uuid.UUID) -> None:
+    """Keep a project config snapshot stable until the transaction finishes."""
+    await lock_project_agent_authority(db, project_id)
+
+
 async def get_config_row(db: AsyncSession, project_id: uuid.UUID, agent_id: str) -> Optional[AgentConfig]:
     result = await db.execute(
         select(AgentConfig).where(AgentConfig.project_id == project_id, AgentConfig.agent_id == agent_id)
@@ -610,12 +632,14 @@ async def put_config(
     config: AgentConfigV1,
     *,
     updated_by: Optional[uuid.UUID],
+    expected_version: Optional[int] = None,
 ) -> AgentConfig:
     """Replace a project's configuration of one agent and bump its version.
 
     One ``INSERT ... ON CONFLICT DO UPDATE`` statement: two concurrent PUTs get
     distinct versions instead of racing a read-then-write.
     """
+    await lock_agent_config_authority(db, project_id)
     document = config.model_dump(mode="json", exclude=set(_COLUMN_FIELDS))
     now = datetime.now(timezone.utc)
     insert_statement = pg_insert(AgentConfig).values(
@@ -630,6 +654,9 @@ async def put_config(
         created_at=now,
         updated_at=now,
     )
+    conflict_kwargs: dict[str, Any] = {}
+    if expected_version is not None:
+        conflict_kwargs["where"] = AgentConfig.config_version == expected_version
     upsert = insert_statement.on_conflict_do_update(
         constraint="uq_agent_configs_project_agent",
         set_={
@@ -640,9 +667,13 @@ async def put_config(
             "updated_by": insert_statement.excluded.updated_by,
             "updated_at": insert_statement.excluded.updated_at,
         },
+        **conflict_kwargs,
     ).returning(AgentConfig)
     result = await db.execute(upsert, execution_options={"populate_existing": True})
-    row: AgentConfig = result.scalar_one()
+    row: Optional[AgentConfig] = result.scalar_one_or_none()
+    if row is None:
+        assert expected_version is not None
+        raise ConfigVersionConflict(expected_version)
     return row
 
 
@@ -718,11 +749,13 @@ __all__ = [
     "COMPATIBILITY_AGENT_IDS",
     "AgentConfigPatch",
     "AgentConfigV1",
+    "ConfigVersionConflict",
     "MODE_ORDER",
     "OverrideRejected",
     "REVIEW_POLICIES",
     "TIER_ORDER",
     "apply_patch",
+    "agent_config_authority_lock_key",
     "config_versions",
     "configurable_capabilities",
     "configurable_agents",
@@ -730,6 +763,7 @@ __all__ = [
     "get_config_row",
     "increment_investigator_shadow_runs",
     "list_config_rows",
+    "lock_agent_config_authority",
     "mode_permits",
     "provider_environment_errors",
     "put_config",

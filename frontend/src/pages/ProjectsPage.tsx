@@ -129,7 +129,7 @@ export default function ProjectsPage() {
                       ))}
                     </div>
                   )}
-                  <p className="text-xs text-[var(--color-text-faint)] mt-2">Created {fromNow(p.created_at)}</p>
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-2">Created {fromNow(p.created_at)}</p>
                 </div>
               </div>
             </div>

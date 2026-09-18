@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, ShieldCheck, ShieldX } from 'lucid
 import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import type {
   DecisionIntelligence,
   DecisionReportAttempt,
@@ -105,6 +106,7 @@ function ClaimsSection({ claims, actions, onInspect }: { claims: DecisionClaim[]
 }
 
 function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { claim: DecisionClaim; reportHash: string; reportVersion?: DecisionReportVersion | null; runId: string; onClose: () => void }) {
+  const dialogRef = useModalFocus({ onClose })
   const renderEvidence = (items: Array<Record<string, unknown>>, label: string) => (
     <section className="mt-3">
       <h4 className="m-0 text-[12px] font-semibold">{label} · {items.length}</h4>
@@ -126,7 +128,7 @@ function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { 
   )
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="claim-evidence-heading" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="claim-evidence-heading" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="m-0 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">Claim evidence</p>

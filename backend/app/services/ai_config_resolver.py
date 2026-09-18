@@ -110,32 +110,39 @@ def apply_offline_ceiling(config: dict[str, Any], *, log_suppressed: bool = Fals
     return config
 
 
-async def get_effective_ai_config() -> dict[str, Any]:
+async def get_effective_ai_config(
+    *,
+    db: Any = None,
+    fresh: bool = False,
+) -> dict[str, Any]:
     """Return the merged effective AI configuration.
 
     Checks Redis cache first, falls back to DB + secrets + env.
     """
-    # 1. Try Redis cache
-    try:
-        from app.db.redis_client import get_redis
-        redis = get_redis()
-        cached = await redis.get(_CACHE_KEY)
-        if cached:
-            # Re-clamp: the ceiling is an environment property, never a cached one.
-            return apply_offline_ceiling(json.loads(cached))
-    except Exception:
-        pass  # Redis unavailable — fall through to DB
+    # 1. Try Redis cache. Authority snapshots use the caller's locked database
+    # transaction so they cannot observe the post-commit/pre-invalidation gap.
+    if not fresh:
+        try:
+            from app.db.redis_client import get_redis
+            redis = get_redis()
+            cached = await redis.get(_CACHE_KEY)
+            if cached:
+                # Re-clamp: the ceiling is an environment property, never a cached one.
+                return apply_offline_ceiling(json.loads(cached))
+        except Exception:
+            pass  # Redis unavailable — fall through to DB
 
     # 2. Load from DB + secrets + env
-    config = await _load_from_db_and_env()
+    config = await _load_from_db_and_env(db=db)
 
     # 3. Cache in Redis
-    try:
-        from app.db.redis_client import get_redis
-        redis = get_redis()
-        await redis.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(config))
-    except Exception:
-        pass  # Redis unavailable — continue without caching
+    if not fresh:
+        try:
+            from app.db.redis_client import get_redis
+            redis = get_redis()
+            await redis.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(config))
+        except Exception:
+            pass  # Redis unavailable — continue without caching
 
     return config
 
@@ -151,7 +158,7 @@ async def invalidate_ai_config_cache() -> None:
         pass
 
 
-async def _load_from_db_and_env() -> dict[str, Any]:
+async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
     """Load AI config from database overrides + secret_refs + environment defaults."""
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import AppSetting
@@ -179,42 +186,42 @@ async def _load_from_db_and_env() -> dict[str, Any]:
         "openrouter_api_key": getattr(settings, "OPENROUTER_API_KEY", None),
     }
 
-    try:
-        async with AsyncSessionLocal() as db:
-            # Load DB overrides
-            result = await db.execute(
+    async def _merge_from_db(session: Any) -> None:
+        # Load DB overrides
+        result = await session.execute(
                 select(AppSetting).where(AppSetting.key == "ai_config")
             )
-            row = result.scalar_one_or_none()
-            if row and row.value:
-                overrides = dict(row.value)
-                config["provider"] = overrides.get("llm_provider", config["provider"])
-                config["model"] = overrides.get("llm_model", config["model"])
-                config["temperature"] = overrides.get("llm_temperature", config["temperature"])
-                config["max_tokens"] = overrides.get("llm_max_tokens", config["max_tokens"])
-                config["base_url"] = overrides.get("base_url", config["base_url"])
-                # Requested value only — apply_offline_ceiling() below decides
-                # the effective one. A DB override can tighten, never loosen.
-                config["offline_mode"] = overrides.get("ai_offline_mode", config["offline_mode"])
-                config["timeout_seconds"] = overrides.get("ai_timeout_seconds", config["timeout_seconds"])
-                # US-15.2: a stored override wins over the env default; a junk
-                # value is dropped (normalize_threshold returns None) so one
-                # bad settings write cannot brick every confidence gate.
-                from app.services.confidence_gate import normalize_threshold
+        row = result.scalar_one_or_none()
+        if row and row.value:
+            overrides = dict(row.value)
+            config["provider"] = overrides.get("llm_provider", config["provider"])
+            config["model"] = overrides.get("llm_model", config["model"])
+            config["temperature"] = overrides.get("llm_temperature", config["temperature"])
+            config["max_tokens"] = overrides.get("llm_max_tokens", config["max_tokens"])
+            config["base_url"] = overrides.get("base_url", config["base_url"])
+            config["offline_mode"] = overrides.get("ai_offline_mode", config["offline_mode"])
+            config["timeout_seconds"] = overrides.get("ai_timeout_seconds", config["timeout_seconds"])
+            from app.services.confidence_gate import normalize_threshold
 
-                stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))
-                if stored_threshold is not None:
-                    config["confidence_threshold"] = stored_threshold
-                    config["confidence_threshold_source"] = CONFIDENCE_SOURCE_AI_CONFIG
+            stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))
+            if stored_threshold is not None:
+                config["confidence_threshold"] = stored_threshold
+                config["confidence_threshold_source"] = CONFIDENCE_SOURCE_AI_CONFIG
 
-            # Load secrets from secret_refs (override env-only keys)
-            for key_name in (
-                "openai_api_key", "google_api_key",
-                "anthropic_api_key", "openrouter_api_key",
-            ):
-                secret = await read_secret(db, "ai_config", key_name)
-                if secret:
-                    config[key_name] = secret
+        for key_name in (
+            "openai_api_key", "google_api_key",
+            "anthropic_api_key", "openrouter_api_key",
+        ):
+            secret = await read_secret(session, "ai_config", key_name)
+            if secret:
+                config[key_name] = secret
+
+    try:
+        if db is None:
+            async with AsyncSessionLocal() as owned_db:
+                await _merge_from_db(owned_db)
+        else:
+            await _merge_from_db(db)
 
     except Exception as exc:
         logger.warning("ai_config_db_load_failed", error=str(exc))

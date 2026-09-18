@@ -172,7 +172,6 @@ async def get_fixer_config(
 @router.put("/projects/{project_id}/fixer/config", deprecated=True)
 async def put_fixer_config(
     project_id: uuid.UUID,
-    body: FixerConfigUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
@@ -209,7 +208,7 @@ async def start_fixer_run(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "The Fixer is disabled for this project. A QA Lead can enable it via "
-                f"PUT /api/v1/projects/{project_id}/fixer/config."
+                f"PUT /api/v1/projects/{project_id}/agent-configs/fixer."
             ),
         )
     except svc.FixerRunnerRequiredForSuggest:

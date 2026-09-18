@@ -279,6 +279,62 @@ async def test_close_job_writes_the_fields_it_was_given(mocker):
     assert params["candidate_hash"] == svc.candidate_hash([run_id])
 
 
+@pytest.mark.asyncio
+async def test_close_job_compare_and_set_refuses_a_stale_writer(mocker):
+    db = mocker.AsyncMock()
+    db.execute.return_value.rowcount = 0
+    session_cm = mocker.MagicMock()
+    session_cm.__aenter__ = mocker.AsyncMock(return_value=db)
+    session_cm.__aexit__ = mocker.AsyncMock(return_value=False)
+    mocker.patch("app.db.postgres.AsyncSessionLocal", return_value=session_cm)
+
+    updated = await svc.close_job(
+        uuid.uuid4(),
+        status=svc.FAILED,
+        expected_status=svc.QUEUED,
+        error="ambiguous publish",
+    )
+
+    assert updated is False
+    statement = db.execute.await_args.args[0]
+    rendered = str(statement)
+    assert "deletion_jobs.status" in rendered
+    assert svc.QUEUED in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_queued_jobs_are_a_durable_relay_source(mocker):
+    rows = [
+        (uuid.uuid4(), uuid.uuid4(), uuid.uuid4()),
+        (uuid.uuid4(), uuid.uuid4(), None),
+    ]
+    db = mocker.AsyncMock()
+    result = mocker.MagicMock()
+    result.all.return_value = rows
+    db.execute.return_value = result
+    session_cm = mocker.MagicMock()
+    session_cm.__aenter__ = mocker.AsyncMock(return_value=db)
+    session_cm.__aexit__ = mocker.AsyncMock(return_value=False)
+    mocker.patch("app.db.postgres.AsyncSessionLocal", return_value=session_cm)
+    dispatch = mocker.patch("app.worker.tasks.execute_criteria_deletion_task.delay")
+    dispatch.side_effect = [None, ConnectionError("broker down")]
+
+    result = await svc.relay_queued_criteria_deletions()
+
+    assert result == {"found": 2, "published": 1, "failed": 1}
+    assert dispatch.call_count == 2
+    statement = db.execute.await_args.args[0]
+    assert svc.QUEUED in statement.compile().params.values()
+
+
+def test_criteria_deletion_relay_runs_every_minute():
+    from app.worker.celery_app import celery_app
+
+    entry = celery_app.conf.beat_schedule["relay-queued-criteria-deletions"]
+    assert entry["task"] == "app.worker.tasks.relay_queued_criteria_deletions"
+    assert str(entry["schedule"]) == "<crontab: * * * * * (m/h/dM/MY/d)>"
+
+
 def test_the_model_documents_only_reachable_kinds():
     """Same rule as statuses: no kind is advertised that nothing produces."""
     import re

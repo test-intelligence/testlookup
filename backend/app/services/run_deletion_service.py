@@ -151,6 +151,30 @@ async def citation_blockers(db, *, run_id: uuid.UUID, mongo) -> list[str]:
     return blockers
 
 
+async def execution_blockers(db, *, run, mongo) -> list[str]:
+    """Revalidate mutable deletion protections at the worker boundary.
+
+    Preview and task execution are separated by a queue. During that gap a run
+    can resume or become cited by a release, compliance pack, or decision
+    report. Deleting from the frozen set without checking again turns an
+    approved preview into permission to destroy newly protected evidence.
+    """
+    reasons: list[str] = []
+    if status_blocks_deletion(run.status):
+        reasons.append("run is still executing")
+    reasons.extend(await citation_blockers(db, run_id=run.id, mongo=mongo))
+    return reasons
+
+
+class RunDeletionBlocked(RuntimeError):
+    """A run gained a mutable protection after the request was accepted."""
+
+    def __init__(self, run_id: uuid.UUID, reasons: list[str]):
+        self.run_id = run_id
+        self.reasons = reasons
+        super().__init__(f"run {run_id} is protected: {'; '.join(reasons)}")
+
+
 async def live_session_slugs_for_run(db, *, project_id: uuid.UUID, run_id: uuid.UUID):
     """The client-side run ids under which this run's live events were written.
 

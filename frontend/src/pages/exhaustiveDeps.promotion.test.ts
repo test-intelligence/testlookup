@@ -32,7 +32,7 @@ describe('react-hooks/exhaustive-deps promotion (regression)', () => {
 
   it('ReleasesPage memoizes the SWR-derived releases array', () => {
     expect(releasesSource).toMatch(
-      /const releases:\s*Release\[\]\s*=\s*useMemo\(\(\)\s*=>\s*data\?\.items\s*\?\?\s*\[\],\s*\[data\]\)/,
+      /const releases:\s*Release\[\]\s*=\s*useMemo\([\s\S]*?\[data, releaseId, routedRelease\],\s*\)/,
     )
     // The unmemoized literal that tripped the rule must not return.
     expect(releasesSource).not.toMatch(/const releases:\s*Release\[\]\s*=\s*data\?\.items\s*\?\?\s*\[\]\s*$/m)

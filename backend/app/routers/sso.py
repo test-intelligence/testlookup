@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import require_role
-from app.core.security import create_access_token
+from app.services.auth_session_tokens import issue_access_jwt
 from app.services.refresh_token_service import issue_refresh_token
 from app.db.postgres import get_db
 from app.models.postgres import (
@@ -203,8 +203,11 @@ async def saml_acs(
             detail="Account is deactivated",
         )
 
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+
     # Issue tokens
-    access_token = create_access_token(str(user.id))
+    access_token = await issue_access_jwt(db, str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
 
     await log_identity_event(

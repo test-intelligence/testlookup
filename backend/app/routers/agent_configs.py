@@ -17,7 +17,7 @@ import uuid
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,23 @@ from app.services.ai_config_resolver import get_effective_ai_config
 
 router = APIRouter(prefix="/api/v1", tags=["Agent Configs"])
 logger = structlog.get_logger("routers.agent_configs")
+
+
+def _expected_version(if_match: str | None) -> int:
+    if if_match is None:
+        raise HTTPException(status_code=428, detail="If-Match is required; use the config_version returned by GET")
+    value = if_match.strip()
+    if value.startswith('W/"') and value.endswith('"'):
+        value = value[3:-1]
+    elif value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    try:
+        version = int(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="If-Match must be a non-negative config_version") from None
+    if version < 0:
+        raise HTTPException(status_code=400, detail="If-Match must be a non-negative config_version")
+    return version
 
 
 def _require_known(agent_id: str) -> None:
@@ -73,12 +90,14 @@ async def put_agent_config(
     project_id: uuid.UUID,
     agent_id: str,
     body: svc.AgentConfigV1,
+    if_match: str | None = Header(default=None, alias="If-Match"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
     """Replace this project's configuration of one agent (QA_LEAD+)."""
     _require_known(agent_id)
+    expected_version = _expected_version(if_match)
     if body.agent_id != agent_id:
         raise HTTPException(
             status_code=422,
@@ -90,6 +109,17 @@ async def put_agent_config(
         raise HTTPException(status_code=422, detail=errors)
 
     before = await svc.get_config_row(db, project_id, agent_id)
+    current_version = int(before.config_version) if before is not None else 0
+    if current_version != expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "agent_config_version_conflict",
+                "message": "The agent configuration changed after it was loaded. Reload it before saving.",
+                "expected_version": expected_version,
+                "current_version": current_version,
+            },
+        )
     before_doc = svc.serialize(agent_id, before)["config"]
     try:
         before_config = svc.AgentConfigV1.model_validate(before_doc)
@@ -117,7 +147,23 @@ async def put_agent_config(
             )
         except TierComparisonRejected as exc:
             raise HTTPException(status_code=422, detail=exc.report) from None
-    row = await svc.put_config(db, project_id, body, updated_by=getattr(current_user, "id", None))
+    try:
+        row = await svc.put_config(
+            db,
+            project_id,
+            body,
+            updated_by=getattr(current_user, "id", None),
+            expected_version=expected_version,
+        )
+    except svc.ConfigVersionConflict:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "agent_config_version_conflict",
+                "message": "The agent configuration changed while it was being saved. Reload it before saving again.",
+                "expected_version": expected_version,
+            },
+        ) from None
     after = svc.serialize(agent_id, row)
     changed = sorted(key for key in after["config"] if after["config"].get(key) != before_doc.get(key))
     await record_activity(

@@ -10,6 +10,15 @@
 
 ## Contents
 
+> **Continuation note, 2026-09-16:** this document retains historical inventory
+> and commands alongside later shipped updates. The original 42 guards / 373
+> mypy baseline and “config_overrides not yet accepted” statements are
+> historical: consult the current guard registry, per-file mypy baseline and
+> invoke implementation. D1 and D3 shipped; D2 is still a user-configured release
+> date, not an instruction to enable enforcement now. The new
+> [exploratory execution package](testing/EXPLORATORY_EXECUTION_PACKAGE.md)
+> supersedes the per-story PR cadence for testing work with one branch/PR/merge.
+
 1. [Executive Summary](#1-executive-summary)
 2. [Epic‑by‑Epic Handover Package](#2-epicbyepic-handover-package)
 3. [Architecture Documentation](#3-architecture-documentation)

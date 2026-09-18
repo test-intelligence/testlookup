@@ -548,7 +548,12 @@ async def apply_override(
     Override the release decision and persist an auditable before/after record.
     """
     result = await db.execute(
-        select(ReleaseDecision).where(ReleaseDecision.test_run_id == run_id)
+        select(ReleaseDecision)
+        .where(ReleaseDecision.test_run_id == run_id)
+        # The JSON audit list is read, appended, and written back. Serialize
+        # concurrent overrides so a stale reader cannot overwrite another QA
+        # lead's decision and silently erase its immutable audit entry.
+        .with_for_update()
     )
     decision = result.scalar_one_or_none()
     if not decision:

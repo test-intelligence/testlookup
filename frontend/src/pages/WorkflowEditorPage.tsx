@@ -251,6 +251,7 @@ export default function WorkflowEditorPage() {
   const [forkName, setForkName] = useState('')
   const [acceptRegression, setAcceptRegression] = useState(false)
   const [regressionReason, setRegressionReason] = useState('')
+  const [evaluationManifestChecksum, setEvaluationManifestChecksum] = useState<string | null>(null)
 
   const selected = workflows.find(item => ref(item) === selectedRef) ?? workflows[0] ?? null
   const currentRef = selected ? ref(selected) : null
@@ -262,6 +263,7 @@ export default function WorkflowEditorPage() {
     setSavedText(nextText)
     setAcceptRegression(false)
     setRegressionReason('')
+    setEvaluationManifestChecksum(null)
   }
 
   const latestVersions = useMemo(() => {
@@ -286,6 +288,7 @@ export default function WorkflowEditorPage() {
     setSelectedRef(ref(item))
     setSeededRef(null)
     setValidation(null)
+    setEvaluationManifestChecksum(null)
     setForkOpen(false)
   }
 
@@ -360,6 +363,7 @@ export default function WorkflowEditorPage() {
     setBusy('evaluate')
     try {
       const result = await evaluateWorkflow(projectId, selected.workflow_id, selected.version)
+      setEvaluationManifestChecksum(result.manifest_checksum)
       await mutate()
       toast.success(`Evaluation ${result.verdict}: ${Math.round(result.coverage * 100)}% coverage`)
     } catch (evaluationError) {
@@ -380,8 +384,11 @@ export default function WorkflowEditorPage() {
         return
       }
       const published = await publishWorkflow(projectId, selected.workflow_id, {
+        version: selected.version,
+        definition_sha256: selected.definition_sha256,
         accept_regression: acceptRegression,
         reason: acceptRegression ? regressionReason.trim() : null,
+        eval_manifest_checksum: acceptRegression ? evaluationManifestChecksum : null,
       })
       await refreshAndChoose(published)
       setValidation(null)
@@ -488,7 +495,7 @@ export default function WorkflowEditorPage() {
                     <button type="button" onClick={handleValidate} disabled={busy !== null || dirty} title={dirty ? 'Save changes before validating the stored version' : undefined} className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50 hover:bg-[var(--color-bg-hover)]">
                       <ShieldCheck className="h-3.5 w-3.5" /> Validate
                     </button>
-                    {isQaLead && !selected.built_in && (
+                    {isQaLead && !selected.built_in && selected.status === 'draft' && (
                       <button type="button" onClick={handleEvaluate} disabled={busy !== null || dirty} className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50 hover:bg-[var(--color-bg-hover)]">
                         <PlayCircle className="h-3.5 w-3.5" /> Run evaluation
                       </button>
@@ -528,6 +535,7 @@ export default function WorkflowEditorPage() {
                     onChange={event => {
                       setEditorText(event.target.value)
                       setValidation(null)
+                      setEvaluationManifestChecksum(null)
                     }}
                     readOnly={!canEdit}
                     spellCheck={false}
@@ -553,7 +561,7 @@ export default function WorkflowEditorPage() {
                       {selected.status === 'published' ? 'Save as new draft' : 'Save draft'}
                     </button>
                     {selected.status === 'draft' && canEdit && (
-                      <button type="button" onClick={handlePublish} disabled={busy !== null || dirty || (acceptRegression && !regressionReason.trim())} className="inline-flex items-center gap-1.5 rounded border border-[var(--status-passed-bd)] bg-[var(--status-passed-bg)] px-3 py-1.5 text-sm text-[var(--status-passed)] disabled:opacity-50">
+                      <button type="button" onClick={handlePublish} disabled={busy !== null || dirty || (acceptRegression && (!regressionReason.trim() || !evaluationManifestChecksum))} className="inline-flex items-center gap-1.5 rounded border border-[var(--status-passed-bd)] bg-[var(--status-passed-bg)] px-3 py-1.5 text-sm text-[var(--status-passed)] disabled:opacity-50">
                         <ShieldCheck className="h-4 w-4" /> Publish
                       </button>
                     )}

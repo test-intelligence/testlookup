@@ -648,7 +648,7 @@ class ReviewerAgent(BaseAgent):
             for step in payload.reviewed_steps:
                 if step.model_tier in {"slm", "llm"}:
                     endpoint = resolved.endpoints.get(step.model_tier)
-                    if endpoint is None or not budget.consume("review_self_consistency"):
+                    if endpoint is None:
                         budget_blocked = True
                         model_checks.append(ReviewCheckV1(
                             family=3, name="self_consistency_budgeted", passed=False,
@@ -675,7 +675,6 @@ class ReviewerAgent(BaseAgent):
                     if (
                         endpoint is None
                         or same_or_unknown_model
-                        or not budget.consume("review_second_model")
                     ):
                         budget_blocked = budget_blocked or endpoint is None or budget.remaining == 0
                         model_checks.append(ReviewCheckV1(

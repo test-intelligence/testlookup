@@ -150,7 +150,10 @@ async def test_the_sync_slot_is_released_when_the_wait_raises(invoke, monkeypatc
 async def test_the_wait_polls_until_the_run_leaves_in_progress(monkeypatch):
     from app.routers import agent_invoke as router
 
-    views = iter([_view("in_progress"), _view("in_progress"), _view("passed")])
+    first = _view("in_progress")
+    unchanged = dict(first)
+    passed = {**first, "status": "passed", "output": {"flaky": []}}
+    views = iter([first, unchanged, passed])
     view = AsyncMock(side_effect=lambda _db, _inv: next(views))
     monkeypatch.setattr(router, "_invocation_view", view)
     sleep = AsyncMock()
@@ -170,6 +173,23 @@ async def test_the_wait_gives_up_at_its_deadline(monkeypatch):
     out = await router._wait_for_terminal(None, object(), wait_seconds=5, sleep=AsyncMock(), clock=lambda: next(ticks))
 
     assert out["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_zero_length_sync_wait_reads_once_without_sleeping(monkeypatch):
+    from app.routers import agent_invoke as router
+
+    view = AsyncMock(return_value=_view("in_progress"))
+    sleep = AsyncMock()
+    monkeypatch.setattr(router, "_invocation_view", view)
+
+    out = await router._wait_for_terminal(
+        None, object(), wait_seconds=0, sleep=sleep, clock=lambda: 10.0,
+    )
+
+    assert out["status"] == "in_progress"
+    view.assert_awaited_once()
+    sleep.assert_not_awaited()
 
 
 # -- stream tickets --------------------------------------------------------------------------
@@ -210,6 +230,22 @@ async def test_a_ticket_is_stored_only_as_a_hash_with_a_short_lifetime(redis):
     assert ticket not in key and hashlib.sha256(ticket.encode()).hexdigest() in key
     assert ex == ttl == 60
     assert json.loads(payload)["invocation_id"] == str(invocation_id)
+
+
+@pytest.mark.asyncio
+async def test_ticket_issue_regenerates_after_a_token_collision(redis, monkeypatch):
+    from app.services import invocation_stream
+
+    collision = "c" * 43
+    replacement = "r" * 43
+    redis.store[invocation_stream._key(collision)] = ("occupied", 60)
+    tokens = iter((collision, replacement))
+    monkeypatch.setattr(invocation_stream.secrets, "token_urlsafe", lambda _size: next(tokens))
+
+    ticket, _ = await invocation_stream.issue_stream_ticket(uuid.uuid4(), "user-1")
+
+    assert ticket == replacement
+    assert invocation_stream._key(replacement) in redis.store
 
 
 @pytest.mark.asyncio
@@ -292,7 +328,10 @@ async def test_the_stream_sends_one_event_per_change_and_stops_when_the_run_fini
     async def _factory():
         yield _Session()
 
-    views = iter([_view("in_progress"), _view("in_progress"), _view("passed")])
+    first = _view("in_progress")
+    unchanged = dict(first)
+    passed = {**first, "status": "passed", "output": {"flaky": []}}
+    views = iter([first, unchanged, passed])
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
     monkeypatch.setattr(router, "_invocation_view", AsyncMock(side_effect=lambda _db, _inv: next(views)))
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
@@ -306,6 +345,39 @@ async def test_the_stream_sends_one_event_per_change_and_stops_when_the_run_fini
     events = [f for f in frames if f.startswith("event: invocation")]
     assert len(events) == 2, "an unchanged read is not re-sent"
     assert json.loads(events[-1].split("data: ", 1)[1])["status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_the_stream_emits_when_an_observable_error_changes(monkeypatch):
+    from app.routers import agent_invoke as router
+
+    invocation = SimpleNamespace(id=uuid.uuid4())
+
+    class _Session:
+        async def execute(self, _stmt):
+            return _Result(invocation)
+
+    @asynccontextmanager
+    async def _factory():
+        yield _Session()
+
+    views = iter([
+        _view("in_progress", error=None),
+        _view("in_progress", error="retry scheduled"),
+        _view("failed", error="model unavailable"),
+    ])
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _factory)
+    monkeypatch.setattr(router, "_invocation_view", AsyncMock(side_effect=lambda _db, _inv: next(views)))
+    request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+
+    frames = [
+        frame async for frame in router.invocation_event_stream(
+            invocation.id, request, sleep=AsyncMock(), clock=lambda: 0.0,
+        )
+    ]
+    events = [frame for frame in frames if frame.startswith("event: invocation")]
+    assert len(events) == 3
+    assert json.loads(events[1].split("data: ", 1)[1])["error"] == "retry scheduled"
 
 
 @pytest.mark.asyncio
@@ -326,3 +398,52 @@ def test_the_events_route_is_guarded_by_the_ticket_and_the_ticket_route_by_acces
     assert "require_invocation_stream_ticket" in events.dependency.__qualname__
     ticket = inspect.signature(router.issue_invocation_stream_ticket).parameters["current_user"].default
     assert "require_invocation_access" in ticket.dependency.__qualname__
+
+
+def test_the_eventsource_route_is_not_hidden_behind_the_global_header_auth():
+    """The ticket is the stream credential; EventSource cannot add headers."""
+    from fastapi.routing import APIRoute
+
+    from app.bootstrap import PROTECTED_ROUTERS, PUBLIC_ROUTERS
+    from app.routers import agent_invoke as router
+
+    assert router.stream_router in PUBLIC_ROUTERS
+    assert router.stream_router not in PROTECTED_ROUTERS
+    routes = [route for route in router.stream_router.routes if isinstance(route, APIRoute)]
+    assert [(route.path, route.methods) for route in routes] == [
+        ("/api/v1/agents/invocations/{invocation_id}/events", {"GET"}),
+    ]
+    dependency_names = {
+        getattr(dependency.call, "__qualname__", "")
+        for dependency in routes[0].dependant.dependencies
+    }
+    assert any("require_invocation_stream_ticket" in name for name in dependency_names)
+    assert not any("get_current_user_or_api_key" in name for name in dependency_names)
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_reaches_the_mounted_eventsource_without_auth_headers(redis, monkeypatch):
+    """App-level regression for the 401 seen through the deployed ingress."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.routers import agent_invoke as router
+    from app.services import invocation_stream
+
+    invocation_id = uuid.uuid4()
+    ticket, _ = await invocation_stream.issue_stream_ticket(invocation_id, "user-1")
+
+    async def _one_event(_invocation_id, _request):
+        yield 'event: invocation\ndata: {"status":"passed"}\n\n'
+
+    monkeypatch.setattr(router, "invocation_event_stream", _one_event)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/agents/invocations/{invocation_id}/events",
+            params={"ticket": ticket},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.text.startswith("event: invocation")

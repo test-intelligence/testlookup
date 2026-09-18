@@ -160,6 +160,13 @@ async def create_source(
 
     canonical_url = payload["canonical_url"]
 
+    from app.services.rag_redaction_service import validate_url_scheme
+
+    try:
+        validate_url_scheme(canonical_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     # RAG-3: Enforce domain allowlist for external URLs
     if source_type == KnowledgeSourceType.EXTERNAL_URL.value:
         allowlist = await get_domain_allowlist(db)
@@ -234,11 +241,18 @@ async def update_source(
 ) -> KnowledgeSource:
     """Stage updates to a knowledge source. Handler commits + refreshes."""
     source = await get_source_or_404(db, source_id, user)
+    was_archived = source.is_archived
     for field, value in payload.items():
         if value is not None:
             if field == "classification" and value not in VALID_CLASSIFICATIONS:
                 raise HTTPException(status_code=422, detail=f"Invalid classification: {value}")
             setattr(source, field, value)
+    if not was_archived and source.is_archived:
+        from app.services.knowledge_chunking_service import retire_chunks_for_source
+        from app.services.rag_staleness_service import mark_cases_stale_for_source
+
+        await retire_chunks_for_source(db, source.id)
+        await mark_cases_stale_for_source(db, source.id)
     logger.info("knowledge_source_updated", source_id=source_id)
     return source
 
@@ -248,10 +262,15 @@ async def delete_source(
     source_id: uuid.UUID,
     user: User,
 ) -> None:
-    """Stage deletion of a knowledge source. Handler commits."""
+    """Archive a source, revoke its vectors, and preserve citation lineage."""
     source = await get_source_or_404(db, source_id, user)
-    await db.delete(source)
-    logger.info("knowledge_source_deleted", source_id=source_id)
+    from app.services.knowledge_chunking_service import retire_chunks_for_source
+    from app.services.rag_staleness_service import mark_cases_stale_for_source
+
+    source.is_archived = True
+    await retire_chunks_for_source(db, source.id)
+    await mark_cases_stale_for_source(db, source.id)
+    logger.info("knowledge_source_archived", source_id=source_id)
 
 
 async def trigger_sync(

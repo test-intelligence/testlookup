@@ -158,7 +158,7 @@ async def test_report_proposals_are_bounded_and_approval_gated():
     assert proposal.approval_required is True
     assert proposal.status == "pending_review"
     assert proposal.action_type == "decision_report_action"
-    assert proposal.request_payload["proposing_agent_id"] == "decision_report"
+    assert proposal.request_payload["proposing_agent_id"] == "agent.decision_report.v1"
 
 
 @pytest.mark.asyncio
@@ -332,8 +332,19 @@ async def test_executor_denies_an_action_whose_proposing_run_is_not_accepted(mon
     review_query = str(db.execute.await_args_list[1].args[0])
     assert "review_requests.pipeline_run_id" in review_query
     assert "review_requests.state" in review_query
+    assert "review_requests.project_id" in review_query
+    assert "review_requests.kind" in review_query
+    assert "review_requests.subject_type" in review_query
+    assert "review_requests.subject_id" in review_query
     review_stmt = db.execute.await_args_list[1].args[0]
-    assert "accepted" in review_stmt.compile().params.values(), "only an ACCEPTED review permits the call"
+    params = set(review_stmt.compile().params.values())
+    assert {
+        "accepted",
+        "report",
+        "pipeline_run",
+        str(action.pipeline_run_id),
+        action.project_id,
+    } <= params
 
 
 @pytest.mark.asyncio
@@ -341,7 +352,7 @@ async def test_executor_proceeds_when_the_proposing_run_was_accepted(monkeypatch
     action = _row(
         status="approved",
         pipeline_run_id=uuid.uuid4(),
-        request_payload={"proposing_agent_id": "decision_report"},
+        request_payload={"proposing_agent_id": "agent.decision_report.v1"},
     )
     service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
 
@@ -355,7 +366,7 @@ async def test_executor_denies_an_accepted_action_unless_proposer_mode_is_act(mo
     action = _row(
         status="approved",
         pipeline_run_id=uuid.uuid4(),
-        request_payload={"proposing_agent_id": "decision_report"},
+        request_payload={"proposing_agent_id": "agent.decision_report.v1"},
     )
     service, db = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
     service.resolve_for_project.return_value.config.mode = "suggest"
@@ -373,7 +384,7 @@ async def test_executor_denies_an_accepted_action_unless_proposer_mode_is_act(mo
     assert action.status == "failed"
     assert action.error_code == "policy_denied"
     service.resolve_for_project.assert_awaited_once_with(
-        db, action.project_id, "decision_report"
+        db, action.project_id, "agent.decision_report.v1"
     )
     db.commit.assert_awaited_once()
 
