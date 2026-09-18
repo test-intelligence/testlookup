@@ -139,6 +139,7 @@ async def test_concurrent_email_dispatch_does_not_share_a_db_session(monkeypatch
     ]
 
     guard = _SingleConnectionGuard()
+    smtp_session_count = 0
 
     # ── Fake session for the manager's own preference-load session ──
     def _prefs_result():
@@ -166,6 +167,8 @@ async def test_concurrent_email_dispatch_does_not_share_a_db_session(monkeypatch
     #    the single-connection guard, modelling the pool's one connection. ──
     class _SmtpSession:
         async def __aenter__(self):
+            nonlocal smtp_session_count
+            smtp_session_count += 1
             return self
 
         async def __aexit__(self, *exc):
@@ -174,7 +177,15 @@ async def test_concurrent_email_dispatch_does_not_share_a_db_session(monkeypatch
         async def execute(self, *a, **k):
             await guard.execute()
             res = MagicMock()
-            res.scalar_one_or_none = MagicMock(return_value=_smtp_row())
+            # The resolver reads metadata first, then the encrypted password.
+            # This race test uses the row's legacy password fallback after an
+            # empty secret-ref result; secret authority has its own regression.
+            value = (
+                _smtp_row()
+                if guard.read_count == 1
+                else SimpleNamespace(encrypted_value=None)
+            )
+            res.scalar_one_or_none = MagicMock(return_value=value)
             return res
 
     monkeypatch.setattr(manager, "AsyncSessionLocal", _ManagerSession)
@@ -218,11 +229,13 @@ async def test_concurrent_email_dispatch_does_not_share_a_db_session(monkeypatch
         "SMTP-config DB reads overlapped on a shared connection — this is the "
         "asyncpg 'another operation in progress' race (BUG-002)."
     )
-    # The DB-backed config resolver ran at most once for the whole fan-out.
-    assert guard.read_count <= 1, (
-        f"_get_smtp_cfg hit the DB {guard.read_count} times; it must be "
+    # One resolver session serves the whole fan-out. It performs one metadata
+    # query and one encrypted-secret query sequentially in that session.
+    assert smtp_session_count == 1, (
+        f"_get_smtp_cfg opened {smtp_session_count} sessions; it must be "
         "resolved once before the concurrent fan-out."
     )
+    assert guard.read_count == 2
     # All five recipients were still served (SMTP enabled via the resolved cfg).
     assert len(sent) == 5
 

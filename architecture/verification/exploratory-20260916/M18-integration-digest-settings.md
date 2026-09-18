@@ -5,7 +5,7 @@
 **PARTIAL — five production defects are fixed and the exact executable was
 deployed before testing; secret migration, local-time scheduling, draft tests,
 seed isolation, and credentialed provider exercises remain open.** Candidate
-`47a8ea7a` was deployed as `build-20260918-052249`. `/health/version` returned
+`feb72376` was deployed as `build-20260918-053936`. `/health/version` returned
 the full revision, every application deployment was ready on the candidate
 tag and expected digest, all health endpoints were green, and Alembic reported
 `0191 (head)`.
@@ -35,14 +35,14 @@ tag and expected digest, all health endpoints were green, and Alembic reported
 ## Verification
 
 - Homelab authority: revision
-  `47a8ea7a5642c5a7e27781c5a1be67908d2487e9`; tag
-  `build-20260918-052249`; backend and worker digest
-  `sha256:ab587d6cf4920455729a4ba15bd8d89aaefdcde6c0dfd5ffc3d58d94b9713314`;
+  `feb72376f598468975971b0c50fa7ae513933673`; tag
+  `build-20260918-053936`; backend and worker digest
+  `sha256:43050019ab7ee8c102a5bb4056216029b8ccbe723f93f84099fdb674999bd4ce`;
   frontend digest
   `sha256:a3bd457a2ff0f6c3815e7e3f53f27861a0e8030e33a1d8f5284ddcd9b242cffe`;
   MCP digest
   `sha256:0dbe7c85653c85043e4ae28d35d60cb52f8bf31176acc6370c5626f88d6c7263`.
-- Focused M18 backend suite: **60 passed**. Broader connector, digest, feature
+- Focused M18 backend suite: **66 passed**. Broader connector, digest, feature
   flag, authorization, and persistence suite: **154 passed**.
 - Backend Ruff passed; mypy held at **367/367**. TypeScript passed; ESLint
   reported **0 errors** and 19 existing warnings. Focused settings UI suite:
