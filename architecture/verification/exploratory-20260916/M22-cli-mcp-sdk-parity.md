@@ -3,10 +3,12 @@
 ## Result
 
 **PARTIAL — five client-contract defects are fixed and the exact executable
-was deployed before final testing.** Candidate `711caa02b18faddf513e83f992c673c610b74f12` was deployed as
-`build-20260918-114919`. Every application deployment was ready on that tag,
+was deployed before final testing.** Candidate `4c3b4f8c98e5cb52f3e2b4a2791a442b76fde051` was deployed as
+`build-20260918-120724`. Every application deployment was ready on that tag,
 the backend and workers used digest
-`sha256:7cd9aea5ae39ba031be83224a1a732ea08ef6a6ceec378dd1892400052da80be`,
+`sha256:2b4ac49946a144f9a40faf120f98c51c10da02d7b5f837abefe474c897cb6c09`
+and the frontend used digest
+`sha256:63fdfb683508d072b938961576d21c7b2bab0c9845f948cb121de375fd0fb6b3`,
 `/health/version` returned the full revision, all health endpoints were green,
 and Alembic reported `0191 (head)`.
 
@@ -70,6 +72,8 @@ and Alembic reported `0191 (head)`.
   and both foreign-run concealment paths. Each selector passed before its
   mutation, each mutated run had to fail with pytest/vitest status 1, every
   replacement applied exactly once, and original bytes were restored.
+- Independent rereview returned **APPROVE** for executable commit `4c3b4f8c`
+  after confirming the Python YAML-extra consumer contract and mutation.
 
 ## Deviations and remaining gaps
 
