@@ -521,12 +521,13 @@ hydration, shared-view seeding, failed-load retry, stale-layout repair and
 persistence use one scoped frontend authority. Shipping picker IDs now map to
 rendered panels, UTC calendar boundaries govern trend/comparison periods,
 committed ingestion clears project and aggregate caches, and Value Metrics plus
-Billing expose retryable outages. The exact executable candidate `e637346d` was
-deployed and verified before tests; 300 broad backend tests, 1,798 full frontend
-tests, all 43 quality guards and 30 asserted mutations passed. Fixed defects:
-EXP-BUG-102 through EXP-BUG-107. Remaining gaps are interactive mutation and
-outage variants on the shared homelab, plus product UI for reordering/duplicate
-instances and server-side multi-tab first-save concurrency. Evidence:
+Billing expose retryable outages. The exact executable candidate `f7001619` was
+deployed and verified before tests; 301 broad backend tests, 1,799 full frontend
+tests, all 43 quality guards and 34 asserted mutations passed, followed by
+independent review approval. Fixed defects: EXP-BUG-102 through EXP-BUG-107.
+Remaining gaps are interactive mutation and outage variants on the shared
+homelab, plus product UI for reordering/duplicate instances and server-side
+multi-tab first-save concurrency. Evidence:
 `architecture/verification/exploratory-20260916/M17-analytics-saved-views.md`.
 
 ## M18 — Integration, digest and notification settings (P1, integration QA)

@@ -4,8 +4,8 @@
 
 **PARTIAL — the exact executable candidate is deployed and all safe local and
 deployed read-only variants pass; interactive shared-homelab mutations and
-destructive outage injection remain blocked.** Candidate `e637346d` was
-deployed as `build-20260918-032752`. `/health/version` returned the full
+destructive outage injection remain blocked.** Candidate `f7001619` was
+deployed as `build-20260918-041409`. `/health/version` returned the full
 revision, every application deployment became ready on the candidate tag and
 digest, health was green, and Alembic reported `0191 (head)`.
 
@@ -32,9 +32,9 @@ digest, health was green, and Alembic reported `0191 (head)`.
 
 ## Verification
 
-- Focused backend suite: **46 passed**. Broad analytics, saved-view, metrics,
-  value, coverage, authorization and transaction-boundary suite: **300 passed**.
-- Focused frontend suite: **45 passed**. Full frontend suite: **1,798 passed in
+- Focused backend suite: **48 passed**. Broad analytics, saved-view, metrics,
+  value, coverage, authorization and transaction-boundary suite: **301 passed**.
+- Focused frontend suite: **46 passed**. Full frontend suite: **1,799 passed in
   241 files** after correcting a stale source-contract assertion for the
   already-memoized routed Releases array.
 - Backend Ruff passed; mypy held at **367/367**; TypeScript passed; ESLint
@@ -42,18 +42,21 @@ digest, health was green, and Alembic reported `0191 (head)`.
 - Quality-gate, mypy-ratchet and CI-security self-tests passed **273 tests**;
   all **43 guards** remained green. Generated agent API documentation matched
   OpenAPI and Alembic had the single head `0191`.
-- Mutation harness: **30 unsafe changes killed**. Every selector was asserted
+- Mutation harness: **34 unsafe changes killed**. Every selector was asserted
   to apply exactly once and source restoration was retried and verified after
   each mutation.
 - Homelab authority: revision
-  `e637346dae823cedb1d1e3fcbbd800951f9d2b25`; backend and worker digest
-  `sha256:ba560367d166a5e78abc9d39343513483f1a1368112a30d027a8095b70a06e1d`;
+  `f7001619ab0c84e02fc78c209c13662beb252d7e`; backend and worker digest
+  `sha256:cc2fc4c7e125e8b2401874cd038cd9ab8e459f9f2a52823945f30a928cedb1b2`;
   frontend digest
-  `sha256:a8712a8c3ac8ef868d75added1696cc72a2e8a814519f2028bec84d31fc45943`;
+  `sha256:a3bd457a2ff0f6c3815e7e3f53f27861a0e8030e33a1d8f5284ddcd9b242cffe`;
   MCP digest
   `sha256:0dbe7c85653c85043e4ae28d35d60cb52f8bf31176acc6370c5626f88d6c7263`.
 - The deployed `/overview` route returned 200 and an unauthenticated saved-view
   request returned 401 through ingress.
+- Independent final re-review returned **APPROVE** after verifying the legacy
+  page fallback, deferred create-response fence, UTC SQL bucket and terminal
+  cache invalidation plus their focused mutations.
 
 ## Defects fixed
 
