@@ -17,7 +17,7 @@
  * - SWR polling GET /api/v1/stream/active (5 s interval, 10 s when WS open)
  * - WebSocket   /ws/live/{projectId} (push updates, merges into local state)
  */
-import { Fragment, useEffect, useState, useMemo, useCallback } from 'react'
+import { Fragment, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
