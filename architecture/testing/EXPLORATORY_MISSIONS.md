@@ -622,6 +622,22 @@ contract; authentication and recovery rules enforced; identity audit complete.
 IDs and post-revoke statuses. Disabled features are recorded with config proof;
 enabled features without test IdP access are BLOCKED.
 
+**Execution 2026-09-18 (shipped, partial):** Exact executable candidate
+`eed44908` was deployed as `build-20260918-080343` before tests. API-key list
+outages now render a retryable unavailable state instead of a false empty list;
+one-time key material and its form are bound to project, user, session, and
+normalized-role authority,
+and the generated-key dialog follows the shared focus/Escape/return contract.
+Focused identity Vitest (**132 passed**), backend key/MFA/SSO/SCIM/session and
+authority tests (**425 passed, 78 skipped**), TypeScript, ESLint, Ruff, mypy
+(**367/367**), all **43** guards, **238** guard self-tests, and five
+applied/killed mutations passed. EXP-BUG-116 and EXP-BUG-117 shipped. Live
+MFA, SAML, SCIM, invitation, revoke/use race, and stale-tab permission tests
+remain blocked because the shared homelab has no dedicated IdP tenant,
+disposable identities, or notification sink, so M20 is PARTIAL. Evidence:
+`architecture/verification/exploratory-20260916/M20-identity-keys.md`.
+Independent final review approved the executable and evidence.
+
 ## M21 — Retention, protected evidence, deletion and export (P0, data QA)
 
 **Preconditions:** dedicated synthetic project/stores; successful disposable
