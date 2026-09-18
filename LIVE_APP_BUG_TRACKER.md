@@ -99,6 +99,90 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ---
 
+## UI / layout
+
+### BUG-005 — `/intelligence` "Recent runs analyzed": Build eats the width, the other columns clip  ·  S2  ·  **OPEN — backlog**
+- **Symptom (user-reported 2026-09-18, with screenshot, on a ~2000px display):**
+  the Build column occupies a large, mostly empty band while Suite shows `—`,
+  Pass rate is cut mid-glyph (`0'` and `1(` where `0%` and `100%` belong), and
+  Timing is squeezed to the right edge.
+- **Cause, stated in the code itself** (`frontend/src/pages/IntelligenceHubPage.tsx:718-742`):
+  the column budget is *"measured live at a 1345px viewport"*. Suite 110 +
+  Status 88 + Pass rate 86 + Timing 158 = **442px of hard `max-w` caps**, and
+  Build alone is `w-full`. Every pixel past 1345px therefore goes to Build and
+  none to the others. Separately, `max-w-[86px]` on Pass rate is narrower than
+  its own content (bar + percentage), which is the clipping.
+- **Why it shipped:** the same numbers fixed a real earlier collapse (Build at
+  28px) by pinning four columns to one measurement. That trades one viewport's
+  bug for every other viewport's.
+- **Fix direction:** proportional / `minmax()` sizing so columns share slack
+  instead of Build absorbing it, and a `min-width` on Pass rate that fits its
+  content rather than a `max-width` that cuts it.
+- **Tests required:** `textContent` cannot see this — every value is in the DOM
+  and only its box is wrong. Assert **computed geometry** at two viewports (the
+  single-measurement habit is what caused it), plus `scrollWidth <= clientWidth`
+  on the Pass rate cell. Same approach as `TL-2026-08-29-01-001`.
+- **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-007.md`
+
+### BUG-006 — four `/releases` controls only toast "coming in next iteration"  ·  S3  ·  **OPEN — backlog, needs a product decision**
+- **Symptom:** on `/releases`, "Clone from previous release", "Generate from
+  PRD", "Export schedule" and "Calendar view" are styled exactly like the
+  working controls beside them and only raise a toast.
+- **Sites:** `frontend/src/components/releases/ReleaseCard.tsx:99,106` and
+  `frontend/src/pages/ReleasesPage.tsx:819,826`.
+- **Count correction:** a 2026-09-05 design handoff scoped this as "two
+  placeholder buttons on `ReleaseCard.tsx`" with an acceptance criterion of "no
+  button in the app toasts 'coming in next iteration'". There are **four** — as
+  scoped, that item could not have satisfied its own criterion.
+- **Decision needed:** implement the four actions, remove the controls until the
+  actions exist, or keep them visibly disabled with a tooltip naming what is
+  missing. These are three different products; a QA pass should not pick.
+- **Acceptance check for whoever takes it:**
+  `grep -rn "coming in next iteration" frontend/src --include=*.tsx --include=*.ts`
+  returns nothing outside tests, and each control either acts or is disabled
+  with a reason a user can read.
+- **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-004.md`
+
+### BUG-007 — "0 flaky" on `/reports/summary` beside "1 quarantine" on `/flaky-coach`  ·  S3/S2  ·  **OPEN — investigate**
+- **Reported:** user, 2026-09-18. Confirm whether the pair is accurate or a bug.
+- **They are not the same measurement.** `/reports/summary` calls
+  `metrics_service._count_flaky_tests` — a *behavioural* count requiring both a
+  10-90% failure ratio **and** N pass<->fail transitions in run order.
+  `/flaky-coach` counts *workflow rows*
+  (`DETECTED -> PROPOSED -> APPROVED -> QUARANTINED -> RECHECK_SCHEDULED`).
+- **And the states interact in exactly this direction.** `models/postgres.py:5738`
+  says a QUARANTINED test is "excluded from release gate scoring" — a suppressed
+  test stops producing flips, so it legitimately drops out of the behavioural
+  count while its quarantine row stays live. **"0 flaky, 1 quarantined" is the
+  expected steady state after a successful quarantine.**
+- **Check the cheap thing first:** `/flaky-coach` is one of the nine
+  single-project routes in `config/routeScope.ts`; `/reports/summary` is not. If
+  the two pages were viewed under different project scopes the numbers describe
+  different populations. Confirm the same project was pinned on both.
+- **Also confirm which number was read:** `FlakyCoachPage.tsx:224-230` renders
+  `flakyCount` AND `quarantine_candidates` in one subtitle. A *candidate* is not
+  an active quarantine. If Flaky Coach's own `flakyCount` disagrees with the
+  summary report's `flaky_test_count`, that IS a bug — one measurement, two
+  answers.
+- **If accurate, the fix is wording, not arithmetic:** a QA lead reading "0
+  flaky" concludes there is no flakiness, while a quarantine exists precisely
+  because there was. The summary should say what it excludes.
+- **Detail + queries:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-008.md`
+
+### BUG-008 — ENHANCEMENT: `/agents` report above Agent Stages, and make Stages collapsible  ·  **OPEN — backlog**
+- **Requested:** user, 2026-09-18. (1) The summary/report section belongs at the
+  top of the page with "Agent Stages" below it. (2) Agent Stages needs an
+  expand/collapse control.
+- **The page's own code already argues for it:** the comment on `showSummary`
+  calls the AI report "the headline output of the pipeline", which is why it
+  defaults to expanded — yet it renders *below* the stage detail, so the reader
+  scrolls past the mechanism to reach the conclusion.
+- **Do not regress:** `AgentStatusPage.test.tsx` pins "shows the AI report by
+  default (expanded) once a pipeline is selected".
+- **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-010.md`
+
+---
+
 ## Open questions / not-yet-bugs
 - Active-project UX: should the dashboard auto-select a project that has data, or
   warn when the active project is empty but others have runs? (Affects BUG-004.)

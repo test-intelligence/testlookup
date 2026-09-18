@@ -585,6 +585,28 @@ export default function AgentStatusPage() {
     setShowSummary(true)
   })
 
+  // Choosing a different run in the "Pipeline Runs" dropdown must clear the
+  // pipeline selected from the PREVIOUS run.
+  //
+  // The dropdown navigates to `/agents/run/:runId`, so `runId` changes and
+  // `usePipelines(runId)` refetches the list correctly — but `selectedPipeline`
+  // is component state and was only ever reset on a project change
+  // (`useProjectChangeReset`) or by clicking a card. Every detail panel below
+  // is keyed on it: `usePipelineStages`, `usePipelineTimeline`, the compute
+  // graph and the AI report. So the header moved to the newly-chosen run while
+  // the stages, timeline and report kept showing the old one, which reads as
+  // "selecting a run does not refresh the page" (user-reported 2026-09-18).
+  //
+  // Reset on `runId` rather than validating the id against the refetched list:
+  // the list arrives a tick later, so a check against it would render the stale
+  // pipeline in the meantime.
+  useEffect(() => {
+    setSelectedPipeline(null)
+    setSelectedRunId(null)
+    // The AI report stays expanded-by-default, matching the card-click path.
+    setShowSummary(true)
+  }, [runId])
+
   const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
   // Sort descending by created_at client-side as a defensive guarantee
   const pipelines = [...rawPipelines].sort(

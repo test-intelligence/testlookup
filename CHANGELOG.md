@@ -2,6 +2,15 @@
 
 ## Unreleased - Full-system exploratory + E2E journey validation (EXJ-2026-09-18)
 
+Choosing a different run in the Pipeline Runs dropdown on `/agents` now
+refreshes the whole page. The dropdown navigates to `/agents/run/:runId`,
+so the run list refetched correctly, but the pipeline selected from the
+previous run was component state that nothing cleared on a run change --
+only on a project change. Every detail panel is keyed on it, so the stage
+detail, timeline, compute graph and AI report kept describing the run the
+user had navigated away from while the header showed the new one.
+
+
 Three live probe sweeps were asserting against the dashboard rather than the
 pages they named: `probe-route-sweep.spec.ts` swept `/failure-analysis` and
 `probe-exploratory.spec.ts` swept `/tests` and `/flaky`, none of which the
