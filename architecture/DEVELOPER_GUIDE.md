@@ -40,10 +40,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **43 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **44 guards**.
 18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 25 ship at zero with **no baseline file at all** — those are
+fail CI. The other 26 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -142,6 +142,7 @@ fails if a *second* deleter appears.
 | Gate id | Forbids / requires | How to satisfy |
 |---|---|---|
 | `repo.no-gitignored-source` | a source file matched by `.gitignore` | Narrow the offending pattern. The security globs (`*credentials*`, `*secrets*`, `*api_key*`) match at **every depth** and have twice silently excluded real code from a commit |
+| `repo.dockerignore-covers-pytest-scratch` † | a build context whose `.dockerignore` misses any pytest scratch-directory spelling | Widen the pattern to the whole class (`.pytest*/` and `**/.pytest*/`), never add a fourth exact spelling. pytest creates `--basetemp` roots owner-only on Windows, so one leftover fails the image build's context walk with `getting extended attributes ...: permission denied`. Three earlier patterns were each written after a build had already broken, and `.pytest_cache_t0` still slipped past all three (mcp image, 2026-09-18). The guard also folds in whatever spellings are on disk right now, so a new one trips the gate instead of the next build |
 
 ### CI
 

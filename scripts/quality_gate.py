@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import hashlib
 import io
 import json
@@ -3784,6 +3785,112 @@ def _repo_no_gitignored_source() -> list[Violation]:
     return violations
 
 
+# ── repo.dockerignore-covers-pytest-scratch ──────────────────────────────────
+#
+# pytest creates its ``--basetemp`` roots owner-only on Windows. The container
+# build's context walk cannot stat them, so a single leftover scratch directory
+# fails the image build outright:
+#
+#   copier: get: getting extended attributes for "/.pytest_cache_t0":
+#   listing extended attributes of "/.pytest_cache_t0": permission denied
+#
+# Each ``.dockerignore`` grew one pattern per incident — ``.pytest_cache/``,
+# then ``.pytest_tmp*/`` (underscore basetemps), then ``.pytest-*/`` (hyphen
+# basetemps). Every one of those was written AFTER a build had already broken,
+# and each covered only the spelling that broke it. On 2026-09-18
+# ``.pytest_cache_t0`` — underscore, but a *cache* rather than a *tmp* — slipped
+# past all three and failed the mcp image build.
+#
+# Matching the literal patterns would re-make the same mistake at guard level.
+# This guard asserts BEHAVIOUR: every scratch directory name pytest can produce
+# must be excluded by *some* declared pattern. It also folds in whatever
+# variants are actually sitting in the working tree right now, so a session that
+# invents a fourth spelling trips the gate instead of the next build.
+_DOCKERIGNORE_CONTEXTS = ("backend", "frontend", "mcp")
+
+# Spellings that have each cost a broken build, plus the shapes adjacent to
+# them. Hard-coded so the guard can never pass vacuously on a clean tree.
+_PYTEST_SCRATCH_NAMES = (
+    ".pytest_cache",
+    ".pytest_cache_t0",
+    ".pytest_cache_t23",
+    ".pytest_tmp",
+    ".pytest_tmp_ui003_full",
+    ".pytest-tmp-m10",
+    ".pytest-cache-m10",
+)
+
+_DOCKERIGNORE_PYTEST_HINT = (
+    "Widen the pattern to cover the whole class rather than the one spelling "
+    "that broke — `.pytest*/` and `**/.pytest*/` match every basetemp and "
+    "cache root pytest produces. Adding a fourth exact spelling only moves the "
+    "next failure."
+)
+
+
+def _dockerignore_patterns(path: Path) -> list[str]:
+    """Declared patterns, comments and blank lines removed.
+
+    The files are CRLF on this repo; podman strips the carriage return itself
+    (verified 2026-09-18 against an LF/CRLF pair on a synthetic context), but
+    the guard must strip it too. ``str.strip()`` removes it as ordinary
+    whitespace; a pattern that kept one would match nothing, silently.
+    """
+    out: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+    return out
+
+
+def _excludes_dir(patterns: list[str], name: str) -> bool:
+    """Does any pattern exclude a directory called ``name`` at any depth?"""
+    for pattern in patterns:
+        if pattern.startswith("!"):
+            continue
+        candidate = pattern.rstrip("/")
+        if candidate.startswith("**/"):
+            candidate = candidate[3:]
+        if fnmatch.fnmatch(name, candidate):
+            return True
+    return False
+
+
+def _repo_dockerignore_covers_pytest_scratch() -> list[Violation]:
+    """Every build context excludes every pytest scratch-directory spelling."""
+    names = list(_PYTEST_SCRATCH_NAMES)
+    # Fold in anything actually on disk, so a new spelling is caught here
+    # rather than by the next person whose build dies.
+    for found in REPO_ROOT.glob("**/.pytest*"):
+        try:
+            if found.is_dir() and found.name not in names:
+                names.append(found.name)
+        except OSError:
+            # Owner-only scratch dirs can refuse even is_dir(). The name is
+            # what matters, and a name we cannot stat is exactly the kind that
+            # breaks the build — keep it.
+            if found.name not in names:
+                names.append(found.name)
+
+    violations: list[Violation] = []
+    for context in _DOCKERIGNORE_CONTEXTS:
+        path = REPO_ROOT / context / ".dockerignore"
+        if not path.exists():
+            continue
+        patterns = _dockerignore_patterns(path)
+        for name in sorted(names):
+            if not _excludes_dir(patterns, name):
+                violations.append(Violation(
+                    path, 0,
+                    f"no pattern excludes the pytest scratch directory "
+                    f"`{name}` — a leftover one fails the image build's "
+                    f"context walk with a permission-denied stat",
+                ))
+    return violations
+
+
 # ── Every test suite is executed by CI (re-audit N2) ─────────────────────────
 #
 # The MCP server's suite (100+ tests, including the principal-isolation tests
@@ -5275,6 +5382,17 @@ GUARDS: list[Guard] = [
         ),
         check=_repo_no_gitignored_source,
         fix_hint=_GITIGNORED_SOURCE_HINT,
+    ),
+    Guard(
+        name="repo.dockerignore-covers-pytest-scratch",
+        description=(
+            "Every build context's .dockerignore excludes every pytest "
+            "scratch-directory spelling — an owner-only leftover fails the "
+            "image build's context walk, and each pattern so far was added "
+            "after a build had already broken on a spelling it missed."
+        ),
+        check=_repo_dockerignore_covers_pytest_scratch,
+        fix_hint=_DOCKERIGNORE_PYTEST_HINT,
     ),
     Guard(
         name="database.downgrade-implemented",

@@ -54,9 +54,14 @@ README.md
 # That failure cost a homelab deploy from backend/, whose ignore covered
 # the underscore spelling but not the hyphenated one. Both separators are
 # matched here so this context cannot repeat it.
-.pytest_cache/
-**/.pytest_cache/
-.pytest_tmp*/
-**/.pytest_tmp*/
-.pytest-*/
-**/.pytest-*/
+# Every pytest scratch root, whatever the session named it. The three
+# spellings below were each added after a build broke on a variant the
+# previous pattern missed: `.pytest_cache`, then `.pytest_tmp_*`, then
+# `.pytest-cache-m10`. `.pytest_cache_t0` slipped past all three and
+# failed the mcp image build on 2026-09-18 with
+#   copier: get: getting extended attributes for "/.pytest_cache_t0":
+#   permission denied
+# (pytest creates these owner-only on Windows, so the context walk cannot
+# even stat them). One pattern for the whole class ends the sequence.
+.pytest*/
+**/.pytest*/
