@@ -36,6 +36,7 @@ def test_saved_view_contract_rejects_layouts_over_the_widget_limit(schema):
 @pytest.mark.parametrize(
     "filters",
     [
+        {"instances": {}},
         {"instances": "not-a-list"},
         {"instances": [{"instanceId": "only-an-id"}]},
         {"widgets": ["pass_fail_trend", ""]},
