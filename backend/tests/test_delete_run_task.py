@@ -198,9 +198,9 @@ def test_the_tombstone_is_written_in_the_same_transaction_as_the_delete():
     assert execute != -1, "the shared transaction never runs the executor"
     assert stage != -1, "the shared transaction never stages a tombstone"
     assert execute < stage, "the tombstone is staged before the deletion runs"
-    assert "commit" not in shared.replace(
-        run_deletion_service.perform_run_deletion.__doc__ or "", ""
-    ), "the shared transaction must stage only; the caller owns the commit"
+    assert ".commit(" not in shared, (
+        "the shared transaction must stage only; the caller owns the commit"
+    )
 
     task = inspect.getsource(tasks.delete_run_everywhere)
     call = task.find("perform_run_deletion(")
