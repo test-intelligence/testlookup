@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased - Full-system exploratory + E2E journey validation (EXJ-2026-09-18)
+
+Three live probe sweeps were asserting against the dashboard rather than the
+pages they named: `probe-route-sweep.spec.ts` swept `/failure-analysis` and
+`probe-exploratory.spec.ts` swept `/tests` and `/flaky`, none of which the
+router declares, so `App.tsx`'s catch-all redirected every one to `/overview`
+and the "page is not an empty shell" assertions passed against a page the sweep
+never opened. Confirmed live against the homelab before fixing. The spellings
+are corrected, and `frontend/src/App.routeTargets.test.ts` now cross-checks
+every probe spec's route literals against the route table so the next
+divergence fails in CI rather than reporting coverage it does not have.
+
+Container builds no longer break on leftover pytest scratch directories. pytest
+creates `--basetemp` roots owner-only on Windows, and the build context walk
+fails outright on one it cannot stat. Each of the three previous
+`.dockerignore` patterns was added after a build had already broken on the
+spelling it covers, and `.pytest_cache_t0` slipped past all three. All three
+build contexts now exclude the whole class, and a new absolute quality gate,
+`repo.dockerignore-covers-pytest-scratch`, checks that every spelling — the
+ones that have broken a build, plus whatever is on disk right now — is actually
+excluded, so the next variant fails the gate instead of the next build.
+
 ## Unreleased - Exploratory testing execution plan
 
 The consolidated release candidate now runs every committed mutation harness

@@ -39,7 +39,7 @@ const ROUTES = [
   '/coverage/suite',
   '/trends',
   '/defects',
-  '/failure-analysis',
+  '/failures',
   '/my-failures',
   '/intelligence',
   '/release-gate',

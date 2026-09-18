@@ -1,0 +1,347 @@
+[
+  {
+    "path": "/overview",
+    "component": "OverviewPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/getting-started",
+    "component": "OnboardingPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/docs",
+    "component": "DocsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/docs/:docId",
+    "component": "DocsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/value-metrics",
+    "component": "ValueMetricsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/intelligence",
+    "component": "IntelligenceHubPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/runs",
+    "component": "RunsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/runs/compare",
+    "component": "RunComparePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/runs/:runId",
+    "component": "RunDetailPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/runs/:runId/intelligence",
+    "component": "RunIntelligencePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/runs/:runId/tests/:testId",
+    "component": "TestCasePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/coverage",
+    "component": "CoveragePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/coverage/suite",
+    "component": "SuiteDetailPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/suites",
+    "component": "SuitesPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/suites/:suiteId",
+    "component": "SuiteCasesPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/canonical-test-cases/:canonicalId",
+    "component": "CanonicalDetailPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/failures",
+    "component": "FailureAnalysisPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/trends",
+    "component": "TrendsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/defects",
+    "component": "DefectsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/search",
+    "component": "SearchPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/chat",
+    "component": "ChatPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/agents",
+    "component": "AgentStatusPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/agents/run/:runId",
+    "component": "AgentStatusPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/agents/workflows",
+    "component": "WorkflowEditorPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/deep-investigate",
+    "component": "DeepInvestigationPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/deep-investigate/:runId",
+    "component": "DeepInvestigationPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/release-gate",
+    "component": "ReleaseGatePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/release-gate/:runId",
+    "component": "ReleaseGatePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/flaky-coach",
+    "component": "FlakyCoachPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/quarantine",
+    "component": "QuarantinePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/reviews",
+    "component": "ReviewsPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/test-management",
+    "component": "TestManagementPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/live",
+    "component": "LiveExecutionPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/my-failures",
+    "component": "MyFailuresPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/reports/summary",
+    "component": "SummaryReportPage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/settings/profile",
+    "component": "ProfilePage",
+    "guard": "authenticated"
+  },
+  {
+    "path": "/projects",
+    "component": "ProjectsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/releases",
+    "component": "ReleasesPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/releases/:releaseId",
+    "component": "ReleasesPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/activity",
+    "component": "ActivityPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/users",
+    "component": "UserManagementPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings",
+    "component": "SettingsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/notifications",
+    "component": "NotificationsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/ai",
+    "component": "AIConfigPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/integrations",
+    "component": "IntegrationsSettingsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/storage",
+    "component": "StoragePage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/sso",
+    "component": "SSOSettingsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/digests",
+    "component": "DigestsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/integration-health",
+    "component": "IntegrationHealthPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/audit",
+    "component": "AuditDashboardPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/ai-eval",
+    "component": "AIEvalDashboardPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/performance",
+    "component": "PerformancePage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/seed-data",
+    "component": "SeedDataPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/feature-flags",
+    "component": "FeatureFlagsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/billing",
+    "component": "BillingPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/github",
+    "component": "GitHubIntegrationPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/gitlab",
+    "component": "GitLabIntegrationPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/webhooks",
+    "component": "OutboundWebhooksPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/api-keys",
+    "component": "ApiKeysPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/project-data",
+    "component": "ProjectDataPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/retention",
+    "component": "RetentionPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/mfa-policy",
+    "component": "MfaPolicyPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/ai-agents",
+    "component": "AIAgentsPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/settings/agent-activity",
+    "component": "AgentActivityPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/policies",
+    "component": "PolicyEditorPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/policies/:policyId",
+    "component": "PolicyEditorPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/ownership",
+    "component": "OwnershipEditorPage",
+    "guard": "management(QA_LEAD|ADMIN)"
+  },
+  {
+    "path": "/login",
+    "component": "LoginPage",
+    "guard": "public"
+  },
+  {
+    "path": "/reset-password",
+    "component": "ResetPasswordPage",
+    "guard": "authenticated"
+  }
+]
