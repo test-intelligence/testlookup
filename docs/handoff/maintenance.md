@@ -13,6 +13,7 @@ python scripts/generate_handoff_reference.py
 python scripts/generate_handoff_reference.py --check
 python scripts/check_handoff_docs.py
 python scripts/test_handoff_docs.py
+python -m pytest backend/tests/regression/test_dev_llm_model_pair.py backend/tests/regression/test_role_hierarchy_is_five_tiers.py -q
 python scripts/gen_schema_docs.py --check
 python scripts/release/check_image_drift.py
 python scripts/quality_gate.py
