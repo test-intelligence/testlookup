@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.postgres import DeletionJob, Project, TestRun
+from app.models.postgres import DeletionJob, Project, TestRun as DbTestRun
 from app.services import deletion_job_service as jobs
 
 pytest.importorskip("asyncpg")
@@ -139,7 +139,7 @@ async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
         setup.add(Project(id=project_id, name=slug, slug=slug))
         await setup.flush()
         setup.add(
-            TestRun(
+            DbTestRun(
                 id=run_id,
                 project_id=project_id,
                 build_number=f"m21-{run_id.hex[:12]}",
@@ -165,7 +165,9 @@ async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
         async with sessions() as db:
             row = (
                 await db.execute(
-                    select(TestRun).where(TestRun.id == run_id).with_for_update()
+                    select(DbTestRun)
+                    .where(DbTestRun.id == run_id)
+                    .with_for_update()
                 )
             ).scalar_one()
             await db.rollback()
@@ -184,7 +186,7 @@ async def test_report_publication_and_deletion_share_the_run_lock(monkeypatch):
         assert reports.docs[0]["report_id"] == published["report_id"]
     finally:
         async with sessions() as cleanup:
-            await cleanup.execute(delete(TestRun).where(TestRun.id == run_id))
+            await cleanup.execute(delete(DbTestRun).where(DbTestRun.id == run_id))
             await cleanup.execute(delete(Project).where(Project.id == project_id))
             await cleanup.commit()
         await engine.dispose()

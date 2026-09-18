@@ -177,7 +177,7 @@ async def close_job(
                 statement = statement.where(DeletionJob.status == expected_status)
             result = await db.execute(statement.values(**values))
             await db.commit()
-            updated = result.rowcount == 1
+            updated = bool(result.rowcount == 1)
             if expected_status is not None and not updated:
                 logger.warning(
                     "deletion_job_stale_close_refused",
