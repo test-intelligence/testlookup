@@ -309,7 +309,9 @@ async def test_queued_jobs_are_a_durable_relay_source(mocker):
         (uuid.uuid4(), uuid.uuid4(), None),
     ]
     db = mocker.AsyncMock()
-    db.execute.return_value.all.return_value = rows
+    result = mocker.MagicMock()
+    result.all.return_value = rows
+    db.execute.return_value = result
     session_cm = mocker.MagicMock()
     session_cm.__aenter__ = mocker.AsyncMock(return_value=db)
     session_cm.__aexit__ = mocker.AsyncMock(return_value=False)

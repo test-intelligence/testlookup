@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+import uuid
 
 import pytest
 from pydantic import ValidationError
