@@ -34,8 +34,8 @@ from app.models.postgres import (
     TestCaseReview as ReviewModel,
     TestRun as RunModel,
     TestCaseVersion as VersionModel,
-    TestPlan,
-    TestPlanItem,
+    TestPlan as PlanModel,
+    TestPlanItem as PlanItemModel,
     TestSuite as SuiteModel,
     User,
     UserRole,
@@ -46,7 +46,7 @@ from app.services.test_management_service import (
     list_combined_test_case_identities,
     list_managed_test_cases,
 )
-from app.models.schemas import TestPlanItemCreate
+from app.models.schemas import TestPlanItemCreate as PlanItemCreate
 from app.services.test_suite_service import promote_canonical_test_case
 
 asyncpg = pytest.importorskip("asyncpg")
@@ -957,7 +957,7 @@ async def test_concurrent_plan_membership_serializes_aggregate_counts(
     case_ids = [uuid.uuid4(), uuid.uuid4()]
     async with factory() as session:
         session.add(
-            TestPlan(
+            PlanModel(
                 id=plan_id,
                 project_id=pg_seed.project.id,
                 name="Concurrent membership proof",
@@ -985,7 +985,7 @@ async def test_concurrent_plan_membership_serializes_aggregate_counts(
             await add_test_plan_item(
                 session,
                 plan_id,
-                TestPlanItemCreate(test_case_id=case_ids[0]),
+                PlanItemCreate(test_case_id=case_ids[0]),
                 pg_seed.author,
             )
             first_locked.set()
@@ -998,7 +998,7 @@ async def test_concurrent_plan_membership_serializes_aggregate_counts(
             await add_test_plan_item(
                 session,
                 plan_id,
-                TestPlanItemCreate(test_case_id=case_ids[1]),
+                PlanItemCreate(test_case_id=case_ids[1]),
                 pg_seed.author,
             )
             await session.commit()
@@ -1013,12 +1013,12 @@ async def test_concurrent_plan_membership_serializes_aggregate_counts(
         await asyncio.gather(first, second)
 
         async with factory() as session:
-            plan = await session.get(TestPlan, plan_id)
+            plan = await session.get(PlanModel, plan_id)
             item_count = int(
                 await session.scalar(
                     select(func.count())
-                    .select_from(TestPlanItem)
-                    .where(TestPlanItem.plan_id == plan_id)
+                    .select_from(PlanItemModel)
+                    .where(PlanItemModel.plan_id == plan_id)
                 )
                 or 0
             )
