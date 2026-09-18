@@ -14,7 +14,7 @@ M12,P0,PASS,M12-invoke-streams.md,EXP-BUG-082;EXP-BUG-083;EXP-BUG-084;EXP-BUG-08
 M13,P1,PARTIAL,M13-workflow-governance.md,EXP-BUG-089;EXP-BUG-090;EXP-BUG-091;EXP-BUG-092;EXP-BUG-093;EXP-BUG-094;EXP-BUG-095,"Credentialed live mutation journey is blocked because no disposable workflow project and scoped non-production credential are available"
 M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive outage injection
 M15,P1,NOT_RUN,,,
-M16,P1,NOT_RUN,,,
+M16,P1,PARTIAL,M16-test-management.md,EXP-BUG-096;EXP-BUG-097;EXP-BUG-098;EXP-BUG-099;EXP-BUG-100;EXP-BUG-101,"Credentialed live mutations and outage injection are blocked because the shared homelab has no disposable Test Management project or scoped non-production credential"
 M17,P1,NOT_RUN,,,
 M18,P1,NOT_RUN,,,
 M19,P1,NOT_RUN,,,

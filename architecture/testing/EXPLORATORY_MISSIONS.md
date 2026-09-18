@@ -483,6 +483,18 @@ same-scope stale data labeled; recovery single-flight and durable after reload.
 **Observe/capture:** versions/audit rows, request counts, focused screenshot of
 failure/retry state, export content and related release effects.
 
+**Execution 2026-09-18:** **PARTIAL.** Exact executable candidate `81dca0bc`
+was deployed as `build-20260918-014434` before final tests. Six defects were
+fixed: stale edit and lifecycle overwrite, cross-project plan membership,
+unbounded execution status, unserialized plan aggregates/duplicate handling,
+and missing membership/execution audit rows. Focused, broad frontend/backend,
+real-PostgreSQL, quality and 14-mutation suites passed. Authenticated deployed
+case, plan and audit reads plus the required-version contract probe also passed.
+Live mutation/race and destructive
+outage variants remain blocked on the shared homelab because no disposable
+project or scoped non-production credential is available. Evidence:
+`architecture/verification/exploratory-20260916/M16-test-management.md`.
+
 ## M17 — Analytics, dashboards and saved views (P1, product QA)
 
 **Preconditions:** corpus with independently calculated counts, widget limits,
