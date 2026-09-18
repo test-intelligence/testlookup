@@ -658,6 +658,28 @@ rules preserved and approved data clock enforced.
 store-specific before/after counts, audit and restore record. Never run whole-
 namespace teardown or purge unrelated data to prepare a mission.
 
+**Execution 2026-09-18 (shipped, partial):** Exact executable candidate
+`47356a97` was deployed as `build-20260918-094024` before tests. Criteria
+deletion now serializes `previewed -> queued -> running` under row locks,
+persists queued work for periodic broker relay, and refuses duplicate requests
+and worker deliveries. Both single-run and criteria workers lock the run and
+revalidate mutable status and citation protections before touching the search
+index or any deletion store. Decision-report publishers take a compatible
+Postgres share lock through their Mongo write. Critic failure attempts and
+summary projections use the same lock and are suppressed if deletion wins.
+Live synthetic Postgres races proved the second claim waited and received 409,
+an update-lock contender waited for report publication, and a deletion-first
+race produced zero orphan Mongo writes; cleanup was verified. Focused and broad
+retention/export coverage passed (**88** and **312** tests, with **8** optional
+integration skips), along
+with Ruff, mypy (**367/367**), all **43** guards, **238** guard self-tests, and
+twelve applied/killed mutations.
+EXP-BUG-118 and EXP-BUG-119 shipped. Whole-run deletion, store interruption,
+restore, and live export reconciliation were not executed because the shared
+homelab lacks the required dedicated stores and successful disposable
+backup/restore rehearsal; legal holds remain future work. Evidence:
+`architecture/verification/exploratory-20260916/M21-retention-deletion-export.md`.
+
 ## M22 — CLI, MCP and SDK contract parity (P1, client QA)
 
 **Preconditions:** installed clients from candidate source and real backend;

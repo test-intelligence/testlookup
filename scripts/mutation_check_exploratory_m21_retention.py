@@ -110,7 +110,7 @@ MUTATIONS = (
 def run_test(mutation: Mutation) -> subprocess.CompletedProcess[str]:
     if "preflight" in mutation.name or "protection" in mutation.name:
         test_file = "backend/tests/test_delete_run_task.py"
-    elif "failure-subject" in mutation.name:
+    elif "failure-evidence" in mutation.name:
         test_file = "backend/tests/test_decision_report_critic_agent.py"
     elif "report-subject" in mutation.name:
         test_file = "backend/tests/services/test_decision_report_service.py"

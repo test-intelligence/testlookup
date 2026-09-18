@@ -2,6 +2,19 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M21 retention hardening serializes criteria-deletion claims through durable
+`previewed -> queued -> running` transitions, so repeated API submits and
+duplicate worker deliveries cannot execute the same frozen set twice. Deletion
+workers now lock each run and recheck in-progress status, release links,
+compliance packs, and decision-report citations before the first search or
+cross-store side effect. Queued work is durably relayed after broker failures,
+terminal writes use compare-and-set status checks, and decision-report
+publication and failure evidence share the run lock with deletion. If deletion
+wins, later critic failure handling suppresses its attempt and summary writes
+instead of recreating orphan Mongo evidence. A run protected after preview is
+preserved and the job records a failed or partial outcome instead of deleting
+newly protected evidence.
+
 M20 identity hardening makes API-key load failures visibly retryable instead
 of presenting them as an empty credential list. One-time generated key secrets
 are removed when the active project changes, remain labelled with the project
