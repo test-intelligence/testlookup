@@ -41,7 +41,7 @@ class _Result:
         return self._value
 
     def scalar_one(self):
-        return self._value
+        return datetime.now(UTC)
 
 
 class _FakeSession:
@@ -53,8 +53,7 @@ class _FakeSession:
 
     async def execute(self, *_a, **_kw):
         self.calls += 1
-        value = self.user if self.calls == 1 else datetime.now(UTC)
-        return _Result(value)
+        return _Result(self.user if self.calls == 1 else None)
 
     async def commit(self):
         pass
