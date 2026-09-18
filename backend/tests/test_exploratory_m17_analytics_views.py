@@ -179,7 +179,7 @@ async def test_page_filter_keeps_pre_0049_filter_only_layouts_discoverable(monke
     sql = str(statement)
     assert "saved_views.page IS NULL" in sql
     assert "saved_views.filters" in sql
-    assert "dashboard" in statement.compile().params.values()
+    assert list(statement.compile().params.values()).count("dashboard") == 2
 
 
 @pytest.mark.asyncio
