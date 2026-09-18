@@ -2,10 +2,10 @@
 
 ## Result
 
-**PARTIAL — four production defects are fixed and the exact executable was
+**PARTIAL — five production defects are fixed and the exact executable was
 deployed before testing; secret migration, local-time scheduling, draft tests,
 seed isolation, and credentialed provider exercises remain open.** Candidate
-`9e419842` was deployed as `build-20260918-050222`. `/health/version` returned
+`47a8ea7a` was deployed as `build-20260918-052249`. `/health/version` returned
 the full revision, every application deployment was ready on the candidate
 tag and expected digest, all health endpoints were green, and Alembic reported
 `0191 (head)`.
@@ -18,39 +18,43 @@ tag and expected digest, all health endpoints were green, and Alembic reported
 - On-demand probes use the saved endpoints and credentials. Their responses
   retain the existing healthy, authentication, degraded, timeout, and down
   distinctions without returning credentials.
+- Runtime email and digest delivery resolve the encrypted SMTP password from
+  the same secret authority as the settings test endpoint.
 - Global integration writes implement the established tri-state contract:
   omission preserves a secret, a non-empty value rotates it, and an empty value
   expires it. Reloaded responses expose only the corresponding set flags.
 - A scheduled digest claims its next slot before provider I/O for duplicate
   suppression, but advances `last_delivered_at` and `delivery_count` only after
   success. A known provider failure schedules a 15-minute retry and retains the
-  previous delta watermark.
+  previous delta watermark and original first-delivery window. Disabled SMTP is
+  a delivery failure, and the final update cannot overwrite a concurrent
+  subscription schedule change.
 - Explicit null or an empty list clears feature-flag project and role scopes;
   omitted fields still preserve the current allow-list.
 
 ## Verification
 
 - Homelab authority: revision
-  `9e419842434df336db0be9ba57487d1ddefde6f2`; tag
-  `build-20260918-050222`; backend and worker digest
-  `sha256:598ce9cd7fb768ce10190ead1bc61262586bc0372f9478e5b6324b4eaec02d2a`;
+  `47a8ea7a5642c5a7e27781c5a1be67908d2487e9`; tag
+  `build-20260918-052249`; backend and worker digest
+  `sha256:ab587d6cf4920455729a4ba15bd8d89aaefdcde6c0dfd5ffc3d58d94b9713314`;
   frontend digest
   `sha256:a3bd457a2ff0f6c3815e7e3f53f27861a0e8030e33a1d8f5284ddcd9b242cffe`;
   MCP digest
   `sha256:0dbe7c85653c85043e4ae28d35d60cb52f8bf31176acc6370c5626f88d6c7263`.
-- Focused M18 backend suite: **57 passed**. Broader connector, digest, feature
+- Focused M18 backend suite: **60 passed**. Broader connector, digest, feature
   flag, authorization, and persistence suite: **154 passed**.
 - Backend Ruff passed; mypy held at **367/367**. TypeScript passed; ESLint
   reported **0 errors** and 19 existing warnings. Focused settings UI suite:
   **11 passed**.
 - Quality gate: all **43 guards** green. Quality-gate self-tests: **238
   passed**.
-- Mutation harness: **6 unsafe changes killed**. Every mutation selector was
+- Mutation harness: **11 unsafe changes killed**. Every mutation selector was
   asserted to apply exactly once and the original bytes were restored.
 
 ## Defects fixed
 
-EXP-BUG-108 through EXP-BUG-111.
+EXP-BUG-108 through EXP-BUG-112.
 
 ## Deviations and remaining gaps
 

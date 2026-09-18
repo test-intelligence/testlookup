@@ -6,10 +6,15 @@ M18 integration settings now resolve saved encrypted credentials for Jira,
 Splunk, OpenShift, GitHub, Slack, and Teams health probes instead of silently
 testing stale environment values. Global connector secrets support an explicit
 keep, replace, or clear contract, and connector reads remain redacted.
+Runtime email and digest delivery now use the saved encrypted SMTP password
+that the settings test endpoint validates.
 Scheduled digest provider failures retain the previous successful watermark
 and delivery count while scheduling a bounded retry; only a successful send
-advances delivery history. Feature-flag project and role allow-lists can be
-cleared back to the documented unrestricted state.
+advances delivery history. First-delivery retries retain their original
+selection window, disabled SMTP is reported as a failed delivery, and
+compare-and-swap finalization preserves concurrent schedule edits. Feature-flag
+project and role allow-lists can be cleared back to the documented unrestricted
+state.
 
 M17 analytics saved views now enforce project membership on direct reads and
 owner mutations, keep project-less shared rows private to their creator, and

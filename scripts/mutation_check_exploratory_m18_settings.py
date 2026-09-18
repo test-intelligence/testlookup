@@ -89,6 +89,15 @@ MUTATIONS = (
         "secret_backed = any(",
         "backend/tests/regression/test_integrations_secret_authority.py::test_integrations_empty_secret_expires_stored_value",
     ),
+    Mutation(
+        "smtp-runtime-secret-authority",
+        "backend/app/services/notification/email_service.py",
+        'cfg["password"] = (\n'
+        '                    secret_value or cfg.get("password") or settings.SMTP_PASSWORD\n'
+        "                )",
+        'cfg["password"] = cfg.get("password") or settings.SMTP_PASSWORD',
+        "backend/tests/regression/test_smtp_secret_tristate.py::test_runtime_smtp_resolver_reads_encrypted_secret_ref",
+    ),
 )
 
 

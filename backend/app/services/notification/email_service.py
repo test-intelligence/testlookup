@@ -43,6 +43,7 @@ async def _get_smtp_cfg() -> dict[str, Any]:
 
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import AppSetting
+        from app.services.secret_service import read_secret
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -50,7 +51,12 @@ async def _get_smtp_cfg() -> dict[str, Any]:
             )
             row = result.scalar_one_or_none()
             if row and row.value:
-                return dict(row.value)
+                cfg = dict(row.value)
+                secret_value = await read_secret(db, "smtp_config", "password")
+                cfg["password"] = (
+                    secret_value or cfg.get("password") or settings.SMTP_PASSWORD
+                )
+                return cfg
     except Exception as exc:
         logger.debug("Could not load SMTP config from DB, falling back to env: %s", exc)
 
