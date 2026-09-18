@@ -2,6 +2,8 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+Fixed workflow-backed pipeline retries to rehydrate their project authority before validating the frozen replay snapshot, and made the PostgreSQL/Mongo integration suite self-contained across per-test event loops and current authorization/configuration routes.
+
 The Projects page now meets WCAG AA contrast for its primary action and
 creation timestamp in the default Signal theme. The primary button uses a
 darker blue and the timestamp uses the readable secondary-text token, closing

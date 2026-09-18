@@ -23,11 +23,13 @@ def _dsn() -> str:
 async def test_supersession_publishes_one_immutable_version_and_replays_idempotently(
     monkeypatch,
 ):
+    from app.db import postgres as app_postgres
     from app.agents.decision_report_agent import compute_decision_evidence_hash
     from app.db.mongo import Collections, close_mongo, get_mongo_db
     from app.services.decision_report_service import publish_decision_report
     from app.services.decision_report_supersession_service import _process_request
 
+    await app_postgres.dispose_engine_for_loop()
     engine = create_async_engine(_dsn(), pool_size=4, max_overflow=0)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(
@@ -146,6 +148,7 @@ async def test_supersession_publishes_one_immutable_version_and_replays_idempote
                 "DELETE FROM failure_clusters WHERE id=:id"
             ), {"id": cluster_id})
         await engine.dispose()
+        await app_postgres.dispose_engine_for_loop()
         await close_mongo()
 
 
@@ -153,6 +156,7 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
     monkeypatch,
 ):
     """A Mongo publication failure must not consume the durable PG request."""
+    from app.db import postgres as app_postgres
     from app.agents.decision_report_agent import compute_decision_evidence_hash
     from app.db.mongo import Collections, close_mongo, get_mongo_db
     from app.services.decision_report_service import publish_decision_report as real_publish
@@ -160,6 +164,7 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
         process_pending_decision_report_supersessions,
     )
 
+    await app_postgres.dispose_engine_for_loop()
     engine = create_async_engine(_dsn(), pool_size=4, max_overflow=0)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(
@@ -305,4 +310,5 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
                 "DELETE FROM failure_clusters WHERE id=:id"
             ), {"id": cluster_id})
         await engine.dispose()
+        await app_postgres.dispose_engine_for_loop()
         await close_mongo()

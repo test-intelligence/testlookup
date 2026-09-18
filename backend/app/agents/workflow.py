@@ -1740,7 +1740,13 @@ async def _claim_pipeline_resume(
             # required to keep budgets/flags and task selection stable.
             return None
         if metadata.get("workflow_ref") is not None:
-            if not _frozen_workflow_authority_valid(metadata, initial_plan):
+            # ``project_id`` is normalized through the parent TestRun instead of
+            # duplicated in execution_metadata, but it is part of the frozen
+            # runtime-authority checksum. Rehydrate it before validating the
+            # persisted snapshot or every valid workflow-backed retry is
+            # refused as ``pipeline_not_resumable``.
+            frozen_authority = {**metadata, "project_id": str(project_id)}
+            if not _frozen_workflow_authority_valid(frozen_authority, initial_plan):
                 return None
         mode_snapshot = metadata.get("analysis_mode_resolution")
         if not isinstance(mode_snapshot, dict) or not mode_snapshot.get("resolved"):

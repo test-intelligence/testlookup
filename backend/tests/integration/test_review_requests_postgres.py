@@ -31,11 +31,24 @@ def _dsn() -> str:
 @pytest.fixture
 async def ctx():
     engine = create_async_engine(_dsn(), pool_size=2, max_overflow=0)
+    reviewer_id = uuid.uuid4()
     async with engine.begin() as db:
         row = (await db.execute(text("SELECT id, project_id FROM test_runs ORDER BY created_at LIMIT 1"))).first()
     if row is None:
         await engine.dispose()
         pytest.skip("database has no test run fixture")
+    async with engine.begin() as db:
+        await db.execute(
+            text(
+                "INSERT INTO users (id, email, username, full_name, hashed_password, role) "
+                "VALUES (:id, :email, :username, 'Review integration', '!unusable', 'QA_LEAD')"
+            ),
+            {
+                "id": reviewer_id,
+                "email": f"review-integration-{reviewer_id.hex}@example.com",
+                "username": f"review_integration_{reviewer_id.hex}",
+            },
+        )
     pipelines: list[uuid.UUID] = []
 
     async def new_pipeline(workflow="offline"):
@@ -54,6 +67,7 @@ async def ctx():
         for pid in pipelines:
             await db.execute(text("DELETE FROM review_requests WHERE subject_id = :s"), {"s": str(pid)})
             await db.execute(text("DELETE FROM agent_pipeline_runs WHERE id = :id"), {"id": pid})
+        await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": reviewer_id})
     await engine.dispose()
 
 

@@ -224,7 +224,8 @@ async def test_project_write_does_not_reach_a_qa_lead_route(world):
 
     role_gate = await world.client.post("/api/v1/releases", headers=world.headers["writer"])
     project_role_gate = await world.client.put(
-        f"/api/v1/projects/{world.project_a}/fixer/config", headers=world.headers["writer"]
+        f"/api/v1/projects/{world.project_a}/agent-configs/fixer",
+        headers=world.headers["writer"],
     )
 
     for resp in (role_gate, project_role_gate):
@@ -234,7 +235,8 @@ async def test_project_write_does_not_reach_a_qa_lead_route(world):
 
 async def test_project_admin_reaches_the_project_role_gate(world):
     resp = await world.client.put(
-        f"/api/v1/projects/{world.project_a}/fixer/config", headers=world.headers["admin"]
+        f"/api/v1/projects/{world.project_a}/agent-configs/fixer",
+        headers=world.headers["admin"],
     )
 
     assert resp.status_code == 422, resp.text
