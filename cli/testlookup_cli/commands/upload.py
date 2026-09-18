@@ -13,7 +13,7 @@ from testlookup_cli import client, output
 from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
-from testlookup_cli.errors import exit_code_for, map_connection_error
+from testlookup_cli.errors import exit_code_for, map_connection_error, map_http_error
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
 
@@ -508,7 +508,7 @@ async def _upload_file(
                         if resp.status_code in RETRYABLE_STATUSES and attempt > 1
                         else ""
                     )
-                    raise Exception(f"HTTP {resp.status_code}: {detail}{gave_up}")
+                    raise map_http_error(resp.status_code, f"{detail}{gave_up}")
 
                 return resp.json()
     except httpx.RequestError as exc:
@@ -582,7 +582,9 @@ async def _wait_for_upload(
                         detail = resp.json().get("detail", resp.text)
                     except Exception:
                         detail = resp.text
-                    raise Exception(f"HTTP {code} while waiting for upload {task_id}: {detail}")
+                    raise map_http_error(
+                        code, f"while waiting for upload {task_id}: {detail}"
+                    )
                 else:
                     status = resp.json()
                     if status.get("state") in TERMINAL_UPLOAD_STATES:

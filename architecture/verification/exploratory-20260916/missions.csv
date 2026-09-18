@@ -20,7 +20,7 @@ M18,P1,PARTIAL,M18-integration-digest-settings.md,EXP-BUG-108;EXP-BUG-109;EXP-BU
 M19,P1,PARTIAL,M19-accessibility-browser-lifecycle.md,EXP-BUG-114;EXP-BUG-115,"Firefox, WebKit, screen-reader, full authenticated keyboard journey, duplicate-tab, cached-chunk, RTL, theme and complete viewport/zoom evidence remain open"
 M20,P0,PARTIAL,M20-identity-keys.md,EXP-BUG-116;EXP-BUG-117,"No dedicated IdP/test tenant, disposable identity accounts, or notification sink for live MFA, SAML, SCIM, invitation, concurrent revoke/use, and old-tab permission-change exercises"
 M21,P0,PARTIAL,M21-retention-deletion-export.md,EXP-BUG-118;EXP-BUG-119,"Shared homelab lacks dedicated stores and a successful disposable backup/restore rehearsal, so destructive cross-store delete/interruption/restore and live export reconciliation were not run; legal holds remain future work"
-M22,P1,NOT_RUN,,,
+M22,P1,PARTIAL,M22-cli-mcp-sdk-parity.md,EXP-BUG-120;EXP-BUG-121;EXP-BUG-122;EXP-BUG-123;EXP-BUG-124,"CLI and streaming SDKs have no agent-invoke surface; Go Java and JavaScript archives were not each compiled and run live; no browser UI comparison"
 M23,P0,BLOCKED,,,Requires an isolated disposable environment and a second worker process for stale-writer injection
 M24,P1,BLOCKED,,,Requires an isolated full ingestion environment and production benchmark access token
 M25,P0,BLOCKED,,,Homelab has no installed Ollama models and no fresh paired-inference producer

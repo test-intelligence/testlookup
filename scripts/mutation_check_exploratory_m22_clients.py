@@ -18,6 +18,7 @@ class Mutation:
     unsafe: str
     command: tuple[str, ...]
     cwd: str
+    executable: str = sys.executable
 
 
 MUTATIONS = (
@@ -92,6 +93,81 @@ MUTATIONS = (
         ),
         "backend",
     ),
+    Mutation(
+        "python-sdk-install-metadata",
+        "client/pyproject.toml",
+        'py-modules = ["testlookup_reporter", "ci_context", "commit_range"]\n',
+        'py-modules = ["testlookup_reporter", "ci_context"]\n',
+        (
+            "-m", "pytest", "-q",
+            "tests/regression/test_request_hardening.py::test_the_real_python_sdk_archive_imports_in_an_isolated_directory",
+            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-sdk-metadata-mutation",
+        ),
+        "backend",
+    ),
+    Mutation(
+        "upload-post-stable-exit-code",
+        "cli/testlookup_cli/commands/upload.py",
+        '                    raise map_http_error(resp.status_code, f"{detail}{gave_up}")\n',
+        '                    raise Exception(f"HTTP {resp.status_code}: {detail}{gave_up}")\n',
+        (
+            "-m", "pytest", "-q",
+            "cli/tests/test_upload_retry_and_wait.py::test_upload_http_errors_keep_the_stable_exit_code",
+            "--basetemp=.pytest-tmp-m22-upload-post-mutation",
+        ),
+        ".",
+    ),
+    Mutation(
+        "upload-poll-stable-exit-code",
+        "cli/testlookup_cli/commands/upload.py",
+        (
+            "                    raise map_http_error(\n"
+            "                        code, f\"while waiting for upload {task_id}: {detail}\"\n"
+            "                    )\n"
+        ),
+        (
+            "                    raise Exception(\n"
+            "                        f\"HTTP {code} while waiting for upload {task_id}: {detail}\"\n"
+            "                    )\n"
+        ),
+        (
+            "-m", "pytest", "-q",
+            "cli/tests/test_upload_retry_and_wait.py::test_an_answer_that_cannot_change_fails_the_wait_at_once",
+            "--basetemp=.pytest-tmp-m22-upload-poll-mutation",
+        ),
+        ".",
+    ),
+    Mutation(
+        "python-sdk-ui-consumer-contract",
+        "frontend/src/pages/LiveExecutionPage.tsx",
+        (
+            "      return `# Download and extract the Python ZIP from SDK Downloads above\n"
+            "cd python\n"
+            "pip install .\n"
+        ),
+        (
+            "      return `pip install httpx pyyaml\n"
+            "# Copy the reporter from the SDK Downloads button above\n"
+        ),
+        (
+            "node_modules/vitest/vitest.mjs", "run",
+            "src/pages/LiveExecutionPage.sdk-download.test.ts",
+        ),
+        "frontend",
+        "node",
+    ),
+    Mutation(
+        "python-sdk-ui-archive-label",
+        "frontend/src/pages/LiveExecutionPage.tsx",
+        "  { sdkLang: 'python',     label: 'Python (.zip)',        backendLang: 'python' },\n",
+        "  { sdkLang: 'python',     label: 'Python (.py)',         backendLang: 'python' },\n",
+        (
+            "node_modules/vitest/vitest.mjs", "run",
+            "src/pages/LiveExecutionPage.sdk-download.test.ts",
+        ),
+        "frontend",
+        "node",
+    ),
 )
 
 
@@ -116,6 +192,21 @@ def main() -> int:
             raise AssertionError(
                 f"{mutation.name} mutation must apply exactly once; found {count}"
             )
+        baseline = subprocess.run(
+            [mutation.executable, *mutation.command],
+            cwd=ROOT / mutation.cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=180,
+        )
+        if baseline.returncode != 0:
+            raise AssertionError(
+                f"{mutation.name} baseline failed with {baseline.returncode}\n"
+                f"{baseline.stdout}{baseline.stderr}"
+            )
         try:
             path.write_text(
                 source.replace(mutation.safe, mutation.unsafe, 1),
@@ -123,7 +214,7 @@ def main() -> int:
                 newline="",
             )
             run = subprocess.run(
-                [sys.executable, *mutation.command],
+                [mutation.executable, *mutation.command],
                 cwd=ROOT / mutation.cwd,
                 capture_output=True,
                 text=True,
@@ -132,9 +223,10 @@ def main() -> int:
                 check=False,
                 timeout=180,
             )
-            if run.returncode == 0:
+            if run.returncode != 1:
                 raise AssertionError(
-                    f"{mutation.name} survived\n{run.stdout}{run.stderr}"
+                    f"{mutation.name} expected pytest failure 1, got {run.returncode}\n"
+                    f"{run.stdout}{run.stderr}"
                 )
         finally:
             restore(path, original)

@@ -9,9 +9,14 @@ until the FastAPI/Starlette upgrade.
 from __future__ import annotations
 
 import io
+import site
+import subprocess
+import sys
 import time
+import tomllib
 import uuid
 import zipfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -216,6 +221,51 @@ async def test_range_is_ignored_so_the_sdk_download_is_always_whole(tmp_path, mo
             "python/README.md",
             "python/testlookup.yaml.example",
         }
+
+
+@pytest.mark.asyncio
+async def test_the_real_python_sdk_archive_imports_in_an_isolated_directory(
+    tmp_path, monkeypatch
+) -> None:
+    from app.routers import sdk as sdk_router
+
+    client_dir = Path(__file__).resolve().parents[3] / "client"
+    monkeypatch.setattr(sdk_router, "SDK_BASE_PATH", str(client_dir))
+    response = await sdk_router.download_sdk("python")
+
+    archive_path = tmp_path / "testlookup-python-sdk.zip"
+    archive_path.write_bytes(response.body)
+    extract_dir = tmp_path / "extracted"
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(extract_dir)
+
+    package_dir = extract_dir / "python"
+    metadata = tomllib.loads((package_dir / "pyproject.toml").read_text("utf-8"))
+    assert metadata["tool"]["setuptools"]["py-modules"] == [
+        "testlookup_reporter",
+        "ci_context",
+        "commit_range",
+    ]
+
+    site_packages = site.getsitepackages()[0]
+    isolated = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            (
+                "import sys; "
+                f"sys.path[:0] = [{str(package_dir)!r}, {site_packages!r}]; "
+                "import testlookup_reporter"
+            ),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert isolated.returncode == 0, isolated.stderr
 
 
 @pytest.mark.asyncio

@@ -698,6 +698,16 @@ explicitly declined.
 **Observe/capture:** sanitized command and exit code, MCP tool inventory/result,
 request IDs and backend effects. SDK unit tests alone are not this live proof.
 
+**Execution 2026-09-18 (shipped, PARTIAL):** exact candidate `96f56b6b` was
+deployed before final testing. Live CLI, MCP, REST, and Python streaming checks
+fixed incomplete Python SDK packaging, stale UI installation guidance, lost
+CLI exit classifications (including upload), and a foreign-run existence
+oracle. MCP idempotency, review parity, mutation-tool
+absence, credential revocation, bounded SDK failure, and cleanup passed. CLI
+and SDK agent-invoke surfaces do not exist; non-Python SDKs were inspected but
+not each compiled and executed, and no browser UI comparison ran. Evidence:
+`architecture/verification/exploratory-20260916/M22-cli-mcp-sdk-parity.md`.
+
 ## M23 — Live event ordering, disconnect and replay (P0, streaming QA)
 
 **Preconditions:** real supported live SDK/ingest endpoint, F5 Redis/worker;

@@ -207,8 +207,9 @@ const SDK_TABS: { id: SDKLang; label: string; icon: string }[] = [
 function getInstallSnippet(lang: SDKLang): string {
   switch (lang) {
     case 'python':
-      return `pip install httpx pyyaml
-# Copy the reporter from the SDK Downloads button above
+      return `# Download and extract the Python ZIP from SDK Downloads above
+cd python
+pip install .
 # Then add testlookup.yaml to your project root (see Step 2)`
     case 'java':
       return `# Option 1: Download the fat JAR from the SDK Downloads button above
@@ -457,7 +458,7 @@ const SDK_API_BASE =
   (typeof window !== 'undefined' ? window.location.origin : '')
 
 const SDK_DOWNLOADS: { sdkLang: SDKLang; label: string; backendLang: string }[] = [
-  { sdkLang: 'python',     label: 'Python (.py)',         backendLang: 'python' },
+  { sdkLang: 'python',     label: 'Python (.zip)',        backendLang: 'python' },
   { sdkLang: 'java',       label: 'Java (.jar)',           backendLang: 'java'   },
   { sdkLang: 'javascript', label: 'JavaScript/TS (.zip)', backendLang: 'js'     },
   { sdkLang: 'go',         label: 'Go (.zip)',             backendLang: 'go'     },

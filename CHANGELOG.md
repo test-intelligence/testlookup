@@ -7,6 +7,9 @@ M22 client parity packages the Python streaming SDK with its required
 download imports in a clean environment. CLI commands now preserve the shared
 client's stable authentication, permission, not-found, validation, and timeout
 exit codes instead of collapsing mapped failures to exit code 1.
+The upload and upload-status paths now use the same HTTP-to-exit-code mapping,
+and the live execution guide describes the Python download as a ZIP that must
+be extracted and installed rather than as a standalone reporter file.
 Malformed requests now use the validation code, and direct run lookups return
 the same not-found response for missing and foreign subjects so IDs cannot be
 used as a cross-project existence oracle.
