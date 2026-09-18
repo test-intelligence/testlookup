@@ -94,8 +94,8 @@ MUTATIONS = (
     Mutation(
         "project-switch-write-scope",
         "frontend/src/hooks/useAnalyticsView.ts",
-        "    const scopedSavedViewId = hydratedScope === scopeKey ? savedViewId : null\n",
-        "    const scopedSavedViewId = savedViewId\n",
+        "  const scopeKey = `${projectId ?? 'all'}:${page}`\n",
+        "  const scopeKey = page // unsafe: project changes retain the previous PATCH target\n",
         "frontend/src/hooks/useAnalyticsView.test.tsx#never patches the previous project",
     ),
     Mutation(
