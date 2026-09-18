@@ -1,24 +1,23 @@
+> Current complete field/constraint reference: [generated data dictionary](../docs/reference/data-dictionary.md). The diagrams below are historical domain views; the generated dictionary is the complete current model inventory.
+
 # TestLookup — Database & Schema Design
 
 > Originally generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
-> `backend/migrations/versions/`) and updated incrementally through migration 0188.
+> `backend/migrations/versions/`). Current table-inventory pointers were added through migration 0191; legacy field descriptions and domain diagrams were not fully regenerated.
 > Regenerate the ER diagrams and the schema
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (139 declared tables, Alembic head `0188`). MongoDB, Redis, MinIO and
-ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
-relational store. This document covers all of them, but the relational schema is
-the focus.
+PostgreSQL is the **relational system of record** (139 declared tables, Alembic head `0191`). Authority is distributed by data type: published decision-report bodies and evidence are also stored in MongoDB, and original uploads/artifacts in object storage. These stores are not all disposable caches. See the current [data architecture](../docs/architecture/data-model.md) and [backup guidance](../docs/operations/deployment.md); this historical document focuses on relational structure.
 
 ## Storage responsibilities at a glance
 
 | Store | Holds | Source of truth? |
 |-------|-------|------------------|
 | **PostgreSQL** | Users, projects, runs, test cases, AI pipeline results, defects, releases, authored test cases, audit | **Yes** — relational system of record |
-| **MongoDB** | Raw ingest blobs (Allure JSON, TestNG XML), REST payloads, OCP pod events, LLM chain-of-thought, run summaries, live event timelines | No — immutable logs / large blobs keyed back to PG ids |
+| **MongoDB** | Raw/sanitized evidence, API and AI payloads, pod events, run summaries, published decision reports/attempts and live timelines | Authoritative for stored document bodies/evidence; relational authority remains in PostgreSQL |
 | **Redis** | Celery broker + result backend, live-session state (hashes/sorted-sets), live-event Streams, the AI-pipeline debounce queue, feature-flag + analysis-mode cache | No — ephemeral / in-flight |
-| **MinIO (S3)** | Raw uploaded report files, generated report PDFs, compliance-pack ZIPs, RAG knowledge docs, training-data exports | No — object/artifact storage |
+| **MinIO (S3)** | Raw uploaded report files, generated report PDFs, compliance-pack ZIPs, RAG knowledge docs, training-data exports | Authoritative payload/artifact storage; some derived objects can be regenerated |
 | **ChromaDB** | Per-project embeddings for semantic search (optional) | No — derived index |
 
 See [`architecture/README.md`](./README.md) for which services write to each store.
@@ -3208,3 +3207,37 @@ _Constraints:_ Index(`ix_chat_messages_session`, `session_id`, `created_at`)
 | `is_active` | `Boolean` |  | NN def |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
+
+## Current-schema additions (2026-09-18)
+
+The older per-domain sections omitted these tables. Their full field definitions, relationships and constraints are generated in the linked dictionary.
+
+| Table | Model | Complete definition |
+|---|---|---|
+| `live_ingestion_attempts` | `LiveIngestionAttempt` | [Fields and constraints](../docs/reference/data-dictionary.md#live_ingestion_attempts) |
+| `live_event_receipts` | `LiveEventReceipt` | [Fields and constraints](../docs/reference/data-dictionary.md#live_event_receipts) |
+| `live_projection_checkpoints` | `LiveProjectionCheckpoint` | [Fields and constraints](../docs/reference/data-dictionary.md#live_projection_checkpoints) |
+| `run_downstream_outbox` | `RunDownstreamOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#run_downstream_outbox) |
+| `semantic_reindex_jobs` | `SemanticReindexJob` | [Fields and constraints](../docs/reference/data-dictionary.md#semantic_reindex_jobs) |
+| `agent_child_dispatch_outbox` | `AgentChildDispatchOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#agent_child_dispatch_outbox) |
+| `decision_report_feedback` | `DecisionReportFeedback` | [Fields and constraints](../docs/reference/data-dictionary.md#decision_report_feedback) |
+| `release_attribution_rules` | `ReleaseAttributionRule` | [Fields and constraints](../docs/reference/data-dictionary.md#release_attribution_rules) |
+| `release_gate_decisions` | `ReleaseGateDecision` | [Fields and constraints](../docs/reference/data-dictionary.md#release_gate_decisions) |
+| `user_ui_dismissals` | `UserUIDismissal` | [Fields and constraints](../docs/reference/data-dictionary.md#user_ui_dismissals) |
+| `ai_eval_reviewer_quality` | `AIEvalReviewerQuality` | [Fields and constraints](../docs/reference/data-dictionary.md#ai_eval_reviewer_quality) |
+| `decision_report_eval_cycles` | `DecisionReportEvalCycle` | [Fields and constraints](../docs/reference/data-dictionary.md#decision_report_eval_cycles) |
+| `decision_report_supersession_requests` | `DecisionReportSupersessionRequest` | [Fields and constraints](../docs/reference/data-dictionary.md#decision_report_supersession_requests) |
+| `agent_action_ledger` | `AgentActionLedger` | [Fields and constraints](../docs/reference/data-dictionary.md#agent_action_ledger) |
+| `agent_invocations` | `AgentInvocation` | [Fields and constraints](../docs/reference/data-dictionary.md#agent_invocations) |
+| `workflow_definitions` | `WorkflowDefinition` | [Fields and constraints](../docs/reference/data-dictionary.md#workflow_definitions) |
+| `workflow_replay_corpus` | `WorkflowReplayCorpus` | [Fields and constraints](../docs/reference/data-dictionary.md#workflow_replay_corpus) |
+| `agent_action_dispatch_outbox` | `AgentActionDispatchOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#agent_action_dispatch_outbox) |
+| `failure_attribution` | `FailureAttribution` | [Fields and constraints](../docs/reference/data-dictionary.md#failure_attribution) |
+| `systemic_flake_cluster` | `SystemicFlakeCluster` | [Fields and constraints](../docs/reference/data-dictionary.md#systemic_flake_cluster) |
+| `systemic_flake_cluster_member` | `SystemicFlakeClusterMember` | [Fields and constraints](../docs/reference/data-dictionary.md#systemic_flake_cluster_member) |
+| `flaky_score` | `FlakyScore` | [Fields and constraints](../docs/reference/data-dictionary.md#flaky_score) |
+| `flaky_classifier_calibration` | `FlakyClassifierCalibration` | [Fields and constraints](../docs/reference/data-dictionary.md#flaky_classifier_calibration) |
+| `flaky_detection_state` | `FlakyDetectionState` | [Fields and constraints](../docs/reference/data-dictionary.md#flaky_detection_state) |
+| `run_tombstones` | `RunTombstone` | [Fields and constraints](../docs/reference/data-dictionary.md#run_tombstones) |
+| `deletion_jobs` | `DeletionJob` | [Fields and constraints](../docs/reference/data-dictionary.md#deletion_jobs) |
+| `project_activity_events` | `ProjectActivityEvent` | [Fields and constraints](../docs/reference/data-dictionary.md#project_activity_events) |

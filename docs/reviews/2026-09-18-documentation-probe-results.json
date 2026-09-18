@@ -1,0 +1,69 @@
+{
+  "kind": "Hermetic service composition probe; aggregate helpers mocked; no database or live application",
+  "summary": [
+    {
+      "mode": "window",
+      "totals": {
+        "total_test_cases": 100,
+        "passed": 70,
+        "failed": 15,
+        "skipped": 10,
+        "broken": 5,
+        "evaluated": 90,
+        "pass_rate_pct": 70.0,
+        "pass_rate_basis": "unique_tests",
+        "pass_rate_basis_label": "per unique test",
+        "fail_rate_pct": 15.0,
+        "skip_rate_pct": 10.0,
+        "broken_rate_pct": 5.0,
+        "weighted_pass_rate_pct": 77.8
+      },
+      "helper_keyword_arguments": {
+        "_resolve_project_name": {},
+        "_window_totals": {},
+        "_latest_totals": null,
+        "_per_suite_breakdown_window": {},
+        "_per_suite_breakdown_latest": null,
+        "_count_flaky_tests": {},
+        "_top_failing_tests": {
+          "limit": 10,
+          "release_id": "00000000-0000-0000-0000-000000000002"
+        },
+        "_enrich_failure_steps": {},
+        "_per_suite_step_success": {}
+      }
+    },
+    {
+      "mode": "latest",
+      "totals": {
+        "total_test_cases": 100,
+        "passed": 70,
+        "failed": 15,
+        "skipped": 10,
+        "broken": 5,
+        "evaluated": 90,
+        "pass_rate_pct": 70.0,
+        "pass_rate_basis": "unique_tests",
+        "pass_rate_basis_label": "per unique test",
+        "fail_rate_pct": 15.0,
+        "skip_rate_pct": 10.0,
+        "broken_rate_pct": 5.0,
+        "weighted_pass_rate_pct": 77.8
+      },
+      "helper_keyword_arguments": {
+        "_resolve_project_name": {},
+        "_window_totals": null,
+        "_latest_totals": {},
+        "_per_suite_breakdown_window": null,
+        "_per_suite_breakdown_latest": {},
+        "_count_flaky_tests": {},
+        "_top_failing_tests": {
+          "limit": 10,
+          "release_id": "00000000-0000-0000-0000-000000000002"
+        },
+        "_enrich_failure_steps": {},
+        "_per_suite_step_success": {}
+      }
+    }
+  ]
+}
