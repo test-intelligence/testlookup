@@ -106,7 +106,10 @@ async def test_change_summary_only_patch_is_a_true_noop_without_version_or_audit
         returned = await test_management_service.update_managed_test_case(
             db,
             test_case.id,
-            ManagedTestCaseUpdate(change_summary="label only"),
+            ManagedTestCaseUpdate(
+                expected_version=test_case.version,
+                change_summary="label only",
+            ),
             SimpleNamespace(id=uuid.uuid4()),
         )
 

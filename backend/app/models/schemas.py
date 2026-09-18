@@ -2149,6 +2149,7 @@ class ManagedTestCaseCreate(BaseModel):
 
 
 class ManagedTestCaseUpdate(BaseModel):
+    expected_version: int = Field(..., ge=1)
     title: Optional[str] = Field(None, min_length=3, max_length=500)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)

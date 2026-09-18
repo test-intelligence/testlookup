@@ -210,7 +210,7 @@ async def test_update_rename_suite_resolves_within_same_project(monkeypatch):
     db.flush = AsyncMock()
     db.add = lambda obj: None
 
-    payload = ManagedTestCaseUpdate(suite_name="Smoke")
+    payload = ManagedTestCaseUpdate(expected_version=existing.version, suite_name="Smoke")
     result = await svc.update_managed_test_case(
         db, existing.id, payload, _fake_user()
     )
@@ -237,7 +237,7 @@ async def test_update_clear_suite_name_clears_fk(monkeypatch):
     db.flush = AsyncMock()
     db.add = lambda obj: None
 
-    payload = ManagedTestCaseUpdate(suite_name="")
+    payload = ManagedTestCaseUpdate(expected_version=existing.version, suite_name="")
     result = await svc.update_managed_test_case(
         db, existing.id, payload, _fake_user()
     )
@@ -263,7 +263,10 @@ async def test_update_unrelated_field_preserves_fk(monkeypatch):
     db.flush = AsyncMock()
     db.add = lambda obj: None
 
-    payload = ManagedTestCaseUpdate(title="Brand new title")
+    payload = ManagedTestCaseUpdate(
+        expected_version=existing.version,
+        title="Brand new title",
+    )
     result = await svc.update_managed_test_case(
         db, existing.id, payload, _fake_user()
     )
@@ -294,7 +297,7 @@ async def test_update_snapshots_parameters_into_version(monkeypatch):
     db.flush = AsyncMock()
     db.add = added.append
 
-    payload = ManagedTestCaseUpdate(title="Renamed")
+    payload = ManagedTestCaseUpdate(expected_version=existing.version, title="Renamed")
     await svc.update_managed_test_case(db, existing.id, payload, _fake_user())
 
     version_rows = [o for o in added if type(o).__name__ == "TestCaseVersion"]

@@ -486,9 +486,21 @@ async def update_managed_test_case(
     test_case = await get_test_case_or_404(db, case_id, for_update=True)
     if test_case.status in ("deprecated", "archived"):
         raise HTTPException(status_code=409, detail=f"Cannot edit a {test_case.status} test case")
+    if test_case.version != payload.expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "current_version": test_case.version,
+                "expected_version": payload.expected_version,
+                "message": "Test case changed; refresh before saving edits",
+            },
+        )
 
     old = {"title": test_case.title, "status": test_case.status, "version": test_case.version}
-    update_data = payload.model_dump(exclude_unset=True, exclude={"change_summary"})
+    update_data = payload.model_dump(
+        exclude_unset=True,
+        exclude={"change_summary", "expected_version"},
+    )
     if not update_data:
         return test_case
 

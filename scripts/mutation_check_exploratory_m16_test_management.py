@@ -21,6 +21,13 @@ class Mutation:
 
 MUTATIONS = (
     Mutation(
+        "case-edit-stale-version",
+        "backend/app/services/test_management_service.py",
+        "    if test_case.version != payload.expected_version:\n",
+        "    if False and test_case.version != payload.expected_version:\n",
+        "backend/tests/test_exploratory_m16_test_management.py::test_case_edit_refuses_a_stale_case_version",
+    ),
+    Mutation(
         "lifecycle-stale-version",
         "backend/app/services/test_case_lifecycle_service.py",
         "    if expected_version is not None and test_case.version != expected_version:\n",

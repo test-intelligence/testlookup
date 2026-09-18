@@ -59,7 +59,11 @@ describe('testManagementService request contracts', () => {
     const draft = { title: 'Checkout' }
     testManagementService.createCase(draft)
     testManagementService.getCase('case-1')
-    testManagementService.updateCase('case-1', { title: 'Checkout v2', change_summary: 'clarify' })
+    testManagementService.updateCase('case-1', {
+      expected_version: 4,
+      title: 'Checkout v2',
+      change_summary: 'clarify',
+    })
     testManagementService.getCaseHistory('case-1')
     testManagementService.getCaseReviews('case-1')
     testManagementService.getCaseComments('case-1')
@@ -70,6 +74,7 @@ describe('testManagementService request contracts', () => {
     expect(postData).toHaveBeenNthCalledWith(1, '/api/v1/test-management/cases', draft)
     expect(getData).toHaveBeenNthCalledWith(1, '/api/v1/test-management/cases/case-1')
     expect(patchData).toHaveBeenCalledWith('/api/v1/test-management/cases/case-1', {
+      expected_version: 4,
       title: 'Checkout v2',
       change_summary: 'clarify',
     })

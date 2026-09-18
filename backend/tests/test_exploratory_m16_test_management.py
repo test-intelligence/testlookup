@@ -15,6 +15,42 @@ from app.services import test_management_service as service
 
 
 @pytest.mark.asyncio
+async def test_case_edit_refuses_a_stale_case_version(monkeypatch) -> None:
+    case = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="Current title",
+        status="draft",
+        version=8,
+    )
+    monkeypatch.setattr(
+        service,
+        "get_test_case_or_404",
+        AsyncMock(return_value=case),
+    )
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await service.update_managed_test_case(
+            db,
+            case.id,
+            schemas.ManagedTestCaseUpdate(
+                expected_version=7,
+                title="Stale replacement",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "current_version": 8,
+        "expected_version": 7,
+        "message": "Test case changed; refresh before saving edits",
+    }
+    assert case.title == "Current title"
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_transition_refuses_a_stale_case_version(monkeypatch) -> None:
     case = SimpleNamespace(
         id=uuid.uuid4(),
