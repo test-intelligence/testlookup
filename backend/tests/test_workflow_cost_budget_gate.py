@@ -241,7 +241,7 @@ async def test_partial_resume_preserves_original_budget_downgrade(monkeypatch):
             return next(self._results)
 
     terminal_session = _Session(
-        [_Result(scalar=pipeline), _Result(scalars=stages), _Result()]
+        [_Result(), _Result(scalar=pipeline), _Result(scalars=stages), _Result()]
     )
     resume_session = _Session(
         [

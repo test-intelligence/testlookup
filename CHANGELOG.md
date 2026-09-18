@@ -2,6 +2,15 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+The consolidated release candidate now runs every committed mutation harness
+with its declared frontend and CLI runtime in backend CI, and the protected
+PostgreSQL job includes deletion-claim, password-change serialization, and
+workflow-definition race coverage. Full-suite regressions were repaired for
+JWT clock independence, opaque foreign-run responses, notification test
+isolation, digest discovery shape, workflow-finalization query order, and
+current mutation targets. Project-bound administrator API keys are now checked
+before the chat helper grants its administrator exception.
+
 Fixed workflow-backed pipeline retries to rehydrate their project authority before validating the frozen replay snapshot, and made the PostgreSQL/Mongo integration suite self-contained across per-test event loops and current authorization/configuration routes.
 
 The Projects page now meets WCAG AA contrast for its primary action and

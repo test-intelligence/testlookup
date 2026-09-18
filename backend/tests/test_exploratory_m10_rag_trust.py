@@ -38,6 +38,24 @@ def test_non_admin_chat_requires_a_project() -> None:
     _require_chat_project(SimpleNamespace(role=UserRole.ADMIN), None)
 
 
+def test_project_bound_admin_chat_cannot_escape_its_project() -> None:
+    from app.core import deps
+    from app.routers.chat import _require_chat_project
+
+    bound_project = uuid.uuid4()
+    user = deps._bind_api_key_project(
+        SimpleNamespace(role=UserRole.ADMIN), bound_project
+    )
+
+    _require_chat_project(user, bound_project)
+    with pytest.raises(HTTPException) as missing:
+        _require_chat_project(user, None)
+    assert missing.value.status_code == 403
+    with pytest.raises(HTTPException) as foreign:
+        _require_chat_project(user, uuid.uuid4())
+    assert foreign.value.status_code == 403
+
+
 @pytest.mark.asyncio
 async def test_existing_chat_session_rechecks_current_project_membership() -> None:
     from app.core.deps import require_session_access

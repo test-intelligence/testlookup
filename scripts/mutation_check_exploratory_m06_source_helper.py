@@ -1,4 +1,4 @@
-"""Prove M06 source regressions reject the old docstring-stripping helper."""
+"""Prove M06 source regressions reject a helper that preserves docstrings."""
 from __future__ import annotations
 
 import subprocess
@@ -31,8 +31,7 @@ GOOD = """\
     return "".join(lines)
 """
 BAD = """\
-    doc = fn.__doc__
-    return src.replace(doc, "", 1) if doc else src
+    return src
 """
 
 
@@ -55,7 +54,7 @@ def main() -> None:
             timeout=60,
         )
         if run.returncode == 0:
-            raise AssertionError("old helper mutation survived")
+            raise AssertionError("docstring-preserving helper mutation survived")
     finally:
         TARGET.write_bytes(original)
     if TARGET.read_bytes() != original:

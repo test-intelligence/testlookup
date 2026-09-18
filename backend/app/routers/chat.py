@@ -11,12 +11,14 @@ Transaction model (pilot of the target "one commit per request" pattern):
   * Ownership checks live in the ``require_session_access`` dependency so
     the handler receives an already-authorized :class:`ChatSession`.
 """
-from typing import Optional
+import uuid
+from typing import Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _enforce_api_key_project_binding,
     get_current_active_user,
     require_session_access,
 )
@@ -36,6 +38,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
 def _require_chat_project(user: User, project_id: object | None) -> None:
     """Keep non-admin chat inside one budgeted, tenant-scoped project."""
+    _enforce_api_key_project_binding(user, cast(uuid.UUID | None, project_id))
     if project_id is None and user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=422,

@@ -4,7 +4,7 @@ from app.core import security
 
 
 def test_access_token_iat_preserves_subsecond_precision(monkeypatch):
-    issued_at = datetime(2026, 9, 16, 15, 30, 0, 750000, tzinfo=timezone.utc)
+    issued_at = datetime.now(timezone.utc).replace(microsecond=750000)
 
     class FixedDateTime(datetime):
         @classmethod
