@@ -257,8 +257,9 @@ def test_a_status_not_yet_written_is_waited_for(fake):
 
 def test_an_unknown_upload_fails_after_the_grace_period(fake):
     fake.install(*[_Resp(404, {"detail": "Upload task not found or expired"}) for _ in range(40)])
-    with pytest.raises(Exception, match="HTTP 404"):
+    with pytest.raises(CLIError, match="Not found.*Upload task not found") as error:
         asyncio.run(upload._wait_for_upload("t1"))
+    assert error.value.exit_code == EXIT_NOT_FOUND
 
 
 # ── --wait rides out what a rollout does to a poll (code review of N15) ──
