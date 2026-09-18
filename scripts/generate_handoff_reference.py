@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import difflib
 import inspect
 import io
 import json
@@ -65,8 +66,17 @@ def write(name: str, data: str) -> None:
     path = OUT / name
     data = data.rstrip() + "\n"
     if CHECK:
-        if not path.exists() or path.read_text(encoding="utf-8") != data:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if existing != data:
             ERRORS.append(str(path.relative_to(ROOT)))
+            difference = difflib.unified_diff(
+                existing.splitlines(keepends=True),
+                data.splitlines(keepends=True),
+                fromfile=str(path.relative_to(ROOT)),
+                tofile="regenerated/" + name,
+                n=2,
+            )
+            print("".join(difference)[:6000])
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(data, encoding="utf-8", newline="\n")
@@ -88,6 +98,32 @@ def reconcile_outputs() -> None:
             path.unlink()
         else:
             ERRORS.append(f"Unexpected output: {path.relative_to(ROOT)}")
+
+
+def verify_tracked_outputs() -> None:
+    """A clean checkout must contain every generated reference, even on Windows."""
+    tracked = set(
+        subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "docs/reference"], cwd=ROOT
+        )
+        .decode("utf-8")
+        .split("\0")
+    )
+    for name in sorted(GENERATED):
+        relative = "docs/reference/" + name
+        if relative not in tracked:
+            ERRORS.append(
+                f"Untracked generated output: {relative}; add it to Git before checking"
+            )
+
+
+def api_domain_filename(group: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", group.lower()).strip("-")
+    # AGENTS.md is intentionally ignored at every depth. On case-insensitive
+    # Git checkouts that also ignores agents.md, leaving CI without the page.
+    if slug == "agents":
+        slug = "agent-operations"
+    return f"api/{slug}.md"
 
 
 def cell(value: object) -> str:
@@ -166,8 +202,7 @@ def generate_api() -> tuple[int, int, int]:
                 continue
             operations += 1
             group = (operation.get("tags") or ["Other"])[0]
-            slug = re.sub(r"[^a-z0-9]+", "-", group.lower()).strip("-")
-            filename = f"api/{slug}.md"
+            filename = api_domain_filename(group)
             route = route_lookup.get((path, method))
             parts = [
                 f"## {method.upper()} `{path}`\n",
@@ -641,6 +676,8 @@ def main() -> None:
     )
     write("inventory-counts.json", json.dumps(counts, indent=2, sort_keys=True))
     reconcile_outputs()
+    if CHECK:
+        verify_tracked_outputs()
     print(json.dumps(counts, indent=2))
     if ERRORS:
         print("Generated reference drift:\n" + "\n".join(ERRORS))

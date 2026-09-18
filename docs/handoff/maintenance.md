@@ -13,12 +13,13 @@ python scripts/generate_handoff_reference.py
 python scripts/generate_handoff_reference.py --check
 python scripts/check_handoff_docs.py
 python scripts/test_handoff_docs.py
+python -m pytest backend/tests/regression/test_dev_llm_model_pair.py backend/tests/regression/test_role_hierarchy_is_five_tiers.py -q
 python scripts/gen_schema_docs.py --check
 python scripts/release/check_image_drift.py
 python scripts/quality_gate.py
 ```
 
-Generated files live under `docs/reference`. Do not hand-edit them; improve source contracts or the generator. `--check` compares regeneration and detects obsolete/unexpected files without rewriting. Normal generation removes only obsolete files carrying the generator ownership banner; unexpected unowned files cause a failure and are retained. The inventory uses `git ls-files`, so add newly created source files to the index before regenerating when they should be included. Generator itself is excluded to avoid self-description churn.
+Generated files live under `docs/reference`. Do not hand-edit them; improve source contracts or the generator. `--check` compares regeneration, verifies that every generated reference is tracked by Git, and detects obsolete/unexpected files without rewriting. Stage newly generated pages before running it; a locally present ignored file is not available in a clean CI checkout. The Agents domain uses `agent-operations.md` to avoid the case-insensitive `AGENTS.md` ignore rule. Normal generation removes only obsolete files carrying the generator ownership banner; unexpected unowned files cause a failure and are retained. The inventory uses `git ls-files`, so add newly created source files to the index before regenerating when they should be included. Generator itself is excluded to avoid self-description churn.
 
 `check_handoff_docs.py` validates maintained-suite local file links, Markdown heading fragments and source line bounds, JSON `$ref` targets in OpenAPI, endpoint/schema/table inventory consistency, and the actual request/response examples in the API guide. It includes the four top-level entrypoints and all dated review pages. External URL availability and historical deep-dive page contents are not validated. It does not prove every business rule or deploy a stack. Mermaid syntax is validated with the existing checker:
 

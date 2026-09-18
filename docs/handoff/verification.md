@@ -85,3 +85,12 @@ python -m pytest backend/tests/test_summary_report_service.py backend/tests/test
 
 python -m pytest backend/tests/test_distribution_gates.py backend/tests/test_notification_distribution_gates.py backend/tests/test_comment_distribution_gates.py backend/tests/regression/test_archive_upload.py backend/tests/regression/test_upload_status.py backend/tests/services/test_llm_offline_egress_pinning.py backend/tests/services/test_retry_policy.py backend/tests/services/test_pipeline_retry_config.py backend/tests/test_architectural_route_shadowing.py backend/tests/test_architectural_authorization.py -q -p no:cacheprovider
 ```
+
+
+## Clean-checkout correction
+
+The first hosted run after the documentation merge failed at reference regeneration because `docs/reference/api/agents.md` was absent from Git. The repository intentionally ignores `AGENTS.md`; with case-insensitive Git matching on the Windows authoring checkout, that also ignored the generated lowercase page. Earlier local checks saw the file on disk and therefore missed this publication gap.
+
+The generated page is now named `agent-operations.md`, the index/review links follow that name, and `generate_handoff_reference.py --check` additionally requires every generated output to be tracked by Git. Drift failures now include a bounded textual diff. A regression test reproduces the original ignore rule with `core.ignorecase=true` in a disposable Git repository, proves the old file is rejected as untracked, and verifies the replacement can be staged and checked. No application behavior changes are part of this correction.
+
+After reference generation passed on Ubuntu, the full backend suite exposed three additional documentation assertions: the main README must explicitly describe automatic model pulls, and both README entrypoints must enumerate all five role tiers. Those details were restored against the Makefile, `UserRole` enum, and authorization hierarchy. The existing model-setup and role-hierarchy regression modules are now included in the documented maintenance checks.

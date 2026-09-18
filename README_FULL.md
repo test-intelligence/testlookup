@@ -16,3 +16,5 @@ The full walkthrough now lives in the modular [documentation suite](docs/README.
 | Testing and handoff | [Testing](docs/operations/testing.md), [developer handoff](docs/handoff/README.md) |
 
 Feature availability depends on configuration, project policy, credentials, model resources and feature flags. SSO/SCIM, project-scoped API keys and report sharing are implemented in the documented source snapshot. Review enforcement and offline egress have distinct defaults and boundaries; see [security](docs/architecture/security.md). Consult [verification](docs/handoff/verification.md) for what was checked rather than treating this page as a production readiness certificate.
+
+The five role tiers, in increasing privilege order, are `VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, and `ADMIN`. Project membership, API-key scopes, and route-specific checks also constrain access; see [security](docs/architecture/security.md).

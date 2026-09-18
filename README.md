@@ -38,7 +38,7 @@ The Makefile creates `.env` with local development secrets if it is absent, buil
 
 Open the dashboard at [localhost:3000](http://localhost:3000), Swagger at [localhost:8000/api-docs](http://localhost:8000/api-docs), and the schema at [localhost:8000/api-docs/openapi.json](http://localhost:8000/api-docs/openapi.json). MCP SSE is served on port 8002 and requires the caller's bearer credentials. The frontend `/docs` page is the in-app user guide.
 
-Default local model tags in the Makefile are `qwen2.5:3b-instruct-q5_K_M`, `qwen2.5:14b-instruct-q5_K_M`, and `nomic-embed-text:v1.5`. Download time and inference latency depend on hardware and model availability; this documentation does not promise benchmark timings. Model weights reside in Docker volumes. [AI pipeline](docs/pipelines/ai.md).
+`make dev-llm` waits for Ollama and pulls the Makefile's pinned SLM, LLM, and embedding models automatically. Default tags are `qwen2.5:3b-instruct-q5_K_M`, `qwen2.5:14b-instruct-q5_K_M`, and `nomic-embed-text:v1.5`. Download time and inference latency depend on hardware and model availability; this documentation does not promise benchmark timings. Model weights reside in Docker volumes. [AI pipeline](docs/pipelines/ai.md).
 
 ## What is implemented
 
@@ -52,6 +52,8 @@ Default local model tags in the Makefile are `qwen2.5:3b-instruct-q5_K_M`, `qwen
 | Integrations | Jira, GitHub/GitLab, knowledge sources, notifications, CLI, Python/JS/Java/Go client code, MCP |
 | Identity | JWT and API keys, project membership and role checks, MFA, SAML SSO and SCIM provisioning |
 | Operations | Health probes, Prometheus metrics, optional tracing/monitoring, backups, migrations, Compose and Kubernetes deployment assets |
+
+The five role tiers, in increasing privilege order, are `VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, and `ADMIN`. Project membership, API-key scopes, and route-specific checks also constrain access; see [security](docs/architecture/security.md).
 
 Presence in the repository does not mean every feature is enabled. Feature flags, project policies, role, provider availability and configuration determine behavior. `AI_OFFLINE_MODE=true` is the default AI egress ceiling; it allows approved local/private endpoints and is not a substitute for network isolation. `REVIEW_GATE_ENFORCED=false` defaults to observation mode for report distribution. [Security and policy boundaries](docs/architecture/security.md).
 
