@@ -21,4 +21,4 @@ def test_m21_retention_mutations_are_applied_and_killed():
         errors="replace",
     )
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M21 retention mutation check: 6 mutations killed"
+    assert run.stdout.strip() == "M21 retention mutation check: 11 mutations killed"

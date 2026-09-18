@@ -130,7 +130,8 @@ async def close_job(
     resolved_run_ids: Optional[list[str]] = None,
     bytes_reclaimed: Optional[int] = None,
     error: Optional[str] = None,
-) -> None:
+    expected_status: Optional[str] = None,
+) -> bool:
     """Finish a job record, on its own session.
 
     ``job_id`` may be None when :func:`open_job` could not write — the call is
@@ -142,14 +143,14 @@ async def close_job(
     worth running.
     """
     if job_id is None:
-        return
+        return False
     if status not in REACHABLE_STATUSES:
         # A typo'd status is a row that no filter will ever match — the same
         # silent-forever failure as a mismatched enum vocabulary.
         logger.warning(
             "deletion_job_unknown_status", job_id=str(job_id), status=status
         )
-        return
+        return False
 
     from app.db.postgres import AsyncSessionLocal
 
@@ -171,14 +172,25 @@ async def close_job(
 
     try:
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                update(DeletionJob).where(DeletionJob.id == job_id).values(**values)
-            )
+            statement = update(DeletionJob).where(DeletionJob.id == job_id)
+            if expected_status is not None:
+                statement = statement.where(DeletionJob.status == expected_status)
+            result = await db.execute(statement.values(**values))
             await db.commit()
+            updated = result.rowcount == 1
+            if expected_status is not None and not updated:
+                logger.warning(
+                    "deletion_job_stale_close_refused",
+                    job_id=str(job_id),
+                    expected_status=expected_status,
+                    requested_status=status,
+                )
+            return updated
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "deletion_job_close_failed", job_id=str(job_id), error=str(exc)
         )
+        return False
 
 
 async def get_job(
@@ -340,6 +352,55 @@ async def start_frozen_set(
     job.status = RUNNING
     job.started_at = datetime.now(timezone.utc)
     return [uuid.UUID(str(r)) for r in resolved]
+
+
+async def relay_queued_criteria_deletions(*, limit: int = 100) -> dict[str, int]:
+    """Publish durable queued criteria jobs; duplicate deliveries are safe.
+
+    ``DeletionJob`` is the outbox row. The API commits QUEUED before its
+    best-effort fast-path publish, while this beat-driven relay recovers a
+    process or broker failure in that gap. The worker's QUEUED -> RUNNING row
+    lock is the consumer-side deduplication boundary.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.worker.tasks import execute_criteria_deletion_task
+
+    async with AsyncSessionLocal() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(
+                        DeletionJob.id,
+                        DeletionJob.project_id,
+                        DeletionJob.requested_by_id,
+                    )
+                    .where(
+                        DeletionJob.job_kind == KIND_CRITERIA,
+                        DeletionJob.status == QUEUED,
+                    )
+                    .order_by(DeletionJob.requested_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    published = failed = 0
+    for job_id, project_id, requested_by_id in rows:
+        try:
+            execute_criteria_deletion_task.delay(
+                str(job_id),
+                str(project_id),
+                str(requested_by_id) if requested_by_id else None,
+            )
+            published += 1
+        except Exception as exc:  # noqa: BLE001 - relay retries next minute
+            failed += 1
+            logger.warning(
+                "criteria_deletion_relay_publish_failed",
+                job_id=str(job_id),
+                error_type=type(exc).__name__,
+            )
+    return {"found": len(rows), "published": published, "failed": failed}
 
 
 def outcome_status(*, requested: int, deleted: int) -> str:

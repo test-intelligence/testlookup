@@ -427,15 +427,14 @@ async def execute_criteria_deletion(
             str(body.job_id), str(project_id), str(current_user.id)
         )
     except Exception as exc:
-        await deletion_job_service.close_job(
-            body.job_id,
-            status=deletion_job_service.FAILED,
-            error=f"criteria deletion dispatch failed: {str(exc)[:400]}",
+        # QUEUED is the durable outbox state. The minute relay republishes it;
+        # an ambiguous broker error may also have accepted this delivery, and
+        # the worker's QUEUED -> RUNNING claim makes that duplicate harmless.
+        logger.warning(
+            "criteria_deletion_fast_dispatch_failed",
+            job_id=str(body.job_id),
+            error_type=type(exc).__name__,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Deletion could not be queued; the job was marked failed",
-        ) from exc
 
     return DeletionExecuteAcceptedResponse(
         job_id=body.job_id, run_count=len(run_ids)

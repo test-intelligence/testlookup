@@ -51,26 +51,64 @@ MUTATIONS = (
     Mutation(
         "single-delete-skips-worker-preflight",
         "backend/app/worker/tasks.py",
-        "            blockers = await run_deletion_service.execution_blockers(\n                db, run=run, mongo=mongo\n            )\n            if blockers:",
-        "            blockers = []\n            if blockers:",
-        "delete_run_everywhere",
+        "            if blockers:\n                raise run_deletion_service.RunDeletionBlocked(run.id, blockers)",
+        "            if False and blockers:\n                raise run_deletion_service.RunDeletionBlocked(run.id, blockers)",
+        "test_single_delete_behavior_stops_before_every_side_effect",
     ),
     Mutation(
         "criteria-delete-skips-worker-preflight",
         "backend/app/worker/tasks.py",
-        "                    blockers = await run_deletion_service.execution_blockers(\n                        db, run=run, mongo=mongo\n                    )\n                    if blockers:",
-        "                    blockers = []\n                    if blockers:",
-        "execute_criteria_deletion_task",
+        "                    if blockers:\n                        raise run_deletion_service.RunDeletionBlocked(\n                            run.id, blockers\n                        )",
+        "                    if False and blockers:\n                        raise run_deletion_service.RunDeletionBlocked(\n                            run.id, blockers\n                        )",
+        "test_criteria_delete_behavior_retains_a_newly_protected_run",
+    ),
+    Mutation(
+        "queued-hash-drift-accepted",
+        "backend/app/services/deletion_job_service.py",
+        "    if job.candidate_hash != candidate_hash(resolved):\n        raise FrozenSetRejected(\n            409,\n            \"the frozen candidate set no longer matches its hash — refusing \"",
+        "    if False and job.candidate_hash != candidate_hash(resolved):\n        raise FrozenSetRejected(\n            409,\n            \"the frozen candidate set no longer matches its hash — refusing \"",
+        "test_queued_hash_drift_is_refused_without_starting",
+    ),
+    Mutation(
+        "job-row-lock-removed",
+        "backend/app/services/deletion_job_service.py",
+        "        statement = statement.with_for_update()",
+        "        statement = statement.execution_options()",
+        "test_get_job_emits_a_real_row_lock_when_requested",
+    ),
+    Mutation(
+        "report-subject-share-lock-removed",
+        "backend/app/services/decision_report_service.py",
+        "                .with_for_update(read=True)",
+        "                .execution_options()",
+        "test_subject_lock_emits_postgres_for_share",
+    ),
+    Mutation(
+        "queued-relay-reads-previewed-jobs",
+        "backend/app/services/deletion_job_service.py",
+        "                        DeletionJob.status == QUEUED,",
+        "                        DeletionJob.status == PREVIEWED,",
+        "test_queued_jobs_are_a_durable_relay_source",
+    ),
+    Mutation(
+        "terminal-close-loses-compare-and-set",
+        "backend/app/services/deletion_job_service.py",
+        "                statement = statement.where(DeletionJob.status == expected_status)",
+        "                statement = statement.where(DeletionJob.id == job_id)",
+        "test_close_job_compare_and_set_refuses_a_stale_writer",
     ),
 )
 
 
 def run_test(mutation: Mutation) -> subprocess.CompletedProcess[str]:
-    test_file = (
-        "backend/tests/test_delete_run_task.py"
-        if "protection" in mutation.name or "preflight" in mutation.name
-        else "backend/tests/test_criteria_deletion_routes.py"
-    )
+    if "preflight" in mutation.name or "protection" in mutation.name:
+        test_file = "backend/tests/test_delete_run_task.py"
+    elif "report-subject" in mutation.name:
+        test_file = "backend/tests/services/test_decision_report_service.py"
+    elif "relay" in mutation.name or "terminal-close" in mutation.name:
+        test_file = "backend/tests/test_deletion_jobs.py"
+    else:
+        test_file = "backend/tests/test_criteria_deletion_routes.py"
     return subprocess.run(
         [
             sys.executable,

@@ -415,6 +415,47 @@ async def test_a_queued_set_can_be_started_once(mocker):
 
 
 @pytest.mark.asyncio
+async def test_queued_hash_drift_is_refused_without_starting(mocker):
+    project_id = uuid.uuid4()
+    job = SimpleNamespace(
+        project_id=project_id,
+        status=jobs.QUEUED,
+        resolved_run_ids=[str(uuid.uuid4())],
+        candidate_hash="tampered",
+        started_at=None,
+    )
+    mocker.patch(
+        "app.services.deletion_job_service.get_job",
+        mocker.AsyncMock(return_value=job),
+    )
+
+    with pytest.raises(jobs.FrozenSetRejected) as exc:
+        await jobs.start_frozen_set(
+            _DB(), job_id=uuid.uuid4(), project_id=project_id
+        )
+
+    assert exc.value.status_code == 409
+    assert "hash" in exc.value.detail
+    assert job.status == jobs.QUEUED
+    assert job.started_at is None
+
+
+@pytest.mark.asyncio
+async def test_get_job_emits_a_real_row_lock_when_requested():
+    class CapturingDB:
+        statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return _Result()
+
+    db = CapturingDB()
+    await jobs.get_job(db, uuid.uuid4(), for_update=True)
+    assert db.statement is not None
+    assert db.statement._for_update_arg is not None
+
+
+@pytest.mark.asyncio
 async def test_an_empty_frozen_set_is_refused(mocker):
     """Executing nothing would report a successful deletion of zero runs."""
     project_id = uuid.uuid4()

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,41 @@ from app.services.decision_report_service import (
     publish_decision_report,
     record_decision_report_attempt,
 )
+from app.services import decision_report_service as report_service
+
+REAL_SUBJECT_LOCK = report_service._lock_report_subject
+
+
+@pytest.fixture(autouse=True)
+def _subject_lock_for_unit_tests(monkeypatch):
+    """Unit reports use symbolic IDs; production and integration use PG locks."""
+    @asynccontextmanager
+    async def unlocked(_test_run_id):
+        yield
+
+    monkeypatch.setattr(report_service, "_lock_report_subject", unlocked)
+
+
+@pytest.mark.asyncio
+async def test_subject_lock_emits_postgres_for_share(monkeypatch, mocker):
+    run_id = uuid.uuid4()
+    result = mocker.MagicMock()
+    result.scalar_one_or_none.return_value = run_id
+    pg = mocker.AsyncMock()
+    pg.execute.return_value = result
+    session_cm = mocker.MagicMock()
+    session_cm.__aenter__ = mocker.AsyncMock(return_value=pg)
+    session_cm.__aexit__ = mocker.AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "app.db.postgres.AsyncSessionLocal", lambda: session_cm
+    )
+
+    async with REAL_SUBJECT_LOCK(str(run_id)):
+        statement = pg.execute.await_args.args[0]
+        assert statement._for_update_arg is not None
+        assert statement._for_update_arg.read is True
+
+    pg.commit.assert_awaited_once()
 
 
 class _Cursor:
@@ -53,6 +89,40 @@ class _Collection:
 
     async def update_one(self, *_args, **_kwargs):
         raise AssertionError("immutable reports must not be updated")
+
+
+@pytest.mark.asyncio
+async def test_publication_holds_the_subject_lock_through_mongo_insert(monkeypatch):
+    locked = False
+
+    @asynccontextmanager
+    async def subject_lock(_test_run_id):
+        nonlocal locked
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+
+    class LockCheckingCollection(_Collection):
+        async def insert_one(self, document):
+            assert locked, "Mongo publication escaped the TestRun share lock"
+            await super().insert_one(document)
+
+    class LockCheckingMongo(_Mongo):
+        def __getitem__(self, name):
+            if name not in self.collections:
+                self.collections[name] = LockCheckingCollection()
+            return self.collections[name]
+
+    monkeypatch.setattr(report_service, "_lock_report_subject", subject_lock)
+    await publish_decision_report(
+        LockCheckingMongo(),
+        state=_state(),
+        decision={"verification": {"status": "passed"}},
+        markdown="verified",
+    )
+    assert locked is False
 
 
 class _Mongo:

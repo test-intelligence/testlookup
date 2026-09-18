@@ -9,7 +9,9 @@ project.
 from __future__ import annotations
 
 import inspect
+import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -297,3 +299,131 @@ def test_workers_recheck_protection_before_touching_the_search_index(task_name):
     assert -1 not in (lock, guard, purge)
     assert lock < guard < purge
     assert "RunDeletionBlocked" in source
+
+
+class _TaskResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class _TaskSession:
+    def __init__(self, value=None):
+        self.value = value
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def execute(self, _statement):
+        return _TaskResult(self.value)
+
+    async def commit(self):
+        self.commits += 1
+
+
+def _session_factory(*sessions):
+    pending = list(sessions)
+
+    def factory():
+        return pending.pop(0)
+
+    return factory
+
+
+def test_single_delete_behavior_stops_before_every_side_effect(monkeypatch, mocker):
+    from app.db import mongo as mongo_module
+    from app.db import postgres as postgres_module
+    from app.db import storage as storage_module
+    from app.services import run_deletion_service, semantic_search
+    from app.worker import tasks
+
+    run = SimpleNamespace(
+        id=uuid.uuid4(), project_id=uuid.uuid4(), status="PASSED", minio_prefix=None
+    )
+    session = _TaskSession(run)
+    monkeypatch.setattr(postgres_module, "AsyncSessionLocal", _session_factory(session))
+    monkeypatch.setattr(mongo_module, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(storage_module, "get_storage_provider", lambda: object())
+    monkeypatch.setattr(tasks, "_run_async", asyncio.run)
+    mocker.patch.object(
+        run_deletion_service,
+        "execution_blockers",
+        mocker.AsyncMock(return_value=["linked to 1 release"]),
+    )
+    purge = mocker.patch.object(
+        semantic_search, "purge_run_documents", mocker.AsyncMock()
+    )
+    deletion = mocker.patch.object(
+        run_deletion_service, "perform_run_deletion", mocker.AsyncMock()
+    )
+
+    with pytest.raises(run_deletion_service.RunDeletionBlocked):
+        tasks.delete_run_everywhere.run(str(run.id))
+
+    purge.assert_not_awaited()
+    deletion.assert_not_awaited()
+    assert session.commits == 0
+
+
+def test_criteria_delete_behavior_retains_a_newly_protected_run(monkeypatch, mocker):
+    from app.db import mongo as mongo_module
+    from app.db import postgres as postgres_module
+    from app.db import storage as storage_module
+    from app.services import deletion_job_service, run_deletion_service, semantic_search
+    from app.worker import tasks
+
+    job_id, project_id, run_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    run = SimpleNamespace(
+        id=run_id, project_id=project_id, status="PASSED", minio_prefix=None
+    )
+    start_session, run_session = _TaskSession(), _TaskSession(run)
+    monkeypatch.setattr(
+        postgres_module,
+        "AsyncSessionLocal",
+        _session_factory(start_session, run_session),
+    )
+    monkeypatch.setattr(mongo_module, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(storage_module, "get_storage_provider", lambda: object())
+    monkeypatch.setattr(tasks, "_run_async", asyncio.run)
+    mocker.patch.object(
+        deletion_job_service,
+        "start_frozen_set",
+        mocker.AsyncMock(return_value=[run_id]),
+    )
+    close = mocker.patch.object(
+        deletion_job_service, "close_job", mocker.AsyncMock(return_value=True)
+    )
+    mocker.patch.object(
+        run_deletion_service,
+        "execution_blockers",
+        mocker.AsyncMock(return_value=["cited by 1 compliance pack"]),
+    )
+    purge = mocker.patch.object(
+        semantic_search, "purge_run_documents", mocker.AsyncMock()
+    )
+    deletion = mocker.patch.object(
+        run_deletion_service, "perform_run_deletion", mocker.AsyncMock()
+    )
+
+    result = tasks.execute_criteria_deletion_task.run(
+        str(job_id), str(project_id), None
+    )
+
+    assert result == {
+        "executed": True,
+        "status": deletion_job_service.FAILED,
+        "requested": 1,
+        "deleted": 0,
+        "failed": 1,
+    }
+    purge.assert_not_awaited()
+    deletion.assert_not_awaited()
+    assert start_session.commits == 1
+    assert run_session.commits == 0
+    assert close.await_args.kwargs["expected_status"] == deletion_job_service.RUNNING

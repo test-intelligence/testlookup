@@ -2508,6 +2508,21 @@ def relay_run_downstream_outbox(self):
 
 
 @celery_app.task(
+    name="app.worker.tasks.relay_queued_criteria_deletions",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_queued_criteria_deletions(self):
+    """Recover criteria deletions committed before broker publication."""
+    _bind_task_context(self)
+    from app.services.deletion_job_service import relay_queued_criteria_deletions
+
+    return _run_async(relay_queued_criteria_deletions())
+
+
+@celery_app.task(
     name="app.worker.tasks.recover_waiting_run_finalizations",
     bind=True,
     max_retries=0,
@@ -6327,6 +6342,7 @@ def execute_criteria_deletion_task(
         await deletion_job_service.close_job(
             job_uuid,
             status=status,
+            expected_status=deletion_job_service.RUNNING,
             counts=totals or None,
             resolved_run_ids=deleted or None,
             error="; ".join(failures[:5]) if failures else None,
