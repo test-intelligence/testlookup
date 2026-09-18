@@ -633,8 +633,23 @@ async def add_test_case_comment(
     return comment
 
 
-async def get_plan_or_404(db: AsyncSession, plan_id: uuid.UUID) -> TestPlan:
-    return cast(TestPlan, await get_or_404(db, TestPlan, plan_id, "Test plan not found"))
+async def get_plan_or_404(
+    db: AsyncSession,
+    plan_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> TestPlan:
+    if not for_update:
+        return cast(
+            TestPlan,
+            await get_or_404(db, TestPlan, plan_id, "Test plan not found"),
+        )
+    statement = select(TestPlan).where(TestPlan.id == plan_id)
+    statement = statement.with_for_update()
+    plan = (await db.execute(statement)).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Test plan not found")
+    return cast(TestPlan, plan)
 
 
 async def get_plan_item_or_404(db: AsyncSession, plan_id: uuid.UUID, item_id: uuid.UUID) -> TestPlanItem:
@@ -717,7 +732,7 @@ async def update_test_plan(
     payload: TestPlanUpdate,
     current_user: User,
 ) -> TestPlan:
-    plan = await get_plan_or_404(db, plan_id)
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     apply_model_updates(plan, payload.model_dump(exclude_unset=True))
     await audit_event(db, "test_plan", plan.id, plan.project_id, "updated", current_user)
     return plan
@@ -729,7 +744,27 @@ async def add_test_plan_item(
     payload: TestPlanItemCreate,
     current_user: User,
 ) -> TestPlanItem:
-    plan = await get_plan_or_404(db, plan_id)
+    # The plan row is the aggregate and membership serialization point. This
+    # prevents concurrent add/remove/execute requests from publishing counts
+    # calculated from different snapshots.
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
+    case_id = await db.scalar(
+        select(ManagedTestCase.id).where(
+            ManagedTestCase.id == payload.test_case_id,
+            ManagedTestCase.project_id == plan.project_id,
+        )
+    )
+    if case_id is None:
+        # Do not disclose whether an identifier belongs to another project.
+        raise HTTPException(status_code=404, detail="Test case not found")
+    existing_item_id = await db.scalar(
+        select(TestPlanItem.id).where(
+            TestPlanItem.plan_id == plan_id,
+            TestPlanItem.test_case_id == payload.test_case_id,
+        )
+    )
+    if existing_item_id is not None:
+        raise HTTPException(status_code=409, detail="Test case is already in this plan")
     item = TestPlanItem(plan_id=plan_id, **payload.model_dump(exclude_unset=True))
     db.add(item)
     await db.flush()  # materialize item.id and expose it to recompute_plan_counts
@@ -738,7 +773,7 @@ async def add_test_plan_item(
 
 
 async def remove_test_plan_item(db: AsyncSession, plan_id: uuid.UUID, item_id: uuid.UUID) -> None:
-    plan = await get_plan_or_404(db, plan_id)
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
     await db.delete(item)
     await recompute_plan_counts(db, plan)
@@ -753,7 +788,7 @@ async def record_test_plan_execution(
     actual_duration_minutes: Optional[int],
     current_user: User,
 ) -> TestPlanItem:
-    plan = await get_plan_or_404(db, plan_id)
+    plan = await get_plan_or_404(db, plan_id, for_update=True)
     item = await get_plan_item_or_404(db, plan_id, item_id)
     item.execution_status = execution_status
     item.executed_by_id = current_user.id

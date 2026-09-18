@@ -49,6 +49,7 @@ export interface TestCaseTransitionRequest {
   action: TestCaseTransitionAction
   reason?: string
   notes?: string
+  expected_version?: number
 }
 
 export interface TestStep {

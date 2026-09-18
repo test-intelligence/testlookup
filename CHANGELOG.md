@@ -2,6 +2,14 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M16 test-management hardening now binds direct lifecycle actions to the case
+version rendered by the client, returning a refreshable conflict instead of
+applying a stale-tab decision to changed content. Test-plan membership refuses
+foreign-project case identifiers without disclosing them, serializes membership
+and execution changes through the plan row so aggregate counts share one
+authority, returns a stable conflict for duplicate membership, and validates
+execution status as a closed API vocabulary.
+
 M13 workflow governance now refuses registered capabilities that lack a runtime
 executor, treats missing conditional facts as an unmet branch, narrows custom
 step tools to the published declaration, and binds project, version, plan,

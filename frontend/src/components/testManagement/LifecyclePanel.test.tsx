@@ -74,6 +74,7 @@ describe('LifecyclePanel', () => {
     await waitFor(() => {
       expect(testManagementService.transitionCase).toHaveBeenCalledWith('case-1', {
         action: 'deprecate',
+        expected_version: 2,
         reason: 'Superseded by case 42',
       })
     })
@@ -97,6 +98,7 @@ describe('LifecyclePanel', () => {
     await waitFor(() => {
       expect(testManagementService.transitionCase).toHaveBeenCalledWith('case-1', {
         action: 'request_review',
+        expected_version: 2,
       })
     })
   })
@@ -125,6 +127,7 @@ describe('LifecyclePanel', () => {
     await waitFor(() => {
       expect(testManagementService.transitionCase).toHaveBeenCalledWith('case-1', {
         action: 'approve',
+        expected_version: 2,
         notes: 'Independently verified expected behavior',
       })
     })

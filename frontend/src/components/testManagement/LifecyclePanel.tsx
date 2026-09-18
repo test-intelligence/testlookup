@@ -83,6 +83,7 @@ export default function LifecyclePanel({ caseItem, onChanged }: LifecyclePanelPr
     try {
       updated = await testManagementService.transitionCase(caseItem.id, {
         action,
+        expected_version: caseItem.version,
         ...(input && REVIEW_NOTES_ACTIONS.has(action) ? { notes: input } : {}),
         ...(input && REASON_ACTIONS.has(action) ? { reason: input } : {}),
       })

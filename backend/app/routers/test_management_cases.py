@@ -323,6 +323,7 @@ async def transition_test_case(
         current_user,
         reason=payload.reason,
         notes=payload.notes,
+        expected_version=payload.expected_version,
     )
     await db.commit()
     await emit_staged_test_management_metrics(db)

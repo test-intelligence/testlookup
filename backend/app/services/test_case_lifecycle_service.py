@@ -125,7 +125,7 @@ def _role_value(user: User) -> str:
     return role.value if isinstance(role, Enum) else str(role)
 
 
-def _conflict(detail: str) -> HTTPException:
+def _conflict(detail: str | dict[str, object]) -> HTTPException:
     return HTTPException(status_code=409, detail=detail)
 
 
@@ -326,6 +326,7 @@ async def transition(
     reason: Optional[str] = None,
     notes: Optional[str] = None,
     changed_fields: Optional[list[str]] = None,
+    expected_version: Optional[int] = None,
 ) -> LifecycleTransitionResult:
     """Stage one validated lifecycle transition under a row lock."""
     try:
@@ -345,6 +346,14 @@ async def transition(
         raise HTTPException(status_code=422, detail=f"reason is required for {action.value}")
 
     test_case = await _lock_case(db, case_id)
+    if expected_version is not None and test_case.version != expected_version:
+        raise _conflict(
+            {
+                "current_version": test_case.version,
+                "expected_version": expected_version,
+                "message": "Test case changed; refresh before applying this action",
+            }
+        )
     old_status = test_case.status
     new_status = ALLOWED_TRANSITIONS.get(action, {}).get(old_status)
     if new_status is None:
