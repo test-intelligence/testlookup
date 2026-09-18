@@ -52,6 +52,8 @@ tag and expected digest, all health endpoints were green, and Alembic reported
   passed**.
 - Mutation harness: **12 unsafe changes killed**. Every mutation selector was
   asserted to apply exactly once and the original bytes were restored.
+- Independent final review: **APPROVE** for executable `f7d2aaf0` and evidence
+  commit `4d7f8cf4`; no blocking finding remains.
 
 ## Defects fixed
 
