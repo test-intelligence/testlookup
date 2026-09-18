@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check, Copy, Key, Loader2, Plus, ShieldAlert, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -284,7 +284,7 @@ asyncio.run(main())`,
   )
 }
 
-export default function ApiKeysPage() {
+function ApiKeysPageContent() {
   const { isAdmin } = usePermissions()
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const project = useProjectStore(s => s.activeProject)
@@ -302,11 +302,6 @@ export default function ApiKeysPage() {
 
   // Same-origin base URL is what clients will hit; useful for snippet generation.
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-
-  useEffect(() => {
-    setShowForm(false)
-    setCreated(null)
-  }, [projectId])
 
   const onRevoke = async (key: ApiKey) => {
     if (!window.confirm(`Revoke "${key.name}"? Active clients using this key will start failing immediately.`)) return
@@ -461,4 +456,12 @@ export default function ApiKeysPage() {
       )}
     </div>
   )
+}
+
+export default function ApiKeysPage() {
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+
+  // API-key form and one-time secret state is project-bound. Remounting the
+  // content on an authority change prevents either from crossing projects.
+  return <ApiKeysPageContent key={activeProjectId ?? 'no-project'} />
 }

@@ -26,7 +26,6 @@ homelabsetup/.homelab-credentials
 .tls-mitm-ca.crt
 *api_key*
 *apikey*
-!frontend/src/pages/settings/ApiKeysPage.test.tsx
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Python

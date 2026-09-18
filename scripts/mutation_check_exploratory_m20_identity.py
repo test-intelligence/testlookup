@@ -28,8 +28,8 @@ MUTATIONS = (
     ),
     Mutation(
         "one-time-key-project-reset",
-        "  useEffect(() => {\n    setShowForm(false)\n    setCreated(null)\n  }, [projectId])",
-        "  useEffect(() => {\n    setShowForm(false)\n  }, [projectId])",
+        "  return <ApiKeysPageContent key={activeProjectId ?? 'no-project'} />",
+        "  return <ApiKeysPageContent />",
         "removes a one-time key secret",
     ),
     Mutation(
@@ -44,7 +44,7 @@ MUTATIONS = (
 def run_test(pattern: str) -> subprocess.CompletedProcess[str]:
     npm = "npm.cmd" if os.name == "nt" else "npm"
     return subprocess.run(
-        [npm, "run", "test", "--", "src/pages/settings/ApiKeysPage.test.tsx", "-t", pattern],
+        [npm, "run", "test", "--", "src/pages/settings/ProjectCredentialPage.test.tsx", "-t", pattern],
         cwd=ROOT / "frontend",
         check=False,
         capture_output=True,
