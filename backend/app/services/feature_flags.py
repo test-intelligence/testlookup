@@ -344,10 +344,14 @@ async def update_flag(
         flag.description = updates["description"]
     if "enabled_global" in updates and updates["enabled_global"] is not None:
         flag.enabled_global = bool(updates["enabled_global"])
-    if "enabled_projects" in updates and updates["enabled_projects"] is not None:
-        flag.enabled_projects = [str(p) for p in updates["enabled_projects"]] or None
-    if "enabled_roles" in updates and updates["enabled_roles"] is not None:
-        flag.enabled_roles = list(updates["enabled_roles"]) or None
+    # Omitted means keep; explicit null or [] means clear the allow-list. The
+    # settings UI uses null for its documented "empty = all" state.
+    if "enabled_projects" in updates:
+        projects = updates["enabled_projects"] or []
+        flag.enabled_projects = [str(p) for p in projects] or None
+    if "enabled_roles" in updates:
+        roles = updates["enabled_roles"] or []
+        flag.enabled_roles = list(roles) or None
     if "rollout_percent" in updates and updates["rollout_percent"] is not None:
         flag.rollout_percent = int(updates["rollout_percent"])
     flag.updated_by_user_id = actor.id

@@ -80,11 +80,15 @@ def _offline_hard_gate(provider: str) -> ProbeResult | None:
     return None
 
 
-async def probe_jira() -> ProbeResult:
+async def probe_jira(config: dict | None = None) -> ProbeResult:
     """Probe Jira REST API: check auth and server info."""
     from app.core.config import settings
 
-    if not settings.JIRA_ENABLED or not settings.JIRA_DOMAIN:
+    enabled = config.get("jira_enabled") if config is not None else settings.JIRA_ENABLED
+    domain = config.get("jira_domain") if config is not None else settings.JIRA_DOMAIN
+    email = config.get("jira_email") if config is not None else settings.JIRA_EMAIL
+    token = config.get("jira_api_token") if config is not None else settings.JIRA_API_TOKEN
+    if not enabled or not domain:
         return ProbeResult("jira", "skipped", message="JIRA_ENABLED=false or no domain configured")
     refused = _offline_hard_gate("jira")
     if refused:
@@ -94,11 +98,11 @@ async def probe_jira() -> ProbeResult:
 
     start = time.monotonic()
     try:
-        url = f"https://{settings.JIRA_DOMAIN}/rest/api/3/serverInfo"
+        url = f"https://{domain}/rest/api/3/serverInfo"
         client = get_http_client()
         resp = await client.get(
             url,
-            auth=(settings.JIRA_EMAIL or "", settings.JIRA_API_TOKEN or ""),
+            auth=(email or "", token or ""),
             timeout=10.0,
         )
         ms = int((time.monotonic() - start) * 1000)
@@ -114,11 +118,14 @@ async def probe_jira() -> ProbeResult:
         return ProbeResult("jira", "down", 0, str(exc)[:300])
 
 
-async def probe_splunk() -> ProbeResult:
+async def probe_splunk(config: dict | None = None) -> ProbeResult:
     """Probe Splunk REST API: check auth and service availability."""
     from app.core.config import settings
 
-    if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
+    enabled = config.get("splunk_enabled") if config is not None else settings.SPLUNK_ENABLED
+    base_url = config.get("splunk_base_url") if config is not None else settings.SPLUNK_BASE_URL
+    token = config.get("splunk_api_token") if config is not None else settings.SPLUNK_API_TOKEN
+    if not enabled or not base_url:
         return ProbeResult("splunk", "skipped", message="SPLUNK_ENABLED=false or no URL configured")
     refused = _offline_hard_gate("splunk")
     if refused:
@@ -128,8 +135,8 @@ async def probe_splunk() -> ProbeResult:
 
     start = time.monotonic()
     try:
-        url = f"{settings.SPLUNK_BASE_URL}/services/server/info"
-        headers = {"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"}
+        url = f"{base_url}/services/server/info"
+        headers = {"Authorization": f"Bearer {token or ''}"}
         client = get_http_client()
         resp = await client.get(url, headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
@@ -144,11 +151,12 @@ async def probe_splunk() -> ProbeResult:
         return ProbeResult("splunk", "down", 0, str(exc)[:300])
 
 
-async def probe_github() -> ProbeResult:
+async def probe_github(config: dict | None = None) -> ProbeResult:
     """Probe GitHub API: check token validity."""
     from app.core.config import settings
 
-    if not settings.GITHUB_TOKEN:
+    token = config.get("github_token") if config is not None else settings.GITHUB_TOKEN
+    if not token:
         return ProbeResult("github", "skipped", message="No GITHUB_TOKEN configured")
     refused = _offline_hard_gate("github")
     if refused:
@@ -157,7 +165,7 @@ async def probe_github() -> ProbeResult:
 
     start = time.monotonic()
     try:
-        headers = {"Authorization": f"token {settings.GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
         client = get_http_client()
         resp = await client.get("https://api.github.com/rate_limit", headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
@@ -171,11 +179,19 @@ async def probe_github() -> ProbeResult:
         return ProbeResult("github", "down", 0, str(exc)[:300])
 
 
-async def probe_ocp() -> ProbeResult:
+async def probe_ocp(config: dict | None = None) -> ProbeResult:
     """Probe OpenShift/K8s API: check service account token validity."""
     from app.core.config import settings
 
-    if not settings.OCP_ENABLED or not settings.OCP_API_URL:
+    enabled = config.get("ocp_enabled") if config is not None else settings.OCP_ENABLED
+    api_url = config.get("ocp_api_url") if config is not None else settings.OCP_API_URL
+    token = config.get("ocp_sa_token") if config is not None else settings.OCP_SA_TOKEN
+    namespace = (
+        config.get("ocp_default_namespace")
+        if config is not None
+        else settings.OCP_DEFAULT_NAMESPACE
+    )
+    if not enabled or not api_url:
         return ProbeResult("ocp", "skipped", message="OCP_ENABLED=false or no URL configured")
     refused = _offline_hard_gate("ocp")
     if refused:
@@ -184,10 +200,10 @@ async def probe_ocp() -> ProbeResult:
 
     start = time.monotonic()
     try:
-        headers = {"Authorization": f"Bearer {settings.OCP_SA_TOKEN}"}
+        headers = {"Authorization": f"Bearer {token or ''}"}
         client = get_http_client()
         resp = await client.get(
-            f"{settings.OCP_API_URL}/api/v1/namespaces/{settings.OCP_DEFAULT_NAMESPACE}",
+            f"{api_url}/api/v1/namespaces/{namespace}",
             headers=headers,
             timeout=10.0,
         )
@@ -342,36 +358,37 @@ async def run_all_probes() -> list[ProbeResult]:
     """Run all integration probes concurrently."""
     import asyncio
 
-    notification_cfg = None
-    notification_cfg_error: Exception | None = None
-    if "slack" in ALL_PROBES or "teams" in ALL_PROBES:
+    integration_cfg = None
+    integration_cfg_error: Exception | None = None
+    configurable = {"jira", "splunk", "github", "ocp", "slack", "teams"}
+    if configurable.intersection(ALL_PROBES):
         from app.db.postgres import AsyncSessionLocal
-        from app.services.integration_config_service import resolve_global_notification_webhooks
+        from app.services.integration_config_service import resolve_global_integrations
 
         try:
             async with AsyncSessionLocal() as db:
-                notification_cfg = await resolve_global_notification_webhooks(db)
+                integration_cfg = await resolve_global_integrations(db)
         except Exception as exc:  # noqa: BLE001 — isolate config from other probes
-            notification_cfg_error = exc
+            integration_cfg_error = exc
             logger.warning(
-                "Notification integration probe configuration unavailable: %s",
+                "Integration probe configuration unavailable: %s",
                 exc,
             )
 
     async def _run_probe(provider, fn):
-        if provider in ("slack", "teams"):
-            if notification_cfg_error is not None:
+        if provider in configurable:
+            if integration_cfg_error is not None:
                 return ProbeResult(
                     provider,
                     "down",
                     0,
                     (
-                        "Notification configuration unavailable: "
-                        f"{type(notification_cfg_error).__name__}: "
-                        f"{str(notification_cfg_error)[:240]}"
+                        "Integration configuration unavailable: "
+                        f"{type(integration_cfg_error).__name__}: "
+                        f"{str(integration_cfg_error)[:240]}"
                     ),
                 )
-            return await fn(notification_cfg)
+            return await fn(integration_cfg)
         return await fn()
 
     results = await asyncio.gather(

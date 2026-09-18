@@ -275,6 +275,37 @@ def test_deserialize_flag_handles_missing_keys_with_safe_defaults():
     assert rt["rollout_percent"] == 0
 
 
+@pytest.mark.asyncio
+async def test_update_flag_explicit_null_clears_scope_allowlists(monkeypatch):
+    flag = SimpleNamespace(
+        id=uuid.uuid4(),
+        key="scoped_flag",
+        description=None,
+        enabled_global=True,
+        enabled_projects=[str(uuid.uuid4())],
+        enabled_roles=["ADMIN"],
+        rollout_percent=100,
+        updated_by_user_id=None,
+        created_at=None,
+        updated_at=None,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), add=lambda _row: None)
+    actor = _make_user(role="ADMIN")
+    monkeypatch.setattr(ff, "lock_global_agent_authority", AsyncMock())
+    monkeypatch.setattr(ff, "get_flag", AsyncMock(return_value=flag))
+    monkeypatch.setattr(ff, "_write_audit_entry", lambda *args, **kwargs: None)
+
+    await ff.update_flag(
+        db,
+        key=flag.key,
+        updates={"enabled_projects": None, "enabled_roles": None},
+        actor=actor,
+    )
+
+    assert flag.enabled_projects is None
+    assert flag.enabled_roles is None
+
+
 # ── _legacy_env_fallback ────────────────────────────────────────────────────
 
 

@@ -1,6 +1,6 @@
 """Celery background tasks for ingestion and AI analysis."""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 import uuid
 from typing import Any, cast
@@ -21,6 +21,31 @@ from app.worker.celery_app import celery_app
 #: from the enum and asserted only that each one was accepted, so three
 #: members could be stored and never delivered.
 EVENT_DRIVEN_SCHEDULES = ("PER_RUN", "PER_SUITE", "PER_RELEASE")
+DIGEST_RETRY_DELAY = timedelta(minutes=15)
+
+
+def digest_delivery_updates(
+    *,
+    status: str,
+    now: datetime,
+    scheduled_next: datetime,
+) -> dict:
+    """Return scheduler fields to persist after a delivery attempt.
+
+    The atomic claim moves only ``next_delivery_at``.  A successful send owns
+    the watermark and counter; a provider failure keeps the previous watermark
+    and makes the row due for a bounded retry.  This preserves the failed
+    window without making concurrent beat workers send it twice.
+    """
+    if status == "sent":
+        return {
+            "last_delivered_at": now,
+            "next_delivery_at": scheduled_next,
+            "increment_delivery_count": True,
+        }
+    if status == "failed":
+        return {"next_delivery_at": now + DIGEST_RETRY_DELAY}
+    return {"next_delivery_at": scheduled_next}
 
 
 def run_matches_digest_scope(sub, run) -> bool:
@@ -4035,13 +4060,12 @@ def dispatch_scheduled_digests(self):
         # concurrent worker that already claimed the row will find its WHERE
         # clause false and get rowcount=0 — we skip those.
         #
-        # We deliberately advance next_delivery_at BEFORE sending the email.
-        # If the send fails later we log the failure but do NOT revert the
-        # claim: missing a digest (which the user can manually re-trigger) is
-        # always better than spamming users with duplicates because a crash
-        # between send and commit left the row "still due".
+        # We advance only next_delivery_at before sending. The successful
+        # watermark and delivery counter are finalized after the provider call;
+        # a known provider failure moves next_delivery_at to a short retry.
         for sub_id, schedule, last_delivered_at, send_when_unchanged, report_attachment in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
+            scheduled_next = now + delta
             period = "daily" if schedule == "DAILY" else "weekly"
             is_retro = schedule == "WEEKLY_RETRO"
             # Delta window (US-7.4): since the previous successful send,
@@ -4060,9 +4084,7 @@ def dispatch_scheduled_digests(self):
                         DigestSubscription.next_delivery_at <= now,
                     )
                     .values(
-                        last_delivered_at=now,
-                        next_delivery_at=now + delta,
-                        delivery_count=DigestSubscription.delivery_count + 1,
+                        next_delivery_at=scheduled_next,
                     )
                     .returning(
                         DigestSubscription.user_id,
@@ -4311,6 +4333,19 @@ def dispatch_scheduled_digests(self):
                         status=status,
                         error_detail=error_detail,
                     ))
+                    outcome = digest_delivery_updates(
+                        status=status,
+                        now=now,
+                        scheduled_next=scheduled_next,
+                    )
+                    increment_count = outcome.pop("increment_delivery_count", False)
+                    if increment_count:
+                        outcome["delivery_count"] = DigestSubscription.delivery_count + 1
+                    await db.execute(
+                        update(DigestSubscription)
+                        .where(DigestSubscription.id == sub_id)
+                        .values(**outcome)
+                    )
                     await db.commit()
             except Exception as exc:
                 logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
