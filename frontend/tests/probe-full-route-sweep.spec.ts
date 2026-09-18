@@ -65,11 +65,15 @@ function isIgnorableConsole(text: string): boolean {
 /** Documented "not configured" answers, kept to one endpoint each. */
 const ALLOWED_404 = [/\/llm-quota$/]
 
-test('every declared static route renders its own page', async ({ page, request }) => {
+test('every declared static route renders its own page', async ({ browser, request }) => {
   test.setTimeout(25 * 60 * 1000)
 
-  const routes = declaredStaticRoutes()
-  expect(routes.length, 'route table parse produced too few routes').toBeGreaterThan(50)
+  const all = declaredStaticRoutes()
+  expect(all.length, 'route table parse produced too few routes').toBeGreaterThan(50)
+  // EXJ_SWEEP_LIMIT exists to time the sweep on a slice before committing the
+  // whole list to a long run. Unset, every declared route is swept.
+  const limit = Number(process.env.EXJ_SWEEP_LIMIT || 0)
+  const routes = limit > 0 ? all.slice(0, limit) : all
 
   const login = await request.post(`${BASE}/api/v1/auth/login`, {
     form: { username: 'admin', password: 'Admin@2026!' },
@@ -77,8 +81,8 @@ test('every declared static route renders its own page', async ({ page, request 
   expect(login.ok(), 'login must succeed before sweeping').toBeTruthy()
   const auth = await login.json()
 
-  await page.addInitScript(
-    ([token, refresh, pid, pname]) => {
+  type InitArgs = readonly [string, string, string, string]
+  const initScript = ([token, refresh, pid, pname]: InitArgs) => {
       localStorage.setItem(
         'auth-storage',
         JSON.stringify({
@@ -97,16 +101,58 @@ test('every declared static route renders its own page', async ({ page, request 
           state: { activeProjectId: pid, activeProject: { id: pid, name: pname } },
           version: 0,
         }),
-      )
-    },
-    [auth.access_token, auth.refresh_token ?? '', PROJECT_ID, PROJECT_NAME] as const,
-  )
+    )
+  }
+  const initArgs: InitArgs = [
+    auth.access_token,
+    auth.refresh_token ?? '',
+    PROJECT_ID,
+    PROJECT_NAME,
+  ]
 
   const redirected: string[] = []
   const thin: string[] = []
   const withErrors: string[] = []
 
+  // The renderer dies after roughly eight route navigations on one page: an
+  // SPA accumulates React trees, SWR caches and pollers per navigation, and
+  // Chromium eventually reports `page.goto: Page crashed` — after which every
+  // later route reports a crash and the stale URL, which reads as 47 redirects
+  // and is really one crash cascading. /coverage/suite was blamed for it until
+  // it was opened on its own and rendered fine (479 chars, no errors).
+  //
+  // A page is cheap inside an existing context; a context is not, because each
+  // one re-bootstraps the whole SPA. So: one context, a fresh page every
+  // PAGE_RECYCLE routes.
+  // Chromium shares one renderer process across same-origin pages in a
+  // context, so a fresh PAGE does not free what the SPA accumulated — the
+  // renderer still died around route 9 ("page.goto: Page crashed"), after
+  // which every later route reported the crash and the stale URL, which reads
+  // as dozens of redirects and is really one crash cascading.
+  //
+  // /coverage/suite was blamed twice because it is where the ceiling happened
+  // to land. It was cleared twice: loaded on its own it renders 479 chars with
+  // no errors, and /coverage -> /coverage/suite -> /suites in sequence is
+  // clean. The limit is cumulative, not that page.
+  //
+  // A fresh CONTEXT gets a fresh renderer. It costs one SPA bootstrap each
+  // time, which is affordable now that the per-route wait is on rendered
+  // content rather than `networkidle`.
+  const CONTEXT_RECYCLE = 6
+  let context = await browser.newContext()
+  await context.addInitScript(initScript, initArgs)
+  let page = await context.newPage()
+  let sinceRecycle = 0
+
   for (const route of routes) {
+    if (sinceRecycle >= CONTEXT_RECYCLE) {
+      await context.close()
+      context = await browser.newContext()
+      await context.addInitScript(initScript, initArgs)
+      page = await context.newPage()
+      sinceRecycle = 0
+    }
+    sinceRecycle += 1
     const consoleErrors: string[] = []
     const failedRequests: string[] = []
     const pageErrors: string[] = []
@@ -141,9 +187,21 @@ test('every declared static route renders its own page', async ({ page, request 
     let navError = ''
     let final = ''
     try {
-      await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle', timeout: 45_000 })
+      // NOT `networkidle`. `probe-route-sweep.spec.ts` records why: background
+      // pollers started by earlier routes keep firing, so on a single page the
+      // network never goes quiet for 500ms and every route burns the full
+      // timeout. That cost this sweep two runs before the header comment next
+      // door was taken at its word. Wait on rendered content instead — which
+      // is the actual contract, and is what a user would call "the page came
+      // up".
+      await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page
+        .locator('h1, h2')
+        .first()
+        .waitFor({ state: 'visible', timeout: 6_000 })
+        .catch(() => undefined)
       // Let SWR settle: most pages fetch on mount.
-      await page.waitForTimeout(1200)
+      await page.waitForTimeout(900)
       bodyLen = (await page.locator('main, body').first().innerText().catch(() => '')).trim().length
       heading = (await page.locator('h1, h2').first().innerText().catch(() => '')).trim().slice(0, 44)
     } catch (e) {
@@ -184,9 +242,11 @@ test('every declared static route renders its own page', async ({ page, request 
     )
   }
 
+  await context.close()
+
   console.log('===== EX-01 FULL ROUTE SWEEP =====')
   console.log(
-    `routes=${routes.length} redirected=${redirected.length} thin=${thin.length} witherrors=${withErrors.length}`,
+    `routes=${routes.length}/${all.length} redirected=${redirected.length} thin=${thin.length} witherrors=${withErrors.length}`,
   )
   for (const r of redirected) console.log(`  REDIRECT ${r}`)
   for (const t of thin) console.log(`  THIN     ${t}`)
