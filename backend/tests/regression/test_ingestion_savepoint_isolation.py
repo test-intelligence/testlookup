@@ -142,6 +142,8 @@ async def test_incomplete_run_aggregate_status_is_stopped():
         broken=0,
         unknown=0,
         ingestion_complete=False,
+        # Summed by _update_run_aggregates since TL-2026-09-18-01-005.
+        duration_ms=8100,
     )
 
     class _Result:
@@ -170,6 +172,8 @@ async def test_incomplete_run_aggregate_status_is_stopped():
 
     params = db.update.compile(dialect=postgresql.dialect()).params
     assert params["status"] == LaunchStatus.STOPPED
+    # A stopped/incomplete run still records the duration of what did run.
+    assert params["duration_ms"] == 8100
 
 
 @pytest.mark.asyncio
