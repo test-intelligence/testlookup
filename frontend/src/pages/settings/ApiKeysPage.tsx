@@ -5,6 +5,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -12,6 +13,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
 import { streamIngestCommand } from './apiKeysCurl'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 const STREAM_WRITE_SCOPE = 'stream:write'
 
@@ -155,7 +157,7 @@ function GenerateKeyForm({
   )
 }
 
-function CreatedKeyModal({
+export function CreatedKeyModal({
   created,
   baseUrl,
   projectLabel,
@@ -166,6 +168,7 @@ function CreatedKeyModal({
   projectLabel: string
   onClose: () => void
 }) {
+  const dialogRef = useModalFocus({ onClose })
   const propertiesSnippet = useMemo(
     () =>
       `# testlookup.properties — drop into src/test/resources/ (Java/TestNG/JUnit)
@@ -209,7 +212,7 @@ asyncio.run(main())`,
   )
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
       {/* max-h + overflow-y-auto are load-bearing. This dialog grew three
           ready-to-paste snippets, which pushed it past a 720px-tall viewport.
           Centred with `items-center` and no scroll container of its own, the
@@ -225,7 +228,7 @@ asyncio.run(main())`,
               Copy the key now — it won't be shown again. Store it in your CI secret manager.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -289,17 +292,21 @@ export default function ApiKeysPage() {
   const projectId = isAllProjects ? null : (activeProjectId ?? null)
   const projectLabel = project?.name ?? 'this project'
 
-  const { data: keys, isLoading, error } = useApiKeys(projectId)
+  const { data: keys, isLoading, error, mutate } = useApiKeys(projectId)
   const [showForm, setShowForm] = useState(false)
-  const [created, setCreated] = useState<ApiKeyCreatedResponse | null>(null)
+  const [created, setCreated] = useState<{
+    key: ApiKeyCreatedResponse
+    projectLabel: string
+  } | null>(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
 
   // Same-origin base URL is what clients will hit; useful for snippet generation.
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 
   useEffect(() => {
-    if (error) toast.error('Failed to load API keys')
-  }, [error])
+    setShowForm(false)
+    setCreated(null)
+  }, [projectId])
 
   const onRevoke = async (key: ApiKey) => {
     if (!window.confirm(`Revoke "${key.name}"? Active clients using this key will start failing immediately.`)) return
@@ -366,7 +373,7 @@ export default function ApiKeysPage() {
           projectLabel={projectLabel}
           onCreated={(key) => {
             setShowForm(false)
-            setCreated(key)
+            setCreated({ key, projectLabel })
           }}
           onCancel={() => setShowForm(false)}
         />
@@ -375,6 +382,8 @@ export default function ApiKeysPage() {
       <div className="card p-0 overflow-hidden">
         {isLoading ? (
           <div className="flex justify-center py-10"><LoadingSpinner size="lg" /></div>
+        ) : error ? (
+          <DataUnavailable error={error} onRetry={() => { void mutate() }} testId="api-keys-unavailable" />
         ) : !keys || keys.length === 0 ? (
           <div className="px-4 py-10">
             <EmptyState
@@ -444,9 +453,9 @@ export default function ApiKeysPage() {
 
       {created && (
         <CreatedKeyModal
-          created={created}
+          created={created.key}
           baseUrl={baseUrl}
-          projectLabel={projectLabel}
+          projectLabel={created.projectLabel}
           onClose={() => setCreated(null)}
         />
       )}

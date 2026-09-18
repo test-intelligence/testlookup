@@ -128,11 +128,11 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/PerformancePage': 'known-silent',
   'settings/GitHubIntegrationPage': 'known-silent',
   'settings/OutboundWebhooksPage': 'known-silent',
-  'settings/ApiKeysPage': 'known-silent',
+  'settings/ApiKeysPage': 'own-error-ui',
 }
 
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
-const KNOWN_SILENT_CEILING = 28
+const KNOWN_SILENT_CEILING = 27
 
 // Tolerant of spacing and quote style: a route written differently must not
 // fall out of the guard.

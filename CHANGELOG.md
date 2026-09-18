@@ -2,6 +2,11 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M20 identity hardening makes API-key load failures visibly retryable instead
+of presenting them as an empty credential list. One-time generated key secrets
+are removed when the active project changes, remain labelled with the project
+that minted them until removal, and use the shared modal keyboard contract.
+
 M19 accessibility hardening gives release editor, release run linking, claim
 correction, and evidence inspection dialogs one shared keyboard contract:
 focus enters and remains in the dialog, Escape closes it, and focus returns to
