@@ -101,7 +101,22 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## UI / layout
 
-### BUG-005 — `/intelligence` "Recent runs analyzed": Build eats the width, the other columns clip  ·  S2  ·  **OPEN — backlog**
+### BUG-005 — `/intelligence` "Recent runs analyzed": Build eats the width, the other columns clip  ·  S2  ·  **FIXED 2026-09-18** (branch `qa/exploratory-e2e-2026-09-18`)
+- **Measured, before → after** (computed geometry, two viewports):
+  - 1345px: table 645 → 645, Build 207 → 169, Pass rate **86 → 120** (needs 120)
+  - 1920px: table 946 → 860, Build **509 → 384** (53.8% → 44.7% of the row)
+- **Fix:** Pass rate sized to its own content (56px bar + 8px gap + the
+  percentage, inside 28px of padding = 120px), and the table capped at 860px so
+  Build stops growing. Build keeps `max-w-0` — that is what makes it yield, and
+  replacing it with a real max-width stopped it shrinking to fit and pushed the
+  1345px table to 692px against a ~645px panel, i.e. a scrollbar where there
+  had been none.
+- **Tests:** `frontend/tests/ci-e2e/intelligence-table-geometry.spec.ts` (runs
+  in CI) measures computed geometry at both widths and asserts the pass-rate
+  cell is not clipped and Build stays under half the row. The existing
+  class-string test `IntelligenceHubPage.timing.test.tsx` was **updated, not
+  deleted** — its invariant (the cap must land on cells, not just headers) is
+  still right; only the numbers moved.
 - **Symptom (user-reported 2026-09-18, with screenshot, on a ~2000px display):**
   the Build column occupies a large, mostly empty band while Suite shows `—`,
   Pass rate is cut mid-glyph (`0'` and `1(` where `0%` and `100%` belong), and
@@ -130,10 +145,12 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   working controls beside them and only raise a toast.
 - **Sites:** `frontend/src/components/releases/ReleaseCard.tsx:99,106` and
   `frontend/src/pages/ReleasesPage.tsx:819,826`.
-- **Count correction:** a 2026-09-05 design handoff scoped this as "two
-  placeholder buttons on `ReleaseCard.tsx`" with an acceptance criterion of "no
-  button in the app toasts 'coming in next iteration'". There are **four** — as
-  scoped, that item could not have satisfied its own criterion.
+- **Count correction, twice over.** A 2026-09-05 design handoff scoped this as
+  "two placeholder buttons on `ReleaseCard.tsx`". A grep for the exact string
+  found **four**. Widening the grep to `coming in (the )?next iteration` finds
+  **six** — `AgentStatusPage.tsx:987-988` say "coming in **the** next
+  iteration" for the Audit and Compare workflow modes, and the narrower
+  pattern missed them. The acceptance check below uses the wider pattern.
 - **Decision needed:** implement the four actions, remove the controls until the
   actions exist, or keep them visibly disabled with a tooltip naming what is
   missing. These are three different products; a QA pass should not pick.
@@ -169,7 +186,15 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   because there was. The summary should say what it excludes.
 - **Detail + queries:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-008.md`
 
-### BUG-008 — ENHANCEMENT: `/agents` report above Agent Stages, and make Stages collapsible  ·  **OPEN — backlog**
+### BUG-008 — ENHANCEMENT: `/agents` report above Agent Stages, and make Stages collapsible  ·  **DONE 2026-09-18** (branch `qa/exploratory-e2e-2026-09-18`)
+- The AI report now leads the column under its own "AI Report" heading, and
+  "Agent Stages" sits below it with a Show/Hide control (`aria-expanded`,
+  expanded by default so the page is unchanged for anyone who ignores it).
+- **Tests:** `frontend/src/pages/AgentStatusPage.layout.test.tsx` asserts order
+  with `compareDocumentPosition` — for both the heading and the report BODY,
+  since a heading-only move would satisfy a weaker check — and that collapsing
+  the stages does not take the report with it. The expanded-by-default report
+  assertion is re-pinned here as well as in `AgentStatusPage.test.tsx`.
 - **Requested:** user, 2026-09-18. (1) The summary/report section belongs at the
   top of the page with "Agent Stages" below it. (2) Agent Stages needs an
   expand/collapse control.

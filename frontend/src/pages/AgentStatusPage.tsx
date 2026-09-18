@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
@@ -558,14 +558,36 @@ const MODE_BADGE: Record<string, { label: string; colour: string }> = {
 export default function AgentStatusPage() {
   const { runId } = useParams<{ runId?: string }>()
   const navigate = useNavigate()
-  const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  // The selected pipeline is stored WITH the run it belongs to, and read back
+  // only when that run is still the one on screen.
+  //
+  // It used to be a bare id, reset on a project change and on a card click but
+  // never on a RUN change. The "Pipeline Runs" dropdown navigates to
+  // `/agents/run/:runId`, so `usePipelines(runId)` refetched correctly while
+  // every panel keyed on the id — `usePipelineStages`, `usePipelineTimeline`,
+  // the compute graph, the AI report — kept rendering the previous run's
+  // pipeline under the new run's header. That is the user-reported
+  // "selecting a run does not refresh the page" (2026-09-18).
+  //
+  // Derived rather than reset in an effect: an effect that calls setState on
+  // `runId` triggers a cascading render (and eslint rejects it), and it can
+  // only ever react *after* a render in which the stale id was still live.
+  // Pairing the id with its run makes the stale state unrepresentable instead.
+  const [selection, setSelection] = useState<
+    { forRunId: string | undefined; pipelineId: string; testRunId: string } | null
+  >(null)
+  const selectionMatchesRoute = selection != null && selection.forRunId === runId
+  const selectedPipeline = selectionMatchesRoute ? selection.pipelineId : null
+  const selectedRunId = selectionMatchesRoute ? selection.testRunId : null
   // The AI report is shown by default (expanded) once a pipeline is selected —
   // it's the headline output of the pipeline, so users shouldn't have to click
   // "View AI report" to see it. The toggle still lets them collapse it. The
   // ``useRunSummary`` fetch below is gated on this, so default-true means the
   // report fetches as soon as a pipeline is picked.
   const [showSummary, setShowSummary] = useState(true)
+  // Agent Stages is collapsible (user request 2026-09-18). Expanded by default
+  // so the page is unchanged for anyone who does not touch the control.
+  const [showStages, setShowStages] = useState(true)
   const { data: aiConfig } = useAIConfig()
   // Recent runs feed the suite+build dropdown so users can browse pipelines
   // across runs instead of only the one in the URL. Size matches the
@@ -577,8 +599,7 @@ export default function AgentStatusPage() {
 
   useProjectChangeRedirect('/agents', Boolean(runId))
   useProjectChangeReset(() => {
-    setSelectedPipeline(null)
-    setSelectedRunId(null)
+    setSelection(null)
     // Stay expanded-by-default: the next pipeline the user picks shows its
     // report without a click. (No pipeline is selected right after a reset, so
     // nothing renders until then anyway.)
@@ -588,25 +609,6 @@ export default function AgentStatusPage() {
   // Choosing a different run in the "Pipeline Runs" dropdown must clear the
   // pipeline selected from the PREVIOUS run.
   //
-  // The dropdown navigates to `/agents/run/:runId`, so `runId` changes and
-  // `usePipelines(runId)` refetches the list correctly — but `selectedPipeline`
-  // is component state and was only ever reset on a project change
-  // (`useProjectChangeReset`) or by clicking a card. Every detail panel below
-  // is keyed on it: `usePipelineStages`, `usePipelineTimeline`, the compute
-  // graph and the AI report. So the header moved to the newly-chosen run while
-  // the stages, timeline and report kept showing the old one, which reads as
-  // "selecting a run does not refresh the page" (user-reported 2026-09-18).
-  //
-  // Reset on `runId` rather than validating the id against the refetched list:
-  // the list arrives a tick later, so a check against it would render the stale
-  // pipeline in the meantime.
-  useEffect(() => {
-    setSelectedPipeline(null)
-    setSelectedRunId(null)
-    // The AI report stays expanded-by-default, matching the card-click path.
-    setShowSummary(true)
-  }, [runId])
-
   const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
   // Sort descending by created_at client-side as a defensive guarantee
   const pipelines = [...rawPipelines].sort(
@@ -837,8 +839,7 @@ export default function AgentStatusPage() {
                 pipeline={p}
                 selected={selectedPipeline === p.id}
                 onSelect={() => {
-                  setSelectedPipeline(p.id)
-                  setSelectedRunId(p.test_run_id)
+                  setSelection({ forRunId: runId, pipelineId: p.id, testRunId: p.test_run_id })
                   // Keep the AI report expanded by default when switching runs.
                   setShowSummary(true)
                 }}
@@ -858,10 +859,17 @@ export default function AgentStatusPage() {
             <div className="flex justify-center py-8"><LoadingSpinner /></div>
           ) : (
             <>
+              {/* The AI report leads.
+                  It is the pipeline's headline output — the reason `showSummary`
+                  defaults to true — but it used to render BELOW the stage
+                  detail, so a reader scrolled past the mechanism to reach the
+                  conclusion. Requested by the user 2026-09-18; the layout now
+                  matches the argument the code was already making. */}
               <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Agent Stages</h3>
+                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI Report</h3>
                 <button
                   onClick={() => setShowSummary(v => !v)}
+                  aria-expanded={showSummary}
                   className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
                 >
                   <FileText className="w-3.5 h-3.5" />
@@ -869,6 +877,62 @@ export default function AgentStatusPage() {
                 </button>
               </div>
 
+              {showSummary && (
+                <div className="card">
+                  {summaryLoading ? (
+                    <div className="flex justify-center py-4">
+                      <LoadingSpinner size="sm" />
+                    </div>
+                  ) : summaryError ? (
+                    <div className="space-y-1">
+                      <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
+                      <p className="text-xs text-[var(--color-text-muted)]">
+                        {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
+                      </p>
+                    </div>
+                  ) : !summary ? (
+                    <div className="space-y-1">
+                      <p className="text-sm text-[var(--color-text-muted)]">No AI summary available yet.</p>
+                      {summaryStage?.status === 'failed' && summaryStage.error && (
+                        <p className="text-xs text-[var(--color-text-muted)]">{summaryStage.error}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* E8.5: the report's human-review status (E8.3 envelope). */}
+                      <ReviewBanner envelope={summary} />
+                      {summary.executive_panel ? (
+                        <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
+                      ) : (
+                        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
+                          <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
+                          <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
+                        </div>
+                      )}
+                      <StructuredReportDetail markdown={summary.markdown_report} hasPanel={!!summary.executive_panel} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Agent Stages — the mechanism behind the report above, and
+                  collapsible so the conclusion stays on screen on a laptop. */}
+              <div className="flex items-center gap-3 mb-1 mt-4">
+                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Agent Stages</h3>
+                <button
+                  onClick={() => setShowStages(v => !v)}
+                  aria-expanded={showStages}
+                  className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
+                >
+                  <ChevronRight
+                    className={"h-3.5 w-3.5 transition-transform " + (showStages ? 'rotate-90' : '')}
+                    aria-hidden
+                  />
+                  {showStages ? 'Hide stages' : 'Show stages'}
+                </button>
+              </div>
+
+              {showStages && (
+                <>
               <ObservabilityPanel timeline={timeline} />
 
               {/* Direction-C compute graph: 1750×560 canvas with absolute-
@@ -956,43 +1020,7 @@ export default function AgentStatusPage() {
                   ))}
                 </div>
               </details>
-
-              {showSummary && (
-                <div className="card mt-4">
-                  {summaryLoading ? (
-                    <div className="flex justify-center py-4">
-                      <LoadingSpinner size="sm" />
-                    </div>
-                  ) : summaryError ? (
-                    <div className="space-y-1">
-                      <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
-                      <p className="text-xs text-[var(--color-text-muted)]">
-                        {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
-                      </p>
-                    </div>
-                  ) : !summary ? (
-                    <div className="space-y-1">
-                      <p className="text-sm text-[var(--color-text-muted)]">No AI summary available yet.</p>
-                      {summaryStage?.status === 'failed' && summaryStage.error && (
-                        <p className="text-xs text-[var(--color-text-muted)]">{summaryStage.error}</p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {/* E8.5: the report's human-review status (E8.3 envelope). */}
-                      <ReviewBanner envelope={summary} />
-                      {summary.executive_panel ? (
-                        <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
-                      ) : (
-                        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
-                          <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
-                          <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
-                        </div>
-                      )}
-                      <StructuredReportDetail markdown={summary.markdown_report} hasPanel={!!summary.executive_panel} />
-                    </div>
-                  )}
-                </div>
+                </>
               )}
             </>
           )}

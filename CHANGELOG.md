@@ -2,6 +2,30 @@
 
 ## Unreleased - Full-system exploratory + E2E journey validation (EXJ-2026-09-18)
 
+The "Recent runs analyzed" table on `/intelligence` now shows its pass
+rate. The cell was 86px where its contents need 120 — a 56px bar, an 8px
+gap and the percentage, inside 28px of padding — so the number sat
+outside the content box and `overflow-hidden` cut it mid-glyph. The
+column budget behind those numbers was taken at a single viewport, and
+Build was the only flexible column, so every pixel past that width landed
+in Build: 53.8% of the row at 1920px, which is the large empty band
+beside the run label. Pass rate is sized to its own content and the table
+is capped, which bounds Build without disturbing the `max-w-0` trick that
+makes it yield in the first place.
+
+On `/agents`, the AI report now leads the column and Agent Stages sits
+below it behind a Show/Hide control. The report is the pipeline's
+headline output -- that is why it defaults to expanded -- but it rendered
+below the stage detail, so a reader scrolled past the mechanism to reach
+the conclusion.
+
+Selecting a different run in that page's Pipeline Runs dropdown no longer
+leaves the previous run's data on screen. The selected pipeline is now
+stored with the run it belongs to and read back only while that run is
+still on screen, so a stale selection is unrepresentable rather than
+merely reset after the fact.
+
+
 Choosing a different run in the Pipeline Runs dropdown on `/agents` now
 refreshes the whole page. The dropdown navigates to `/agents/run/:runId`,
 so the run list refetched correctly, but the pipeline selected from the

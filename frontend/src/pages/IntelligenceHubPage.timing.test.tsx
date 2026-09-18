@@ -93,14 +93,29 @@ describe('IntelligenceHubPage timing column', () => {
  * columns were consuming 631px of a 641px panel, so Build collapsed to 28px
  * and the table still overflowed by 19px. A `max-width` on the <th> alone does
  * not help either — an auto-layout column cannot shrink below its CELLS'
- * min-content width, so the cap has to land on both.
+ * min-content width, so the cap has to land on both. That invariant is what
+ * these two tests exist for and it has not changed.
+ *
+ * The NUMBERS changed on 2026-09-18 (BUG-005). The original budget was taken
+ * at a single viewport, and the 86px Pass rate cap was narrower than the
+ * meter-plus-percentage it contains, so the number was cut mid-glyph; Build,
+ * as the only flexible column, then took 53.8% of the row at 1920px. Pass rate
+ * is now 120px (its own content width) and the table is capped so Build stops
+ * growing.
+ *
+ * These assertions are on class strings, which pin the mechanism. The
+ * behaviour — "the user can actually read the number, at more than one
+ * viewport" — is owned by
+ * `tests/ci-e2e/intelligence-table-geometry.spec.ts`, which measures computed
+ * geometry at 1345px and 1920px. Class names alone could never have caught the
+ * defect that produced these numbers.
  */
 describe('IntelligenceHubPage column budget', () => {
   const CAPPED = [
     { name: /Suite/i, cap: 'max-w-[110px]' },
     { name: /Status/i, cap: 'max-w-[88px]' },
-    { name: /Pass rate/i, cap: 'max-w-[86px]' },
-    { name: /Timing/i, cap: 'max-w-[158px]' },
+    { name: /Pass rate/i, cap: 'max-w-[120px]' },
+    { name: /Timing/i, cap: 'max-w-[230px]' },
   ]
 
   it('caps every fixed column so Build keeps a readable share', async () => {
@@ -152,7 +167,7 @@ describe('IntelligenceHubPage column budget', () => {
     // Header-only caps left the table 35px over its wrapper on the deployment.
     expect(cells[1].className).toContain('max-w-[110px]')
     expect(cells[2].className).toContain('max-w-[88px]')
-    expect(cells[3].className).toContain('max-w-[86px]')
-    expect(cells[4].className).toContain('max-w-[158px]')
+    expect(cells[3].className).toContain('max-w-[120px]')
+    expect(cells[4].className).toContain('max-w-[230px]')
   })
 })

@@ -712,30 +712,57 @@ function RunsTable({
       ) : (
         <>
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px] border-collapse">
+            {/* Capped so Build stops growing. `max-w-0` on Build is what
+                makes it yield (see the header comment), and the flip side is
+                that it absorbs ALL slack — 509px of a 946px table at 1920px.
+                Capping the table bounds the band without touching the
+                mechanism; below the cap nothing changes. */}
+            <table className="w-full max-w-[860px] text-[13px] border-collapse">
               <thead>
                 <tr className="bg-[var(--color-bg-secondary)] text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                   {/* w-full + max-w-0 is what actually makes an auto-layout
                       table column flexible — `min-w-0` on a <td> does nothing,
                       the column still sizes to its content min-content width. */}
-                  {/* Column budget (measured live at a 1345px viewport, where the
-                      runs panel is 641px): the four fixed columns must fit in
-                      ~442px so Build keeps a readable ~200px. Without caps they
-                      took 631px, collapsing Build to 28px AND still overflowing. */}
+                  {/* Column budget. The previous one was measured at a single
+                      viewport (1345px, runs panel 641px) and pinned all four
+                      non-Build columns to hard `max-w` caps. Measured again at
+                      two widths, which is what one measurement misses:
+
+                        1345px  table 645  Build 207  110  88  86  153
+                        1920px  table 946  Build 509  110  88  86  153
+
+                      Build is the only flexible column, so every pixel past the
+                      measured width lands in it — 53.8% of the row at 1920px,
+                      which is the "Build occupies more space" report. And the
+                      86px Pass rate cell needs 120px: PassRateMeter is a 56px
+                      bar + 8px gap + the percentage, inside px-3.5 padding. The
+                      number was cut mid-glyph behind `overflow-hidden`, which
+                      is the "values are hidden" half of the same report.
+
+                      So: Pass rate is sized to its own content (120px), and
+                      the table itself is capped so Build stops growing. Build
+                      keeps `max-w-0` — that is what makes it yield, and
+                      replacing it with a real max-width stopped it shrinking to
+                      fit and pushed the 1345px table to 692px against a ~645px
+                      panel, i.e. a horizontal scrollbar where there had been
+                      none. Suite stays hard-capped for the same reason.
+                      Floors keep the 1345px layout unchanged.
+                      Held by tests/ci-e2e/intelligence-table-geometry.spec.ts,
+                      which asserts computed geometry at BOTH widths. */}
                   <Th className="w-full max-w-0 min-w-[150px]">Build</Th>
                   <Th className="w-[110px] max-w-[110px]">Suite</Th>
                   <Th className="w-[88px] max-w-[88px]">Status</Th>
                   {/* US-15.1 honesty fix: this column has always rendered the
                       run's pass rate. It was labelled "AI confidence", which
                       it never was — no AI confidence is wired here. */}
-                  <Th className="w-[86px] max-w-[86px]">Pass rate</Th>
+                  <Th className="w-[120px] min-w-[120px] max-w-[120px]">Pass rate</Th>
                   {/* Timing is the SORT KEY here. It was previously two
                       `hidden md:table-cell` columns, so below 768px the table
                       dropped the field it was ordered by. Merged and always
                       visible — see TimingCell. */}
                   <Th
                     align="right"
-                    className="w-[158px] max-w-[158px]"
+                    className="w-[158px] min-w-[158px] max-w-[230px]"
                     onClick={onToggleDatetimeSort}
                     sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
                   >
@@ -838,7 +865,7 @@ function RunRow({
         />
       </td>
       <td className="px-3.5 py-2.5 w-[88px] max-w-[88px] overflow-hidden"><RunStatusPill run={run} /></td>
-      <td className="px-3.5 py-2.5 w-[86px] max-w-[86px] overflow-hidden">
+      <td className="px-3.5 py-2.5 w-[120px] min-w-[120px] max-w-[120px]">
         {passRatePct != null
           ? <PassRateMeter pct={passRatePct} />
           : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
@@ -847,7 +874,7 @@ function RunRow({
         started={run.start_time ?? run.created_at}
         end={run.end_time}
         durationMs={run.duration_ms}
-        className="w-[158px] max-w-[158px]"
+        className="w-[158px] min-w-[158px] max-w-[230px]"
       />
     </tr>
   )
