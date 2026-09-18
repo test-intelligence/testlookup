@@ -16,6 +16,7 @@ import time
 import tomllib
 import uuid
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -52,7 +53,8 @@ class _FakeSession:
 
     async def execute(self, *_a, **_kw):
         self.calls += 1
-        return _Result(self.user if self.calls == 1 else None)
+        value = self.user if self.calls == 1 else datetime.now(UTC)
+        return _Result(value)
 
     async def commit(self):
         pass
