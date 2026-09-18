@@ -699,6 +699,9 @@ async def update_integrations_config(
                 actor_id=current_user.id,
             )
 
+    # Session factory uses autoflush=False. Flush secret upserts/expirations so
+    # the SELECTs below observe the post-update state rather than stale rows.
+    await db.flush()
     secret_backed = any(
         [await has_secret(db, _INTEGRATIONS_KEY, key_name) for key_name in secret_fields]
     )

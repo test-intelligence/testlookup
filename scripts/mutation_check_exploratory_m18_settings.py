@@ -41,6 +41,27 @@ MUTATIONS = (
         "backend/tests/regression/test_digest_failure_retry.py::test_atomic_claim_does_not_advance_success_history",
     ),
     Mutation(
+        "digest-first-window-anchor",
+        "backend/app/worker/tasks.py",
+        "return last_delivered_at or created_at or (now - delta)",
+        "return last_delivered_at or (now - delta)",
+        "backend/tests/regression/test_digest_failure_retry.py::test_first_delivery_retry_keeps_original_creation_window",
+    ),
+    Mutation(
+        "digest-disabled-smtp",
+        "backend/app/worker/tasks.py",
+        'return None if smtp_cfg.get("enabled") else "SMTP is disabled"',
+        'return None',
+        "backend/tests/regression/test_digest_failure_retry.py::test_disabled_smtp_is_a_failed_delivery_not_a_successful_skip",
+    ),
+    Mutation(
+        "digest-failure-claim-cas",
+        "backend/app/worker/tasks.py",
+        'if status == "failed":\n                            final_update = final_update.where(',
+        'if False and status == "failed":\n                            final_update = final_update.where(',
+        "backend/tests/regression/test_digest_failure_retry.py::test_failure_retry_update_is_bound_to_the_claimed_schedule_slot",
+    ),
+    Mutation(
         "feature-scope-clear",
         "backend/app/services/feature_flags.py",
         'if "enabled_projects" in updates:\n        projects = updates["enabled_projects"] or []',
@@ -59,6 +80,13 @@ MUTATIONS = (
         "backend/app/routers/app_settings.py",
         'if raw_value == "":\n            await expire_secret(db, _INTEGRATIONS_KEY, key_name)',
         'if False and raw_value == "":\n            await expire_secret(db, _INTEGRATIONS_KEY, key_name)',
+        "backend/tests/regression/test_integrations_secret_authority.py::test_integrations_empty_secret_expires_stored_value",
+    ),
+    Mutation(
+        "integration-secret-flush",
+        "backend/app/routers/app_settings.py",
+        "await db.flush()\n    secret_backed = any(",
+        "secret_backed = any(",
         "backend/tests/regression/test_integrations_secret_authority.py::test_integrations_empty_secret_expires_stored_value",
     ),
 )

@@ -40,12 +40,32 @@ def digest_delivery_updates(
     if status == "sent":
         return {
             "last_delivered_at": now,
-            "next_delivery_at": scheduled_next,
             "increment_delivery_count": True,
         }
     if status == "failed":
         return {"next_delivery_at": now + DIGEST_RETRY_DELAY}
-    return {"next_delivery_at": scheduled_next}
+    return {}
+
+
+def digest_window_start(
+    *,
+    last_delivered_at: datetime | None,
+    created_at: datetime | None,
+    now: datetime,
+    delta: timedelta,
+) -> datetime:
+    """Anchor first-delivery retries to subscription creation.
+
+    ``next_delivery_at`` is a claim/retry field and therefore cannot define the
+    content window. A first failed attempt has no successful watermark yet;
+    using the current retry time would silently trim the oldest retry delay.
+    """
+    return last_delivered_at or created_at or (now - delta)
+
+
+def digest_email_config_error(smtp_cfg: dict[str, Any]) -> str | None:
+    """Return a delivery error when SMTP would silently skip the message."""
+    return None if smtp_cfg.get("enabled") else "SMTP is disabled"
 
 
 def run_matches_digest_scope(sub, run) -> bool:
@@ -4031,14 +4051,14 @@ def dispatch_scheduled_digests(self):
         # claim happens per-row via an atomic UPDATE so concurrent invocations
         # of this task (beat hiccup, worker retry, manual trigger) cannot
         # double-dispatch the same email. ``last_delivered_at`` is captured
-        # NOW (pre-claim) because it is the delta-window watermark (US-7.4)
-        # and the claim UPDATE advances it.
+        # before the claim because it is the last successful delta watermark.
         async with AsyncSessionLocal() as db:
             discovery = await db.execute(
                 select(
                     DigestSubscription.id,
                     DigestSubscription.schedule,
                     DigestSubscription.last_delivered_at,
+                    DigestSubscription.created_at,
                     DigestSubscription.send_when_unchanged,
                     DigestSubscription.report_attachment,
                 ).where(
@@ -4063,14 +4083,26 @@ def dispatch_scheduled_digests(self):
         # We advance only next_delivery_at before sending. The successful
         # watermark and delivery counter are finalized after the provider call;
         # a known provider failure moves next_delivery_at to a short retry.
-        for sub_id, schedule, last_delivered_at, send_when_unchanged, report_attachment in due:
+        for (
+            sub_id,
+            schedule,
+            last_delivered_at,
+            created_at,
+            send_when_unchanged,
+            report_attachment,
+        ) in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             scheduled_next = now + delta
             period = "daily" if schedule == "DAILY" else "weekly"
             is_retro = schedule == "WEEKLY_RETRO"
             # Delta window (US-7.4): since the previous successful send,
             # falling back to one schedule period for first-ever deliveries.
-            window_start = last_delivered_at or (now - delta)
+            window_start = digest_window_start(
+                last_delivered_at=last_delivered_at,
+                created_at=created_at,
+                now=now,
+                delta=delta,
+            )
 
             # Each claim runs in its own short transaction so the UPDATE is
             # visible to sibling workers immediately.
@@ -4187,6 +4219,7 @@ def dispatch_scheduled_digests(self):
                                 append_digest_html_note,
                             )
                             from app.services.notification.email_service import (
+                                get_smtp_config,
                                 send_html_email_with_attachments,
                             )
 
@@ -4213,12 +4246,19 @@ def dispatch_scheduled_digests(self):
                                     html_body = append_digest_html_note(
                                         html_body, REPORT_BUILD_FAILED_NOTE,
                                     )
-                            await send_html_email_with_attachments(
-                                to_email=user.email,
-                                subject=f"TestLookup — {period.title()} Quality Digest",
-                                html_body=html_body,
-                                attachments=attachments,
-                            )
+                            smtp_cfg = await get_smtp_config()
+                            smtp_error = digest_email_config_error(smtp_cfg)
+                            if smtp_error:
+                                status = "failed"
+                                error_detail = smtp_error
+                            else:
+                                await send_html_email_with_attachments(
+                                    to_email=user.email,
+                                    subject=f"TestLookup — {period.title()} Quality Digest",
+                                    html_body=html_body,
+                                    attachments=attachments,
+                                    smtp_cfg=smtp_cfg,
+                                )
                         except Exception as e:
                             status = "failed"
                             error_detail = str(e)
@@ -4341,11 +4381,18 @@ def dispatch_scheduled_digests(self):
                     increment_count = outcome.pop("increment_delivery_count", False)
                     if increment_count:
                         outcome["delivery_count"] = DigestSubscription.delivery_count + 1
-                    await db.execute(
-                        update(DigestSubscription)
-                        .where(DigestSubscription.id == sub_id)
-                        .values(**outcome)
-                    )
+                    if outcome:
+                        final_update = update(DigestSubscription).where(
+                            DigestSubscription.id == sub_id
+                        )
+                        # A failed delivery may shorten only the slot this
+                        # attempt claimed. A concurrent pause/resume or schedule
+                        # edit owns its newly calculated next-delivery value.
+                        if status == "failed":
+                            final_update = final_update.where(
+                                DigestSubscription.next_delivery_at == scheduled_next
+                            )
+                        await db.execute(final_update.values(**outcome))
                     await db.commit()
             except Exception as exc:
                 logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)

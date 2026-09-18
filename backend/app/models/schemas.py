@@ -4939,7 +4939,11 @@ class FeatureFlagCreate(BaseModel):
 
 
 class FeatureFlagUpdate(BaseModel):
-    """All fields optional — partial update. None means keep existing."""
+    """Partial update.
+
+    Omitted fields keep their value. Explicit null clears project/role
+    allow-lists; for the scalar fields null is ignored.
+    """
     description: Optional[str] = Field(None, max_length=2000)
     enabled_global: Optional[bool] = None
     enabled_projects: Optional[List[uuid.UUID]] = None

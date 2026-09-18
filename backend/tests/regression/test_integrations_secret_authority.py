@@ -110,6 +110,7 @@ async def test_integrations_empty_secret_expires_stored_value(field):
     result.scalar_one_or_none.return_value = row
     db = SimpleNamespace(
         execute=AsyncMock(return_value=result),
+        flush=AsyncMock(),
         commit=AsyncMock(),
         add=MagicMock(),
     )
@@ -129,6 +130,7 @@ async def test_integrations_empty_secret_expires_stored_value(field):
         )
 
     expire.assert_awaited_once_with(db, "integrations_config", field)
+    db.flush.assert_awaited_once()
     assert field not in row.value
     assert response.slack_webhook_url is None
     assert response.teams_webhook_url is None

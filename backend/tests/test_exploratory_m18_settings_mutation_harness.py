@@ -18,4 +18,4 @@ def test_m18_settings_mutation_harness() -> None:
     )
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "M18 settings mutation check: 6 mutations killed"
+    assert run.stdout.strip() == "M18 settings mutation check: 10 mutations killed"
