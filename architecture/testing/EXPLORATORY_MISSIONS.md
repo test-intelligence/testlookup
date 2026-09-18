@@ -550,6 +550,22 @@ digest timing/content and review policy correct; duplicates controlled.
 **Observe/capture:** redacted settings diff, connection diagnostic, sink request
 count, scheduler timezone and delivery/audit IDs. Never copy real credentials.
 
+**Shipped 2026-09-18 (partial):** global connector probes now resolve the same
+persisted metadata and encrypted credentials as the settings API; empty secret
+values explicitly clear stored credentials while omitted values remain
+unchanged. Scheduled digest failures keep their last successful watermark and
+count and become due for a bounded retry, and feature-flag project/role lists
+can be cleared. The exact executable candidate `9e419842` was deployed as
+`build-20260918-050222` and verified healthy at schema head `0191` before any
+tests ran. Focused and broad M18 backend suites, TypeScript, ESLint, focused
+frontend tests, all 43 quality guards, the 367-error mypy ratchet and six
+asserted mutations passed. Fixed defects: EXP-BUG-108 through EXP-BUG-111.
+Remaining gaps are encrypted personal notification webhooks, timezone and
+wall-clock digest scheduling, draft connector tests, GitHub load/dirty-state
+safety, seed ownership, Jira runtime client authority, and live provider/error
+mutation against disposable credentials. Evidence:
+`architecture/verification/exploratory-20260916/M18-integration-digest-settings.md`.
+
 ## M19 — Accessibility, UX and browser lifecycle (P1, accessibility QA)
 
 **Preconditions:** critical routes from M01–M18; browser matrix; keyboard and

@@ -83,6 +83,7 @@ async def test_unknown_provider_is_rejected_without_running_all_probes(monkeypat
 async def test_jira_probe_uses_resolved_endpoint_and_credentials(monkeypatch):
     client = SimpleNamespace(get=AsyncMock(return_value=_Response()))
     monkeypatch.setattr(integration_probe_service, "get_http_client", lambda: client)
+    monkeypatch.setattr(integration_probe_service, "_offline_hard_gate", lambda _provider: None)
 
     result = await integration_probe_service.probe_jira({
         "jira_enabled": True,
@@ -128,6 +129,7 @@ async def test_bearer_probes_use_resolved_config(
 ):
     client = SimpleNamespace(get=AsyncMock(return_value=_Response()))
     monkeypatch.setattr(integration_probe_service, "get_http_client", lambda: client)
+    monkeypatch.setattr(integration_probe_service, "_offline_hard_gate", lambda _provider: None)
 
     result = await getattr(integration_probe_service, probe_name)(config)
 

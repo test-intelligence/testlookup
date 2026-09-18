@@ -34,10 +34,24 @@ MUTATIONS = (
         "backend/tests/regression/test_digest_failure_retry.py",
     ),
     Mutation(
+        "digest-claim-success-history",
+        "backend/app/worker/tasks.py",
+        ".values(\n                        next_delivery_at=scheduled_next,\n                    )",
+        ".values(\n                        last_delivered_at=now,\n                        next_delivery_at=scheduled_next,\n                        delivery_count=DigestSubscription.delivery_count + 1,\n                    )",
+        "backend/tests/regression/test_digest_failure_retry.py::test_atomic_claim_does_not_advance_success_history",
+    ),
+    Mutation(
         "feature-scope-clear",
         "backend/app/services/feature_flags.py",
         'if "enabled_projects" in updates:\n        projects = updates["enabled_projects"] or []',
         'if "enabled_projects" in updates and updates["enabled_projects"] is not None:\n        projects = updates["enabled_projects"] or []',
+        "backend/tests/services/test_feature_flags_service.py::test_update_flag_explicit_null_clears_scope_allowlists",
+    ),
+    Mutation(
+        "feature-role-clear",
+        "backend/app/services/feature_flags.py",
+        'if "enabled_roles" in updates:\n        roles = updates["enabled_roles"] or []',
+        'if "enabled_roles" in updates and updates["enabled_roles"] is not None:\n        roles = updates["enabled_roles"] or []',
         "backend/tests/services/test_feature_flags_service.py::test_update_flag_explicit_null_clears_scope_allowlists",
     ),
     Mutation(

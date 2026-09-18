@@ -24,7 +24,10 @@ async def test_resolver_prefers_encrypted_webhooks_over_inline_and_env():
 
     async def read_secret(db_arg, scope, key):
         assert db_arg is db
-        return {"slack_webhook_url": "db-slack", "teams_webhook_url": "db-teams"}[key]
+        return {
+            "slack_webhook_url": "db-slack",
+            "teams_webhook_url": "db-teams",
+        }.get(key)
 
     with patch("app.services.integration_config_service.read_secret", new=read_secret):
         config = await resolve_global_notification_webhooks(db, overrides=overrides)

@@ -16,7 +16,7 @@ M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive out
 M15,P1,NOT_RUN,,,
 M16,P1,PARTIAL,M16-test-management.md,EXP-BUG-096;EXP-BUG-097;EXP-BUG-098;EXP-BUG-099;EXP-BUG-100;EXP-BUG-101,"Credentialed live mutations and outage injection are blocked because the shared homelab has no disposable Test Management project or scoped non-production credential"
 M17,P1,PARTIAL,M17-analytics-saved-views.md,EXP-BUG-102;EXP-BUG-103;EXP-BUG-104;EXP-BUG-105;EXP-BUG-106;EXP-BUG-107,Shared homelab has no disposable analytics project or scoped test credential; reorder/duplicate controls and multi-tab optimistic concurrency are not shipped
-M18,P1,NOT_RUN,,,
+M18,P1,PARTIAL,M18-integration-digest-settings.md,EXP-BUG-108;EXP-BUG-109;EXP-BUG-110;EXP-BUG-111,"Shared homelab has no disposable provider credentials/sinks/project; encrypted personal webhooks, timezone scheduling, draft tests, seed ownership, GitHub load safety and Jira runtime authority remain open"
 M19,P1,NOT_RUN,,,
 M20,P0,NOT_RUN,,,
 M21,P0,NOT_RUN,,,

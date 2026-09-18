@@ -2,6 +2,15 @@
 
 ## Unreleased - Exploratory testing execution plan
 
+M18 integration settings now resolve saved encrypted credentials for Jira,
+Splunk, OpenShift, GitHub, Slack, and Teams health probes instead of silently
+testing stale environment values. Global connector secrets support an explicit
+keep, replace, or clear contract, and connector reads remain redacted.
+Scheduled digest provider failures retain the previous successful watermark
+and delivery count while scheduling a bounded retry; only a successful send
+advances delivery history. Feature-flag project and role allow-lists can be
+cleared back to the documented unrestricted state.
+
 M17 analytics saved views now enforce project membership on direct reads and
 owner mutations, keep project-less shared rows private to their creator, and
 scope all-project lists to accessible projects plus the caller's global views.
