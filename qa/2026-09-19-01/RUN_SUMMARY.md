@@ -20,13 +20,17 @@ This is a slice, not the five journeys. Roughly half of the declared steps were
 measured. The unmeasured half is enumerated per mission rather than summarised,
 so nobody reads this as broader coverage than it is.
 
-## Defects — 3 found, 3 fixed
+## Defects — 7 found, 6 fixed, 1 owner decision
 
 | ID | Sev | Summary | Status |
 |---|---|---|---|
 | [001](defects/TL-2026-09-19-01-001.md) | S3 | Both demo seeders stored a pass rate the product calls wrong | **Fixed** |
 | [002](defects/TL-2026-09-19-01-002.md) | S3 | `/settings` sub-pages had three ways back, one of which was none | **Fixed** |
 | [003](defects/TL-2026-09-19-01-003.md) | S3 | `CONDITIONAL_GO` with empty `conditions_for_go`; the UI hides the section | **Fixed** |
+| [004](defects/TL-2026-09-19-01-004.md) | S3 | Clustering that never ran is reported as "0 / no clusters" | **Fixed** |
+| [005](defects/TL-2026-09-19-01-005.md) | S3 | The exported PDF publishes a pass rate without its basis | **Fixed** |
+| [006](defects/TL-2026-09-19-01-006.md) | S3 | Release-gate hard-cap docs contradict the classifier | **Fixed** |
+| [007](defects/TL-2026-09-19-01-007.md) | S3 | A written release decision is not always announced — 11% of live decisions | **Owner decision** |
 
 Plus **BUG-010** filed and deliberately not fixed: the AI-pipeline debouncer is
 dead code whose config describes it as live. Another worktree is actively wiring
