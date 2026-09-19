@@ -484,6 +484,49 @@ celery_app.conf.update(
 )
 
 
+# ── Beat must not subscribe to task results ──────────────────────────────────
+#
+# Celery beat is fire-and-forget: it dispatches periodic tasks and never reads
+# what they return. But ``Celery.send_task`` does this (celery 5.6.3,
+# ``app/base.py``):
+#
+#     ignore_result = options.pop('ignore_result', False)
+#     ...
+#     if not ignore_result:
+#         self.backend.on_task_call(P, task_id)
+#
+# With the Redis result backend, ``on_task_call`` starts a **result consumer** --
+# a pub/sub subscription per dispatched task -- inside the long-lived beat
+# process. They accumulate until the backend connection cannot be re-established
+# and beat dies with:
+#
+#     celery.beat.SchedulingError: Couldn't apply scheduled task <name>:
+#     Retry limit exceeded while trying to reconnect to the Celery result store
+#     backend. The Celery application must be restarted.
+#
+# After that beat logs "Sending due task" but the publish never lands, so EVERY
+# periodic task silently stops while the container still reports healthy. Observed
+# on the local stack 2026-09-19: the worker received nothing for 20+ minutes,
+# every queue sat at depth 0, and 20 `run_downstream_outbox` rows stayed `pending`
+# with `attempts=0` -- no AI pipeline, no webhooks, no notifications. It looks
+# exactly like a broken relay, and it is not: invoking
+# ``claim_downstream_dispatches`` directly claimed all 20 rows correctly.
+#
+# Note ``ignore_result`` is read from the per-call **options**, NOT from
+# ``conf.task_ignore_result`` -- setting that would change nothing here. And beat
+# reaches ``send_task`` rather than ``Task.apply_async`` because the task is not
+# registered in the beat process, so the task-level ``ignore_result`` attribute
+# is not consulted either. The option has to be on the schedule entry.
+#
+# Injected in a loop rather than typed into all 45 entries: a per-entry option is
+# a rule the author of entry 46 has to remember, and this failure is invisible
+# until periodic work silently stops.
+for _entry in celery_app.conf.beat_schedule.values():
+    _options = _entry.setdefault("options", {})
+    _options.setdefault("ignore_result", True)
+del _entry, _options
+
+
 # ── Post-fork DB pool isolation ──────────────────────────────────────────────
 #
 # Celery's default pool is prefork: ``--concurrency=N`` forks N children from
