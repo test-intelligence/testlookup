@@ -3975,8 +3975,12 @@ class PolicyPassRateBands(BaseModel):
 
     Defaults match the user-requested levels (red <90, orange 90-95,
     yellow 95-99, green >=99). Verdict mapping is fixed: green = GO,
-    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps
-    (PolicyHardCaps) can downgrade the resolved band by one or two steps.
+    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO.
+
+    A breached hard cap (``PolicyHardCaps``) does **not** step the band down
+    one or two notches — it pins the band straight to red and forces NO_GO,
+    whatever the pass rate was. The stepped behaviour was abandoned because
+    yellow still mapped to GO, which made a "hard cap" advisory at best.
     """
     orange_min: float = Field(default=90.0, ge=0, le=100)
     yellow_min: float = Field(default=95.0, ge=0, le=100)

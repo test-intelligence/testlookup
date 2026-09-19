@@ -19219,25 +19219,25 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "Hard caps that downgrade the pass-rate band before the verdict map.\n\nEach cap is a (count) threshold; exceeding it downgrades the resolved\nband by one step (green → yellow → orange → red, no wrap). Multiple\nbreached caps stack, capped at red. ``None`` (or 0 where ``ge=0``)\ndisables the cap.",
+  "description": "Hard caps that downgrade the pass-rate band before the verdict map.\n\nEach cap is a (count) threshold. **Breaching any cap pins the band to red\nand forces NO_GO**, regardless of how green the pass rate was — a hard cap\nis a hard blocker, not a one-step downgrade. ``downgrades`` records which\ncaps fired.\n\n**Zero does not mean the same thing for every cap**, and the difference is\nload-bearing, so it is stated per field below rather than summarised here.\n``max_p0_defects=0`` means \"no P0 defects allowed\" and blocks on the first\none; ``max_flaky_count=0`` and ``max_new_failures_24h=0`` *disable* their\ncaps, because a literal zero would over-fire on real projects. That\nasymmetry is deliberate and pinned by\n``tests/test_classify_with_policy.py``.",
   "properties": {
     "max_flaky_count": {
       "default": 10,
-      "description": "Flaky tests allowed before downgrade",
+      "description": "Flaky tests allowed before the gate blocks. 0 DISABLES this cap (any flaky count passes) rather than forbidding flakiness — set 1 to block on the first flaky test.",
       "minimum": 0.0,
       "title": "Max Flaky Count",
       "type": "integer"
     },
     "max_new_failures_24h": {
       "default": 20,
-      "description": "New failures in last 24h allowed before downgrade",
+      "description": "New failures in the last 24h allowed before the gate blocks. 0 DISABLES this cap rather than forbidding new failures — set 1 to block on the first one.",
       "minimum": 0.0,
       "title": "Max New Failures 24H",
       "type": "integer"
     },
     "max_p0_defects": {
       "default": 0,
-      "description": "Active P0 defects allowed before downgrade",
+      "description": "Active P0 defects allowed before the gate blocks. 0 means NONE allowed — one open P0 forces red/NO_GO. This cap cannot be disabled by setting it to 0; raise it to permit P0 defects.",
       "minimum": 0.0,
       "title": "Max P0 Defects",
       "type": "integer"
