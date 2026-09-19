@@ -709,11 +709,23 @@ function TestOutcomeCard({
   failureClusters,
   affectedSuites,
   categoryBreakdown,
+  clusteringRan,
 }: {
   run: RunIntelligence['run']
   failureClusters: FailureClusterIntel[]
   affectedSuites: Array<{ suite: string; failed_count: number }>
   categoryBreakdown: Record<string, number>
+  /**
+   * Whether failure clustering actually executed for this run.
+   *
+   * `failure_clusters: []` means two different things and the reader cannot tell
+   * them apart: "clustering ran and grouped nothing" or "clustering never ran".
+   * Only the `deep` workflow contains the `failure_clustering` stage
+   * (`DEEP_REQUIRED_STAGES`), so an `offline` pipeline always reports an empty
+   * list. Showing that as `0 / no clusters` states a measurement that was never
+   * taken -- on a run with real failures.
+   */
+  clusteringRan: boolean
 }) {
   const { passed, broken, skipped, failed, total, evaluated, passRate } =
     computeRunOutcome(run)
@@ -735,7 +747,17 @@ function TestOutcomeCard({
         <Stat label="Total tests" value={`${total}`} tiny={`across ${affectedSuites.length || 1} suite${affectedSuites.length === 1 ? '' : 's'}`} borderRight />
         <Stat tone={failed > 0 ? 'bad' : undefined} label="Failed" value={`${failed}`} tiny={broken > 0 ? `incl. ${broken} broken` : failed > 0 ? dominantCategory : '—'} borderRight />
         <Stat label="Skipped" value={`${skipped}`} tiny={skipped > 0 ? 'in run' : '—'} borderRight />
-        <Stat label="Anomalies" value={`${failureClusters.length}`} tiny={failureClusters.length > 0 ? `${failureClusters.length} cluster${failureClusters.length === 1 ? '' : 's'}` : 'no clusters'} />
+        <Stat
+          label="Clusters"
+          value={clusteringRan ? `${failureClusters.length}` : '—'}
+          tiny={
+            !clusteringRan
+              ? 'not run — deep investigation only'
+              : failureClusters.length > 0
+                ? `${failureClusters.length} cluster${failureClusters.length === 1 ? '' : 's'}`
+                : 'no clusters found'
+          }
+        />
       </div>
 
       <div className="px-4 pb-3 pt-2">
@@ -1585,6 +1607,10 @@ export default function RunIntelligencePage() {
             failureClusters={failure_clusters}
             affectedSuites={affected_suites}
             categoryBreakdown={category_breakdown}
+            // Read from the stage list rather than inferred from the workflow
+            // name: a pipeline reports the stages it actually executed, so this
+            // stays correct if clustering is ever added to another workflow.
+            clusteringRan={pipeline_stages.some((s) => s.stage_name === 'failure_clustering')}
           />
           <WhatFailedCard
             clusters={failure_clusters}

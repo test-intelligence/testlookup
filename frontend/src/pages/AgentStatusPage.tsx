@@ -759,8 +759,25 @@ export default function AgentStatusPage() {
             // so users never have to handle the opaque UUID directly. The
             // value carried in state is still the UUID under the hood —
             // it's just selected by suite/build attributes.
-            <form onSubmit={handleTriggerByRunId} className="flex items-center gap-1.5">
+            // BUG-011: this control sits under the "Pipeline Runs" heading and
+            // lists runs, so users read it as "choose which pipeline run to
+            // view" and report that selecting one changes nothing. It never
+            // did: onChange only arms the trigger button. The pipeline shown
+            // below is chosen by CLICKING A CARD (see setSelection). The
+            // purpose is now stated visibly rather than living only in
+            // aria-label and a hover title, and the control is separated from
+            // the list it does not filter.
+            <form onSubmit={handleTriggerByRunId} className="space-y-1 pb-3 mb-1 border-b border-[var(--color-border-light)]">
+              <label
+                htmlFor="agent-trigger-run"
+                className="block text-[11px] font-medium text-[var(--color-text-muted)]"
+              >
+                Trigger a pipeline manually
+                <span className="font-normal"> — does not change the view below</span>
+              </label>
+              <div className="flex items-center gap-1.5">
               <select
+                id="agent-trigger-run"
                 value={triggerInput}
                 onChange={e => setTriggerInput(e.target.value)}
                 aria-label="Pick a run by test suite and build to trigger"
@@ -789,6 +806,7 @@ export default function AgentStatusPage() {
                   ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   : <Zap className="h-3.5 w-3.5" />}
               </button>
+              </div>
             </form>
           )}
 
