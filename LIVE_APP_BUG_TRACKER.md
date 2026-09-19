@@ -295,3 +295,30 @@ Investigate the **dropdown** specifically: the earlier fix addressed selecting a
 pipeline *card*, and the user is describing the run selector. Confirm which
 control is involved before changing anything, and add a live probe assertion so
 the next "fixed" is evidence rather than inference.
+
+### BUG-012 — `/agents` still shows "awaiting review" after the pipeline is accepted on `/reviews`  ·  S2  ·  **OPEN — reported 2026-09-19**
+
+- Reported by: **user**, against `http://testlookup.local/agents`
+- "When a pipeline is accepted in the review in the page
+  `http://testlookup.local/reviews`, then the AI pipeline status still shows
+  'awaiting review'."
+
+Two surfaces disagree about the same fact after a state change on one of them.
+The likely shapes, in the order worth checking:
+
+1. **The accept writes, but `/agents` reads a different field.** `/reviews`
+   records an acceptance (review row / `requires_human_review`) while the agents
+   page derives its badge from something else that was never updated.
+2. **A cache or SWR key is not invalidated.** The accept commits, but `/agents`
+   serves a stale payload until a hard reload — check whether the status corrects
+   itself on refresh. If it does, it is invalidation, not persistence.
+3. **The accept never persists.** Check the row directly before blaming the UI.
+
+Distinguish these before changing anything: reload `/agents` after accepting and
+see whether the badge corrects itself. That single observation separates (2) from
+(1) and (3).
+
+Note the precedent from BUG-011: the previous "same page, same symptom" report
+turned out to be a *different control* from the one already fixed. Confirm which
+status field the badge actually reads before assuming the accept path is wrong,
+and add a live assertion so "fixed" is evidence rather than inference.

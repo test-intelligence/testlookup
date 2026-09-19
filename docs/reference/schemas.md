@@ -19219,25 +19219,25 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "Hard caps that downgrade the pass-rate band before the verdict map.\n\nEach cap is a (count) threshold; exceeding it downgrades the resolved\nband by one step (green → yellow → orange → red, no wrap). Multiple\nbreached caps stack, capped at red. ``None`` (or 0 where ``ge=0``)\ndisables the cap.",
+  "description": "Hard caps that downgrade the pass-rate band before the verdict map.\n\nEach cap is a (count) threshold. **Breaching any cap pins the band to red\nand forces NO_GO**, regardless of how green the pass rate was — a hard cap\nis a hard blocker, not a one-step downgrade. ``downgrades`` records which\ncaps fired.\n\n**Zero does not mean the same thing for every cap**, and the difference is\nload-bearing, so it is stated per field below rather than summarised here.\n``max_p0_defects=0`` means \"no P0 defects allowed\" and blocks on the first\none; ``max_flaky_count=0`` and ``max_new_failures_24h=0`` *disable* their\ncaps, because a literal zero would over-fire on real projects. That\nasymmetry is deliberate and pinned by\n``tests/test_classify_with_policy.py``.",
   "properties": {
     "max_flaky_count": {
       "default": 10,
-      "description": "Flaky tests allowed before downgrade",
+      "description": "Flaky tests allowed before the gate blocks. 0 DISABLES this cap (any flaky count passes) rather than forbidding flakiness — set 1 to block on the first flaky test.",
       "minimum": 0.0,
       "title": "Max Flaky Count",
       "type": "integer"
     },
     "max_new_failures_24h": {
       "default": 20,
-      "description": "New failures in last 24h allowed before downgrade",
+      "description": "New failures in the last 24h allowed before the gate blocks. 0 DISABLES this cap rather than forbidding new failures — set 1 to block on the first one.",
       "minimum": 0.0,
       "title": "Max New Failures 24H",
       "type": "integer"
     },
     "max_p0_defects": {
       "default": 0,
-      "description": "Active P0 defects allowed before downgrade",
+      "description": "Active P0 defects allowed before the gate blocks. 0 means NONE allowed — one open P0 forces red/NO_GO. This cap cannot be disabled by setting it to 0; raise it to permit P0 defects.",
       "minimum": 0.0,
       "title": "Max P0 Defects",
       "type": "integer"
@@ -19326,7 +19326,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "Project-level 4-band classification for the build colour and verdict.\n\nBands are defined by the *lower* edge of each colour and must be strictly\nincreasing: ``orange_min < yellow_min < green_min``. A pass rate below\n``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;\n``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.\n\nDefaults match the user-requested levels (red <90, orange 90-95,\nyellow 95-99, green >=99). Verdict mapping is fixed: green = GO,\nyellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps\n(PolicyHardCaps) can downgrade the resolved band by one or two steps.",
+  "description": "Project-level 4-band classification for the build colour and verdict.\n\nBands are defined by the *lower* edge of each colour and must be strictly\nincreasing: ``orange_min < yellow_min < green_min``. A pass rate below\n``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;\n``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.\n\nDefaults match the user-requested levels (red <90, orange 90-95,\nyellow 95-99, green >=99). Verdict mapping is fixed: green = GO,\nyellow = GO with watch, orange = CONDITIONAL, red = NO_GO.\n\nA breached hard cap (``PolicyHardCaps``) does **not** step the band down\none or two notches — it pins the band straight to red and forces NO_GO,\nwhatever the pass rate was. The stepped behaviour was abandoned because\nyellow still mapped to GO, which made a \"hard cap\" advisory at best.",
   "properties": {
     "green_min": {
       "default": 99.0,

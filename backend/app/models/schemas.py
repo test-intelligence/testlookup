@@ -3975,8 +3975,12 @@ class PolicyPassRateBands(BaseModel):
 
     Defaults match the user-requested levels (red <90, orange 90-95,
     yellow 95-99, green >=99). Verdict mapping is fixed: green = GO,
-    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps
-    (PolicyHardCaps) can downgrade the resolved band by one or two steps.
+    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO.
+
+    A breached hard cap (``PolicyHardCaps``) does **not** step the band down
+    one or two notches — it pins the band straight to red and forces NO_GO,
+    whatever the pass rate was. The stepped behaviour was abandoned because
+    yellow still mapped to GO, which made a "hard cap" advisory at best.
     """
     orange_min: float = Field(default=90.0, ge=0, le=100)
     yellow_min: float = Field(default=95.0, ge=0, le=100)
@@ -3986,14 +3990,46 @@ class PolicyPassRateBands(BaseModel):
 class PolicyHardCaps(BaseModel):
     """Hard caps that downgrade the pass-rate band before the verdict map.
 
-    Each cap is a (count) threshold; exceeding it downgrades the resolved
-    band by one step (green → yellow → orange → red, no wrap). Multiple
-    breached caps stack, capped at red. ``None`` (or 0 where ``ge=0``)
-    disables the cap.
+    Each cap is a (count) threshold. **Breaching any cap pins the band to red
+    and forces NO_GO**, regardless of how green the pass rate was — a hard cap
+    is a hard blocker, not a one-step downgrade. ``downgrades`` records which
+    caps fired.
+
+    **Zero does not mean the same thing for every cap**, and the difference is
+    load-bearing, so it is stated per field below rather than summarised here.
+    ``max_p0_defects=0`` means "no P0 defects allowed" and blocks on the first
+    one; ``max_flaky_count=0`` and ``max_new_failures_24h=0`` *disable* their
+    caps, because a literal zero would over-fire on real projects. That
+    asymmetry is deliberate and pinned by
+    ``tests/test_classify_with_policy.py``.
     """
-    max_p0_defects: int = Field(default=0, ge=0, description="Active P0 defects allowed before downgrade")
-    max_flaky_count: int = Field(default=10, ge=0, description="Flaky tests allowed before downgrade")
-    max_new_failures_24h: int = Field(default=20, ge=0, description="New failures in last 24h allowed before downgrade")
+    max_p0_defects: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Active P0 defects allowed before the gate blocks. 0 means NONE "
+            "allowed — one open P0 forces red/NO_GO. This cap cannot be "
+            "disabled by setting it to 0; raise it to permit P0 defects."
+        ),
+    )
+    max_flaky_count: int = Field(
+        default=10,
+        ge=0,
+        description=(
+            "Flaky tests allowed before the gate blocks. 0 DISABLES this cap "
+            "(any flaky count passes) rather than forbidding flakiness — set 1 "
+            "to block on the first flaky test."
+        ),
+    )
+    max_new_failures_24h: int = Field(
+        default=20,
+        ge=0,
+        description=(
+            "New failures in the last 24h allowed before the gate blocks. 0 "
+            "DISABLES this cap rather than forbidding new failures — set 1 to "
+            "block on the first one."
+        ),
+    )
 
 
 class PolicyKindBudget(BaseModel):
