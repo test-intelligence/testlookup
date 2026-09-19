@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
+import SettingsBackBar from './SettingsBackBar'
 
 export default function AppLayout() {
   const mainRef = useRef<HTMLElement>(null)
@@ -27,6 +28,7 @@ export default function AppLayout() {
               (see PageShell). px scales 16→24→32→40 as the viewport grows;
               py-6 preserves the old p-6 vertical padding. */}
           <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
+            <SettingsBackBar />
             <Outlet />
           </div>
         </main>

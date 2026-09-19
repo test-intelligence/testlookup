@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   GitMerge,
   RefreshCw,
@@ -10,7 +9,6 @@ import {
   TestTube,
   XCircle,
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
@@ -139,11 +137,6 @@ export default function GitLabIntegrationPage() {
   if (error && !config) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-            <ArrowLeft className="h-3 w-3" /> Settings
-          </Link>
-        </div>
         <PageHeader
           title="GitLab Integration"
           subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}
@@ -220,11 +213,6 @@ export default function GitLabIntegrationPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-        <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-          <ArrowLeft className="h-3 w-3" /> Settings
-        </Link>
-      </div>
       <PageHeader
         title="GitLab Integration"
         subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}

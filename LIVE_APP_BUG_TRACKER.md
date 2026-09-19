@@ -233,3 +233,43 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 - Perf + security passes (load behaviour under concurrent runs; auth/tenant
   isolation; SSRF on connectors; PII in logs) — **not yet run**; queue as
   dedicated audits and log findings here.
+
+---
+
+### BUG-009 — `/settings` sub-pages have inconsistent back-navigation  ·  S3  ·  **OPEN — reported 2026-09-19**
+
+- Reported by: **user**, against `http://testlookup.local/settings`
+- "The back button or navigation back to settings is not consistent across all
+  the sub-pages in settings. There should be a consistent approach for all pages
+  and standard options."
+
+Investigate every `/settings/*` sub-page and make the return-to-settings affordance
+uniform: same control, same placement, same label, on every sub-page. Expected
+outcome is one shared component rather than per-page ad-hoc headers, plus a test
+that enumerates the settings routes so a new sub-page cannot ship without one.
+
+### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **OPEN — needs owner decision**
+
+Found by JR-03. `app/services/ai_pipeline_debouncer.enqueue_pipeline_for_run` has
+**zero production callers** in the tracked tree (`git grep`: the only non-test
+reference is a *comment* at `celery_app.py:169`). Yet:
+
+- `config.py:304-309` states "``stream_service.close_session`` no longer fires
+  ``run_agent_pipeline`` directly; the run lands in a Redis SortedSet" —
+  `stream_service.py` references neither the debouncer nor `run_agent_pipeline`.
+- `AI_PIPELINE_DEBOUNCE_ENABLED` defaults to **True**, so an operator would
+  reasonably tune `AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS` expecting an effect.
+- The `flush-ai-pipeline-queue` beat task runs **every 2 minutes** draining an
+  empty set — 279 firings observed with the SortedSet empty while five
+  `run_downstream_outbox` rows waited.
+
+The live mechanism is the outbox: `run_downstream_outbox` carries an
+`agent_pipeline` operation, and `claim_downstream_dispatches` was invoked
+directly and claimed all 20 pending rows correctly (rolled back).
+
+**Not fixed deliberately.** The worktree `agent-a08622553ca10f607`
+(`feat/epic3-gitlab-integration`) *is* adding the missing call at
+`stream_service.py:500`. Deleting the module or its beat entry here would
+conflict with that active work. Decide which mechanism is canonical — outbox or
+debouncer — then either wire it or remove it together with the beat entry and the
+config comment. Wiring it as-is risks double dispatch alongside the outbox.

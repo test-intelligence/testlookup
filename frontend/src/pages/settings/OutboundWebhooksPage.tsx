@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   ActivitySquare,
-  ArrowLeft,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -14,7 +13,6 @@ import {
   XCircle,
 } from 'lucide-react'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
-import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -199,11 +197,6 @@ export default function OutboundWebhooksPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-        <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-          <ArrowLeft className="h-3 w-3" /> Settings
-        </Link>
-      </div>
       <PageHeader
         title="Outbound Webhooks"
         subtitle={`HMAC-signed event delivery for ${activeProject?.name || 'this project'}`}

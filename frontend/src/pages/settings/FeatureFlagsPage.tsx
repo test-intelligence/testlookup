@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -101,11 +100,6 @@ export default function FeatureFlagsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-        <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-          <ArrowLeft className="h-3 w-3" /> Settings
-        </Link>
-      </div>
       <PageHeader
         title="Feature Flags"
         subtitle="Gate capabilities by global kill switch, project, role, or rollout percent."
