@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.pass_rate import canonical_pass_rate
 from app.core.security import get_password_hash
 from app.models.postgres import (
     AgentPipelineRun,
@@ -636,7 +637,8 @@ async def _seed_test_runs(
                 )
                 test_cases.append(tc)
 
-        actual_pass_rate = round(passed / total * 100, 1) if total > 0 else 0.0
+        # Canonical rule: skipped tests are not in the denominator.
+        actual_pass_rate = canonical_pass_rate(passed, failed, 0, ndigits=1)
         run_status = LaunchStatus.PASSED if failed == 0 else LaunchStatus.FAILED
         run_end = run_start + timedelta(milliseconds=duration_ms)
 
