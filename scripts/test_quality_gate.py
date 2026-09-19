@@ -2313,8 +2313,18 @@ def test_only_a_workflow_a_push_or_pull_request_triggers_gates(on: str, gates: b
 
 
 def test_the_real_ci_moved_to_dispatch_only_runs_no_suite() -> None:
+    # The literal must track ci.yml's trigger blocks exactly, because removing
+    # it below is what simulates a dispatch-only CI. ``paths-ignore`` (added
+    # 2026-09-19 so documentation-only changes skip the suite) is part of those
+    # blocks, so it belongs here too. Keep comments OUT of the blocks in
+    # ci.yml — one inside breaks this match, which is how the change that
+    # introduced paths-ignore was caught.
     ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    triggers = "  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main]\n"
+    _ignore = "    paths-ignore:\n      - 'qa/**'\n      - 'CHANGELOG.md'\n      - '*.md'\n"
+    triggers = (
+        "  push:\n    branches: [main, develop]\n" + _ignore
+        + "  pull_request:\n    branches: [main]\n" + _ignore
+    )
     assert ci.count(triggers) == 1
     assert qg._unit_is_run("mcp/tests", qg._gating_workflow_commands(ci))
     assert qg._gating_workflow_commands(ci.replace(triggers, "")) == []
