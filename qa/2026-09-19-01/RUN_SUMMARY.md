@@ -95,6 +95,51 @@ pass vacuously against two files it could not find.
 - `ruff check app/ tests/` clean · `tsc --noEmit` clean · `eslint` 0 errors, 0
   warnings on changed files · `scripts/quality_gate.py` all guards passed.
 
+## Verified on the homelab
+
+Deployed from a **detached worktree** at `b8302001`, not from the working tree:
+`require_clean_build_inputs` correctly refuses the main tree, which still holds 22
+modified source files from an interrupted mutation-test run. Build
+`build-20260919-043402`, revision `b8302001`, deploy exit 0.
+
+`frontend/tests/probe-jr-homelab-verify.spec.ts` was run **before** the deploy and
+failed both checks. That is what makes the later passes evidence rather than
+decoration.
+
+```
+                         before deploy                          after
+settings missing     all 23 sub-pages                           []
+stale Back button    /settings/ai, /settings/storage             []
+duplicated                          []                          []
+release gate         CONDITIONAL_GO composite=13 conditions=0    conditions=2
+```
+
+All **23** `/settings/*` sub-pages are checked, not a sample — the request was
+consistency across all pages, and the three pre-fix behaviours were spread
+unevenly enough that which pages you sample changes the answer.
+
+The gate check also asserts the UI *renders* the conditions, not merely that the
+API returns them: the page body contains "not measured" after the deploy.
+
+TL-2026-09-19-01-001 (the seeder rule) is **not** verifiable live and is not
+claimed to be. Deploying does not re-seed, and the homelab's existing rows keep
+the values they were written with.
+
+### The probe's first draft was wrong, and its own output caught it
+
+It located `a[href="/settings"]` unscoped and reported `missing=[]` against a
+deployment where 14 of 23 pages had nothing — because the **sidebar** carries its
+own Settings nav link with that exact href. It was measuring the sidebar and
+calling it a back affordance.
+
+Left alone it would have been worse than useless rather than merely weak: after
+the fix every page would have matched twice and the duplicate assertion would
+have **failed a correct deployment**. Now scoped to `nav[aria-label="Breadcrumb"]`,
+with a separate check that `a.btn-secondary[href="/settings"]` is gone.
+
+That is the fifth time in this program a measurement instrument was wrong before
+the subject was.
+
 ## Not done
 
 - **Not deployed to the homelab**, so none of these three fixes is verified live.

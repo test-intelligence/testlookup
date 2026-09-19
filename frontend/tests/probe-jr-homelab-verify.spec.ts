@@ -35,18 +35,42 @@ const PASS = 'Admin@2026!'
 const RUN_CONDITIONAL_GO = 'ac670406-bf13-4f47-88b1-f9483222a7b5'
 
 /**
- * Sub-pages to check. The first four had **no** back affordance at all before
- * the fix; the last two had a `btn-secondary` "Back" button that was replaced.
- * Both groups matter: one proves the gap closed, the other proves the old
- * control was removed rather than duplicated.
+ * **Every** `/settings/*` sub-page declared in `App.tsx`, not a sample.
+ *
+ * The request was a consistent approach for *all* pages, so a six-page sample
+ * would not answer it — and the three pre-fix behaviours were unevenly spread,
+ * so which six you pick changes the answer. 14 of these had no back affordance
+ * at all, 5 had a `btn-secondary` "Back" button, and 4 had a muted breadcrumb.
+ * All three groups matter: one proves the gap closed, the other two prove the
+ * old controls were removed rather than left beside the new one.
+ *
+ * Kept in sync by `SettingsBackBar.test.tsx`, which enumerates the same routes
+ * from `App.tsx` itself and fails if a declared route is missing the bar.
  */
 const SUB_PAGES = [
-  '/settings/profile',
-  '/settings/notifications',
-  '/settings/audit',
-  '/settings/api-keys',
+  '/settings/agent-activity',
   '/settings/ai',
+  '/settings/ai-agents',
+  '/settings/ai-eval',
+  '/settings/api-keys',
+  '/settings/audit',
+  '/settings/billing',
+  '/settings/digests',
+  '/settings/feature-flags',
+  '/settings/github',
+  '/settings/gitlab',
+  '/settings/integration-health',
+  '/settings/integrations',
+  '/settings/mfa-policy',
+  '/settings/notifications',
+  '/settings/performance',
+  '/settings/profile',
+  '/settings/project-data',
+  '/settings/retention',
+  '/settings/seed-data',
+  '/settings/sso',
   '/settings/storage',
+  '/settings/webhooks',
 ] as const
 
 async function signIn(page: Page, request: import('@playwright/test').APIRequestContext) {
