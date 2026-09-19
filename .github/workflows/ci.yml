@@ -1,10 +1,35 @@
 name: TestLookup — CI/CD
 
 on:
+  # Documentation-only changes skip this workflow entirely — nothing in the ~17
+  # jobs below can be affected by prose. Markdown is still validated: docs.yml
+  # runs the Mermaid parser over every tracked markdown file.
+  #
+  # Deliberately NOT ``**/*.md``. That glob would also swallow
+  # ``docs/reference/**``, whose markdown is GENERATED from Python source
+  # (schemas.md, python-contracts.md) and checked against it by the backend
+  # job's handoff-reference step. A hand-edit there must still face the drift
+  # check, so those paths keep triggering the full run.
+  #
+  # The list is spelled out twice rather than shared through a YAML anchor:
+  # GitHub Actions does not reliably expand anchors, and a parse failure here
+  # takes down every job.
+  #
+  # Keep the two trigger blocks below free of comments. scripts/test_quality_gate.py
+  # matches them literally to simulate a dispatch-only CI, and a comment inside
+  # them breaks that check — which is how this very edit was caught.
   push:
     branches: [main, develop]
+    paths-ignore:
+      - 'qa/**'
+      - 'CHANGELOG.md'
+      - '*.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'qa/**'
+      - 'CHANGELOG.md'
+      - '*.md'
   # Manual escape hatch. On 2026-08-06 GitHub silently dispatched NO workflow
   # runs for PR #456 — Actions enabled, no queue, other branches running
   # normally, correct triggers, and neither reopening the PR nor pushing a new
