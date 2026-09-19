@@ -110,9 +110,23 @@ interface KpiStripProps {
 }
 
 /**
- * Derive the 4 KPI cards from the current release list. Sparkline values
- * are placeholder waveforms — kept stable per card so they don't twitch
- * between renders.
+ * Derive the 4 KPI cards from the current release list.
+ *
+ * Every number here is counted from `releases`. Nothing is invented.
+ *
+ * It used to be otherwise: each card carried a `sparkline` of hardcoded
+ * literals — `[4, 5, 4, 6, 7, 6, 7, inProgress.length || 6]` — of which only
+ * the final point was real, and even that fell back to a made-up constant when
+ * the real count was 0. The strip therefore drew a seven-point trend line
+ * nobody had measured, labelled `trend ending at N` for screen readers, and
+ * rendered a genuine zero as a six. Two captions were hardcoded the same way:
+ * `avg gate 97.1%` and `100% audit-packed`.
+ *
+ * `OverviewPage` was fixed for this exact rule in 2026-08 — a KPI must not
+ * claim a trend it has no history for, and a caption must explain a missing
+ * trend rather than deny the metric. There is no time series behind a release
+ * list, so these cards carry no sparkline at all. `override` remains for a
+ * caller that genuinely has one.
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   const planning = releases.filter(r => r.stage === 'planning')
@@ -131,37 +145,36 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   // Surface the Planning count as the In Progress sub-line so the
   // user can see "N at Planning · promote to In Progress" instead of
   // wondering whether the page is broken.
+  // Only stated when it is true and counted. The previous fallback here read
+  // "from last week", which described a comparison the card does not make.
   const inProgressSub = inProgress.length === 0 && planning.length > 0
     ? `<strong>${planning.length}</strong> at Planning · promote one to start tracking`
-    : 'from last week'
+    : undefined
   return [
     {
       label: 'In progress',
       value: inProgress.length,
       tone: 'neutral',
       sub: inProgressSub,
-      sparkline: [4, 5, 4, 6, 7, 6, 7, inProgress.length || 6],
     },
     {
       label: 'Ready to ship',
       value: readyToShip.length,
       tone: 'good',
-      sub: 'avg gate <strong>97.1%</strong>',
-      sparkline: [1, 2, 1, 2, 3, 2, 2, readyToShip.length || 2],
+      sub: readyToShip.length > 0
+        ? `<strong>${readyToShip.length}</strong> of ${inProgress.length} in progress`
+        : undefined,
     },
     {
       label: 'Blocked',
       value: blocked.length,
       tone: blocked.length > 0 ? 'bad' : 'neutral',
-      sub: blocked.length > 0 ? `<strong>aging</strong> · view` : 'no blockers',
-      sparkline: [0, 1, 1, 0, 1, 1, 1, blocked.length || 1],
+      sub: blocked.length > 0 ? undefined : 'no blockers',
     },
     {
       label: 'Released · 30d',
       value: last30Days,
       tone: 'good',
-      sub: '<strong>100%</strong> audit-packed',
-      sparkline: [8, 9, 10, 11, 11, 10, 11, last30Days || 11],
     },
   ]
 }

@@ -924,6 +924,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
             func.sum((TestCase.status == TestStatus.SKIPPED).cast(Integer)).label("skipped"),
             func.sum((TestCase.status == TestStatus.BROKEN).cast(Integer)).label("broken"),
             func.sum((TestCase.status == TestStatus.UNKNOWN).cast(Integer)).label("unknown"),
+            func.sum(TestCase.duration_ms).label("duration_ms"),
             select(TestRun.ingestion_complete)
             .where(TestRun.id == run_id)
             .scalar_subquery()
@@ -949,6 +950,27 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     # which included skipped — see docs/reviews/live-stream-ingestion.)
     executed = passed + failed + broken
     pass_rate = round((passed / executed * 100), 2) if executed > 0 else 0.0
+
+    # ``TestRun.duration_ms`` was never written by either ingest path. The
+    # per-case durations were parsed and stored correctly, and this function
+    # was already aggregating those very rows — it just never summed them, so
+    # every uploaded run carried a NULL duration. Seeded demo data sets the
+    # column directly, which is why the gap stayed invisible: the app's own
+    # sample runs had durations and real uploads did not.
+    #
+    # ``RunsPage`` counts a run as having metadata only when
+    # ``(duration_ms ?? 0) > 0`` alongside branch and release_name, and warns
+    # below 80% coverage — so the product told users their uploads were
+    # missing metadata that the product had simply declined to compute.
+    #
+    # The sum of case durations is the right figure here and the only one
+    # available: it is what a JUnit suite reports as its own ``time``
+    # (AuthSuite declares time="12.456" and its six cases sum to 12456ms).
+    # Wall-clock start/end on the run covers the ingest request, not the test
+    # execution. NULL is preserved when no case carried a duration — an
+    # unmeasured run must not read as 0ms.
+    duration_ms = counts.duration_ms
+    duration_ms = int(duration_ms) if duration_ms is not None else None
 
     # Suite attribution — distinct suite_name values + dominant suite.
     suite_q = await db.execute(
@@ -999,6 +1021,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
         "broken_tests":  counts.broken or 0,
         "unknown_tests": unknown,
         "pass_rate":     pass_rate,
+        "duration_ms":   duration_ms,
         "status":        run_status,
         "end_time":      datetime.now(timezone.utc),
         # ``suite_names`` is the full set actually present in the

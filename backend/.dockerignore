@@ -14,8 +14,17 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
-.pytest_cache/
-**/.pytest_cache/
+# Every pytest scratch root, whatever the session named it. The three
+# spellings below were each added after a build broke on a variant the
+# previous pattern missed: `.pytest_cache`, then `.pytest_tmp_*`, then
+# `.pytest-cache-m10`. `.pytest_cache_t0` slipped past all three and
+# failed the mcp image build on 2026-09-18 with
+#   copier: get: getting extended attributes for "/.pytest_cache_t0":
+#   permission denied
+# (pytest creates these owner-only on Windows, so the context walk cannot
+# even stat them). One pattern for the whole class ends the sequence.
+.pytest*/
+**/.pytest*/
 # pytest --basetemp directories. The repo's own test instructions tell
 # you to pass `--basetemp=backend/.pytest_tmp` on Windows, and sessions
 # routinely use suffixed variants (.pytest_tmp_ui003_full, ...). Those
@@ -25,8 +34,6 @@
 #   permission denied
 # The bare `.pytest_cache` entries above did not cover them, so the
 # documented test command broke the documented build.
-.pytest_tmp*/
-**/.pytest_tmp*/
 # ...and the HYPHENATED spelling of the same thing. The patterns above cover
 # `.pytest_tmp_*` and `.pytest_cache`, but a session that used
 # `--basetemp=backend/.pytest-tmp-m10` (hyphens) slipped straight past them
@@ -34,8 +41,6 @@
 # `getting extended attributes for "/.pytest-cache-m10": permission denied`.
 # Match on either separator so the next variant does not have to be
 # discovered the same way.
-.pytest-*/
-**/.pytest-*/
 # Custom pytest --basetemp roots used by local/CI validation (for example,
 # `.tmp/pytest-homelab-full-*`) have the same Windows permission behavior.
 .tmp/

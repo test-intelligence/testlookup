@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased - Full-system exploratory + E2E journey validation (EXJ-2026-09-18)
+
+The "Recent runs analyzed" table on `/intelligence` now shows its pass
+rate. The cell was 86px where its contents need 120 — a 56px bar, an 8px
+gap and the percentage, inside 28px of padding — so the number sat
+outside the content box and `overflow-hidden` cut it mid-glyph. The
+column budget behind those numbers was taken at a single viewport, and
+Build was the only flexible column, so every pixel past that width landed
+in Build: 53.8% of the row at 1920px, which is the large empty band
+beside the run label. Pass rate is sized to its own content and the table
+takes a percentage share of the slack with a floor beneath it, so the
+table fills its panel at every width and no single column pools the
+spare space. An earlier attempt capped the table instead; that bounded
+Build but left the table short of its panel, which is the same empty
+band moved to the right-hand edge.
+
+On `/agents`, the AI report now leads the column and Agent Stages sits
+below it behind a Show/Hide control. The report is the pipeline's
+headline output -- that is why it defaults to expanded -- but it rendered
+below the stage detail, so a reader scrolled past the mechanism to reach
+the conclusion.
+
+Selecting a different run in that page's Pipeline Runs dropdown no longer
+leaves the previous run's data on screen. The selected pipeline is now
+stored with the run it belongs to and read back only while that run is
+still on screen, so a stale selection is unrepresentable rather than
+merely reset after the fact.
+
+
+Choosing a different run in the Pipeline Runs dropdown on `/agents` now
+refreshes the whole page. The dropdown navigates to `/agents/run/:runId`,
+so the run list refetched correctly, but the pipeline selected from the
+previous run was component state that nothing cleared on a run change --
+only on a project change. Every detail panel is keyed on it, so the stage
+detail, timeline, compute graph and AI report kept describing the run the
+user had navigated away from while the header showed the new one.
+
+
+Three live probe sweeps were asserting against the dashboard rather than the
+pages they named: `probe-route-sweep.spec.ts` swept `/failure-analysis` and
+`probe-exploratory.spec.ts` swept `/tests` and `/flaky`, none of which the
+router declares, so `App.tsx`'s catch-all redirected every one to `/overview`
+and the "page is not an empty shell" assertions passed against a page the sweep
+never opened. Confirmed live against the homelab before fixing. The spellings
+are corrected, and `frontend/src/App.routeTargets.test.ts` now cross-checks
+every probe spec's route literals against the route table so the next
+divergence fails in CI rather than reporting coverage it does not have.
+
+Container builds no longer break on leftover pytest scratch directories. pytest
+creates `--basetemp` roots owner-only on Windows, and the build context walk
+fails outright on one it cannot stat. Each of the three previous
+`.dockerignore` patterns was added after a build had already broken on the
+spelling it covers, and `.pytest_cache_t0` slipped past all three. All three
+build contexts now exclude the whole class, and a new absolute quality gate,
+`repo.dockerignore-covers-pytest-scratch`, checks that every spelling — the
+ones that have broken a build, plus whatever is on disk right now — is actually
+excluded, so the next variant fails the gate instead of the next build.
+
 ## Unreleased - Exploratory testing execution plan
 
 The consolidated release candidate now runs every committed mutation harness

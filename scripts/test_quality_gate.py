@@ -2936,3 +2936,94 @@ def test_prompt_attestation_hash_normalizes_checkout_line_endings(tmp_path: Path
     target.write_bytes(b"first\r\nsecond\r\n")
 
     assert qg._eval_attestation_watched_sources(tmp_path)[relative] == lf_hash
+
+
+# ── Guard: repo.dockerignore-covers-pytest-scratch ───────────────────────────
+#
+# The guard exists because three earlier pattern additions each covered only
+# the spelling that had just broken a build. These tests pin the behaviour that
+# distinguishes it from a fourth exact-spelling patch: it must reject the
+# historical narrow set, and it must notice a spelling nobody has seen yet.
+
+
+def _write_dockerignore(root: Path, context: str, body: str) -> None:
+    """Write a CRLF .dockerignore, as every one in this repo is."""
+    path = root / context / ".dockerignore"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(textwrap.dedent(body).lstrip().replace("\n", "\r\n").encode("utf-8"))
+
+
+def test_dockerignore_pytest_scratch_passes_for_class_wide_pattern(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    for context in qg._DOCKERIGNORE_CONTEXTS:
+        _write_dockerignore(tmp_path, context, """
+            # comments and blanks are not patterns
+
+            __pycache__/
+            .pytest*/
+            **/.pytest*/
+        """)
+    assert qg._repo_dockerignore_covers_pytest_scratch() == []
+
+
+def test_dockerignore_pytest_scratch_rejects_the_historical_narrow_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The exact pattern set that shipped before 2026-09-18 must not pass.
+
+    `.pytest_cache_t0` is underscore-spelled but is a *cache*, not a *tmp*, so
+    it slipped past all three patterns and failed the mcp image build.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    for context in qg._DOCKERIGNORE_CONTEXTS:
+        _write_dockerignore(tmp_path, context, """
+            .pytest_cache/
+            **/.pytest_cache/
+            .pytest_tmp*/
+            **/.pytest_tmp*/
+            .pytest-*/
+            **/.pytest-*/
+        """)
+    violations = qg._repo_dockerignore_covers_pytest_scratch()
+    assert violations, "the narrow pattern set must not pass"
+    assert any(".pytest_cache_t0" in v.message for v in violations)
+
+
+def test_dockerignore_pytest_scratch_catches_an_unseen_spelling_on_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scratch directory nobody anticipated must trip the guard.
+
+    Without the working-tree scan the guard would only ever know the spellings
+    hard-coded into it — which is precisely the failure mode it replaces.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    for context in qg._DOCKERIGNORE_CONTEXTS:
+        # Covers every spelling in the hard-coded list, so a violation here can
+        # only come from the on-disk scan.
+        _write_dockerignore(tmp_path, context, """
+            .pytest_cache*/
+            **/.pytest_cache*/
+            .pytest_tmp*/
+            **/.pytest_tmp*/
+            .pytest-*/
+            **/.pytest-*/
+        """)
+    assert qg._repo_dockerignore_covers_pytest_scratch() == []
+
+    (tmp_path / "backend" / ".pytestXscratch").mkdir(parents=True, exist_ok=True)
+    violations = qg._repo_dockerignore_covers_pytest_scratch()
+    assert violations, "an unanticipated spelling on disk must be caught"
+    assert any(".pytestXscratch" in v.message for v in violations)
+
+
+def test_dockerignore_patterns_ignores_comments_and_negations(tmp_path: Path) -> None:
+    path = tmp_path / ".dockerignore"
+    path.write_bytes(b"# a comment\r\n\r\n.pytest*/\r\n!.pytest_keep/\r\n")
+    patterns = qg._dockerignore_patterns(path)
+    assert patterns == [".pytest*/", "!.pytest_keep/"]
+    # A negation must never be read as an exclusion.
+    assert qg._excludes_dir(["!.pytest_keep/"], ".pytest_keep") is False
+    assert qg._excludes_dir([".pytest*/"], ".pytest_cache_t0") is True
