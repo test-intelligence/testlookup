@@ -234,6 +234,40 @@ async def assemble_input_snapshot(
     return snapshot
 
 
+def _quick_look_conditions(
+    recommendation: str, pass_rate: float, threshold: float
+) -> list[str]:
+    """The conditions a quick-look verdict is actually contingent on.
+
+    A CONDITIONAL_GO whose ``conditions_for_go`` is empty tells a release manager
+    "conditional" and nothing else. ``ReleaseGatePage`` renders that block behind
+    ``conditions_for_go.length > 0``, so an empty list hides the section outright
+    and the page shows a conditional verdict with no conditions anywhere on it.
+    The ``reasoning`` prose already names what is missing; this puts the same
+    facts in the structured field the UI reads.
+
+    Only conditions this path genuinely gates on are returned. The
+    analysis-driven dimensions (regression likelihood, historical recurrence,
+    env sensitivity) score 0 here because no per-test analyses exist -- NOT
+    because those risks were measured and found absent -- so the first condition
+    is the honest one: the verdict is provisional. Reporting an unmeasured
+    dimension as a zero risk is how absence gets read as health.
+    """
+    if recommendation == "GO":
+        return []
+    conditions = [
+        "Run Deep Investigation — this verdict used run aggregates only; "
+        "failure clusters, regression likelihood and historical recurrence "
+        "were not measured."
+    ]
+    if pass_rate < threshold:
+        conditions.append(
+            f"Raise pass rate to at least {threshold:.1f}% "
+            f"(currently {pass_rate:.1f}%)."
+        )
+    return conditions
+
+
 async def _synthesize_release_council(
     run_id: uuid.UUID,
     db: AsyncSession,
@@ -323,6 +357,8 @@ async def _synthesize_release_council(
         "clusters, defect breakdown, and AI narrative."
     )
 
+    conditions = _quick_look_conditions(recommendation, pass_rate, threshold)
+
     return ReleaseCouncilResponse(
         run_id=str(run_id),
         recommendation=recommendation,
@@ -332,7 +368,7 @@ async def _synthesize_release_council(
         composite_risk=composite,
         dimension_scores=_build_dimension_scores(dim_scores),
         blocking_issues=[],
-        conditions_for_go=[],
+        conditions_for_go=conditions,
         reasoning=reasoning,
         score_model_version=SCORE_MODEL_VERSION,
         input_snapshot={

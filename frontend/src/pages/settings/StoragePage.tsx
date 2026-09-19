@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Save } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Save } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -66,8 +65,7 @@ export default function StoragePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Data & Storage" subtitle="Database connections, object storage, and vector store"
-        actions={<Link to="/settings" className="btn-secondary text-sm flex items-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</Link>} />
+      <PageHeader title="Data & Storage" subtitle="Database connections, object storage, and vector store" />
 
       <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
         {/* Infrastructure status (connection details masked for security) */}

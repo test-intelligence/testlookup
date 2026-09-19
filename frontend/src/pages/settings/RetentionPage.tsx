@@ -20,7 +20,6 @@ import { useState } from 'react'
 import {
   AlertTriangle,
   Archive,
-  ArrowLeft,
   Loader2,
   RefreshCw,
   Save,
@@ -28,7 +27,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -328,11 +326,6 @@ export default function RetentionPage() {
   if ((error && !policy) || !policy || !form || !seededPolicy) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-            <ArrowLeft className="h-3 w-3" /> Settings
-          </Link>
-        </div>
         <PageHeader
           title="Retention & Purge"
           subtitle={`Data-retention windows for ${activeProject?.name || 'this project'}`}
@@ -417,11 +410,6 @@ export default function RetentionPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-        <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
-          <ArrowLeft className="h-3 w-3" /> Settings
-        </Link>
-      </div>
       <PageHeader
         title="Retention & Purge"
         subtitle={`Data-retention windows for ${projectName || 'this project'}. ADMIN only.`}

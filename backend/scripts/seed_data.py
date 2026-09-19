@@ -35,8 +35,13 @@ from typing import Optional
 import boto3
 import httpx
 from botocore.client import Config
+# Same bootstrap as scripts/seed_dev_data.py, so ``app`` imports regardless of cwd.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.pass_rate import canonical_pass_rate
 
 # ── Runtime config ──────────────────────────────────────────────────────────
 BACKEND_URL      = "http://localhost:8000"
@@ -474,7 +479,7 @@ async def _seed_project_runs(db: AsyncSession, slug: str, proj_id: str, tests: l
         failed   = sum(1 for c in case_rows if c["status"] == "FAILED")
         broken   = sum(1 for c in case_rows if c["status"] == "BROKEN")
         skipped  = sum(1 for c in case_rows if c["status"] == "SKIPPED")
-        pass_rate = round(passed / total * 100, 2) if total else 0
+        pass_rate = canonical_pass_rate(passed, failed, broken)
         duration_ms = sum(c["duration_ms"] or 0 for c in case_rows)
         end_time = run_time + timedelta(milliseconds=duration_ms)
         run_status = "PASSED" if failed == 0 and broken == 0 else "FAILED"

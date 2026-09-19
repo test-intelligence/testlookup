@@ -1,6 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { ArrowLeft, Save } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Save } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -87,8 +86,7 @@ export default function IntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Integrations" subtitle="Jira, Splunk, OpenShift, Slack, Teams, and GitHub"
-        actions={<Link to="/settings" className="btn-secondary text-sm flex items-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</Link>} />
+      <PageHeader title="Integrations" subtitle="Jira, Splunk, OpenShift, Slack, Teams, and GitHub" />
 
       <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
         {/* Jira */}
