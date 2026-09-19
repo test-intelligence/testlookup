@@ -18023,7 +18023,7 @@
         "type": "object"
       },
       "PolicyPassRateBands": {
-        "description": "Project-level 4-band classification for the build colour and verdict.\n\nBands are defined by the *lower* edge of each colour and must be strictly\nincreasing: ``orange_min < yellow_min < green_min``. A pass rate below\n``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;\n``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.\n\nDefaults match the user-requested levels (red <90, orange 90-95,\nyellow 95-99, green >=99). Verdict mapping is fixed: green = GO,\nyellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps\n(PolicyHardCaps) can downgrade the resolved band by one or two steps.",
+        "description": "Project-level 4-band classification for the build colour and verdict.\n\nBands are defined by the *lower* edge of each colour and must be strictly\nincreasing: ``orange_min < yellow_min < green_min``. A pass rate below\n``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;\n``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.\n\nDefaults match the user-requested levels (red <90, orange 90-95,\nyellow 95-99, green >=99). Verdict mapping is fixed: green = GO,\nyellow = GO with watch, orange = CONDITIONAL, red = NO_GO.\n\nA breached hard cap (``PolicyHardCaps``) does **not** step the band down\none or two notches — it pins the band straight to red and forces NO_GO,\nwhatever the pass rate was. The stepped behaviour was abandoned because\nyellow still mapped to GO, which made a \"hard cap\" advisory at best.",
         "properties": {
           "green_min": {
             "default": 99.0,
