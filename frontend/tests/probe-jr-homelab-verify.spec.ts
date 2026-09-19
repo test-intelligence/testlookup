@@ -12,7 +12,17 @@
  *   TL-003   fails — run ac670406 returns CONDITIONAL_GO with conditions_for_go: []
  *
  * Read-only. It navigates and reads; it submits nothing and creates nothing. The
- * release-gate check is a GET, and `/release-readiness` does not mutate.
+ * release-gate check is a GET against `/api/v1/release-readiness`, which does not
+ * mutate.
+ *
+ * That path is spelled with its `/api/v1` prefix deliberately, in prose as well
+ * as in code. `App.routeTargets.test.ts` extracts quoted path literals from every
+ * probe spec and asserts each is a declared SPA route; it cannot tell prose from
+ * code, so writing the endpoint's bare name inside backticks in a comment reads
+ * as an undeclared route and fails CI. It did exactly that on the first push of
+ * this file. The `/api/` prefix is on that test's non-route allow-list, and it is
+ * also the accurate name of the endpoint, so there is no reason to write it any
+ * other way.
  *
  * TL-2026-09-19-01-001 (the seeder pass-rate rule) is deliberately NOT checked
  * here. Deploying does not re-seed, and the homelab's existing rows keep the
