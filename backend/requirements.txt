@@ -123,7 +123,7 @@ pytest-asyncio==1.4.0
 aiosqlite==0.20.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
-anyio==4.14.1
+anyio==4.14.2
 factory-boy==3.3.3
 freezegun==1.5.1
 
