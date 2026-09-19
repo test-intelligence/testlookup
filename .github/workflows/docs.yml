@@ -1,0 +1,54 @@
+name: TestLookup — Docs
+
+# ci.yml skips documentation-only changes (see its ``paths-ignore``). That would
+# otherwise leave markdown with NO validation at all, which is backwards: the
+# Mermaid validator reads ``git ls-files -- '*.md' '*.markdown'``, so a prose PR
+# is exactly the change it exists to check.
+#
+# This workflow is the narrow counterpart — the markdown validator and nothing
+# else. No Python, no Node app build, no browser, no containers.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '**/*.md'
+      - '**/*.markdown'
+      - 'scripts/mermaid-check/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - '**/*.markdown'
+      - 'scripts/mermaid-check/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  mermaid-check:
+    name: Docs — Mermaid diagrams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: scripts/mermaid-check/package-lock.json
+
+      - name: Install validator dependencies
+        working-directory: ./scripts/mermaid-check
+        run: npm ci
+
+      - name: Validate Mermaid diagrams render
+        working-directory: ./scripts/mermaid-check
+        run: node validate.mjs

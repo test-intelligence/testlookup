@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased - Documentation-only changes no longer run the test suite
+
+A PR that touches nothing but prose used to run all ~17 CI jobs — the backend
+matrix, the Postgres integration suite, every SDK, image builds and scans —
+none of which can be affected by a markdown edit.
+
+`ci.yml` now carries a `paths-ignore` for `qa/**`, `CHANGELOG.md` and
+root-level `*.md`, so those changes skip the workflow entirely.
+
+- **Why not `**/*.md`.** That glob would also swallow `docs/reference/**`,
+  whose markdown is *generated* from Python source (`schemas.md`,
+  `python-contracts.md`) and checked against it by the backend job's
+  handoff-reference step. A hand-edit there must still face the drift check, so
+  those paths keep triggering the full run.
+- **Markdown is still validated.** Skipping `ci.yml` would otherwise leave prose
+  with no checks at all, which is backwards: the Mermaid validator reads
+  `git ls-files -- '*.md'`, so a documentation PR is exactly what it exists to
+  check. A new `docs.yml` runs that validator — and only that validator — on any
+  markdown change. No Python, no app build, no browser, no containers.
+- The two path lists are spelled out rather than shared through a YAML anchor:
+  GitHub Actions does not reliably expand anchors, and a parse failure in
+  `ci.yml` takes down every job.
+
 ## Unreleased - Full-system exploratory + E2E journey validation (EXJ-2026-09-18)
 
 The "Recent runs analyzed" table on `/intelligence` now shows its pass
