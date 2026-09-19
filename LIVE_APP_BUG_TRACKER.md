@@ -273,3 +273,25 @@ directly and claimed all 20 pending rows correctly (rolled back).
 conflict with that active work. Decide which mechanism is canonical — outbox or
 debouncer — then either wire it or remove it together with the beat entry and the
 config comment. Wiring it as-is risks double dispatch alongside the outbox.
+
+### BUG-011 — `/agents` pipeline-run dropdown still shows static content  ·  S2  ·  **REOPENED 2026-09-19**
+
+- Reported by: **user**, against `http://testlookup.local/agents`
+- "The pipeline runs drop down, when any value is selected, the displayed content
+  of pipelines are not refreshed or changed. It is static values."
+
+**This was previously filed as TL-2026-09-18-01-009 and marked FIXED** (derived
+selection in `AgentStatusPage.tsx`, merged in PR #126, deployed to the homelab at
+`build-20260918-224140` and again at `build-20260919-043402`). The user reports it
+is still broken, so either the fix was incomplete or there is a second cause.
+
+Note the earlier fix was **never verified live**: the homelab probe
+(`probe-exj-homelab-verify.spec.ts`) covered BUG-005 (intelligence table geometry)
+and BUG-008 (agents report/stages layout) only. TL-009 was verified by unit test
+(`AgentStatusPage.runswitch.test.tsx`) and never against the deployment — which is
+exactly the gap that lets an incomplete fix look done.
+
+Investigate the **dropdown** specifically: the earlier fix addressed selecting a
+pipeline *card*, and the user is describing the run selector. Confirm which
+control is involved before changing anything, and add a live probe assertion so
+the next "fixed" is evidence rather than inference.
