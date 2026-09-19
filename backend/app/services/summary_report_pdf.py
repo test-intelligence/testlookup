@@ -224,6 +224,30 @@ def render_summary_report_pdf(payload: dict) -> bytes:
     )
     story.append(kpi_tbl)
 
+    # The basis is part of the number, not decoration.
+    #
+    # The page renders "Pass %" with a subtitle carrying
+    # ``pass_rate_basis_label`` ("per unique test"), because a pass rate is not
+    # interpretable without knowing what it divides. The PDF dropped it, and the
+    # PDF is the DETACHED surface -- emailed, attached to compliance packs, read
+    # with no app beside it. It showed "Pass % 70.5%" and "Weighted pass % 75.8%"
+    # side by side with nothing saying why two pass rates differ.
+    #
+    # `tests/regression/test_pass_rate_basis_is_published.py` exists for the same
+    # reason one layer down: a computed field must survive its response_model.
+    # It survives the API and then died at the export.
+    basis_label = (totals.get("pass_rate_basis_label") or "").strip()
+    if basis_label:
+        story.append(Spacer(1, 4))
+        story.append(
+            Paragraph(
+                f"Pass % is measured {basis_label}. "
+                "Weighted pass % divides by executed tests only "
+                "(passed + failed + broken), so skipped tests are excluded.",
+                small,
+            )
+        )
+
     # ── Pass/fail/skip/broken counts ────────────────────────────────────
     story.append(Spacer(1, 3 * mm))
     counts_rows = [
