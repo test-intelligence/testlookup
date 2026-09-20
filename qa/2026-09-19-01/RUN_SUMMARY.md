@@ -20,7 +20,7 @@ This is a slice, not the five journeys. Roughly half of the declared steps were
 measured. The unmeasured half is enumerated per mission rather than summarised,
 so nobody reads this as broader coverage than it is.
 
-## Defects — 7 found, 6 fixed, 1 owner decision
+## Defects — 10 found, 6 fixed, 4 reported
 
 | ID | Sev | Summary | Status |
 |---|---|---|---|
@@ -31,6 +31,9 @@ so nobody reads this as broader coverage than it is.
 | [005](defects/TL-2026-09-19-01-005.md) | S3 | The exported PDF publishes a pass rate without its basis | **Fixed** |
 | [006](defects/TL-2026-09-19-01-006.md) | S3 | Release-gate hard-cap docs contradict the classifier | **Fixed** |
 | [007](defects/TL-2026-09-19-01-007.md) | S3 | A written release decision is not always announced — 11% of live decisions | **Owner decision** |
+| [008](defects/TL-2026-09-19-01-008.md) | S3 | A policy changes the verdict without appearing in the provenance | **Reported** |
+| [009](defects/TL-2026-09-19-01-009.md) | S3 | A release override is not written to the activity ledger | **Reported** |
+| [010](defects/TL-2026-09-19-01-010.md) | S3 | `/policies` identifies each project by a truncated UUID | **Reported** |
 
 Plus **BUG-010** filed and deliberately not fixed: the AI-pipeline debouncer is
 dead code whose config describes it as live. Another worktree is actively wiring
