@@ -12,7 +12,7 @@ import zipfile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import RunIntelligenceSnapshot, TestRun
+from app.models.postgres import TestRun
 from app.services.report_composition_service import compose_report
 from app.services.report_export_sanitizer import sanitize_report_export_payload
 from app.services.report_pdf_renderer import render_report_pdf
@@ -39,16 +39,31 @@ async def build_evidence_bundle(
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # ── Intelligence snapshot JSON ──────────────────────────────────
-        snapshot_result = await db.execute(
-            select(RunIntelligenceSnapshot)
-            .join(TestRun, TestRun.id == RunIntelligenceSnapshot.run_id)
-            .where(
-                RunIntelligenceSnapshot.run_id == run_id,
-                TestRun.project_id == project_id,
+        # Tenant scope first. The old query enforced it by joining TestRun in
+        # the same select; ``get_or_compute`` keys on run_id alone, so the
+        # check has to be explicit rather than lost.
+        owning_project = (
+            await db.execute(
+                select(TestRun.project_id).where(TestRun.id == run_id)
             )
-        )
-        snapshot = snapshot_result.scalar_one_or_none()
-        payload = sanitize_report_export_payload(snapshot.payload) if snapshot else {}
+        ).scalar_one_or_none()
+        if owning_project is None or str(owning_project) != str(project_id):
+            raise ValueError(f"Run {run_id} does not belong to project {project_id}")
+
+        # A CURRENT payload. This read used to have no ``stale`` and no
+        # ``schema_version`` predicate, and fell back to ``{}`` when nothing
+        # matched — so a compliance bundle could carry the verdict as it stood
+        # before the override that superseded it, or an empty
+        # ``release-decision.json`` with nothing saying it was empty. This is
+        # the artifact an auditor is handed.
+        from app.services.intelligence_snapshot_service import get_or_compute
+
+        raw_payload = await get_or_compute(db, run_id)
+        if not raw_payload:
+            raise ValueError(
+                f"No intelligence snapshot for run {run_id}; cannot build an evidence bundle."
+            )
+        payload = sanitize_report_export_payload(raw_payload)
 
         zf.writestr(
             "intelligence-snapshot.json",

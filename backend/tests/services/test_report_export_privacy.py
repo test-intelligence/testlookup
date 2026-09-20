@@ -62,16 +62,48 @@ def test_export_projection_removes_evidence_and_redacts_remaining_text():
 
 @pytest.mark.asyncio
 async def test_zip_snapshot_never_contains_restricted_evidence():
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+
     class _Result:
+        def __init__(self, value):
+            self._value = value
+
         def scalar_one_or_none(self):
-            return SimpleNamespace(payload=_payload())
+            return self._value
 
     class _Db:
+        """Answers the tenant lookup first, then the snapshot read.
+
+        The service used to enforce tenancy inside the snapshot SELECT, which
+        a mocked session ignores entirely — this test would have passed even if
+        the service had dropped the scope check. The check is explicit now, so
+        the fake has to answer it.
+        """
+
+        def __init__(self):
+            self.calls = 0
+
         async def execute(self, _statement):
-            return _Result()
+            self.calls += 1
+            if self.calls == 1:
+                return _Result(project_id)
+            # ``get_cached_snapshot`` reads schema_version off the row; a
+            # hand-built namespace does not grow a column when the query does.
+            from app.services.intelligence_snapshot_service import (
+                CURRENT_SCHEMA_VERSION,
+            )
+
+            return _Result(
+                SimpleNamespace(
+                    payload=_payload(),
+                    schema_version=CURRENT_SCHEMA_VERSION,
+                    stale=False,
+                )
+            )
 
     bundle = await build_evidence_bundle(
-        _Db(), uuid.uuid4(), uuid.uuid4(), include_pdf=False
+        _Db(), project_id, run_id, include_pdf=False
     )
     with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
         snapshot = archive.read("intelligence-snapshot.json").decode()
