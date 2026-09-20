@@ -320,18 +320,30 @@ column explains the absence. An explicitly clicked card still wins.
 
 `tests/probe-bug011-agents-trigger.spec.ts`, run against **both** builds:
 
-- homelab, old code: `placeholders=[true,true,true]` → **2 failed**
-- local dev, fixed: `placeholders=[false,false,false]` → **3 passed**, twice
+| Build | `placeholders` | Result |
+|---|---|---|
+| homelab `build-20260919-165423` (old code) | `[true,true,true]` | **2 failed** |
+| local dev, fixed | `[false,false,false]` | 3 passed, twice |
+| **homelab `build-20260920-210311` (deployed fix)** | `[false,true,false]` | **3 passed, twice** |
 
 A probe that has never been seen to fail is not evidence, so it was run red
-first. Six unit cases in `AgentStatusPage.runswitch.test.tsx` survive five
-mutations aimed at the *plausible wrong fixes* (no auto-select; unsorted `[0]`;
+first, on the deployment.
+
+The single `true` in the deployed run is the fix behaving correctly, not a
+partial pass: the three probed runs hold **13 / 0 / 2** pipelines, and the
+placeholder appears exactly on the run that has none. A fix that blindly
+selected something would have shown `[false,false,false]` there and been wrong.
+
+Six unit cases in `AgentStatusPage.runswitch.test.tsx` survive five mutations
+aimed at the *plausible wrong fixes* (no auto-select; unsorted `[0]`;
 auto-select with no run on the route; auto-select overriding a click;
 auto-selecting the pipeline but not its run).
 
-**Still needs a homelab deploy** — the fix is verified on local dev against the
-same backend shape, not yet on `testlookup.local`. Re-run the probe there after
-deploying; it is written to run against either via `PROBE_BASE_URL`.
+**VERIFIED LIVE on `testlookup.local`**, 2026-09-20, `build-20260920-210311`
+(DEPLOY_EXIT=0, frontend pod image
+`sha256:7a0030acba94c2710969a83aa080125bc500f22146ebfae50c2b1a1ce326e87f`).
+This is the gap that let the first fix look done — it was unit-tested only and
+never checked against the deployment.
 
 ### BUG-012 — `/agents` still shows "awaiting review" after the pipeline is accepted on `/reviews`  ·  S2  ·  **FIXED 2026-09-19** on `fix/stale-state-bugs-2026-09-19`
 
