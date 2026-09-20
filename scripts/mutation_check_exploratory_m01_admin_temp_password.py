@@ -16,7 +16,6 @@ TEST = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=.pytest-tmp-exploratory-m01-admin-temp-password-mutation",
     "backend/tests/test_user_management.py::TestAdminCreateUser::test_happy_path_returns_forced_reset_temp_password",
 )
 GOOD = """        role=payload.role,\n        must_change_password=True,\n"""

@@ -58,8 +58,6 @@ def main() -> None:
                     "no:testlookup",
                     "-k",
                     "DecisionHistoryKeepsReleaseAndPhaseScopesSeparate",
-                    "--basetemp",
-                    f".pytest-tmp-exploratory-m06-mutation-{index}",
                 ],
                 cwd=ROOT / "backend",
                 capture_output=True,

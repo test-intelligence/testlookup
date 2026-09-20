@@ -62,7 +62,6 @@ def main() -> int:
                     "-q",
                     "-p",
                     "no:testlookup",
-                    "--basetemp=.pytest-tmp-coverage-investigator-mutation",
                     *TESTS,
                 ],
                 cwd=ROOT,

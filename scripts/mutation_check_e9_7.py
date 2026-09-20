@@ -20,7 +20,6 @@ BACKEND_COMMAND = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-e97-mutation",
     *BACKEND_TESTS,
 )
 FRONTEND_COMMAND = (

@@ -16,7 +16,6 @@ PYTEST = (
     "no:testlookup",
     "-p",
     "no:randomly",
-    "--basetemp=backend/.pytest-tmp-t3-mutation",
     "backend/tests/test_migration_0188_pipeline_requested_by.py",
     "backend/tests/test_agent_configs.py",
     "backend/tests/test_agent_invocations.py",

@@ -35,8 +35,6 @@ def main() -> None:
                 "-q",
                 "-p",
                 "no:testlookup",
-                "--basetemp",
-                ".pytest-tmp-exploratory-m06-override-race-mutation",
             ],
             cwd=ROOT / "backend",
             capture_output=True,

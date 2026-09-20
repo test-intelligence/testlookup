@@ -16,7 +16,6 @@ PYTEST = (
     "no:testlookup",
     "-p",
     "no:randomly",
-    "--basetemp=backend/.pytest-tmp-e32-mutation",
     "backend/tests/test_workflow_compiler.py",
     "backend/tests/test_workflows_router.py",
     "backend/tests/test_architectural_agent_contracts.py",

@@ -14,7 +14,6 @@ COMMAND = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-e21-mutation",
     "backend/tests/services/test_agent_step_tracing.py",
     "backend/tests/test_decision_evidence_checkpoint_resume.py",
 )

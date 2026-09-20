@@ -25,9 +25,11 @@
 # even stat them). One pattern for the whole class ends the sequence.
 .pytest*/
 **/.pytest*/
-# pytest --basetemp directories. The repo's own test instructions tell
-# you to pass `--basetemp=backend/.pytest_tmp` on Windows, and sessions
-# routinely use suffixed variants (.pytest_tmp_ui003_full, ...). Those
+# pytest --basetemp directories. The repo's own test instructions used to
+# tell you to pass `--basetemp=backend/.pytest_tmp` on Windows, and sessions
+# routinely used suffixed variants (.pytest_tmp_ui003_full, ...). No tracked
+# command does that any more — repo.no-repo-relative-basetemp forbids it —
+# but a tree that predates the change still carries the roots. Those
 # directories are permission-locked on Windows, so podman/docker aborts
 # the whole build reading their extended attributes:
 #   copier: get: getting extended attributes for "/.pytest_tmp_...":

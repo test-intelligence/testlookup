@@ -48,8 +48,6 @@ def main() -> int:
         "-q",
         "-p",
         "no:testlookup",
-        "--basetemp",
-        ".pytest-tmp-exploratory-m08-advisory-mutation",
         *TESTS,
     ]
     baseline = subprocess.run(

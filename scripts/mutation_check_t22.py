@@ -14,7 +14,6 @@ PYTEST = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-t22-mutation",
     "backend/tests/test_agent_catalog.py",
     "backend/tests/test_agentic_live_dod.py",
     "backend/tests/test_intelligence_export_review_envelope.py",

@@ -91,8 +91,6 @@ def _run(label: str) -> subprocess.CompletedProcess[str]:
             "-q",
             "-p",
             "no:testlookup",
-            "--basetemp",
-            f".pytest-tmp-exploratory-m08-notification-{label}",
             *TESTS,
         ],
         cwd=ROOT,
