@@ -181,10 +181,20 @@ async def test_submit_feedback_invalidates_cache_on_incorrect_correction():
     # is stubbed out here. It has its own coverage in
     # ``tests/regression/test_remaining_idors_closed.py``; this test is about
     # the correction back-propagating, not about authorization.
-    with patch.object(fs, "_require_analysis_access", new=AsyncMock()),          patch.object(fs, "_invalidate_analysis_cache_for", new=AsyncMock()) as inv:
+    with patch.object(fs, "_require_analysis_access", new=AsyncMock()):
         await fs.submit_feedback(db, analysis.id, body, user)
 
-    inv.assert_awaited_once()
     # The corrected category is applied to the current analysis row too.
     assert analysis.failure_category == FailureCategory.PRODUCT_BUG.value
     assert analysis.requires_human_review is False
+
+    # Eviction moved OUT of the service (2026-09-20). It is now
+    # ``evict_corrected_analysis_cache``, called by the router AFTER its commit:
+    # evicting from inside the staged service lets a concurrent reader
+    # re-populate the cache from the old committed row, which then stands for
+    # the full TTL. The behaviour this test names is unchanged -- an INCORRECT
+    # correction still drops the cached verdict -- so it is asserted at the new
+    # seam rather than deleted.
+    with patch.object(fs, "_invalidate_analysis_cache_for", new=AsyncMock()) as inv:
+        await fs.evict_corrected_analysis_cache(db, analysis.id, body)
+    inv.assert_awaited_once()

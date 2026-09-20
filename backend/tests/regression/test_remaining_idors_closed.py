@@ -129,7 +129,10 @@ class TestFeedbackIsProjectScoped:
             "cross-tenant write behind a bare authenticated session"
         )
         guard_at = src.index("_require_analysis_access")
-        assert src.index("analysis.failure_category =") > guard_at, (
+        # The assignment moved into ``_apply_correction`` when the edit path was
+        # made to share it (2026-09-20). The invariant is unchanged: nothing may
+        # mutate the analysis before access is verified, so anchor on the CALL.
+        assert src.index("_apply_correction(analysis, body)") > guard_at, (
             "the analysis is overwritten before access is verified"
         )
 

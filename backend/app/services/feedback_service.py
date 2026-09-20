@@ -14,6 +14,56 @@ from app.services.privacy_service import sanitize_for_persistence
 from app.models.postgres import AIAnalysis, AIFeedback, DecisionReportFeedback, Defect, FeedbackRating, ModelVersion, TestRun
 
 
+def _is_correction(body) -> bool:
+    """A correction is a rating of INCORRECT that names a replacement category.
+
+    One predicate, used by the submit path, the edit path and the cache
+    eviction. Spelling it out three times is how the edit path came to disagree
+    with the submit path in the first place.
+    """
+    return bool(body.corrected_category) and body.rating == FeedbackRating.INCORRECT
+
+
+def _apply_correction(analysis, body) -> None:
+    """Push a correction onto the analysis every product surface renders.
+
+    Staged only -- the router commits, and the semantic cache is evicted after
+    that commit by ``evict_corrected_analysis_cache``.
+    """
+    analysis.failure_category = body.corrected_category
+    if body.corrected_root_cause:
+        analysis.root_cause_summary = body.corrected_root_cause
+    analysis.requires_human_review = False
+
+
+async def evict_corrected_analysis_cache(
+    db: AsyncSession, analysis_id: uuid.UUID, body
+) -> None:
+    """Drop the now-known-wrong verdict from the semantic cache.
+
+    **Called by the router AFTER its commit**, never from inside the staged
+    service. Evicting mid-transaction lets a concurrent reader re-populate the
+    cache from the old *committed* row, which then stands for the full TTL --
+    the failure this codebase already measured live on the feature-flag caches
+    (``feature_flags.invalidate_flag_cache``) and fixed there the same way.
+
+    Best-effort: a cache that will not drop must never fail a correction the
+    user has already had accepted.
+    """
+    if not _is_correction(body):
+        return
+    try:
+        test_case_id = (
+            await db.execute(
+                select(AIAnalysis.test_case_id).where(AIAnalysis.id == analysis_id)
+            )
+        ).scalar_one_or_none()
+        if test_case_id:
+            await _invalidate_analysis_cache_for(db, test_case_id)
+    except Exception:  # noqa: BLE001 -- the correction is already committed
+        pass
+
+
 async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, current_user) -> dict:
     analysis = (await db.execute(select(AIAnalysis).where(AIAnalysis.id == analysis_id))).scalar_one_or_none()
     if not analysis:
@@ -43,15 +93,10 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     )
     db.add(feedback)
 
-    if body.corrected_category and body.rating == FeedbackRating.INCORRECT:
-        analysis.failure_category = body.corrected_category
-        if body.corrected_root_cause:
-            analysis.root_cause_summary = body.corrected_root_cause
-        analysis.requires_human_review = False
-        # Close the correction loop: evict the stale (now-known-wrong) verdict
-        # from the semantic analysis cache so it isn't re-served to this or a
-        # similar test. Best-effort — never fail the feedback submission.
-        await _invalidate_analysis_cache_for(db, analysis.test_case_id)
+    if _is_correction(body):
+        # Close the correction loop. The analysis is what every product surface
+        # renders; the AIFeedback row is only the training label.
+        _apply_correction(analysis, body)
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
@@ -300,7 +345,34 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     feedback.corrected_root_cause = body.corrected_root_cause
     feedback.comment = body.comment
     feedback.exported = False
-    # stage-only: router handler commits
+
+    # Apply the revised correction to the analysis, exactly as the submit path
+    # does. This wrote ONLY the AIFeedback row before, so editing a correction
+    # moved the training label and nothing else: /analyze, the run intelligence
+    # snapshot, the shared report and the compliance bundle all kept the value
+    # from the first submission, and the exported label disagreed with every one
+    # of them.
+    analysis = (
+        await db.execute(select(AIAnalysis).where(AIAnalysis.id == analysis_id))
+    ).scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(404, detail="Analysis not found")
+
+    # Required now that this path writes to the analysis. Matching the feedback
+    # row on ``user_id`` proves who authored it, never that the author may still
+    # touch that project -- membership can be revoked after the fact. Without
+    # this the edit is the cross-tenant write the submit path was fixed for.
+    await _require_analysis_access(db, analysis, current_user)
+
+    if _is_correction(body):
+        _apply_correction(analysis, body)
+    # A retraction (INCORRECT -> CORRECT, or the category cleared) deliberately
+    # leaves the analysis alone: AIAnalysis keeps no pre-correction original, so
+    # the AI's first verdict is unrecoverable once a correction overwrote it.
+    # Guessing a revert would invent a value no one supplied. Restoring it would
+    # need a new column and is an owner decision.
+
+    # stage-only: router handler commits; the cache is evicted after that.
     return {"message": "Feedback updated"}
 
 
