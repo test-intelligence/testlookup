@@ -63,7 +63,7 @@ Get Feedback Stats
 
 
 
-Source: [backend/app/routers/feedback.py:407](../../../backend/app/routers/feedback.py#L407).
+Source: [backend/app/routers/feedback.py:413](../../../backend/app/routers/feedback.py#L413).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -237,7 +237,7 @@ Update Feedback
 
 
 
-Source: [backend/app/routers/feedback.py:341](../../../backend/app/routers/feedback.py#L341).
+Source: [backend/app/routers/feedback.py:346](../../../backend/app/routers/feedback.py#L346).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -338,7 +338,7 @@ Bridges the Failure Analysis page (which identifies tests by
 ``test_fingerprint``) to the feedback endpoints (which key on
 ``analysis_id``). Returns 200 with null fields when no analysis exists.
 
-Source: [backend/app/routers/feedback.py:353](../../../backend/app/routers/feedback.py#L353).
+Source: [backend/app/routers/feedback.py:359](../../../backend/app/routers/feedback.py#L359).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -438,7 +438,7 @@ Project-scoped via ``require_project_access`` (authorization ratchet);
 any active project member may record an outcome, matching the feedback
 endpoints above.
 
-Source: [backend/app/routers/feedback.py:377](../../../backend/app/routers/feedback.py#L377).
+Source: [backend/app/routers/feedback.py:383](../../../backend/app/routers/feedback.py#L383).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -535,7 +535,7 @@ Submit Decision Report Feedback
 
 
 
-Source: [backend/app/routers/feedback.py:323](../../../backend/app/routers/feedback.py#L323).
+Source: [backend/app/routers/feedback.py:328](../../../backend/app/routers/feedback.py#L328).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -641,7 +641,7 @@ Trigger Export
 
 
 
-Source: [backend/app/routers/feedback.py:417](../../../backend/app/routers/feedback.py#L417).
+Source: [backend/app/routers/feedback.py:423](../../../backend/app/routers/feedback.py#L423).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -718,7 +718,7 @@ Trigger Finetune
 
 
 
-Source: [backend/app/routers/feedback.py:424](../../../backend/app/routers/feedback.py#L424).
+Source: [backend/app/routers/feedback.py:430](../../../backend/app/routers/feedback.py#L430).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -805,7 +805,7 @@ Promote Model
 
 
 
-Source: [backend/app/routers/feedback.py:432](../../../backend/app/routers/feedback.py#L432).
+Source: [backend/app/routers/feedback.py:438](../../../backend/app/routers/feedback.py#L438).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -892,7 +892,7 @@ Get Training Status
 
 
 
-Source: [backend/app/routers/feedback.py:443](../../../backend/app/routers/feedback.py#L443).
+Source: [backend/app/routers/feedback.py:449](../../../backend/app/routers/feedback.py#L449).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
