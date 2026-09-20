@@ -18745,7 +18745,7 @@ truncated: bool = False
 
 ## backend/app/services/report_composition_service.py — ReportSection
 
-[backend/app/services/report_composition_service.py:25](../../backend/app/services/report_composition_service.py#L25)
+[backend/app/services/report_composition_service.py:27](../../backend/app/services/report_composition_service.py#L27)
 
 Bases: ``.
 
@@ -18758,7 +18758,7 @@ content: Any
 
 ## backend/app/services/report_composition_service.py — ReportData
 
-[backend/app/services/report_composition_service.py:31](../../backend/app/services/report_composition_service.py#L31)
+[backend/app/services/report_composition_service.py:33](../../backend/app/services/report_composition_service.py#L33)
 
 Bases: ``.
 

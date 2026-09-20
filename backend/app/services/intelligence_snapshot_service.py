@@ -2,7 +2,9 @@
 Run Intelligence Snapshot Service — read-through caching.
 
 Provides:
-  - get_or_compute: returns cached snapshot or computes live then caches
+  - get_or_compute: returns a CURRENT payload, recomputing when the cached row
+    is stale or at a superseded schema_version. Export paths must use this
+    rather than reading the table directly.
   - save_snapshot: persists a computed intelligence payload
   - mark_stale: flags a snapshot as stale (triggers re-compute on next read)
   - invalidate: deletes a snapshot (used after re-analysis)
@@ -211,6 +213,58 @@ async def get_stale_snapshot(
     if snapshot:
         return snapshot.payload
     return None
+
+
+async def get_or_compute(db: AsyncSession, run_id: uuid.UUID) -> dict:
+    """Return a CURRENT snapshot payload, recomputing when the cached row cannot serve.
+
+    This module's docstring has advertised ``get_or_compute`` since it was
+    written and never defined it. Both export paths hand-rolled their own
+    ``select(RunIntelligenceSnapshot).where(run_id == ...)`` instead — with no
+    ``stale`` predicate and no ``schema_version`` predicate — so a shared report
+    link and a compliance evidence bundle would serve:
+
+    * a **stale** payload, i.e. the verdict as it stood before the defect
+      promotion or override that invalidated it; and
+    * an **obsolete** payload at a superseded ``schema_version``, which
+      ``get_stale_snapshot`` explicitly refuses to serve because it has the
+      WRONG SHAPE — "a payload the current contract says cannot exist".
+
+    Those are the two most exposed surfaces in the product: one is readable by
+    anyone holding a share-link token, the other is what an auditor is handed.
+
+    Recompute rather than refuse, so a link that worked keeps working. Failures
+    propagate: an export that cannot produce current evidence must fail rather
+    than quietly ship superseded evidence.
+
+    The write uses its own session. ``save_snapshot`` commits, and an export is
+    a read path — committing the caller's transaction from inside it would be a
+    surprising side effect of rendering a report.
+    """
+    cached = await get_cached_snapshot(db, run_id)
+    if cached is not None:
+        return cached
+
+    from app.db.mongo import get_mongo_db
+    from app.services.run_intelligence_service import get_run_intelligence
+
+    payload = await get_run_intelligence(run_id, db, get_mongo_db())
+
+    try:
+        from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+
+        provenance = payload.get("provenance") if isinstance(payload, dict) else None
+        fallback = (
+            provenance.get("fallback_used", False) if isinstance(provenance, dict) else False
+        )
+        async with _AsyncSessionLocal() as write_db:
+            await save_snapshot(write_db, run_id, payload, fallback_used=fallback)
+    except Exception as exc:  # noqa: BLE001 — caching is best-effort
+        logger.warning(
+            "Could not cache the recomputed snapshot for run %s: %s", run_id, exc
+        )
+
+    return payload
 
 
 async def save_snapshot(

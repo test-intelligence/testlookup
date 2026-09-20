@@ -1,7 +1,9 @@
 """
 Report Composition Service — transforms RunIntelligenceSnapshot into structured report sections.
 
-Reads from the cached snapshot payload (never re-queries individual tables).
+Reads the snapshot payload through ``intelligence_snapshot_service.get_or_compute``,
+which refuses a stale or obsolete-schema row and recomputes instead — an export
+must not carry a superseded verdict.
 Supports two layouts: executive (summary-level) and engineering (full detail).
 """
 from __future__ import annotations
@@ -15,7 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import RunIntelligenceSnapshot, TestRun
+from app.models.postgres import TestRun
 from app.services.report_export_sanitizer import sanitize_report_export_payload
 
 logger = logging.getLogger("services.report_composition")
@@ -77,20 +79,36 @@ async def compose_report(
     layout: str = "executive",
 ) -> ReportData:
     """
-    Read RunIntelligenceSnapshot for run_id, return structured ReportData.
+    Read a CURRENT intelligence payload for run_id, return structured ReportData.
 
     Raises ValueError if no intelligence data is available.
     """
-    # Try cached snapshot first
-    result = await db.execute(
-        select(RunIntelligenceSnapshot).where(RunIntelligenceSnapshot.run_id == run_id)
-    )
-    snapshot = result.scalar_one_or_none()
+    # A CURRENT payload, never whatever happens to be in the table.
+    #
+    # This read used to be a bare select on run_id with no ``stale`` and no
+    # ``schema_version`` predicate, so an exported or shared report served the
+    # verdict as it stood before the override or defect promotion that
+    # invalidated it — and would serve an obsolete-schema payload that
+    # ``get_stale_snapshot`` refuses precisely because it has the wrong shape.
+    # A share link is the most exposed channel in the product: anyone holding
+    # the token reads it, with no login.
+    from app.services.intelligence_snapshot_service import get_or_compute
 
-    if not snapshot or not snapshot.payload:
+    try:
+        raw_payload = await get_or_compute(db, run_id)
+    except Exception as exc:
+        # Fail rather than fall back to the stale row: shipping a superseded
+        # verdict to an external reader is the defect being fixed.
+        logger.warning("Could not produce a current snapshot for run %s: %s", run_id, exc)
+        raise ValueError(
+            f"Intelligence for run {run_id} could not be refreshed for export. "
+            "Retry, or re-run the investigation."
+        ) from exc
+
+    if not raw_payload:
         raise ValueError(f"No intelligence snapshot found for run {run_id}. Trigger deep investigation first.")
 
-    payload = sanitize_report_export_payload(snapshot.payload)
+    payload = sanitize_report_export_payload(raw_payload)
 
     # Get test run info
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
