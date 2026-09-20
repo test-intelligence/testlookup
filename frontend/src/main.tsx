@@ -11,10 +11,16 @@ import './index.css'
 import './store/themeStore' // Apply saved theme on load (before first paint)
 import { useAuthStore } from './store/authStore'
 import { APP_SWR_CONFIG } from './config/swrConfig'
+import { SwrMutateBridge } from './components/SwrMutateBridge'
 
 function SessionCacheBoundary() {
   const generation = useAuthStore((state) => state.sessionGeneration)
-  return <SWRConfig key={generation} value={{ ...APP_SWR_CONFIG, provider: () => new Map() }}><App /></SWRConfig>
+  return (
+    <SWRConfig key={generation} value={{ ...APP_SWR_CONFIG, provider: () => new Map() }}>
+      <SwrMutateBridge />
+      <App />
+    </SWRConfig>
+  )
 }
 
 // Install window.onerror + unhandledrejection listeners before anything renders

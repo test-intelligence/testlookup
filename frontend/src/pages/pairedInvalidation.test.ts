@@ -45,8 +45,12 @@ describe('ReleasesPage — the detail route renders entirely from the detail key
   // ['release-detail', id], which the list route does not even subscribe to.
   const src = source('ReleasesPage.tsx')
 
-  it('the edit modal refreshes the detail key as well as the list', () => {
-    expect(src).toMatch(/onSaved=\{\(\) => Promise\.all\(\[refetch\(\), refetchRoutedRelease\(\)\]\)\}/)
+  it('the edit modal refreshes the edited release detail key, not just the list', () => {
+    // Keyed off the EDITED release, not the route: the same detail key is read
+    // by ReleaseDetailPanel inside an expanded row on the list route, which a
+    // route-scoped refresh would leave stale.
+    expect(src).toContain("appMutate(['release-detail', editRelease.id])")
+    expect(src).toContain('refetch()')
   })
 })
 
@@ -55,8 +59,15 @@ describe('UserManagementPage — editing yourself changes the header identity', 
   // setAuth/fetchUser; fetchUser's one caller runs once per page load.
   const src = source('UserManagementPage.tsx')
 
-  it('refetches the auth store when the edited user is the current user', () => {
-    expect(src).toMatch(/user\.id === useAuthStore\.getState\(\)\.user\?\.id/)
-    expect(src).toMatch(/useAuthStore\.getState\(\)\.fetchUser\(\)/)
+  it('routes every self-edit path through one helper', () => {
+    expect(src).toContain('async function syncSelfIfEdited(')
+    expect(src).toContain('useAuthStore.getState().fetchUser()')
+  })
+
+  it('covers all THREE write paths, not just the modal', () => {
+    // The modal, the inline role dropdown and the active/inactive toggle all
+    // write the same record; usePermissions() reads authStore.user.role.
+    const calls = src.match(/syncSelfIfEdited\(/g) ?? []
+    expect(calls.length).toBe(4) // 1 definition + 3 call sites
   })
 })

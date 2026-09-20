@@ -35,7 +35,11 @@ from typing import Any, Optional
 from sqlalchemy import or_, select
 
 from app.models.postgres import ReviewRequest
-from app.services.review_request_service import AI_DISCLAIMER, AI_DISCLAIMER_VERSION
+from app.services.review_request_service import (
+    AI_DISCLAIMER,
+    AI_DISCLAIMER_VERSION,
+    subject_still_exists,
+)
 
 __all__ = [
     "EXPOSED_HEADERS",
@@ -157,6 +161,12 @@ async def review_envelope_for_run(
         ReviewRequest.test_run_id == run_uuid,
         ReviewRequest.kind == "report",
         ReviewRequest.state != "superseded",
+        # A review whose pipeline run was deleted can never be settled, so
+        # letting it report ``pending_review`` here would withhold the export
+        # and the release narrative for this run PERMANENTLY — and the accept
+        # that used to be the escape hatch now refuses. Same rule as the queue,
+        # one definition.
+        subject_still_exists(),
     )
     if workflow_type:
         stmt = stmt.where(ReviewRequest.workflow_type == workflow_type)

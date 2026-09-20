@@ -37,6 +37,25 @@ const ROLE_COLORS: Record<UserRole, string> = {
   ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
 }
 
+/**
+ * Re-read the signed-in user when the record just written is their own.
+ *
+ * `authStore.user` is client state persisted to localStorage, written only by
+ * `setAuth`/`fetchUser`. `fetchUser`'s single caller is a `ProtectedRoute`
+ * effect keyed on `[hasHydrated]`, which runs once per page load — so without
+ * this the header identity, and `usePermissions()` which reads `user.role`,
+ * keep the pre-edit values for the rest of the session.
+ *
+ * Every self-edit path needs it, not just the modal: the inline role dropdown
+ * and the active/inactive toggle write the same record.
+ */
+async function syncSelfIfEdited(editedUserId: string): Promise<void> {
+  if (editedUserId === useAuthStore.getState().user?.id) {
+    await useAuthStore.getState().fetchUser()
+  }
+}
+
+
 export default function UserManagementPage() {
   const [tab, setTab] = useState<'users' | 'apikeys' | 'project-members'>('users')
   const { canManageUsers, canGenerateApiKeys, isAdmin } = usePermissions()
@@ -107,6 +126,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
     try {
       await userManagementService.updateUserRole(userId, role)
       refreshUsers()
+      // Changing your OWN role from the inline dropdown: usePermissions()
+      // reads authStore.user.role, so without this every permission gate keeps
+      // the old role for the session.
+      await syncSelfIfEdited(userId)
       toast.success('Role updated')
     } catch {
       toast.error('Failed to update role')
@@ -117,6 +140,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
     try {
       await userManagementService.updateUserStatus(userId, !currentActive)
       refreshUsers()
+      await syncSelfIfEdited(userId)
       toast.success(currentActive ? 'User deactivated' : 'User activated')
     } catch {
       toast.error('Failed to update status')
@@ -314,9 +338,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
         // ProtectedRoute effect keyed on [hasHydrated], which runs once per
         // page load. The store persists `user` to localStorage, so the old
         // name survives navigation and only a hard reload clears it.
-        if (user.id === useAuthStore.getState().user?.id) {
-          await useAuthStore.getState().fetchUser()
-        }
+        await syncSelfIfEdited(user.id)
         toast.success('User updated')
       } else {
         toast('No changes to save')

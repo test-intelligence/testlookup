@@ -16,6 +16,7 @@ Endpoints:
       Standalone baseline diff: new/resolved failures, regression clusters,
       classified failures, suite impact delta.
 """
+import asyncio
 import logging
 import time
 import uuid
@@ -80,6 +81,19 @@ router = APIRouter(prefix="/api/v1/runs", tags=["Run Intelligence"])
 # schedules one recompute per request and they all race to write the same row.
 _REFRESH_IN_FLIGHT: set[str] = set()
 
+# At most one background recompute per worker process at a time.
+#
+# The in-flight set de-duplicates per RUN. It does nothing about K *different*
+# stale runs being viewed at once, and each refresh holds its own session for
+# the whole of ``get_run_intelligence`` — a multi-source Postgres + Mongo
+# aggregation. The production pool is deliberately tiny because one is created
+# per worker child: ``pool_size=2, max_overflow=1`` (``db/postgres.py``), i.e.
+# THREE connections. Three concurrent refreshes would starve the request
+# handlers in that worker and 500 them, which is far worse than the staleness
+# being fixed. A Mongo outage makes it self-amplifying: every stale GET
+# schedules a doomed recompute that still holds a connection.
+_REFRESH_SLOT = asyncio.Semaphore(1)
+
 
 async def _refresh_snapshot_after_response(run_id: uuid.UUID) -> None:
     """Recompute and store the snapshot for ``run_id``. Best-effort, never raises.
@@ -103,7 +117,9 @@ async def _refresh_snapshot_after_response(run_id: uuid.UUID) -> None:
         from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
 
         mongo = get_mongo_db()
-        async with _AsyncSessionLocal() as write_db:
+        # Take the slot BEFORE opening the session, never after: queueing here
+        # costs a coroutine, queueing on the pool costs a connection.
+        async with _REFRESH_SLOT, _AsyncSessionLocal() as write_db:
             result = await get_run_intelligence(run_id, write_db, mongo)
             provenance = result.get("provenance") if isinstance(result, dict) else None
             fallback = provenance.get("fallback_used", False) if isinstance(provenance, dict) else False
@@ -174,10 +190,20 @@ async def get_run_intelligence_endpoint(
             # refresh is what makes it a trade rather than a permanent answer.
             background.add_task(_refresh_snapshot_after_response, run_id)
             if isinstance(stale, dict):
+                # Copy first: ``get_stale_snapshot`` returns the live ORM
+                # attribute. The column is plain JSON today so nothing flushes
+                # the mutation, but wrapping it in MutableDict later would turn
+                # annotating it into cache poisoning.
+                stale = dict(stale)
                 stale["_snapshot"] = {
                     "cached": True,
                     "stale": True,
-                    "refresh_scheduled": True,
+                    # "requested", not "scheduled": this is set before the task
+                    # runs, and the task still short-circuits on the in-flight
+                    # key, can raise, and does not survive a worker restart.
+                    # Claiming the refresh happened would be the same kind of
+                    # unfounded promise this endpoint was already making.
+                    "refresh_requested": True,
                 }
             return await _with_review(db, response, run_id, stale)
 

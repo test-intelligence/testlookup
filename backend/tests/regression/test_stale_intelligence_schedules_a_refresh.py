@@ -23,12 +23,27 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from types import SimpleNamespace
+
 from fastapi import BackgroundTasks
 from fastapi.responses import Response
 
 from app.routers import run_intelligence as ri
 
 RUN_ID = uuid.uuid4()
+
+
+@pytest.fixture(autouse=True)
+def _clear_refresh_state():
+    """``_REFRESH_IN_FLIGHT`` is module-level mutable state.
+
+    Only these tests monkeypatch it today; any future test that reaches the
+    stale path would otherwise leave a key behind and silently suppress the
+    refresh in whatever ran next.
+    """
+    ri._REFRESH_IN_FLIGHT.clear()
+    yield
+    ri._REFRESH_IN_FLIGHT.clear()
 
 
 @pytest.mark.asyncio
@@ -54,9 +69,13 @@ async def test_the_stale_path_schedules_a_refresh(monkeypatch):
     )
 
     assert result["_snapshot"]["stale"] is True
-    assert result["_snapshot"]["refresh_scheduled"] is True, (
-        "the response claims nothing about a refresh; a consumer cannot tell "
-        "a stale-but-converging answer from a stale-forever one"
+    assert result["_snapshot"]["refresh_requested"] is True, (
+        "the response says nothing about a refresh; a consumer cannot tell a "
+        "stale-but-converging answer from a stale-forever one"
+    )
+    assert "refresh_scheduled" not in result["_snapshot"], (
+        "'scheduled' over-promises: the field is set before the task runs, and "
+        "the task can short-circuit, raise, or die with the worker"
     )
     scheduled = [t.func for t in background.tasks]
     assert ri._refresh_snapshot_after_response in scheduled, (
@@ -175,3 +194,45 @@ async def _none():
 
 async def _payload():
     return {"summary": "stale content"}
+
+
+class TestAReleaseOverrideLeavesNothingServable:
+    """A human GO -> NO_GO must not be servable as GO even once.
+
+    Marking the snapshot stale keeps it servable while a refresh converges,
+    which is a fair trade for automatic staleness (defect promotion) and the
+    wrong one for a release gate. The override path deletes instead, so the
+    next read has no cached and no stale row and must recompute.
+    """
+
+    def test_the_override_path_deletes_rather_than_marks_stale(self):
+        import inspect
+
+        from app.routers import release_readiness
+
+        src = inspect.getsource(release_readiness)
+        assert "stage_invalidate" in src
+        assert "import mark_stale" not in src, (
+            "the override still marks the snapshot stale, leaving the "
+            "superseded verdict servable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stage_invalidate_does_not_commit(self):
+        # It must land in the SAME transaction as the override; committing here
+        # would let a rolled-back override drop a valid snapshot.
+        from app.services import intelligence_snapshot_service as svc
+
+        calls = []
+
+        class _DB:
+            async def execute(self, _stmt):
+                calls.append("execute")
+                return SimpleNamespace(rowcount=1)
+
+            async def commit(self):
+                calls.append("commit")
+
+        assert await svc.stage_invalidate(_DB(), RUN_ID) is True
+        assert "commit" not in calls, "stage_invalidate must leave the commit to its caller"
+

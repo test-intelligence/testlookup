@@ -296,6 +296,26 @@ async def stage_run_review_request(db: Any, **kwargs: Any) -> Optional[ReviewReq
 # ── Settling a review (architecture E8.2, section 8.3) ───────────────────────
 
 
+def subject_still_exists():
+    """SQL predicate: the review's subject has not been deleted.
+
+    ``review_requests.pipeline_run_id`` is an FK with ``ON DELETE SET NULL``
+    while ``subject_id`` is a plain varchar with no FK, so deleting a pipeline
+    run nulls the first, leaves a dangling id in the second, and the review row
+    survives. Such a review cannot be settled — there is no run to mark — so it
+    is not a live review and must not be offered OR gate anything.
+
+    This lives in one place on purpose. Filtering only the queue would hide the
+    row from the one surface an operator could see it on while it still drove
+    the export gate and the release narrative, which is the same
+    two-readers-one-fact shape this branch exists to fix.
+    """
+    return ~(
+        (ReviewRequest.subject_type == "pipeline_run")
+        & (ReviewRequest.pipeline_run_id.is_(None))
+    )
+
+
 class ReviewDecisionRefused(Exception):
     """A review decision the gate refuses. ``status_code`` is the HTTP status the
     router returns; ``code`` is stable for clients to branch on."""
@@ -338,7 +358,15 @@ async def settle_review(
        superseded one is history.
     5. **Separation of duties.** The person who requested the run cannot review
        it. Enforced whenever the requester is recorded.
-    6. **The run must still be awaiting review.** One guarded UPDATE moves it
+    6. **The subject must still exist.** ``pipeline_run_id`` is an FK with
+       ``ON DELETE SET NULL`` while ``subject_id`` is an unconstrained varchar,
+       so a deleted pipeline run leaves the review behind pointing at nothing.
+       There is no run to mark, so settling it would report an effect it cannot
+       have. (Checked after #5 only because ``_run_proposes_act_actions``
+       returns ``False`` when ``pipeline_run_id`` is ``None``; if that early
+       return goes, move this guard above the separation-of-duties check or an
+       orphan will report the wrong refusal.)
+    7. **The run must still be awaiting review.** One guarded UPDATE moves it
        ``completed -> passed`` (accept) or ``completed -> failed`` (reject); if
        the run moved first -- re-run, resumed -- the decision is refused rather
        than recorded against a run it no longer describes.

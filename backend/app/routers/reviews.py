@@ -255,12 +255,7 @@ async def list_reviews(
     # that resolves to nothing. Settling one cannot change any run, and
     # ``settle_review`` now refuses it outright — so surfacing it here only
     # offers the user an action that is guaranteed to fail (BUG-012).
-    stmt = stmt.where(
-        ~(
-            (ReviewRequest.subject_type == "pipeline_run")
-            & (ReviewRequest.pipeline_run_id.is_(None))
-        )
-    )
+    stmt = stmt.where(review_request_service.subject_still_exists())
     if state:
         stmt = stmt.where(ReviewRequest.state == state)
     rows = (

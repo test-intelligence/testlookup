@@ -101,17 +101,66 @@ class TestSettlingAnOrphanIsRefused:
         assert review.reviewed_at is None
 
 
-class TestTheQueueDoesNotOfferOrphans:
-    def test_the_listing_excludes_a_null_pipeline_run_id(self):
-        # Source-level: the filter must be on the statement, not applied in
-        # Python after the fact, or ``limit`` would return fewer rows than
-        # asked while orphans still consume slots.
+class TestTheRuleIsCompiledSqlNotProse:
+    """Assert the predicate COMPILES to the right SQL.
+
+    An earlier version of this test read the handler's source and looked for
+    substrings. That cannot detect an inverted ``~``, wrong ``&``/``|``
+    precedence, or a ``.where()`` whose return value is discarded — which are
+    the three ways this filter actually breaks.
+    """
+
+    def _sql(self, stmt) -> str:
+        from sqlalchemy.dialects import postgresql
+
+        return " ".join(str(stmt.compile(dialect=postgresql.dialect())).split())
+
+    def test_the_predicate_negates_the_orphan_shape(self):
+        from sqlalchemy import select
+
+        from app.models.postgres import ReviewRequest
+        from app.services.review_request_service import subject_still_exists
+
+        sql = self._sql(select(ReviewRequest.id).where(subject_still_exists()))
+        # NOT (subject_type = ... AND pipeline_run_id IS NULL)
+        assert "NOT (" in sql
+        assert "subject_type" in sql and "pipeline_run_id IS NULL" in sql
+        assert " OR " not in sql, "the two halves must be ANDed inside the NOT"
+
+    def test_the_queue_statement_carries_it(self):
+        # Built the way list_reviews builds it, then compiled.
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from app.models.postgres import ReviewRequest
+        from app.services.review_request_service import subject_still_exists
+
+        stmt = (
+            select(ReviewRequest)
+            .where(ReviewRequest.project_id == _uuid.uuid4())
+            .where(subject_still_exists())
+        )
+        sql = self._sql(stmt)
+        assert "pipeline_run_id IS NULL" in sql
+        assert "project_id" in sql, "tenant scoping must survive the new filter"
+
+    def test_the_queue_handler_actually_applies_the_predicate(self):
         import inspect
 
         from app.routers import reviews
 
         src = inspect.getsource(reviews.list_reviews)
-        assert "pipeline_run_id.is_(None)" in src, (
-            "list_reviews no longer filters orphan reviews out of the queue"
-        )
-        assert 'subject_type == "pipeline_run"' in src
+        assert "subject_still_exists()" in src
+        # Assigned back — a bare ``stmt.where(...)`` is a no-op on a Select.
+        assert "stmt = stmt.where(review_request_service.subject_still_exists())" in src
+
+    def test_the_export_gate_uses_the_same_rule(self):
+        # Filtering only the queue would hide the row from the one surface an
+        # operator can see while it still withheld the export forever.
+        import inspect
+
+        from app.services import review_envelope
+
+        src = inspect.getsource(review_envelope.review_envelope_for_run)
+        assert "subject_still_exists()" in src

@@ -1,4 +1,5 @@
-import useSWR, { mutate as globalMutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import { featureFlagService, type FeatureFlag } from '@/services/featureFlagService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
@@ -17,14 +18,25 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
  * present for the rest of the session.
  *
  * One helper so both key spaces go through the same place.
+ *
+ * Two details that are easy to get wrong and silently produce a no-op or a
+ * flicker:
+ *
+ * 1. `appMutate`, NOT the `mutate` exported by `swr`. This app supplies its own
+ *    cache provider, so the module-level mutate is bound to a different (empty)
+ *    cache and would match nothing. See `utils/swrCacheMutate`.
+ * 2. ONE argument. Passing `(matcher, undefined, { revalidate: true })` takes
+ *    SWR's data-write path and writes `undefined` into every matched key before
+ *    revalidating, so `useFeatureEnabled` momentarily reads `false` and every
+ *    gated surface — the sidebar nav especially — blinks off and back on. The
+ *    single-argument form is a pure revalidation and preserves the cached value
+ *    while it refetches.
  */
 export function refreshFeatureFlags() {
-  return globalMutate(
+  return appMutate(
     (key) =>
       key === 'feature-flags' ||
       (Array.isArray(key) && key[0] === 'feature-flag-status'),
-    undefined,
-    { revalidate: true },
   )
 }
 
