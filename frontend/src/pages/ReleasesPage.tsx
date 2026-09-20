@@ -797,7 +797,14 @@ export default function ReleasesPage() {
           projectId={projectId}
           initial={editRelease}
           onClose={() => { setShowModal(false); setEditRelease(undefined) }}
-          onSaved={() => refetch()}
+          // Both key spaces. On the routed detail URL this page renders
+          // ENTIRELY from ['release-detail', id] (see `releases` above), while
+          // `refetch` is the LIST mutator — a key that route does not even
+          // subscribe to. The detail key is declared revalidateOnFocus:false
+          // with no refreshInterval, and Edit sits inside the already-expanded
+          // row so nothing remounts: a renamed release kept its old name until
+          // a hard reload.
+          onSaved={() => Promise.all([refetch(), refetchRoutedRelease()])}
         />
       )}
 
