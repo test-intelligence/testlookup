@@ -9,7 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYTEST = (
     sys.executable, "-m", "pytest", "-q", "-p", "no:testlookup", "-p", "no:randomly",
-    "--basetemp=backend/.pytest-tmp-e33-mutation",
     "backend/tests/test_e33_workflow_runtime.py",
     "backend/tests/services/test_workflow_definition_service.py",
 )

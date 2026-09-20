@@ -16,7 +16,6 @@ TESTS = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=.pytest-tmp-exploratory-m01-cutoff-mutation",
     "tests/core/test_access_token_precision.py",
     "tests/core/test_auth_session_tokens.py",
     "tests/core/test_token_revocation.py",

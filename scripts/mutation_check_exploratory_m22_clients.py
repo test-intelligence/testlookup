@@ -30,7 +30,7 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "tests/regression/test_request_hardening.py::test_range_is_ignored_so_the_sdk_download_is_always_whole",
-            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-sdk-mutation",
+            "-p", "no:testlookup",
         ),
         "backend",
     ),
@@ -41,7 +41,6 @@ MUTATIONS = (
         "    return EXIT_ERROR\n",
         (
             "-m", "pytest", "-q", "cli/tests/test_command_exit_codes.py",
-            "--basetemp=.pytest-tmp-m22-cli-mutation",
         ),
         ".",
     ),
@@ -53,7 +52,6 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "cli/tests/test_client_connection_errors.py::test_bad_request_uses_the_validation_exit_code",
-            "--basetemp=.pytest-tmp-m22-cli-validation-mutation",
         ),
         ".",
     ),
@@ -77,7 +75,7 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "tests/test_authorization_guards.py::TestRequireRunAccess::test_non_member_gets_404_without_confirming_the_run",
-            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-run-denial-mutation",
+            "-p", "no:testlookup",
         ),
         "backend",
     ),
@@ -89,7 +87,7 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "tests/test_authorization_guards.py::TestRequireRunAccess::test_foreign_project_key_gets_404_without_confirming_the_run",
-            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-key-denial-mutation",
+            "-p", "no:testlookup",
         ),
         "backend",
     ),
@@ -101,7 +99,7 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "tests/regression/test_request_hardening.py::test_the_real_python_sdk_archive_imports_in_an_isolated_directory",
-            "-p", "no:testlookup", "--basetemp=.pytest-tmp-m22-sdk-metadata-mutation",
+            "-p", "no:testlookup",
         ),
         "backend",
     ),
@@ -113,7 +111,6 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "cli/tests/test_upload_retry_and_wait.py::test_upload_http_errors_keep_the_stable_exit_code",
-            "--basetemp=.pytest-tmp-m22-upload-post-mutation",
         ),
         ".",
     ),
@@ -133,7 +130,6 @@ MUTATIONS = (
         (
             "-m", "pytest", "-q",
             "cli/tests/test_upload_retry_and_wait.py::test_an_answer_that_cannot_change_fails_the_wait_at_once",
-            "--basetemp=.pytest-tmp-m22-upload-poll-mutation",
         ),
         ".",
     ),

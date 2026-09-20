@@ -3858,6 +3858,94 @@ def _excludes_dir(patterns: list[str], name: str) -> bool:
     return False
 
 
+# ── repo.no-repo-relative-basetemp ───────────────────────────────────────────
+#
+# pytest already writes ``tmp_path`` under the system temp and rotates it down
+# to the last three runs. Overriding that with a repo-relative ``--basetemp``
+# buys nothing and costs a directory per run that nothing ever deletes: on
+# 2026-09-20 the working tree held 186 ``.pytest*`` roots at the repo root
+# alone, and homelabsetup/deploy-homelab.sh refused to build from it because
+# ignored files still enter the Docker build context. Worse, pytest creates
+# those roots owner-only on Windows, so they are unreadable to git — they hide
+# from ``git status`` entirely — and to the image build's context walk.
+#
+# Four ``.dockerignore`` patterns and one ``.gitignore`` pattern were each
+# widened after a build or a deploy had already broken on a spelling the
+# previous one missed. This guard removes the thing being spelled.
+#
+# Scope is INVOCATIONS, not prose. qa/ defect reports and CHANGELOG entries
+# describe the historical bug and must keep saying ``--basetemp``; so must the
+# ignore machinery and the DEVELOPER_GUIDE row that explain why the patterns
+# exist.
+_BASETEMP_FLAG = re.compile(r"--basetemp(?:=|\b)")
+_BASETEMP_SCOPES = ("scripts/", "architecture/", ".github/", "backend/", "cli/",
+                    "mcp/", "client/", "frontend/", "homelabsetup/")
+_BASETEMP_SUFFIXES = {".py", ".sh", ".md", ".yml", ".yaml"}
+# The ignore machinery and the guard's own tests NAME the flag, they do not run
+# it, so they are exempt. The other evidence archives need no entry here and
+# must not get one: ``qa/`` and root-level files like ``CHANGELOG.md`` are not
+# under _BASETEMP_SCOPES, so they are never candidates in the first place. An
+# exemption for them would be dead code that no test can exercise — which is
+# how the first draft of this guard shipped, and mutation testing caught it.
+_BASETEMP_EXEMPT_FILES = {
+    "architecture/DEVELOPER_GUIDE.md",
+    "scripts/quality_gate.py",
+    "scripts/test_quality_gate.py",
+    "scripts/clean_scratch.sh",
+    "scripts/test_clean_scratch.py",
+}
+_BASETEMP_HINT = (
+    "Delete the --basetemp argument. pytest's default basetemp lives under the "
+    "system temp, is unique per run (so concurrent suites cannot clobber each "
+    "other) and is rotated down to the last three runs — which is exactly what "
+    "the unique suffixes on the old repo-relative paths were emulating, without "
+    "leaving 186 undeletable directories in the working tree. If a run genuinely "
+    "needs its scratch on a specific volume, pass an ABSOLUTE path outside the "
+    "repository."
+)
+
+
+def _repo_no_repo_relative_basetemp() -> list[Violation]:
+    """No tracked command tells pytest to write its scratch inside the repo."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        return [Violation(REPO_ROOT / ".gitignore", 0,
+                          "git ls-files failed; the guard could not look")]
+    tracked = [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+
+    candidates = [
+        rel for rel in tracked
+        if rel.startswith(_BASETEMP_SCOPES)
+        and Path(rel).suffix in _BASETEMP_SUFFIXES
+        and rel not in _BASETEMP_EXEMPT_FILES
+    ]
+
+    # Fail loud, not open: an empty candidate set would pass the whole tree.
+    if len(candidates) < 50:
+        return [Violation(REPO_ROOT / ".gitignore", 0,
+                          f"only {len(candidates)} files were scanned; the "
+                          "guard cannot have looked properly")]
+
+    violations: list[Violation] = []
+    for rel in candidates:
+        path = REPO_ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "--basetemp" not in text:
+            continue
+        for number, line in enumerate(text.splitlines(), start=1):
+            if _BASETEMP_FLAG.search(line):
+                violations.append(Violation(
+                    path, number,
+                    "--basetemp points pytest scratch into the repository",
+                ))
+    return violations
+
+
 def _repo_dockerignore_covers_pytest_scratch() -> list[Violation]:
     """Every build context excludes every pytest scratch-directory spelling."""
     names = list(_PYTEST_SCRATCH_NAMES)
@@ -5393,6 +5481,17 @@ GUARDS: list[Guard] = [
         ),
         check=_repo_dockerignore_covers_pytest_scratch,
         fix_hint=_DOCKERIGNORE_PYTEST_HINT,
+    ),
+    Guard(
+        name="repo.no-repo-relative-basetemp",
+        description=(
+            "No tracked command passes a repo-relative --basetemp: pytest's "
+            "own default is unique per run and rotated, while an in-repo root "
+            "is created owner-only on Windows, hides from git and enters the "
+            "Docker build context (186 of them on 2026-09-20)."
+        ),
+        check=_repo_no_repo_relative_basetemp,
+        fix_hint=_BASETEMP_HINT,
     ),
     Guard(
         name="database.downgrade-implemented",

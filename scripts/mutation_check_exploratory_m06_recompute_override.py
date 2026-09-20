@@ -51,8 +51,6 @@ def main() -> None:
                     "-q",
                     "-p",
                     "no:testlookup",
-                    "--basetemp",
-                    f".pytest-tmp-exploratory-m06-recompute-mutation-{index}",
                 ],
                 cwd=ROOT / "backend",
                 capture_output=True,

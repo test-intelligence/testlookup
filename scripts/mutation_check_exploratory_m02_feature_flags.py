@@ -15,7 +15,6 @@ TESTS = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=.pytest-tmp-exploratory-m02-feature-flag-mutation",
     "backend/tests/integration/test_feature_flags_api.py",
 )
 

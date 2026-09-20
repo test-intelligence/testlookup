@@ -22,7 +22,6 @@ BACKEND_COMMAND = (
     "no:testlookup",
     "-p",
     "no:randomly",
-    "--basetemp=backend/.pytest-tmp-e35-mutation",
     "backend/tests/test_workflow_compiler.py",
     "-k",
     "builtin_definitions_compile_to_the_live_graph_topology",

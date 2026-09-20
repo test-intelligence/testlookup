@@ -839,7 +839,7 @@ T22 ran on 2026-09-15 against a seeded Podman lite stack with review enforcement
   tests/test_agent_invocation_retry_cancel.py tests/test_reviews_api.py tests/test_agent_catalog.py \
   tests/test_agent_api_docs.py tests/test_architectural_authorization.py tests/test_architectural_transaction_boundaries.py \
   tests/services/test_workflow_run_state.py tests/services/test_retry_policy.py tests/services/test_pipeline_lease.py \
-  -p no:randomly -p no:testlookup --basetemp=.pytest_tmp -q
+  -p no:randomly -p no:testlookup -q
 ../.venv311/Scripts/python -m app.services.agent_api_docs --check
 
 # repo root

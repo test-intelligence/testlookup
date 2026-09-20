@@ -15,7 +15,6 @@ COMMAND = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-e98-mutation",
     "backend/tests/services/test_eval_scorer_mutations.py",
 )
 

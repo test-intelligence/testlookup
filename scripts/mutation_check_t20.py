@@ -91,7 +91,7 @@ def main() -> int:
         try:
             command = (
                 BACKEND_TEST
-                + (f"--basetemp=backend/.pytest_tmp_t20_mutation_{index}",)
+                + ()
                 if kind == "backend"
                 else FRONTEND_TEST
             )

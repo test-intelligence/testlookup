@@ -16,7 +16,6 @@ TESTS = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-exploratory-m26-provenance-mutation",
     "backend/tests/test_health_build_provenance.py::test_homelab_backend_image_receives_exact_build_provenance",
     "backend/tests/regression/test_homelab_build_authority.py",
     "backend/tests/regression/test_k8s_migration_runner.py::test_runner_uses_unique_attempt_jobs_and_readiness_init_container",

@@ -78,7 +78,7 @@ delete/reset data. Verify DSN destination before execution without printing it.
 ```powershell
 ../.venv311/Scripts/python -m ruff check app/ tests/
 ../.venv311/Scripts/python -X utf8 ../scripts/mypy_ratchet.py --check-stale
-../.venv311/Scripts/python -X utf8 -m pytest tests/test_agent_configs.py tests/test_agent_config_resolver.py tests/test_agent_invocations.py tests/test_agent_invocation_idempotency.py tests/test_agent_invocation_sync_sse.py tests/test_agent_invocation_retry_cancel.py tests/test_reviews_api.py tests/test_agent_catalog.py tests/test_agent_api_docs.py tests/test_architectural_authorization.py tests/test_architectural_transaction_boundaries.py tests/services/test_workflow_run_state.py tests/services/test_retry_policy.py tests/services/test_pipeline_lease.py -p no:randomly -p no:testlookup --basetemp=.pytest-tmp-exploratory-key -q
+../.venv311/Scripts/python -X utf8 -m pytest tests/test_agent_configs.py tests/test_agent_config_resolver.py tests/test_agent_invocations.py tests/test_agent_invocation_idempotency.py tests/test_agent_invocation_sync_sse.py tests/test_agent_invocation_retry_cancel.py tests/test_reviews_api.py tests/test_agent_catalog.py tests/test_agent_api_docs.py tests/test_architectural_authorization.py tests/test_architectural_transaction_boundaries.py tests/services/test_workflow_run_state.py tests/services/test_retry_policy.py tests/services/test_pipeline_lease.py -p no:randomly -p no:testlookup -q
 ../.venv311/Scripts/python -m app.services.agent_api_docs --check
 ../.venv311/Scripts/python -m app.services.prompt_eval_recordings --check
 ../.venv311/Scripts/python -m alembic heads
@@ -87,7 +87,7 @@ delete/reset data. Verify DSN destination before execution without printing it.
 Full regression (real services configured and migrated as in CI):
 
 ```powershell
-../.venv311/Scripts/python -X utf8 -m pytest tests/ -p no:randomly -p no:testlookup --basetemp=.pytest-tmp-exploratory-full --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=74 --junit-xml=test-results.xml
+../.venv311/Scripts/python -X utf8 -m pytest tests/ -p no:randomly -p no:testlookup --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=74 --junit-xml=test-results.xml
 ```
 
 Also execute the **explicit protected integration selection** from the current
@@ -103,9 +103,9 @@ local when possible instead of triggering extra workflow runs.
 
 ```powershell
 .venv311/Scripts/python -X utf8 scripts/quality_gate.py
-.venv311/Scripts/python -X utf8 -m pytest scripts/test_quality_gate.py scripts/test_mypy_ratchet.py scripts/test_ci_security.py -p no:randomly -p no:testlookup --basetemp=.pytest-tmp-exploratory-guards -q
+.venv311/Scripts/python -X utf8 -m pytest scripts/test_quality_gate.py scripts/test_mypy_ratchet.py scripts/test_ci_security.py -p no:randomly -p no:testlookup -q
 .venv311/Scripts/python scripts/release/check_image_drift.py
-.venv311/Scripts/python -m pytest scripts/release/test_image_drift.py scripts/release/tests -p no:testlookup --basetemp=.pytest-tmp-exploratory-release -q
+.venv311/Scripts/python -m pytest scripts/release/test_image_drift.py scripts/release/tests -p no:testlookup -q
 ```
 
 Capture quality guard count from actual output. A new guard requires fixture
@@ -157,15 +157,15 @@ are missing; never `test.skip()` the defect reproduction because data is absent.
 From `mcp/` (matching its CI measurement domains):
 
 ```powershell
-../.venv311/Scripts/python -m pytest tests -p no:testlookup -q --basetemp=.pytest-tmp-exploratory-mcp --cov=client --cov=config --cov=prompts --cov=resources --cov=review_notice --cov=server --cov=token_verifier --cov=tools --cov-report=term-missing --cov-fail-under=41
+../.venv311/Scripts/python -m pytest tests -p no:testlookup -q --cov=client --cov=config --cov=prompts --cov=resources --cov=review_notice --cov=server --cov=token_verifier --cov=tools --cov-report=term-missing --cov-fail-under=41
 ```
 
 From root, install package dependencies using current CI requirements, then
 keep SDK and CLI measurement invocations separate:
 
 ```powershell
-.venv311/Scripts/python -m pytest client/tests -p no:testlookup -q --basetemp=.pytest-tmp-exploratory-sdk
-.venv311/Scripts/python -m pytest cli/tests -p no:testlookup -q --basetemp=.pytest-tmp-exploratory-cli --cov=testlookup_cli --cov-report=term-missing --cov-fail-under=62
+.venv311/Scripts/python -m pytest client/tests -p no:testlookup -q
+.venv311/Scripts/python -m pytest cli/tests -p no:testlookup -q --cov=testlookup_cli --cov-report=term-missing --cov-fail-under=62
 ```
 
 Other SDKs: `mvn --batch-mode --no-transfer-progress test` in `client/java`;

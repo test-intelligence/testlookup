@@ -3037,3 +3037,127 @@ def test_dockerignore_patterns_ignores_comments_and_negations(tmp_path: Path) ->
     # A negation must never be read as an exclusion.
     assert qg._excludes_dir(["!.pytest_keep/"], ".pytest_keep") is False
     assert qg._excludes_dir([".pytest*/"], ".pytest_cache_t0") is True
+
+
+# ── repo.no-repo-relative-basetemp ───────────────────────────────────────────
+
+
+def _basetemp_repo(tmp_path: Path) -> None:
+    """A throwaway git repo with enough tracked files to clear the fail-loud
+    floor, so a test is measuring the rule and not the "could not look" branch.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.st"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    for index in range(60):
+        _write(tmp_path / "scripts" / f"filler_{index}.py", "x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+
+def test_basetemp_guard_flags_a_repo_relative_basetemp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _basetemp_repo(tmp_path)
+    _write(tmp_path / "scripts" / "mutation_check_x.py", '''
+        ARGS = [
+            "-m", "pytest", "-q",
+            "--basetemp=backend/.pytest-tmp-e21-mutation",
+        ]
+    ''')
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    violations = qg._repo_no_repo_relative_basetemp()
+
+    assert [v.file.name for v in violations] == ["mutation_check_x.py"]
+    assert "scratch into the repository" in violations[0].message
+
+
+def test_basetemp_guard_catches_the_hyphen_and_space_spellings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both call-site shapes the repo actually used, and a docs command.
+
+    `--basetemp X` (space-separated argv) is how the m06/m07/m08 harnesses
+    passed it; `--basetemp=X` is how the rest did. A guard that only knew the
+    `=` form would have left half the call sites free to come back.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _basetemp_repo(tmp_path)
+    _write(tmp_path / "scripts" / "space_form.py",
+           'ARGS = ["--basetemp", ".pytest-tmp-exploratory-m06-mutation-1"]\n')
+    _write(tmp_path / "architecture" / "RUNBOOK.md",
+           "```bash\npython -m pytest tests/ --basetemp=.pytest-tmp-full -q\n```\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    flagged = sorted(v.file.name for v in qg._repo_no_repo_relative_basetemp())
+
+    assert flagged == ["RUNBOOK.md", "space_form.py"]
+
+
+def test_basetemp_guard_passes_a_command_that_lets_pytest_choose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _basetemp_repo(tmp_path)
+    _write(tmp_path / "scripts" / "mutation_check_x.py",
+           'ARGS = ["-m", "pytest", "-q", "-p", "no:testlookup"]\n')
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert qg._repo_no_repo_relative_basetemp() == []
+
+
+def test_basetemp_guard_leaves_the_evidence_archives_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Prose that describes the historical bug must keep saying `--basetemp`.
+
+    A guard that rewrote the record of why it exists would be deleting its own
+    justification. Two different mechanisms protect that prose, and this pins
+    both: `qa/` and root-level files are outside _BASETEMP_SCOPES and are never
+    candidates, while DEVELOPER_GUIDE.md sits under a scanned scope and is
+    spared only by _BASETEMP_EXEMPT_FILES. An earlier draft also listed `qa/`
+    and CHANGELOG.md as exemptions; that was dead code, and a test asserting
+    only the empty result could not tell the difference.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _basetemp_repo(tmp_path)
+    _write(tmp_path / "qa" / "defects" / "TL-002.md",
+           "Run any pytest invocation that passes `--basetemp=<x>/.pytest_cache_t0`.\n")
+    _write(tmp_path / "CHANGELOG.md",
+           "- every suite was invoked with a repo-relative `--basetemp`.\n")
+    _write(tmp_path / "architecture" / "DEVELOPER_GUIDE.md",
+           "| guard | pytest creates `--basetemp` roots owner-only on Windows |\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert qg._repo_no_repo_relative_basetemp() == []
+
+    # The exemption list is load-bearing for the in-scope file: drop it and
+    # DEVELOPER_GUIDE.md alone must start failing, while the out-of-scope prose
+    # stays quiet.
+    monkeypatch.setattr(qg, "_BASETEMP_EXEMPT_FILES", set())
+    flagged = [v.file.name for v in qg._repo_no_repo_relative_basetemp()]
+    assert flagged == ["DEVELOPER_GUIDE.md"]
+
+
+def test_basetemp_guard_fails_loud_when_it_cannot_look(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Too few candidates means the scan broke, not that the tree is clean."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.st"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    _write(tmp_path / "scripts" / "only_one.py", "x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    violations = qg._repo_no_repo_relative_basetemp()
+
+    assert len(violations) == 1
+    assert "cannot have looked properly" in violations[0].message
+
+
+def test_basetemp_guard_is_registered_and_the_real_tree_is_clean() -> None:
+    """The rule is wired into the gate, and main satisfies it."""
+    assert any(g.name == "repo.no-repo-relative-basetemp" for g in qg.GUARDS)
+    assert qg._repo_no_repo_relative_basetemp() == []

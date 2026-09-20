@@ -231,8 +231,6 @@ def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
             "-q",
             "-p",
             "no:testlookup",
-            "--basetemp",
-            f".pytest-tmp-exploratory-m11-mutation-{suffix}",
             test,
         ],
         cwd=ROOT,

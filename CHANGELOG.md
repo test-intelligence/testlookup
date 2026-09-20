@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased - Every suite uses pytest's own basetemp
+
+**The override was never needed.** 65 `--basetemp` arguments across 45 tracked
+files pointed pytest's scratch at a repo-relative directory, each with a unique
+suffix so concurrent runs would not delete each other's tmp dirs. Nothing ever
+removed them, they are created owner-only on Windows — invisible to `git status`
+and fatal to the image build's context walk — and by 2026-09-20 there were 186 at
+the repo root alone, enough that `require_clean_build_inputs` refused to deploy
+from the main tree.
+
+Two observations decided this. CI has **never** passed `--basetemp`, and the full
+backend suite is green there. And on Windows, a `tmp_path`-heavy suite run with no
+`--basetemp` passes and writes to `%TEMP%\pytest-of-<user>\pytest-N`, which pytest
+numbers per run and rotates down to the last three. The default already provides
+everything the unique suffixes were emulating — uniqueness, isolation, cleanup —
+without putting anything in the working tree. No call site read its basetemp path
+back; the argument was pure habit.
+
+So the migration is a deletion, not the nested `--basetemp=.pytest_tmp/<run-id>`
+convention floated in the previous entry. That convention would have been worse:
+pytest does not create intermediate parents, so every caller would have needed a
+`mkdir -p` first or every `tmp_path` fixture errors with `FileNotFoundError`.
+
+Removed from 38 `scripts/mutation_check_*.py` harnesses (both the `--basetemp=X`
+and the space-separated `--basetemp X` shapes), the 7 commands in
+`architecture/testing/EXPLORATORY_RUNBOOK.md`, and Appendix B of
+`architecture/AGENTIC_HANDOVER_2026-09-13.md`. Left alone deliberately: the `qa/`
+defect report and the CHANGELOG/DEVELOPER_GUIDE/ignore-file comments that record
+*why* the scratch patterns exist — a change that rewrote its own justification
+would be the wrong kind of tidy.
+
+`repo.no-repo-relative-basetemp` (absolute rule, no baseline) is what stops it
+coming back, because the alternative is what already happened three times to
+`.dockerignore` and once to `.gitignore`: a wider pattern written after each new
+spelling broke a build. The guard scans tracked `.py`/`.sh`/`.md`/`.yml` under the
+code and instruction directories, skips prose archives, and fails loud if it
+scanned fewer than 50 files rather than passing because it could not look.
+
+Its self-tests were mutation-checked, and that caught a defect in the guard
+itself: a first draft exempted `qa/` and `CHANGELOG.md`, but neither is under a
+scanned scope, so both exemptions were unreachable. Deleting them changed nothing
+and no test failed — dead code that looked like safety. The exemption list now
+holds only the files that are genuinely in scope, and the test asserts the two
+mechanisms separately.
+
 ## Unreleased - `make clean-scratch`, and one gitignore pattern for every pytest basetemp
 
 **The deploy could not run from the main working tree.** `require_clean_build_inputs`

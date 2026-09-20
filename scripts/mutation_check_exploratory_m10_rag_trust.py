@@ -142,7 +142,6 @@ def run_test(test: str, suffix: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable, "-m", "pytest", "-q", "-p", "no:testlookup",
-            "--basetemp", f".pytest-tmp-exploratory-m10-mutation-{suffix}",
             f"{TEST_FILE}::{test}",
         ],
         cwd=ROOT,

@@ -20,7 +20,6 @@ COMMAND = (
     "-q",
     "-p",
     "no:testlookup",
-    "--basetemp=backend/.pytest-tmp-e910-mutation",
     *TESTS,
 )
 MUTATIONS = (

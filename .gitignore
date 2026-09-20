@@ -35,17 +35,22 @@ __pycache__/
 # One pattern for every pytest scratch root, matching the `.pytest*/` that the
 # three .dockerignore files already use. The narrow pair this replaces —
 # `.pytest_cache/` plus `.pytest_tmp*/` — covered only the UNDERSCORE spelling,
-# while the repo's own tracked callers pass the HYPHENATED one:
-# scripts/mutation_check_e2_1.py uses `--basetemp=backend/.pytest-tmp-e21-mutation`
-# and architecture/testing/EXPLORATORY_RUNBOOK.md uses `.pytest-tmp-exploratory-*`.
-# Those dirs were therefore untracked-but-visible: `git add -A` could sweep one
-# into a commit, and homelabsetup/deploy-homelab.sh's require_clean_build_inputs
-# fails on them as *untracked* build inputs, which is worse than ignored.
-# They looked ignored only because pytest creates basetemp roots owner-only, so
-# git skipped them with "could not open directory ...: Permission denied"
-# (200 such entries in the main tree on 2026-09-20). Widen the class, never add
-# a fourth exact spelling — the same rule repo.dockerignore-covers-pytest-scratch
-# enforces for the build contexts.
+# while the tracked callers of the day passed the HYPHENATED one (for example
+# `--basetemp=backend/.pytest-tmp-e21-mutation`). Those dirs were therefore
+# untracked-but-visible: `git add -A` could sweep one into a commit, and
+# homelabsetup/deploy-homelab.sh's require_clean_build_inputs fails on them as
+# *untracked* build inputs, which is worse than ignored. They looked ignored
+# only because pytest creates basetemp roots owner-only, so git skipped them
+# with "could not open directory ...: Permission denied" (200 such entries in
+# the main tree on 2026-09-20).
+#
+# No tracked command passes `--basetemp` any more — every suite uses pytest's
+# default under the system temp, and repo.no-repo-relative-basetemp keeps it
+# that way — so this pattern now mostly catches `.pytest_cache/`, which an
+# ordinary run still writes here. Keep it class-wide anyway: a working tree
+# that predates that change still carries the old roots, and the lesson from
+# the three .dockerignore rewrites is to match the class, never to add a
+# fourth exact spelling.
 .pytest*/
 
 # Celery beat runtime state (regenerated at startup — not source)

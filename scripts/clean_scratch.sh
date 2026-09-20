@@ -2,15 +2,19 @@
 #
 # Remove pytest scratch roots and tool caches from the working tree.
 #
-# Why this exists: every suite in this repo is invoked with a repo-relative
-# `--basetemp` (65 call sites across 45 tracked files — scripts/mutation_check_*.py,
-# architecture/testing/EXPLORATORY_RUNBOOK.md, the per-component CLAUDE.md files),
-# and each call site invents a unique suffix so that concurrent runs do not delete
-# each other's tmp dirs (pytest rm_rf's its basetemp at session start). Nothing
-# ever removes them. On 2026-09-20 the main tree held 186 `.pytest*` roots at the
+# Why this exists: on 2026-09-20 the main tree held 186 `.pytest*` roots at the
 # repo root alone, and homelabsetup/deploy-homelab.sh's require_clean_build_inputs
 # refused to deploy from it — 200 entries, so the deploy had to run from a
 # throwaway `git worktree add --detach`, a full 3463-file checkout.
+#
+# The `--basetemp` overrides that produced those 186 roots are gone (every suite
+# now uses pytest's own default under the system temp, which it rotates down to
+# the last three runs), so this script no longer has an accumulating basetemp to
+# chase. It still earns its place: `.pytest_cache`, `__pycache__`, coverage
+# output and `.hypothesis` are all written into the tree by an ordinary test run
+# and none of them are ever cleaned up, and a repo that predates the basetemp
+# change still carries the old roots. repo.no-repo-relative-basetemp is what
+# stops them coming back.
 #
 # Scope is deliberately narrow: scratch and cache output only. Dependency trees
 # (node_modules, venvs, .uv-cache) and build outputs (dist, build, target) are
