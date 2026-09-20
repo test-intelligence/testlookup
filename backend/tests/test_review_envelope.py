@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import Response
+from fastapi import BackgroundTasks, Response
 
 from app.services import review_envelope as env
 from app.services.review_request_service import AI_DISCLAIMER_VERSION
@@ -294,7 +294,7 @@ async def test_selected_decision_report_uses_its_exact_pipeline_review(monkeypat
     db = object()
 
     out = await run_intelligence.get_run_intelligence_endpoint(
-        RUN, response, include="", report_version=1, db=db
+        RUN, response, BackgroundTasks(), include="", report_version=1, db=db
     )
 
     assert out["review"]["state"] == "superseded"
@@ -315,7 +315,8 @@ async def test_a_cached_intelligence_snapshot_gets_a_live_review_state(monkeypat
     response = Response()
 
     out = await run_intelligence.get_run_intelligence_endpoint(
-        RUN, response, include="", report_version=None, db=_DB(_review("rejected", datetime.now(timezone.utc))),
+        RUN, response, BackgroundTasks(),
+        include="", report_version=None, db=_DB(_review("rejected", datetime.now(timezone.utc))),
     )
 
     assert out["review"]["state"] == "rejected"

@@ -21,7 +21,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import select
 
@@ -75,10 +75,52 @@ async def _with_review(
 router = APIRouter(prefix="/api/v1/runs", tags=["Run Intelligence"])
 
 
+# Run ids with a background refresh already scheduled. A stale snapshot is
+# served to every caller until the refresh lands, so without this a popular run
+# schedules one recompute per request and they all race to write the same row.
+_REFRESH_IN_FLIGHT: set[str] = set()
+
+
+async def _refresh_snapshot_after_response(run_id: uuid.UUID) -> None:
+    """Recompute and store the snapshot for ``run_id``. Best-effort, never raises.
+
+    Scheduled when the GET below serves a STALE snapshot. Without it nothing
+    ever cleared the flag: ``get_stale_snapshot`` filters on ``schema_version``
+    and not on ``stale``, the handler returns that row before reaching the live
+    recompute, and ``save_snapshot`` — the only writer that resets
+    ``stale = False`` — was unreachable. There is no TTL, so a QA Lead's
+    ``GO -> NO_GO`` override committed to ``release_decisions`` and this
+    endpoint kept answering ``GO`` indefinitely.
+
+    Runs after the response is sent, on its own session: the request session is
+    closed by then.
+    """
+    key = str(run_id)
+    if key in _REFRESH_IN_FLIGHT:
+        return
+    _REFRESH_IN_FLIGHT.add(key)
+    try:
+        from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+
+        mongo = get_mongo_db()
+        async with _AsyncSessionLocal() as write_db:
+            result = await get_run_intelligence(run_id, write_db, mongo)
+            provenance = result.get("provenance") if isinstance(result, dict) else None
+            fallback = provenance.get("fallback_used", False) if isinstance(provenance, dict) else False
+            await save_snapshot(write_db, run_id, result, fallback_used=fallback)
+    except Exception as exc:  # noqa: BLE001 — a failed refresh must not break the served response
+        logger.warning(
+            "Background intelligence refresh failed for run %s: %s", run_id, exc
+        )
+    finally:
+        _REFRESH_IN_FLIGHT.discard(key)
+
+
 @router.get("/{run_id}/intelligence")
 async def get_run_intelligence_endpoint(
     run_id: uuid.UUID,
     response: Response,
+    background: BackgroundTasks,
     include: str = Query(
         default="",
         description="Comma-separated optional expansions: test_cases,evidence,history",
@@ -128,8 +170,15 @@ async def get_run_intelligence_endpoint(
         )
         if stale and not include_set:
             run_intelligence_requests_total.labels(status="cache_stale").inc()
+            # Serving stale is deliberate — it is a latency trade. Scheduling the
+            # refresh is what makes it a trade rather than a permanent answer.
+            background.add_task(_refresh_snapshot_after_response, run_id)
             if isinstance(stale, dict):
-                stale["_snapshot"] = {"cached": True, "stale": True}
+                stale["_snapshot"] = {
+                    "cached": True,
+                    "stale": True,
+                    "refresh_scheduled": True,
+                }
             return await _with_review(db, response, run_id, stale)
 
         # Cache miss — compute live

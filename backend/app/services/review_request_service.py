@@ -392,6 +392,23 @@ async def settle_review(
             "The person who requested this run cannot review its act-mode proposals.",
         )
 
+    # The subject has to still exist. ``review_requests.pipeline_run_id`` is a
+    # real FK with ``ON DELETE SET NULL``, while ``subject_id`` is a plain
+    # varchar with no FK, so deleting a pipeline run nulls the first, leaves a
+    # dangling id in the second, and the review row survives. This branch used
+    # to be a bare ``if pipeline_run_id is not None``, so settling such a review
+    # skipped the transition and reported success having changed nothing —
+    # the page promises "accepting marks the pipeline run passed" and there was
+    # no run left to mark. Measured on the homelab deployment: 12 of 118
+    # pipeline-run reviews were in this state, and the one review a human had
+    # accepted was one of them (BUG-012).
+    if review.subject_type == "pipeline_run" and review.pipeline_run_id is None:
+        raise ReviewDecisionRefused(
+            409, "subject_run_deleted",
+            "The pipeline run this review describes no longer exists, so "
+            "accepting or rejecting it cannot change anything.",
+        )
+
     if review.pipeline_run_id is not None:
         target = PipelineRunStatus.PASSED if decision == "accepted" else PipelineRunStatus.FAILED
         run_error = None if decision == "accepted" else f"{REVIEW_REJECTED_ERROR_PREFIX}: {reason_code}"
