@@ -14,10 +14,6 @@ export function useProjectMembers(projectId: string | null) {
   )
 }
 
-export function useApiKeys() {
-  return useSWR('/api/v1/keys', userManagementService.listApiKeys)
-}
-
 export function refreshUsers() {
   // Match every users key, not just the bare string. ``useUsers`` keys on
   // ``['/api/v1/users', params]`` once filters are passed, so mutating the
@@ -33,6 +29,8 @@ export function refreshUsers() {
   )
 }
 
-export function refreshApiKeys() {
-  return mutate('/api/v1/keys')
-}
+// ``useApiKeys``/``refreshApiKeys`` used to live here too, keyed on the bare
+// string '/api/v1/keys' while hooks/useApiKeys keys on ['api-keys', projectId].
+// Two key spaces for one resource: neither matcher could match the other's key,
+// so a revoke on one page left the other page listing the revoked key. Both
+// consumers now import from '@/hooks/useApiKeys'.

@@ -316,6 +316,11 @@ async def submit_feedback(
 ):
     result = await feedback_service.submit_feedback(db, analysis_id, body, current_user)
     await db.commit()
+    # AFTER the commit. Evicting from inside the staged service lets a
+    # concurrent reader re-populate the cache from the old committed row, which
+    # then stands for the full TTL — measured live on the feature-flag caches
+    # and fixed there the same way.
+    await feedback_service.evict_corrected_analysis_cache(db, analysis_id, body)
     return result
 
 
@@ -347,6 +352,7 @@ async def update_feedback(
 ):
     result = await feedback_service.update_feedback(db, analysis_id, body, current_user)
     await db.commit()
+    await feedback_service.evict_corrected_analysis_cache(db, analysis_id, body)
     return result
 
 

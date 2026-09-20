@@ -12,6 +12,7 @@ import {
 } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
+import { appMutate } from '@/utils/swrCacheMutate'
 import Field from '@/components/ui/Field'
 
 // MUST stay in step with the LLM_PROVIDER Literal in backend/app/core/config.py.
@@ -294,6 +295,18 @@ export default function AIConfigPage() {
     try {
       const updated = await appSettingsService.updateAIConfig(form)
       setConfig(updated)
+      // This page keeps its own useState copy, loaded by a raw useEffect above
+      // that predates the frontend.swr-only-fetching convention. Everything
+      // ELSE reads 'settings/ai-config' through useAIConfig — Sidebar, ChatPage,
+      // ReleaseGatePage, AgentStatusPage, AgentWorkflowPage — and the
+      // active-tier panel on THIS screen reads useAIModelStatus. Neither was
+      // invalidated, so a saved change sat behind a 60s / 15s poll while the
+      // form showed the new value.
+      //
+      // Converting the page to useAIConfig is the convention-correct fix and a
+      // larger refactor of this form; invalidating is what stops the surfaces
+      // disagreeing today.
+      await Promise.all([appMutate('settings/ai-config'), refreshModelStatus()])
       toast.success('AI configuration saved')
     } catch {
       toast.error('Failed to save AI configuration')

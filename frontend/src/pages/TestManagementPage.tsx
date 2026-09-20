@@ -29,8 +29,7 @@ import { useProjectStore } from '@/store/projectStore'
 import {
   useTestCases, useTestPlans, useStrategies, useAuditLog,
   useTestCaseHistory, useTestCaseReviews, useTestCaseComments,
-  usePlanItems, useUsers, useDuplicateCandidates,
-} from '@/hooks/useTestManagement'
+  usePlanItems, useUsers, useDuplicateCandidates, refreshTestCases } from '@/hooks/useTestManagement'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectMembers } from '@/hooks/useUserManagement'
 import {
@@ -4144,7 +4143,11 @@ export function ReviewsTab({ projectId: _projectId, lifecycleV2 }: ReviewsTabPro
   const isLoading = requestedQuery.isLoading || claimedQuery.isLoading
   const reviewError = requestedQuery.error ?? claimedQuery.error
 
-  const mutateReviews = () => Promise.all([requestedQuery.mutate(), claimedQuery.mutate()])
+  // The two queues AND every tm-cases roll: the library headline, verdict
+  // ribbon and blocker line are derived from a different useTestCases key, and
+  // refreshing only the queues left them stale on the first paint back.
+  const mutateReviews = () =>
+    Promise.all([requestedQuery.mutate(), claimedQuery.mutate(), refreshTestCases()])
 
   async function retryReviews() {
     setQueueRefreshWarning(null)

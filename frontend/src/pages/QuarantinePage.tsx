@@ -61,7 +61,7 @@ export default function QuarantinePage() {
   const [tab, setTab] = useState<Tab>('proposals')
   // US-6.1: quarantine row being filed to Jira via the one-click dialog.
   const [jiraTarget, setJiraTarget] = useState<FlakyQuarantineRead | null>(null)
-  const { stats } = useQuarantineStats(projectId)
+  const { stats, refresh: refreshStats } = useQuarantineStats(projectId)
   const { requests, isLoading, isError, refresh } = useQuarantineList({
     projectId,
     liveOnly: tab !== 'history',
@@ -173,7 +173,11 @@ export default function QuarantinePage() {
                   canAct={hasQaLeadAccess}
                   canFileJira={isQaEngineer}
                   onFileJira={(r) => setJiraTarget(r)}
-                  onRefresh={() => refresh()}
+                  // The stat tiles above the table are a SEPARATE SWR key
+                  // and are on screen at the same time, so approving a row
+                  // updated the row and left the counts beside it disagreeing
+                  // until their own 30s poll landed.
+                  onRefresh={() => Promise.all([refresh(), refreshStats()])}
                 />
               ))}
             </tbody>

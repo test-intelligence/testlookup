@@ -14,7 +14,7 @@ import { useState } from 'react'
 import { Bot, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
-import { useAgentPolicies } from '@/hooks/useAgentGovernance'
+import { useAgentPolicies, refreshAgentGovernance } from '@/hooks/useAgentGovernance'
 import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -262,7 +262,9 @@ export default function AIAgentsPage() {
                 key={`${p.agent_id}:${p.enabled}:${p.mode}:${p.budgets.max_runs_per_day}:${p.budgets.max_llm_calls_per_run}:${p.budgets.max_tokens_per_run}:${p.budgets.max_seconds_per_run}`}
                 policy={p}
                 projectId={scopedProjectId}
-                onSaved={() => void mutate()}
+                // Both keys: the config panel below renders the same document
+                // under a different key and holds the If-Match the next save sends.
+                onSaved={() => void refreshAgentGovernance(projectId)}
               />
             ))
           )}
