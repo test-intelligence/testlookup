@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useProjectStore } from '@/store/projectStore';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
@@ -58,6 +59,23 @@ const EXCLUDABLE_KINDS = [
 export default function PolicyEditorPage() {
   const { policyId } = useParams<{ policyId: string }>();
   const navigate = useNavigate();
+  const projects = useProjectStore((state) => state.projects);
+  /**
+   * Name the project a policy governs, not its id.
+   *
+   * This list used to render `project_id.slice(0, 8)` — three policies for
+   * three different projects, told apart only by comparing hex fragments, on
+   * the one surface whose job is to say which thresholds apply where. The
+   * names are already in the store; `/releases` renders the same relationship
+   * correctly, so this was an inconsistency rather than a data limitation.
+   *
+   * Falls back to the truncated id when the lookup misses, which happens for a
+   * policy on a project the signed-in user cannot see — better a short id than
+   * a blank or a confident wrong name.
+   */
+  const projectLabel = (projectId: string): string =>
+    projects.find((project) => project.id === projectId)?.name
+    ?? `${projectId.slice(0, 8)}...`;
   const isNew = !policyId || policyId === 'new';
 
   // Editor state
@@ -254,7 +272,7 @@ export default function PolicyEditorPage() {
                     </span>
                   </div>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                    {p.project_id ? `Project: ${p.project_id.slice(0, 8)}...` : 'System Default'}
+                    {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
                     {' · '}Created: {new Date(p.created_at).toLocaleDateString()}
                   </p>
                 </div>

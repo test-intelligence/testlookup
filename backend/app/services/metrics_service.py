@@ -1010,17 +1010,35 @@ def classify_with_policy(
     return {"band": band, "verdict": verdict, "downgrades": downgrades}
 
 
-async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) -> dict | None:
-    """Return the active policy document (JSON) for a project, with the
-    standard precedence: project-active → system-default (project_id IS NULL,
-    is_active=True). Returns None when no policy row matches — callers fall
-    back to the hardcoded thresholds. Lean query: no row hydration, just the
-    JSON ``rules`` column."""
+async def _resolve_active_policy_for_project(
+    db: AsyncSession, project_id: str | None
+) -> tuple[dict, str, int, str] | None:
+    """Return ``(rules, policy_id, version, level)`` for the policy in force.
+
+    Standard precedence: project-active → system-default (``project_id IS
+    NULL``, ``is_active=True``). ``level`` is ``"project"`` or ``"system"``
+    accordingly. ``None`` when no policy row matches, which is how callers know
+    to fall back to the hardcoded thresholds.
+
+    The identity is returned alongside the document because a caller that lets
+    a policy change a verdict has to be able to say WHICH policy did it —
+    ``/release-gate`` reported a band-driven ``CONDITIONAL_GO`` while its
+    provenance fields still said ``policy_level: "hardcoded", policy_id: null``
+    (TL-2026-09-19-01-008). Resolving both here keeps one implementation of the
+    precedence rule; a second lookup beside this one would be free to drift
+    from it.
+    """
     from app.models.postgres import ReleaseGatePolicy
+
+    columns = (
+        ReleaseGatePolicy.rules,
+        ReleaseGatePolicy.id,
+        ReleaseGatePolicy.version,
+    )
 
     if project_id:
         result = await db.execute(
-            select(ReleaseGatePolicy.rules)
+            select(*columns)
             .where(
                 ReleaseGatePolicy.project_id == project_id,
                 ReleaseGatePolicy.is_active.is_(True),
@@ -1030,10 +1048,10 @@ async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) 
         )
         row = result.first()
         if row and row[0]:
-            return row[0]
+            return row[0], str(row[1]), int(row[2]), "project"
 
     result = await db.execute(
-        select(ReleaseGatePolicy.rules)
+        select(*columns)
         .where(
             ReleaseGatePolicy.project_id.is_(None),
             ReleaseGatePolicy.is_active.is_(True),
@@ -1042,4 +1060,16 @@ async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) 
         .limit(1)
     )
     row = result.first()
-    return row[0] if row and row[0] else None
+    if row and row[0]:
+        return row[0], str(row[1]), int(row[2]), "system"
+    return None
+
+
+async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) -> dict | None:
+    """The active policy document (JSON) for a project, or ``None``.
+
+    Thin wrapper over :func:`_resolve_active_policy_for_project` so the
+    precedence rule has exactly one implementation.
+    """
+    resolved = await _resolve_active_policy_for_project(db, project_id)
+    return resolved[0] if resolved else None

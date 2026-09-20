@@ -7,7 +7,9 @@ and /overview produce the same colour + verdict for the same project + run:
     recommendations on the GO < CONDITIONAL < NO_GO ladder. Used to layer
     the band-derived verdict over the composite without ever softening.
 
-  * ``_apply_band_floor(db, project_id, recommendation, pass_rate)`` — async.
+  * ``_apply_band_floor(db, project_id, recommendation, pass_rate)`` — async,
+    returning ``(recommendation, band, downgrades, band_policy)`` where
+    ``band_policy`` is ``(policy_id, version, level)`` or ``None``.
     Resolves the active ``ReleaseGatePolicy`` for the project via
     ``metrics_service._resolve_policy_for_project``, counts open CRITICAL
     defects via ``metrics_service.count_open_critical_defects`` (the P0-cap
@@ -82,10 +84,22 @@ def test_worse_verdict_unknown_input_never_softens():
 # ── _apply_band_floor — async, resolves a policy ──────────────────────────
 
 
+POLICY_ID = "11111111-2222-3333-4444-555555555555"
+POLICY_VERSION = 7
+
+
 def _policy_first_result(rules: dict | None):
-    """Match the .first() shape used by _resolve_policy_for_project."""
+    """Match the .first() shape used by ``_resolve_active_policy_for_project``.
+
+    The resolver selects ``(rules, id, version)`` — not just the rules — so the
+    band floor can report WHICH policy produced the band. A single-column row
+    here raises IndexError rather than failing an assertion, so keep this in
+    step with the query.
+    """
     res = MagicMock()
-    res.first = MagicMock(return_value=(rules,) if rules is not None else None)
+    res.first = MagicMock(
+        return_value=(rules, POLICY_ID, POLICY_VERSION) if rules is not None else None
+    )
     return res
 
 
@@ -102,7 +116,7 @@ async def test_band_floor_no_project_returns_input_unchanged():
     a no-op so the legacy verdict is preserved."""
     from app.services.release_council_service import _apply_band_floor
     db = AsyncMock()
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=None, recommendation="GO", pass_rate=99.0,
     )
     assert rec == "GO"
@@ -123,7 +137,7 @@ async def test_band_floor_no_policy_returns_input_unchanged():
         _policy_first_result(None),
         _policy_first_result(None),
     ])
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="CONDITIONAL",
         pass_rate=92.0,
     )
@@ -148,7 +162,7 @@ async def test_band_floor_downgrades_when_band_is_stricter():
     db.execute = AsyncMock(side_effect=[
         _policy_first_result(rules), _critical_count_result(0),
     ])
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
         pass_rate=88.0,
     )
@@ -174,7 +188,7 @@ async def test_band_floor_never_softens_composite():
     db.execute = AsyncMock(side_effect=[
         _policy_first_result(rules), _critical_count_result(0),
     ])
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="NO_GO",
         pass_rate=99.5,
     )
@@ -199,7 +213,7 @@ async def test_band_floor_does_not_soften_conditional_go_in_green_band():
     db.execute = AsyncMock(side_effect=[
         _policy_first_result(rules), _critical_count_result(0),
     ])
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="CONDITIONAL_GO",
         pass_rate=99.5,
     )
@@ -223,7 +237,7 @@ async def test_band_floor_p0_cap_forces_no_go():
     db.execute = AsyncMock(side_effect=[
         _policy_first_result(rules), _critical_count_result(2),
     ])
-    rec, band, downgrades = await _apply_band_floor(
+    rec, band, downgrades, band_policy = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
         pass_rate=99.5,
     )
@@ -247,7 +261,7 @@ async def test_band_floor_returns_downgrade_audit_trail():
     db.execute = AsyncMock(side_effect=[
         _policy_first_result(rules), _critical_count_result(5),
     ])
-    _, _, downgrades = await _apply_band_floor(
+    _, _, downgrades, _ = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
         pass_rate=99.5,
     )

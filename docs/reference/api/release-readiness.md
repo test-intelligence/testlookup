@@ -12,7 +12,7 @@ Retrieve the release readiness decision with full council context:
 dimension scores, linked cluster insights, baseline diff, open defects,
 and override audit trail.
 
-Source: [backend/app/routers/release_readiness.py:43](../../../backend/app/routers/release_readiness.py#L43).
+Source: [backend/app/routers/release_readiness.py:44](../../../backend/app/routers/release_readiness.py#L44).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -113,7 +113,7 @@ Override Release Decision
 Override the AI release decision (QA Lead only).
 Records the override in an immutable audit trail with before/after values.
 
-Source: [backend/app/routers/release_readiness.py:99](../../../backend/app/routers/release_readiness.py#L99).
+Source: [backend/app/routers/release_readiness.py:100](../../../backend/app/routers/release_readiness.py#L100).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
