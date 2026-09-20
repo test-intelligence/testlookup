@@ -5,6 +5,7 @@ import { useUsers, useApiKeys, refreshUsers, refreshApiKeys } from '@/hooks/useU
 import { userManagementService, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAuthStore } from '@/store/authStore'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
@@ -35,6 +36,25 @@ const ROLE_COLORS: Record<UserRole, string> = {
   QA_LEAD: 'bg-[var(--status-broken-bg)]/50 text-[var(--status-broken)]',
   ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
 }
+
+/**
+ * Re-read the signed-in user when the record just written is their own.
+ *
+ * `authStore.user` is client state persisted to localStorage, written only by
+ * `setAuth`/`fetchUser`. `fetchUser`'s single caller is a `ProtectedRoute`
+ * effect keyed on `[hasHydrated]`, which runs once per page load — so without
+ * this the header identity, and `usePermissions()` which reads `user.role`,
+ * keep the pre-edit values for the rest of the session.
+ *
+ * Every self-edit path needs it, not just the modal: the inline role dropdown
+ * and the active/inactive toggle write the same record.
+ */
+async function syncSelfIfEdited(editedUserId: string): Promise<void> {
+  if (editedUserId === useAuthStore.getState().user?.id) {
+    await useAuthStore.getState().fetchUser()
+  }
+}
+
 
 export default function UserManagementPage() {
   const [tab, setTab] = useState<'users' | 'apikeys' | 'project-members'>('users')
@@ -106,6 +126,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
     try {
       await userManagementService.updateUserRole(userId, role)
       refreshUsers()
+      // Changing your OWN role from the inline dropdown: usePermissions()
+      // reads authStore.user.role, so without this every permission gate keeps
+      // the old role for the session.
+      await syncSelfIfEdited(userId)
       toast.success('Role updated')
     } catch {
       toast.error('Failed to update role')
@@ -116,6 +140,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
     try {
       await userManagementService.updateUserStatus(userId, !currentActive)
       refreshUsers()
+      await syncSelfIfEdited(userId)
       toast.success(currentActive ? 'User deactivated' : 'User activated')
     } catch {
       toast.error('Failed to update status')
@@ -307,6 +332,13 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
       if (Object.keys(updates).length > 0) {
         await userManagementService.updateUserProfile(user.id, updates as Parameters<typeof userManagementService.updateUserProfile>[1])
         refreshUsers()
+        // Editing YOURSELF also has to refresh the identity the header renders.
+        // `authStore.user` is client state, not an SWR key: it is written only
+        // by setAuth/fetchUser, and fetchUser's single caller is a
+        // ProtectedRoute effect keyed on [hasHydrated], which runs once per
+        // page load. The store persists `user` to localStorage, so the old
+        // name survives navigation and only a hard reload clears it.
+        await syncSelfIfEdited(user.id)
         toast.success('User updated')
       } else {
         toast('No changes to save')

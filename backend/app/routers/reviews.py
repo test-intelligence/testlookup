@@ -249,6 +249,13 @@ async def list_reviews(
 ):
     """The project's review queue, newest first. ``?state=pending_review`` for the open queue."""
     stmt = select(ReviewRequest).where(ReviewRequest.project_id == project_id)
+    # Never offer a review whose subject is gone. ``pipeline_run_id`` is an FK
+    # with ``ON DELETE SET NULL``; ``subject_id`` is a plain varchar with no FK,
+    # so a deleted pipeline run leaves the review row behind pointing at an id
+    # that resolves to nothing. Settling one cannot change any run, and
+    # ``settle_review`` now refuses it outright — so surfacing it here only
+    # offers the user an action that is guaranteed to fail (BUG-012).
+    stmt = stmt.where(review_request_service.subject_still_exists())
     if state:
         stmt = stmt.where(ReviewRequest.state == state)
     rows = (

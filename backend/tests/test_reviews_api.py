@@ -378,10 +378,35 @@ async def test_blank_notes_are_stored_as_none(transitions):
 
 
 @pytest.mark.asyncio
-async def test_a_review_whose_run_was_deleted_still_settles(transitions):
+async def test_a_review_whose_run_was_deleted_is_refused(transitions):
+    """Behaviour CHANGED 2026-09-19 (BUG-012), by owner decision.
+
+    This test previously asserted the opposite — ``..._still_settles``: a
+    review whose ``pipeline_run_id`` had been nulled settled to ``accepted``
+    with no transition. It carried no rationale, and the reading that it was
+    deliberate housekeeping (let a human clear an orphan out of the queue) is
+    plausible.
+
+    It was also how the user hit BUG-012. ``review_requests.pipeline_run_id``
+    is an FK with ``ON DELETE SET NULL`` while ``subject_id`` is a plain
+    varchar with no FK, so deleting a pipeline run leaves the review behind
+    pointing at nothing. On the homelab deployment 12 of 118 pipeline-run
+    reviews were in that state, and the single review a human had accepted was
+    one of them. The page promises "Accepting marks the pipeline run passed";
+    for these there is no run to mark, so the accept reported success and
+    changed nothing.
+
+    The queue no longer offers orphans (``list_reviews`` filters them), so the
+    housekeeping the old behaviour provided is no longer needed — there is
+    nothing to clear. Settling one now fails loudly instead of quietly.
+    """
     review = _review(pipeline_run_id=None, subject_id="gone")
-    await svc.settle_review(_DB(), review=review, reviewer=_user(), decision="accepted")
-    assert transitions == [] and review.state == "accepted"
+    with pytest.raises(svc.ReviewDecisionRefused) as exc:
+        await svc.settle_review(_DB(), review=review, reviewer=_user(), decision="accepted")
+    assert exc.value.status_code == 409
+    assert exc.value.code == "subject_run_deleted"
+    assert transitions == []
+    assert review.state == "pending_review", "the refused review must stay in the queue state"
 
 
 def test_the_api_reason_codes_match_the_database_vocabulary():

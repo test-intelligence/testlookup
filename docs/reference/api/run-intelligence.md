@@ -20,7 +20,7 @@ Response includes:
 - classified_new_failures (new failures enriched with their cluster classification)
 - suites_impacted_delta, current_suite_count, baseline_suite_count
 
-Source: [backend/app/routers/run_intelligence.py:265](../../../backend/app/routers/run_intelligence.py#L265).
+Source: [backend/app/routers/run_intelligence.py:340](../../../backend/app/routers/run_intelligence.py#L340).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -114,7 +114,7 @@ List Run Decision Reports
 
 List immutable published DecisionReport versions for an authorized run.
 
-Source: [backend/app/routers/run_intelligence.py:185](../../../backend/app/routers/run_intelligence.py#L185).
+Source: [backend/app/routers/run_intelligence.py:260](../../../backend/app/routers/run_intelligence.py#L260).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -222,7 +222,7 @@ Export a customer-facing intelligence report as a structured JSON payload.
 Combines: run summary, structured AI analysis, baseline diff, release decision,
 criticality dimensions, role actions, and provenance — in a single downloadable document.
 
-Source: [backend/app/routers/run_intelligence.py:338](../../../backend/app/routers/run_intelligence.py#L338).
+Source: [backend/app/routers/run_intelligence.py:413](../../../backend/app/routers/run_intelligence.py#L413).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -338,14 +338,14 @@ Aggregates:
 - Pipeline stage history with skip context
 - Provenance (schema_version, fallback_used, tools_used_count)
 
-Source: [backend/app/routers/run_intelligence.py:78](../../../backend/app/routers/run_intelligence.py#L78).
+Source: [backend/app/routers/run_intelligence.py:135](../../../backend/app/routers/run_intelligence.py#L135).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, response: Response, include: str=Query(default='', description='Comma-separated optional expansions: test_cases,evidence,history'), report_version: int | None=Query(default=None, ge=1, description='Immutable DecisionReport version to display; omitted means latest'), db: Any=Depends(get_db), _: Any=Depends(require_run_access())
+run_id: uuid.UUID, response: Response, background: BackgroundTasks, include: str=Query(default='', description='Comma-separated optional expansions: test_cases,evidence,history'), report_version: int | None=Query(default=None, ge=1, description='Immutable DecisionReport version to display; omitted means latest'), db: Any=Depends(get_db), _: Any=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -467,7 +467,7 @@ Force-refresh the intelligence snapshot for a run.
 Invalidates the cached snapshot and recomputes from live data.
 Returns the fresh intelligence payload.
 
-Source: [backend/app/routers/run_intelligence.py:298](../../../backend/app/routers/run_intelligence.py#L298).
+Source: [backend/app/routers/run_intelligence.py:373](../../../backend/app/routers/run_intelligence.py#L373).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -567,7 +567,7 @@ Return a mode-specific AI-generated summary.
 Falls back to a deterministic PostgreSQL-derived summary when the AI pipeline
 has not yet produced a MongoDB document for this run.
 
-Source: [backend/app/routers/run_intelligence.py:230](../../../backend/app/routers/run_intelligence.py#L230).
+Source: [backend/app/routers/run_intelligence.py:305](../../../backend/app/routers/run_intelligence.py#L305).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

@@ -296,7 +296,7 @@ pipeline *card*, and the user is describing the run selector. Confirm which
 control is involved before changing anything, and add a live probe assertion so
 the next "fixed" is evidence rather than inference.
 
-### BUG-012 — `/agents` still shows "awaiting review" after the pipeline is accepted on `/reviews`  ·  S2  ·  **OPEN — reported 2026-09-19**
+### BUG-012 — `/agents` still shows "awaiting review" after the pipeline is accepted on `/reviews`  ·  S2  ·  **FIXED 2026-09-19** on `fix/stale-state-bugs-2026-09-19`
 
 - Reported by: **user**, against `http://testlookup.local/agents`
 - "When a pipeline is accepted in the review in the page
@@ -322,3 +322,89 @@ Note the precedent from BUG-011: the previous "same page, same symptom" report
 turned out to be a *different control* from the one already fixed. Confirm which
 status field the badge actually reads before assuming the accept path is wrong,
 and add a live assertion so "fixed" is evidence rather than inference.
+
+---
+
+## BUG-012 — resolved: the accept path was never broken, the subject was missing
+
+Diagnosed against live homelab data, not from source. The three shapes listed
+above were all wrong, and the real cause was none of them.
+
+`POST /reviews/{id}/accept` **does** transition `agent_pipeline_runs.status`
+(`review_request_service.settle_review` → `guarded_transition`), and `/agents`
+reads that same column. No stale field, no missing invalidation.
+
+The review's *subject* had been deleted. `review_requests.pipeline_run_id` is an
+FK with `ON DELETE SET NULL`; `subject_id` is a plain `varchar` with **no FK**.
+Deleting a pipeline run nulls the first, leaves a dangling id in the second, and
+the review row survives in the queue. `settle_review` guarded its transition
+with a bare `if pipeline_run_id is not None`, so settling such a review skipped
+the transition and reported success having changed nothing.
+
+Measured on the deployment:
+
+| `pipeline_run_id IS NULL` | subject is a real pipeline | count |
+|---|---|---|
+| false | yes | 106 |
+| true | **no** | **12** |
+
+No exceptions either way, and the single review a human had accepted was one of
+the twelve — which is why the report was reproducible but the code looked right.
+
+**Fixed** (owner decision): settling an orphan now fails loudly with
+`409 subject_run_deleted`, and `list_reviews` filters orphans out of the queue.
+This reverses a previously pinned behaviour — `test_a_review_whose_run_was_deleted_still_settles`
+asserted the silent settle, with no rationale; the replacement carries one.
+
+The 12 existing orphan rows are left in place. They no longer surface.
+
+---
+
+## Open findings from the 2026-09-19 stale-state sweep (not yet fixed)
+
+Found while scanning for this bug class. Confirmed by tracing both sides;
+**not** fixed on the BUG-012 branch, which was scoped to defects that never
+self-heal.
+
+**Backend**
+
+- **Shared report links and compliance evidence bundles ignore snapshot
+  staleness entirely** (`report_composition_service.py:85-93`,
+  `evidence_bundle_service.py:41-56` — no `stale` and no `schema_version`
+  predicate). The background refresh added for `/intelligence` converges the
+  API; these two paths can still serve a pre-override verdict to an external
+  reader or an auditor. **Highest remaining value.**
+- **Correcting an AI classification never invalidates the run snapshot**
+  (`feedback_service.py:46-54`). The corrected category shows on `/analyze` and
+  nowhere else.
+- **`PUT /feedback/{analysis_id}` is asymmetric with `POST`**
+  (`feedback_service.py:284-304`): it writes the `AIFeedback` row only — never
+  applies `corrected_category` to `AIAnalysis`, never resets
+  `requires_human_review`, never evicts the semantic cache. Editing a correction
+  makes the training label diverge from every product surface.
+- **Semantic-cache eviction runs before the commit** (`feedback_service.py:50-54`
+  vs the router commit at `feedback.py:318`) — the exact ordering this codebase
+  documents and fixed at `app_settings.py:578-584`.
+- `test_bl03_snapshot_freshness.py` is **vacuous** — e.g.
+  `action = "mark_stale"; assert action == "mark_stale"`. It is the named guard
+  for the snapshot-freshness contract and tests nothing, which is why the
+  permanent-staleness defect survived.
+
+**Frontend** (all self-heal on a poll or a route unmount, so they are a stale
+first paint rather than a durable lie)
+
+- Quarantine approve/reject/release refreshes the table but not the stat tiles
+  above it (30 s poll).
+- Two `useApiKeys`/`refreshApiKeys` pairs over disjoint key spaces for one
+  `/api/v1/keys` resource — neither matcher can ever match the other's key.
+- Per-row "Dismiss" refreshes the log list but not the unread badge, while the
+  sibling `handleMarkAll` in the same component does it correctly.
+- `/settings/ai-agents` renders one agent config twice under two keys; beyond
+  the display mismatch the panel then sends a stale `If-Match`, so the **next**
+  save is rejected on a precondition the user cannot see.
+- `/settings/ai-config` saves into `useState`, bypassing SWR against the
+  `frontend.swr-only-fetching` convention; the shared `settings/ai-config` key
+  waits a 60 s poll.
+- Reviews-tab actions leave the library's "N awaiting review" headline on a
+  different `tm-cases` key.
+

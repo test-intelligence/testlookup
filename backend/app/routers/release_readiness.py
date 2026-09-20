@@ -132,12 +132,18 @@ async def override_release_decision(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No release decision found for this run.",
             )
-        # BL-03: Mark intelligence snapshot stale after release override.
-        # ``apply_override`` and ``mark_stale`` both stage-only now, so a
-        # single commit below makes the override + staleness flip atomic.
+        # BL-03: drop the intelligence snapshot after a release override.
+        # ``apply_override`` and ``stage_invalidate`` are both stage-only, so
+        # the single commit below keeps the override and the invalidation
+        # atomic.
+        #
+        # DELETE, not mark-stale. A human has just written GO -> NO_GO; a row
+        # still saying GO must not be servable at all. Marking it stale leaves
+        # it servable until a background refresh converges, and handing a
+        # superseded GO to even one CI poller is exactly the defect.
         try:
-            from app.services.intelligence_snapshot_service import mark_stale
-            await mark_stale(db, run_id)
+            from app.services.intelligence_snapshot_service import stage_invalidate
+            await stage_invalidate(db, run_id)
         except Exception:
             pass  # Non-blocking
         await db.commit()

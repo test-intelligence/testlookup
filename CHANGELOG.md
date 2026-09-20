@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased - Writes that reported success and changed nothing
+
+A sweep for one defect class, prompted by a user report: *an action succeeds and
+the displayed data does not update.*
+
+**`POST /reviews/{id}/accept` could silently do nothing.** BREAKING for that
+endpoint: it now returns **409 `subject_run_deleted`** where it previously
+returned 200. `review_requests.pipeline_run_id` is an FK with
+`ON DELETE SET NULL` while `subject_id` is an unconstrained varchar, so deleting
+a pipeline run nulls the first, leaves a dangling id in the second, and the
+review survives. `settle_review` guarded its status transition with a bare
+`if pipeline_run_id is not None`, so settling such a review skipped the
+transition and reported success. Measured on a live deployment: 12 of 118
+pipeline-run reviews, and the only review a human had accepted was one of them.
+The accept path itself was never broken — the subject was missing.
+
+A review whose subject is gone is now excluded from the queue *and* from
+`review_envelope_for_run`, through one shared predicate
+(`review_request_service.subject_still_exists`). Filtering only the queue would
+have hidden the row from the one surface an operator can see while it still
+withheld that run's export and release narrative permanently — the same
+two-readers-one-fact shape being fixed. This reverses `test_a_review_whose_run_was_deleted_still_settles`,
+which pinned the silent settle without a rationale.
+
+**A stale run-intelligence snapshot was served forever.** `get_stale_snapshot`
+filtered on `schema_version` and not on `stale`, the handler returned that row
+before the live recompute, and `save_snapshot` — the only writer that clears the
+flag — sat after the return. With no TTL, a QA Lead's committed `GO -> NO_GO`
+override left `GET /runs/{id}/intelligence` answering `GO` indefinitely.
+Serving stale remains (a deliberate latency trade); the refresh that makes it a
+trade is now scheduled after the response, on its own session, bounded by a
+semaphore because the production pool is 2 connections + 1 overflow per worker.
+A release override now *deletes* the snapshot (`stage_invalidate`, stage-only so
+it stays atomic with the override) rather than marking it stale: a superseded
+`GO` must not be servable even once.
+
+**Four frontend writes updated one surface and left its sibling stale** — a
+feature-flag toggle that never reached the key the app gates on, the CODEOWNERS
+coverage badge, release detail, and your own identity in the header.
+
+Underneath them was a bigger one: **`main.tsx` supplies `provider: () => new Map()`,
+so the `mutate` exported by the `swr` module is bound to a different, empty
+cache.** Every module-scope helper built on it matched nothing —
+`refreshUsers()` and `refreshApiKeys()` have never worked. `SwrMutateBridge`
+now publishes the provider-bound mutate and `utils/swrCacheMutate.appMutate`
+delegates to it. Invalidation uses the single-argument `mutate(matcher)`: the
+three-argument form writes `undefined` into every matched key first, which
+blinks every gated surface off and back on.
+
 ## Unreleased - Documentation-only changes no longer run the test suite
 
 A PR that touches nothing but prose used to run all ~17 CI jobs — the backend

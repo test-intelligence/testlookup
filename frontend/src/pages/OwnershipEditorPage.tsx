@@ -75,7 +75,13 @@ export default function OwnershipEditorPage() {
       setTeamName('');
       setTeamContact('');
       setPriority(0);
-      refresh();
+      // The coverage badge above this table is a SEPARATE SWR key
+      // (['codeowners-coverage', projectId]) with no poll and no focus
+      // revalidation, and this page does not unmount while you edit. Refreshing
+      // only the rule list left the badge quoting coverage computed from rules
+      // that no longer exist. The CODEOWNERS import path already pairs these
+      // two; the three rule mutations did not.
+      await Promise.all([refresh(), refreshCoverage()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create rule');
     }
@@ -85,7 +91,7 @@ export default function OwnershipEditorPage() {
     if (!projectId) return;
     try {
       await updateOwnershipRule(projectId, rule.id, { is_active: !rule.is_active });
-      refresh();
+      await Promise.all([refresh(), refreshCoverage()]);
     } catch {
       toast.error('Failed to toggle rule');
     }
@@ -96,7 +102,7 @@ export default function OwnershipEditorPage() {
     try {
       await deleteOwnershipRule(projectId, ruleId);
       toast.success('Rule deleted');
-      refresh();
+      await Promise.all([refresh(), refreshCoverage()]);
     } catch {
       toast.error('Failed to delete rule');
     }

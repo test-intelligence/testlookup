@@ -1,4 +1,5 @@
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate as mutate } from '@/utils/swrCacheMutate'
 import { userManagementService, type UserRole } from '@/services/userManagementService'
 
 export function useUsers(params?: { is_active?: boolean; role?: UserRole; page_size?: number }) {

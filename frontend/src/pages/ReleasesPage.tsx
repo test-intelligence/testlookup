@@ -6,6 +6,7 @@ import {
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { appMutate } from '@/utils/swrCacheMutate'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -797,7 +798,20 @@ export default function ReleasesPage() {
           projectId={projectId}
           initial={editRelease}
           onClose={() => { setShowModal(false); setEditRelease(undefined) }}
-          onSaved={() => refetch()}
+          // Key off the release that was EDITED, not off the route.
+          //
+          // `refetch` is the list mutator. The detail data lives under
+          // ['release-detail', id] and is read by two different things: the
+          // routed /releases/:id view AND `ReleaseDetailPanel` inside an
+          // expanded row on the list route. Refreshing only the routed one
+          // fixes the first and leaves the second stale — including the name
+          // it passes to CompliancePackPanel — because that key is
+          // revalidateOnFocus:false with no interval and the panel does not
+          // unmount while the modal is open.
+          onSaved={() => Promise.all([
+            refetch(),
+            editRelease ? appMutate(['release-detail', editRelease.id]) : Promise.resolve(),
+          ])}
         />
       )}
 

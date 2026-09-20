@@ -286,6 +286,42 @@ async def mark_stale(
     return False
 
 
+async def stage_invalidate(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+) -> bool:
+    """Delete the snapshot, leaving the mutation PENDING for the caller to commit.
+
+    ``invalidate`` commits; ``mark_stale`` is stage-only. Neither fits a human
+    release override, which needs both properties at once:
+
+    * it must land in the same transaction as the override itself, so a
+      rolled-back override cannot drop a valid snapshot (rules out
+      ``invalidate``);
+    * it must leave NOTHING servable behind, so the next read is forced to
+      recompute rather than being handed the superseded verdict (rules out
+      ``mark_stale``).
+
+    Marking stale is right for cheap, automatic staleness such as defect
+    promotion, where serving a slightly old payload while a refresh converges
+    is a fair latency trade. It is wrong here: a QA Lead has just written
+    ``GO -> NO_GO`` and the stale row still says ``GO``. Serving that even once,
+    to one CI poller, is the whole defect — reducing the window from "forever"
+    to "one request" would not be a fix for a release gate.
+    """
+    result = await db.execute(
+        delete(RunIntelligenceSnapshot).where(
+            RunIntelligenceSnapshot.run_id == run_id,
+        )
+    )
+    # ``Result`` does not declare ``rowcount`` (only ``CursorResult`` does), so
+    # reading it directly is two mypy errors: an unknown attribute and an Any
+    # return. The sibling ``invalidate`` below carries both in the baseline;
+    # this one does not add to it.
+    deleted: int = getattr(result, "rowcount", 0) or 0
+    return deleted > 0
+
+
 async def invalidate(
     db: AsyncSession,
     run_id: uuid.UUID,
