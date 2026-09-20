@@ -15,7 +15,7 @@ import { useState } from 'react'
 import { AlertTriangle, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
-import { useAgentConfigs } from '@/hooks/useAgentGovernance'
+import { useAgentConfigs, refreshAgentGovernance } from '@/hooks/useAgentGovernance'
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { agentLabel, saveErrorLines } from '@/utils/agentConfig'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -445,7 +445,9 @@ export default function AgentConfigPanel({ projectId }: { projectId: string }) {
             view={active}
             tools={tools}
             projectId={projectId}
-            onSaved={() => void mutate()}
+            // Both keys: the policy cards above render the same document under
+            // a different key, and a stale card poisons this panel's If-Match.
+            onSaved={() => void refreshAgentGovernance(projectId)}
           />
         </>
       )}

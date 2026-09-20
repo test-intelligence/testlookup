@@ -13,6 +13,12 @@ import type { AgentConfigDocument, AgentConfigView } from '@/types/agentConfig'
 
 vi.mock('@/hooks/useAgentGovernance', () => ({
   useAgentConfigs: vi.fn(),
+  // Revalidation moved to this shared helper (2026-09-20). The panel and the
+  // policy cards above it read ONE AgentConfig document under two SWR keys, and
+  // each used to refresh only its own -- so the page showed the same config
+  // twice with two answers, and the panel then sent an If-Match from its stale
+  // cache, making the NEXT save fail on a precondition the user cannot see.
+  refreshAgentGovernance: vi.fn(),
 }))
 
 vi.mock('@/services/agentGovernanceService', () => ({
@@ -160,7 +166,8 @@ describe('AgentConfigPanel', () => {
         budget: { ...base.budget, max_cost_usd_per_run: 1.25 },
       }, 0),
     )
-    await waitFor(() => expect(mutate).toHaveBeenCalled())
+    const { refreshAgentGovernance } = await import('@/hooks/useAgentGovernance')
+    await waitFor(() => expect(refreshAgentGovernance).toHaveBeenCalled())
   })
 
   it('shows the attempts x timeout arithmetic as it is edited', async () => {
@@ -205,7 +212,8 @@ describe('AgentConfigPanel', () => {
     expect(await screen.findByText(/The server refused this configuration/)).toBeInTheDocument()
     expect(screen.getByText(/10 x 300 = 3000 s/)).toBeInTheDocument()
     expect(screen.getByLabelText('Max attempts')).toHaveValue(10)
-    expect(mutate).not.toHaveBeenCalled()
+    const { refreshAgentGovernance } = await import('@/hooks/useAgentGovernance')
+    expect(refreshAgentGovernance).not.toHaveBeenCalled()
   })
 
   it('warns when the stored configuration no longer validates', async () => {

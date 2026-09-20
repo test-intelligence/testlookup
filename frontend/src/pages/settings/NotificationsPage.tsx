@@ -761,7 +761,12 @@ function HistoryPanel() {
                 <button
                   onClick={async () => {
                     await notificationService.markRead(log.id)
+                    // Same fan-out as handleMarkAll above. refreshLogs only
+                    // touches ['notifications/history', false]; the unread
+                    // badge lives on 'notifications/unread' in TopBar, which is
+                    // part of the persistent layout and never unmounts.
                     refreshLogs()
+                    await invalidateNotifications()
                   }}
                   className="shrink-0 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >

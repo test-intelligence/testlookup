@@ -71,3 +71,40 @@ describe('UserManagementPage — editing yourself changes the header identity', 
     expect(calls.length).toBe(4) // 1 definition + 3 call sites
   })
 })
+
+describe('QuarantinePage — the stat tiles sit above the table being acted on', () => {
+  const src = source('QuarantinePage.tsx')
+
+  it('every row action refreshes the tiles too', () => {
+    expect(src).toContain('refresh: refreshStats')
+    expect(src).toContain('Promise.all([refresh(), refreshStats()])')
+  })
+})
+
+describe('NotificationsPage — the unread badge lives in the persistent TopBar', () => {
+  const src = source('settings/NotificationsPage.tsx')
+
+  it('the per-row dismiss fans out like handleMarkAll does', () => {
+    // handleMarkAll already called invalidateNotifications; the per-row handler
+    // in the same component did not, so the badge kept the old count.
+    const calls = src.match(/invalidateNotifications\(\)/g) ?? []
+    expect(calls.length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe('AIConfigPage — five other surfaces read the shared key', () => {
+  const src = source('settings/AIConfigPage.tsx')
+
+  it('saving invalidates the shared key and the active-tier panel', () => {
+    expect(src).toContain("appMutate('settings/ai-config')")
+    expect(src).toContain('refreshModelStatus()')
+  })
+})
+
+describe('TestManagementPage — the review headline is a different tm-cases roll', () => {
+  const src = source('TestManagementPage.tsx')
+
+  it('mutateReviews refreshes every tm-cases key, not just its two queues', () => {
+    expect(src).toContain('refreshTestCases()')
+  })
+})

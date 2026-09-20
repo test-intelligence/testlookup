@@ -9,6 +9,26 @@ import type {
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+import { appMutate } from '@/utils/swrCacheMutate'
+
+/**
+ * Revalidate every `tm-cases` roll, whatever its params.
+ *
+ * `useTestCases` is called with three different param sets on this page, and
+ * three param sets are three different SWR keys. The page already knew that in
+ * one place — `handleRefresh` deliberately pairs the table with the
+ * library-health roll — but the Reviews tab's `mutateReviews` only refreshed
+ * its own two queues, so acting on a review left the "N awaiting review"
+ * headline, the verdict ribbon and the blocker line computed from a roll
+ * nobody had invalidated.
+ *
+ * `appMutate`, not the `swr` module's mutate: this app supplies its own cache
+ * provider (see `utils/swrCacheMutate`).
+ */
+export function refreshTestCases() {
+  return appMutate((key) => Array.isArray(key) && key[0] === 'tm-cases')
+}
+
 
 export function useTestCases(params?: Record<string, unknown>) {
   return useProjectScopedSWR(
