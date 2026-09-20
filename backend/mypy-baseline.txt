@@ -79,7 +79,7 @@
 2 app/services/llm_cost_budget.py
 2 app/services/llm_factory.py
 1 app/services/local_embedder_guard.py
-2 app/services/metrics_service.py
+1 app/services/metrics_service.py
 1 app/services/ml/classifier.py
 1 app/services/ml/flaky_confidence.py
 1 app/services/notification/email_service.py
