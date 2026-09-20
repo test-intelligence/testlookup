@@ -314,7 +314,12 @@ async def stage_invalidate(
             RunIntelligenceSnapshot.run_id == run_id,
         )
     )
-    return result.rowcount > 0
+    # ``Result`` does not declare ``rowcount`` (only ``CursorResult`` does), so
+    # reading it directly is two mypy errors: an unknown attribute and an Any
+    # return. The sibling ``invalidate`` below carries both in the baseline;
+    # this one does not add to it.
+    deleted: int = getattr(result, "rowcount", 0) or 0
+    return deleted > 0
 
 
 async def invalidate(
