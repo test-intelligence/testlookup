@@ -3464,10 +3464,24 @@ class ReleaseCouncilResponse(BaseModel):
     # Test run context
     pass_rate: Optional[float] = None
     build_number: Optional[str] = None
-    # Policy context (ENT-02)
+    # Policy context (ENT-02). These describe the STORED decision — what the
+    # release-risk agent used when it wrote the row. They are not necessarily
+    # the provenance of ``recommendation`` below; see ``band_policy_*``.
     policy_id: Optional[str] = None
     policy_version: Optional[int] = None
     policy_level: Optional[str] = None  # "project" | "system" | "hardcoded"
+    # The policy applied at READ time, which produced ``release_readiness_band``
+    # and may have downgraded ``recommendation``.
+    #
+    # Publishing a policy was measured moving a live run from GO to
+    # CONDITIONAL_GO while the three fields above still reported
+    # ``policy_level: "hardcoded"`` with a null ``policy_id`` — accurate about
+    # the stored decision, and the wrong answer to "which policy produced this
+    # verdict" (TL-2026-09-19-01-008). ``None`` when no policy is active, which
+    # is also when ``release_readiness_band`` is ``None``.
+    band_policy_id: Optional[str] = None
+    band_policy_version: Optional[int] = None
+    band_policy_level: Optional[str] = None  # "project" | "system"
     rule_evaluations: List["RuleEvaluationResponse"] = []
     # Synthesised quick-look response — when True, this council view was
     # derived from the run's aggregates because no ReleaseDecision row

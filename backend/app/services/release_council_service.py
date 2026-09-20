@@ -84,7 +84,7 @@ async def _apply_band_floor(
     project_id: Optional[uuid.UUID],
     recommendation: str,
     pass_rate: float,
-) -> tuple[str, Optional[str], list[str]]:
+) -> tuple[str, Optional[str], list[str], Optional[tuple[str, int, str]]]:
     """Layer the project's ``PolicyPassRateBands`` over the composite verdict.
 
     "Fail-closed" semantics: if the band-derived verdict is *stricter* than
@@ -95,8 +95,19 @@ async def _apply_band_floor(
 
     The band classifier mirrors what ``metrics_service.classify_with_policy``
     uses for /overview, so both pages produce the same colour for the same
-    project + run. Returns ``(final_recommendation, band, downgrades)``;
-    ``band`` is ``None`` and ``downgrades`` is empty when no policy is active.
+    project + run. Returns
+    ``(final_recommendation, band, downgrades, band_policy)`` where
+    ``band_policy`` is ``(policy_id, version, level)`` for the policy that
+    produced the band, or ``None``. ``band`` is ``None`` and ``downgrades`` is
+    empty when no policy is active.
+
+    The identity is returned because this function can CHANGE the verdict. It
+    did so on a live deployment — a published policy moved ``GO`` to
+    ``CONDITIONAL_GO`` — while the response still reported
+    ``policy_level: "hardcoded"`` with a null ``policy_id``, because those
+    fields describe the STORED decision and this floor is applied at read time
+    (TL-2026-09-19-01-008). A caller that lets a policy move a ship decision
+    has to be able to name the policy.
 
     The open-CRITICAL defect count for the ``max_p0_defects`` hard cap is
     resolved here via the shared ``count_open_critical_defects`` helper rather
@@ -105,7 +116,7 @@ async def _apply_band_floor(
     zero respectively, so the cap either over-counted or never fired.
     """
     if project_id is None:
-        return recommendation, None, []
+        return recommendation, None, [], None
 
     # Local import to keep release_council_service free of metrics-service
     # coupling at module level — _resolve_policy_for_project also depends on
@@ -113,14 +124,15 @@ async def _apply_band_floor(
     # policy_id / policy_version fields. Both services live downstream of
     # the same data, so this is safe.
     from app.services.metrics_service import (
-        _resolve_policy_for_project,
+        _resolve_active_policy_for_project,
         classify_with_policy,
         count_open_critical_defects,
     )
 
-    policy_doc = await _resolve_policy_for_project(db, str(project_id))
-    if policy_doc is None:
-        return recommendation, None, []
+    resolved = await _resolve_active_policy_for_project(db, str(project_id))
+    if resolved is None:
+        return recommendation, None, [], None
+    policy_doc, band_policy_id, band_policy_version, band_policy_level = resolved
 
     bands = policy_doc.get("pass_rate_bands") or {}
     caps = policy_doc.get("hard_caps") or {}
@@ -142,7 +154,12 @@ async def _apply_band_floor(
     # canonical (CONDITIONAL_GO, not the band's CONDITIONAL).
     band_verdict = _normalize_verdict(classified["verdict"])
     final = _worse_verdict(recommendation, band_verdict)
-    return final, classified["band"], classified["downgrades"]
+    return (
+        final,
+        classified["band"],
+        classified["downgrades"],
+        (band_policy_id, band_policy_version, band_policy_level),
+    )
 
 
 def _build_dimension_scores(scores_dict: Optional[dict]) -> list[DimensionScore]:
@@ -346,7 +363,7 @@ async def _synthesize_release_council(
     # Layer the active ReleaseGatePolicy's pass-rate bands over the composite
     # so /release-gate honours the same colours /overview renders. Fail-closed:
     # the band can downgrade the verdict but never soften it.
-    recommendation, band, band_downgrades = await _apply_band_floor(
+    recommendation, band, band_downgrades, band_policy = await _apply_band_floor(
         db, run.project_id, recommendation, pass_rate,
     )
 
@@ -405,6 +422,12 @@ async def _synthesize_release_council(
         pass_rate=pass_rate,
         build_number=run.build_number,
         policy_level="hardcoded",
+        # No stored decision on this path, so ``policy_level`` is honestly
+        # "hardcoded" — but the band floor above may still have applied a
+        # policy and changed the verdict, so name it.
+        band_policy_id=band_policy[0] if band_policy else None,
+        band_policy_version=band_policy[1] if band_policy else None,
+        band_policy_level=band_policy[2] if band_policy else None,
         rule_evaluations=[],
         synthesized=True,
     )
@@ -531,11 +554,14 @@ async def get_release_council(
     final_recommendation = decision.recommendation
     band: Optional[str] = None
     band_downgrades: list[str] = []
+    # Initialised here, not only inside the branch below: an overridden
+    # decision skips the band floor entirely, and the response reads this.
+    band_policy: Optional[tuple[str, int, str]] = None
     if decision.human_override is None:
         # The open-CRITICAL defect count for the P0 hard cap is resolved
         # inside _apply_band_floor via the shared helper — the old inline
         # ``severity == "P0"`` count matched nothing, so the cap never fired.
-        final_recommendation, band, band_downgrades = await _apply_band_floor(
+        final_recommendation, band, band_downgrades, band_policy = await _apply_band_floor(
             db, project_id, decision.recommendation, run.pass_rate if run else 0.0,
         )
 
@@ -567,6 +593,12 @@ async def get_release_council(
         policy_id=policy_id,
         policy_version=policy_version,
         policy_level=policy_level,
+        # The policy that produced ``release_readiness_band`` and may have
+        # downgraded ``recommendation`` above. Distinct from ``policy_*``,
+        # which describes the STORED decision as the agent wrote it.
+        band_policy_id=band_policy[0] if band_policy else None,
+        band_policy_version=band_policy[1] if band_policy else None,
+        band_policy_level=band_policy[2] if band_policy else None,
         release_readiness_band=band,
         band_downgrades=band_downgrades,
         rule_evaluations=rule_evaluations,

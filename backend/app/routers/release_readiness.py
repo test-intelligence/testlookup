@@ -19,6 +19,7 @@ from app.models.schemas import (
     ReleaseCouncilOverrideRequest,
     ReleaseCouncilResponse,
 )
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.release_council_service import apply_override, get_release_council
 
 logger = logging.getLogger("routers.release_readiness")
@@ -146,6 +147,46 @@ async def override_release_decision(
             await stage_invalidate(db, run_id)
         except Exception:
             pass  # Non-blocking
+
+        # The activity ledger is the cross-cutting "what happened in this
+        # project" record, and a QA Lead reversing the product's own ship
+        # recommendation is the action most likely to be asked about later. It
+        # was the one release action missing from that ledger: the catalog has
+        # declared ``release.decision_overridden`` all along and nothing ever
+        # emitted it, while eleven other routers record activity — including
+        # the review-accept path, for a far less consequential act.
+        #
+        # Staged, not committed, so it lands in the same transaction as the
+        # override itself: an override that rolls back must not leave a ledger
+        # entry claiming it happened.
+        try:
+            project_id = (
+                await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+            ).scalar_one_or_none()
+            if project_id is not None:
+                before_recommendation = council.original_recommendation
+                await record_activity(
+                    db,
+                    project_id=project_id,
+                    event_type="release.decision_overridden",
+                    actor=ActorRef.from_user(current_user),
+                    entity_id=run_id,
+                    entity_label=str(run_id),
+                    # The catalog template interpolates {recommendation}.
+                    context={
+                        "recommendation": council.recommendation,
+                        "run_id": str(run_id),
+                        "reason": body.reason.strip(),
+                    },
+                    before={"recommendation": before_recommendation},
+                    after={"recommendation": council.recommendation},
+                    changed_fields=["recommendation"],
+                )
+        except Exception as exc:  # noqa: BLE001 — the committed override stands
+            logger.warning(
+                "release override activity record failed for run %s: %s", run_id, exc
+            )
+
         await db.commit()
     # Outbound ``release.decided`` for the override. It runs after the commit,
     # never before: a rolled-back override must not reach a subscriber. The

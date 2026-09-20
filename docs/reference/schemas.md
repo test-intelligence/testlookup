@@ -21269,6 +21269,39 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Band Downgrades",
       "type": "array"
     },
+    "band_policy_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Band Policy Id"
+    },
+    "band_policy_level": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Band Policy Level"
+    },
+    "band_policy_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Band Policy Version"
+    },
     "baseline_diff": {
       "anyOf": [
         {
