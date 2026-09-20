@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased - `make clean-scratch`, and one gitignore pattern for every pytest basetemp
+
+**The deploy could not run from the main working tree.** `require_clean_build_inputs`
+in `homelabsetup/deploy-homelab.sh` refuses to build while anything untracked or
+ignored exists under `backend/frontend/mcp/client`, because those files still land
+in the Docker build context and can change the image. On 2026-09-20 it reported
+200 entries and the deploy had to run from a throwaway `git worktree add --detach`
+— a full 3463-file checkout.
+
+Every suite here is invoked with a repo-relative `--basetemp` (65 call sites across
+45 tracked files), and each call site invents a unique suffix, because pytest
+`rm_rf`s its basetemp at session start and a shared one would make concurrent runs
+delete each other's tmp dirs. Nothing ever removed them: the main tree had **186
+`.pytest*` roots at the repo root alone**, plus per-component caches.
+
+`make clean-scratch` (`scripts/clean_scratch.sh`) removes them. Scope is scratch
+and cache output only — dependency trees (node_modules, venvs, `.uv-cache`) and
+build outputs (`dist`/`build`/`target`) are pruned, the repo-root `.tmp` is kept
+because it holds run evidence while a component's own `backend/.tmp` is basetemp
+output, and **no path holding a git-tracked file is ever removed**, whatever the
+directory is called. `DRY_RUN=1` lists instead. `scripts/test_clean_scratch.py`
+pins all four properties; each was mutation-checked by deleting the guard and
+confirming its test fails.
+
+`.gitignore` now carries `.pytest*/` in place of `.pytest_cache/` plus
+`.pytest_tmp*/`. The pair it replaces covered only the UNDERSCORE spelling, while
+the repo's own tracked callers pass the hyphenated one —
+`scripts/mutation_check_e2_1.py` uses `--basetemp=backend/.pytest-tmp-e21-mutation`
+and `architecture/testing/EXPLORATORY_RUNBOOK.md` uses `.pytest-tmp-exploratory-*`.
+Those directories were untracked-but-visible: `git add -A` could sweep one into a
+commit, and the deploy guard fails on them as *untracked* build inputs, which is
+worse than ignored. They looked ignored only because pytest creates basetemp roots
+owner-only, so git skipped them with `could not open directory ...: Permission
+denied`. This is the same widening `repo.dockerignore-covers-pytest-scratch`
+already enforces for the three build contexts: match the class, never add a fourth
+exact spelling.
+
+Two things worth knowing for the follow-up work. pytest does **not** create
+intermediate parents for `--basetemp`, so a nested `--basetemp=.pytest_tmp/<run-id>`
+convention needs `mkdir -p .pytest_tmp` first or every `tmp_path` fixture errors
+with `FileNotFoundError`. And scratch written by a *containerised* run through the
+bind mount is owned by an unresolvable SID on Windows — the host user holds neither
+`READ_CONTROL` nor `WRITE_OWNER`, so `takeown` itself needs elevation; the script
+detects that case and prints the elevated command rather than failing silently.
+
+Not addressed: the guard still cannot pass from a working dev tree, by design —
+`node_modules`, `dist`, `.uv-cache` and the untracked per-component `CLAUDE.md`
+files all remain, and the script's own error text says *"Use a clean worktree
+before deployment."* A persistent detached worktree re-pointed with
+`git -C <wt> checkout --detach <commit>` avoids re-checking out 3463 files each
+deploy.
+
 ## Unreleased - Choosing a run on /agents opens that run's pipeline
 
 **BUG-011, and the fix that caused it.** A user reported twice that the
