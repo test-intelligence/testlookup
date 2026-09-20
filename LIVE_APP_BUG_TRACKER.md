@@ -368,12 +368,12 @@ self-heal.
 
 **Backend**
 
-- **Shared report links and compliance evidence bundles ignore snapshot
-  staleness entirely** (`report_composition_service.py:85-93`,
-  `evidence_bundle_service.py:41-56` — no `stale` and no `schema_version`
-  predicate). The background refresh added for `/intelligence` converges the
-  API; these two paths can still serve a pre-override verdict to an external
-  reader or an auditor. **Highest remaining value.**
+- ~~Shared report links and compliance evidence bundles ignore snapshot
+  staleness entirely~~ — **FIXED 2026-09-20** (PR #138). Both now read through
+  `intelligence_snapshot_service.get_or_compute`, which recomputes rather than
+  serving a stale or obsolete-schema row; the bundle no longer falls back to an
+  empty payload, and its tenant scope is an explicit check rather than a join
+  predicate that a mocked session ignored.
 - **Correcting an AI classification never invalidates the run snapshot**
   (`feedback_service.py:46-54`). The corrected category shows on `/analyze` and
   nowhere else.
