@@ -18916,7 +18916,7 @@ retry_on: frozenset[str] = field(default_factory=lambda: DEFAULT_RETRYABLE)
 
 ## backend/app/services/review_envelope.py — ReviewEnvelope
 
-[backend/app/services/review_envelope.py:63](../../backend/app/services/review_envelope.py#L63)
+[backend/app/services/review_envelope.py:67](../../backend/app/services/review_envelope.py#L67)
 
 Bases: ``.
 

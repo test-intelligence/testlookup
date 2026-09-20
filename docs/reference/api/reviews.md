@@ -129,7 +129,7 @@ Get Review
 
 
 
-Source: [backend/app/routers/reviews.py:260](../../../backend/app/routers/reviews.py#L260).
+Source: [backend/app/routers/reviews.py:267](../../../backend/app/routers/reviews.py#L267).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`.
 
@@ -216,7 +216,7 @@ Accept Review
 
 Accept an AI report. Its run becomes ``passed``.
 
-Source: [backend/app/routers/reviews.py:274](../../../backend/app/routers/reviews.py#L274).
+Source: [backend/app/routers/reviews.py:281](../../../backend/app/routers/reviews.py#L281).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -314,7 +314,7 @@ Reject Review
 
 Reject an AI report with a reason code. Its run becomes ``failed``.
 
-Source: [backend/app/routers/reviews.py:300](../../../backend/app/routers/reviews.py#L300).
+Source: [backend/app/routers/reviews.py:307](../../../backend/app/routers/reviews.py#L307).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 
