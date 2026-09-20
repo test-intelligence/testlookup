@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased - Choosing a run on /agents opens that run's pipeline
+
+**BUG-011, and the fix that caused it.** A user reported twice that the
+`/agents` run dropdown "shows static values". The first fix (TL-2026-09-18-01-009,
+PR #126) was aimed correctly at the run selector and was *half* a fix: it cleared
+the previously-selected pipeline id so the detail panels could no longer describe
+the run the user had navigated away from, and stopped there. `selectedPipeline`
+was then null, so the AI report, agent stages and compute graph — everything the
+user means by "the displayed content of pipelines" — fell back to *Select a
+pipeline run to see agent stages*, **identically for every run picked**. Wrong
+content had become no content, which reads the same way from the user's chair,
+and it made a second click mandatory after every selection.
+
+Measured against the deployment before changing anything: four runs, four
+different left-hand pipeline lists (14 / 0 / 3 / 3 cards), one identical empty
+panel. The dropdown had been navigating and refetching correctly the whole time,
+which is why three passes over the source found nothing — the bug was in what
+happened *after* the refetch.
+
+A run on the route now also opens that run's **newest** pipeline, derived from
+the already-sorted list rather than set in an effect (an effect can only react
+after a render in which the stale value was still live). Runs here carry 0, 2 and
+13 pipelines, so "the run's pipeline" is not a safe assumption; newest-first is,
+and it matches what the `Run #N` label leads the reader to expect. A run with no
+pipelines keeps the placeholder — honest there, because the left column explains
+the absence — and an explicitly clicked card still wins over the auto-selection.
+
+Verified in both directions, because the previous fix was verified by unit test
+only and never against the deployment, which is exactly what let an incomplete
+fix look done: `tests/probe-bug011-agents-trigger.spec.ts` fails on the homelab's
+current build (`placeholders=[true,true,true]`, 2 failed) and passes against the
+fix (`[false,false,false]`, 3 passed, twice). It takes `PROBE_BASE_URL` so the
+same probe runs against local dev or the deployment. That probe also lost two
+`test.skip` guards that could fire on a populated page — the run list arrives
+after the select renders, so reading the options immediately saw one option and
+reported "nothing to check" as a pass.
+
+`AgentStatusPage.runswitch.test.tsx` now mocks `usePipelines` **per run** (a
+run-blind fixture cannot tell "kept the old pipeline" from "opened the new one",
+since the two differ only in which run the id belongs to) and covers six cases.
+They survive five mutations aimed at plausible wrong fixes: no auto-select;
+auto-selecting the unsorted `[0]`; auto-selecting with no run on the route;
+auto-selection overriding an explicit click; and auto-selecting the pipeline but
+not its run, which leaves the AI report empty.
+
+Not deployed to `testlookup.local` yet — re-run the probe there after deploying.
+
 ## Unreleased - Writes that reported success and changed nothing
 
 A sweep for one defect class, prompted by a user report: *an action succeeds and

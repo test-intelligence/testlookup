@@ -1,22 +1,31 @@
 /**
- * Choosing a different run must not leave the previous run's pipeline selected.
+ * Choosing a run in the dropdown must show THAT run's pipeline.
  *
- * Regression for TL-2026-09-18-01-009 (user-reported 2026-09-18: "the dropdown
- * 'Pipeline Runs' — when a run is selected the data in the page is not
- * refreshed").
+ * Two user reports, one control, and the first fix caused the second report.
  *
- * The dropdown navigates to `/agents/run/:runId`, so `runId` changes and
- * `usePipelines(runId)` refetches correctly. But `selectedPipeline` is
- * component state, and it was only ever cleared on a project change
- * (`useProjectChangeReset`) or by clicking a pipeline card. Every detail panel
- * is keyed on it — `usePipelineStages`, `usePipelineTimeline`, the compute
- * graph and the AI report — so the page header moved to the new run while the
- * stages, timeline and report kept rendering the old one.
+ * TL-2026-09-18-01-009 (2026-09-18): the dropdown navigates to
+ * `/agents/run/:runId`, so `usePipelines(runId)` refetched correctly, but
+ * `selectedPipeline` was component state cleared only on a project change or a
+ * card click. Every detail panel is keyed on it — `usePipelineStages`,
+ * `usePipelineTimeline`, the compute graph, the AI report — so the header moved
+ * to the new run while the panels kept rendering the previous one.
  *
- * The assertion is on the id the detail hooks are CALLED with, not on rendered
- * text: the panels are what went stale, and they are driven entirely by that
- * argument. Asserting on text would pass as soon as any panel rendered
- * anything, including the stale panel.
+ * BUG-011 (2026-09-19): that fix cleared the id and stopped. The panels then
+ * showed "Select a pipeline run to see agent stages" for EVERY run picked —
+ * measured against the homelab as four runs, four different left-hand lists,
+ * one identical empty panel. Wrong content became no content, which reads the
+ * same way from the user's chair ("it is static values") and added a mandatory
+ * second click. A run on the route now also opens its newest pipeline.
+ *
+ * The assertions are on the id the detail hooks are CALLED with, not on
+ * rendered text: the panels are what went stale, and that argument is what
+ * drives them. Asserting on text would pass as soon as any panel rendered
+ * anything, including the stale one.
+ *
+ * `usePipelines` is mocked PER RUN. A mock that ignores its argument cannot
+ * tell "kept the old pipeline" apart from "opened the new one" — the two
+ * differ only in which run the id belongs to, so a run-blind fixture would
+ * pass either way.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -69,15 +78,38 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
-const pipelineForRun1 = {
-  id: 'pipe-1',
-  test_run_id: 'run-1',
-  workflow_type: 'offline',
-  status: 'completed',
-  started_at: '2026-03-31T10:00:00Z',
-  completed_at: '2026-03-31T10:01:00Z',
-  error: null,
-  created_at: '2026-03-31T10:00:00Z',
+function pipeline(id: string, runId: string, createdAt: string) {
+  return {
+    id,
+    test_run_id: runId,
+    workflow_type: 'offline',
+    status: 'completed',
+    started_at: '2026-03-31T10:00:00Z',
+    completed_at: '2026-03-31T10:01:00Z',
+    error: null,
+    created_at: createdAt,
+  }
+}
+
+const pipelineForRun1 = pipeline('pipe-1', 'run-1', '2026-03-31T10:00:00Z')
+// run-2 carries two, deliberately out of order: homelab runs hold 0, 2 and 13,
+// so "the run's pipeline" is not a thing — the NEWEST one is what opens.
+const pipeRun2Older = pipeline('pipe-2-old', 'run-2', '2026-03-31T11:00:00Z')
+const pipeRun2Newer = pipeline('pipe-2-new', 'run-2', '2026-03-31T12:00:00Z')
+
+const PIPELINES_BY_RUN: Record<string, ReturnType<typeof pipeline>[]> = {
+  'run-1': [pipelineForRun1],
+  'run-2': [pipeRun2Older, pipeRun2Newer],
+  // A run whose pipelines never fired. The placeholder is correct here.
+  'run-3': [],
+}
+
+/** Mock `usePipelines` so it answers for the run it is actually asked about. */
+function mockPipelinesPerRun(usePipelines: ReturnType<typeof vi.fn>) {
+  usePipelines.mockImplementation((runId?: string) => ({
+    data: runId ? PIPELINES_BY_RUN[runId] ?? [] : [pipelineForRun1, pipeRun2Newer],
+    isLoading: false,
+  }))
 }
 
 const lastArgOf = (fn: ReturnType<typeof vi.fn>): unknown => {
@@ -94,15 +126,12 @@ describe('AgentStatusPage — switching the selected run', () => {
     mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
   })
 
-  it('clears the previous run pipeline so the detail panels cannot go stale', async () => {
+  async function setup(entry: string) {
     const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } =
       await import('@/hooks/useAgentRuns')
 
     ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
-    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: [pipelineForRun1],
-      isLoading: false,
-    })
+    mockPipelinesPerRun(usePipelines as ReturnType<typeof vi.fn>)
     ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
     ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined })
     ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -112,7 +141,7 @@ describe('AgentStatusPage — switching the selected run', () => {
     })
 
     render(
-      <MemoryRouter initialEntries={['/agents/run/run-1']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/agents" element={<AgentStatusPage />} />
           <Route path="/agents/run/:runId" element={<AgentStatusPage />} />
@@ -120,34 +149,100 @@ describe('AgentStatusPage — switching the selected run', () => {
       </MemoryRouter>,
     )
 
-    // Pick run-1's pipeline: the detail panels are now keyed on it.
-    fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
+    return { usePipelineStages, usePipelineTimeline, useRunSummary }
+  }
+
+  /** The dropdown is labelled 'Test Suite & Build:'; the user calls it the
+   *  Pipeline Runs dropdown, after the section heading above it. */
+  const switchRunTo = (runId: string) =>
+    fireEvent.change(screen.getByLabelText(/test suite/i), { target: { value: runId } })
+
+  it('switching runs drives the panels with the NEW run pipeline, never the old one', async () => {
+    const { usePipelineStages, usePipelineTimeline } = await setup('/agents/run/run-1')
+
     await waitFor(() => {
-      expect(usePipelineStages).toHaveBeenCalledWith('pipe-1')
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-1')
     })
 
-    // Now switch runs through the dropdown, exactly as the user did.
-    // Labelled 'Test Suite & Build:' in the markup; the user calls it the
-    // Pipeline Runs dropdown after the section heading above it.
-    const dropdown = screen.getByLabelText(/test suite/i)
-    fireEvent.change(dropdown, { target: { value: 'run-2' } })
+    switchRunTo('run-2')
 
-    // The detail hooks must stop being asked for run-1's pipeline. Before the
-    // fix they kept receiving 'pipe-1' forever, so the stages, timeline and AI
-    // report below the header still described the run the user had navigated
-    // away from.
+    // TL-009: 'pipe-1' here means the panels still describe the run the user
+    // navigated away from. BUG-011: null here means they describe nothing.
     await waitFor(() => {
-      const lastStagesArg = lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)
       expect(
-        lastStagesArg,
-        'the previous run pipeline is still driving the stage panel',
-      ).toBeNull()
+        lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>),
+        'the stage panel is not showing the newly selected run pipeline',
+      ).toBe('pipe-2-new')
     })
 
-    const lastTimelineArg = lastArgOf(usePipelineTimeline as ReturnType<typeof vi.fn>)
     expect(
-      lastTimelineArg,
-      'the previous run pipeline is still driving the timeline',
-    ).toBeNull()
+      lastArgOf(usePipelineTimeline as ReturnType<typeof vi.fn>),
+      'the timeline is not showing the newly selected run pipeline',
+    ).toBe('pipe-2-new')
+  })
+
+  it('opens the NEWEST pipeline when the run has several', async () => {
+    // Guards the sort, not just "something was selected": 'pipe-2-old' is
+    // first in the fixture array, so taking [0] unsorted picks the wrong one.
+    const { usePipelineStages } = await setup('/agents/run/run-2')
+
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-2-new')
+    })
+  })
+
+  it('opens the run pipeline on a direct load, with no click', async () => {
+    // The reported symptom in its simplest form: landing on a run must not
+    // require hunting for a card before anything appears.
+    const { usePipelineStages, useRunSummary } = await setup('/agents/run/run-1')
+
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-1')
+    })
+    // The AI report is the headline panel and is keyed on the run, not the
+    // pipeline — it has to follow the same selection or the page is half-filled.
+    expect(lastArgOf(useRunSummary as ReturnType<typeof vi.fn>)).toBe('run-1')
+  })
+
+  it('leaves the panels empty for a run that has no pipelines', async () => {
+    // Auto-selecting must not invent a pipeline. The left column explains the
+    // absence, so the placeholder is honest here rather than a dead end.
+    const { usePipelineStages } = await setup('/agents/run/run-3')
+
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBeNull()
+    })
+  })
+
+  it('shows no pipeline on /agents, where the list spans many runs', async () => {
+    // Without a run there is no "this run's pipeline" to open, and picking one
+    // arbitrarily would claim a run the user never chose.
+    const { usePipelineStages } = await setup('/agents')
+
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBeNull()
+    })
+  })
+
+  it('keeps an explicitly clicked pipeline selected over the auto-selected one', async () => {
+    // Auto-selection must yield to the user. run-2 opens 'pipe-2-new'; clicking
+    // the older card has to stick rather than being pulled back on re-render.
+    const { usePipelineStages } = await setup('/agents/run/run-2')
+
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-2-new')
+    })
+
+    const cards = screen.getAllByRole('button', { name: /offline pipeline/i })
+    expect(cards.length, 'both of run-2 pipelines should be listed').toBe(2)
+    // Cards render newest-first, so the second card is the older pipeline.
+    fireEvent.click(cards[1])
+
+    await waitFor(() => {
+      expect(
+        lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>),
+        'the click was overridden by the auto-selection',
+      ).toBe('pipe-2-old')
+    })
   })
 })
