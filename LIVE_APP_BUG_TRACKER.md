@@ -274,27 +274,64 @@ conflict with that active work. Decide which mechanism is canonical — outbox o
 debouncer — then either wire it or remove it together with the beat entry and the
 config comment. Wiring it as-is risks double dispatch alongside the outbox.
 
-### BUG-011 — `/agents` pipeline-run dropdown still shows static content  ·  S2  ·  **REOPENED 2026-09-19**
+### BUG-011 — `/agents` pipeline-run dropdown still shows static content  ·  S2  ·  **FIXED 2026-09-20** on `fix/bug011-agents-run-selection-2026-09-20`
 
 - Reported by: **user**, against `http://testlookup.local/agents`
 - "The pipeline runs drop down, when any value is selected, the displayed content
   of pipelines are not refreshed or changed. It is static values."
 
-**This was previously filed as TL-2026-09-18-01-009 and marked FIXED** (derived
-selection in `AgentStatusPage.tsx`, merged in PR #126, deployed to the homelab at
-`build-20260918-224140` and again at `build-20260919-043402`). The user reports it
-is still broken, so either the fix was incomplete or there is a second cause.
+**Previously filed as TL-2026-09-18-01-009 and marked FIXED** (derived selection
+in `AgentStatusPage.tsx`, merged in PR #126, deployed at `build-20260918-224140`
+and `build-20260919-043402`).
 
-Note the earlier fix was **never verified live**: the homelab probe
-(`probe-exj-homelab-verify.spec.ts`) covered BUG-005 (intelligence table geometry)
-and BUG-008 (agents report/stages layout) only. TL-009 was verified by unit test
-(`AgentStatusPage.runswitch.test.tsx`) and never against the deployment — which is
-exactly the gap that lets an incomplete fix look done.
+#### Root cause: the first fix caused the second report
 
-Investigate the **dropdown** specifically: the earlier fix addressed selecting a
-pipeline *card*, and the user is describing the run selector. Confirm which
-control is involved before changing anything, and add a live probe assertion so
-the next "fixed" is evidence rather than inference.
+Not a second cause, and not the wrong control — this tracker guessed both. The
+TL-009 fix was **half of one**. It cleared the stale pipeline id so the panels
+could not describe the previous run, and stopped there, leaving
+`selectedPipeline` null. Every right-hand panel — AI report, agent stages,
+compute graph, the whole "displayed content of pipelines" — then fell back to
+*Select a pipeline run to see agent stages*, identically, for every run picked.
+**Wrong content became no content**, which reads the same way from the user's
+chair, and it made a second click mandatory on every selection.
+
+#### Measured live, on the deployment, before touching anything
+
+| Run selected | Pipelines | Left list | Right panel |
+|---|---|---|---|
+| Auth Service · Run #2 | 13 | 14 cards | placeholder |
+| Auth Service · Run #1 | 0 | empty state | placeholder |
+| CheckoutSuite · Run #3 | 2 | 3 cards | placeholder |
+| CheckoutSuite · Run #2 | 2 | 3 cards | placeholder |
+
+The dropdown navigated and refetched correctly the whole time — which is why
+three passes over the source found nothing. Only the panel was static.
+
+#### The fix
+
+A run on the route now also opens that run's **newest** pipeline
+(`AgentStatusPage.tsx`, derived from the already-sorted list, not an effect).
+Runs carry 0, 2 and 13 pipelines here, so "the run's pipeline" is not a safe
+assumption; newest-first is, and it matches what the "Run #N" label promises. A
+run with no pipelines keeps the placeholder — honest there, since the left
+column explains the absence. An explicitly clicked card still wins.
+
+#### Evidence, both directions
+
+`tests/probe-bug011-agents-trigger.spec.ts`, run against **both** builds:
+
+- homelab, old code: `placeholders=[true,true,true]` → **2 failed**
+- local dev, fixed: `placeholders=[false,false,false]` → **3 passed**, twice
+
+A probe that has never been seen to fail is not evidence, so it was run red
+first. Six unit cases in `AgentStatusPage.runswitch.test.tsx` survive five
+mutations aimed at the *plausible wrong fixes* (no auto-select; unsorted `[0]`;
+auto-select with no run on the route; auto-select overriding a click;
+auto-selecting the pipeline but not its run).
+
+**Still needs a homelab deploy** — the fix is verified on local dev against the
+same backend shape, not yet on `testlookup.local`. Re-run the probe there after
+deploying; it is written to run against either via `PROBE_BASE_URL`.
 
 ### BUG-012 — `/agents` still shows "awaiting review" after the pipeline is accepted on `/reviews`  ·  S2  ·  **FIXED 2026-09-19** on `fix/stale-state-bugs-2026-09-19`
 

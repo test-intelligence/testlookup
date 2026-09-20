@@ -573,12 +573,25 @@ export default function AgentStatusPage() {
   // `runId` triggers a cascading render (and eslint rejects it), and it can
   // only ever react *after* a render in which the stale id was still live.
   // Pairing the id with its run makes the stale state unrepresentable instead.
+  // Clearing it was only HALF the fix, and the other half is BUG-011 (reported
+  // again 2026-09-19). Dropping the stale id left `selectedPipeline` null, so
+  // every panel on the right fell back to "Select a pipeline run to see agent
+  // stages" — the same placeholder for every run the user picked. Measured
+  // against the homelab: four different runs, four different pipeline lists on
+  // the left, and an identical empty panel on the right each time. Replacing
+  // the wrong pipeline with NO pipeline reads as "selecting a run changes
+  // nothing", which is what was reported, and it made a second click mandatory.
+  //
+  // So a run chosen in the dropdown now also picks that run's newest pipeline
+  // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2 or
+  // 13 pipelines on the homelab, so "the one pipeline" is not a safe assumption
+  // — newest-first is, and it matches what the "Run #N" label leads the reader
+  // to expect. A run with no pipelines keeps the placeholder, which is honest
+  // there: the left column explains the absence.
   const [selection, setSelection] = useState<
     { forRunId: string | undefined; pipelineId: string; testRunId: string } | null
   >(null)
   const selectionMatchesRoute = selection != null && selection.forRunId === runId
-  const selectedPipeline = selectionMatchesRoute ? selection.pipelineId : null
-  const selectedRunId = selectionMatchesRoute ? selection.testRunId : null
   // The AI report is shown by default (expanded) once a pipeline is selected —
   // it's the headline output of the pipeline, so users shouldn't have to click
   // "View AI report" to see it. The toggle still lets them collapse it. The
@@ -614,6 +627,20 @@ export default function AgentStatusPage() {
   const pipelines = [...rawPipelines].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   )
+  // Only when a specific run is on the route. On `/agents` the list spans many
+  // runs, so there is no "this run's pipeline" to open and the placeholder is
+  // the correct first screen.
+  //
+  // Derived, not an effect: it cannot render a frame with the old run's
+  // pipeline, and an explicit card click still wins because clicking stores
+  // `forRunId: runId`, which makes `selectionMatchesRoute` true from then on.
+  const autoPipeline = runId ? pipelines[0] ?? null : null
+  const selectedPipeline = selectionMatchesRoute
+    ? selection.pipelineId
+    : autoPipeline?.id ?? null
+  const selectedRunId = selectionMatchesRoute
+    ? selection.testRunId
+    : autoPipeline?.test_run_id ?? null
   const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(selectedPipeline)
   const { data: timeline } = usePipelineTimeline(selectedPipeline)
   const summaryStage = stages.find((stage) => stage.stage_name === 'summary')
@@ -868,7 +895,12 @@ export default function AgentStatusPage() {
 
         {/* Stage detail */}
         <div className="lg:col-span-2 space-y-3">
-          {!selectedPipeline ? (
+          {!selectedPipeline && runId && pipelinesLoading ? (
+            // The auto-selected pipeline is not known until the list arrives.
+            // Without this the placeholder flashes on every dropdown change and
+            // the panel still looks like it is refusing to load.
+            <div className="flex justify-center py-8"><LoadingSpinner /></div>
+          ) : !selectedPipeline ? (
             <div className="card flex flex-col items-center justify-center py-16 text-center">
               <Bot className="w-12 h-12 text-[var(--color-text-faint)] mb-3" />
               <p className="text-[var(--color-text-muted)]">Select a pipeline run to see agent stages</p>
