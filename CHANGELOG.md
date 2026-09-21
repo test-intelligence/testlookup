@@ -1,5 +1,97 @@
 # Changelog
 
+## Unreleased - Controls that tell the truth, and one dispatch path
+
+**BUG-006.** Four ``/releases`` controls -- "Clone from ...", "Generate from
+PRD", "Export schedule", "Calendar view" -- were styled exactly like the
+working controls beside them and answered a click with *"coming in next
+iteration"*. The cost lands in the wrong place: the user reads the control as
+available, decides to use it, clicks, and only then learns it does not exist.
+They are now disabled, carry the reason in ``title``, and say **(planned)** in
+the visible label -- a tooltip does not exist on touch and ``title`` is not
+reliably announced. The features stay on the backlog; what changed is how they
+are advertised, not whether they are coming, which is why the controls were not
+simply deleted.
+
+**BUG-010.** Two AI-pipeline dispatch mechanisms existed and only one ran.
+``ai_pipeline_debouncer.enqueue_pipeline_for_run`` had **zero production
+callers**, and everything else in the module was reachable only through it --
+``_enqueue_direct`` from that entry point, ``flush_pending`` from a beat task
+draining a set nothing filled, and ``get_degraded_project_count`` from keys
+only ``flush_pending`` wrote. So ``/health`` published two numbers that were
+*structurally incapable* of being non-zero, while the mechanism that actually
+dispatches went unreported: five ``run_downstream_outbox`` rows waited across
+279 consecutive empty flushes. ``config.py`` meanwhile described a Redis
+SortedSet that ``stream_service`` never used and exposed a window knob that
+tuned nothing.
+
+The tracker deferred this as an owner decision -- outbox or debouncer -- on the
+grounds that a branch was actively wiring the debouncer up. **That premise was
+stale**: the branch's last commit was 2026-07-15 and it sits 1374 commits
+behind ``main``. With it gone there was no decision left to make. The outbox is
+what runs, and wiring the debouncer would have risked double dispatch.
+
+Removed the module, its Celery task, its beat entry and its two settings.
+``/health`` now reports ``ai_pipeline.pending_dispatches`` from the outbox --
+and ``None``, never ``0``, when it cannot read, because this endpoint exists
+for an on-call engineer asking why runs are slow and a zero reads as "nothing
+is waiting". Mutating that fallback to ``0`` initially survived every test: the
+existing guard patched the helper and so never reached the endpoint's own
+``except``. That branch now has its own test.
+
+## Unreleased - A flaky count now says what it counted
+
+**BUG-007.** A user read **"Flaky 0"** on the summary report beside a flaky test
+on Flaky Coach and reported the pair as a contradiction. Measured against the
+deployment across all five projects, the two surfaces disagree on **two** of
+them -- ExploreQA (coach 1, summary 0) and Inventory (coach 5, summary 6).
+
+Neither was computing anything wrong. They apply the same flip threshold
+(``MIN_FLIPS_FOR_INTERMITTENCY``, which is 2) to **different populations**:
+Flaky Coach takes the last 30 days and needs 3 runs; the summary takes each
+test's last 10 runs, needs 5 of them, and requires a failure ratio inside
+10-90%. ExploreQA's one flaky test has exactly three runs (FAILED, PASSED,
+FAILED) -- enough for Flaky Coach, below the summary's floor. Inventory diverges
+the other way, because a test that flips once inside the coach's 8-run window
+flips enough inside the summary's 10-run one.
+
+**The thresholds are deliberately NOT aligned.** ``_count_flaky_tests`` feeds
+``_evaluate_hard_caps`` (``max_flaky_count``, which forces NO_GO) and
+``_compute_readiness``. Lowering ``min_runs`` to 3 to match Flaky Coach is the
+obvious fix and would have moved release verdicts on live projects because a KPI
+tile was confusing. A display problem must not be repaired by changing a gate;
+``test_flaky_count_publishes_its_rule.py::TestTheGateDidNotMove`` pins that,
+including an explicit assertion that ``min_runs`` was not lowered toward Flaky
+Coach's threshold.
+
+What was actually missing is the rule travelling with the number. The summary
+response now carries ``flaky_criteria`` (window runs, minimum runs, minimum
+flips, and the ratio band), the KPI tile states it on hover, and a zero reads
+*"none met the 5-run threshold"* instead of *"0.0% of total"* -- which restated
+the zero rather than explaining it. Flaky Coach's subtitle names its own 30-day
+window and spells out "quarantine candidate", which the original report read as
+an active quarantine.
+
+The ratio band moved out of the SQL into ``_FLAKY_MIN_FAILURE_RATIO`` /
+``_FLAKY_MAX_FAILURE_RATIO``, because publishing 0.1/0.9 from a separate literal
+would make the report confidently state the old band the day someone widened the
+query. A guard asserts the band is not hardcoded in the SQL again and that every
+published bound appears in it.
+
+The tile reads its numbers from the payload and never as literals, for the same
+reason -- mutation-tested by moving the criteria to 20/8/20-80% and asserting the
+sentence follows.
+
+``flaky_criteria`` is **null on the empty envelope only** -- the no-project path,
+where nothing was measured at all. Stating a rule there would claim "we applied
+this bar and nothing cleared it" about a search that never ran, which is the same
+absence-is-not-health mistake the field exists to prevent; the tile falls back to
+the plain rate instead of asserting a threshold was applied. Making it required
+first broke that endpoint outright (three router tests, caught by CI), and the
+guard now pins both halves: absent on the empty envelope, always present on a
+real report. ``FlakyCountCriteria`` itself requires all five fields, so the
+criteria are never half-stated.
+
 ## Unreleased - Every suite uses pytest's own basetemp
 
 **The override was never needed.** 65 `--basetemp` arguments across 45 tracked

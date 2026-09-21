@@ -828,19 +828,25 @@ export default function ReleasesPage() {
           }
           actions={
             <div className="flex items-center gap-2 flex-wrap">
+              {/* BUG-006: sat in the page header beside working actions and
+                  only toasted after the click. Disabled with the reason on the
+                  control itself, so the cost is paid before the click rather
+                  than after it. */}
               <button
                 type="button"
-                onClick={() => toast('Export schedule — coming in next iteration', { icon: '📅' })}
-                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
+                disabled
+                title="Not built yet."
+                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
               >
-                <Calendar className="h-3.5 w-3.5" /> Export schedule
+                <Calendar className="h-3.5 w-3.5" /> Export schedule <span className="text-[10px]">(planned)</span>
               </button>
               <button
                 type="button"
-                onClick={() => toast('Calendar view — coming in next iteration', { icon: '🗓' })}
-                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
+                disabled
+                title="Not built yet. The release list below is the current view."
+                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
               >
-                <Calendar className="h-3.5 w-3.5" /> Calendar view
+                <Calendar className="h-3.5 w-3.5" /> Calendar view <span className="text-[10px]">(planned)</span>
               </button>
               {!isAllProjects && !releaseId && (
                 <button

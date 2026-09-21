@@ -214,6 +214,23 @@ quality-gate: ## Run cross-cutting invariant guards (backend / frontend / databa
 quality-gate-list: ## List every quality-gate guard with a one-line description
 	python scripts/quality_gate.py --list
 
+push-check: ## Run everything CI runs, before pushing (see scripts/push_check.py)
+	python scripts/push_check.py
+
+push-check-quick: ## Same, minus the slow suites — weaker, does NOT predict CI
+	python scripts/push_check.py --quick
+
+push-check-list: ## List the checks push-check runs
+	python scripts/push_check.py --list
+
+install-hooks: ## Run push-check automatically on every git push
+	git config core.hooksPath .githooks
+	@echo "core.hooksPath -> .githooks (bypass once with: SKIP_PUSH_CHECK=1 git push)"
+
+uninstall-hooks: ## Stop running push-check on git push
+	git config --unset core.hooksPath || true
+	@echo "core.hooksPath cleared"
+
 quality-gate-update-baseline: ## Re-snapshot the ratchet baseline (review the diff before commit)
 	python scripts/quality_gate.py --update-baseline
 

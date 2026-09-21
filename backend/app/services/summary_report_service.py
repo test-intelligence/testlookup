@@ -44,6 +44,7 @@ from app.services.metrics_service import (  # F-067: one vocabulary, two surface
     PASS_RATE_BASIS_LABELS,
     PASS_RATE_BASIS_UNIQUE_TESTS,
     _count_flaky_tests,
+    flaky_count_criteria,
 )
 
 
@@ -236,10 +237,20 @@ async def build_summary_report(
         "avg_duration_ms": avg_duration_ms,
         "latest_run_at": latest_run_at.isoformat() if latest_run_at else None,
         "flaky_test_count": flaky_count,
-        # ``flaky_count`` is an all-time, project-wide count
-        # (metrics_service._count_flaky_tests has no window bound) while
-        # ``totals.total`` is windowed, so for a short window the ratio can
-        # exceed 100%. Clamp so the report never shows a nonsensical rate.
+        # Published with the count so "0" cannot be read as "no flakiness"
+        # (BUG-007). Flaky Coach applies a looser rule — 30 days, 3 runs — so
+        # the same project can show a flaky test there and 0 here, which a user
+        # reported as a contradiction.
+        "flaky_criteria": flaky_count_criteria(),
+        # ``flaky_count`` is project-wide and bounded to each test's last
+        # ``window_runs`` executions, NOT to this report's period — so it does
+        # not move when the reader changes the window, while ``totals.total``
+        # does. For a short period the ratio can therefore exceed 100%. Clamp so
+        # the report never shows a nonsensical rate.
+        #
+        # (This comment used to say the count had "no window bound". It has one;
+        # it is a run-count bound rather than a date bound, which is exactly the
+        # distinction that makes the two surfaces disagree.)
         "flaky_rate_pct": (
             min(100.0, round(flaky_count / totals.total * 100.0, 1))
             if totals.total

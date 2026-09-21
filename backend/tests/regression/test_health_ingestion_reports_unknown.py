@@ -11,7 +11,7 @@ gates failing open, on-call received::
      "redis": {"used_pct": 0.0},
      "recent": {"reject_count_this_minute": 0},
      "dlq": {"persist_live_session": 0},
-     "ai_pipeline": {"degraded_projects": 0}}
+     "ai_pipeline": {"pending_dispatches": 0}}
 
 Every number in that payload is the most reassuring value it could hold, and
 each one means "we could not look". ``0.0%`` reads as headroom; ``dlq: 0`` reads
@@ -65,7 +65,7 @@ async def _payload_with_dead_redis() -> dict:
             AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.ai_pipeline_debouncer.get_degraded_project_count",
+            "app.services.run_downstream_outbox.pending_dispatch_count",
             AsyncMock(return_value=None),
         ),
     ):
@@ -101,7 +101,7 @@ async def test_the_endpoint_does_not_raise_when_redis_is_down():
         ("recent", "active_projects_this_minute"),
         ("live_sessions", "active"),
         ("dlq", "persist_live_session"),
-        ("ai_pipeline", "degraded_projects"),
+        ("ai_pipeline", "pending_dispatches"),
     ],
     ids=lambda p: "/".join(p),
 )
@@ -138,12 +138,20 @@ async def test_a_forced_refresh_never_returns_a_stale_snapshot():
 @pytest.mark.asyncio
 async def test_helpers_report_none_rather_than_zero():
     """A count of 0 from a helper that could not read is the same lie."""
-    from app.services.ai_pipeline_debouncer import get_degraded_project_count
     from app.services.ingestion_dlq import get_dlq_count
+    from app.services.run_downstream_outbox import pending_dispatch_count
 
     with patch("app.db.redis_client.get_redis", MagicMock(return_value=_DeadRedis())):
         assert await get_dlq_count("persist_live_session") is None
-        assert await get_degraded_project_count() is None
+
+    class _DeadDb:
+        async def execute(self, _stmt):
+            raise RuntimeError("database unreachable")
+
+    # The AI-pipeline backlog moved from Redis to Postgres with the debouncer's
+    # removal (BUG-010), so its "could not look" case is a failing query rather
+    # than a dead Redis -- but the contract is identical.
+    assert await pending_dispatch_count(_DeadDb()) is None
 
 
 @pytest.mark.asyncio
@@ -177,7 +185,7 @@ async def test_a_healthy_redis_still_reports_ok():
         ),
         patch("app.services.ingestion_dlq.get_dlq_count", AsyncMock(return_value=0)),
         patch(
-            "app.services.ai_pipeline_debouncer.get_degraded_project_count",
+            "app.services.run_downstream_outbox.pending_dispatch_count",
             AsyncMock(return_value=0),
         ),
     ):

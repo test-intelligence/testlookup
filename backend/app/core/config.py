@@ -300,18 +300,6 @@ class Settings(BaseSettings):
     # for very-high-volume runs; the bulk-insert path scales linearly.
     LIVE_SESSION_DRAIN_BATCH_SIZE: int = 5_000
 
-    # ── Phase 3 AI pipeline debouncer (2026-05-16) ────────────
-    # When True, ``stream_service.close_session`` no longer fires
-    # ``run_agent_pipeline`` directly; the run lands in a Redis
-    # SortedSet drained every 2 minutes by the beat task. Set to
-    # False to revert to the legacy per-run direct dispatch — used
-    # by tests + any deploy that hasn't enabled the beat schedule.
-    AI_PIPELINE_DEBOUNCE_ENABLED: bool = True
-    # Minimum age a run must reach before the debouncer flushes it.
-    # Shorter = lower per-run analysis latency but less burst-coalescing.
-    # The default matches a 2-minute beat cadence (debounce ≪ cadence).
-    AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS: int = 60
-
     # ── Pipeline wall-clock budget ────────────────────────────
     # The agent pipeline runs as a Celery task under a 1740s soft /
     # 1800s hard limit. Without an in-graph budget an oversized run

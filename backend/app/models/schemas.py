@@ -1006,6 +1006,49 @@ class SummaryTopFailingTest(BaseModel):
     step_breakdown: Optional[List[SummaryStepBreakdownRow]] = None
 
 
+class FlakyCountCriteria(BaseModel):
+    """What a flaky-test count actually measured.
+
+    A bare count cannot distinguish "this project has no flaky tests" from
+    "no test cleared this particular bar", and surfaces applying different bars
+    then look like they contradict each other.
+    """
+
+    window_runs: int = Field(
+        ..., description="How many of each test's most recent runs were examined."
+    )
+    min_runs: int = Field(
+        ...,
+        description=(
+            "Runs a test must have inside the window to be judged at all. A test "
+            "with fewer is not counted as flaky and not counted as healthy — "
+            "there is not enough history to say."
+        ),
+    )
+    min_flips: int = Field(
+        ...,
+        description=(
+            "Pass<->fail transitions required, in run order. This is what "
+            "separates a flaky test from a persistent regression, which a "
+            "failure ratio alone cannot do."
+        ),
+    )
+    min_failure_ratio: float = Field(
+        ...,
+        description=(
+            "Lower bound of the failure ratio. Below it the test is treated as "
+            "healthy rather than flaky."
+        ),
+    )
+    max_failure_ratio: float = Field(
+        ...,
+        description=(
+            "Upper bound of the failure ratio. Above it the test is treated as "
+            "broken rather than flaky — it is not intermittent, it is failing."
+        ),
+    )
+
+
 class SummaryReportResponse(BaseModel):
     project_id: Optional[str] = None
     project_name: Optional[str] = None
@@ -1023,6 +1066,19 @@ class SummaryReportResponse(BaseModel):
     latest_run_at: Optional[str] = None
     flaky_test_count: int
     flaky_rate_pct: float
+    # The rule behind ``flaky_test_count``, published with it (BUG-007).
+    #
+    # Without this a reader cannot tell "no flakiness" from "nothing cleared the
+    # threshold", and the two are very different answers. Flaky Coach applies a
+    # looser rule, so the same project can legitimately show a flaky test there
+    # and 0 here; a user reported that pair as a contradiction.
+    #
+    # ``None`` ONLY on the empty envelope, where no project is resolved and
+    # therefore nothing was measured. Stating criteria there would claim "we
+    # looked and found none" about a search that never ran — the same
+    # absence-is-not-health mistake this field exists to prevent. The UI falls
+    # back to the plain rate rather than asserting a threshold was applied.
+    flaky_criteria: Optional[FlakyCountCriteria] = None
     suites: List[SummarySuiteRow]
     top_failing_tests: List[SummaryTopFailingTest]
 

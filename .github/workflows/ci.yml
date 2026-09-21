@@ -186,7 +186,7 @@ jobs:
         # can't accidentally turn the gate into a no-op.
         run: |
           cd scripts
-          python -m pytest test_quality_gate.py test_mypy_ratchet.py test_ci_security.py test_clean_scratch.py -v
+          python -m pytest test_quality_gate.py test_mypy_ratchet.py test_ci_security.py test_clean_scratch.py test_push_check.py -v
 
   # ─────────────────────────────────────────────────────────────
   # JOB 0c: Validate Mermaid diagrams in markdown

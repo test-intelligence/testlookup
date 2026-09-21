@@ -227,7 +227,15 @@ export default function FlakyCoachPage() {
     <div className="space-y-6">
       <PageHeader
         title="Flaky Coach"
-        subtitle={`${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'}`}
+        // BUG-007: the summary report's "Flaky" tile counts a DIFFERENT
+        // population — each test's last 10 runs, needing 5 — so it can read 0
+        // while this page lists a flaky test. Measured live, the two disagreed
+        // on 2 of 5 projects. Naming the window here is half of making the pair
+        // reconcilable; the report states its own rule on the tile.
+        //
+        // "quarantine candidate" is also spelled out because the short form
+        // read as an active quarantine in the original report.
+        subtitle={`${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'} · last 30 days`}
         actions={
           <button
             onClick={handleRefresh}

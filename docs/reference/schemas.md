@@ -10556,6 +10556,50 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## FlakyCountCriteria
+
+```json
+{
+  "description": "What a flaky-test count actually measured.\n\nA bare count cannot distinguish \"this project has no flaky tests\" from\n\"no test cleared this particular bar\", and surfaces applying different bars\nthen look like they contradict each other.",
+  "properties": {
+    "max_failure_ratio": {
+      "description": "Upper bound of the failure ratio. Above it the test is treated as broken rather than flaky — it is not intermittent, it is failing.",
+      "title": "Max Failure Ratio",
+      "type": "number"
+    },
+    "min_failure_ratio": {
+      "description": "Lower bound of the failure ratio. Below it the test is treated as healthy rather than flaky.",
+      "title": "Min Failure Ratio",
+      "type": "number"
+    },
+    "min_flips": {
+      "description": "Pass<->fail transitions required, in run order. This is what separates a flaky test from a persistent regression, which a failure ratio alone cannot do.",
+      "title": "Min Flips",
+      "type": "integer"
+    },
+    "min_runs": {
+      "description": "Runs a test must have inside the window to be judged at all. A test with fewer is not counted as flaky and not counted as healthy — there is not enough history to say.",
+      "title": "Min Runs",
+      "type": "integer"
+    },
+    "window_runs": {
+      "description": "How many of each test's most recent runs were examined.",
+      "title": "Window Runs",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "window_runs",
+    "min_runs",
+    "min_flips",
+    "min_failure_ratio",
+    "max_failure_ratio"
+  ],
+  "title": "FlakyCountCriteria",
+  "type": "object"
+}
+```
+
 ## FlakyQuarantineRead
 
 ```json
@@ -26812,6 +26856,16 @@ These are the full generated JSON Schema definitions, including required fields,
     "avg_duration_ms": {
       "title": "Avg Duration Ms",
       "type": "integer"
+    },
+    "flaky_criteria": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/FlakyCountCriteria"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "flaky_rate_pct": {
       "title": "Flaky Rate Pct",

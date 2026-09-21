@@ -779,6 +779,15 @@ async def _period_stats(
 # the Wilson-CI / ML flaky verdict lives in flaky_statistics / flaky_sentinel.
 _FLAKY_WINDOW_RUNS = 10
 _FLAKY_MIN_RUNS = 5
+# The failure-ratio band. Below the floor the test is healthy; above the ceiling
+# it is broken rather than intermittent.
+#
+# Named rather than inlined in the SQL because ``flaky_count_criteria()`` now
+# publishes these to the summary report. A second literal would be a second
+# source of truth for the same rule, and the report would keep claiming the old
+# band the day someone widened the query.
+_FLAKY_MIN_FAILURE_RATIO = 0.1
+_FLAKY_MAX_FAILURE_RATIO = 0.9
 # Minimum pass<->fail transitions ("flips") required inside the window.
 #
 # A failure RATIO alone is order-blind: a test that passed twice and has failed
@@ -796,6 +805,37 @@ _FLAKY_MIN_RUNS = 5
 from app.services.flaky_signals import (  # noqa: E402
     MIN_FLIPS_FOR_INTERMITTENCY as _FLAKY_MIN_FLIPS,
 )
+
+
+def flaky_count_criteria() -> dict[str, int | float]:
+    """The rule this count applies, as data, so a surface can publish it.
+
+    BUG-007: a user read "0 flaky" on the summary report beside a flaky test on
+    Flaky Coach and reasonably called it a contradiction. Both numbers were
+    right under their own rule and neither rule was visible:
+
+    * here — each test's last ``window_runs`` executions, needing at least
+      ``min_runs`` of them, a failure ratio inside 10-90%, and ``min_flips``
+      pass<->fail transitions;
+    * Flaky Coach — a 30-day window needing only 3 runs.
+
+    Measured live on 2026-09-21, the two disagreed on 2 of 5 projects. The
+    project the user was looking at held one test with **3 runs**
+    (FAILED/PASSED/FAILED): enough for Flaky Coach, below ``min_runs`` here.
+
+    The thresholds are deliberately NOT unified. This count feeds the
+    ``max_flaky_count`` hard cap (``_evaluate_hard_caps``) and the readiness
+    score, so moving it moves release verdicts; a display problem must not be
+    fixed by changing a gate. What was missing is the rule travelling with the
+    number, which is what this returns.
+    """
+    return {
+        "window_runs": _FLAKY_WINDOW_RUNS,
+        "min_runs": _FLAKY_MIN_RUNS,
+        "min_flips": _FLAKY_MIN_FLIPS,
+        "min_failure_ratio": _FLAKY_MIN_FAILURE_RATIO,
+        "max_failure_ratio": _FLAKY_MAX_FAILURE_RATIO,
+    }
 
 
 async def _count_flaky_tests(
@@ -902,7 +942,8 @@ async def _count_flaky_tests(
             ) seq
             GROUP BY fingerprint
             HAVING COUNT(*) >= {_FLAKY_MIN_RUNS}
-               AND COUNT(*) FILTER (WHERE is_failed = 1) * 1.0 / COUNT(*) BETWEEN 0.1 AND 0.9
+               AND COUNT(*) FILTER (WHERE is_failed = 1) * 1.0 / COUNT(*)
+                   BETWEEN {_FLAKY_MIN_FAILURE_RATIO} AND {_FLAKY_MAX_FAILURE_RATIO}
                AND COUNT(*) FILTER (
                        WHERE prev_failed IS NOT NULL AND prev_failed <> is_failed
                    ) >= {_FLAKY_MIN_FLIPS}

@@ -113,4 +113,4 @@
 6 app/services/ws_event_ingest.py
 6 app/streams/live_consumer.py
 4 app/streams/live_fanout.py
-31 app/worker/tasks.py
+30 app/worker/tasks.py

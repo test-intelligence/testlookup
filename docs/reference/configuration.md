@@ -81,8 +81,6 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `LIVE_INGEST_SHARD_COUNT` | `int` | `8` |
 | `LIVE_SESSION_DRAIN_ENABLED` | `bool` | `True` |
 | `LIVE_SESSION_DRAIN_BATCH_SIZE` | `int` | `5000` |
-| `AI_PIPELINE_DEBOUNCE_ENABLED` | `bool` | `True` |
-| `AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS` | `int` | `60` |
 | `AI_PIPELINE_DEADLINE_SECONDS` | `int` | `1500` |
 | `AGENT_PIPELINE_ALERT_GRACE_SECONDS` | `int` | `300` |
 | `HIGH_VOLUME_AUTO_DETECT_ENABLED` | `bool` | `True` |
