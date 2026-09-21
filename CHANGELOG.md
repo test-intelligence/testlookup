@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased - A flaky count now says what it counted
+
+**BUG-007.** A user read **"Flaky 0"** on the summary report beside a flaky test
+on Flaky Coach and reported the pair as a contradiction. Measured against the
+deployment across all five projects, the two surfaces disagree on **two** of
+them -- ExploreQA (coach 1, summary 0) and Inventory (coach 5, summary 6).
+
+Neither was computing anything wrong. They apply the same flip threshold
+(``MIN_FLIPS_FOR_INTERMITTENCY``, which is 2) to **different populations**:
+Flaky Coach takes the last 30 days and needs 3 runs; the summary takes each
+test's last 10 runs, needs 5 of them, and requires a failure ratio inside
+10-90%. ExploreQA's one flaky test has exactly three runs (FAILED, PASSED,
+FAILED) -- enough for Flaky Coach, below the summary's floor. Inventory diverges
+the other way, because a test that flips once inside the coach's 8-run window
+flips enough inside the summary's 10-run one.
+
+**The thresholds are deliberately NOT aligned.** ``_count_flaky_tests`` feeds
+``_evaluate_hard_caps`` (``max_flaky_count``, which forces NO_GO) and
+``_compute_readiness``. Lowering ``min_runs`` to 3 to match Flaky Coach is the
+obvious fix and would have moved release verdicts on live projects because a KPI
+tile was confusing. A display problem must not be repaired by changing a gate;
+``test_flaky_count_publishes_its_rule.py::TestTheGateDidNotMove`` pins that,
+including an explicit assertion that ``min_runs`` was not lowered toward Flaky
+Coach's threshold.
+
+What was actually missing is the rule travelling with the number. The summary
+response now carries ``flaky_criteria`` (window runs, minimum runs, minimum
+flips, and the ratio band), the KPI tile states it on hover, and a zero reads
+*"none met the 5-run threshold"* instead of *"0.0% of total"* -- which restated
+the zero rather than explaining it. Flaky Coach's subtitle names its own 30-day
+window and spells out "quarantine candidate", which the original report read as
+an active quarantine.
+
+The ratio band moved out of the SQL into ``_FLAKY_MIN_FAILURE_RATIO`` /
+``_FLAKY_MAX_FAILURE_RATIO``, because publishing 0.1/0.9 from a separate literal
+would make the report confidently state the old band the day someone widened the
+query. A guard asserts the band is not hardcoded in the SQL again and that every
+published bound appears in it.
+
+The tile reads its numbers from the payload and never as literals, for the same
+reason -- mutation-tested by moving the criteria to 20/8/20-80% and asserting the
+sentence follows.
+
 ## Unreleased - Every suite uses pytest's own basetemp
 
 **The override was never needed.** 65 `--basetemp` arguments across 45 tracked

@@ -179,31 +179,84 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   with a reason a user can read.
 - **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-004.md`
 
-### BUG-007 — "0 flaky" on `/reports/summary` beside "1 quarantine" on `/flaky-coach`  ·  S3/S2  ·  **OPEN — investigate**
+### BUG-007 — "0 flaky" on `/reports/summary` beside "1 quarantine" on `/flaky-coach`  ·  S3  ·  **FIXED 2026-09-21** on `fix/bug007-flaky-count-states-its-rule-2026-09-21`
 - **Reported:** user, 2026-09-18. Confirm whether the pair is accurate or a bug.
+
+#### Answer: both numbers were right, and the product never said so
+
+Measured live against `build-20260921-001432`, all five projects:
+
+| Project | Flaky Coach `total_flaky` | candidates | summary `flaky_test_count` |
+|---|---|---|---|
+| **ExploreQA 134934** | **1** | 1 | **0** |
+| **Inventory Service** | **5** | 4 | **6** |
+| Auth Service | 5 | 2 | 5 |
+| Checkout Service | 2 | 0 | 2 |
+| Payment Service | 9 | 4 | 9 |
+
+Two of five disagree — so this is **not** the "0 flaky + 1 quarantined is the
+expected steady state" case this entry first proposed, and not the
+`quarantine_candidates` misreading either. Flaky Coach's own flaky count
+disagrees with the summary's, which this entry already identified as the
+condition that makes it a real defect.
+
+**Root cause: two populations, same word.** Both surfaces apply the *same* flip
+threshold (`MIN_FLIPS_FOR_INTERMITTENCY`, which is **2**), but to different data:
+
+| | window | min runs | ratio band |
+|---|---|---|---|
+| Flaky Coach | last 30 days | 3 | none |
+| summary report | each test's last 10 runs | **5** | 10-90% |
+
+ExploreQA's one flaky test has exactly **3 runs** (`FAILED, PASSED, FAILED`) —
+enough for Flaky Coach, below the summary's 5. Inventory diverges the other way:
+`testReservationExpiry` shows 1 flip in the coach's 8-run window, so the coach
+excludes it, while the summary's last-10-runs window sees enough flips.
+
+#### The fix is disclosure, NOT alignment
+
+`_count_flaky_tests` feeds `_evaluate_hard_caps` (`max_flaky_count`, which forces
+NO_GO) and `_compute_readiness`. Lowering `min_runs` to 3 to match Flaky Coach —
+the obvious "fix" — would have changed release verdicts on live projects because
+a KPI tile was confusing. A display problem must not be fixed by moving a gate,
+and `test_flaky_count_publishes_its_rule.py::TestTheGateDidNotMove` is what holds
+that line.
+
+So the count now publishes the rule it applied (`flaky_criteria` on the summary
+response), the tile states it, and a zero reads *"none met the 5-run threshold"*
+rather than `0% of total`. Flaky Coach's subtitle names its own window. The
+ratio band moved out of the SQL into named constants so the published criteria
+cannot drift from the query that enforces them.
+
+- **Detail + queries:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-008.md`
 - **They are not the same measurement.** `/reports/summary` calls
   `metrics_service._count_flaky_tests` — a *behavioural* count requiring both a
   10-90% failure ratio **and** N pass<->fail transitions in run order.
   `/flaky-coach` counts *workflow rows*
   (`DETECTED -> PROPOSED -> APPROVED -> QUARANTINED -> RECHECK_SCHEDULED`).
-- **And the states interact in exactly this direction.** `models/postgres.py:5738`
-  says a QUARANTINED test is "excluded from release gate scoring" — a suppressed
-  test stops producing flips, so it legitimately drops out of the behavioural
-  count while its quarantine row stays live. **"0 flaky, 1 quarantined" is the
-  expected steady state after a successful quarantine.**
-- **Check the cheap thing first:** `/flaky-coach` is one of the nine
-  single-project routes in `config/routeScope.ts`; `/reports/summary` is not. If
-  the two pages were viewed under different project scopes the numbers describe
-  different populations. Confirm the same project was pinned on both.
-- **Also confirm which number was read:** `FlakyCoachPage.tsx:224-230` renders
-  `flakyCount` AND `quarantine_candidates` in one subtitle. A *candidate* is not
-  an active quarantine. If Flaky Coach's own `flakyCount` disagrees with the
-  summary report's `flaky_test_count`, that IS a bug — one measurement, two
-  answers.
-- **If accurate, the fix is wording, not arithmetic:** a QA lead reading "0
-  flaky" concludes there is no flakiness, while a quarantine exists precisely
-  because there was. The summary should say what it excludes.
-- **Detail + queries:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-008.md`
+*The triage notes below are kept for the reasoning. Two of them were **wrong**,
+and are marked so rather than deleted — an unmarked disproven hypothesis reads
+like a finding.*
+
+- ~~**And the states interact in exactly this direction.**~~ **DISPROVEN.**
+  `models/postgres.py:5738` says a QUARANTINED test is "excluded from release
+  gate scoring", so the theory was that a suppressed test stops flipping and
+  legitimately leaves the behavioural count. It does not explain the measured
+  data: Flaky Coach's *own* `total_flaky` reads 1 where the summary reads 0, and
+  Inventory diverges in the **opposite** direction (coach 5, summary 6), which a
+  quarantine-suppression story cannot produce.
+- ~~**Check the cheap thing first** (project scope)~~ — **RULED OUT.** All five
+  projects were queried by explicit `project_id` against the same deployment in
+  one pass, so no scope difference was possible.
+- ~~**Also confirm which number was read**~~ — **RULED OUT**, and it was the
+  right question. `quarantine_candidates` is indeed not an active quarantine,
+  but the disagreement survives comparing `total_flaky` to `flaky_test_count`
+  directly. This note's own test — "if Flaky Coach's `flakyCount` disagrees with
+  the summary's `flaky_test_count`, that IS a bug" — is what the measurement met.
+- **CONFIRMED:** the fix is wording, not arithmetic. A QA lead reading "0 flaky"
+  concludes there is no flakiness. The summary now says what it excludes, and
+  deliberately does **not** change what it counts, because that number gates
+  releases.
 
 ### BUG-008 — ENHANCEMENT: `/agents` report above Agent Stages, and make Stages collapsible  ·  **DONE 2026-09-18** (branch `qa/exploratory-e2e-2026-09-18`)
 - The AI report now leads the column under its own "AI Report" heading, and

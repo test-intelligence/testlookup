@@ -24,6 +24,7 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useSummaryReport } from '@/hooks/useSummaryReport'
 import { summaryReportService } from '@/services/summaryReportService'
 import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
+import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
 
 const DAYS_OPTIONS = [1, 7, 30, 90] as const
 /** Aggregation mode is page-local — different from the global window
@@ -340,7 +341,8 @@ export default function SummaryReportPage() {
             <KpiTile label="Skip %"        value={fmtPct(totals.skip_rate_pct)}    icon={<MinusCircle className="h-4 w-4" />} tone="warn" />
             <KpiTile label="Broken %"      value={fmtPct(totals.broken_rate_pct)}  icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
             <KpiTile label="Flaky"         value={fmtInt(data?.flaky_test_count)}   icon={<Zap className="h-4 w-4" />} tone="warn"
-                     sub={`${fmtPct(data?.flaky_rate_pct)} of total`} />
+                     sub={flakySubtitle(data?.flaky_rate_pct, data?.flaky_criteria, data?.flaky_test_count)}
+                     title={flakyCriteriaSentence(data?.flaky_criteria)} />
           </section>
 
           {/* Counts strip */}
@@ -416,13 +418,15 @@ export default function SummaryReportPage() {
 // ── small components ───────────────────────────────────────────────────────
 
 function KpiTile({
-  label, value, icon, tone, sub,
+  label, value, icon, tone, sub, title,
 }: {
   label: string
   value: string
   icon: React.ReactNode
   tone: 'good' | 'bad' | 'warn' | 'neutral'
   sub?: string
+  /** Hover/assistive explanation of how the figure was derived. */
+  title?: string
 }) {
   const toneClasses: Record<typeof tone, string> = {
     good:    'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)]',
@@ -431,7 +435,12 @@ function KpiTile({
     neutral: 'bg-white/5 text-[var(--color-text)]',
   }
   return (
-    <div className="card flex items-start justify-between gap-3" role="status" aria-live="polite">
+    <div
+      className="card flex items-start justify-between gap-3"
+      role="status"
+      aria-live="polite"
+      title={title}
+    >
       <div className="min-w-0 flex-1">
         <p className="text-[10.5px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">{label}</p>
         <p className="text-[22px] font-bold text-[var(--color-text)] tabular-nums leading-tight">{value}</p>

@@ -6,6 +6,21 @@
 
 export type SummaryReportMode = 'window' | 'latest'
 
+/**
+ * What a flaky-test count measured. Mirrors ``FlakyCountCriteria``.
+ *
+ * A bare count cannot distinguish "no flaky tests" from "nothing cleared this
+ * particular bar", and Flaky Coach applies a looser bar — so the same project
+ * can show a flaky test there and 0 here without either being wrong.
+ */
+export interface FlakyCountCriteria {
+  window_runs: number
+  min_runs: number
+  min_flips: number
+  min_failure_ratio: number
+  max_failure_ratio: number
+}
+
 export interface SummaryTotals {
   total_test_cases: number
   passed: number
@@ -68,6 +83,13 @@ export interface SummaryReport {
   latest_run_at: string | null
   flaky_test_count: number
   flaky_rate_pct: number
+  /**
+   * What ``flaky_test_count`` measured (BUG-007).
+   *
+   * Optional because a cached or older payload may predate the field — the UI
+   * falls back to showing the bare count rather than rendering "undefined".
+   */
+  flaky_criteria?: FlakyCountCriteria
   suites: SummarySuiteRow[]
   top_failing_tests: SummaryTopFailingTest[]
 }
