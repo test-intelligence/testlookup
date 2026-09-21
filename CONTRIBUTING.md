@@ -92,11 +92,62 @@ Write commit messages that explain *why*, not *what*. The diff shows the *what*.
 
 PRs that follow Conventional Commits (`fix:`, `feat:`, `docs:`, `chore:`, `refactor:`, `test:`) make release notes easier to write.
 
+## Before you push
+
+Running the tests is not the same as running what CI runs. CI also builds the
+production bundle, enforces a coverage ratchet, and runs several guards that
+live outside the test suites — `check:bundle`, `check:theme`,
+`prompt_eval_recordings --check`, `agent_api_docs --check` and the handoff
+reference checks. Each of those has failed a PR for a change whose author had
+run the tests and seen green.
+
+So run the list, not your memory of it:
+
+```bash
+make push-check
+```
+
+To have it run on every `git push` automatically:
+
+```bash
+make install-hooks
+```
+
+That points `core.hooksPath` at the tracked `.githooks/`. To push anyway, once
+and deliberately:
+
+```bash
+SKIP_PUSH_CHECK=1 git push
+```
+
+`make push-check-quick` skips the slow suites. It is genuinely weaker and says
+so when it finishes — it does not predict CI.
+
+**Where local and CI legitimately differ.** Three checks cannot be made
+identical, and `push_check.py` documents how it handles each rather than
+pretending otherwise:
+
+- **Handoff references.** `generate_handoff_reference.py --check` can never pass
+  locally, because the local FastAPI/Pydantic emits slightly different OpenAPI
+  than CI's. The gate applies the equivalent test that *is* reliable: the
+  committed references must differ from `origin/main` by **additions only**.
+  Every known skew shows up as a deletion.
+- **The mypy ratchet.** Local and CI mypy disagree on a number of files, in both
+  directions. Compare the files your change touched, not the total.
+- **Environment-dependent tests.** A few suites need services a laptop does not
+  run. They are listed in `KNOWN_LOCAL_FAILURES` with a reason and are reported
+  but not fatal. Anything *not* on that list fails the push. Add an entry only
+  with evidence that CI passes the same test — the list is checked by
+  `scripts/test_push_check.py`, which pins that one unknown failure alongside a
+  known one still blocks.
+
 ## Pull request process
 
 1. **Fork** the repo and branch from `main`.
 2. **Make your change** in small, self-contained commits.
-3. **Run the tests locally.** PRs with failing CI get bumped down the queue.
+3. **Run `make push-check`.** This runs what CI runs — see
+   [Before you push](#before-you-push). PRs with failing CI get bumped down
+   the queue.
 4. **Open a PR** against `main`. Describe: what, why, how you tested.
 5. **Respond to review.** Maintainers aim to respond within 72 hours.
 6. **Squash before merge** if your PR history has fixup commits.

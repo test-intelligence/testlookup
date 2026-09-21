@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Run CI's checks before the push, so a green tree means a green PR.
+#
+# Tracked in the repo (not .git/hooks, which is local-only and unshareable).
+# Enable with:  make install-hooks   — which sets core.hooksPath to .githooks
+#
+# Deliberate bypass, when you know why:
+#     SKIP_PUSH_CHECK=1 git push
+#
+# `git push --no-verify` also skips it, but leaves no trace in the shell
+# history of a decision having been made; prefer the variable.
+set -euo pipefail
+
+if [ "${SKIP_PUSH_CHECK:-}" = "1" ]; then
+  echo "pre-push: skipped (SKIP_PUSH_CHECK=1)" >&2
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Deleting a remote branch pushes no commits; there is nothing to verify.
+have_commits=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] || have_commits=1
+done
+if [ "$have_commits" = "0" ]; then
+  exit 0
+fi
+
+PY="${PYTHON:-python}"
+command -v "$PY" >/dev/null 2>&1 || PY=python3
+
+echo "pre-push: running the checks CI runs (SKIP_PUSH_CHECK=1 to bypass)" >&2
+exec "$PY" "$REPO_ROOT/scripts/push_check.py"
