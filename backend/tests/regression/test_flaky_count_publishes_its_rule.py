@@ -49,6 +49,22 @@ class TestTheRuleIsPublished:
     def test_the_summary_response_carries_them(self):
         assert "flaky_criteria" in SummaryReportResponse.model_fields
 
+    def test_the_empty_envelope_states_no_rule_rather_than_a_false_one(self):
+        """No project resolved means nothing was measured.
+
+        Publishing criteria on the empty envelope would claim "we applied this
+        bar and nothing cleared it" about a search that never ran, which is the
+        absence-is-not-health mistake this field exists to prevent. It is also
+        the path that 500'd when the field was required -- CI caught a real
+        endpoint break, not a test-fixture detail.
+        """
+        from app.services.summary_report_service import _empty_envelope
+
+        env = _empty_envelope(days=7, mode="window")
+        assert env.get("flaky_criteria") is None
+        # And it must still validate, which is what broke.
+        assert SummaryReportResponse(**env).flaky_criteria is None
+
     def test_the_report_populates_them_from_the_service(self):
         src = inspect.getsource(
             __import__(
@@ -57,6 +73,9 @@ class TestTheRuleIsPublished:
         )
         # The CALL, not the name: the module explains the choice in a comment
         # above it, and matching the bare name finds the prose.
+        #
+        # This is the flip side of the field being Optional: absent is
+        # correct ONLY on the empty envelope, never on a real report.
         assert "flaky_count_criteria()" in src
 
 

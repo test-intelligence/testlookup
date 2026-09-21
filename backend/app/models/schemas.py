@@ -1072,7 +1072,13 @@ class SummaryReportResponse(BaseModel):
     # threshold", and the two are very different answers. Flaky Coach applies a
     # looser rule, so the same project can legitimately show a flaky test there
     # and 0 here; a user reported that pair as a contradiction.
-    flaky_criteria: FlakyCountCriteria
+    #
+    # ``None`` ONLY on the empty envelope, where no project is resolved and
+    # therefore nothing was measured. Stating criteria there would claim "we
+    # looked and found none" about a search that never ran — the same
+    # absence-is-not-health mistake this field exists to prevent. The UI falls
+    # back to the plain rate rather than asserting a threshold was applied.
+    flaky_criteria: Optional[FlakyCountCriteria] = None
     suites: List[SummarySuiteRow]
     top_failing_tests: List[SummaryTopFailingTest]
 
