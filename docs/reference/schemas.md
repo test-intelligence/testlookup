@@ -32241,13 +32241,6 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
-    "ctx": {
-      "title": "Context",
-      "type": "object"
-    },
-    "input": {
-      "title": "Input"
-    },
     "loc": {
       "items": {
         "anyOf": [
