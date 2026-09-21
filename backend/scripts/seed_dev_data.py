@@ -47,6 +47,7 @@ from app.models.postgres import (
     AgentPipelineRun,
     AgentStageResult,
     AIAnalysis,
+    CanonicalTestCase,
     CoverageSnapshot,
     DeepFinding,
     Defect,
@@ -68,9 +69,11 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
     TestStrategy,
+    TestSuite,
     User,
     UserRole,
 )
+from scripts.seed_viz_data import apply_viz_seed, build_viz_seed_plan
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Seed marker + catalogue
@@ -382,6 +385,13 @@ async def _wipe_seed_data(db: AsyncSession) -> None:
             await db.execute(delete(TestStrategy).where(TestStrategy.project_id == pid))
             await db.execute(delete(ManagedTestCase).where(ManagedTestCase.project_id == pid))
             await db.execute(delete(ProjectMember).where(ProjectMember.project_id == pid))
+
+        # Catalog rows the viz seed's canonical sync writes (VIZ-213). Canonicals
+        # first: their suite FK is RESTRICT, so deleting the project cannot
+        # cascade through test_suites while any of them exist. Release links
+        # need nothing here — both of their FKs CASCADE with the runs above.
+        await db.execute(delete(CanonicalTestCase).where(CanonicalTestCase.project_id.in_(project_ids)))
+        await db.execute(delete(TestSuite).where(TestSuite.project_id.in_(project_ids)))
 
         await db.execute(delete(Project).where(Project.id.in_(project_ids)))
 
@@ -1116,6 +1126,12 @@ async def main(reset: bool = False, wipe_only: bool = False) -> None:
             # Live session (Live tab)
             await _seed_live_sessions(db, project)
             print(f"  Live session created")
+
+            # Visualization edge cases (VIZ-213): more releases, environments,
+            # failure groups, an in-progress run. Draws from its own RNG, so
+            # everything seeded above is exactly what it was before.
+            viz = await apply_viz_seed(db, project, admin_user, build_viz_seed_plan(project.slug, _now()))
+            print(f"  {viz.releases} viz releases · {viz.runs} viz runs ({viz.linked_runs} release-linked) · {viz.test_cases} test cases")
 
         await db.commit()
 
