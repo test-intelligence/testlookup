@@ -158,7 +158,22 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   on the Pass rate cell. Same approach as `TL-2026-08-29-01-001`.
 - **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-007.md`
 
-### BUG-006 — four `/releases` controls only toast "coming in next iteration"  ·  S3  ·  **OPEN — backlog, needs a product decision**
+### BUG-006 — four `/releases` controls only toast "coming in next iteration"  ·  S3  ·  **FIXED 2026-09-21**
+
+**Fixed without needing the product decision.** The filed defect is *"a control
+that promises an action it never performs"*, not *"these four features are
+missing"* — so the fix is how they are advertised. All four are now `disabled`,
+carry the reason in `title`, and say **(planned)** in the visible label. The
+state is in the label rather than only the tooltip because a tooltip does not
+exist on touch and `title` is not reliably announced by screen readers.
+
+They were not deleted: `docs/BACKLOG.md` carries all four, and removing the
+controls would drop the only signal that the capability is coming. Whether and
+when to build them remains a roadmap question — it is just no longer answered
+by a button that lies.
+
+`ReleasesPage.plannedControls.test.tsx` guards the whole class rather than the
+four known sites: any control answering a click with that toast fails it.
 - **Symptom:** on `/releases`, "Clone from previous release", "Generate from
   PRD", "Export schedule" and "Calendar view" are styled exactly like the
   working controls beside them and only raise a toast.
@@ -334,7 +349,24 @@ On `testlookup.local` at `build-20260921-001432`. Measured placement is
 identical on every sub-page (x=264, y=80, height 24) and **absent on
 `/settings` itself**, which is the destination rather than a sub-page.
 
-### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **OPEN — needs owner decision**
+### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **FIXED 2026-09-21**
+
+**The owner decision this was waiting on had already been made by events.** The
+entry below defers it because a worktree was "actively adding the missing call".
+That branch's last commit is **2026-07-15** and it sits **1374 commits behind
+`main`** — abandoned, not active. With that premise gone there is no decision
+left: the outbox is what runs, and wiring the debouncer would have risked double
+dispatch.
+
+The module was *entirely* unreachable, not merely its entry point — including
+`get_degraded_project_count`, which `/health` published, because the keys it
+counted were written only inside `flush_pending`. So the ops dashboard showed
+**two numbers structurally incapable of being non-zero** while the real backlog
+went unreported.
+
+Removed the module, its task, its beat entry and its two settings. `/health`
+now reports `ai_pipeline.pending_dispatches` from `run_downstream_outbox` —
+`None` rather than `0` when it cannot read.
 
 Found by JR-03. `app/services/ai_pipeline_debouncer.enqueue_pipeline_for_run` has
 **zero production callers** in the tracked tree (`git grep`: the only non-test
