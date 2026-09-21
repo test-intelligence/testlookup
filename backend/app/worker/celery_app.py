@@ -164,16 +164,6 @@ celery_app.conf.update(
             "task": "app.worker.tasks.sync_jira_defect_statuses",
             "schedule": crontab(minute="5-59/15"),
         },
-        # Phase 3 — AI pipeline debouncer flush (every 2 minutes).
-        # Drains the per-project SortedSet built by
-        # services.ai_pipeline_debouncer.enqueue_pipeline_for_run,
-        # applies the daily LLM cost-budget cap, then fans out
-        # run_agent_pipeline tasks. See
-        # docs/SCALABLE_INGESTION_DESIGN.md § Phase 3.
-        "flush-ai-pipeline-queue": {
-            "task": "app.worker.tasks.flush_ai_pipeline_queue",
-            "schedule": crontab(minute="*/2"),
-        },
         # RAG-6: Knowledge source freshness re-sync (every 4 hours)
         "knowledge-source-resync": {
             "task": "app.worker.tasks.resync_stale_knowledge_sources",

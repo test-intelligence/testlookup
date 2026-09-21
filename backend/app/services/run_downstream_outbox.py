@@ -1146,3 +1146,28 @@ async def downstream_status_for_run(
             for row in rows
         ],
     }
+
+
+async def pending_dispatch_count(db: AsyncSession) -> int | None:
+    """How many downstream dispatches are waiting — the real AI-pipeline backlog.
+
+    ``/health`` used to publish two numbers about the *debouncer* instead:
+    ``pending_in_debouncer`` and ``degraded_projects``. Both were structurally
+    incapable of being non-zero — the SortedSet they read was only ever written
+    by ``enqueue_pipeline_for_run``, which had no production callers — so an
+    operator watched two permanent zeroes while this table held the actual
+    backlog. It was measured at five waiting rows during 279 consecutive
+    empty-set flushes (BUG-010).
+
+    ``None`` rather than 0 when the count cannot be read, so a database problem
+    never renders as a healthy queue ("absence is not health").
+    """
+    try:
+        result = await db.execute(
+            select(func.count())
+            .select_from(RunDownstreamOutbox)
+            .where(RunDownstreamOutbox.status.in_(("pending", "sending")))
+        )
+        return int(result.scalar() or 0)
+    except Exception:  # pragma: no cover - defensive, health must not 500
+        return None

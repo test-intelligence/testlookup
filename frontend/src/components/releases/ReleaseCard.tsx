@@ -12,7 +12,6 @@
 import { clsx } from 'clsx'
 import { useNow } from '@/hooks/useNow'
 import { Clock, CheckCircle2, Sparkles, Copy, BadgeCheck, ChevronRight } from 'lucide-react'
-import toast from 'react-hot-toast'
 import type { DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
 import PhasePipeline from './PhasePipeline'
@@ -94,20 +93,27 @@ function PlanningCallout({ releaseName }: { releaseName: string }) {
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {/* BUG-006: these two were styled exactly like the working controls
+            beside them and only raised a toast AFTER the click. A control that
+            looks available and then says "coming in next iteration" spends the
+            user's attention to deliver nothing; disabled-with-a-reason spends
+            none. The label carries the state visibly rather than hiding it in
+            a title, because a hover tooltip does not exist on touch. */}
         <button
           type="button"
-          onClick={() => toast('Clone from previous release — coming in next iteration', { icon: '📋' })}
-          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-border-light)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+          disabled
+          title="Not built yet. Scope this release by adding phases below."
+          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
         >
-          <Copy className="h-3 w-3" /> Clone from …
+          <Copy className="h-3 w-3" /> Clone from … <span className="text-[10px]">(planned)</span>
         </button>
         <button
           type="button"
-          onClick={() => toast('Generate from PRD — coming in next iteration', { icon: '✨' })}
-          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border text-[var(--color-accent)] hover:underline"
-          style={{ background: 'var(--color-accent-muted)', borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)' }}
+          disabled
+          title="Not built yet. Scope this release by adding phases below."
+          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
         >
-          <Sparkles className="h-3 w-3" /> Generate from PRD
+          <Sparkles className="h-3 w-3" /> Generate from PRD <span className="text-[10px]">(planned)</span>
         </button>
       </div>
     </div>
