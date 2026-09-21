@@ -214,6 +214,63 @@ class TestTheGateNeverHandsBackAnAlteredTree:
         assert (repo / "service.py").read_bytes() == b"OPEN = 1.0\n"
 
 
+class TestTheMypyRatchetIsActuallyChecked:
+    """The gate's docstring promised this from the first version and
+    ``build_checks()`` never contained it. PR #147 then failed CI on exactly it:
+    deleting a dead task dropped ``tasks.py`` from 31 errors to 30, and the
+    ratchet fails on a DROP as well as a rise."""
+
+    RATCHET_OUT = (
+        "mypy: 365 errors in 114 files (baseline 366)\n"
+        "::error::fewer errors than the baseline allows; tighten it\n"
+        "  app/worker/tasks.py: 30 errors (baseline 31)\n"
+        "  app/routers/integration_health.py: 2 errors (baseline 1)\n"
+    )
+
+    def _stub(self, monkeypatch, touched):
+        monkeypatch.setattr(push_check, "_touched_backend_modules", lambda: touched)
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: (1, self.RATCHET_OUT))
+
+    def test_the_check_is_registered(self):
+        # The exact gap: a promise in the docstring, nothing in the list.
+        names = [c.name for c in push_check.build_checks()]
+        assert any("mypy" in n for n in names), "no mypy check in build_checks()"
+
+    def test_it_runs_before_the_slow_suites(self):
+        # A baseline slip should cost a minute, not wait behind 15.
+        names = [c.name for c in push_check.build_checks()]
+        mypy_at = next(i for i, n in enumerate(names) if "mypy" in n)
+        assert mypy_at < names.index("backend: full test suite")
+
+    def test_a_drop_in_a_touched_module_fails_the_push(self, monkeypatch):
+        self._stub(monkeypatch, {"app/worker/tasks.py"})
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is False
+        assert "app/worker/tasks.py" in msg
+        assert "DROPPED" in msg, "a drop must be named as a drop, not a rise"
+
+    def test_divergence_in_untouched_modules_does_not_fail(self, monkeypatch):
+        # Local mypy disagrees with CI's across files nobody touched. Failing on
+        # those would fail every push, and a gate that always fails is bypassed.
+        self._stub(monkeypatch, {"app/services/something_else.py"})
+        ok, _ = push_check.check_mypy_touched()
+        assert ok is True
+
+    def test_it_never_advises_update(self, monkeypatch):
+        # --update rewrites all ~116 entries from the local mypy, which is the
+        # wrong mypy. The remediation has to say edit the one line.
+        self._stub(monkeypatch, {"app/worker/tasks.py"})
+        _, msg = push_check.check_mypy_touched()
+        assert "Do NOT run --update" in msg
+
+    def test_no_backend_change_skips_the_slow_mypy_run(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(push_check, "_touched_backend_modules", lambda: set())
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: called.append(1) or (0, ""))
+        ok, _ = push_check.check_mypy_touched()
+        assert ok is True and called == []
+
+
 class TestOutputSurvivesAWindowsConsole:
     def test_nothing_printed_is_outside_ascii(self):
         """The gate crashed here once.

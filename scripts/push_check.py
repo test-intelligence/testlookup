@@ -66,6 +66,8 @@ import shutil
 import subprocess
 import sys
 import time
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -155,6 +157,9 @@ class Check:
     # Run even in --quick. Cheap guards that have actually caught pushes.
     always: bool = True
     env: dict[str, str] = field(default_factory=dict)
+    # A check that needs logic rather than one subprocess. Returns
+    # (ok, report). When set, ``cmd`` is ignored.
+    fn: "Callable[[], tuple[bool, str]] | None" = None
 
 
 def _npm() -> str:
@@ -191,6 +196,9 @@ def build_checks() -> list[Check]:
              "-q", "-p", "no:testlookup"],
             BACKEND, "docs",
         ),
+        # Before the slow suites, so a baseline slip costs ~1 minute, not 16.
+        Check("backend: mypy ratchet (touched modules)", [], BACKEND, "backend",
+              fn=check_mypy_touched),
         # ── the expensive ones
         Check("frontend: vitest + coverage ratchet",
               [npm, "run", "test", "--", "--coverage"], FRONTEND, "frontend", slow=True),
@@ -300,6 +308,68 @@ def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[s
     for node in failed:
         (known if _allowlist_key_for(node) else unknown).append(node)
     return not unknown, sorted(set(known)), sorted(set(unknown))
+
+
+_RATCHET_LINE = re.compile(r"^\s+(app/\S+\.py): (\d+) errors \(baseline (\d+)\)")
+
+
+def _touched_backend_modules() -> set[str]:
+    """Backend modules this branch changed, as the ratchet names them (app/...)."""
+    paths: set[str] = set()
+    for args in (("diff", "--name-only", "-z", "origin/main...HEAD"),
+                 ("diff", "--name-only", "-z", "HEAD")):
+        code, out = _git_stdout(*args)
+        if code == 0:
+            paths.update(p for p in out.split("\0") if p)
+    return {
+        p[len("backend/"):] for p in paths
+        if p.startswith("backend/app/") and p.endswith(".py")
+    }
+
+
+def check_mypy_touched() -> tuple[bool, str]:
+    """The mypy ratchet, judged only on the files this change touched.
+
+    This gate's own docstring promised a mypy check from the first version, and
+    ``build_checks()`` never contained one. PR #147 then went red on exactly it:
+    deleting a dead Celery task removed a type error from ``tasks.py``, and the
+    ratchet fails when a count DROPS as well as when it rises ("tighten it").
+
+    Scoped because local mypy disagrees with CI's wholesale -- 391 errors here
+    against CI's 365, across files nobody touched -- and a gate that fails on
+    those would fail every push and be bypassed. On a file you DID touch, the
+    local count is the best evidence available, and it matched CI's.
+    """
+    touched = _touched_backend_modules()
+    if not touched:
+        return True, "no backend module touched"
+    code, out = run(
+        [sys.executable, str(REPO / "scripts" / "mypy_ratchet.py"), "--check-stale"],
+        BACKEND,
+    )
+    if code == 0:
+        return True, f"ratchet clean ({len(touched)} module(s) touched)"
+    violations = []
+    for line in out.splitlines():
+        m = _RATCHET_LINE.match(line)
+        if m:
+            violations.append((m.group(1), int(m.group(2)), int(m.group(3))))
+    mine = [v for v in violations if v[0] in touched]
+    if not mine:
+        return True, (
+            f"{len(violations)} untouched module(s) differ locally (known "
+            f"local/CI mypy divergence); none you changed"
+        )
+    lines = []
+    for path, now, base in mine:
+        verb = "rose" if now > base else "DROPPED -- tighten the baseline"
+        lines.append(f"  {path}: {now} errors, baseline {base} ({verb})")
+    return False, (
+        "mypy ratchet fails on files this change touched:\n" + "\n".join(lines)
+        + "\n\nEdit only these lines in backend/mypy-baseline.txt (format "
+        "'<count> <path>'). Do NOT run --update: it rewrites every entry from "
+        "the local mypy, which disagrees with CI's across a dozen files."
+    )
 
 
 def check_reference_drift() -> tuple[bool, str]:
@@ -450,7 +520,11 @@ def _main() -> int:
     for c in checks:
         t0 = time.time()
         _progress(c.name)
-        code, out = run(c.cmd, c.cwd, c.env)
+        if c.fn is not None:
+            ok, out = c.fn()
+            code = 0 if ok else 1
+        else:
+            code, out = run(c.cmd, c.cwd, c.env)
         secs = time.time() - t0
 
         if code != 0 and c.name == "backend: full test suite":
