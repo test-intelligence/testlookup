@@ -442,16 +442,29 @@ async def health_ingestion() -> dict:
         active_sessions = None
         redis_reachable = False
 
-    # Phase 3 — AI pipeline debouncer state. ``pending`` = runs waiting
-    # in the SortedSet; ``degraded_projects`` = projects currently
-    # over their daily LLM-cost budget (rules+ML fallback in effect).
-    debouncer_pending: int | None = None
+    # AI pipeline backlog (BUG-010). This used to report the debouncer's
+    # SortedSet depth and its degraded-project count. Both were structurally
+    # always zero: the only writer of either was reachable solely through
+    # ``enqueue_pipeline_for_run``, which had no production callers. An
+    # operator therefore watched two permanent zeroes while the real backlog
+    # sat in ``run_downstream_outbox`` -- five rows waiting across 279
+    # consecutive empty flushes, as measured.
+    #
+    # The debouncer is gone; this reports the mechanism that actually
+    # dispatches.
+    # This endpoint is otherwise Redis-only, so it opens its own short-lived
+    # session rather than taking a dependency -- and swallows a failure into
+    # ``None``, because a health endpoint that 500s tells an on-call engineer
+    # nothing about the thing they came to check.
+    from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
+    from app.services.run_downstream_outbox import pending_dispatch_count  # noqa: PLC0415
+
     try:
-        debouncer_pending = int(await redis.zcard("testlookup:ai_pipeline_debounce"))
-    except Exception:
-        debouncer_pending = None
-    from app.services.ai_pipeline_debouncer import get_degraded_project_count
-    degraded_projects = await get_degraded_project_count()
+        async with AsyncSessionLocal() as _db:
+            pipeline_pending = await pending_dispatch_count(_db)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("AI pipeline backlog probe failed: %s", exc)
+        pipeline_pending = None
 
     # Phase 4.3 — DLQ depth for permanently-failed persist_live_session
     # tasks. Surfaces "N tasks failed after exhausting retries in the
@@ -506,10 +519,9 @@ async def health_ingestion() -> dict:
         "queues": queue_depths,
         "live_sessions": {"active": active_sessions},
         "ai_pipeline": {
-            "pending_in_debouncer": debouncer_pending,
-            "degraded_projects": degraded_projects,
-            "debounce_window_seconds": settings.AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS,
-            "debouncer_enabled": settings.AI_PIPELINE_DEBOUNCE_ENABLED,
+            # ``None`` means "could not read", never "empty" -- a database
+            # problem must not render as a healthy queue.
+            "pending_dispatches": pipeline_pending,
         },
         "dlq": {
             "persist_live_session": dlq_persist_count,

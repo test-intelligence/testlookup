@@ -5284,37 +5284,6 @@ def notify_test_suite_owner(
 
 
 @celery_app.task(
-    name="app.worker.tasks.flush_ai_pipeline_queue",
-    bind=True,
-    queue="default",
-    time_limit=120,
-)
-def flush_ai_pipeline_queue(self) -> dict:
-    """Drain the AI-pipeline debouncer (Phase 3).
-
-    Scheduled every 2 minutes by Celery beat (see ``celery_app.py``).
-    Pulls runs older than ``AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS`` from
-    the SortedSet, groups them by project, applies the per-project
-    LLM cost-budget cap, and fans out one ``run_agent_pipeline`` per
-    surviving run.
-
-    Returns the flush-summary dict for log inspection. Errors are
-    caught + logged inside ``flush_pending`` — this task body just
-    schedules the async call and surfaces the result.
-    """
-    from app.services.ai_pipeline_debouncer import flush_pending
-
-    try:
-        return _run_async(flush_pending())
-    except Exception as exc:
-        logger.warning(
-            "flush_ai_pipeline_queue_failed task=%s error=%s",
-            self.request.id, exc,
-        )
-        return {"drained": 0, "error": str(exc)}
-
-
-@celery_app.task(
     name="app.worker.tasks.run_duplicate_detection",
     bind=True,
     queue="default",
