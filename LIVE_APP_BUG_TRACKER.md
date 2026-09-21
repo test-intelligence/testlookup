@@ -158,7 +158,9 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   on the Pass rate cell. Same approach as `TL-2026-08-29-01-001`.
 - **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-007.md`
 
-### BUG-006 — four `/releases` controls only toast "coming in next iteration"  ·  S3  ·  **FIXED 2026-09-21**
+### BUG-006 — four `/releases` controls only toast "coming in next iteration"  ·  S3  ·  **FIXED + VERIFIED LIVE 2026-09-21** (PR #147, `build-20260921-062523`)
+
+**Verified on `build-20260921-062523`: the served `ReleasesPage` chunk contains `(planned)` and no longer contains the stub toast text.**
 
 **Fixed without needing the product decision.** The filed defect is *"a control
 that promises an action it never performs"*, not *"these four features are
@@ -194,7 +196,9 @@ four known sites: any control answering a click with that toast fails it.
   with a reason a user can read.
 - **Detail:** `qa/2026-09-18-01/defects/TL-2026-09-18-01-004.md`
 
-### BUG-007 — "0 flaky" on `/reports/summary` beside "1 quarantine" on `/flaky-coach`  ·  S3  ·  **FIXED 2026-09-21** on `fix/bug007-flaky-count-states-its-rule-2026-09-21`
+### BUG-007 — "0 flaky" on `/reports/summary` beside "1 quarantine" on `/flaky-coach`  ·  S3  ·  **FIXED + VERIFIED LIVE 2026-09-21** (PR #147, `build-20260921-062523`)
+
+**Verified on `build-20260921-062523`: `/reports/summary` for ExploreQA returns `flaky_test_count: 0` WITH `flaky_criteria` (10 runs / 5 min / 2 flips / 10-90%).**
 - **Reported:** user, 2026-09-18. Confirm whether the pair is accurate or a bug.
 
 #### Answer: both numbers were right, and the product never said so
@@ -349,7 +353,9 @@ On `testlookup.local` at `build-20260921-001432`. Measured placement is
 identical on every sub-page (x=264, y=80, height 24) and **absent on
 `/settings` itself**, which is the destination rather than a sub-page.
 
-### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **FIXED 2026-09-21**
+### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **FIXED + VERIFIED LIVE 2026-09-21** (PR #147, `build-20260921-062523`)
+
+**Verified on `build-20260921-062523`: `/health/ingestion` returns `ai_pipeline = {'pending_dispatches': 0}` from a live read (`status=ok`), the debouncer fields are gone, and the beat log never mentions the flush task.**
 
 **The owner decision this was waiting on had already been made by events.** The
 entry below defers it because a worktree was "actively adding the missing call".
