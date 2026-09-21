@@ -1511,6 +1511,26 @@ success response and then never received a delivery.
     (`trigger: "agent"`);
   - a QA lead overrides it via `POST /api/v1/release-readiness/{run_id}/override`
     (`trigger: "override"`, `overridden: true`).
+
+  > **Corrected 2026-09-21: the agent half of this is no longer true.** It was
+  > accurate when written. On 2026-09-17 (`057826a7`, `21f1e98f`) the
+  > `trigger: "agent"` emission moved from the release-risk agent to
+  > `DecisionReportCriticAgent._persist`, which runs **only when the report's
+  > verification passes**. The release-risk agent still writes and commits the
+  > decision, but emits nothing. When verification fails, the critic takes
+  > `_persist_failure`, which also emits nothing, so **that decision is never
+  > announced**, even though `GET /release-readiness/{run_id}` serves it to the
+  > UI and to CI. On a re-run it is worse: the stored decision is *updated*, so a
+  > subscriber keeps the previous value while the UI shows the new one. Measured
+  > on the live deployment, 20 of 178 decisions (11%) went unannounced.
+  >
+  > The override half is unaffected: it still emits after its route commits.
+  >
+  > **Whether suppressing the announcement on a failed verification is intended
+  > (fail-closed) or a regression is an open owner decision:**
+  > TL-2026-09-19-01-007. This note describes the current behaviour only and
+  > does not settle that question. The relocation shipped without a CHANGELOG
+  > entry of its own, which is how this claim outlived it.
 - **Why overrides emit (decision).** An override changes the value CI pipelines
   gate on, and that value is exactly what a subscriber listens for. Every
   override is its own delivery. A retried agent write for the same pipeline run
