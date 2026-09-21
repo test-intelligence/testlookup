@@ -1,0 +1,21 @@
+{
+  "description": "Edges reference existing nodes.",
+  "violates": "edge_endpoints",
+  "payload": {
+    "kind": "graph",
+    "nodes": [
+      {
+        "id": "g1",
+        "label": "x",
+        "size": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "g1",
+        "target": "g9",
+        "weight": 0.5
+      }
+    ]
+  }
+}

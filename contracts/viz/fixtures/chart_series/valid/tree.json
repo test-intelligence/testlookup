@@ -1,0 +1,22 @@
+{
+  "description": "Suite to class-or-file to test hierarchy.",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:payments",
+        "parent_id": null,
+        "label": "payments",
+        "value": 40,
+        "measure": 92.5
+      },
+      {
+        "id": "c:payments/CardTest",
+        "parent_id": "s:payments",
+        "label": "CardTest",
+        "value": 25,
+        "measure": null
+      }
+    ]
+  }
+}

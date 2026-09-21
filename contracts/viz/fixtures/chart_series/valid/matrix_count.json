@@ -1,0 +1,28 @@
+{
+  "description": "A count matrix with a zero and a no-data cell.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "count",
+    "x_labels": [
+      "r1",
+      "r2"
+    ],
+    "y_labels": [
+      "t"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 0,
+        "n": 4
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": null,
+        "n": 0
+      }
+    ]
+  }
+}

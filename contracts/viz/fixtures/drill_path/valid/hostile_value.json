@@ -1,0 +1,11 @@
+{
+  "description": "Values are untrusted text.",
+  "payload": {
+    "path": [
+      {
+        "dimension": "test",
+        "value": "<script>alert(1)</script>"
+      }
+    ]
+  }
+}

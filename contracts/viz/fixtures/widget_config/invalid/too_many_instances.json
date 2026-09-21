@@ -1,0 +1,62 @@
+{
+  "description": "At most 12 instances per page.",
+  "violates": "instance_cap",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "i-00",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-01",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-02",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-03",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-04",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-05",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-06",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-07",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-08",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-09",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-10",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-11",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "i-12",
+        "templateId": "pass_rate_trend"
+      }
+    ]
+  }
+}

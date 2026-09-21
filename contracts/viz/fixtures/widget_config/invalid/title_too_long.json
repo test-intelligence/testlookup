@@ -1,0 +1,15 @@
+{
+  "description": "Titles are capped at 120 characters.",
+  "violates": "title_length",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a",
+        "templateId": "pass_rate_trend",
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    ]
+  }
+}

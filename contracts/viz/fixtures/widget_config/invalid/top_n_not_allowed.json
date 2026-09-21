@@ -1,0 +1,15 @@
+{
+  "description": "topN is 5, 10, 25 or 50.",
+  "violates": "top_n_enum",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a",
+        "templateId": "pass_rate_trend",
+        "topN": 7
+      }
+    ]
+  }
+}

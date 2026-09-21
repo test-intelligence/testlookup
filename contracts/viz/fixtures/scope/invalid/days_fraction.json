@@ -1,0 +1,12 @@
+{
+  "description": "In the scope, every bad days value is window_days_range, including a fraction.",
+  "violates": "window_days_range",
+  "payload": {
+    "project_id": null,
+    "release_ids": [],
+    "suite_names": [],
+    "window": {
+      "days": 7.5
+    }
+  }
+}

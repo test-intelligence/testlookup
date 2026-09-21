@@ -1,0 +1,23 @@
+{
+  "description": "No cycles, at least one root.",
+  "violates": "tree_acyclic",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "a",
+        "parent_id": "b",
+        "label": "a",
+        "value": 1,
+        "measure": null
+      },
+      {
+        "id": "b",
+        "parent_id": "a",
+        "label": "b",
+        "value": 1,
+        "measure": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "description": "At most two group-by dimensions.",
+  "violates": "group_by_cap",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a",
+        "templateId": "pass_rate_trend",
+        "groupBy": [
+          "day",
+          "suite",
+          "release"
+        ]
+      }
+    ]
+  }
+}

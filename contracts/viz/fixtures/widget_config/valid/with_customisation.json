@@ -1,0 +1,28 @@
+{
+  "description": "Additive per-instance chart configuration.",
+  "payload": {
+    "page": "dashboard",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "5a0c6d3e-1b7a-4f57-9a0e-3a1f8f4d0003",
+        "templateId": "pass_rate_trend",
+        "chartType": "line",
+        "metricVariant": "rate",
+        "filters": {
+          "suites": [
+            "payments"
+          ]
+        },
+        "groupBy": [
+          "day",
+          "suite"
+        ],
+        "topN": 10,
+        "scale": "linear",
+        "stack": "none",
+        "bucket": "week"
+      }
+    ]
+  }
+}

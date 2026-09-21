@@ -1,0 +1,8 @@
+{
+  "description": "kind is a closed set.",
+  "violates": "kind_enum",
+  "payload": {
+    "kind": "pie3d",
+    "series": []
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "description": "Failure groups linked by shared tests.",
+  "payload": {
+    "kind": "graph",
+    "nodes": [
+      {
+        "id": "g1",
+        "label": "timeout waiting for #",
+        "size": 31
+      },
+      {
+        "id": "g2",
+        "label": "assertionerror",
+        "size": 12
+      }
+    ],
+    "edges": [
+      {
+        "source": "g1",
+        "target": "g2",
+        "weight": 0.4
+      }
+    ]
+  }
+}

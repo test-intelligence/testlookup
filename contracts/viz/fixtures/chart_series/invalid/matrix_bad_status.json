@@ -1,0 +1,22 @@
+{
+  "description": "Status cells use the TestStatus vocabulary.",
+  "violates": "status_vocab",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "status",
+    "x_labels": [
+      "r1"
+    ],
+    "y_labels": [
+      "t1"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": "flaky",
+        "n": 1
+      }
+    ]
+  }
+}

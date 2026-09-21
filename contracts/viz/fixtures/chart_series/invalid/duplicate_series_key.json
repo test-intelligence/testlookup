@@ -1,0 +1,23 @@
+{
+  "description": "Series keys are unique.",
+  "violates": "unique_series_key",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "suite"
+    ],
+    "x_type": "category",
+    "series": [
+      {
+        "key": "a",
+        "label": "a",
+        "points": []
+      },
+      {
+        "key": "a",
+        "label": "a again",
+        "points": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "description": "At most 8 series (top 7 plus Other).",
+  "violates": "series_cap",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "suite"
+    ],
+    "x_type": "category",
+    "series": [
+      {
+        "key": "k0",
+        "label": "k0",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k1",
+        "label": "k1",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k2",
+        "label": "k2",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k3",
+        "label": "k3",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k4",
+        "label": "k4",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k5",
+        "label": "k5",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k6",
+        "label": "k6",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k7",
+        "label": "k7",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "key": "k8",
+        "label": "k8",
+        "points": [
+          {
+            "x": "a",
+            "y": 1,
+            "n": 1
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "description": "Duplicates must be removed before the scope is built.",
+  "violates": "unique_suite",
+  "payload": {
+    "project_id": null,
+    "release_ids": [],
+    "suite_names": [
+      "payments",
+      "payments"
+    ],
+    "window": {
+      "days": 30
+    }
+  }
+}

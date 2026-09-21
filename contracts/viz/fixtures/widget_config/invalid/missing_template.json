@@ -1,0 +1,13 @@
+{
+  "description": "templateId is required.",
+  "violates": "required_field",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a"
+      }
+    ]
+  }
+}

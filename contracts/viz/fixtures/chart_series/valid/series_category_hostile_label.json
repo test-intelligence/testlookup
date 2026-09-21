@@ -1,0 +1,28 @@
+{
+  "description": "Labels are untrusted plain text.",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "status"
+    ],
+    "x_type": "category",
+    "series": [
+      {
+        "key": "s",
+        "label": "<img src=x onerror=alert(1)>",
+        "points": [
+          {
+            "x": "passed",
+            "y": 880,
+            "n": 880
+          },
+          {
+            "x": "unknown",
+            "y": 3,
+            "n": 3
+          }
+        ]
+      }
+    ]
+  }
+}

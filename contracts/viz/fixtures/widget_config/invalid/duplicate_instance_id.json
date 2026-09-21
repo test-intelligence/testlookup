@@ -1,0 +1,18 @@
+{
+  "description": "instanceId is unique per page.",
+  "violates": "unique_instance_id",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "dup",
+        "templateId": "pass_rate_trend"
+      },
+      {
+        "instanceId": "dup",
+        "templateId": "daily_breakdown"
+      }
+    ]
+  }
+}

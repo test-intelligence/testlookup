@@ -1,0 +1,7 @@
+{
+  "description": "An empty tree is how a coverage map says 'no data'.",
+  "payload": {
+    "kind": "tree",
+    "nodes": []
+  }
+}

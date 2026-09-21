@@ -1,0 +1,15 @@
+{
+  "description": "Suite, then status within it.",
+  "payload": {
+    "path": [
+      {
+        "dimension": "suite",
+        "value": "payments"
+      },
+      {
+        "dimension": "status",
+        "value": "failed"
+      }
+    ]
+  }
+}

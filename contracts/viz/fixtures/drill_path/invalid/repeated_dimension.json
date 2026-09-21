@@ -1,0 +1,16 @@
+{
+  "description": "A dimension appears once.",
+  "violates": "unique_dimension",
+  "payload": {
+    "path": [
+      {
+        "dimension": "suite",
+        "value": "a"
+      },
+      {
+        "dimension": "suite",
+        "value": "b"
+      }
+    ]
+  }
+}

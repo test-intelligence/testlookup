@@ -1,0 +1,28 @@
+{
+  "description": "Test by run status matrix.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "status",
+    "x_labels": [
+      "run-1",
+      "run-2"
+    ],
+    "y_labels": [
+      "testA"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": "passed",
+        "n": 1
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": "failed",
+        "n": 1
+      }
+    ]
+  }
+}

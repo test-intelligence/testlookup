@@ -1,0 +1,12 @@
+{
+  "description": "Dimensions are a closed set.",
+  "violates": "dimension_enum",
+  "payload": {
+    "path": [
+      {
+        "dimension": "colour",
+        "value": "red"
+      }
+    ]
+  }
+}

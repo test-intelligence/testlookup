@@ -1,0 +1,8 @@
+{
+  "description": "An empty layout is legal (falls back to defaults).",
+  "payload": {
+    "page": "coverage",
+    "version": 2,
+    "instances": []
+  }
+}
