@@ -1,5 +1,70 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 0: contracts before charts
+
+Nothing a user sees changes in this release. It lays the ground the chart work
+stands on, so that the backend and frontend halves can be built in parallel
+without drifting apart.
+
+**One set of contract fixtures, validated by both sides.** ``contracts/viz``
+freezes five seams: the report scope (project, releases, suites, window), the
+``meta`` envelope every analytics response will carry, the normalised chart
+series, the saved widget configuration, and the drill-down path. Each fixture
+under ``valid/`` must be accepted by the Pydantic models *and* the TypeScript
+guards; each under ``invalid/`` must be rejected by both, for the rule it names.
+A rule enforced on one side only fails that side's suite in the PR that
+introduced it. The README's rule ids are cross-checked against the fixtures, so
+a rule with no failing example cannot be added silently.
+
+**Written twice, then made to agree.** A differential fuzzer fed 129 107 mutated
+payloads to both validators before this merged. They disagreed on 703, in nine
+root causes, each a place where the README had been silent: whether release ids
+compare case-insensitively, whether a count cell may hold ``1.5``, which
+timestamp forms count as UTC (``strftime("%z")`` gives ``+0000``, which one side
+took and the other refused), which characters are whitespace (Python's
+``strip()`` and JavaScript's ``trim()`` differ), lone UTF-16 surrogates, counts
+past 2^53, ``from_`` accepted as an alias for ``from``, years 0001-0099, and the
+payload size limit. Every one is now a written rule with a fixture that both
+sides must reject for that rule. Three payload-wide rules apply everywhere,
+including inside keys the contract does not know: well-formed strings, at most
+32 levels of nesting, and no ``__proto__``/``constructor``/``prototype`` keys --
+preserving unknown keys must not let a later merge rewrite a prototype.
+
+**Six rollout flags, seeded off.** Migration ``0192`` adds ``viz_report_context``,
+``viz_multi_filters``, ``viz_chart_data_api``, ``viz_advanced_charts``,
+``viz_customize`` and ``viz_three_d``, disabled at 100% rollout so enabling one is
+a single switch. The keys use underscores because the flag API rejects dots: a
+dotted flag deleted through the API could never be recreated through it. Backend
+constants, frontend constants and the migration are each tested against
+``contracts/viz/flags.json``.
+
+**Chart engines decided on evidence.**
+``architecture/VISUALIZATION_ENGINES_ADR.md`` records why charts use Recharts,
+ECharts registered per chart type, and three.js. ``echarts-gl`` renders
+correctly with no security policy and throws under ours (``script-src 'self'``,
+no ``eval``), so it is rejected rather than accommodated. A tooltip formatter
+that returns a string executed a hostile test name in the same spike, so
+tooltips must build DOM nodes.
+
+**Demo data that can show every chart.** The dev seed gains, per project, eight
+releases, three environments, failures that collapse into five error signatures
+plus a group with no message, an in-progress run shaped like a real live run (no
+pass rate yet, not catalogued until it finishes), unknown-status cases, missing
+durations, a suite that is skipped in every run and a test not run for more than 30 days.
+Runs are attributed to releases through the product's own linker and catalogued
+through its own canonical sync, and fingerprints come from the ingestion
+function, so a real report uploaded into a demo project matches the same tests.
+The existing seed data is unchanged: the new rows draw from their own random
+source. A separate generator builds a marked, disposable project of up to a
+million test results for performance measurement; it refuses production, will
+not write or wipe without ``--yes``, and its wipe touches only rows of the
+project that carries its marker.
+
+**A gallery to take screenshots of.** ``/__charts`` exists in development
+builds only and renders every chart component from fixed data. A CI spec checks
+that each chart actually draws and passes axe; ``visual-baselines.yml`` produces
+the Linux screenshot baselines, which a person reviews and commits.
+
 ## Unreleased - A regression test that could not fail, and three stale records
 
 **TL-2026-08-29-02-001's regression test passed with the fix removed.** The

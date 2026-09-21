@@ -204,6 +204,7 @@ path: string
 { path: 'policies/:policyId', component: PolicyEditorPage },
 { path: 'ownership', component: OwnershipEditorPage },
 <Route path="/login" element={<LoginPage />} />
+<Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
 <Route path="/reset-password" element={<ResetPasswordPage />} />
 <Route path="/*" element={<AppLayout />}>
 <Route key={path} path={path} element={renderLazyRoute(component)} />

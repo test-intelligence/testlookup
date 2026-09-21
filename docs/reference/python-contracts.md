@@ -15441,6 +15441,393 @@ Bases: `BaseModel`.
 queued: bool = True
 ```
 
+## backend/app/models/viz_contracts.py — VizContract
+
+[backend/app/models/viz_contracts.py:343](../../backend/app/models/viz_contracts.py#L343)
+
+Bases: `BaseModel`.
+
+
+
+```python
+model_config = ConfigDict(extra='ignore', strict=True, validate_by_alias=True, validate_by_name=False, serialize_by_alias=True)
+```
+
+## backend/app/models/viz_contracts.py — ScopeWindow
+
+[backend/app/models/viz_contracts.py:368](../../backend/app/models/viz_contracts.py#L368)
+
+Bases: `VizContract`.
+
+
+
+```python
+days: WindowDays | None = None
+from_: str | None = Field(default=None, alias='from')
+to: str | None = None
+```
+
+- Validator/serializer `_one_form_in_order`: [backend/app/models/viz_contracts.py:375](../../backend/app/models/viz_contracts.py#L375). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — Scope
+
+[backend/app/models/viz_contracts.py:397](../../backend/app/models/viz_contracts.py#L397)
+
+Bases: `VizPayload`.
+
+What a report is filtered by. OR within a dimension, AND across dimensions.
+
+```python
+project_id: str | None
+release_ids: list[str] = Field(max_length=MAX_RELEASES)
+suite_names: list[Annotated[str, Field(min_length=1, max_length=MAX_SUITE_NAME_LENGTH)]] = Field(max_length=MAX_SUITES)
+window: ScopeWindow
+```
+
+- Validator/serializer `_project_id_format`: [backend/app/models/viz_contracts.py:409](../../backend/app/models/viz_contracts.py#L409). Read source for the cross-field or conversion rule.
+- Validator/serializer `_release_ids`: [backend/app/models/viz_contracts.py:416](../../backend/app/models/viz_contracts.py#L416). Read source for the cross-field or conversion rule.
+- Validator/serializer `_unique_suites`: [backend/app/models/viz_contracts.py:435](../../backend/app/models/viz_contracts.py#L435). Read source for the cross-field or conversion rule.
+- Validator/serializer `_release_requires_project`: [backend/app/models/viz_contracts.py:444](../../backend/app/models/viz_contracts.py#L444). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — ScopeProject
+
+[backend/app/models/viz_contracts.py:457](../../backend/app/models/viz_contracts.py#L457)
+
+Bases: `VizContract`.
+
+
+
+```python
+id: str
+name: str
+```
+
+## backend/app/models/viz_contracts.py — ScopeRelease
+
+[backend/app/models/viz_contracts.py:462](../../backend/app/models/viz_contracts.py#L462)
+
+Bases: `VizContract`.
+
+
+
+```python
+id: str
+name: str
+status: str
+```
+
+## backend/app/models/viz_contracts.py — AppliedWindow
+
+[backend/app/models/viz_contracts.py:468](../../backend/app/models/viz_contracts.py#L468)
+
+Bases: `VizContract`.
+
+
+
+```python
+from_: str = Field(alias='from')
+to: str
+days: Count
+timezone: Literal['UTC']
+_days = field_validator('from_', 'to')(_check_day)
+```
+
+## backend/app/models/viz_contracts.py — AppliedScope
+
+[backend/app/models/viz_contracts.py:477](../../backend/app/models/viz_contracts.py#L477)
+
+Bases: `VizContract`.
+
+What the server applied, not what was asked.
+
+```python
+projects: list[ScopeProject]
+releases: list[ScopeRelease]
+suites: list[str]
+window: AppliedWindow
+```
+
+## backend/app/models/viz_contracts.py — Totals
+
+[backend/app/models/viz_contracts.py:486](../../backend/app/models/viz_contracts.py#L486)
+
+Bases: `VizContract`.
+
+
+
+```python
+matched_runs: Count
+total_runs: Count
+matched_executions: Count
+total_executions: Count
+```
+
+- Validator/serializer `_totals_subset`: [backend/app/models/viz_contracts.py:493](../../backend/app/models/viz_contracts.py#L493). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — IgnoredFilter
+
+[backend/app/models/viz_contracts.py:503](../../backend/app/models/viz_contracts.py#L503)
+
+Bases: `VizContract`.
+
+
+
+```python
+dimension: Literal['release', 'suite', 'window']
+reason: str
+```
+
+## backend/app/models/viz_contracts.py — EnvelopeMeta
+
+[backend/app/models/viz_contracts.py:508](../../backend/app/models/viz_contracts.py#L508)
+
+Bases: `VizPayload`.
+
+The additive ``meta`` object on an analytics response.
+
+Every key is required. A nullable one is sent as ``null``, never left out:
+"not measured" and "the server forgot" must not look the same.
+
+```python
+schema_version: PositiveCount
+scope: AppliedScope
+totals: Totals
+pass_rate_basis: Literal['executions', 'unique_tests'] | None
+ignored_filters: list[IgnoredFilter]
+truncated: bool
+truncated_total: Count | None
+measured: bool
+reason: str | None
+includes_in_progress: Count
+partial_day: str | None
+generated_at: str
+as_of: str
+_partial_day = field_validator('partial_day')(_check_day)
+_instants = field_validator('generated_at', 'as_of')(_check_utc_instant)
+```
+
+- Validator/serializer `_conditional_fields`: [backend/app/models/viz_contracts.py:533](../../backend/app/models/viz_contracts.py#L533). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — SeriesPoint
+
+[backend/app/models/viz_contracts.py:563](../../backend/app/models/viz_contracts.py#L563)
+
+Bases: `VizContract`.
+
+
+
+```python
+x: str
+y: Number | None
+n: Count
+```
+
+## backend/app/models/viz_contracts.py — Series
+
+[backend/app/models/viz_contracts.py:570](../../backend/app/models/viz_contracts.py#L570)
+
+Bases: `VizContract`.
+
+
+
+```python
+key: str
+label: str
+points: list[SeriesPoint] = Field(max_length=MAX_POINTS_PER_SERIES)
+_point_cap = field_validator('points', mode='before')(_cap('point_cap', MAX_POINTS_PER_SERIES, 'points in one series'))
+```
+
+## backend/app/models/viz_contracts.py — SeriesChart
+
+[backend/app/models/viz_contracts.py:580](../../backend/app/models/viz_contracts.py#L580)
+
+Bases: `VizContract`.
+
+
+
+```python
+kind: Literal['series']
+dimensions: list[str]
+x_type: Literal['time', 'category']
+series: list[Series] = Field(max_length=MAX_SERIES)
+```
+
+- Validator/serializer `_unique_series_key`: [backend/app/models/viz_contracts.py:588](../../backend/app/models/viz_contracts.py#L588). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — MatrixCell
+
+[backend/app/models/viz_contracts.py:597](../../backend/app/models/viz_contracts.py#L597)
+
+Bases: `VizContract`.
+
+
+
+```python
+x: Count
+y: Count
+value: Number | str | None
+n: Count
+```
+
+## backend/app/models/viz_contracts.py — MatrixChart
+
+[backend/app/models/viz_contracts.py:605](../../backend/app/models/viz_contracts.py#L605)
+
+Bases: `VizContract`.
+
+
+
+```python
+kind: Literal['matrix']
+value_type: Literal['rate', 'count', 'status']
+x_labels: list[str]
+y_labels: list[str]
+cells: list[MatrixCell] = Field(max_length=MAX_MATRIX_CELLS)
+_cell_cap = field_validator('cells', mode='before')(_cap('cell_cap', MAX_MATRIX_CELLS, 'cells'))
+```
+
+- Validator/serializer `_cells`: [backend/app/models/viz_contracts.py:617](../../backend/app/models/viz_contracts.py#L617). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — TreeNode
+
+[backend/app/models/viz_contracts.py:643](../../backend/app/models/viz_contracts.py#L643)
+
+Bases: `VizContract`.
+
+
+
+```python
+id: str
+parent_id: str | None
+label: str
+value: NonNegativeNumber
+measure: Number | None
+```
+
+## backend/app/models/viz_contracts.py — TreeChart
+
+[backend/app/models/viz_contracts.py:651](../../backend/app/models/viz_contracts.py#L651)
+
+Bases: `VizContract`.
+
+
+
+```python
+kind: Literal['tree']
+nodes: list[TreeNode] = Field(max_length=MAX_TREE_NODES)
+_node_cap = field_validator('nodes', mode='before')(_cap('node_cap', MAX_TREE_NODES, 'tree nodes'))
+```
+
+- Validator/serializer `_forest`: [backend/app/models/viz_contracts.py:661](../../backend/app/models/viz_contracts.py#L661). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — GraphNode
+
+[backend/app/models/viz_contracts.py:696](../../backend/app/models/viz_contracts.py#L696)
+
+Bases: `VizContract`.
+
+
+
+```python
+id: str
+label: str
+size: NonNegativeNumber
+```
+
+## backend/app/models/viz_contracts.py — GraphEdge
+
+[backend/app/models/viz_contracts.py:702](../../backend/app/models/viz_contracts.py#L702)
+
+Bases: `VizContract`.
+
+
+
+```python
+source: str
+target: str
+weight: UnitNumber
+```
+
+## backend/app/models/viz_contracts.py — GraphChart
+
+[backend/app/models/viz_contracts.py:708](../../backend/app/models/viz_contracts.py#L708)
+
+Bases: `VizContract`.
+
+
+
+```python
+kind: Literal['graph']
+nodes: list[GraphNode] = Field(max_length=MAX_GRAPH_NODES)
+edges: list[GraphEdge]
+_node_cap = field_validator('nodes', mode='before')(_cap('node_cap', MAX_GRAPH_NODES, 'graph nodes'))
+```
+
+- Validator/serializer `_edges_join_nodes`: [backend/app/models/viz_contracts.py:718](../../backend/app/models/viz_contracts.py#L718). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — WidgetInstance
+
+[backend/app/models/viz_contracts.py:757](../../backend/app/models/viz_contracts.py#L757)
+
+Bases: `VizContract`.
+
+One placed visualisation inside ``saved_views.filters``.
+
+Attribute names ARE the wire keys. The frontend writes this same stored
+object, so a dump that forgot ``by_alias`` must not be able to write
+``instance_id`` beside the ``instanceId`` the other writer reads.
+
+```python
+model_config = ConfigDict(extra='allow')
+instanceId: str = Field(min_length=1)
+templateId: str = Field(min_length=1)
+title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)
+chartType: ChartType | None = None
+metricVariant: str | None = None
+filters: dict[str, Any] | None = None
+groupBy: list[Dimension] | None = Field(default=None, max_length=MAX_GROUP_BY)
+topN: Literal[5, 10, 25, 50] | None = None
+scale: Literal['linear', 'log'] | None = None
+stack: Literal['none', 'absolute', 'percent'] | None = None
+bucket: Literal['day', 'week'] | None = None
+```
+
+- Validator/serializer `_optional_is_not_nullable`: [backend/app/models/viz_contracts.py:780](../../backend/app/models/viz_contracts.py#L780). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — WidgetConfig
+
+[backend/app/models/viz_contracts.py:796](../../backend/app/models/viz_contracts.py#L796)
+
+Bases: `VizPayload`.
+
+``saved_views.filters`` for an analytics page. Unknown keys survive a round-trip.
+
+```python
+model_config = ConfigDict(extra='allow')
+page: str
+version: PositiveCount
+instances: list[WidgetInstance] = Field(max_length=MAX_INSTANCES)
+```
+
+- Validator/serializer `_unique_instance_id`: [backend/app/models/viz_contracts.py:807](../../backend/app/models/viz_contracts.py#L807). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — DrillLevel
+
+[backend/app/models/viz_contracts.py:819](../../backend/app/models/viz_contracts.py#L819)
+
+Bases: `VizContract`.
+
+
+
+```python
+dimension: Dimension
+value: str = Field(min_length=1, max_length=MAX_DRILL_VALUE_LENGTH)
+```
+
+- Validator/serializer `_status_vocab`: [backend/app/models/viz_contracts.py:824](../../backend/app/models/viz_contracts.py#L824). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — DrillPath
+
+[backend/app/models/viz_contracts.py:830](../../backend/app/models/viz_contracts.py#L830)
+
+Bases: `VizPayload`.
+
+Ordered from the top level down.
+
+```python
+path: list[DrillLevel] = Field(max_length=MAX_DRILL_DEPTH)
+```
+
+- Validator/serializer `_unique_dimension`: [backend/app/models/viz_contracts.py:837](../../backend/app/models/viz_contracts.py#L837). Read source for the cross-field or conversion rule.
 ## backend/app/routers/admin_maintenance.py — OutboxRequeueRequest
 
 [backend/app/routers/admin_maintenance.py:292](../../backend/app/routers/admin_maintenance.py#L292)
