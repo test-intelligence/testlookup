@@ -236,17 +236,50 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ---
 
-### BUG-009 — `/settings` sub-pages have inconsistent back-navigation  ·  S3  ·  **OPEN — reported 2026-09-19**
+### BUG-009 — `/settings` sub-pages have inconsistent back-navigation  ·  S3  ·  **FIXED 2026-09-19, VERIFIED LIVE 2026-09-21**
 
 - Reported by: **user**, against `http://testlookup.local/settings`
 - "The back button or navigation back to settings is not consistent across all
   the sub-pages in settings. There should be a consistent approach for all pages
   and standard options."
 
-Investigate every `/settings/*` sub-page and make the return-to-settings affordance
-uniform: same control, same placement, same label, on every sub-page. Expected
-outcome is one shared component rather than per-page ad-hoc headers, plus a test
-that enumerates the settings routes so a new sub-page cannot ship without one.
+**This entry was stale, not open.** It was fixed the day it was reported, in
+`d8ba9360` ("one consistent way back, rendered by the layout — BUG-009"), and
+the status line here was never updated. Corrected 2026-09-20 after verifying
+against the deployment rather than the commit message.
+
+#### What was wrong — three behaviours across 23 sub-pages
+
+| Behaviour | Count | Pages |
+|---|---|---|
+| `btn-secondary` "Back" in `PageHeader`'s `actions` slot | 5 | AIConfig, Storage, FeatureFlags, GitHub, Integrations |
+| muted "Settings" breadcrumb above the header | 4 | Billing, GitLab, Retention, OutboundWebhooks |
+| **nothing at all** | **14** | Profile, Notifications, SSO, Audit, API keys, Digests, MFA policy, Performance, Project data, Seed data, AI agents, AI eval, Agent activity, Integration health |
+
+#### The fix
+
+`components/layout/SettingsBackBar.tsx`, rendered by `AppLayout` and keyed off
+the route, not by the pages. That placement is the substance of the fix: a
+per-page control is a rule every future sub-page has to remember, and 14 of 23
+already did not. A new `/settings/<thing>` route now gets the affordance without
+its author doing anything, so the inconsistency cannot return one page at a time.
+
+The breadcrumb form won over the button because `PageHeader`'s `actions` slot
+holds real page actions (Save, Create, Rotate); a "Back" button there competes
+with them and reads as one of them.
+
+#### Verified live
+
+`probe-jr-homelab-verify.spec.ts` walks **every** `/settings/*` route declared in
+`App.tsx` — all 23, not a sample — and checks three separate failure modes:
+
+```
+LIVE_SETTINGS missing=[] duplicated=[] staleButton=[]
+```
+
+On `testlookup.local` at `build-20260921-001432`. Measured placement is
+identical on every sub-page (x=264, y=80, height 24) and **absent on
+`/settings` itself**, which is the destination rather than a sub-page.
 
 ### BUG-010 — the AI-pipeline debouncer is dead code, and config describes it as live  ·  S3  ·  **OPEN — needs owner decision**
 
