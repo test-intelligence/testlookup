@@ -390,6 +390,12 @@ async def _wipe_seed_data(db: AsyncSession) -> None:
         # first: their suite FK is RESTRICT, so deleting the project cannot
         # cascade through test_suites while any of them exist. Release links
         # need nothing here — both of their FKs CASCADE with the runs above.
+        # Defensive, not load-bearing today: both tables CASCADE from projects,
+        # and canonical_test_cases -> test_suites is RESTRICT. Deleting the
+        # project works only because Postgres happens to fire the canonical
+        # cascade before the suite cascade (constraint creation order). Removing
+        # these two lines passes the Postgres test; they pin the order instead
+        # of relying on it.
         await db.execute(delete(CanonicalTestCase).where(CanonicalTestCase.project_id.in_(project_ids)))
         await db.execute(delete(TestSuite).where(TestSuite.project_id.in_(project_ids)))
 

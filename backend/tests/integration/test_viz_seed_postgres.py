@@ -189,14 +189,16 @@ async def test_viz_seed_guarantees_hold_in_the_database(factory) -> None:
         )
 
         # 7. one suite skipped in every run — not measured, not 0%
-        skipped = await _rows(
-            factory,
-            "SELECT count(*) AS total, count(*) FILTER (WHERE tc.status <> 'SKIPPED') AS executed, "
-            "count(DISTINCT tc.test_run_id) AS runs "
-            "FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id "
-            "WHERE tr.project_id = :p AND tc.suite_name = :s",
-            p=project_id,
-            s=ALWAYS_SKIPPED_SUITE,
+        skipped = (
+            await _rows(
+                factory,
+                "SELECT count(*) AS total, count(*) FILTER (WHERE tc.status <> 'SKIPPED') AS executed, "
+                "count(DISTINCT tc.test_run_id) AS runs "
+                "FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id "
+                "WHERE tr.project_id = :p AND tc.suite_name = :s",
+                p=project_id,
+                s=ALWAYS_SKIPPED_SUITE,
+            )
         )[0]
         assert skipped.total > 0 and skipped.executed == 0
         assert skipped.runs == len(plan.runs) - 1  # every finished run
