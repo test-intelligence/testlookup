@@ -271,6 +271,55 @@ class TestTheMypyRatchetIsActuallyChecked:
         assert ok is True and called == []
 
 
+class TestStaleReferencesAreCaught:
+    """PR #147 failed CI on a stale ``source-inventory.csv`` that this gate
+    passed: its reference check only looked at the three skewed files."""
+
+    def _stub(self, monkeypatch, out, code=1):
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: (code, out))
+
+    def test_it_is_registered_before_the_slow_suites(self):
+        names = [c.name for c in push_check.build_checks()]
+        at = names.index("docs: handoff references current")
+        assert at < names.index("backend: full test suite")
+
+    def test_only_the_known_skew_is_not_a_failure(self, monkeypatch):
+        # What --check ALWAYS reports on this machine. Failing here would fail
+        # every push.
+        self._stub(monkeypatch, (
+            "Generated reference drift:\n"
+            "docs\\reference\\openapi.json\n"
+            "docs\\reference\\api\\authentication.md\n"
+            "docs\\reference\\schemas.md\n"))
+        assert push_check.check_stale_references()[0] is True
+
+    def test_a_stale_inventory_fails(self, monkeypatch):
+        # The exact CI failure.
+        self._stub(monkeypatch, (
+            "Generated reference drift:\n"
+            "docs\\reference\\openapi.json\n"
+            "docs\\reference\\source-inventory.csv\n"))
+        ok, msg = push_check.check_stale_references()
+        assert ok is False
+        assert "docs/reference/source-inventory.csv" in msg
+        assert "openapi.json" not in msg.split("Stage")[0], (
+            "the known skew must not be reported as staleness"
+        )
+
+    def test_windows_separators_are_normalised(self, monkeypatch):
+        # --check prints backslashes here; the skew set is written with forward
+        # slashes. Without normalising, the three skew files would never match
+        # and every push would fail as "stale".
+        self._stub(monkeypatch, (
+            "Generated reference drift:\n"
+            "docs\\reference\\schemas.md\n"))
+        assert push_check.check_stale_references()[0] is True
+
+    def test_a_clean_check_passes(self, monkeypatch):
+        self._stub(monkeypatch, "References are current.\n", code=0)
+        assert push_check.check_stale_references()[0] is True
+
+
 class TestOutputSurvivesAWindowsConsole:
     def test_nothing_printed_is_outside_ascii(self):
         """The gate crashed here once.

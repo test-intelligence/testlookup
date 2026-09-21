@@ -199,6 +199,8 @@ def build_checks() -> list[Check]:
         # Before the slow suites, so a baseline slip costs ~1 minute, not 16.
         Check("backend: mypy ratchet (touched modules)", [], BACKEND, "backend",
               fn=check_mypy_touched),
+        Check("docs: handoff references current", [], REPO, "docs",
+              fn=check_stale_references),
         # ── the expensive ones
         Check("frontend: vitest + coverage ratchet",
               [npm, "run", "test", "--", "--coverage"], FRONTEND, "frontend", slow=True),
@@ -369,6 +371,43 @@ def check_mypy_touched() -> tuple[bool, str]:
         + "\n\nEdit only these lines in backend/mypy-baseline.txt (format "
         "'<count> <path>'). Do NOT run --update: it rewrites every entry from "
         "the local mypy, which disagrees with CI's across a dozen files."
+    )
+
+
+def check_stale_references() -> tuple[bool, str]:
+    """Are the NON-skewed references current? This is what CI's --check fails on.
+
+    The first version of this gate only inspected the three files whose local
+    regeneration always differs from CI's. It never looked at
+    ``source-inventory.csv`` -- which records every file's line count and
+    exports, so editing ANY tracked file after regenerating makes it stale.
+    PR #147 went red on precisely that: a test and ``push_check.py`` were
+    changed after the references were refreshed, and the gate passed.
+
+    ``--check`` is usable locally after all, once its drift list is filtered:
+    it always names the three skewed files here, and anything beyond them is
+    genuine staleness.
+    """
+    code, out = run([sys.executable, "scripts/generate_handoff_reference.py",
+                     "--check"], REPO)
+    if code == 0:
+        return True, "references current"
+    _, _, tail = out.partition("Generated reference drift:")
+    drifted = {
+        ln.strip().replace("\\", "/")
+        for ln in tail.splitlines()
+        if ln.strip().startswith("docs")
+    }
+    stale = sorted(drifted - set(SKEWED_REFERENCES))
+    if not stale:
+        return True, "only the known local-toolchain skew differs"
+    return False, (
+        "references are stale -- a tracked file changed after they were "
+        "regenerated:\n    " + "\n    ".join(stale)
+        + "\n  Stage your changes, then:\n"
+        "    python scripts/generate_handoff_reference.py\n"
+        "    git checkout -- " + " ".join(SKEWED_REFERENCES) + "\n"
+        "  (the second line drops the local skew; commit what remains)"
     )
 
 
