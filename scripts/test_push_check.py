@@ -33,6 +33,41 @@ sys.modules["push_check"] = push_check
 spec.loader.exec_module(push_check)
 
 
+class TestChecksDoNotInheritTheHooksRepository:
+    """Git exports GIT_DIR (and friends) to the hooks it runs. The pre-push hook
+    from a linked worktree failed test_handoff_docs.py, which builds its own
+    scratch repository, while the same gate run by hand passed."""
+
+    def test_the_strip_list_covers_everything_git_calls_repository_local(self):
+        code, out = push_check._git_stdout("rev-parse", "--local-env-vars")
+        assert code == 0, out
+        listed = {line.strip() for line in out.splitlines() if line.strip()}
+        assert listed, "git listed no variables; the comparison would be vacuous"
+        assert listed <= set(push_check.HOOK_GIT_ENV)
+
+    def test_the_check_env_drops_them_and_keeps_everything_else(self, monkeypatch):
+        monkeypatch.setenv("GIT_DIR", "/somewhere/.git")
+        monkeypatch.setenv("GIT_WORK_TREE", "/somewhere")
+        monkeypatch.setenv("KEEP_ME", "1")
+        env = push_check.check_env({"EXTRA": "x"})
+        assert "GIT_DIR" not in env and "GIT_WORK_TREE" not in env
+        assert env["KEEP_ME"] == "1" and env["EXTRA"] == "x"
+
+    def test_a_scratch_repository_is_itself_under_a_hooks_environment(
+        self, monkeypatch, tmp_path
+    ):
+        code, own = push_check._git_stdout("rev-parse", "--absolute-git-dir")
+        assert code == 0, own
+        # What the hook hands every child process.
+        monkeypatch.setenv("GIT_DIR", own.strip())
+        scratch = tmp_path / "scratch"
+        code, out = push_check.run(["git", "init", "-q", str(scratch)], tmp_path)
+        assert code == 0, out
+        code, out = push_check.run(["git", "rev-parse", "--absolute-git-dir"], scratch)
+        assert code == 0, out
+        assert Path(out.strip()).resolve() == (scratch / ".git").resolve()
+
+
 class TestParsingPytestOutput:
     def test_it_extracts_the_node_id_not_just_the_file(self):
         # Node ids, because a FILE-level allowlist entry tolerates every test in

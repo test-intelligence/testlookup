@@ -65,6 +65,16 @@ builds only and renders every chart component from fixed data. A CI spec checks
 that each chart actually draws and passes axe; ``visual-baselines.yml`` produces
 the Linux screenshot baselines, which a person reviews and commits.
 
+**The pre-push gate no longer hands its checks the hook's repository.** Git
+exports ``GIT_DIR`` and related variables to the hooks it runs. From a linked
+worktree, ``scripts/test_handoff_docs.py`` -- which builds its own scratch
+repository -- inherited them, so its ``git`` looked at the caller's repository
+and failed with "this operation must be run in a work tree". It failed only under
+the hook; the same gate run by hand passed, which is the worst kind of red.
+``push_check.py`` now strips git's repository-local variables (the list is
+``git rev-parse --local-env-vars``, and a self-test keeps it current) from every
+check's environment.
+
 ## Unreleased - A regression test that could not fail, and three stale records
 
 **TL-2026-08-29-02-001's regression test passed with the fix removed.** The
