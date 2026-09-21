@@ -129,6 +129,17 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     "test_a_hypothesis_call_with_no_reported_usage_is_metered_once": _LLM_TIMEOUT,
     "tests/services/test_llm_one_call_one_meter_row.py::"
     "test_a_hypothesis_call_with_reported_usage_is_metered_once_by_the_stage": _LLM_TIMEOUT,
+    # A p95 WALL-CLOCK budget, measured while this machine runs ~11,000 other
+    # tests. It failed on a different parametrised case each full run
+    # ([flaky_coach], then [run_list]) and passed 7/7 three times running in
+    # isolation; CI runs it on its own resources and it is green there. Under
+    # the gate's own load it measures the gate, not the code. Entered as the
+    # test FUNCTION, so its cases are covered via the "[" boundary while the
+    # rest of the file still counts.
+    "tests/test_performance_budgets_live.py::test_scenario_meets_p95_budget": (
+        "p95 latency budget fails only under the full suite's load; passes in "
+        "isolation and in CI"
+    ),
 }
 
 # Reference files whose local regeneration always differs from CI's.
