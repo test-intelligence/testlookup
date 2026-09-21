@@ -26858,7 +26858,14 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "integer"
     },
     "flaky_criteria": {
-      "$ref": "#/components/schemas/FlakyCountCriteria"
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/FlakyCountCriteria"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "flaky_rate_pct": {
       "title": "Flaky Rate Pct",
@@ -26969,7 +26976,6 @@ These are the full generated JSON Schema definitions, including required fields,
     "avg_duration_ms",
     "flaky_test_count",
     "flaky_rate_pct",
-    "flaky_criteria",
     "suites",
     "top_failing_tests"
   ],
