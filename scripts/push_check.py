@@ -49,6 +49,10 @@ Usage
     python scripts/push_check.py --list     # show the checks and exit
     python scripts/push_check.py --only backend
     python scripts/push_check.py --only frontend
+    python scripts/push_check.py --full     # run even for a docs-only change
+
+A change whose every file is ignored by CI's ``paths-ignore`` (root ``*.md``,
+``CHANGELOG.md``, ``qa/**``) skips the checks, because CI skips them too.
 
 Install the hook so it runs on every push:
 
@@ -465,6 +469,93 @@ def _git_stdout(*args: str) -> tuple[int, str]:
     return proc.returncode, proc.stdout or ""
 
 
+CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+
+
+def _ci_paths_ignore() -> list[list[str]]:
+    """Every ``paths-ignore`` list in ci.yml, read from the file itself.
+
+    Read, not restated: a copy here would drift from CI's, and the gate would
+    then skip a change CI tests (or test one CI skips). Parsed by hand so the
+    hook needs nothing beyond the standard library.
+    """
+    try:
+        lines = CI_WORKFLOW.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    lists: list[list[str]] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == "paths-ignore:":
+            items: list[str] = []
+            i += 1
+            while i < len(lines):
+                m = re.match(r"^\s+-\s+['\"]?([^'\"#]+?)['\"]?\s*(#.*)?$", lines[i])
+                if not m:
+                    break
+                items.append(m.group(1).strip())
+                i += 1
+            if items:
+                lists.append(items)
+            continue
+        i += 1
+    return lists
+
+
+def _github_glob(pattern: str) -> re.Pattern[str]:
+    """GitHub Actions path-filter semantics, NOT fnmatch's.
+
+    In a workflow filter ``*`` stops at ``/`` and only ``**`` crosses it, so
+    CI's ``'*.md'`` ignores README.md at the root but still runs for
+    architecture/DATABASE_SCHEMA.md. ``fnmatch`` lets ``*`` cross ``/``, which
+    would have skipped the gate for changes CI goes on to test.
+    """
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def docs_only_change() -> tuple[bool, list[str]]:
+    """Does this branch change only files CI's test workflow ignores?
+
+    Compared against ``origin/main``, because CI's tests run on the pull
+    request and a PR's change set is its diff from the base. A file must be
+    ignored by EVERY ``paths-ignore`` list (push and pull_request), since CI
+    skipping one event but not the other still runs the tests.
+
+    Fails safe in both directions that matter: if the rules cannot be read, or
+    nothing differs from main, this says "not docs-only" and the full gate runs.
+    """
+    rule_sets = _ci_paths_ignore()
+    if not rule_sets:
+        return False, []
+    _git_stdout("fetch", "-q", "origin", "main")
+    code, out = _git_stdout("diff", "--name-only", "-z", "origin/main...HEAD")
+    if code != 0:
+        return False, []
+    changed = sorted(p for p in out.split("\0") if p)
+    if not changed:
+        return False, []
+    compiled = [[_github_glob(p) for p in rules] for rules in rule_sets]
+    for path in changed:
+        for rules in compiled:
+            if not any(r.match(path) for r in rules):
+                return False, changed
+    return True, changed
+
+
 def _dirty_tracked_files() -> set[str]:
     """Tracked files that currently differ from HEAD."""
     # -z: NUL-separated, so a path containing a newline cannot split in two.
@@ -532,6 +623,8 @@ def _main() -> int:
                     help="keep going after the first failure (default: stop, so a "
                          "one-second lint error does not wait behind a 30-minute suite)")
     ap.add_argument("--no-colour", action="store_true")
+    ap.add_argument("--full", action="store_true",
+                    help="run every check even when only docs changed")
     args = ap.parse_args()
 
     if args.no_colour or os.environ.get("NO_COLOR"):
@@ -548,6 +641,22 @@ def _main() -> int:
             tag = " (slow)" if c.slow else ""
             print(f"  [{c.group}] {c.name}{tag}")
         return 0
+
+    # Documentation merges without running tests (standing rule), and CI's
+    # paths-ignore already skips its test workflow for exactly these files.
+    # Without this the hook ran the full ~18-minute gate on a one-line tracker
+    # edit, and the only way through was SKIP_PUSH_CHECK -- a bypass that, used
+    # routinely, stops meaning anything.
+    if not args.full:
+        docs_only, changed = docs_only_change()
+        if docs_only:
+            print(f"{Colour.OK}Docs-only change{Colour.OFF} "
+                  f"({len(changed)} file(s), all ignored by CI's paths-ignore) "
+                  f"-- skipping the checks, as CI will.")
+            for p in changed[:10]:
+                print(f"  {Colour.DIM}{p}{Colour.OFF}")
+            print(f"{Colour.DIM}Run them anyway with --full.{Colour.OFF}")
+            return 0
 
     print(f"{Colour.DIM}Running {len(checks)} checks that mirror CI. "
           f"Ctrl-C is safe.{Colour.OFF}\n")

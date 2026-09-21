@@ -320,6 +320,88 @@ class TestStaleReferencesAreCaught:
         assert push_check.check_stale_references()[0] is True
 
 
+class TestDocsOnlyPushesSkipTheGate:
+    """Docs merge without tests (standing rule), and CI's paths-ignore already
+    skips its test workflow for them. The gate must skip EXACTLY when CI does:
+    skipping more lets an untested change through; skipping less makes the
+    bypass variable routine, and a routine bypass protects nothing."""
+
+    def _diff(self, monkeypatch, files):
+        def fake_git(*args):
+            if args[:1] == ("fetch",):
+                return 0, ""
+            return 0, "\0".join(files) + ("\0" if files else "")
+        monkeypatch.setattr(push_check, "_git_stdout", fake_git)
+
+    def test_the_rules_are_read_from_ci_yml(self):
+        # Read, not restated -- a copy here would drift from CI's.
+        rules = push_check._ci_paths_ignore()
+        assert rules, "no paths-ignore found in ci.yml"
+        for r in rules:
+            assert "*.md" in r and "qa/**" in r
+
+    @pytest.mark.parametrize("path,ignored", [
+        ("README.md", True),
+        ("LIVE_APP_BUG_TRACKER.md", True),
+        ("CHANGELOG.md", True),
+        ("qa/2026-09-19-01/defects/TL-1.md", True),
+        # GitHub's '*' stops at '/': CI RUNS for these.
+        ("architecture/DATABASE_SCHEMA.md", False),
+        ("frontend/README.md", False),
+        ("backend/app/x.py", False),
+    ])
+    def test_github_glob_semantics(self, path, ignored):
+        # fnmatch lets '*' cross '/', which would skip the gate for nested
+        # markdown CI still tests.
+        rules = push_check._ci_paths_ignore()[0]
+        hit = any(push_check._github_glob(p).match(path) for p in rules)
+        assert hit is ignored, path
+
+    def test_a_tracker_edit_is_docs_only(self, monkeypatch):
+        self._diff(monkeypatch, ["LIVE_APP_BUG_TRACKER.md", "qa/x/y.md"])
+        assert push_check.docs_only_change()[0] is True
+
+    def test_one_code_file_makes_it_not_docs_only(self, monkeypatch):
+        self._diff(monkeypatch, ["LIVE_APP_BUG_TRACKER.md", "scripts/push_check.py"])
+        assert push_check.docs_only_change()[0] is False
+
+    def test_nested_markdown_is_not_docs_only(self, monkeypatch):
+        self._diff(monkeypatch, ["architecture/DATABASE_SCHEMA.md"])
+        assert push_check.docs_only_change()[0] is False
+
+    def test_an_empty_diff_runs_the_gate(self, monkeypatch):
+        # Nothing to judge is not "only docs"; fail toward running.
+        self._diff(monkeypatch, [])
+        assert push_check.docs_only_change()[0] is False
+
+    def test_unreadable_rules_run_the_gate(self, monkeypatch):
+        # If ci.yml moves or cannot be parsed, skip nothing.
+        monkeypatch.setattr(push_check, "_ci_paths_ignore", lambda: [])
+        self._diff(monkeypatch, ["README.md"])
+        assert push_check.docs_only_change()[0] is False
+
+    def test_the_skip_runs_no_check(self, monkeypatch):
+        monkeypatch.setattr(push_check, "docs_only_change",
+                            lambda: (True, ["README.md"]))
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: pytest.fail(
+            "a check ran on a docs-only push"))
+        monkeypatch.setattr("sys.argv", ["push_check.py", "--no-colour"])
+        assert push_check._main() == 0
+
+    def test_full_runs_the_checks_anyway(self, monkeypatch):
+        ran = []
+        monkeypatch.setattr(push_check, "docs_only_change",
+                            lambda: (True, ["README.md"]))
+        monkeypatch.setattr(push_check, "build_checks", lambda: [
+            push_check.Check("probe", [], push_check.REPO, "repo",
+                             fn=lambda: (ran.append(1) or True, "ok"))])
+        monkeypatch.setattr(push_check, "check_reference_drift",
+                            lambda: (True, "ok"))
+        monkeypatch.setattr("sys.argv", ["push_check.py", "--no-colour", "--full"])
+        assert push_check._main() == 0
+        assert ran == [1]
+
+
 class TestOutputSurvivesAWindowsConsole:
     def test_nothing_printed_is_outside_ascii(self):
         """The gate crashed here once.

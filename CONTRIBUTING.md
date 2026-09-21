@@ -123,6 +123,12 @@ SKIP_PUSH_CHECK=1 git push
 `make push-check-quick` skips the slow suites. It is genuinely weaker and says
 so when it finishes — it does not predict CI.
 
+**Docs-only pushes skip the checks automatically**, because CI skips its test
+workflow for them too. "Docs-only" is read straight from the `paths-ignore`
+lists in `.github/workflows/ci.yml`, with GitHub's glob rules: `*.md` means
+root-level markdown only, so an edit to `architecture/*.md` still runs
+everything, as it does in CI. Pass `--full` to run the checks anyway.
+
 **Where local and CI legitimately differ.** Three checks cannot be made
 identical, and `push_check.py` documents how it handles each rather than
 pretending otherwise:
