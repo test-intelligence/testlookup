@@ -1,0 +1,91 @@
+name: TestLookup — Chart visual baselines (Linux)
+
+# ============================================================================
+# Generates the screenshot baselines for the chart gallery (`/__charts`).
+#
+# WHY A WORKFLOW AND NOT A DEVELOPER MACHINE: font rasterisation and canvas
+# anti-aliasing differ by OS. A baseline captured on Windows or macOS never
+# matches the Linux runner that compares against it, so the comparison would
+# fail on every PR for a reason that is not a regression. Baselines are
+# therefore produced HERE, on the same image CI compares on, and committed by
+# a person.
+#
+# HOW TO USE IT
+#   1. Label the pull request `update-visual-baselines`, or run this workflow
+#      manually from the Actions tab against the branch.
+#   2. Download the `chart-visual-baselines` artefact:
+#        gh run download <run-id> -n chart-visual-baselines \
+#          -D frontend/tests/visual/__screenshots__/linux
+#   3. Look at the images, then commit them.
+#
+# WHAT THIS DOES NOT DO: it never commits or pushes. `contents: read` is the
+# whole permission set, so a change to a baseline is always a reviewed diff
+# authored by a human, never a bot commit.
+#
+# No backend, no deployment, no credentials: the gallery is served by
+# `vite dev` from fixed fixtures, like the docs-diagram job in ci.yml.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    name: Generate Linux baselines
+    # `labeled` fires for every label; only this one means "regenerate".
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'update-visual-baselines'
+    # Concurrency lives on the JOB, below the `if`, on purpose. At workflow
+    # level, adding any OTHER label to the PR would start a run in the same
+    # group, cancel the baseline run in progress, and then skip its own job —
+    # leaving no baselines at all.
+    concurrency:
+      group: visual-baselines-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22 to match ci.yml's frontend jobs.
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate baselines
+        run: npm run test:visual:update
+
+      # A run that produced nothing must fail here, not upload an empty
+      # artefact that looks like success.
+      - name: Refuse an empty result
+        run: |
+          count=$(find tests/visual/__screenshots__/linux -name '*.png' | wc -l)
+          echo "baselines generated: $count"
+          test "$count" -gt 0
+
+      - name: Upload baselines
+        uses: actions/upload-artifact@v7
+        with:
+          name: chart-visual-baselines
+          path: frontend/tests/visual/__screenshots__/linux
+          if-no-files-found: error
+          retention-days: 7

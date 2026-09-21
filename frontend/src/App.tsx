@@ -127,6 +127,20 @@ const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
 const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
 
+// The chart gallery (`/__charts`) is the visual-regression harness's subject
+// and exists in DEVELOPMENT builds only. `import.meta.env.DEV` is a build-time
+// constant, so in production both this import and the route below fold away
+// and no gallery chunk is emitted (`npm run check:bundle` + a grep of dist/ for
+// `data-gallery-item` prove it). It sits outside ProtectedRoute/AppLayout on
+// purpose: CI's e2e job has no backend to log in to. Plain `reactLazy`, not
+// the retry wrapper: there is no deploy for a dev-only chunk to go stale
+// against, and the routed-page guards (routedPagesErrorState, routeScope
+// ratchet) enumerate PRODUCT pages by the `lazy` + page-import shape above.
+// This is not a product page, so it is deliberately not written that way.
+const ChartGalleryPage = import.meta.env.DEV
+  ? reactLazy(() => import('@/pages/dev/ChartGalleryPage'))
+  : null
+
 type AppRoute = {
   path: string
   component: ComponentType
@@ -310,6 +324,9 @@ export default function App() {
     <DocumentTitleRouteKeyContext.Provider value={documentTitleRouteKey}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {import.meta.env.DEV && ChartGalleryPage && (
+        <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
+      )}
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/*" element={<AppLayout />}>

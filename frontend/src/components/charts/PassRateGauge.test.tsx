@@ -6,7 +6,10 @@ import PassRateGauge from './PassRateGauge'
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   RadialBarChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  RadialBar: () => <div data-testid="radial-bar" />,
+  // Echoes `isAnimationActive` so the `animate` prop is observable.
+  RadialBar: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
+    <div data-testid="radial-bar" data-animate={String(isAnimationActive)} />
+  ),
 }))
 
 describe('PassRateGauge', () => {
@@ -20,5 +23,15 @@ describe('PassRateGauge', () => {
     const { container } = render(<PassRateGauge value={80} size={160} />)
     const wrapper = container.firstElementChild as HTMLElement
     expect(wrapper).toHaveStyle({ width: '160px', height: '160px' })
+  })
+
+  it('leaves the Recharts animation default alone unless told otherwise', () => {
+    render(<PassRateGauge value={80} />)
+    expect(screen.getByTestId('radial-bar')).toHaveAttribute('data-animate', 'undefined')
+  })
+
+  it('forwards animate={false} to the radial bar', () => {
+    render(<PassRateGauge value={80} animate={false} />)
+    expect(screen.getByTestId('radial-bar')).toHaveAttribute('data-animate', 'false')
   })
 })

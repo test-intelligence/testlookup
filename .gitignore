@@ -88,6 +88,12 @@ frontend/.vite/
 frontend/tests/e2e/.auth/
 .ms-playwright/
 
+# Visual-regression baselines (frontend/tests/visual) are rendered in CI on
+# Linux. A workstation's win32/darwin snapshots differ in font rasterising and
+# anti-aliasing and must never be committed beside them: only linux/ is admitted.
+frontend/tests/visual/__screenshots__/*/
+!frontend/tests/visual/__screenshots__/linux/
+
 # Java SDK build artifacts
 client/java/target/
 *.jar

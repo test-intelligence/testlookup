@@ -13,9 +13,16 @@ vi.mock('recharts', () => ({
   YAxis: () => <div />,
   Tooltip: () => <div />,
   Legend: () => <div />,
-  Line: () => <div />,
-  Area: () => <div />,
-  Bar: () => <div />,
+  // The series marks echo `isAnimationActive` so the `animate` prop is observable.
+  Line: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
+    <div data-testid="series-mark" data-animate={String(isAnimationActive)} />
+  ),
+  Area: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
+    <div data-testid="series-mark" data-animate={String(isAnimationActive)} />
+  ),
+  Bar: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
+    <div data-testid="series-mark" data-animate={String(isAnimationActive)} />
+  ),
 }))
 
 const data = [
@@ -44,5 +51,25 @@ describe('TrendChart', () => {
   it('renders bar chart when requested', () => {
     render(<TrendChart data={data} type="bar" />)
     expect(screen.getByTestId('bar-chart')).toBeInTheDocument()
+  })
+
+  // line: passed / failed / skipped / pass_rate · area: total / passed ·
+  // bar: passed / failed / skipped / broken
+  const SERIES_PER_TYPE = [['line', 4], ['area', 2], ['bar', 4]] as const
+
+  it.each(SERIES_PER_TYPE)('leaves the %s chart on the Recharts animation default', (type, series) => {
+    // `undefined` is what lets Recharts resolve its own default ('auto'), so
+    // adding the prop changed nothing for the call sites that do not pass it.
+    render(<TrendChart data={data} type={type} />)
+    const marks = screen.getAllByTestId('series-mark')
+    expect(marks).toHaveLength(series)
+    for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'undefined')
+  })
+
+  it.each(SERIES_PER_TYPE)('forwards animate={false} to every %s series', (type, series) => {
+    render(<TrendChart data={data} type={type} animate={false} />)
+    const marks = screen.getAllByTestId('series-mark')
+    expect(marks).toHaveLength(series)
+    for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 })
