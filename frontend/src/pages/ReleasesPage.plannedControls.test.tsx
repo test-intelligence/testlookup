@@ -20,26 +20,24 @@
  * the label reads "(planned)" instead of the control being deleted: removing it
  * would drop the only signal that the capability is coming.
  *
- * Asserted against source rather than by mounting. `ReleaseCard` needs a
+ * Strategy: pull the source via Vite's `?raw` import, the same way
+ * `AgentStatusPage.partial.test.tsx` does — `node:fs` and `__dirname` are not
+ * typed in this tsconfig, and reaching for them fails `tsc --noEmit`.
+ *
+ * Asserted against source rather than by mounting: `ReleaseCard` needs a
  * complete release object (`gate.decision`, `stage`, `phases`, `blockers`,
- * `metrics`) and the header lives inside the whole page; a fabricated fixture
- * would pin the fixture rather than the contract. Same call this repo makes in
- * `siblingInvalidation.test.ts`.
+ * `metrics`) and the header lives inside the whole page, so a fabricated
+ * fixture would pin the fixture rather than the contract.
  */
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const SRC = join(__dirname, '..')
+import cardSource from '@/components/releases/ReleaseCard.tsx?raw'
+import pageSource from './ReleasesPage.tsx?raw'
 
-const PLANNED = [
-  ['components/releases/ReleaseCard.tsx', /Clone from|Generate from PRD/],
-  ['pages/ReleasesPage.tsx', /Export schedule|Calendar view/],
-] as const
-
-function sourceOf(relative: string): string {
-  return readFileSync(join(SRC, relative), 'utf-8')
-}
+const PLANNED: ReadonlyArray<readonly [string, string, RegExp]> = [
+  ['ReleaseCard.tsx', cardSource, /Clone from|Generate from PRD/],
+  ['ReleasesPage.tsx', pageSource, /Export schedule|Calendar view/],
+]
 
 /**
  * Each `<button …>` element, sliced at its OWN closing tag.
@@ -73,16 +71,16 @@ describe('the planned /releases controls are honestly unavailable', () => {
   it('no control still answers a click with a stub toast', () => {
     // The guard for the whole class, not just the four known sites: a new stub
     // button shipped the same way fails here.
-    for (const [file] of PLANNED) {
+    for (const [name, src] of PLANNED) {
       expect(
-        codeOnly(sourceOf(file)),
-        `${file} still promises an action it cannot perform`,
+        codeOnly(src),
+        `${name} still promises an action it cannot perform`,
       ).not.toMatch(/coming in next iteration/i)
     }
   })
 
-  it.each(PLANNED)('%s marks its planned controls unavailable', (file, labels) => {
-    const planned = buttonElements(sourceOf(file)).filter(b => labels.test(b))
+  it.each(PLANNED)('%s marks its planned controls unavailable', (_name, src, labels) => {
+    const planned = buttonElements(src).filter(b => labels.test(b))
     expect(planned, 'expected exactly the two known planned controls').toHaveLength(2)
 
     for (const b of planned) {
