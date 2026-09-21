@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased - A regression test that could not fail, and three stale records
+
+**TL-2026-08-29-02-001's regression test passed with the fix removed.** The
+defect: ``git -C <path>`` searches upward, so a plain directory NESTED inside a
+checkout resolved to the parent repository and reported its commit range as the
+caller's. The fix (``d2bbad24``) shipped with no test of its own, and the record
+said "verified by regression suite". The only coverage,
+``test_non_git_directory_returns_none``, uses a directory OUTSIDE any checkout,
+where git fails with or without the fix -- disabling the guard left it green.
+
+``test_a_plain_directory_inside_a_checkout_does_not_report_the_parents_history``
+nests the directory inside a real checkout, and opens with a positive control
+proving the parent HAS a range to leak; without that, a ``None`` could mean
+"nothing there" and the new test would be as vacuous as the old. It fails when
+the guard is removed, and does so for each of the two copies (SDK and CLI)
+independently.
+
+**Three QA records said OPEN for work that was done.** TL-2026-09-18-01-004 and
+-008 are BUG-006 and BUG-007, fixed and verified live in #147; the tracker was
+updated and these were not. TL-2026-08-29-02-001 said "fixed locally". All three
+now carry their evidence. TL-2026-09-19-01-007 remains the only open record.
+
 ## Unreleased - Controls that tell the truth, and one dispatch path
 
 **BUG-006.** Four ``/releases`` controls -- "Clone from ...", "Generate from

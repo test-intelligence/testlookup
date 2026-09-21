@@ -441,10 +441,50 @@ def test_shallow_clone_with_unresolvable_user_base_degrades(cr, shallow_clone):
 
 @both
 def test_non_git_directory_returns_none(cr, tmp_path):
+    # Covers a directory OUTSIDE any checkout, where git fails on its own. It
+    # is NOT the regression test for TL-2026-08-29-02-001 -- it passes with
+    # that fix removed. See the nested test below.
     plain = tmp_path / "plain"
     plain.mkdir()
     assert cr.collect_commit_range(env={}, repo_path=str(plain)) is None
     assert cr.resolve_commit_range(env={}, repo_path=str(plain)) is None
+
+
+@both
+def test_a_plain_directory_inside_a_checkout_does_not_report_the_parents_history(
+    cr, repo
+):
+    """TL-2026-08-29-02-001.
+
+    ``git -C <path>`` searches upward for a repository, so a plain directory
+    NESTED inside a checkout -- a build folder, a temp dir under the workspace
+    -- silently resolved to the parent repository and reported its commit
+    range as if it were the caller's.
+
+    The fix (d2bbad24) shipped with the test above as its only coverage. That
+    test's directory sits outside any checkout, where git fails with or without
+    the fix, so it passed with the fix removed: the defect had no real
+    regression test. This one puts the directory inside a real checkout.
+    """
+    # Positive control: the parent must HAVE history to leak. Without it, a
+    # None below could just mean "nothing there", and this test would be as
+    # vacuous as the one it replaces.
+    parent_range = cr.collect_commit_range(env={}, repo_path=str(repo))
+    assert parent_range is not None and parent_range["commits"], (
+        "fixture checkout has no commit range, so a leak could not be observed"
+    )
+
+    nested = repo / "build" / "plain"
+    nested.mkdir(parents=True)
+
+    assert cr.collect_commit_range(env={}, repo_path=str(nested)) is None, (
+        "a plain directory inside a checkout reported the parent's history"
+    )
+    assert cr.resolve_commit_range(env={}, repo_path=str(nested)) is None
+
+    # And it says why, rather than looking like a git failure.
+    outcome = cr.diagnose_commit_range(env={}, repo_path=str(nested))
+    assert outcome.reason == cr.REASON_NO_CHECKOUT, outcome.detail
 
 
 @both
