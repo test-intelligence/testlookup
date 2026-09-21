@@ -1,0 +1,11 @@
+{
+  "description": "All projects, no release or suite filter, default 30-day window.",
+  "payload": {
+    "project_id": null,
+    "release_ids": [],
+    "suite_names": [],
+    "window": {
+      "days": 30
+    }
+  }
+}

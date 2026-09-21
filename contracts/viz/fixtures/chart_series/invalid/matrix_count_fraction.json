@@ -1,0 +1,22 @@
+{
+  "description": "A count cell is a whole number.",
+  "violates": "integer_count",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "count",
+    "x_labels": [
+      "r"
+    ],
+    "y_labels": [
+      "t"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 1.5,
+        "n": 1
+      }
+    ]
+  }
+}

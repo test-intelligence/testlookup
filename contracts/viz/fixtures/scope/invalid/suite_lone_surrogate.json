@@ -1,0 +1,14 @@
+{
+  "description": "A lone UTF-16 surrogate is not a well-formed string.",
+  "violates": "well_formed_string",
+  "payload": {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "release_ids": [],
+    "suite_names": [
+      "half an emoji \ud83d"
+    ],
+    "window": {
+      "days": 30
+    }
+  }
+}

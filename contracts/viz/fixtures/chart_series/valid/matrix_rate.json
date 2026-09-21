@@ -1,0 +1,35 @@
+{
+  "description": "Suite by day pass-rate matrix; a null value means no runs.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "2026-09-17",
+      "2026-09-18"
+    ],
+    "y_labels": [
+      "payments",
+      "cart"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 96.4,
+        "n": 220
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": null,
+        "n": 0
+      },
+      {
+        "x": 0,
+        "y": 1,
+        "value": 0,
+        "n": 12
+      }
+    ]
+  }
+}

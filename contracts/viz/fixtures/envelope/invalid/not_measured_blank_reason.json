@@ -1,0 +1,39 @@
+{
+  "description": "A reason made only of whitespace says nothing; it counts as missing.",
+  "violates": "measured_reason",
+  "payload": {
+    "schema_version": 1,
+    "scope": {
+      "projects": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "name": "Checkout"
+        }
+      ],
+      "releases": [],
+      "suites": [],
+      "window": {
+        "from": "2026-08-20",
+        "to": "2026-09-19",
+        "days": 30,
+        "timezone": "UTC"
+      }
+    },
+    "totals": {
+      "matched_runs": 0,
+      "total_runs": 12,
+      "matched_executions": 0,
+      "total_executions": 90
+    },
+    "pass_rate_basis": null,
+    "ignored_filters": [],
+    "truncated": false,
+    "truncated_total": null,
+    "measured": false,
+    "reason": " \t\n ",
+    "includes_in_progress": 0,
+    "partial_day": null,
+    "generated_at": "2026-09-19T10:42:07Z",
+    "as_of": "2026-09-19T10:42:07Z"
+  }
+}

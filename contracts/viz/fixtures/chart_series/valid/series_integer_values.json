@@ -1,0 +1,33 @@
+{
+  "description": "Whole-number y values must come back as integers, not 3.0.",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "status"
+    ],
+    "x_type": "category",
+    "series": [
+      {
+        "key": "s",
+        "label": "s",
+        "points": [
+          {
+            "x": "passed",
+            "y": 3,
+            "n": 3
+          },
+          {
+            "x": "failed",
+            "y": 0,
+            "n": 0
+          },
+          {
+            "x": "skipped",
+            "y": 2.5,
+            "n": 4
+          }
+        ]
+      }
+    ]
+  }
+}

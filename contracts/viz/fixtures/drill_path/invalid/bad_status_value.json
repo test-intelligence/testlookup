@@ -1,0 +1,12 @@
+{
+  "description": "A status level uses the TestStatus vocabulary.",
+  "violates": "status_vocab",
+  "payload": {
+    "path": [
+      {
+        "dimension": "status",
+        "value": "flaky"
+      }
+    ]
+  }
+}

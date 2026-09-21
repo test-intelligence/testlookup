@@ -1,0 +1,14 @@
+{
+  "description": "A release belongs to exactly one project.",
+  "violates": "release_requires_project",
+  "payload": {
+    "project_id": null,
+    "release_ids": [
+      "22222222-2222-4222-8222-222222222221"
+    ],
+    "suite_names": [],
+    "window": {
+      "days": 30
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "description": "Every parent must exist.",
+  "violates": "tree_parent_exists",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "root",
+        "parent_id": null,
+        "label": "root",
+        "value": 1,
+        "measure": null
+      },
+      {
+        "id": "a",
+        "parent_id": "missing",
+        "label": "a",
+        "value": 1,
+        "measure": null
+      }
+    ]
+  }
+}

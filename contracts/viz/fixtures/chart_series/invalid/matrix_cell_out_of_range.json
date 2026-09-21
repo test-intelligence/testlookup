@@ -1,0 +1,22 @@
+{
+  "description": "Cell indexes must address a label.",
+  "violates": "cell_index_range",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "d1"
+    ],
+    "y_labels": [
+      "s1"
+    ],
+    "cells": [
+      {
+        "x": 1,
+        "y": 0,
+        "value": 50,
+        "n": 2
+      }
+    ]
+  }
+}

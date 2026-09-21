@@ -1,0 +1,12 @@
+{
+  "description": "A level needs a value.",
+  "violates": "value_length",
+  "payload": {
+    "path": [
+      {
+        "dimension": "suite",
+        "value": ""
+      }
+    ]
+  }
+}

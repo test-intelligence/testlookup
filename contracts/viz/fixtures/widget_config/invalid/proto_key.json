@@ -1,0 +1,17 @@
+{
+  "description": "`__proto__` is never a data key: preserving it would let a merge rewrite a prototype.",
+  "violates": "forbidden_key",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a",
+        "templateId": "pass_rate_trend",
+        "__proto__": {
+          "isAdmin": true
+        }
+      }
+    ]
+  }
+}

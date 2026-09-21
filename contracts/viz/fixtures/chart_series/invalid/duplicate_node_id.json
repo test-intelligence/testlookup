@@ -1,0 +1,20 @@
+{
+  "description": "Node ids are unique.",
+  "violates": "unique_node_id",
+  "payload": {
+    "kind": "graph",
+    "nodes": [
+      {
+        "id": "g1",
+        "label": "a",
+        "size": 1
+      },
+      {
+        "id": "g1",
+        "label": "b",
+        "size": 2
+      }
+    ],
+    "edges": []
+  }
+}

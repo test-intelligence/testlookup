@@ -269,12 +269,35 @@ def _clear() -> str:
     return chr(13) + " " * _LINE_WIDTH + chr(13)
 
 
-def run(cmd: list[str], cwd: Path, extra_env: dict[str, str] | None = None
-        ) -> tuple[int, str]:
-    env = dict(os.environ)
+# Variables git exports to the hooks it runs, pinning every `git` inside the
+# hook to THIS repository. The list is `git rev-parse --local-env-vars`.
+# A check that builds its own scratch repository (test_handoff_docs.py does,
+# with `git init` + `git check-ignore`) must not inherit them: from a linked
+# worktree the pre-push hook sets GIT_DIR, the scratch `git` resolved to the
+# caller's repository, and the test failed with "this operation must be run
+# in a work tree" -- only under the hook, never when the gate was run by hand.
+# Checks find the repository from their working directory instead.
+HOOK_GIT_ENV = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+    "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
+)
+
+
+def check_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment a check runs in: ours, minus git's hook variables."""
+    env = {k: v for k, v in os.environ.items() if k not in HOOK_GIT_ENV}
     env.setdefault("PYTHONIOENCODING", "utf-8")
     if extra_env:
         env.update(extra_env)
+    return env
+
+
+def run(cmd: list[str], cwd: Path, extra_env: dict[str, str] | None = None
+        ) -> tuple[int, str]:
+    env = check_env(extra_env)
     proc = subprocess.run(
         cmd, cwd=str(cwd), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

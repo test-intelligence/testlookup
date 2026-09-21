@@ -1,0 +1,12 @@
+{
+  "description": "project_id is a UUID or null.",
+  "violates": "project_id_format",
+  "payload": {
+    "project_id": "checkout",
+    "release_ids": [],
+    "suite_names": [],
+    "window": {
+      "days": 30
+    }
+  }
+}

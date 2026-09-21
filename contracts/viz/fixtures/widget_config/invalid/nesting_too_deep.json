@@ -1,0 +1,97 @@
+{
+  "description": "Payloads nest at most 32 containers deep.",
+  "violates": "nesting_depth",
+  "payload": {
+    "page": "trends",
+    "version": 2,
+    "instances": [
+      {
+        "instanceId": "a",
+        "templateId": "pass_rate_trend",
+        "filters": {
+          "n": {
+            "n": {
+              "n": {
+                "n": {
+                  "n": {
+                    "n": {
+                      "n": {
+                        "n": {
+                          "n": {
+                            "n": {
+                              "n": {
+                                "n": {
+                                  "n": {
+                                    "n": {
+                                      "n": {
+                                        "n": {
+                                          "n": {
+                                            "n": {
+                                              "n": {
+                                                "n": {
+                                                  "n": {
+                                                    "n": {
+                                                      "n": {
+                                                        "n": {
+                                                          "n": {
+                                                            "n": {
+                                                              "n": {
+                                                                "n": {
+                                                                  "n": {
+                                                                    "n": {
+                                                                      "n": {
+                                                                        "n": {
+                                                                          "n": {
+                                                                            "n": {
+                                                                              "n": {
+                                                                                "n": {
+                                                                                  "n": {
+                                                                                    "n": {
+                                                                                      "n": {
+                                                                                        "n": {
+                                                                                          "v": 1
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

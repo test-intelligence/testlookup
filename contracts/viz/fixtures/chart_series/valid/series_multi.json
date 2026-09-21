@@ -1,0 +1,45 @@
+{
+  "description": "Two series over UTC days; a null y is a gap, never zero.",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "day",
+      "suite"
+    ],
+    "x_type": "time",
+    "series": [
+      {
+        "key": "payments",
+        "label": "payments",
+        "points": [
+          {
+            "x": "2026-09-17",
+            "y": 96.4,
+            "n": 220
+          },
+          {
+            "x": "2026-09-18",
+            "y": null,
+            "n": 0
+          }
+        ]
+      },
+      {
+        "key": "cart",
+        "label": "cart",
+        "points": [
+          {
+            "x": "2026-09-17",
+            "y": 88.0,
+            "n": 50
+          },
+          {
+            "x": "2026-09-18",
+            "y": 90.0,
+            "n": 60
+          }
+        ]
+      }
+    ]
+  }
+}

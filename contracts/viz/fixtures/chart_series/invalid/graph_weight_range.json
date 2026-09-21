@@ -1,0 +1,26 @@
+{
+  "description": "Similarity is 0..1.",
+  "violates": "weight_range",
+  "payload": {
+    "kind": "graph",
+    "nodes": [
+      {
+        "id": "g1",
+        "label": "x",
+        "size": 1
+      },
+      {
+        "id": "g2",
+        "label": "y",
+        "size": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "g1",
+        "target": "g2",
+        "weight": 1.5
+      }
+    ]
+  }
+}

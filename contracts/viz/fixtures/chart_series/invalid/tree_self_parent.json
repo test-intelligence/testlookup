@@ -1,0 +1,16 @@
+{
+  "description": "A node cannot be its own parent.",
+  "violates": "tree_acyclic",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "a",
+        "parent_id": "a",
+        "label": "a",
+        "value": 1,
+        "measure": null
+      }
+    ]
+  }
+}

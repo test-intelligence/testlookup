@@ -1,0 +1,15 @@
+{
+  "description": "Suite names are untrusted text and must round-trip unchanged.",
+  "payload": {
+    "project_id": null,
+    "release_ids": [],
+    "suite_names": [
+      "<img src=x onerror=alert(1)>",
+      "a,b/c\\d \"e\" & %25",
+      "日本語スイート"
+    ],
+    "window": {
+      "days": 30
+    }
+  }
+}

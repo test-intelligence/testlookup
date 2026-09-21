@@ -1,0 +1,30 @@
+{
+  "contract": "flags",
+  "version": 1,
+  "flags": [
+    {
+      "key": "viz_report_context",
+      "description": "Report context header and metrics strip on report pages (VIZ-E3)."
+    },
+    {
+      "key": "viz_multi_filters",
+      "description": "Multi-select release and suite filters, chips, summary and URL sync (VIZ-E3)."
+    },
+    {
+      "key": "viz_chart_data_api",
+      "description": "Generic chart-data, heatmap, coverage-map, failure-groups and rows endpoints (VIZ-E2)."
+    },
+    {
+      "key": "viz_advanced_charts",
+      "description": "Heatmap, coverage map, failure groups, scatter, Sankey and explorer views (VIZ-E5)."
+    },
+    {
+      "key": "viz_customize",
+      "description": "Chart customisation panel and saved-views manager (VIZ-E6)."
+    },
+    {
+      "key": "viz_three_d",
+      "description": "Opt-in 3D scatter view (VIZ-508)."
+    }
+  ]
+}
