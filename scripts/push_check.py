@@ -275,7 +275,81 @@ def check_reference_drift() -> tuple[bool, str]:
     return True, f"additions only vs {base}"
 
 
+def _git_stdout(*args: str) -> tuple[int, str]:
+    """Run git keeping stdout and stderr APART.
+
+    ``run()`` merges them, which is right for a check's report and wrong for
+    parsing: git writes "warning: in the working copy of 'x.py', LF will be
+    replaced by CRLF" to stderr, and merged into a ``--name-only`` listing it
+    became a "filename" that could never be restored. On a Windows checkout
+    that warning is routine, so every leak would have been reported as
+    unrecoverable. Caught by this module's own self-test.
+    """
+    proc = subprocess.run(
+        ["git", *args], cwd=str(REPO),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    return proc.returncode, proc.stdout or ""
+
+
+def _dirty_tracked_files() -> set[str]:
+    """Tracked files that currently differ from HEAD."""
+    # -z: NUL-separated, so a path containing a newline cannot split in two.
+    code, out = _git_stdout("diff", "--name-only", "-z", "HEAD")
+    if code != 0:
+        return set()
+    return {p for p in out.split("\0") if p}
+
+
+def _restore_harness_leaks(before: set[str]) -> list[str]:
+    """Put back any tracked file a check modified, and report it.
+
+    The backend suite contains mutation harnesses that patch REAL source files,
+    run the tests, and restore on a clean exit. When one crashes mid-mutation
+    the file stays mutated -- and every later harness in the run then starts
+    from a sabotaged baseline and fails too. Measured on this gate's first full
+    run: 23 source files left mutated, including ``llm_circuit_breaker``
+    reporting an open breaker as closed.
+
+    That is the most dangerous thing this script can do, because the obvious
+    next step after a gate run is ``git commit -a``.
+
+    Only files that were CLEAN when the gate started are restored. A file the
+    developer was already editing is left exactly as it is and reported
+    instead: restoring it would silently discard their uncommitted work, which
+    is worse than the leak.
+    """
+    after = _dirty_tracked_files()
+    leaked = sorted(after - before)
+    if leaked:
+        _git_stdout("checkout", "--", *leaked)
+    still = sorted(_dirty_tracked_files() - before)
+    touched_own = sorted(before & after)
+    if leaked:
+        print(f"\n  {Colour.WARN}restored {len(leaked)} source file(s) a check "
+              f"left modified{Colour.OFF} -- a mutation harness exited without "
+              f"cleaning up:")
+        for f in leaked:
+            print(f"    {f}")
+    if still:
+        print(f"  {Colour.BAD}could NOT restore:{Colour.OFF} {', '.join(still)}")
+    if touched_own:
+        print(f"  {Colour.DIM}(left alone -- you were already editing these: "
+              f"{', '.join(touched_own)}){Colour.OFF}")
+    return leaked
+
+
 def main() -> int:
+    """Run the gate, and never hand back a tree it has altered."""
+    before = _dirty_tracked_files()
+    try:
+        return _main()
+    finally:
+        _restore_harness_leaks(before)
+
+
+def _main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--quick", action="store_true",
                     help="skip the slow suites (weaker; CI may still fail)")

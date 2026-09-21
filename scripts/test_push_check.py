@@ -104,6 +104,80 @@ class TestTheAllowlistCannotHideARegression:
             assert reason.strip(), f"{entry} is allowlisted with no reason"
 
 
+class TestTheGateNeverHandsBackAnAlteredTree:
+    """The most dangerous thing this script can do.
+
+    The backend suite contains mutation harnesses that patch real source files
+    and restore them only on a clean exit. The gate's first full run left 23
+    source files mutated -- ``llm_circuit_breaker`` reporting an open breaker as
+    closed among them -- and the natural next step after a gate is a commit.
+    Tested in a throwaway repository so the assertion does not depend on a
+    harness happening to crash.
+    """
+
+    @pytest.fixture
+    def repo(self, tmp_path, monkeypatch):
+        import subprocess
+
+        def git(*a):
+            subprocess.run(["git", *a], cwd=tmp_path, check=True,
+                           capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        # Pin line endings. With the host's core.autocrlf=true, checkout
+        # rewrites LF as CRLF and a byte comparison fails even though the
+        # restore worked -- the first run of this test failed on exactly that.
+        git("config", "core.autocrlf", "false")
+        (tmp_path / "service.py").write_bytes(b"OPEN = 1.0\n")
+        (tmp_path / "mine.py").write_bytes(b"x = 1\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "base")
+        monkeypatch.setattr(push_check, "REPO", tmp_path)
+        return tmp_path
+
+    def test_a_file_a_harness_mutated_is_put_back(self, repo):
+        before = push_check._dirty_tracked_files()
+        assert before == set()
+
+        # What a crashed harness leaves behind.
+        (repo / "service.py").write_bytes(b"OPEN = 0.0\n")
+
+        leaked = push_check._restore_harness_leaks(before)
+        assert leaked == ["service.py"]
+        assert (repo / "service.py").read_bytes() == b"OPEN = 1.0\n", (
+            "the mutation survived the gate"
+        )
+
+    def test_the_developers_own_edit_is_never_discarded(self, repo):
+        # They were already editing this when the gate started. Restoring it
+        # would silently throw their work away -- worse than any leak.
+        (repo / "mine.py").write_bytes(b"x = 2  # in progress\n")
+        before = push_check._dirty_tracked_files()
+        assert before == {"mine.py"}
+
+        push_check._restore_harness_leaks(before)
+        assert (repo / "mine.py").read_bytes() == b"x = 2  # in progress\n"
+
+    def test_a_clean_run_changes_nothing(self, repo):
+        before = push_check._dirty_tracked_files()
+        assert push_check._restore_harness_leaks(before) == []
+
+    def test_main_restores_even_when_a_check_raises(self, repo, monkeypatch):
+        # The restore lives in a `finally`. Fail-fast, Ctrl-C and a crash all
+        # leave the loop early -- exactly the cases where a harness is likeliest
+        # to have left something behind.
+        def boom():
+            (repo / "service.py").write_bytes(b"OPEN = 0.0\n")
+            raise RuntimeError("check crashed")
+
+        monkeypatch.setattr(push_check, "_main", boom)
+        with pytest.raises(RuntimeError):
+            push_check.main()
+        assert (repo / "service.py").read_bytes() == b"OPEN = 1.0\n"
+
+
 class TestOutputSurvivesAWindowsConsole:
     def test_nothing_printed_is_outside_ascii(self):
         """The gate crashed here once.
