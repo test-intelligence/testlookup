@@ -83,8 +83,19 @@ REPO = Path(__file__).resolve().parent.parent
 BACKEND = REPO / "backend"
 FRONTEND = REPO / "frontend"
 
+_LANGCHAIN = (
+    "local langchain is newer than CI's pin: 'langchain.agents has no "
+    "attribute create_react_agent'"
+)
+_LLM_TIMEOUT = (
+    "the hypothesis LLM call times out on this machine (TimeoutError); "
+    "flagged as local-only before any change in the session that found it"
+)
+
 # Tests known to fail on a developer machine and pass in CI, with the reason.
 # NOT a place to park flaky tests — each entry needs evidence CI is green.
+# Prefer a test id (``path::name``) over a file: a file entry tolerates every
+# test in it, including ones that should be catching regressions.
 KNOWN_LOCAL_FAILURES: dict[str, str] = {
     "tests/regression/test_chroma_storage_settings_runtime.py": (
         "needs a ChromaDB build CI installs; verified failing on a tree with no "
@@ -93,6 +104,25 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     "tests/regression/test_offline_embedder_guard.py": (
         "same ChromaDB dependency as above"
     ),
+    # The entries below are individual TESTS, not files -- each file also holds
+    # tests that pass locally and must stay covered. Each was confirmed failing
+    # on a PRISTINE origin/main checkout with no local change and no mutation
+    # harness running, and each passed in CI run 35549887616 on the same code.
+    "tests/test_chat_copilot.py::test_loop_iteration_cap_then_fallback": _LANGCHAIN,
+    "tests/test_chat_copilot.py::test_loop_timeout_falls_back_to_single_shot": _LANGCHAIN,
+    "tests/test_chat_copilot.py::test_multi_hop_question_resolved_via_two_tools": _LANGCHAIN,
+    "tests/test_root_cause_tier_routing.py::"
+    "test_react_explanation_uses_endpoint_and_bypasses_classifier_and_caches": _LANGCHAIN,
+    "tests/test_rag_services.py::TestDocumentConnectorInternals::"
+    "test_extract_docx_preserves_mixed_block_order_and_formatting": (
+        "docx extraction differs under the local python-docx build"
+    ),
+    "tests/services/test_llm_one_call_one_meter_row.py::"
+    "test_a_hypothesis_call_that_times_out_after_sending_is_metered_once": _LLM_TIMEOUT,
+    "tests/services/test_llm_one_call_one_meter_row.py::"
+    "test_a_hypothesis_call_with_no_reported_usage_is_metered_once": _LLM_TIMEOUT,
+    "tests/services/test_llm_one_call_one_meter_row.py::"
+    "test_a_hypothesis_call_with_reported_usage_is_metered_once_by_the_stage": _LLM_TIMEOUT,
 }
 
 # Reference files whose local regeneration always differs from CI's.
@@ -171,8 +201,20 @@ def build_checks() -> list[Check]:
               [npm, "run", "check:bundle"], FRONTEND, "frontend", slow=True),
         Check("frontend: theme tokens",
               [npm, "run", "check:theme"], FRONTEND, "frontend"),
+        # Mutation harnesses are EXCLUDED here and run in CI instead. Measured on
+        # this gate's first full run: they take minutes each, they patch REAL
+        # source files and restore only on a clean exit, and on slower hardware
+        # they hit their subprocess timeouts -- after which the file stays
+        # mutated and every later harness starts from a sabotaged baseline. One
+        # timeout became 9 harness failures and 23 corrupted files. CI ran every
+        # one of them green on the same code.
+        #
+        # That is not a check a pre-push gate can run safely, so it does not.
+        # Nothing ships unverified: CI still runs them, and the leak restore in
+        # main() remains as a backstop.
         Check("backend: full test suite",
               [py, "-m", "pytest", "tests/", "--ignore=tests/integration",
+               "--ignore-glob=*mutation_harness*",
                "-q", "-p", "no:testlookup"],
               BACKEND, "backend", slow=True),
     ]
@@ -217,13 +259,37 @@ def run(cmd: list[str], cwd: Path, extra_env: dict[str, str] | None = None
 
 
 def parse_pytest_failures(output: str) -> list[str]:
-    """The test FILES that failed, so they can be matched against the allowlist."""
-    files = []
+    """Node ids of the failed tests (``path::name``), forward-slashed.
+
+    Node ids, not files. Allowlisting a whole FILE tolerates every test in it:
+    ``test_rag_services.py`` has one locally-broken test among many, and a file
+    entry would have hidden a real regression in any of the others.
+    """
+    ids = []
     for line in output.splitlines():
         if line.startswith("FAILED "):
-            target = line[len("FAILED "):].split("::")[0].strip()
-            files.append(target.replace("\\", "/"))
-    return files
+            node = line[len("FAILED "):].split(" - ")[0].strip()
+            ids.append(node.replace("\\", "/"))
+    return ids
+
+
+def _allowlist_key_for(node: str) -> str | None:
+    """The allowlist entry covering this failed test, if any.
+
+    Every match needs a BOUNDARY. A bare ``startswith`` let a node-id key
+    ``x::test_a`` also cover ``x::test_ab`` -- a different test that happens to
+    share a prefix, and exactly the kind of regression nobody would look for.
+    """
+    for key in KNOWN_LOCAL_FAILURES:
+        if node == key:
+            return key
+        # A file entry covers every test in that file.
+        if key.endswith(".py") and node.startswith(key + "::"):
+            return key
+        # A test entry covers its own parametrised cases: x::t covers x::t[1].
+        if "::" in key and node.startswith(key + "["):
+            return key
+    return None
 
 
 def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[str]]:
@@ -231,11 +297,8 @@ def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[s
     if not failed:
         return False, [], []
     known, unknown = [], []
-    for f in failed:
-        if any(f == k or f.startswith(k) for k in KNOWN_LOCAL_FAILURES):
-            known.append(f)
-        else:
-            unknown.append(f)
+    for node in failed:
+        (known if _allowlist_key_for(node) else unknown).append(node)
     return not unknown, sorted(set(known)), sorted(set(unknown))
 
 
@@ -396,9 +459,10 @@ def _main() -> int:
                 print(f"{_clear()}  {Colour.WARN}~{Colour.OFF} {c.name} "
                       f"{Colour.DIM}({secs:.0f}s){Colour.OFF}")
                 for k in known:
-                    warnings.append(
-                        f"{k} failed locally - known: {KNOWN_LOCAL_FAILURES.get(k, '')}"
-                    )
+                    # ``k`` is a node id; the reason lives on whichever entry
+                    # covered it, which may be its file.
+                    reason = KNOWN_LOCAL_FAILURES.get(_allowlist_key_for(k) or "", "")
+                    warnings.append(f"{k} failed locally - known: {reason}")
                 continue
             out += "\n\nUnexpected failures (not in KNOWN_LOCAL_FAILURES):\n  " + \
                    "\n  ".join(unknown)

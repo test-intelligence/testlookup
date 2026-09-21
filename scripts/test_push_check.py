@@ -34,14 +34,16 @@ spec.loader.exec_module(push_check)
 
 
 class TestParsingPytestOutput:
-    def test_it_extracts_the_file_from_a_failure_line(self):
+    def test_it_extracts_the_node_id_not_just_the_file(self):
+        # Node ids, because a FILE-level allowlist entry tolerates every test in
+        # that file -- including the ones meant to catch regressions.
         out = (
             "FAILED tests/test_a.py::test_one - AssertionError\n"
             "FAILED tests/sub/test_b.py::TestX::test_two - ValueError\n"
         )
         assert push_check.parse_pytest_failures(out) == [
-            "tests/test_a.py",
-            "tests/sub/test_b.py",
+            "tests/test_a.py::test_one",
+            "tests/sub/test_b.py::TestX::test_two",
         ]
 
     def test_a_clean_run_yields_nothing(self):
@@ -58,7 +60,9 @@ class TestParsingPytestOutput:
         # pytest reports backslashes on Windows; the allowlist is written with
         # forward slashes, and a mismatch would silently fail to match.
         out = "FAILED tests\\regression\\test_x.py::test_one - Error"
-        assert push_check.parse_pytest_failures(out) == ["tests/regression/test_x.py"]
+        assert push_check.parse_pytest_failures(out) == [
+            "tests/regression/test_x.py::test_one"
+        ]
 
 
 class TestTheAllowlistCannotHideARegression:
@@ -69,7 +73,7 @@ class TestTheAllowlistCannotHideARegression:
         out = f"FAILED {known}::test_something - ImportError\n"
         all_known, matched, unknown = push_check.backend_failures_are_all_known(out)
         assert all_known is True
-        assert matched == [known]
+        assert matched == [f"{known}::test_something"]
         assert unknown == []
 
     def test_one_unknown_failure_beside_a_known_one_still_fails(self):
@@ -82,7 +86,7 @@ class TestTheAllowlistCannotHideARegression:
         )
         all_known, _, unknown = push_check.backend_failures_are_all_known(out)
         assert all_known is False
-        assert unknown == ["tests/test_real_regression.py"]
+        assert unknown == ["tests/test_real_regression.py::test_it"]
 
     def test_a_clean_run_is_not_reported_as_all_known(self):
         # No failures must not be mistaken for "all failures are known", which
@@ -91,13 +95,45 @@ class TestTheAllowlistCannotHideARegression:
         assert all_known is False
 
     def test_the_allowlist_is_not_a_prefix_wildcard_for_a_directory(self):
-        # Entries are files. If someone shortened one to "tests/regression",
-        # every regression failure would be tolerated forever.
+        # Entries are a test file or a test id. If someone shortened one to
+        # "tests/regression", every regression failure would be tolerated.
         for entry in push_check.KNOWN_LOCAL_FAILURES:
-            assert entry.endswith(".py"), (
-                f"{entry!r} is not a test FILE; a directory entry would "
-                "swallow every failure beneath it"
+            assert entry.endswith(".py") or ".py::" in entry, (
+                f"{entry!r} is neither a test file nor a test id; a directory "
+                "entry would swallow every failure beneath it"
             )
+
+    def test_a_test_id_entry_does_not_cover_a_test_sharing_its_prefix(self, monkeypatch):
+        # The latent bug in the first matcher: a bare startswith() let
+        # "x::test_a" also tolerate "x::test_ab" -- a different test entirely.
+        monkeypatch.setattr(push_check, "KNOWN_LOCAL_FAILURES",
+                            {"tests/test_x.py::test_a": "env"})
+        out = "FAILED tests/test_x.py::test_ab - AssertionError"
+        all_known, _, unknown = push_check.backend_failures_are_all_known(out)
+        assert all_known is False
+        assert unknown == ["tests/test_x.py::test_ab"]
+
+    def test_a_test_id_entry_covers_its_own_parametrised_cases(self, monkeypatch):
+        monkeypatch.setattr(push_check, "KNOWN_LOCAL_FAILURES",
+                            {"tests/test_x.py::test_a": "env"})
+        out = "FAILED tests/test_x.py::test_a[case-1] - AssertionError"
+        assert push_check.backend_failures_are_all_known(out)[0] is True
+
+    def test_a_file_entry_covers_its_tests_and_no_other_file(self, monkeypatch):
+        monkeypatch.setattr(push_check, "KNOWN_LOCAL_FAILURES",
+                            {"tests/test_x.py": "env"})
+        assert push_check.backend_failures_are_all_known(
+            "FAILED tests/test_x.py::anything - E")[0] is True
+        # "test_x.py" must not also cover "test_xy.py".
+        assert push_check.backend_failures_are_all_known(
+            "FAILED tests/test_xy.py::anything - E")[0] is False
+
+    def test_the_langchain_entries_are_single_tests_not_whole_files(self):
+        # test_rag_services.py holds one locally-broken test among many; a file
+        # entry would have hidden a regression in any of the others.
+        for entry in push_check.KNOWN_LOCAL_FAILURES:
+            if any(n in entry for n in ("rag_services", "chat_copilot", "root_cause")):
+                assert "::" in entry, f"{entry} is allowlisted as a whole file"
 
     def test_every_allowlist_entry_carries_a_reason(self):
         for entry, reason in push_check.KNOWN_LOCAL_FAILURES.items():
