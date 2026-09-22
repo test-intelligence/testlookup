@@ -68,6 +68,102 @@ class TestChecksDoNotInheritTheHooksRepository:
         assert Path(out.strip()).resolve() == (scratch / ".git").resolve()
 
 
+class TestReferenceDriftAcceptsARealApiChange:
+    """The drift check once treated EVERY deletion in the skewed reference
+    files as toolchain skew, so a change that rewrote an existing parameter
+    (VIZ-201: ``release_id`` became repeatable) could never pass the pre-push
+    hook. Deletions are now accepted exactly when the committed file is CI's
+    ``origin/main`` file plus the change's own delta, derived from two LOCAL
+    generations whose skew cancels."""
+
+    CI = "a\nb-ci-form\nc\nd\n"            # what CI committed on main
+    LOCAL_BASE = "a\nb-local-skew\nc\nd\n"  # main as THIS toolchain renders it
+    LOCAL_HEAD = "a\nb-local-skew\nc\nD\n"  # the branch, same toolchain
+
+    def test_the_merge_is_ci_plus_the_real_delta(self):
+        # The skewed line keeps CI's form; the real change (d -> D) lands.
+        assert push_check.merged_reference(self.CI, self.LOCAL_BASE, self.LOCAL_HEAD) == (
+            "a\nb-ci-form\nc\nD\n"
+        )
+
+    def test_a_delta_that_touches_a_skewed_line_has_no_exact_answer(self):
+        head = "a\nb-changed\nc\nd\n"
+        assert push_check.merged_reference(self.CI, self.LOCAL_BASE, head) is None
+
+    def test_crlf_does_not_count_as_a_difference(self):
+        crlf = self.CI.replace("\n", "\r\n")
+        assert push_check.merged_reference(crlf, self.LOCAL_BASE, self.LOCAL_HEAD) == (
+            "a\nb-ci-form\nc\nD\n"
+        )
+
+    def _fake_refs(self, monkeypatch, tmp_path, current):
+        refs = {"origin/main": self.LOCAL_BASE, "HEAD": self.LOCAL_HEAD}
+        seen = []
+
+        def fake_generate(ref, workdir, *, with_working_tree=False):
+            seen.append((ref, with_working_tree))
+            return {p: refs[ref] for p in push_check.SKEWED_REFERENCES}
+
+        monkeypatch.setattr(push_check, "_generate_references_at", fake_generate)
+        monkeypatch.setattr(push_check, "_git_stdout", lambda *args: (0, self.CI))
+        # "This checkout" is read from disk, as the deletion scan reads it.
+        monkeypatch.setattr(push_check, "REPO", tmp_path)
+        for p in push_check.SKEWED_REFERENCES:
+            (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / p).write_bytes(current.encode("utf-8"))
+        return seen
+
+    def test_committed_equal_to_ci_plus_delta_is_real(self, monkeypatch, tmp_path):
+        seen = self._fake_refs(monkeypatch, tmp_path, "a\nb-ci-form\nc\nD\n")
+        real, why = push_check.reference_delta_is_real("origin/main")
+        assert real, why
+        # The head side must describe the checkout, not just the last commit.
+        assert ("HEAD", True) in seen and ("origin/main", False) in seen
+
+    def test_committed_local_skew_is_not_real(self, monkeypatch, tmp_path):
+        # Committing the raw local generation carries the skewed line.
+        self._fake_refs(monkeypatch, tmp_path, self.LOCAL_HEAD)
+        real, why = push_check.reference_delta_is_real("origin/main")
+        assert not real
+        assert "not CI's file plus this change's delta" in why
+
+    def test_a_generation_failure_fails_closed(self, monkeypatch):
+        def boom(ref, workdir, **_):
+            raise RuntimeError("worktree add failed")
+
+        monkeypatch.setattr(push_check, "_generate_references_at", boom)
+        real, why = push_check.reference_delta_is_real("origin/main")
+        assert not real and "worktree add failed" in why
+
+    def _drift_with(self, monkeypatch, diff_text, real):
+        def fake_run(cmd, cwd, extra_env=None):
+            if cmd[:2] == ["git", "fetch"]:
+                return 0, ""
+            return 0, diff_text
+
+        monkeypatch.setattr(push_check, "run", fake_run)
+        calls = []
+
+        def fake_real(base):
+            calls.append(base)
+            return real, "stub"
+
+        monkeypatch.setattr(push_check, "reference_delta_is_real", fake_real)
+        return push_check.check_reference_drift(), calls
+
+    def test_additions_only_never_derive_the_delta(self, monkeypatch):
+        (ok, _), calls = self._drift_with(monkeypatch, "+++ b/x\n+added\n", real=False)
+        assert ok and calls == []
+
+    def test_deletions_that_are_the_real_delta_pass(self, monkeypatch):
+        (ok, detail), calls = self._drift_with(monkeypatch, "--- a/x\n-removed\n", real=True)
+        assert ok and calls == ["origin/main"] and "real API change" in detail
+
+    def test_deletions_that_are_not_the_real_delta_fail(self, monkeypatch):
+        (ok, detail), _ = self._drift_with(monkeypatch, "--- a/x\n-removed\n", real=False)
+        assert not ok and "not this change's own API delta" in detail
+
+
 class TestParsingPytestOutput:
     def test_it_extracts_the_node_id_not_just_the_file(self):
         # Node ids, because a FILE-level allowlist entry tolerates every test in
@@ -297,6 +393,36 @@ class TestTheMypyRatchetIsActuallyChecked:
         self._stub(monkeypatch, {"app/worker/tasks.py"})
         _, msg = push_check.check_mypy_touched()
         assert "Do NOT run --update" in msg
+
+    def _skewed(self, monkeypatch, local, baseline, skew):
+        monkeypatch.setattr(push_check, "_touched_backend_modules",
+                            lambda: {"app/skewed.py"})
+        out = f"  app/skewed.py: {local} errors (baseline {baseline})\n"
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: (1, out))
+        monkeypatch.setattr(push_check, "KNOWN_MYPY_SKEW",
+                            {"app/skewed.py": (skew, "CI log shows +1")})
+
+    def test_a_documented_skew_that_explains_the_gap_passes(self, monkeypatch):
+        # PR #153: CI counts bootstrap.py at 2, local mypy at 1. The baseline
+        # holds CI's 2; the local 1 is not a drop to "tighten".
+        self._skewed(monkeypatch, local=1, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is True, msg
+
+    def test_a_skew_does_not_excuse_a_further_change(self, monkeypatch):
+        # One more real error than the skew accounts for still fails ...
+        self._skewed(monkeypatch, local=2, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is False and "rose" in msg
+        # ... and so does a real fix beyond it.
+        self._skewed(monkeypatch, local=0, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is False and "DROPPED" in msg
+
+    def test_every_documented_skew_names_its_evidence(self):
+        for path, (delta, why) in push_check.KNOWN_MYPY_SKEW.items():
+            assert path.startswith("app/") and delta != 0
+            assert "CI" in why and len(why) > 40, f"{path}: say where CI showed it"
 
     def test_no_backend_change_skips_the_slow_mypy_run(self, monkeypatch):
         called = []

@@ -477,6 +477,7 @@ class AnalysisAgent(BaseAgent):
         await self._batch_upsert_analyses(
             analyses,
             eval_manifest_checksum=state.get("eval_manifest_checksum"),
+            project_id=project_id,
         )
 
         # Summarise routing across all analyses — the dominant mode is what
@@ -1529,13 +1530,19 @@ class AnalysisAgent(BaseAgent):
         chunk_size: int = 50,
         *,
         eval_manifest_checksum: str | None = None,
+        project_id: str | None = None,
     ) -> None:
-        """Batch upsert all analysis results in chunked commits (single session per chunk)."""
+        """Batch upsert all analysis results in chunked commits (single session per chunk).
+
+        VIZ-212: once any chunk has committed, the project's analytics epoch
+        is bumped — new ai_analysis rows feed the cached hours-saved model.
+        """
         items = list(analyses.items())
         if not items:
             return
 
         now = datetime.now(timezone.utc)
+        committed = False
         for i in range(0, len(items), chunk_size):
             chunk = items[i:i + chunk_size]
             try:
@@ -1584,6 +1591,7 @@ class AnalysisAgent(BaseAgent):
                         )
                         await db.execute(stmt)
                     await db.commit()
+                    committed = True
             except Exception as exc:
                 logger.error(
                     "batch_upsert_failed",
@@ -1591,3 +1599,7 @@ class AnalysisAgent(BaseAgent):
                     chunk_end=i + len(chunk),
                     error=str(exc),
                 )
+        if committed:
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(project_id)

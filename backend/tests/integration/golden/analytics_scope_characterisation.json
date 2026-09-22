@@ -1,0 +1,5560 @@
+{
+ "coverage/member_all_projects": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 19,
+     "pass_rate": 92.8,
+     "passed": 244,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    },
+    {
+     "failed": 24,
+     "pass_rate": 88.6,
+     "passed": 186,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "InventorySuite",
+     "unique_tests": 5
+    },
+    {
+     "failed": 10,
+     "pass_rate": 93.9,
+     "passed": 155,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "NotificationSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 5,
+     "pass_rate": 96.8,
+     "passed": 152,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 8,
+     "suite_name": "ReportingSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 4,
+     "pass_rate": 91.1,
+     "passed": 41,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "LegacyBatchSuite",
+     "unique_tests": 3
+    },
+    {
+     "failed": 0,
+     "pass_rate": null,
+     "passed": 0,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 126,
+     "suite_name": "QuarantinedSuite",
+     "unique_tests": 3
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 92.6,
+    "days_with_runs": 43,
+    "suite_count": 6,
+    "total_executions": 980,
+    "unique_tests": 25
+   }
+  },
+  "status": 200
+ },
+ "coverage/none": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 19,
+     "pass_rate": 92.8,
+     "passed": 244,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    },
+    {
+     "failed": 24,
+     "pass_rate": 88.6,
+     "passed": 186,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "InventorySuite",
+     "unique_tests": 5
+    },
+    {
+     "failed": 10,
+     "pass_rate": 93.9,
+     "passed": 155,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "NotificationSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 5,
+     "pass_rate": 96.8,
+     "passed": 152,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 8,
+     "suite_name": "ReportingSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 4,
+     "pass_rate": 91.1,
+     "passed": 41,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "LegacyBatchSuite",
+     "unique_tests": 3
+    },
+    {
+     "failed": 0,
+     "pass_rate": null,
+     "passed": 0,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 126,
+     "suite_name": "QuarantinedSuite",
+     "unique_tests": 3
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 92.6,
+    "days_with_runs": 43,
+    "suite_count": 6,
+    "total_executions": 980,
+    "unique_tests": 25
+   }
+  },
+  "status": 200
+ },
+ "coverage/release": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 7,
+     "pass_rate": 93.1,
+     "passed": 95,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 6
+    },
+    {
+     "failed": 14,
+     "pass_rate": 83.5,
+     "passed": 71,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "InventorySuite",
+     "unique_tests": 5
+    },
+    {
+     "failed": 4,
+     "pass_rate": 93.9,
+     "passed": 62,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "NotificationSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 1,
+     "pass_rate": 98.4,
+     "passed": 61,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 4,
+     "suite_name": "ReportingSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 0,
+     "pass_rate": null,
+     "passed": 0,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 51,
+     "suite_name": "QuarantinedSuite",
+     "unique_tests": 3
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 91.7,
+    "days_with_runs": 17,
+    "suite_count": 5,
+    "total_executions": 374,
+    "unique_tests": 22
+   }
+  },
+  "status": 200
+ },
+ "coverage/release_suite": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 7,
+     "pass_rate": 93.1,
+     "passed": 95,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 6
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 93.1,
+    "days_with_runs": 17,
+    "suite_count": 1,
+    "total_executions": 102,
+    "unique_tests": 6
+   }
+  },
+  "status": 200
+ },
+ "coverage/suite": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 19,
+     "pass_rate": 92.8,
+     "passed": 244,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 92.8,
+    "days_with_runs": 43,
+    "suite_count": 1,
+    "total_executions": 263,
+    "unique_tests": 11
+   }
+  },
+  "status": 200
+ },
+ "coverage/suite_casefold": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 19,
+     "pass_rate": 92.8,
+     "passed": 244,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 92.8,
+    "days_with_runs": 43,
+    "suite_count": 1,
+    "total_executions": 263,
+    "unique_tests": 11
+   }
+  },
+  "status": 200
+ },
+ "coverage/unattributed": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 3,
+     "pass_rate": 89.7,
+     "passed": 26,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    },
+    {
+     "failed": 2,
+     "pass_rate": 86.7,
+     "passed": 13,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "InventorySuite",
+     "unique_tests": 5
+    },
+    {
+     "failed": 1,
+     "pass_rate": 91.7,
+     "passed": 11,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "NotificationSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 1,
+     "suite_name": "ReportingSuite",
+     "unique_tests": 4
+    },
+    {
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 3,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "LegacyBatchSuite",
+     "unique_tests": 3
+    },
+    {
+     "failed": 0,
+     "pass_rate": null,
+     "passed": 0,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 9,
+     "suite_name": "QuarantinedSuite",
+     "unique_tests": 3
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 90.0,
+    "days_with_runs": 4,
+    "suite_count": 6,
+    "total_executions": 80,
+    "unique_tests": 25
+   }
+  },
+  "status": 200
+ },
+ "coverage/unattributed_suite": {
+  "body": {
+   "period_days": 90,
+   "suites": [
+    {
+     "failed": 3,
+     "pass_rate": 89.7,
+     "passed": 26,
+     "project_count": 1,
+     "project_name": "vizscope-p1-<tag>",
+     "skipped": 0,
+     "suite_name": "CheckoutSuite",
+     "unique_tests": 11
+    }
+   ],
+   "summary": {
+    "avg_pass_rate": 89.7,
+    "days_with_runs": 4,
+    "suite_count": 1,
+    "total_executions": 29,
+    "unique_tests": 11
+   }
+  },
+  "status": 200
+ },
+ "failure_categories/member_all_projects": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 28,
+     "kind": "product"
+    },
+    {
+     "count": 13,
+     "kind": "test_code"
+    },
+    {
+     "count": 14,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 7,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 28,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 14,
+     "kind": "infrastructure"
+    },
+    {
+     "category": "TEST_DATA",
+     "count": 13,
+     "kind": "test_code"
+    },
+    {
+     "category": "UNKNOWN",
+     "count": 7,
+     "kind": "unknown"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/none": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 28,
+     "kind": "product"
+    },
+    {
+     "count": 13,
+     "kind": "test_code"
+    },
+    {
+     "count": 14,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 7,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 28,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 14,
+     "kind": "infrastructure"
+    },
+    {
+     "category": "TEST_DATA",
+     "count": 13,
+     "kind": "test_code"
+    },
+    {
+     "category": "UNKNOWN",
+     "count": 7,
+     "kind": "unknown"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/release": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 14,
+     "kind": "product"
+    },
+    {
+     "count": 5,
+     "kind": "test_code"
+    },
+    {
+     "count": 5,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 2,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 14,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 5,
+     "kind": "infrastructure"
+    },
+    {
+     "category": "TEST_DATA",
+     "count": 5,
+     "kind": "test_code"
+    },
+    {
+     "category": "UNKNOWN",
+     "count": 2,
+     "kind": "unknown"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/release_suite": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 6,
+     "kind": "product"
+    },
+    {
+     "count": 0,
+     "kind": "test_code"
+    },
+    {
+     "count": 1,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 0,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 6,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 1,
+     "kind": "infrastructure"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/suite": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 15,
+     "kind": "product"
+    },
+    {
+     "count": 0,
+     "kind": "test_code"
+    },
+    {
+     "count": 4,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 0,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 15,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 4,
+     "kind": "infrastructure"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/suite_casefold": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 15,
+     "kind": "product"
+    },
+    {
+     "count": 0,
+     "kind": "test_code"
+    },
+    {
+     "count": 4,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 0,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 15,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 4,
+     "kind": "infrastructure"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/unattributed": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 4,
+     "kind": "product"
+    },
+    {
+     "count": 0,
+     "kind": "test_code"
+    },
+    {
+     "count": 2,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 1,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 4,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 2,
+     "kind": "infrastructure"
+    },
+    {
+     "category": "UNKNOWN",
+     "count": 1,
+     "kind": "unknown"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "failure_categories/unattributed_suite": {
+  "body": {
+   "by_kind": [
+    {
+     "count": 2,
+     "kind": "product"
+    },
+    {
+     "count": 0,
+     "kind": "test_code"
+    },
+    {
+     "count": 1,
+     "kind": "infrastructure"
+    },
+    {
+     "count": 0,
+     "kind": "unknown"
+    }
+   ],
+   "items": [
+    {
+     "category": "PRODUCT_BUG",
+     "count": 2,
+     "kind": "product"
+    },
+    {
+     "category": "INFRASTRUCTURE",
+     "count": 1,
+     "kind": "infrastructure"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "flaky_scores/member_all_projects": {
+  "body": {
+   "detail": [
+    {
+     "input": null,
+     "loc": [
+      "query",
+      "project_id"
+     ],
+     "msg": "Field required",
+     "type": "missing"
+    }
+   ]
+  },
+  "status": 422
+ },
+ "flaky_scores/none": {
+  "body": {
+   "items": [],
+   "scope": {
+    "membership": "project",
+    "note": null,
+    "release_id": null,
+    "score": "project_window"
+   },
+   "suppression": {
+    "advisory_specificity_floor": 0.9,
+    "may_suppress": false,
+    "measured_specificity": null,
+    "mode": "hint",
+    "policy": "Flaky verdicts never auto-suppress a failure. A previously stable test that turns flaky reflects a real bug often enough that suppression is the one irreversible mistake here.",
+    "project_id": "<P1>",
+    "reason": "classifier specificity has not been measured on this project yet — verdicts are shown as hints until it has",
+    "sample_count": 0
+   },
+   "total": 0
+  },
+  "status": 200
+ },
+ "flaky_scores/release": {
+  "body": {
+   "items": [],
+   "scope": {
+    "membership": "release",
+    "note": "Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.",
+    "release_id": "<release:1.0.0-rc1>",
+    "score": "project_window"
+   },
+   "suppression": {
+    "advisory_specificity_floor": 0.9,
+    "may_suppress": false,
+    "measured_specificity": null,
+    "mode": "hint",
+    "policy": "Flaky verdicts never auto-suppress a failure. A previously stable test that turns flaky reflects a real bug often enough that suppression is the one irreversible mistake here.",
+    "project_id": "<P1>",
+    "reason": "classifier specificity has not been measured on this project yet — verdicts are shown as hints until it has",
+    "sample_count": 0
+   },
+   "total": 0
+  },
+  "status": 200
+ },
+ "flaky_scores/unattributed": {
+  "body": {
+   "items": [],
+   "scope": {
+    "membership": "release",
+    "note": "Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.",
+    "release_id": "unattributed",
+    "score": "project_window"
+   },
+   "suppression": {
+    "advisory_specificity_floor": 0.9,
+    "may_suppress": false,
+    "measured_specificity": null,
+    "mode": "hint",
+    "policy": "Flaky verdicts never auto-suppress a failure. A previously stable test that turns flaky reflects a real bug often enough that suppression is the one irreversible mistake here.",
+    "project_id": "<P1>",
+    "reason": "classifier specificity has not been measured on this project yet — verdicts are shown as hints until it has",
+    "sample_count": 0
+   },
+   "total": 0
+  },
+  "status": 200
+ },
+ "flaky_tests/member_all_projects": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 28,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 26.7,
+     "last_seen": "2026-08-05T10:09:44.364948+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 11,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02",
+     "total_runs": 15
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 10,
+     "failure_rate_pct": 23.8,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 32,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_rate_pct": 21.4,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 33,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 7,
+     "failure_rate_pct": 16.7,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 35,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 5,
+     "failure_rate_pct": 11.9,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 37,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 9.5,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 38,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 42
+    }
+   ],
+   "period_days": 90,
+   "total": 7
+  },
+  "status": 200
+ },
+ "flaky_tests/none": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 28,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 26.7,
+     "last_seen": "2026-08-05T10:09:44.364948+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 11,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02",
+     "total_runs": 15
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 10,
+     "failure_rate_pct": 23.8,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 32,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_rate_pct": 21.4,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 33,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 7,
+     "failure_rate_pct": 16.7,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 35,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 5,
+     "failure_rate_pct": 11.9,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 37,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 9.5,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 38,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 42
+    }
+   ],
+   "period_days": 90,
+   "total": 7
+  },
+  "status": 200
+ },
+ "flaky_tests/release": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 6,
+     "failure_rate_pct": 35.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 11,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 5,
+     "failure_rate_pct": 29.4,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 12,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 23.5,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Intermittent flake — flips pass↔fail; check timing, ordering, and shared-state dependencies.",
+     "likely_cause_code": "intermittent",
+     "pass_count": 13,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 2,
+     "failure_rate_pct": 11.8,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 15,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 5.9,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 16,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 5.9,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 16,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02",
+     "total_runs": 17
+    }
+   ],
+   "period_days": 90,
+   "total": 6
+  },
+  "status": 200
+ },
+ "flaky_tests/release_suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 6,
+     "failure_rate_pct": 35.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 11,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 17
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 5.9,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 16,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 17
+    }
+   ],
+   "period_days": 90,
+   "total": 2
+  },
+  "status": 200
+ },
+ "flaky_tests/suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 28,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 9.5,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 38,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 42
+    }
+   ],
+   "period_days": 90,
+   "total": 2
+  },
+  "status": 200
+ },
+ "flaky_tests/suite_casefold": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 28,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 42
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_rate_pct": 9.5,
+     "last_seen": "2026-09-19T16:03:03.280888+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 38,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_runs": 42
+    }
+   ],
+   "period_days": 90,
+   "total": 2
+  },
+  "status": 200
+ },
+ "flaky_tests/unattributed": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-14T09:37:36.773667+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 2,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02",
+     "total_runs": 3
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-14T09:37:36.773667+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 2,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 3
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-14T09:37:36.773667+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 2,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_runs": 3
+    }
+   ],
+   "period_days": 90,
+   "total": 3
+  },
+  "status": 200
+ },
+ "flaky_tests/unattributed_suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-14T09:37:36.773667+00:00",
+     "likely_cause": "Framework-confirmed in-run retry flake — the test passed on retry within a single run, so non-determinism is internal to the test.",
+     "likely_cause_code": "in_run_retry",
+     "pass_count": 2,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_runs": 3
+    }
+   ],
+   "period_days": 90,
+   "total": 1
+  },
+  "status": 200
+ },
+ "metrics_summary/member_all_projects": {
+  "body": {},
+  "status": 200
+ },
+ "metrics_summary/none": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": -2.6,
+    "trend_direction": "flat",
+    "value": 55764
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": -2.0,
+    "trend_direction": "down",
+    "value": 91.7
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": 110.6,
+    "trend_direction": "up",
+    "value": 495
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/release": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 54887
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 91.7
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 374
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/release_suite": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 54887
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 93.1
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 102
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/suite": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": -2.6,
+    "trend_direction": "flat",
+    "value": 55764
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": -1.1,
+    "trend_direction": "down",
+    "value": 92.3
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": 138.3,
+    "trend_direction": "up",
+    "value": 143
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/suite_casefold": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": -2.6,
+    "trend_direction": "flat",
+    "value": 55764
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": -1.1,
+    "trend_direction": "down",
+    "value": 92.3
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": 138.3,
+    "trend_direction": "up",
+    "value": 143
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/unattributed": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 60481
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 87.8
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 55
+   }
+  },
+  "status": 200
+ },
+ "metrics_summary/unattributed_suite": {
+  "body": {
+   "active_defects": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 0
+   },
+   "avg_duration_ms": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 60481
+   },
+   "avg_pass_rate_7d": {
+    "basis": "executions",
+    "basis_label": "per test execution",
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 87.0
+   },
+   "flaky_test_count": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 7
+   },
+   "new_failures_24h": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 1
+   },
+   "release_readiness": "AMBER",
+   "release_readiness_band": null,
+   "release_readiness_downgrades": [],
+   "total_executions_7d": {
+    "trend": null,
+    "trend_direction": "flat",
+    "value": 23
+   }
+  },
+  "status": 200
+ },
+ "metrics_trends/member_all_projects": {
+  "body": {
+   "data": [],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/none": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-23",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-24",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-26",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-08-27",
+     "failed": 1,
+     "pass_rate": 87.5,
+     "passed": 14,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-28",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-29",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-31",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-01",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-02",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-04",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-05",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-06",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-07",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-09",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-10",
+     "failed": 2,
+     "pass_rate": 88.2,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-11",
+     "failed": 3,
+     "pass_rate": 78.9,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-13",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-14",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-15",
+     "failed": 3,
+     "pass_rate": 83.3,
+     "passed": 15,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-17",
+     "failed": 1,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-18",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-19",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-21",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "skipped": 0,
+     "total": 11
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/release": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-23",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-24",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-08-27",
+     "failed": 1,
+     "pass_rate": 87.5,
+     "passed": 14,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-28",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-29",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-02",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-04",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-05",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-06",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-09",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-10",
+     "failed": 2,
+     "pass_rate": 88.2,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-11",
+     "failed": 3,
+     "pass_rate": 78.9,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-13",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-15",
+     "failed": 3,
+     "pass_rate": 83.3,
+     "passed": 15,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-17",
+     "failed": 1,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-18",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-19",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/release_suite": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-23",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-24",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-08-27",
+     "failed": 1,
+     "pass_rate": 87.5,
+     "passed": 14,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-28",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-29",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-02",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-04",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-05",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-06",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-09",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-10",
+     "failed": 2,
+     "pass_rate": 88.2,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-11",
+     "failed": 3,
+     "pass_rate": 78.9,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-13",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-15",
+     "failed": 3,
+     "pass_rate": 83.3,
+     "passed": 15,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-17",
+     "failed": 1,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-18",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-19",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/suite": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-23",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-24",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-26",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-08-27",
+     "failed": 1,
+     "pass_rate": 87.5,
+     "passed": 14,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-28",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-29",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-31",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-01",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-02",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-04",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-05",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-06",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-07",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-09",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-10",
+     "failed": 2,
+     "pass_rate": 88.2,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-11",
+     "failed": 3,
+     "pass_rate": 78.9,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-13",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-14",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-15",
+     "failed": 3,
+     "pass_rate": 83.3,
+     "passed": 15,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-17",
+     "failed": 1,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-18",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-19",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-21",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "skipped": 0,
+     "total": 11
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/suite_casefold": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-23",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-24",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-26",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-08-27",
+     "failed": 1,
+     "pass_rate": 87.5,
+     "passed": 14,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-28",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 19,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-29",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-08-31",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-01",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-02",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-04",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-05",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-06",
+     "failed": 0,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-07",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-09",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 18,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-10",
+     "failed": 2,
+     "pass_rate": 88.2,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-11",
+     "failed": 3,
+     "pass_rate": 78.9,
+     "passed": 15,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-13",
+     "failed": 1,
+     "pass_rate": 94.7,
+     "passed": 18,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-14",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-15",
+     "failed": 3,
+     "pass_rate": 83.3,
+     "passed": 15,
+     "skipped": 4,
+     "total": 22
+    },
+    {
+     "broken": 1,
+     "date": "2026-09-17",
+     "failed": 1,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-18",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-19",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-21",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "skipped": 0,
+     "total": 11
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/unattributed": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-31",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-14",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-21",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "skipped": 0,
+     "total": 11
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "metrics_trends/unattributed_suite": {
+  "body": {
+   "data": [
+    {
+     "broken": 0,
+     "date": "2026-08-31",
+     "failed": 3,
+     "pass_rate": 84.2,
+     "passed": 16,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-14",
+     "failed": 2,
+     "pass_rate": 89.5,
+     "passed": 17,
+     "skipped": 3,
+     "total": 22
+    },
+    {
+     "broken": 0,
+     "date": "2026-09-21",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "skipped": 0,
+     "total": 11
+    }
+   ],
+   "period_days": 30
+  },
+  "status": 200
+ },
+ "suite_detail/member_all_projects": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [],
+   "suite_name": "",
+   "summary": {
+    "avg_duration_ms": null,
+    "failed": 0,
+    "last_run_at": null,
+    "pass_rate": null,
+    "passed": 0,
+    "skipped": 0,
+    "total_executions": 0,
+    "unique_tests": 0
+   },
+   "test_cases": []
+  },
+  "status": 200
+ },
+ "suite_detail/none": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [],
+   "suite_name": "",
+   "summary": {
+    "avg_duration_ms": null,
+    "failed": 0,
+    "last_run_at": null,
+    "pass_rate": null,
+    "passed": 0,
+    "skipped": 0,
+    "total_executions": 0,
+    "unique_tests": 0
+   },
+   "test_cases": []
+  },
+  "status": 200
+ },
+ "suite_detail/release": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [],
+   "suite_name": "",
+   "summary": {
+    "avg_duration_ms": null,
+    "failed": 0,
+    "last_run_at": null,
+    "pass_rate": null,
+    "passed": 0,
+    "skipped": 0,
+    "total_executions": 0,
+    "unique_tests": 0
+   },
+   "test_cases": []
+  },
+  "status": 200
+ },
+ "suite_detail/release_suite": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [
+    {
+     "build_number": "viz-3043",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-19T16:03:03.280888+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3043>"
+    },
+    {
+     "build_number": "viz-3042",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-18T08:22:52.496425+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3042>"
+    },
+    {
+     "build_number": "viz-3041",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-17T03:26:34.091177+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3041>"
+    },
+    {
+     "build_number": "viz-3040",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-15T16:49:54.495330+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3040>"
+    },
+    {
+     "build_number": "viz-3038",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-13T04:03:49.602981+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3038>"
+    },
+    {
+     "build_number": "viz-3037",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-11T21:46:08.970570+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3037>"
+    },
+    {
+     "build_number": "viz-3036",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-10T12:20:44.184999+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3036>"
+    },
+    {
+     "build_number": "viz-3035",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-09T06:59:53.194130+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3035>"
+    },
+    {
+     "build_number": "viz-3033",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-06T18:53:09.299086+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3033>"
+    },
+    {
+     "build_number": "viz-3032",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-05T08:47:08.936991+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3032>"
+    },
+    {
+     "build_number": "viz-3031",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-04T04:12:53.589729+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3031>"
+    },
+    {
+     "build_number": "viz-3030",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-02T21:12:55.469485+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3030>"
+    },
+    {
+     "build_number": "viz-3027",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-08-29T21:40:17.652616+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3027>"
+    },
+    {
+     "build_number": "viz-3026",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-08-28T16:15:11.837792+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3026>"
+    },
+    {
+     "build_number": "viz-3025",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-08-27T07:41:49.220267+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3025>"
+    }
+   ],
+   "suite_name": "CheckoutSuite",
+   "summary": {
+    "avg_duration_ms": 2819.0,
+    "failed": 7,
+    "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+    "pass_rate": 93.1,
+    "passed": 95,
+    "skipped": 0,
+    "total_executions": 102,
+    "unique_tests": 6
+   },
+   "test_cases": [
+    {
+     "avg_duration_ms": 5599.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 6,
+     "is_flaky": true,
+     "last_error": "AssertionError: expected HTTP 200 but got 502 for order 49594",
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "FAILED",
+     "pass_rate": 64.7,
+     "passed": 11,
+     "skipped": 0,
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_executions": 17
+    },
+    {
+     "avg_duration_ms": 2660.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 1,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 94.1,
+     "passed": 16,
+     "skipped": 0,
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_executions": 17
+    },
+    {
+     "avg_duration_ms": 2389.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 17,
+     "skipped": 0,
+     "test_fingerprint": "743cdfc8d26bed97",
+     "test_name": "testCheckoutCase05",
+     "total_executions": 17
+    },
+    {
+     "avg_duration_ms": 1660.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 17,
+     "skipped": 0,
+     "test_fingerprint": "9007cb7209e0784b",
+     "test_name": "testCheckoutCase04",
+     "total_executions": 17
+    },
+    {
+     "avg_duration_ms": 2595.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 17,
+     "skipped": 0,
+     "test_fingerprint": "b7f81ab4d13f48c9",
+     "test_name": "testCheckoutCase01",
+     "total_executions": 17
+    },
+    {
+     "avg_duration_ms": 1955.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 17,
+     "skipped": 0,
+     "test_fingerprint": "d13cf8f6996ceab3",
+     "test_name": "testCheckoutCase06",
+     "total_executions": 17
+    }
+   ]
+  },
+  "status": 200
+ },
+ "suite_detail/suite": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [
+    {
+     "build_number": "viz-3044",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "run_date": "2026-09-21T11:35:00+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3044>"
+    },
+    {
+     "build_number": "viz-3043",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-19T16:03:03.280888+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3043>"
+    },
+    {
+     "build_number": "viz-3042",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-18T08:22:52.496425+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3042>"
+    },
+    {
+     "build_number": "viz-3041",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-17T03:26:34.091177+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3041>"
+    },
+    {
+     "build_number": "viz-3040",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-15T16:49:54.495330+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3040>"
+    },
+    {
+     "build_number": "viz-3039",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-14T09:37:36.773667+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3039>"
+    },
+    {
+     "build_number": "viz-3038",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-13T04:03:49.602981+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3038>"
+    },
+    {
+     "build_number": "viz-3037",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-11T21:46:08.970570+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3037>"
+    },
+    {
+     "build_number": "viz-3036",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-10T12:20:44.184999+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3036>"
+    },
+    {
+     "build_number": "viz-3035",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-09T06:59:53.194130+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3035>"
+    },
+    {
+     "build_number": "viz-3034",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-07T22:45:21.988211+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3034>"
+    },
+    {
+     "build_number": "viz-3033",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-06T18:53:09.299086+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3033>"
+    },
+    {
+     "build_number": "viz-3032",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-05T08:47:08.936991+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3032>"
+    },
+    {
+     "build_number": "viz-3031",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-04T04:12:53.589729+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3031>"
+    },
+    {
+     "build_number": "viz-3030",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-02T21:12:55.469485+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3030>"
+    }
+   ],
+   "suite_name": "CheckoutSuite",
+   "summary": {
+    "avg_duration_ms": 2774.0,
+    "failed": 19,
+    "last_run_at": "2026-09-21T11:35:00+00:00",
+    "pass_rate": 92.8,
+    "passed": 244,
+    "skipped": 0,
+    "total_executions": 263,
+    "unique_tests": 11
+   },
+   "test_cases": [
+    {
+     "avg_duration_ms": 4894.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 14,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 67.4,
+     "passed": 29,
+     "skipped": 0,
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2860.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 4,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 90.7,
+     "passed": 39,
+     "skipped": 0,
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 14177.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 1,
+     "is_flaky": false,
+     "last_error": "NullPointerException: InventoryItem@0x93959334 was null while reserving sku 7044",
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "FAILED",
+     "pass_rate": 0.0,
+     "passed": 0,
+     "skipped": 0,
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 2237.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "743cdfc8d26bed97",
+     "test_name": "testCheckoutCase05",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 1960.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "9007cb7209e0784b",
+     "test_name": "testCheckoutCase04",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2399.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "b7f81ab4d13f48c9",
+     "test_name": "testCheckoutCase01",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2063.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "d13cf8f6996ceab3",
+     "test_name": "testCheckoutCase06",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 168.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1096.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1105.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "0f5f170c86fcd674",
+     "test_name": "testInventoryCase03",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1676.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "6c61669d7cf7c1e3",
+     "test_name": "testInventoryCase05",
+     "total_executions": 1
+    }
+   ]
+  },
+  "status": 200
+ },
+ "suite_detail/suite_casefold": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [
+    {
+     "build_number": "viz-3044",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "run_date": "2026-09-21T11:35:00+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3044>"
+    },
+    {
+     "build_number": "viz-3043",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-19T16:03:03.280888+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3043>"
+    },
+    {
+     "build_number": "viz-3042",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-18T08:22:52.496425+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3042>"
+    },
+    {
+     "build_number": "viz-3041",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-17T03:26:34.091177+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3041>"
+    },
+    {
+     "build_number": "viz-3040",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-15T16:49:54.495330+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3040>"
+    },
+    {
+     "build_number": "viz-3039",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-14T09:37:36.773667+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3039>"
+    },
+    {
+     "build_number": "viz-3038",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-13T04:03:49.602981+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3038>"
+    },
+    {
+     "build_number": "viz-3037",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-11T21:46:08.970570+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3037>"
+    },
+    {
+     "build_number": "viz-3036",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-10T12:20:44.184999+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3036>"
+    },
+    {
+     "build_number": "viz-3035",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-09T06:59:53.194130+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3035>"
+    },
+    {
+     "build_number": "viz-3034",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-07T22:45:21.988211+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3034>"
+    },
+    {
+     "build_number": "viz-3033",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-06T18:53:09.299086+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3033>"
+    },
+    {
+     "build_number": "viz-3032",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-05T08:47:08.936991+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3032>"
+    },
+    {
+     "build_number": "viz-3031",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-04T04:12:53.589729+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3031>"
+    },
+    {
+     "build_number": "viz-3030",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-09-02T21:12:55.469485+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3030>"
+    }
+   ],
+   "suite_name": "  checkoutsuite ",
+   "summary": {
+    "avg_duration_ms": 2774.0,
+    "failed": 19,
+    "last_run_at": "2026-09-21T11:35:00+00:00",
+    "pass_rate": 92.8,
+    "passed": 244,
+    "skipped": 0,
+    "total_executions": 263,
+    "unique_tests": 11
+   },
+   "test_cases": [
+    {
+     "avg_duration_ms": 4894.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 14,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 67.4,
+     "passed": 29,
+     "skipped": 0,
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2860.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 4,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 90.7,
+     "passed": 39,
+     "skipped": 0,
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 14177.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 1,
+     "is_flaky": false,
+     "last_error": "NullPointerException: InventoryItem@0x93959334 was null while reserving sku 7044",
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "FAILED",
+     "pass_rate": 0.0,
+     "passed": 0,
+     "skipped": 0,
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 2237.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "743cdfc8d26bed97",
+     "test_name": "testCheckoutCase05",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 1960.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "9007cb7209e0784b",
+     "test_name": "testCheckoutCase04",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2399.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "b7f81ab4d13f48c9",
+     "test_name": "testCheckoutCase01",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 2063.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 43,
+     "skipped": 0,
+     "test_fingerprint": "d13cf8f6996ceab3",
+     "test_name": "testCheckoutCase06",
+     "total_executions": 43
+    },
+    {
+     "avg_duration_ms": 168.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1096.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1105.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "0f5f170c86fcd674",
+     "test_name": "testInventoryCase03",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1676.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "6c61669d7cf7c1e3",
+     "test_name": "testInventoryCase05",
+     "total_executions": 1
+    }
+   ]
+  },
+  "status": 200
+ },
+ "suite_detail/unattributed": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [],
+   "suite_name": "",
+   "summary": {
+    "avg_duration_ms": null,
+    "failed": 0,
+    "last_run_at": null,
+    "pass_rate": null,
+    "passed": 0,
+    "skipped": 0,
+    "total_executions": 0,
+    "unique_tests": 0
+   },
+   "test_cases": []
+  },
+  "status": 200
+ },
+ "suite_detail/unattributed_suite": {
+  "body": {
+   "period_days": 90,
+   "recent_runs": [
+    {
+     "build_number": "viz-3044",
+     "failed": 1,
+     "pass_rate": 90.9,
+     "passed": 10,
+     "run_date": "2026-09-21T11:35:00+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3044>"
+    },
+    {
+     "build_number": "viz-3039",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-09-14T09:37:36.773667+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3039>"
+    },
+    {
+     "build_number": "viz-3028",
+     "failed": 1,
+     "pass_rate": 83.3,
+     "passed": 5,
+     "run_date": "2026-08-31T05:40:23.876672+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3028>"
+    },
+    {
+     "build_number": "viz-3005",
+     "failed": 0,
+     "pass_rate": 100.0,
+     "passed": 6,
+     "run_date": "2026-07-03T10:10:01.305275+00:00",
+     "skipped": 0,
+     "test_run_id": "<run:viz-3005>"
+    }
+   ],
+   "suite_name": "CheckoutSuite",
+   "summary": {
+    "avg_duration_ms": 2926.0,
+    "failed": 3,
+    "last_run_at": "2026-09-21T11:35:00+00:00",
+    "pass_rate": 89.7,
+    "passed": 26,
+    "skipped": 0,
+    "total_executions": 29,
+    "unique_tests": 11
+   },
+   "test_cases": [
+    {
+     "avg_duration_ms": 3595.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 1,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 75.0,
+     "passed": 3,
+     "skipped": 0,
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 4952.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 1,
+     "is_flaky": true,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 75.0,
+     "passed": 3,
+     "skipped": 0,
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 14177.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 1,
+     "is_flaky": false,
+     "last_error": "NullPointerException: InventoryItem@0x93959334 was null while reserving sku 7044",
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "FAILED",
+     "pass_rate": 0.0,
+     "passed": 0,
+     "skipped": 0,
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 2264.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 4,
+     "skipped": 0,
+     "test_fingerprint": "743cdfc8d26bed97",
+     "test_name": "testCheckoutCase05",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 1620.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 4,
+     "skipped": 0,
+     "test_fingerprint": "9007cb7209e0784b",
+     "test_name": "testCheckoutCase04",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 1627.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 4,
+     "skipped": 0,
+     "test_fingerprint": "b7f81ab4d13f48c9",
+     "test_name": "testCheckoutCase01",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 2273.0,
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 4,
+     "skipped": 0,
+     "test_fingerprint": "d13cf8f6996ceab3",
+     "test_name": "testCheckoutCase06",
+     "total_executions": 4
+    },
+    {
+     "avg_duration_ms": 168.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1096.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1105.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "0f5f170c86fcd674",
+     "test_name": "testInventoryCase03",
+     "total_executions": 1
+    },
+    {
+     "avg_duration_ms": 1676.0,
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failed": 0,
+     "is_flaky": false,
+     "last_error": null,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_status": "PASSED",
+     "pass_rate": 100.0,
+     "passed": 1,
+     "skipped": 0,
+     "test_fingerprint": "6c61669d7cf7c1e3",
+     "test_name": "testInventoryCase05",
+     "total_executions": 1
+    }
+   ]
+  },
+  "status": 200
+ },
+ "summary_latest/member_all_projects": {
+  "body": {
+   "avg_duration_ms": 0,
+   "flaky_criteria": null,
+   "flaky_rate_pct": 0.0,
+   "flaky_test_count": 0,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": null,
+   "mode": "latest",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": null,
+   "project_name": null,
+   "run_count": 0,
+   "runs_per_day": null,
+   "suites": [],
+   "top_failing_tests": [],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 0,
+    "fail_rate_pct": 0.0,
+    "failed": 0,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 0.0,
+    "passed": 0,
+    "skip_rate_pct": 0.0,
+    "skipped": 0,
+    "total_test_cases": 0,
+    "weighted_pass_rate_pct": 0.0
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_latest/none": {
+  "body": {
+   "avg_duration_ms": 0,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 63.6,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-21T11:35:00+00:00",
+   "mode": "latest",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 1,
+   "runs_per_day": null,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "pass_rate_pct": 90.9,
+     "passed": 10,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 11,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 90.9
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-08-05T10:09:44.364948+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 3,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "LegacyBatchSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 14,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 10,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 9,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 8,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 7,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 5,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "LegacyBatchSuite",
+     "test_name": "testLegacyBatchCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testInventoryCase01"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 11,
+    "fail_rate_pct": 9.1,
+    "failed": 1,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 90.9,
+    "passed": 10,
+    "skip_rate_pct": 0.0,
+    "skipped": 0,
+    "total_test_cases": 11,
+    "weighted_pass_rate_pct": 90.9
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_latest/release": {
+  "body": {
+   "avg_duration_ms": 50481,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 31.8,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-19T16:03:03.280888+00:00",
+   "mode": "latest",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 1,
+   "runs_per_day": null,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 83.3,
+     "passed": 5,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 6,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 83.3
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 7,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 6,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 5,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 2,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 19,
+    "fail_rate_pct": 9.1,
+    "failed": 2,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 77.3,
+    "passed": 17,
+    "skip_rate_pct": 13.6,
+    "skipped": 3,
+    "total_test_cases": 22,
+    "weighted_pass_rate_pct": 89.5
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_latest/unattributed": {
+  "body": {
+   "avg_duration_ms": 0,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 63.6,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-21T11:35:00+00:00",
+   "mode": "latest",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 1,
+   "runs_per_day": null,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "pass_rate_pct": 90.9,
+     "passed": 10,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 11,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 90.9
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-07-03T10:10:01.305275+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 3,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "LegacyBatchSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 11,
+    "fail_rate_pct": 9.1,
+    "failed": 1,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 90.9,
+    "passed": 10,
+    "skip_rate_pct": 0.0,
+    "skipped": 0,
+    "total_test_cases": 11,
+    "weighted_pass_rate_pct": 90.9
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_pdf/member_all_projects": {
+  "body": {
+   "detail": [
+    {
+     "input": null,
+     "loc": [
+      "query",
+      "project_id"
+     ],
+     "msg": "Field required",
+     "type": "missing"
+    }
+   ]
+  },
+  "status": 422
+ },
+ "summary_pdf/none": {
+  "body": {
+   "content_type": "application/pdf",
+   "disposition": "attachment; filename=\"summary-vizscope-p1-<tag>-90d-window.pdf\"",
+   "is_pdf": true
+  },
+  "status": 200
+ },
+ "summary_pdf/release": {
+  "body": {
+   "content_type": "application/pdf",
+   "disposition": "attachment; filename=\"summary-vizscope-p1-<tag>-90d-window.pdf\"",
+   "is_pdf": true
+  },
+  "status": 200
+ },
+ "summary_pdf/unattributed": {
+  "body": {
+   "content_type": "application/pdf",
+   "disposition": "attachment; filename=\"summary-vizscope-p1-<tag>-90d-window.pdf\"",
+   "is_pdf": true
+  },
+  "status": 200
+ },
+ "summary_window/member_all_projects": {
+  "body": {
+   "avg_duration_ms": 0,
+   "flaky_criteria": null,
+   "flaky_rate_pct": 0.0,
+   "flaky_test_count": 0,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": null,
+   "mode": "window",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": null,
+   "project_name": null,
+   "run_count": 0,
+   "runs_per_day": 0.0,
+   "suites": [],
+   "top_failing_tests": [],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 0,
+    "fail_rate_pct": 0.0,
+    "failed": 0,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 0.0,
+    "passed": 0,
+    "skip_rate_pct": 0.0,
+    "skipped": 0,
+    "total_test_cases": 0,
+    "weighted_pass_rate_pct": 0.0
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_window/none": {
+  "body": {
+   "avg_duration_ms": 56280,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 28.0,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-21T11:35:00+00:00",
+   "mode": "window",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 43,
+   "runs_per_day": 0.48,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "pass_rate_pct": 90.9,
+     "passed": 10,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 11,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 90.9
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-08-05T10:09:44.364948+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 3,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "LegacyBatchSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 14,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 10,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 9,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 8,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 7,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 5,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "LegacyBatchSuite",
+     "test_name": "testLegacyBatchCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testInventoryCase01"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 22,
+    "fail_rate_pct": 4.0,
+    "failed": 1,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 84.0,
+    "passed": 21,
+    "skip_rate_pct": 12.0,
+    "skipped": 3,
+    "total_test_cases": 25,
+    "weighted_pass_rate_pct": 95.5
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_window/release": {
+  "body": {
+   "avg_duration_ms": 54887,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 31.8,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-19T16:03:03.280888+00:00",
+   "mode": "window",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 17,
+   "runs_per_day": 0.19,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 83.3,
+     "passed": 5,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 6,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 83.3
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 7,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 6,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 5,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 2,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 19,
+    "fail_rate_pct": 9.1,
+    "failed": 2,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 77.3,
+    "passed": 17,
+    "skip_rate_pct": 13.6,
+    "skipped": 3,
+    "total_test_cases": 22,
+    "weighted_pass_rate_pct": 89.5
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "summary_window/unattributed": {
+  "body": {
+   "avg_duration_ms": 62840,
+   "flaky_criteria": {
+    "max_failure_ratio": 0.9,
+    "min_failure_ratio": 0.1,
+    "min_flips": 2,
+    "min_runs": 5,
+    "window_runs": 10
+   },
+   "flaky_rate_pct": 28.0,
+   "flaky_test_count": 7,
+   "generated_at": "2026-09-21T12:00:00+00:00",
+   "latest_run_at": "2026-09-21T11:35:00+00:00",
+   "mode": "window",
+   "period_end": "2026-09-21T12:00:00+00:00",
+   "period_start": "2026-06-23T12:00:00+00:00",
+   "project_id": "<P1>",
+   "project_name": "vizscope-p1-<tag>",
+   "run_count": 4,
+   "runs_per_day": 0.04,
+   "suites": [
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "pass_rate_pct": 90.9,
+     "passed": 10,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "CheckoutSuite",
+     "total": 11,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 90.9
+    },
+    {
+     "broken": 0,
+     "failed": 1,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 80.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "InventorySuite",
+     "total": 5,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 80.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "NotificationSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 4,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "ReportingSuite",
+     "total": 4,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-07-03T10:10:01.305275+00:00",
+     "pass_rate_pct": 100.0,
+     "passed": 3,
+     "passed_steps": null,
+     "skipped": 0,
+     "step_success_rate": null,
+     "suite_name": "LegacyBatchSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 100.0
+    },
+    {
+     "broken": 0,
+     "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "pass_rate_pct": 0.0,
+     "passed": 0,
+     "passed_steps": null,
+     "skipped": 3,
+     "step_success_rate": null,
+     "suite_name": "QuarantinedSuite",
+     "total": 3,
+     "total_steps": null,
+     "weighted_pass_rate_pct": 0.0
+    }
+   ],
+   "top_failing_tests": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "NotificationSuite",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "failure_step": null,
+     "failures": 1,
+     "step_breakdown": null,
+     "suite_name": "ReportingSuite",
+     "test_name": "testReportingCase02"
+    }
+   ],
+   "totals": {
+    "broken": 0,
+    "broken_rate_pct": 0.0,
+    "evaluated": 22,
+    "fail_rate_pct": 4.0,
+    "failed": 1,
+    "pass_rate_basis": "unique_tests",
+    "pass_rate_basis_label": "per unique test",
+    "pass_rate_pct": 84.0,
+    "passed": 21,
+    "skip_rate_pct": 12.0,
+    "skipped": 3,
+    "total_test_cases": 25,
+    "weighted_pass_rate_pct": 95.5
+   },
+   "window_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/member_all_projects": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 10,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 7,
+     "failure_category": "UNKNOWN",
+     "failure_kind": "unknown",
+     "failure_step": null,
+     "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 5,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/none": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 10,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 9,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 7,
+     "failure_category": "UNKNOWN",
+     "failure_kind": "unknown",
+     "failure_step": null,
+     "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 5,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/release": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 7,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 6,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 5,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "74cd38b04975719b",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 4,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 2,
+     "failure_category": "UNKNOWN",
+     "failure_kind": "unknown",
+     "failure_step": null,
+     "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-08-29T21:40:17.652616+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/release_suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 6,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-08-29T21:40:17.652616+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/suite_casefold": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 14,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 4,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/unattributed": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 2,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.notification.NotificationSuiteTest",
+     "fail_count": 1,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-07-03T10:10:01.305275+00:00",
+     "suite_name": "NotificationSuite",
+     "test_fingerprint": "bca8e23ef2c5bc3e",
+     "test_name": "testNotificationsCase01"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_category": "UNKNOWN",
+     "failure_kind": "unknown",
+     "failure_step": null,
+     "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ },
+ "top_failing/unattributed_suite": {
+  "body": {
+   "items": [
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "INFRASTRUCTURE",
+     "failure_kind": "infrastructure",
+     "failure_step": null,
+     "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "0340c6f08b524cb4",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.checkout.CheckoutSuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "suite_name": "CheckoutSuite",
+     "test_fingerprint": "937b396d0de3cff9",
+     "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
+     "failure_step": null,
+     "last_failed": "2026-09-21T11:35:00+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "ed573a90393a8abe",
+     "test_name": "testInventoryCase01"
+    }
+   ],
+   "period_days": 90
+  },
+  "status": 200
+ }
+}

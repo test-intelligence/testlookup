@@ -432,6 +432,10 @@ class DefectCommander(BaseAgent):
             db.add(defect)
             await db.commit()
             await db.refresh(defect)
+            # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(project_id)
             return defect.id
 
 

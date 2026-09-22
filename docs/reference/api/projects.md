@@ -450,7 +450,7 @@ yet (covers projects created before this feature shipped). Returns
 the new password so the operator can hand it off; the response is
 not persisted anywhere else.
 
-Source: [backend/app/routers/projects.py:335](../../../backend/app/routers/projects.py#L335).
+Source: [backend/app/routers/projects.py:341](../../../backend/app/routers/projects.py#L341).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -558,7 +558,7 @@ Two-step confirmation: ``payload.confirmation_name`` must equal
 the project's ``name`` exactly (case-sensitive). A mismatch
 returns 422 and nothing is deleted.
 
-Source: [backend/app/routers/projects.py:278](../../../backend/app/routers/projects.py#L278).
+Source: [backend/app/routers/projects.py:284](../../../backend/app/routers/projects.py#L284).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

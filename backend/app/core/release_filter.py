@@ -56,15 +56,37 @@ def release_predicate(release_id, model=None) -> list:
     in ``core`` so that ``core.deps`` can use it without creating a
     core -> models dependency at import time.
     """
+    import uuid as _uuid
+
+    # VIZ-201: a sequence of ids is OR within the dimension. Empty = no filter
+    # and one item = exactly the single-value predicate below, so a legacy
+    # single-value call builds the statement it always built.
+    if release_id is not None and not isinstance(release_id, (str, _uuid.UUID)):
+        ids = list(dict.fromkeys(str(item) for item in release_id))
+        if not ids:
+            return []
+        if len(ids) == 1:
+            return release_predicate(ids[0], model)
+        if model is None:
+            from app.models.postgres import TestRun
+
+            model = TestRun
+        from sqlalchemy import or_
+
+        real = [_uuid.UUID(item) for item in ids if not is_unattributed(item)]
+        if len(real) == len(ids):
+            return [model.primary_release_id.in_(real)]
+        if not real:
+            return [model.primary_release_id.is_(None)]
+        return [or_(model.primary_release_id.in_(real), model.primary_release_id.is_(None))]
+
     if release_id is None:
         return []
     if model is None:
         from app.models.postgres import TestRun
 
         model = TestRun
-    if is_unattributed(release_id):
+    if is_unattributed(str(release_id)):
         return [model.primary_release_id.is_(None)]
-
-    import uuid as _uuid
 
     return [model.primary_release_id == _uuid.UUID(str(release_id))]

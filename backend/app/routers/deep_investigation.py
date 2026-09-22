@@ -260,6 +260,10 @@ async def promote_cluster_to_defect(
         except Exception:
             pass  # Non-blocking
         await db.commit()
+        # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(run.project_id)
         return DefectPromotionResponse(**result_dict)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

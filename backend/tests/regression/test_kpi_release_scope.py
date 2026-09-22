@@ -34,6 +34,7 @@ guarantee is only half true.
 from __future__ import annotations
 
 import inspect
+import re
 
 from app.services import metrics_service
 from app.services.cache_service import _build_cache_key
@@ -67,8 +68,8 @@ class TestCacheKeyCarriesTheRelease:
     """The shared-cache half, which is the part that bleeds across users."""
 
     def test_two_releases_do_not_share_a_cache_entry(self):
-        a = _build_cache_key("dashboard_summary_v2", "p1", days=7, suite="", release="rel-a")
-        b = _build_cache_key("dashboard_summary_v2", "p1", days=7, suite="", release="rel-b")
+        a = _build_cache_key("dashboard_summary_v2", "p1", epoch=0, days=7, suite="", release="rel-a")
+        b = _build_cache_key("dashboard_summary_v2", "p1", epoch=0, days=7, suite="", release="rel-b")
 
         assert a != b, (
             "two releases sharing one Redis entry means the first reader's "
@@ -76,8 +77,10 @@ class TestCacheKeyCarriesTheRelease:
         )
 
     def test_a_release_does_not_share_the_unfiltered_entry(self):
-        unfiltered = _build_cache_key("dashboard_summary_v2", "p1", days=7, suite="")
-        scoped = _build_cache_key("dashboard_summary_v2", "p1", days=7, suite="", release="rel-a")
+        unfiltered = _build_cache_key("dashboard_summary_v2", "p1", epoch=0, days=7, suite="")
+        scoped = _build_cache_key(
+            "dashboard_summary_v2", "p1", epoch=0, days=7, suite="", release="rel-a"
+        )
 
         assert unfiltered != scoped
 
@@ -86,8 +89,8 @@ class TestCacheKeyCarriesTheRelease:
         # render a permanent segment into the key, changing it for every caller
         # who never asked about a release and orphaning every existing entry.
         assert (
-            _build_cache_key("dashboard_summary_v2", "p1", days=7, suite="")
-            == "analytics:dashboard_summary_v2:p1:days=7:suite="
+            _build_cache_key("dashboard_summary_v2", "p1", epoch=0, days=7, suite="")
+            == "analytics:dashboard_summary_v2:p1:e0:days=7:suite="
         )
 
     def test_the_summary_passes_the_release_to_both_cache_calls(self):
@@ -99,9 +102,11 @@ class TestCacheKeyCarriesTheRelease:
         assert src.count("**release_key") == 2, (
             "both cache_get and cache_set must key on the release"
         )
-        assert 'release_key = {"release": release_id} if release_id else {}' in src, (
-            "the kwarg must be CONDITIONAL, or the unfiltered key changes"
-        )
+        # The annotation is optional; the conditional right-hand side is not.
+        assert re.search(
+            r'release_key(?:\s*:\s*[^=]+)?\s*=\s*\{"release": release_id\} if release_id else \{\}',
+            src,
+        ), "the kwarg must be CONDITIONAL, or the unfiltered key changes"
 
 
 class TestTheReleaseReachesTheQuery:
@@ -150,31 +155,37 @@ class TestTheReleaseReachesTheQuery:
         ]
 
         assert len(calls) == 2, f"expected two _period_stats calls, found {len(calls)}"
+        # VIZ-201: ``release_filter`` is the release argument the queries read
+        # (one id or several); ``release_id`` became the cache identity.
         for i, call in enumerate(calls):
             names = {a.id for a in call.args if isinstance(a, ast.Name)}
             names |= {k.value.id for k in call.keywords if isinstance(k.value, ast.Name)}
-            assert "release_id" in names, (
+            assert "release_filter" in names, (
                 f"_period_stats call {i} does not pass release_id — that period "
                 f"is computed project-wide while the other is release-scoped"
             )
 
     def test_trend_data_emits_the_fragment_and_binds_it(self):
+        # VIZ-201: the fragment is built by the shared builder, which binds
+        # into the same ``params`` the query executes with.
         src = inspect.getsource(metrics_service.get_trend_data)
 
-        assert 'release_filter = "AND tr.primary_release_id = :release_id "' in src
+        assert "release_filter = release_filter_sql(params, release_id)" in src
         assert "{release_filter}" in src, "the fragment must be interpolated into the query"
         # A bind with no placeholder is dead weight at best and raises on some
-        # drivers; a placeholder with no bind always raises.
-        assert 'params["release_id"]' in src
-        # Three branches, not two: no filter, the unattributed NULL test, and
-        # the equality. The NULL branch must NOT bind a parameter, because its
-        # predicate references none.
-        assert "if not release_id:" in src
-        assert 'release_filter = "AND tr.primary_release_id IS NULL "' in src
-        assert "not _unattributed(release_id)" in src, (
-            "the unattributed branch must be excluded from the bind, or the "
-            "query binds a value its SQL never mentions"
+        # drivers; a placeholder with no bind always raises. Three branches,
+        # not two: no filter, the unattributed NULL test (no bind), the equality.
+        from app.services.analytics_scope import release_filter_sql
+
+        params: dict = {}
+        assert release_filter_sql(params, None) == "" and params == {}
+        assert release_filter_sql(params, "unattributed") == "AND tr.primary_release_id IS NULL"
+        assert params == {}, (
+            "the unattributed branch must not bind, or the query binds a value "
+            "its SQL never mentions"
         )
+        assert release_filter_sql(params, "r-1") == "AND tr.primary_release_id = :release_id"
+        assert params == {"release_id": "r-1"}
 
 
 class TestTheRouteVerifiesTheReleaseItWasGiven:
@@ -182,22 +193,30 @@ class TestTheRouteVerifiesTheReleaseItWasGiven:
 
     def test_both_handlers_resolve_the_release_scope(self):
         from app.routers import metrics as metrics_router
+        from app.services import analytics_scope
 
+        # The ratchet checks evidence per-ROUTE and stops at the first scoped
+        # parameter it can satisfy, so both of these pass on ``project_id``
+        # alone with the release entirely unchecked. That blind spot hid nine
+        # IDORs before; the guard has to be explicit. Since VIZ-201 it lives in
+        # the shared scope dependency, which checks EVERY release id.
         for fn in (metrics_router.dashboard_summary, metrics_router.trend_data):
             src = inspect.getsource(fn)
-            # The ratchet checks evidence per-ROUTE and stops at the first
-            # scoped parameter it can satisfy, so both of these pass on
-            # ``project_id`` alone with the release entirely unchecked. That
-            # blind spot hid nine IDORs before; the guard has to be explicit.
-            assert "resolve_release_query_scope" in src, (
-                f"{fn.__name__} accepts release_id without verifying it"
+            assert "Depends(analytics_scope(" in src, (
+                f"{fn.__name__} takes a release without the scope dependency"
             )
+        authorize = inspect.getsource(analytics_scope.authorize_scope)
+        # Every id, in one batch (one IN query, the per-id 404/403 answer).
+        assert "resolve_release_query_scopes(db, request.release_ids, user)" in authorize
 
     def test_both_handlers_accept_the_parameter(self):
         from app.routers import metrics as metrics_router
+        from app.services.analytics_scope import analytics_scope
 
+        dependency = analytics_scope(metrics_router.METRICS_SCOPE)
+        assert "release_id" in inspect.signature(dependency).parameters
         for fn in (metrics_router.dashboard_summary, metrics_router.trend_data):
-            assert "release_id" in inspect.signature(fn).parameters, fn.__name__
+            assert "scope" in inspect.signature(fn).parameters, fn.__name__
 
 
 class TestTheFilterActuallyReachesTheSQL:

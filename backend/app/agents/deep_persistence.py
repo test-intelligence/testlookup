@@ -318,6 +318,14 @@ async def persist_failure_cluster_snapshot(
             if observed != values:
                 raise RuntimeError(f"cluster snapshot mutation rejected for {cluster_id}")
         await db.commit()
+        # VIZ-212: cluster sizes feed the cached hours-saved model.
+        from app.models.postgres import TestRun
+        from app.services.cache_service import bump_analytics_epoch
+
+        project_id = (
+            await db.execute(select(TestRun.project_id).where(TestRun.id == run_uuid))
+        ).scalar_one_or_none()
+        await bump_analytics_epoch(project_id)
         rows = (
             await db.execute(
                 select(FailureCluster).where(

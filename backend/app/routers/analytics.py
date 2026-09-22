@@ -1,19 +1,18 @@
 """Analytics endpoints: flaky tests, failure clusters, coverage, defects."""
 
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.release_filter import is_unattributed
+from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import (
-    resolve_release_query_scope,
     get_accessible_project_ids,
     get_current_active_user,
     require_role,
     resolve_project_scope,
 )
+from app.core.release_filter import release_predicate as _release_predicate
 from app.db.postgres import get_db
 from app.models.postgres import (
     FlakyClassifierCalibration,
@@ -34,44 +33,93 @@ from app.models.schemas import (
     NotifyTestOwnerResponse,
 )
 from app.services import analytics_service
+from app.services.analytics_meta import build_meta, with_meta
+from app.services.analytics_scope import (
+    AnalyticsScope,
+    ScopePolicy,
+    analytics_scope,
+    effective_suite_clause,
+)
 from app.services.flake_load_service import get_flake_load
 from app.services.flaky_suppression_gate import decide as gate_decide
+from app.services.metrics_service import PASS_RATE_BASIS_EXECUTIONS
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
 _EMPTY_LIST = {"items": [], "period_days": 0, "total": 0}
 
+# VIZ-201: one scope resolver for every route that filters by release or
+# suite. ``project_id`` is single-valued (403 for a project the caller cannot
+# read, via ``resolve_project_scope``); ``release_id`` and ``suite_name``
+# repeat, OR within a dimension and AND across; EVERY release id is authorised
+# (403/404) before any query runs. With one value each, the SQL is exactly what
+# these routes ran before -- ``tests/integration/test_analytics_scope_postgres.py``.
+#
+# VIZ-204: every response below carries ``meta`` (``analytics_meta``), built
+# from the same resolved scope, so the envelope states what was applied.
+_WINDOWED = ScopePolicy(default_days=30, max_days=365)
+# VIZ-202: flaky scores take suites too -- as membership, like releases.
+_FLAKY_SCORES = ScopePolicy(default_days=None, project_required=True)
+# VIZ-202: clusters are per project (a required id, as before) and have no
+# window; release and suite select the members that ran in scope.
+_CLUSTERS = ScopePolicy(default_days=None, project_required=True)
+_AI_SUMMARY = ScopePolicy(default_days=30, max_days=365)
+# The defect list has no window (open defects of any age).
+_DEFECTS = ScopePolicy(default_days=None)
+
+
+def _membership_note(scope: AnalyticsScope, subject: str) -> dict:
+    """The ``scope`` block of a membership-filtered list (flaky scores,
+    systemic clusters): which tests are listed is filtered, the statistic is
+    not. Stated in the payload because the number is what gets read."""
+    dims = [name for name, on in (("release", scope.release_ids), ("suite", scope.suite_names)) if on]
+    return {
+        "membership": "+".join(dims) if dims else "project",
+        "note": (
+            f"{subject} are computed project-wide and are NOT recomputed per "
+            f"{' or '.join(dims)}: the filter selects which tests ran in scope, "
+            "not how they behaved there."
+        ) if dims else None,
+    }
+
+
+def _ran_in_scope(project_id, scope: AnalyticsScope):
+    """Fingerprints with at least one execution in the scope's releases and
+    suites (effective suite), in ``project_id`` -- the membership filter."""
+    stmt = (
+        select(TestCase.test_fingerprint)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestRun.project_id == project_id, *_release_predicate(scope.release_arg))
+    )
+    in_suite = effective_suite_clause(scope.suite_arg)
+    if in_suite is not None:
+        stmt = stmt.where(in_suite)
+    return stmt
+
 
 # ── Flaky Test Leaderboard ─────────────────────────────────────────────────
 
 @router.get("/flaky-tests")
+@analytics_error_contract
 async def flaky_tests(
-    project_id: str | None = None,
-    days: int = Query(30, ge=1, le=365),
     limit: int = Query(20, ge=1, le=100),
-    suite_name: str | None = Query(None, min_length=1),
-    # S4a. Optional: omitting it returns byte-identical results to before
-    # the release axis existed (NFR1), including issuing no extra query.
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return tests with highest flakiness rate (intermittent pass/fail pattern)."""
-    # ``resolve_project_scope`` returns (pinned_uuid_or_None, allowed_ids_or_None)
-    # and raises 403 when a non-admin requests a project they don't belong to.
-    # Both slots get forwarded to the service so the raw-SQL ``_tenant_filter``
+    # Both project slots reach the service so the raw-SQL ``_tenant_filter``
     # applies the right ``=`` or ``IN (...)`` clause as defence-in-depth.
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    return await analytics_service.flaky_tests(
+    payload = await analytics_service.flaky_tests(
         db,
-        str(scoped) if scoped else None,
-        days,
+        scope.project,
+        scope.window_days,
         limit,
-        suite_name=suite_name,
-        allowed_project_ids=allowed,
-        release_id=release_id,
+        suite_name=scope.suite_arg,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
     )
+    # ``limit`` is a requested top-N, not a cap on the data: not truncated.
+    return with_meta(payload, await build_meta(db, scope))
 
 
 @router.get("/flake-load")
@@ -107,16 +155,14 @@ async def flake_load(
 
 
 @router.get("/flaky-scores")
+@analytics_error_contract
 async def flaky_scores(
-    project_id: str = Query(..., description="Project to score — never a fleet average"),
     limit: int = Query(50, ge=1, le=200),
-    # S4b. Selects WHICH flaky tests ran in this release. It does NOT rescope
-    # the score — see the ``scope`` block in the response and the note below.
-    release_id: str | None = Query(
-        None, description="Only flaky tests that ran in this release"
-    ),
+    # ``project_id`` is required (never a fleet average). ``release_id`` (S4b,
+    # repeatable since VIZ-201) selects WHICH flaky tests ran in those
+    # releases. It does NOT rescope the score -- see ``scope`` in the response.
+    scope: AnalyticsScope = Depends(analytics_scope(_FLAKY_SCORES)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Continuous 0–1 flakiness scores for this project, most flaky first.
 
@@ -134,17 +180,17 @@ async def flaky_scores(
     projects, so how much authority a flaky verdict carries is a per-project
     question. It is never "may act" — see the ``policy`` field.
     """
-    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
-    if scoped is None:
+    scoped = scope.project_id
+    if scoped is None:  # unreachable: the policy requires a project
         raise HTTPException(status_code=400, detail="Invalid project ID")
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    release_id = scope.release_arg
 
     stmt = (
         select(FlakyScore)
         .where(FlakyScore.project_id == scoped)
         .order_by(FlakyScore.score.desc())
     )
-    if release_id is not None:
+    if release_id is not None or scope.suite_names:
         # INTERSECTION, not a rescope. flaky_score is a rolling-window
         # statistic keyed on (project_id, test_fingerprint) — it has no release
         # dimension and deliberately gains none: the service refuses to emit a
@@ -157,24 +203,18 @@ async def flaky_scores(
         # release, leaving each score on its full evidence base.
         #
         # The Unattributed bucket arrives as the literal sentinel rather than a
-        # UUID, so parsing it unconditionally raised ValueError -> 500. Every
-        # other filter site guards with `is_unattributed()` first; this one was
-        # missed because `/flaky-scores` has no frontend caller, so nothing
-        # exercised it. One predicate, chosen here, rather than two branches
-        # that could drift.
-        release_predicate = (
-            TestRun.primary_release_id.is_(None)
-            if is_unattributed(release_id)
-            else TestRun.primary_release_id == uuid.UUID(release_id)
-        )
-        ran_in_release = (
-            select(TestCase.test_fingerprint)
-            .join(TestRun, TestRun.id == TestCase.test_run_id)
-            .where(TestRun.project_id == scoped, release_predicate)
-        )
-        stmt = stmt.where(FlakyScore.test_fingerprint.in_(ran_in_release))
+        # UUID, so parsing it unconditionally raised ValueError -> 500. The one
+        # shared predicate handles it (and, since VIZ-201, several releases).
+        # VIZ-202: a suite filter selects the same way -- which scored tests
+        # ran in the suite (effective suite), score unchanged.
+        stmt = stmt.where(FlakyScore.test_fingerprint.in_(_ran_in_scope(scoped, scope)))
 
     rows = (await db.execute(stmt.limit(limit))).scalars().all()
+    # How many scored tests matched, so a list cut at ``limit`` says so.
+    matched = int(
+        (await db.execute(select(func.count()).select_from(stmt.order_by(None).subquery())))
+        .scalar() or 0
+    )
 
     calibration = (
         await db.execute(
@@ -190,7 +230,13 @@ async def flaky_scores(
         sample_count=getattr(calibration, "sample_count", 0) or 0,
     )
 
+    # Scores are stored by the scoring job, not derived from the window's
+    # runs, so an empty list is a measured answer (``measured=True``).
+    meta = await build_meta(
+        db, scope, truncated=matched > len(rows), truncated_total=matched, measured=True,
+    )
     return {
+        "meta": meta,
         "items": [
             {
                 "test_fingerprint": row.test_fingerprint,
@@ -212,25 +258,27 @@ async def flaky_scores(
         # gets read — a reader who takes `score` as "how flaky during 2.4.0"
         # would be wrong, and nothing in a bare filtered list would tell them.
         "scope": {
-            "membership": "release" if release_id else "project",
+            "membership": _membership_note(scope, "Scores")["membership"],
             "score": "project_window",
-            "release_id": release_id,
+            "release_id": list(release_id) if isinstance(release_id, tuple) else release_id,
             "note": (
                 "Scores are computed project-wide over the scoring window and "
                 "are NOT recomputed per release: a single release rarely "
                 "reaches the evidence floor a score needs. A release filter "
                 "selects which already-scored tests ran in that release, not "
                 "how flaky they were during it."
-            ) if release_id else None,
+            ) if release_id and not scope.suite_names else (
+                _membership_note(scope, "Scores")["note"]
+            ),
         },
     }
 
 
 @router.get("/systemic-clusters")
+@analytics_error_contract
 async def systemic_clusters(
-    project_id: str = Query(..., description="Project to read — clusters are per project"),
+    scope: AnalyticsScope = Depends(analytics_scope(_CLUSTERS)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Tests that fail TOGETHER across runs, with the shared cause named.
 
@@ -248,10 +296,18 @@ async def systemic_clusters(
     ``cause_family`` may be ``unknown``: a cluster is still actionable without
     a named cause, and inventing one would be worse than admitting we cannot
     tell from the failure text.
+
+    VIZ-202: ``release_id`` / ``suite_name`` (repeatable) select the MEMBERS
+    that ran in scope -- a member is kept when it has an execution in one of
+    the releases and suites -- and a cluster with no member left is dropped.
+    The cluster's own statistics (size, cohesion, co-failure runs) are
+    project-level and are not recomputed; ``scope`` in the response says so.
+    Clusters have no time window (``meta.ignored_filters``).
     """
-    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
-    if scoped is None:
+    scoped = scope.project_id
+    if scoped is None:  # unreachable: the policy requires a project
         raise HTTPException(status_code=400, detail="Invalid project ID")
+    filtered = bool(scope.release_ids or scope.suite_names)
 
     clusters = list(
         (
@@ -264,17 +320,20 @@ async def systemic_clusters(
     )
     members_by_cluster: dict = {}
     if clusters:
-        rows = (
-            await db.execute(
-                select(SystemicFlakeClusterMember).where(
-                    SystemicFlakeClusterMember.cluster_id.in_([c.id for c in clusters])
-                )
+        member_stmt = select(SystemicFlakeClusterMember).where(
+            SystemicFlakeClusterMember.cluster_id.in_([c.id for c in clusters])
+        )
+        if filtered:
+            member_stmt = member_stmt.where(
+                SystemicFlakeClusterMember.test_fingerprint.in_(_ran_in_scope(scoped, scope))
             )
-        ).scalars().all()
+        rows = (await db.execute(member_stmt)).scalars().all()
         for member in rows:
             members_by_cluster.setdefault(member.cluster_id, []).append(member)
+    if filtered:
+        clusters = [c for c in clusters if members_by_cluster.get(c.id)]
 
-    return {
+    payload = {
         "items": [
             {
                 "cluster_key": cluster.cluster_key,
@@ -304,60 +363,56 @@ async def systemic_clusters(
             "clustering failed."
         ),
     }
+    if filtered:
+        # Only when a filter is applied: the unfiltered body is unchanged.
+        payload["scope"] = {
+            **_membership_note(scope, "Cluster statistics"),
+            "cluster_stats": "project",
+        }
+    return with_meta(payload, await build_meta(db, scope, measured=True))
 
 
 # ── Failure Category Distribution ─────────────────────────────────────────
 
 @router.get("/failure-categories")
+@analytics_error_contract
 async def failure_categories(
-    project_id: str | None = None,
-    days: int = Query(30, ge=1, le=365),
-    suite_name: str | None = Query(None, min_length=1),
-    # S4a. Optional: omitting it returns byte-identical results to before
-    # the release axis existed (NFR1), including issuing no extra query.
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return distribution of failure categories for AI-analysed test cases."""
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    return await analytics_service.failure_categories(
+    payload = await analytics_service.failure_categories(
         db,
-        str(scoped) if scoped else None,
-        days,
-        suite_name=suite_name,
-        allowed_project_ids=allowed,
-        release_id=release_id,
+        scope.project,
+        scope.window_days,
+        suite_name=scope.suite_arg,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
     )
+    return with_meta(payload, await build_meta(db, scope))
 
 
 # ── Top Failing Tests ──────────────────────────────────────────────────────
 
 @router.get("/top-failing")
+@analytics_error_contract
 async def top_failing_tests(
-    project_id: str | None = None,
-    days: int = Query(30, ge=1, le=365),
     limit: int = Query(15, ge=1, le=50),
-    suite_name: str | None = Query(None, min_length=1),
-    # S4a. Optional: omitting it returns byte-identical results to before
-    # the release axis existed (NFR1), including issuing no extra query.
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return tests with the highest total failure count in the period."""
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    return await analytics_service.top_failing_tests(
+    payload = await analytics_service.top_failing_tests(
         db,
-        str(scoped) if scoped else None,
-        days,
+        scope.project,
+        scope.window_days,
         limit,
-        suite_name=suite_name,
-        allowed_project_ids=allowed,
-        release_id=release_id,
+        suite_name=scope.suite_arg,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
     )
+    # ``limit`` is a requested top-N, not a cap on the data: not truncated.
+    return with_meta(payload, await build_meta(db, scope))
 
 
 # ── Failure-kind evidence checklist (AI-4) ─────────────────────────────────
@@ -456,81 +511,91 @@ async def kind_evidence(
 # ── Coverage Snapshot ──────────────────────────────────────────────────────
 
 @router.get("/coverage")
+@analytics_error_contract
 async def coverage_stats(
-    project_id: str | None = None,
-    days: int = Query(30, ge=1, le=365),
-    suite_name: str | None = Query(None, min_length=1),
-    # S4a. Optional: omitting it returns byte-identical results to before
-    # the release axis existed (NFR1), including issuing no extra query.
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return test suite coverage stats aggregated over the period."""
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    return await analytics_service.coverage_stats(
+    payload = await analytics_service.coverage_stats(
         db,
-        str(scoped) if scoped else None,
-        days,
-        suite_name=suite_name,
-        allowed_project_ids=allowed,
-        release_id=release_id,
+        scope.project,
+        scope.window_days,
+        suite_name=scope.suite_arg,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
     )
+    # The per-suite table is capped (``LIMIT 50``); ``summary.suite_count``
+    # counts every suite by the same grouping expression, so the cut is known.
+    suite_count = int((payload.get("summary") or {}).get("suite_count") or 0)
+    shown = len(payload.get("suites") or [])
+    return with_meta(payload, await build_meta(
+        db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS,
+        truncated=suite_count > shown, truncated_total=suite_count,
+    ))
 
 
 # ── Suite Detail ───────────────────────────────────────────────────────────
 
 @router.get("/suite-detail")
+@analytics_error_contract
 async def suite_detail(
-    project_id: str | None = None,
-    suite_name: str = "",
-    days: int = Query(30, ge=1, le=365),
-    # S4a. Optional: omitting it returns byte-identical results to before
-    # the release axis existed (NFR1), including issuing no extra query.
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Return detailed breakdown for a single test suite:
+    Return detailed breakdown for a test suite (several ``suite_name`` values
+    return their union, and ``suite_name`` in the response is then the list):
       - Summary KPIs (unique tests, executions, pass rate, avg duration)
       - Per-test-case aggregates with flakiness flag
       - Last 10 test runs that included this suite
+    No ``suite_name`` matches nothing (``suite_name: ""``), as before.
     """
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    return await analytics_service.suite_detail(
+    suite = scope.suite_arg
+    payload = await analytics_service.suite_detail(
         db,
-        str(scoped) if scoped else None,
-        suite_name,
-        days,
-        allowed_project_ids=allowed,
-        release_id=release_id,
+        scope.project,
+        suite if suite is not None else "",
+        scope.window_days,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
     )
+    return with_meta(payload, await build_meta(
+        db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS,
+    ))
 
 
 # ── Defects List ───────────────────────────────────────────────────────────
 
 @router.get("/defects")
+@analytics_error_contract
 async def list_defects(
-    project_id: str | None = None,
     resolution_status: str | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    scope: AnalyticsScope = Depends(analytics_scope(_DEFECTS)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
-    """Return defects for a project with optional resolution status filter."""
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    return await analytics_service.list_defects(
+    """Return defects for a project with optional resolution status filter.
+
+    VIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects
+    whose originating execution ran in one of the releases (the run's primary
+    release) and suites (effective suite). A defect with no linked execution
+    cannot be placed and is left out while either filter is set. The list has
+    no time window (``meta.ignored_filters``): open defects of any age.
+    """
+    payload = await analytics_service.list_defects(
         db,
-        str(scoped) if scoped else None,
+        scope.project,
         resolution_status,
         page,
         size,
-        allowed_project_ids=allowed,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
+        suite_name=scope.suite_arg,
     )
+    # Paged, not truncated: ``total`` and ``pages`` state the whole list.
+    return with_meta(payload, await build_meta(db, scope, measured=True))
 
 
 @router.post(
@@ -556,11 +621,16 @@ async def create_defect(
         )
     body = payload.model_dump()  # model_dump() already coerces Enum → its .value string
     # ``create_manual_defect`` flushes so id + server defaults (created_at) are
-    # populated on the row. The request-scoped session is committed by the
-    # ``get_db`` dependency once the response is built — see
-    # ``backend/app/db/postgres.py``. ``expire_on_commit=False`` keeps the
-    # defect usable without a refresh.
+    # populated on the row. VIZ-212: commit HERE rather than leaving it to the
+    # ``get_db`` teardown — that commit runs after the handler returns, so no
+    # bump placed in the handler could follow it, and the cached dashboard
+    # (open / open-critical defect counts) would stay stale until TTL.
+    # ``expire_on_commit=False`` keeps the defect usable without a refresh.
     defect = await analytics_service.create_manual_defect(db, payload.project_id, body)
+    await db.commit()
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(payload.project_id)
     raw_category = getattr(defect.failure_category, "value", defect.failure_category)
     return DefectIntakeResponse(
         id=defect.id,
@@ -582,20 +652,26 @@ async def create_defect(
 # ── AI Analysis Summary ────────────────────────────────────────────────────
 
 @router.get("/ai-summary")
+@analytics_error_contract
 async def ai_analysis_summary(
-    project_id: str | None = None,
-    days: int = Query(30, ge=1, le=365),
+    scope: AnalyticsScope = Depends(analytics_scope(_AI_SUMMARY)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
-    """Return summary of AI analysis results for the project."""
-    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
-    return await analytics_service.ai_analysis_summary(
+    """Return summary of AI analysis results for the project.
+
+    VIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses
+    of executions in those releases (run's primary release) and suites
+    (effective suite).
+    """
+    payload = await analytics_service.ai_analysis_summary(
         db,
-        str(scoped) if scoped else None,
-        days,
-        allowed_project_ids=allowed,
+        scope.project,
+        scope.window_days,
+        allowed_project_ids=scope.allowed_project_ids,
+        release_id=scope.release_arg,
+        suite_name=scope.suite_arg,
     )
+    return with_meta(payload, await build_meta(db, scope))
 
 
 # ── Notify suite owner about a recurring failure ───────────────────────────
@@ -761,6 +837,12 @@ async def classify_uncategorized_failures(
         .where(AIAnalysis.test_case_id.in_(tc_ids))
         .values(failure_category=new_category)
     )
+    # VIZ-212: commit explicitly (not in the get_db teardown, which runs after
+    # the handler returns) so the epoch bump can follow the commit.
+    await db.commit()
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(payload.project_id)
 
     return ClassifyUncategorizedResponse(
         updated=len(tc_ids),

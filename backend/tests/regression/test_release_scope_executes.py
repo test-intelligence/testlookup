@@ -89,6 +89,10 @@ class _Result:
     def scalar_one_or_none(self):
         return None
 
+    def scalar(self):
+        # VIZ-204: /flaky-scores counts the matched scores (``meta.truncated``).
+        return 0
+
 
 class RecordingSession:
     """Captures every statement and the params it was executed with.
@@ -274,7 +278,14 @@ def test_every_summary_run_query_carries_the_filter(fn_name):
     """Counted per statement, not 'the name appears in the function'."""
     from app.services import summary_report_service as srs
 
-    src = inspect.getsource(getattr(srs, fn_name))
+    fn = getattr(srs, fn_name)
+    src = inspect.getsource(fn)
+    # ``_per_suite_breakdown_latest`` (and its suite-scoped totals sibling)
+    # build their SQL from the shared ``_latest_per_suite_ctes`` -- the same
+    # WITH clause a filter change to one cannot drift from the other. Follow
+    # it one level down, the way this suite's own helper-delegation checks do.
+    if "_latest_per_suite_ctes(" in src:
+        src += "\n" + inspect.getsource(srs._latest_per_suite_ctes)
 
     # This module writes SQL two ways, and BOTH have to be scoped. A skip here
     # would be the vacuous kind: the first version of this test only understood
@@ -388,16 +399,16 @@ async def test_flaky_scores_survives_the_unattributed_sentinel():
             return _Result()
 
     db = _CaptureSession()
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(router_mod, "resolve_project_scope", _scope)
-        mp.setattr(router_mod, "resolve_release_query_scope", _release)
-        result = await router_mod.flaky_scores(
-            project_id=str(scoped),
-            limit=50,
-            release_id="unattributed",
-            db=db,
-            current_user=object(),
-        )
+    # VIZ-201: the handler takes the scope the shared dependency resolved;
+    # build it through the same parser so the sentinel is normalised as live.
+    from app.services.analytics_scope import AnalyticsScope, parse_release_ids
+
+    del _scope, _release
+    result = await router_mod.flaky_scores(
+        limit=50,
+        scope=AnalyticsScope(scoped, None, parse_release_ids(["Unattributed"]), (), None),
+        db=db,
+    )
 
     assert result is not None
     compiled = " ".join(str(s) for s in stmts)
@@ -431,13 +442,14 @@ async def test_flaky_scores_still_filters_on_a_real_release():
             return _Result()
 
     db = _CaptureSession()
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(router_mod, "resolve_project_scope", _scope)
-        mp.setattr(router_mod, "resolve_release_query_scope", _release)
-        await router_mod.flaky_scores(
-            project_id=str(scoped), limit=50, release_id=RELEASE_UUID,
-            db=db, current_user=object(),
-        )
+    from app.services.analytics_scope import AnalyticsScope, parse_release_ids
+
+    del _scope, _release
+    await router_mod.flaky_scores(
+        limit=50,
+        scope=AnalyticsScope(scoped, None, parse_release_ids([RELEASE_UUID]), (), None),
+        db=db,
+    )
 
     compiled = " ".join(str(s) for s in stmts)
     assert "IS NULL" not in compiled, (

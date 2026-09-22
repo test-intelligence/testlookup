@@ -6,17 +6,37 @@ import io
 import json
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
+
+import dataclasses
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import get_current_active_user, resolve_project_scope
 from app.db.postgres import get_db
 from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem, TestStrategy, User
+from app.services.analytics_meta import (
+    META_HEADER,
+    build_meta,
+    ignored,
+    meta_header,
+    nothing_applied,
+    query_dimensions,
+)
+from app.services.analytics_scope import (
+    AnalyticsScope,
+    ScopePolicy,
+    analytics_scope,
+    release_filter_sql,
+    scoped_text,
+    suite_keys,
+)
+from app.services.metrics_service import PASS_RATE_BASIS_UNIQUE_TESTS
 
 logger = structlog.get_logger(__name__)
 
@@ -700,15 +720,66 @@ async def export_test_strategy_pdf(
 
 # ── Test Suites: list suites and their test cases ─────────────────────────────
 
+#: VIZ-202: the catalogue's scope. It has no window (lifetime counts, declared
+#: in ``meta.ignored_filters``); ``release_id`` keeps the runs of those
+#: releases, ``suite_name`` keeps those suites.
+_SUITES_SCOPE = ScopePolicy(default_days=None)
+#: The trend's suite is its path segment, so the query-string suite filter is
+#: not declared; one sent anyway is reported in ``meta.ignored_filters``.
+_SUITE_TREND_SCOPE = ScopePolicy(default_days=30, max_days=365, suites=False)
+
+
 @router.get("/suites")
-async def list_test_suites(
-    project_id: Optional[uuid.UUID] = Query(None),
+@analytics_error_contract
+async def list_test_suites_in_scope(
+    response: Response,
+    scope: AnalyticsScope = Depends(analytics_scope(_SUITES_SCOPE)),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Return test suites grouped by suite_name, combining automation test_cases
     (from ingested runs) and manually authored managed_test_cases.
+
+    ``release_id`` / ``suite_name`` repeat (OR within each). A release keeps
+    the suites and counts of runs in those releases (manual cases, which never
+    ran in a release, are then left out); a suite name keeps those suites
+    (trimmed, case-insensitive). The body stays a JSON list, so a bounded
+    summary of the analytics envelope (ids and counts, no names, <= 2 KB;
+    ``analytics_meta.header_summary``) travels in the ``X-Analytics-Meta``
+    header (VIZ-204).
+    """
+    rows = await list_test_suites(
+        project_id=scope.project_id, db=db, current_user=current_user,
+        release_id=scope.release_arg, suite_name=scope.suite_arg,
+    )
+    if scope.project_id is None and scope.allowed_project_ids is not None:
+        meta = await build_meta(
+            db, nothing_applied(scope), measured=False,
+            reason="The suite catalogue is per project: select a project.",
+        )
+    else:
+        meta = await build_meta(
+            db, scope, pass_rate_basis=PASS_RATE_BASIS_UNIQUE_TESTS, measured=True,
+        )
+    response.headers[META_HEADER] = meta_header(meta)
+    return rows
+
+
+async def list_test_suites(
+    project_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    release_id: Any = None,
+    suite_name: Any = None,
+):
+    """
+    Return test suites grouped by suite_name, combining automation test_cases
+    (from ingested runs) and manually authored managed_test_cases.
+
+    The body of ``GET /suites`` (``list_test_suites_in_scope`` resolves the
+    scope and adds the envelope). ``release_id`` / ``suite_name`` default to
+    no filter, so a direct caller gets the unscoped catalogue as before.
     """
     from app.core.deps import get_accessible_project_ids
     accessible = await get_accessible_project_ids(db, current_user)
@@ -748,6 +819,13 @@ async def list_test_suites(
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
     sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
+    # VIZ-202: the release narrows every automation source to its runs --
+    # the snapshot, the last run id and the no-rows fallback alike. Appended
+    # only when asked, so the unfiltered statements are unchanged.
+    release_where = release_filter_sql(auto_params, release_id)
+    auto_where = f"{auto_where} {release_where}".strip() if release_where else auto_where
+    if release_where:
+        sub_where = f"{sub_where} {release_filter_sql({}, release_id, table_alias='tr2')}"
     # A test_case row legitimately belongs to TWO suite buckets when its
     # per-row ``tc.suite_name`` (often the Java class name from a TestNG
     # SDK) differs from its run-level ``tr.primary_suite_name`` (the
@@ -762,7 +840,7 @@ async def list_test_suites(
     # Path B: per-row suite (``tc.suite_name`` not NULL and DISTINCT
     #         FROM the run-level value to avoid double-counting when
     #         they happen to match).
-    auto_query = sa_text(f"""
+    auto_query = scoped_text(f"""
         WITH effective AS (
             SELECT
                 NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
@@ -821,7 +899,7 @@ async def list_test_suites(
             ) AS last_run_id
         FROM latest_per_test
         GROUP BY suite_name
-    """)
+    """, auto_params)
     auto_rows = (await db.execute(auto_query, auto_params)).fetchall()
 
     # Live-stream gap fallback: surface suites that exist in ``test_runs``
@@ -834,6 +912,8 @@ async def list_test_suites(
     # pitfall #15 — and the same union-fallback pattern used in
     # services/summary_report_service._per_suite_breakdown_window.
     run_aggregate_where = "AND tr.project_id = :project_id" if project_id else ""
+    if release_where:
+        run_aggregate_where = f"{run_aggregate_where} {release_where}"
     # Pick the latest run per (project, suite_key) inline with
     # ``array_agg(... ORDER BY ...)[1]`` instead of a correlated subquery.
     # The previous shape — ``(SELECT tr3.id ... WHERE tr3.suite_key =
@@ -845,7 +925,7 @@ async def list_test_suites(
     # every later query in this handler ALSO 500'd with
     # ``InFailedSQLTransactionError`` — including ``list_suite_owners``
     # which is the one users saw fail in the trace.
-    run_aggregate_query = sa_text(f"""
+    run_aggregate_query = scoped_text(f"""
         SELECT
             NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
             COALESCE(SUM(tr.total_tests),  0) AS test_count,
@@ -869,7 +949,7 @@ async def list_test_suites(
           {run_aggregate_where}
         GROUP BY NULLIF(TRIM(tr.primary_suite_name), '')
         HAVING NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
-    """)
+    """, auto_params)
     # Wrap in a SAVEPOINT so any future SQL failure (older deployment
     # missing a column, dialect quirk, etc.) is isolated from the outer
     # transaction. Without this, a thrown query leaves the session in
@@ -905,9 +985,15 @@ async def list_test_suites(
           {manual_where}
         GROUP BY suite_name
     """)
+    manual_rows: Sequence[Any] = []
     try:
-        async with db.begin_nested():
-            manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
+        if release_where:
+            # Authored cases never ran in a release: a release-scoped catalogue
+            # holds what ran in it, so they are outside it (not dropped).
+            pass
+        else:
+            async with db.begin_nested():
+                manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
     except Exception as exc:
         # SAVEPOINT-scoped, see comment on the run_aggregate try-block.
         # Without the savepoint, an error here (e.g. older deployment
@@ -961,6 +1047,16 @@ async def list_test_suites(
                 "last_run_id": None,  # manual-only suite, no automation run yet
             }
 
+    wanted = suite_keys(suite_name)
+    if wanted:
+        # VIZ-202: the requested suites, matched the way every analytics
+        # suite filter matches (trimmed, case-insensitive) -- on the bucket
+        # names this catalogue already built.
+        merged = {
+            name: row for name, row in merged.items()
+            if (name or "").strip().lower() in wanted
+        }
+
     # Bulk-resolve owners (migration 0076) so each row carries its resolved
     # owner alongside aggregate counts. Falls back to project.manager_user_id.
     owner_map: dict[str, dict] = {}
@@ -977,11 +1073,13 @@ async def list_test_suites(
     # failed_count) keep their original "of the unique tests in this suite,
     # how many last ran red/green" semantics — additive, not a replacement.
     from app.services.suite_history_service import compute_suite_history
+    history_kwargs = {"release_id": release_id} if release_where else {}
     history_map = await compute_suite_history(
         db,
         project_id=project_id,
         suite_names=[s["suite_name"] for s in merged.values()] or None,
         days=None,
+        **history_kwargs,
     )
 
     result = sorted(merged.values(), key=lambda x: x["test_count"], reverse=True)
@@ -1013,12 +1111,53 @@ async def list_test_suites(
 
 
 @router.get("/suites/{suite_name}/trend")
+@analytics_error_contract
+async def get_suite_trend_in_scope(
+    suite_name: str,
+    request: Request,
+    scope: AnalyticsScope = Depends(analytics_scope(_SUITE_TREND_SCOPE)),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Per-day trend points for one suite over the time window.
+
+    ``release_id`` repeats (OR) and keeps the runs of those releases. The
+    suite is the path segment; a ``suite_name`` query parameter cannot widen
+    or narrow it and is reported in ``meta.ignored_filters``.
+    """
+    body = await get_suite_trend(
+        suite_name=suite_name, project_id=scope.project_id, days=scope.window_days,
+        db=db, current_user=current_user, release_id=scope.release_arg,
+    )
+    declared = []
+    if "suite" in query_dimensions(request.query_params):
+        declared.append(ignored(
+            "suite",
+            "This trend is for the suite named in the path; the suite_name "
+            "query parameter does not change it.",
+        ))
+    # The suite this route applied is its path segment, so the envelope is
+    # built with it applied; the ignored QUERY suite is declared afterwards
+    # (declaring it to ``build_meta`` would remove the applied path suite).
+    applied = dataclasses.replace(scope, suite_names=(suite_name,))
+    if scope.project_id is None and scope.allowed_project_ids is not None:
+        meta = await build_meta(
+            db, nothing_applied(applied), measured=False,
+            reason="A suite trend is per project (suite names collide across projects): select a project.",
+        )
+    else:
+        meta = await build_meta(db, applied)
+    meta["ignored_filters"].extend(declared)
+    return {**body, "meta": meta}
+
+
 async def get_suite_trend(
     suite_name: str,
     project_id: Optional[uuid.UUID] = Query(None),
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    release_id: Any = None,
 ):
     """Per-day trend points for one suite over the time window.
 
@@ -1049,11 +1188,13 @@ async def get_suite_trend(
         return {"suite_name": suite_name, "days": days, "points": []}
 
     from app.services.suite_history_service import compute_suite_trend
+    trend_kwargs = {"release_id": release_id} if release_id is not None else {}
     points = await compute_suite_trend(
         db,
         project_id=project_id,
         suite_name=suite_name,
         days=days,
+        **trend_kwargs,
     )
     return {
         "suite_name": suite_name,
@@ -1097,9 +1238,10 @@ async def get_suite_test_cases(
     )
     if scoped_project_id is None and allowed is not None:
         return empty_page
-    from sqlalchemy import func, or_
+    from sqlalchemy import func
 
     from app.models.postgres import TestCase, TestRun
+    from app.services.analytics_scope import row_or_run_label_clause
 
     # Automation test cases — aggregate by fingerprint so each unique test
     # collapses to one row carrying its execution count and most-recent run
@@ -1131,12 +1273,8 @@ async def get_suite_test_cases(
             TestRun.created_at.label("run_created_at"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .where(
-            or_(
-                func.lower(func.trim(TestCase.suite_name)) == suite_key,
-                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
-            )
-        )
+        # Per-row OR run-level label, built in ``analytics_scope`` (VIZ-201).
+        .where(row_or_run_label_clause(suite_name))
     )
     if project_id:
         base = base.where(TestRun.project_id == project_id)

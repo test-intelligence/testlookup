@@ -1064,7 +1064,18 @@ class SummaryReportResponse(BaseModel):
     runs_per_day: Optional[float] = None
     avg_duration_ms: int
     latest_run_at: Optional[str] = None
-    flaky_test_count: int
+    # Field-level scope exception (VIZ-202 review): ``meta.ignored_filters``
+    # is per dimension and the rest of the body IS release-scoped, so the one
+    # field that is not says so here. Text: summary_report_service.FLAKY_COUNT_SCOPE_NOTE.
+    flaky_test_count: int = Field(
+        description=(
+            "Not scoped by release_id. A test is flaky by its last N executions "
+            "across the project's history (flaky_criteria) -- a run-count window, "
+            "not a set of runs -- and the dashboard's flaky count and the release "
+            "gate's flaky cap read that same project-wide figure; restricting it to "
+            "one release's runs would be a different metric. Scoped by suite_name."
+        ),
+    )
     flaky_rate_pct: float
     # The rule behind ``flaky_test_count``, published with it (BUG-007).
     #
@@ -1081,6 +1092,10 @@ class SummaryReportResponse(BaseModel):
     flaky_criteria: Optional[FlakyCountCriteria] = None
     suites: List[SummarySuiteRow]
     top_failing_tests: List[SummaryTopFailingTest]
+    # VIZ-204: the analytics envelope (contract C2, validated by
+    # ``viz_contracts.EnvelopeMeta``) -- declared here because a response_model
+    # drops undeclared keys. A plain dict: the contract module owns its shape.
+    meta: Optional[Dict[str, Any]] = None
 
 
 # ── My Failures inbox (migration 0080) ─────────────────────────────────────
@@ -1175,13 +1190,26 @@ class MetricCard(BaseModel):
     trend_direction: Optional[str] = None  # "up" | "down" | "flat"
 
 
+#: ``GET /metrics/summary`` fields that honour ``suite_name`` but NOT
+#: ``release_id`` while the rest of the body honours both (VIZ-202 review;
+#: ``routers/metrics.DASHBOARD_RELEASE_UNSCOPED``). They are the inputs of the
+#: readiness verdict's hard caps (open CRITICAL defects, flaky count, new
+#: failures in 24h), defined project-wide by the gate policy; scoping them to a
+#: release would change what the gate gates on -- an owner decision, not a
+#: filter fix.
+_DASHBOARD_RELEASE_UNSCOPED = (
+    "Not scoped by release_id (suite_name applies): a project-wide input of the "
+    "readiness verdict's hard caps."
+)
+
+
 class DashboardSummary(BaseModel):
     total_executions_7d: MetricCard
     avg_pass_rate_7d: MetricCard
-    active_defects: MetricCard
-    flaky_test_count: MetricCard
+    active_defects: MetricCard = Field(description=_DASHBOARD_RELEASE_UNSCOPED)
+    flaky_test_count: MetricCard = Field(description=_DASHBOARD_RELEASE_UNSCOPED)
     avg_duration_ms: MetricCard
-    new_failures_24h: MetricCard
+    new_failures_24h: MetricCard = Field(description=_DASHBOARD_RELEASE_UNSCOPED)
     coverage_pct: Optional[MetricCard] = None
     release_readiness: Optional[str] = None  # "GREEN" | "AMBER" | "RED"
     # 4-band pass-rate verdict driven by the active ReleaseGatePolicy. ``None``
@@ -5374,6 +5402,9 @@ class QuarantineStatsResponse(BaseModel):
     re_quarantined: int = 0
     detected: int = 0
     total_live: int = 0
+    # VIZ-204: the analytics envelope (contract C2). Declared because a
+    # response_model drops undeclared keys; the contract module owns its shape.
+    meta: Optional[Dict[str, Any]] = None
 
 
 # ── Release Compliance Pack (Tier 1 item 4) ─────────────────────────────────

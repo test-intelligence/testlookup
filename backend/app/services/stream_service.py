@@ -728,7 +728,13 @@ async def close_session(
     db: AsyncSession,
     session_id: str,
     bound_project_id: Optional[uuid.UUID] = None,
-) -> None:
+) -> Optional[uuid.UUID]:
+    """Stage a live session's close. The caller commits.
+
+    Returns the session's project id when this call closed it, so the caller
+    can bump that project's analytics epoch after its commit (VIZ-212), and
+    None when the session was already completed and nothing changed.
+    """
     try:
         uid = uuid.UUID(session_id)
     except ValueError as exc:
@@ -756,7 +762,7 @@ async def close_session(
     # depending on Celery worker timing — duplicate DB upserts.
     if session.status == "completed":
         logger.info(f"close_session: already completed, skipping session_id={session_id}")
-        return
+        return None
 
     from app.streams.live_run_state import RedisLiveRunState
 
@@ -983,6 +989,7 @@ async def close_session(
         f"staged_persist_live_session session_id={session_id} "
         f"canonical_run_id={canonical_run_uuid}"
     )
+    return session.project_id
 
 
 async def _resolve_project_id_for_run(run_id: str) -> Optional[str]:

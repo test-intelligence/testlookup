@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json as _json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import structlog
 from sqlalchemy import select, update
@@ -416,9 +417,11 @@ async def repair_clobbered_primary_suite_names(
 
     Caller owns the transaction.
 
-    Returns ``{candidates: int, repaired: int}`` for observability.
+    Returns ``{candidates: int, repaired: int, project_ids: list[str]}``.
+    ``project_ids`` names each project that had a run repaired, once, so the
+    caller can bump its analytics epoch after its commit (VIZ-212).
     """
-    counts = {"candidates": 0, "repaired": 0}
+    counts: dict[str, Any] = {"candidates": 0, "repaired": 0, "project_ids": []}
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
@@ -430,6 +433,7 @@ async def repair_clobbered_primary_suite_names(
             TestRun.id,
             TestRun.primary_suite_name,
             LiveSession.suite_name,
+            TestRun.project_id,
         )
         .join(LiveSession, LiveSession.id == TestRun.id)
         .where(
@@ -451,7 +455,7 @@ async def repair_clobbered_primary_suite_names(
 
     counts["candidates"] = len(rows)
 
-    for run_id, current_psn, session_suite in rows:
+    for run_id, current_psn, session_suite, project_id in rows:
         current = (current_psn or "").strip() or None
         target = (session_suite or "").strip() or None
         if not target or current == target:
@@ -463,6 +467,8 @@ async def repair_clobbered_primary_suite_names(
                 .values(primary_suite_name=target)
             )
             counts["repaired"] += 1
+            if str(project_id) not in counts["project_ids"]:
+                counts["project_ids"].append(str(project_id))
             logger.info(
                 "primary_suite_repaired",
                 run_id=str(run_id), from_=current, to=target,

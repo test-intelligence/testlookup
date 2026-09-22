@@ -934,6 +934,11 @@ def persist_live_session(
                     )
 
             await db.commit()
+            # VIZ-212: the run row and its test cases are committed; finalize_run
+            # below bumps again after its own steps.
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(proj_uuid)
             # The close transaction and its durable outbox intent are now
             # committed. Finalize the Redis close only at this point. This
             # outbox-backed task is retryable, so it also repairs a process
@@ -1145,6 +1150,11 @@ def ingest_uploaded_results(
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
+                # VIZ-212: the run and its cases are visible now; finalize_run
+                # bumps again once its aggregates and release link commit.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(payload["project_id"])
                 logger.info(
                     "[Task %s] Uploaded results ingested: %d cases",
                     self.request.id, count,
@@ -1352,6 +1362,10 @@ def ingest_uploaded_file(
                     run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)
                 count = await ingest_test_results(db, run, results)
                 await db.commit()
+                # VIZ-212: as in ingest_uploaded_results.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(project_id)
                 logger.info(
                     "[Task %s] File ingested: %d cases from %s (%s)",
                     task_id, count, file_name, file_format,
@@ -4488,6 +4502,7 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     from sqlalchemy import select
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import LiveSession
+    from app.services.cache_service import bump_analytics_epochs
     from app.services.stream_service import close_session, finalize_closed_session_redis
     from app.streams.live_run_state import RedisLiveRunState
 
@@ -4496,6 +4511,8 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
         closed = 0
         skipped_recent = 0
         errors = 0
+        # Projects whose close COMMITTED — a close that rolled back is absent.
+        changed_projects: list = []
         async with AsyncSessionLocal() as db:
             active = (
                 await db.execute(
@@ -4541,8 +4558,10 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         skipped_recent += 1
                         continue
 
-                    await close_session(db, str(session.id))
+                    closed_project_id = await close_session(db, str(session.id))
                     await db.commit()
+                    if closed_project_id is not None:
+                        changed_projects.append(closed_project_id)
                     await finalize_closed_session_redis(str(session.id))
                     closed += 1
                 except Exception as exc:
@@ -4556,6 +4575,8 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                     except Exception:
                         pass
 
+        # VIZ-212: once per project, after every close has committed.
+        await bump_analytics_epochs(changed_projects)
         return {
             "checked": len(active),
             "closed": closed,
@@ -4966,6 +4987,7 @@ def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> di
     produces zero new rows.
     """
     from app.db.postgres import AsyncSessionLocal
+    from app.services.cache_service import bump_analytics_epochs
     from app.services.placeholder_backfill_service import (
         backfill_placeholders_all_projects,
     )
@@ -4977,10 +4999,12 @@ def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> di
                     db, max_runs_per_project=max_runs_per_project,
                 )
                 await db.commit()
-                return result
             except Exception:
                 await db.rollback()
                 raise
+        # VIZ-212: the inserted TestCase rows change failure counts.
+        await bump_analytics_epochs(result.get("project_ids") or [])
+        return result
 
     logger.info(
         "[Task %s] backfill_placeholder_test_cases starting",
@@ -5022,6 +5046,7 @@ def auto_recover_completed_live_runs(
     before the placeholder backfill fires.
     """
     from app.db.postgres import AsyncSessionLocal
+    from app.services.cache_service import bump_analytics_epochs
     from app.services.live_run_recovery_service import (
         auto_recover_completed_runs,
         repair_clobbered_primary_suite_names,
@@ -5047,7 +5072,11 @@ def auto_recover_completed_live_runs(
                 max_runs=max(max_runs, 200),
             )
             await db.commit()
-            return {"recover": recover, "repair": repair}
+        # VIZ-212: a repaired primary_suite_name moves runs between suites.
+        # The recovery half only re-dispatches persist_live_session, whose
+        # finalize_run bumps on its own commit.
+        await bump_analytics_epochs(repair.get("project_ids") or [])
+        return {"recover": recover, "repair": repair}
 
     logger.info(
         "[Task %s] auto_recover_completed_live_runs starting", self.request.id
@@ -5428,6 +5457,7 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import ProjectRetentionPolicy, SettingsAuditLog
     from app.services import retention_service
+    from app.services.cache_service import bump_analytics_epoch
 
     if project_id:
         targets = [_uuid_mod.UUID(str(project_id))]
@@ -5464,6 +5494,9 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
                     db, project_id=pid, mode="execute"
                 )
                 await db.commit()
+            # VIZ-212: once per project, after THIS project's commit. A purge
+            # that raised above never reaches it.
+            await bump_analytics_epoch(pid)
         except Exception as exc:
             errors.append(str(exc)[:500])
             summary["errors"] += 1
@@ -6118,6 +6151,7 @@ def delete_run_everywhere(
         run_deletion_service,
         semantic_search,
     )
+    from app.services.cache_service import bump_analytics_epoch
 
     async def _run() -> dict[str, Any]:
         run_uuid = uuid.UUID(run_id)
@@ -6166,6 +6200,8 @@ def delete_run_everywhere(
             # ONE commit covers the cross-store deletion and the tombstone.
             await db.commit()
 
+        # VIZ-212: every cached number that counted this run is now wrong.
+        await bump_analytics_epoch(project_uuid)
         return {"deleted": True, "counts": counts, "run_id": run_id}
 
     try:
@@ -6228,6 +6264,7 @@ def execute_criteria_deletion_task(
         run_deletion_service,
         semantic_search,
     )
+    from app.services.cache_service import bump_analytics_epoch
 
     async def _run() -> dict[str, Any]:
         job_uuid = uuid.UUID(job_id)
@@ -6254,6 +6291,7 @@ def execute_criteria_deletion_task(
         deleted: list[str] = []
         failures: list[str] = []
         totals: dict[str, Any] = {}
+        committed_deletions = 0
 
         for run_id in run_ids:
             try:
@@ -6294,6 +6332,7 @@ def execute_criteria_deletion_task(
                         deletion_job_id=job_uuid,
                     )
                     await db.commit()
+                    committed_deletions += 1
                 deleted.append(str(run_id))
                 for store, value in (counts or {}).items():
                     if isinstance(value, dict):
@@ -6304,6 +6343,11 @@ def execute_criteria_deletion_task(
             except Exception as exc:  # noqa: BLE001 — one run must not stop the rest
                 failures.append(f"{run_id}: {str(exc)[:200]}")
                 logger.warning("[criteria-delete] run %s failed: %s", run_id, exc)
+
+        # VIZ-212: once for the whole job (every run is in this one project),
+        # and only if at least one per-run deletion committed.
+        if committed_deletions:
+            await bump_analytics_epoch(project_uuid)
 
         status = deletion_job_service.outcome_status(
             requested=len(run_ids), deleted=len(deleted)
@@ -6445,7 +6489,11 @@ def reconcile_primary_releases(self) -> dict:
             release_primary_drift_total,
             release_primary_sweeps_total,
         )
+        from sqlalchemy import select
+
         from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import TestRun
+        from app.services.cache_service import bump_analytics_epochs
         from app.services.release_linker import (
             find_primary_release_drift,
             sync_primary_release,
@@ -6453,6 +6501,8 @@ def reconcile_primary_releases(self) -> dict:
 
         repaired: list[str] = []
         failed: list[str] = []
+        # Projects whose repair COMMITTED; each is bumped once after the loop.
+        changed_projects: list = []
 
         async with AsyncSessionLocal() as db:
             drifted = await find_primary_release_drift(db)
@@ -6460,8 +6510,13 @@ def reconcile_primary_releases(self) -> dict:
         for run_id in drifted:
             try:
                 async with AsyncSessionLocal() as db:
+                    # Looked up before the commit, on the same session.
+                    project_id = await db.scalar(
+                        select(TestRun.project_id).where(TestRun.id == run_id)
+                    )
                     await sync_primary_release(db, run_id)
                     await db.commit()
+                changed_projects.append(project_id)
                 repaired.append(str(run_id))
                 release_primary_drift_total.labels(outcome="repaired").inc()
             except Exception as exc:
@@ -6473,6 +6528,8 @@ def reconcile_primary_releases(self) -> dict:
                     error=str(exc),
                 )
 
+        # VIZ-212: a repaired primary_release_id re-attributes runs.
+        await bump_analytics_epochs(changed_projects)
         release_primary_sweeps_total.inc()
 
         if drifted:

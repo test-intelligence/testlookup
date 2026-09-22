@@ -743,6 +743,12 @@ async def ingest_live_event(
             # The stream router's order: commit what was staged, then finalise
             # Redis. A close that fails to commit must not be finalised there.
             await db.commit()
+            if outcome.completes:
+                # VIZ-212: run_complete closed the session in the staged
+                # work, so the commit above wrote the run analytics reads.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(bound_project_id)
             await after_commit(outcome)
         return {
             "accepted": True,

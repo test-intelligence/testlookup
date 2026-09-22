@@ -3,6 +3,7 @@
  * snapshot per project. Mirrors ``backend/app/models/schemas.py``
  * SummaryReportResponse.
  */
+import type { EnvelopeMeta } from '@/lib/viz/contracts'
 
 export type SummaryReportMode = 'window' | 'latest'
 
@@ -92,4 +93,10 @@ export interface SummaryReport {
   flaky_criteria?: FlakyCountCriteria
   suites: SummarySuiteRow[]
   top_failing_tests: SummaryTopFailingTest[]
+  /**
+   * Contract C2 envelope: what the SERVER applied (releases by id + name).
+   * Optional — an older backend or a cached payload predates it, and the page
+   * then falls back to client state without claiming a confirmed scope.
+   */
+  meta?: EnvelopeMeta
 }

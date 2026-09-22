@@ -12,6 +12,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -23,7 +24,7 @@ from app.core.deps import (
     resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, User, UserRole
+from app.models.postgres import AccessAuditLog, TestRun, User, UserRole
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.serializers import serialize_model
 from app.services import (
@@ -437,6 +438,11 @@ async def delete_release(
         )
 
     await db.commit()
+    # VIZ-212: deleting a release re-points its runs' primary release.
+    if project_id is not None:
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(project_id)
 
 
 @router.post("/{release_id}/gate/evaluate")
@@ -674,6 +680,10 @@ async def link_test_run(
     )
     if is_new:
         await db.commit()
+        # VIZ-212: the new link became the run's primary release.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(link.project_id)
         await db.refresh(link)
         return serialize_model(link)
     # Idempotent: link already existed, service returned the existing row.
@@ -695,5 +705,13 @@ async def unlink_test_run(
     # could unlink it from a release in a project they cannot reach.
     ___: User = Depends(require_release_access()),
 ):
+    # Read before the unlink: the run's project is what the bump invalidates.
+    project_id = await db.scalar(
+        select(TestRun.project_id).where(TestRun.id == uuid.UUID(run_id))
+    )
     await release_service.unlink_test_run(db, release_id, run_id)
     await db.commit()
+    # VIZ-212: the unlink promoted a survivor (or cleared the primary release).
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(project_id)

@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:156](../../../backend/app/routers/stream.py#L156).
+Source: [backend/app/routers/stream.py:171](../../../backend/app/routers/stream.py#L171).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -135,7 +135,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:97](../../../backend/app/routers/stream.py#L97).
+Source: [backend/app/routers/stream.py:107](../../../backend/app/routers/stream.py#L107).
 
 Dependency chain: .
 
@@ -209,7 +209,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:120](../../../backend/app/routers/stream.py#L120).
+Source: [backend/app/routers/stream.py:130](../../../backend/app/routers/stream.py#L130).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -372,7 +372,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:83](../../../backend/app/routers/stream.py#L83).
+Source: [backend/app/routers/stream.py:88](../../../backend/app/routers/stream.py#L88).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -445,7 +445,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:67](../../../backend/app/routers/stream.py#L67).
+Source: [backend/app/routers/stream.py:72](../../../backend/app/routers/stream.py#L72).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -531,7 +531,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:218](../../../backend/app/routers/stream.py#L218).
+Source: [backend/app/routers/stream.py:233](../../../backend/app/routers/stream.py#L233).
 
 Dependency chain: .
 

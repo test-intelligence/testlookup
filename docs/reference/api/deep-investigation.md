@@ -20,7 +20,7 @@ legitimately unscoped; the defect was that non-admins were unscoped too.
 ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
 already anticipated this filter.
 
-Source: [backend/app/routers/deep_investigation.py:424](../../../backend/app/routers/deep_investigation.py#L424).
+Source: [backend/app/routers/deep_investigation.py:428](../../../backend/app/routers/deep_investigation.py#L428).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -126,7 +126,7 @@ Approve or reject a defect that is pending review (QA Lead+ only).
 
 When approved with a Jira project key, the Jira ticket is created.
 
-Source: [backend/app/routers/deep_investigation.py:326](../../../backend/app/routers/deep_investigation.py#L326).
+Source: [backend/app/routers/deep_investigation.py:330](../../../backend/app/routers/deep_investigation.py#L330).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -412,7 +412,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:268](../../../backend/app/routers/deep_investigation.py#L268).
+Source: [backend/app/routers/deep_investigation.py:272](../../../backend/app/routers/deep_investigation.py#L272).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -598,7 +598,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:303](../../../backend/app/routers/deep_investigation.py#L303).
+Source: [backend/app/routers/deep_investigation.py:307](../../../backend/app/routers/deep_investigation.py#L307).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

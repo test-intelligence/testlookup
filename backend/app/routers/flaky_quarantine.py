@@ -43,7 +43,10 @@ from app.models.schemas import (
     QuarantineProposeRequest,
     QuarantineStatsResponse,
 )
+from app.core.analytics_errors import analytics_error_contract
 from app.services import flaky_quarantine_service as svc
+from app.services.analytics_meta import build_meta
+from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_scope
 
 router = APIRouter(prefix="/api/v1/quarantine", tags=["Flaky Quarantine"])
 # US-5.1 — CI quarantine manifest lives under the project scope so the
@@ -133,21 +136,33 @@ async def list_quarantine_requests(
     return await _with_owner_names(db, rows)
 
 
+#: VIZ-201/202: the shared scope. Quarantine counts are current state, so the
+#: route has no window (declared in ``meta.ignored_filters``); ``release_id`` /
+#: ``suite_name`` count the requests whose test ran in scope.
+_STATS_SCOPE = ScopePolicy(default_days=None)
+
+
 @router.get("/stats", response_model=QuarantineStatsResponse)
+@analytics_error_contract
 async def get_quarantine_stats(
-    project_id: Optional[uuid.UUID] = None,
+    scope: AnalyticsScope = Depends(analytics_scope(_STATS_SCOPE)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return status counts for the UI header."""
+    # The pin, else the caller's memberships, else (admin) every project --
+    # exactly the two branches this route resolved by hand before VIZ-202.
     project_ids: Optional[set[uuid.UUID]]
-    if project_id is not None:
-        await resolve_project_scope(db, current_user, str(project_id))
-        project_ids = {project_id}
+    if scope.project_id is not None:
+        project_ids = {scope.project_id}
     else:
-        project_ids = await get_accessible_project_ids(db, current_user)
+        project_ids = (
+            set(scope.allowed_project_ids) if scope.allowed_project_ids is not None else None
+        )
 
-    counts = await svc.stats_by_status(db, project_ids=project_ids)
+    counts = await svc.stats_by_status(
+        db, project_ids=project_ids,
+        release_id=scope.release_arg, suite_name=scope.suite_arg,
+    )
     live_states = {
         "DETECTED", "PROPOSED", "APPROVED",
         "QUARANTINED", "RECHECK_SCHEDULED", "RE_QUARANTINED",
@@ -163,6 +178,7 @@ async def get_quarantine_stats(
         rejected=counts.get("REJECTED", 0),
         expired=counts.get("EXPIRED", 0),
         total_live=sum(v for k, v in counts.items() if k in live_states),
+        meta=await build_meta(db, scope, measured=True),
     )
 
 

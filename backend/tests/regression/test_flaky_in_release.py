@@ -59,9 +59,13 @@ def _code_only(fn) -> str:
 
 
 def test_flaky_scores_accepts_an_optional_release():
-    sig = inspect.signature(analytics.flaky_scores)
+    # VIZ-201: the release arrives through the shared scope dependency.
+    from app.services.analytics_scope import analytics_scope
+
+    sig = inspect.signature(analytics_scope(analytics._FLAKY_SCORES))
     assert "release_id" in sig.parameters
-    assert sig.parameters["release_id"].default is not None, (
+    default = sig.parameters["release_id"].default
+    assert default is not None and default.default is None, (
         "must be a Query(...) with a None default, never required"
     )
 
@@ -74,13 +78,19 @@ def test_the_release_filter_intersects_rather_than_rescoping():
     fingerprints, not anything that reaches the score itself.
     """
     body = _code_only(analytics.flaky_scores)
-    assert "FlakyScore.test_fingerprint.in_(" in body, (
+    assert "FlakyScore.test_fingerprint.in_(_ran_in_scope(scoped, scope))" in body, (
         "the release filter must select fingerprints, not recompute scores"
     )
     # It reaches the release through the run, which is the only path that
-    # exists — flaky_score itself has no release dimension.
-    assert "TestRun.primary_release_id" in body
-    assert "TestCase.test_fingerprint" in body
+    # exists — flaky_score itself has no release dimension. The predicate is
+    # the shared one (``release_filter.release_predicate``) on TestRun. Since
+    # VIZ-202 the membership subquery is shared with systemic clusters.
+    ran = _code_only(analytics._ran_in_scope)
+    assert "_release_predicate(scope.release_arg)" in ran
+    assert "select(TestCase.test_fingerprint)" in ran
+    from app.core import release_filter
+
+    assert "model.primary_release_id" in inspect.getsource(release_filter.release_predicate)
 
 
 def test_the_intersection_is_project_scoped_on_both_sides():
@@ -92,8 +102,10 @@ def test_the_intersection_is_project_scoped_on_both_sides():
     project filter would not save it: the IN list is what selects rows.
     """
     body = _code_only(analytics.flaky_scores)
-    sub = body[body.index("ran_in_release"):body.index("stmt = stmt.where")]
-    assert "TestRun.project_id == scoped" in sub, (
+    # The subquery is built for the handler's own pinned project...
+    assert "_ran_in_scope(scoped, scope)" in body
+    # ...and carries that pin itself.
+    assert "TestRun.project_id == project_id" in _code_only(analytics._ran_in_scope), (
         "the fingerprint subquery must be tenant-scoped independently"
     )
 
@@ -105,11 +117,15 @@ def test_the_release_is_guarded_before_it_reaches_the_query():
     authorization ratchet is satisfied by that alone and would pass this route
     with the release entirely unchecked.
     """
+    # VIZ-201: the guard is the scope dependency, which resolves EVERY
+    # release id before the handler body -- and so the query -- runs.
     body = _code_only(analytics.flaky_scores)
-    assert "resolve_release_query_scope(db, release_id, current_user)" in body
-    guard_at = body.index("resolve_release_query_scope")
-    use_at = body.index("TestRun.primary_release_id")
-    assert guard_at < use_at, "the release must be validated before it is queried"
+    assert "Depends(analytics_scope(_FLAKY_SCORES))" in body
+    assert "release_id = scope.release_arg" in body
+    from app.services import analytics_scope
+
+    authorize = inspect.getsource(analytics_scope.authorize_scope)
+    assert "resolve_release_query_scopes(db, request.release_ids, user)" in authorize
 
 
 def test_no_release_means_no_subquery_and_no_change():
@@ -119,8 +135,10 @@ def test_no_release_means_no_subquery_and_no_change():
     gets the same statement the endpoint has always built.
     """
     body = _code_only(analytics.flaky_scores)
-    assert "if release_id is not None:" in body
-    guard_at = body.index("if release_id is not None:")
+    # VIZ-202: a suite filter selects members the same way.
+    guard = "if release_id is not None or scope.suite_names:"
+    assert guard in body
+    guard_at = body.index(guard)
     assert body.index("FlakyScore.test_fingerprint.in_(") > guard_at, (
         "the subquery must be conditional, not always applied"
     )
@@ -154,8 +172,20 @@ def test_the_scope_note_appears_only_when_a_release_was_asked_for():
     """
     body = _code_only(analytics.flaky_scores)
     scope = body[body.index('"scope"'):]
-    assert 'if release_id else None' in scope
-    assert '"membership": "release" if release_id else "project"' in scope
+    # The release-only note keeps its wording; any other filter gets the
+    # shared membership note, which is None when nothing was filtered.
+    assert "if release_id and not scope.suite_names else" in scope
+    from app.services.analytics_scope import AnalyticsScope
+
+    unfiltered = AnalyticsScope(None, None, (), (), None)
+    assert analytics._membership_note(unfiltered, "Scores") == {
+        "membership": "project", "note": None,
+    }
+    release_only = AnalyticsScope(None, None, ("r",), (), None)
+    assert analytics._membership_note(release_only, "Scores")["membership"] == "release"
+    both = AnalyticsScope(None, None, ("r",), ("s",), None)
+    note = analytics._membership_note(both, "Scores")
+    assert note["membership"] == "release+suite" and "NOT recomputed" in note["note"]
 
 
 def test_the_note_explains_the_evidence_floor_not_just_the_mechanic():

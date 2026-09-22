@@ -587,6 +587,10 @@ async def drain_run_buffer(
                 session_suite=session_suite, state=state, now=now,
             )
             await db.commit()
+        # VIZ-212: the projection just changed this project's counts.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(project_uuid)
         if stream_entries:
             stream_id = stream_entries[0][0]
             legacy_ids = [

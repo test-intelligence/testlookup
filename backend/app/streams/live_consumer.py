@@ -597,5 +597,9 @@ async def _finalise_run_in_db(run_id: str, state: dict) -> None:
                 run.pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
                 run.end_time = datetime.now(timezone.utc)
                 await db.commit()
+                # VIZ-212: the run just became terminal with its final counts.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(run.project_id)
     except Exception as exc:
         logger.error("Failed to finalise run %s in DB: %s", run_id, exc)

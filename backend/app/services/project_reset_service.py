@@ -219,6 +219,11 @@ async def reset_project(
         await ensure_active_release_for_new_project(db, project)
 
     await db.commit()
+    # VIZ-212: after the commit, so a reset that rolls back leaves the cache
+    # (and its epoch) exactly as it was.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(project_id)
 
     logger.info(
         "project_reset_completed",

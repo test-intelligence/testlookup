@@ -111,20 +111,26 @@ class TestPoolConfiguration:
 
 class TestCacheKeyBuilder:
     def test_basic_key(self):
-        key = _build_cache_key("dashboard", "proj-1", days=7)
-        assert key == "analytics:dashboard:proj-1:days=7"
+        key = _build_cache_key("dashboard", "proj-1", epoch=0, days=7)
+        assert key == "analytics:dashboard:proj-1:e0:days=7"
 
     def test_all_projects_key(self):
-        key = _build_cache_key("dashboard", None, days=7)
-        assert key == "analytics:dashboard:all:days=7"
+        key = _build_cache_key("dashboard", None, epoch=3, days=7)
+        assert key == "analytics:dashboard:all:e3:days=7"
 
     def test_multiple_params_sorted(self):
-        key = _build_cache_key("flaky", "proj-1", days=30, limit=20)
-        assert key == "analytics:flaky:proj-1:days=30:limit=20"
+        key = _build_cache_key("flaky", "proj-1", epoch=0, days=30, limit=20)
+        assert key == "analytics:flaky:proj-1:e0:days=30:limit=20"
 
     def test_no_params(self):
-        key = _build_cache_key("coverage", "proj-2")
-        assert key == "analytics:coverage:proj-2"
+        key = _build_cache_key("coverage", "proj-2", epoch=12)
+        assert key == "analytics:coverage:proj-2:e12"
+
+    def test_a_new_epoch_is_a_new_key(self):
+        # VIZ-212: bumping the epoch is the invalidation.
+        assert _build_cache_key("d", "p", epoch=1, days=7) != _build_cache_key(
+            "d", "p", epoch=2, days=7
+        )
 
 
 class TestCacheTTLPresets:
@@ -143,7 +149,7 @@ class TestCacheGetSet:
         mock_redis.get.return_value = None
 
         with patch("app.db.redis_client.get_redis", return_value=mock_redis):
-            result = await cache_get("test", "proj-1", days=7)
+            result = await cache_get("test", "proj-1", epoch=0, days=7)
 
         assert result is None
 
@@ -154,7 +160,7 @@ class TestCacheGetSet:
         mock_redis.get.return_value = json.dumps({"value": 42})
 
         with patch("app.db.redis_client.get_redis", return_value=mock_redis):
-            result = await cache_get("test", "proj-1", days=7)
+            result = await cache_get("test", "proj-1", epoch=0, days=7)
 
         assert result == {"value": 42}
 
@@ -164,11 +170,11 @@ class TestCacheGetSet:
         mock_redis = AsyncMock()
 
         with patch("app.db.redis_client.get_redis", return_value=mock_redis):
-            await cache_set("test", {"value": 42}, "proj-1", ttl=60, days=7)
+            await cache_set("test", {"value": 42}, "proj-1", ttl=60, epoch=4, days=7)
 
         mock_redis.set.assert_called_once()
         call_args = mock_redis.set.call_args
-        assert "analytics:test:proj-1:days=7" == call_args[0][0]
+        assert "analytics:test:proj-1:e4:days=7" == call_args[0][0]
         assert json.loads(call_args[0][1]) == {"value": 42}
         assert call_args[1]["ex"] == 60
 
@@ -179,7 +185,7 @@ class TestCacheGetSet:
         mock_redis.get.side_effect = ConnectionError("Redis down")
 
         with patch("app.db.redis_client.get_redis", return_value=mock_redis):
-            result = await cache_get("test", "proj-1")
+            result = await cache_get("test", "proj-1", epoch=0)
 
         assert result is None  # Should not raise
 

@@ -925,7 +925,7 @@ Export Test Cases Excel
 
 Export test cases to an Excel (.xlsx) file.
 
-Source: [backend/app/routers/test_management_exports.py:61](../../../backend/app/routers/test_management_exports.py#L61).
+Source: [backend/app/routers/test_management_exports.py:81](../../../backend/app/routers/test_management_exports.py#L81).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2676,7 +2676,7 @@ Export Test Plan Pdf
 
 Export a test plan to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:367](../../../backend/app/routers/test_management_exports.py#L367).
+Source: [backend/app/routers/test_management_exports.py:387](../../../backend/app/routers/test_management_exports.py#L387).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2769,7 +2769,7 @@ Export Test Plan Word
 
 Export a test plan to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:272](../../../backend/app/routers/test_management_exports.py#L272).
+Source: [backend/app/routers/test_management_exports.py:292](../../../backend/app/routers/test_management_exports.py#L292).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3649,7 +3649,7 @@ Export Test Strategy Pdf
 
 Export a test strategy to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:598](../../../backend/app/routers/test_management_exports.py#L598).
+Source: [backend/app/routers/test_management_exports.py:618](../../../backend/app/routers/test_management_exports.py#L618).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3742,7 +3742,7 @@ Export Test Strategy Word
 
 Export a test strategy to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:486](../../../backend/app/routers/test_management_exports.py#L486).
+Source: [backend/app/routers/test_management_exports.py:506](../../../backend/app/routers/test_management_exports.py#L506).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4403,25 +4403,27 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ## GET `/api/v1/test-management/suites`
 
-List Test Suites
+List Test Suites In Scope
 
 Return test suites grouped by suite_name, combining automation test_cases
 (from ingested runs) and manually authored managed_test_cases.
 
-Source: [backend/app/routers/test_management_exports.py:703](../../../backend/app/routers/test_management_exports.py#L703).
+``release_id`` / ``suite_name`` repeat (OR within each). A release keeps
+the suites and counts of runs in those releases (manual cases, which never
+ran in a release, are then left out); a suite name keeps those suites
+(trimmed, case-insensitive). The body stays a JSON list, so a bounded
+summary of the analytics envelope (ids and counts, no names, <= 2 KB;
+``analytics_meta.header_summary``) travels in the ``X-Analytics-Meta``
+header (VIZ-204).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Source: [backend/app/routers/test_management_exports.py:732](../../../backend/app/routers/test_management_exports.py#L732).
+
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[uuid.UUID]=Query(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
-```
-
-Direct handler error branches (dependency/service errors can add others):
-
-```python
-HTTPException(status_code=403, detail='You do not have access to this project')
+response: Response, scope: AnalyticsScope=Depends(analytics_scope(_SUITES_SCOPE)), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -4430,23 +4432,66 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ```json
 {
-  "operationId": "list_test_suites_api_v1_test_management_suites_get",
+  "operationId": "list_test_suites_in_scope_api_v1_test_management_suites_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "format": "uuid",
             "type": "string"
           },
           {
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
       }
     },
     {
@@ -4497,8 +4542,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-[]
-[{'suite_name': s['suite_name'], 'test_count': s['test_count'], 'passed_count': s['passed_count'], 'failed_count': s['failed_count'], 'last_run_at': s['last_run_at'].isoformat() if s['last_run_at'] else None, 'last_run_id': str(s['last_run_id']) if s['last_run_id'] else None, 'pass_rate': round(s['passed_count'] / s['test_count'] * 100, 1) if s['test_count'] > 0 else None, 'run_count': history_map.get(s['suite_name'], {}).get('run_count', 0), 'total_executions': history_map.get(s['suite_name'], {}).get('total_tests', 0), 'total_passed': history_map.get(s['suite_name'], {}).get('passed_count', 0), 'total_failed': history_map.get(s['suite_name'], {}).get('failed_count', 0), 'total_skipped': history_map.get(s['suite_name'], {}).get('skipped_count', 0), 'total_broken': history_map.get(s['suite_name'], {}).get('broken_count', 0), 'owner_user_id': owner_map.get(s['suite_name'], {}).get('owner_user_id'), 'owner_email': owner_map.get(s['suite_name'], {}).get('owner_email'), 'owner_full_name': owner_map.get(s['suite_name'], {}).get('owner_full_name'), 'owner_is_fallback': owner_map.get(s['suite_name'], {}).get('is_fallback', False)} for s in result]
+rows
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -4515,7 +4559,7 @@ Suite-match semantics: per-row ``tc.suite_name`` OR run-level
 the Java class as the per-row name but ``testlookup.suite`` at the
 run level still surfaces the case under the run-level suite.
 
-Source: [backend/app/routers/test_management_exports.py:1065](../../../backend/app/routers/test_management_exports.py#L1065).
+Source: [backend/app/routers/test_management_exports.py:1206](../../../backend/app/routers/test_management_exports.py#L1206).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4660,7 +4704,7 @@ Get Suite Changes
 
 Return suite membership change events, optionally filtered by run.
 
-Source: [backend/app/routers/test_management_exports.py:1312](../../../backend/app/routers/test_management_exports.py#L1312).
+Source: [backend/app/routers/test_management_exports.py:1450](../../../backend/app/routers/test_management_exports.py#L1450).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4793,7 +4837,7 @@ Get Suite Deleted
 
 Return deleted/needs_review members from the <suite>-deleted bucket.
 
-Source: [backend/app/routers/test_management_exports.py:1359](../../../backend/app/routers/test_management_exports.py#L1359).
+Source: [backend/app/routers/test_management_exports.py:1497](../../../backend/app/routers/test_management_exports.py#L1497).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4897,7 +4941,7 @@ Get Suite Membership
 
 Return current suite membership records from the traceability model.
 
-Source: [backend/app/routers/test_management_exports.py:1262](../../../backend/app/routers/test_management_exports.py#L1262).
+Source: [backend/app/routers/test_management_exports.py:1400](../../../backend/app/routers/test_management_exports.py#L1400).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5014,34 +5058,22 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 ## GET `/api/v1/test-management/suites/{suite_name}/trend`
 
-Get Suite Trend
+Get Suite Trend In Scope
 
 Per-day trend points for one suite over the time window.
 
-Returns ``{suite_name, days, points: [{date, run_count, total_tests,
-passed_count, failed_count, skipped_count, broken_count}]}``. Empty
-days are emitted with all-zero counts so the chart x-axis stays
-continuous.
+``release_id`` repeats (OR) and keeps the runs of those releases. The
+suite is the path segment; a ``suite_name`` query parameter cannot widen
+or narrow it and is reported in ``meta.ignored_filters``.
 
-Powers the trend chart on /coverage/suite and the sparkline on
-/test-management Test Suites. Single source of truth lives in
-``services/suite_history_service.compute_suite_trend`` so /suites
-/reports/summary can adopt the same shape later.
+Source: [backend/app/routers/test_management_exports.py:1113](../../../backend/app/routers/test_management_exports.py#L1113).
 
-Source: [backend/app/routers/test_management_exports.py:1015](../../../backend/app/routers/test_management_exports.py#L1015).
-
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-suite_name: str, project_id: Optional[uuid.UUID]=Query(None), days: int=Query(30, ge=1, le=365), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
-```
-
-Direct handler error branches (dependency/service errors can add others):
-
-```python
-HTTPException(status_code=403, detail='You do not have access to this project')
+suite_name: str, request: Request, scope: AnalyticsScope=Depends(analytics_scope(_SUITE_TREND_SCOPE)), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -5050,7 +5082,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ```json
 {
-  "operationId": "get_suite_trend_api_v1_test_management_suites__suite_name__trend_get",
+  "operationId": "get_suite_trend_in_scope_api_v1_test_management_suites__suite_name__trend_get",
   "parameters": [
     {
       "in": "path",
@@ -5062,30 +5094,52 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "format": "uuid",
             "type": "string"
           },
           {
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
       }
     },
     {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
       "in": "query",
       "name": "days",
       "required": false,
       "schema": {
         "default": 30,
-        "maximum": 365,
-        "minimum": 1,
+        "description": "Window in days, 1-365.",
         "title": "Days",
         "type": "integer"
       }
@@ -5138,8 +5192,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'suite_name': suite_name, 'days': days, 'points': []}
-{'suite_name': suite_name, 'days': days, 'points': points}
+{**body, 'meta': meta}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

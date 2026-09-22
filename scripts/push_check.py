@@ -352,6 +352,19 @@ def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[s
 
 _RATCHET_LINE = re.compile(r"^\s+(app/\S+\.py): (\d+) errors \(baseline (\d+)\)")
 
+# Touched files whose local mypy count is known to differ from CI's: CI's
+# count minus the local count, with the evidence. The baseline holds CI's
+# number, so the local count is shifted by this before it is compared.
+# Add an entry only with a CI log that shows the difference; the ratchet then
+# still fails on any change beyond it, in either direction.
+KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
+    "app/bootstrap.py": (1, (
+        "CI (py3.11, its starlette/uvicorn stubs) reports bootstrap.py:~303 "
+        "'add_middleware ... type[ProxyHeadersMiddleware]' [arg-type]; the local "
+        "install does not. Seen on PR #153 run 35683876813: CI 2, local 1."
+    )),
+}
+
 
 def _touched_backend_modules() -> set[str]:
     """Backend modules this branch changed, as the ratchet names them (app/...)."""
@@ -394,7 +407,14 @@ def check_mypy_touched() -> tuple[bool, str]:
         m = _RATCHET_LINE.match(line)
         if m:
             violations.append((m.group(1), int(m.group(2)), int(m.group(3))))
-    mine = [v for v in violations if v[0] in touched]
+    mine = [
+        (path, now + KNOWN_MYPY_SKEW.get(path, (0, ""))[0], base)
+        for path, now, base in violations
+        if path in touched
+    ]
+    # A documented local/CI difference that accounts exactly for the gap is
+    # not a violation; anything else still is.
+    mine = [v for v in mine if v[1] != v[2]]
     if not mine:
         return True, (
             f"{len(violations)} untouched module(s) differ locally (known "
@@ -473,16 +493,134 @@ def check_reference_drift() -> tuple[bool, str]:
         ]
         if deletions:
             offenders.append(f"{path}: {len(deletions)} deleted line(s)")
-    if offenders:
-        return False, (
-            "reference files differ from "
-            f"{base} by DELETIONS, which means local toolchain skew was "
-            "committed:\n    " + "\n    ".join(offenders)
-            + "\n  Regenerate, then strip the skew hunks:\n"
-            "    python scripts/generate_handoff_reference.py\n"
-            "  and re-run. Deletions here are what CI's --check fails on."
+    if not offenders:
+        return True, f"additions only vs {base}"
+    # Deletions are ALSO what a real API change looks like: a parameter that
+    # becomes repeatable or moves into a sub-dependency rewrites existing
+    # schema lines. Decide exactly instead of guessing: skew is a property of
+    # the toolchain, so it cancels between two LOCAL generations.
+    real, why = reference_delta_is_real(base)
+    if real:
+        return True, f"deletions are a real API change ({why})"
+    return False, (
+        "reference files differ from "
+        f"{base} by DELETIONS that are not this change's own API delta, which "
+        "means local toolchain skew was committed:\n    "
+        + "\n    ".join(offenders)
+        + f"\n  ({why})\n"
+        "  The committed file must be CI's file plus this change's delta:\n"
+        "    python scripts/generate_handoff_reference.py   # after staging\n"
+        "  then, per skewed file, git merge-file -p <origin/main copy> "
+        "<local generation of origin/main> <local generation of HEAD>."
+    )
+
+
+def _normalise(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
+def merged_reference(ci_base: str, local_base: str, local_head: str) -> str | None:
+    """CI's committed ``base`` file plus this change's real delta.
+
+    ``local_head - local_base`` is the change as the LOCAL toolchain renders
+    it; both sides carry the same skew, so it cancels. Applied onto CI's own
+    file with ``git merge-file``, the result is what CI's generator would have
+    committed. ``None`` when the hunks conflict (the delta touches skewed lines,
+    so no exact answer exists).
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for name, body in (("ci", ci_base), ("base", local_base), ("head", local_head)):
+            p = Path(tmp) / name
+            p.write_bytes(_normalise(body).encode("utf-8"))
+            paths.append(str(p))
+        proc = subprocess.run(
+            ["git", "merge-file", "-p", *paths], capture_output=True,
+            env=check_env(), check=False,
         )
-    return True, f"additions only vs {base}"
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8")
+
+
+def _generate_references_at(ref: str, workdir: Path, *, with_working_tree: bool = False
+                            ) -> dict[str, str]:
+    """The skewed reference files as THIS toolchain generates them at ``ref``.
+
+    Builds a throwaway detached worktree, so neither the working tree nor the
+    index is touched. ``with_working_tree`` overlays ``git diff HEAD`` (staged
+    and unstaged tracked changes) so the result describes what this checkout
+    holds now -- the same state the deletion scan above reads. Raises
+    ``RuntimeError`` with the reason on any failure.
+    """
+    code, out = run(["git", "worktree", "add", "--detach", "--quiet", str(workdir), ref], REPO)
+    if code != 0:
+        raise RuntimeError(f"git worktree add {ref} failed: {out.strip()[:300]}")
+    # A shared config with core.bare=true (seen on this machine) leaves a new
+    # worktree without a working tree; the override is per worktree and inert
+    # everywhere else.
+    code, _ = run(["git", "rev-parse", "--is-inside-work-tree"], workdir)
+    if code != 0:
+        run(["git", "config", "--worktree", "core.bare", "false"], workdir)
+    if with_working_tree:
+        diff = subprocess.run(
+            ["git", "diff", "HEAD", "--binary"], cwd=REPO, capture_output=True,
+            env=check_env(), check=False,
+        )
+        if diff.returncode != 0:
+            raise RuntimeError("git diff HEAD failed")
+        if diff.stdout:
+            patch = workdir.parent / f"{workdir.name}.patch"
+            patch.write_bytes(diff.stdout)
+            code, out = run(["git", "apply", "--whitespace=nowarn", str(patch)], workdir)
+            if code != 0:
+                raise RuntimeError(f"could not overlay the working tree: {out.strip()[:300]}")
+    code, out = run([sys.executable, "scripts/generate_handoff_reference.py"], workdir)
+    if code != 0:
+        raise RuntimeError(f"generating references at {ref} failed: {out.strip()[-300:]}")
+    return {
+        path: (workdir / path).read_text(encoding="utf-8")
+        for path in SKEWED_REFERENCES
+    }
+
+
+def reference_delta_is_real(base: str) -> tuple[bool, str]:
+    """True when every skewed file in this checkout equals ``merged_reference``
+    of it: CI's ``base`` copy plus the local ``base -> this checkout`` delta.
+    "This checkout" is HEAD plus staged and unstaged tracked changes, which is
+    what the deletion scan in :func:`check_reference_drift` reads, and what
+    HEAD is by the time the pre-push hook runs."""
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="push-check-refs-"))
+    trees = [tmp / "base", tmp / "head"]
+    try:
+        try:
+            local_base = _generate_references_at(base, trees[0])
+            local_head = _generate_references_at("HEAD", trees[1], with_working_tree=True)
+        except RuntimeError as exc:
+            return False, f"could not derive the real delta: {exc}"
+        for path in SKEWED_REFERENCES:
+            code, ci = _git_stdout("show", f"{base}:{path}")
+            if code != 0:
+                return False, f"could not read {base}:{path}"
+            try:
+                current = (REPO / path).read_text(encoding="utf-8")
+            except OSError as exc:
+                return False, f"could not read {path}: {exc}"
+            expected = merged_reference(ci, local_base[path], local_head[path])
+            if expected is None:
+                return False, f"{path}: the change's delta conflicts with skewed lines"
+            if _normalise(current) != expected:
+                return False, f"{path} is not CI's file plus this change's delta"
+        return True, f"each skewed file == {base} + the local {base}->checkout delta"
+    finally:
+        for tree in trees:
+            if tree.exists():
+                run(["git", "worktree", "remove", "--force", str(tree)], REPO)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _git_stdout(*args: str) -> tuple[int, str]:

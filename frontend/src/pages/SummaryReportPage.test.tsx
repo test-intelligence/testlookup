@@ -20,6 +20,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SummaryReportPage from './SummaryReportPage'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
+import { useReleaseStore } from '@/store/releaseStore'
+import type { EnvelopeMeta } from '@/lib/viz/contracts'
 
 const mockGet = vi.fn()
 const mockDownloadPdf = vi.fn()
@@ -358,6 +360,172 @@ describe('SummaryReportPage', () => {
         mode: 'latest',
       })
     })
+
+    URL.createObjectURL = origCreateUrl
+    URL.revokeObjectURL = origRevoke
+  })
+})
+
+// ── Release scope: the badge and the PDF ────────────────────────────────────
+//
+// The backend now scopes the WHOLE report (totals, suites, steps, PDF) to the
+// selected release and says which releases it applied in `meta.scope.releases`.
+// The old badge ("…across all releases") became false the moment that shipped,
+// and the PDF request still had no release — so the screen and the exported
+// sign-off document disagreed. These pin both.
+
+const RELEASE_ID = '22222222-2222-4222-8222-222222222221'
+
+function makeMeta(releases: EnvelopeMeta['scope']['releases'], overrides: Partial<EnvelopeMeta> = {}): EnvelopeMeta {
+  return {
+    schema_version: 2,
+    scope: {
+      projects: [{ id: 'p1', name: 'GoogleProject' }],
+      releases,
+      suites: [],
+      window: { from: '2026-08-20', to: '2026-09-19', days: 30, timezone: 'UTC' },
+    },
+    totals: { matched_runs: 4, total_runs: 10, matched_executions: 200, total_executions: 500 },
+    pass_rate_basis: 'unique_tests',
+    ignored_filters: [],
+    truncated: false,
+    truncated_total: null,
+    measured: true,
+    reason: null,
+    includes_in_progress: 0,
+    partial_day: null,
+    generated_at: '2026-09-19T10:42:07Z',
+    as_of: '2026-09-19T10:42:07Z',
+    ...overrides,
+  }
+}
+
+describe('SummaryReportPage — release scope badge and PDF', () => {
+  beforeEach(() => {
+    mockGet.mockReset()
+    mockDownloadPdf.mockReset()
+    mockProjectStore.mockImplementation((selector) => selector({
+      activeProjectId: 'p1',
+      activeProject: { id: 'p1', name: 'GoogleProject' },
+    }))
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
+  })
+
+  it('no release: shows no release badge at all', async () => {
+    mockGet.mockResolvedValue(makeReport({ meta: makeMeta([]) }))
+    renderPage()
+    expect(await screen.findByText('Total tests')).toBeInTheDocument()
+
+    expect(screen.queryByTestId('summary-scope-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText('All releases')).not.toBeInTheDocument()
+  })
+
+  it('one release applied: names it and says the PDF matches', async () => {
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport({
+      meta: makeMeta([{ id: RELEASE_ID, name: '2026.09', status: 'in_progress' }]),
+    }))
+    renderPage()
+
+    const badge = await screen.findByTestId('summary-scope-badge')
+    expect(badge).toHaveTextContent('Release: 2026.09')
+    expect(badge.getAttribute('title')).toBe(
+      'Filtered to release 2026.09. This report and its PDF export both cover only this release within the selected time window.',
+    )
+    // The false claim is gone.
+    expect(screen.queryByText('All releases')).not.toBeInTheDocument()
+  })
+
+  it('prefers the server meta over client state (names what was APPLIED)', async () => {
+    // Client asked for one release; the server says it applied a different
+    // name — the badge reports the server.
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport({
+      meta: makeMeta([{ id: RELEASE_ID, name: 'server-name', status: 'released' }]),
+    }))
+    renderPage()
+    expect(await screen.findByTestId('summary-scope-badge')).toHaveTextContent('Release: server-name')
+  })
+
+  it('unattributed: names the sentinel release the server applied', async () => {
+    useReleaseStore.getState().setActiveRelease('unattributed', 'p1')
+    mockGet.mockResolvedValue(makeReport({
+      meta: makeMeta([{ id: 'unattributed', name: 'Unattributed', status: 'unattributed' }]),
+    }))
+    renderPage()
+
+    const badge = await screen.findByTestId('summary-scope-badge')
+    expect(badge).toHaveTextContent('Release: Unattributed')
+    expect(badge.getAttribute('title')).toContain('PDF export both cover only this release')
+  })
+
+  it('release selected but the server applied none: says "All releases"', async () => {
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport({ meta: makeMeta([]) }))
+    renderPage()
+
+    const badge = await screen.findByText('All releases')
+    expect(badge.getAttribute('title')).toBe(
+      'Not filtered by the selected release. This report and its PDF export cover the selected time window across all releases.',
+    )
+    expect(screen.queryByTestId('summary-scope-badge')).not.toBeInTheDocument()
+  })
+
+  it('meta missing (older backend / cached payload): claims only a request, never a scope', async () => {
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+
+    const badge = await screen.findByTestId('summary-scope-badge')
+    expect(badge).toHaveTextContent('Release scope unconfirmed')
+    expect(badge).not.toHaveTextContent(/Release:/)
+    expect(screen.queryByText('All releases')).not.toBeInTheDocument()
+  })
+
+  it('meta missing and no release: shows nothing', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    expect(await screen.findByText('Total tests')).toBeInTheDocument()
+    expect(screen.queryByTestId('summary-scope-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText('All releases')).not.toBeInTheDocument()
+  })
+
+  it('renders a hostile release name as literal text, never as markup', async () => {
+    const hostile = '<img src=x onerror="window.__pwned=1"><b>bold</b>'
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport({
+      meta: makeMeta([{ id: RELEASE_ID, name: hostile, status: 'in_progress' }]),
+    }))
+    renderPage()
+
+    const badge = await screen.findByTestId('summary-scope-badge')
+    expect(badge).toHaveTextContent(`Release: ${hostile}`)
+    expect(badge.querySelector('img')).toBeNull()
+    expect(badge.querySelector('b')).toBeNull()
+    expect(badge.getAttribute('title')).toContain(hostile)
+  })
+
+  it('exports the PDF with the same release the screen was requested with', async () => {
+    useReleaseStore.getState().setActiveRelease(RELEASE_ID, 'p1')
+    mockGet.mockResolvedValue(makeReport({
+      meta: makeMeta([{ id: RELEASE_ID, name: '2026.09', status: 'in_progress' }]),
+    }))
+    mockDownloadPdf.mockResolvedValue(new Blob(['%PDF-1.4'], { type: 'application/pdf' }))
+    const origCreateUrl = URL.createObjectURL
+    const origRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn(() => 'blob:fake')
+    URL.revokeObjectURL = vi.fn()
+
+    renderPage()
+    const button = await screen.findByRole('button', { name: /Export PDF/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() => expect(mockDownloadPdf).toHaveBeenCalled())
+    const screenArgs = mockGet.mock.calls[mockGet.mock.calls.length - 1][0]
+    expect(mockDownloadPdf.mock.calls[0][0]).toEqual({ ...screenArgs, project_id: 'p1' })
+    expect(mockDownloadPdf.mock.calls[0][0].release_id).toBe(RELEASE_ID)
 
     URL.createObjectURL = origCreateUrl
     URL.revokeObjectURL = origRevoke

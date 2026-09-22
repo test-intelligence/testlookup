@@ -19,7 +19,7 @@ double-submitted form deleting twice) and 409 on hash drift. The queued
 transition is committed before dispatch so a second request cannot race
 through the same preview.
 
-Source: [backend/app/routers/retention.py:376](../../../backend/app/routers/retention.py#L376).
+Source: [backend/app/routers/retention.py:377](../../../backend/app/routers/retention.py#L377).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -327,7 +327,7 @@ replays that set.
 Runs that cannot be deleted are reported HERE rather than discovered
 mid-execution, so the count an ADMIN authorises is the count that will go.
 
-Source: [backend/app/routers/retention.py:269](../../../backend/app/routers/retention.py#L269).
+Source: [backend/app/routers/retention.py:270](../../../backend/app/routers/retention.py#L270).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -691,7 +691,7 @@ Two-step confirmation: ``confirmation_name`` must equal the project's
 name exactly (422 on mismatch — the project-reset convention). 409
 while the policy is disabled.
 
-Source: [backend/app/routers/retention.py:226](../../../backend/app/routers/retention.py#L226).
+Source: [backend/app/routers/retention.py:227](../../../backend/app/routers/retention.py#L227).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

@@ -378,6 +378,10 @@ async def analyze_test_case(
         .values(failure_category=fc)
     )
     await db.commit()
+    # VIZ-212: a new ai_analysis row feeds the cached hours-saved model.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(authorized.project_id)
 
     provenance = _build_provenance(
         routing_metadata,

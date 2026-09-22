@@ -10,14 +10,18 @@ Ai Analysis Summary
 
 Return summary of AI analysis results for the project.
 
-Source: [backend/app/routers/analytics.py:584](../../../backend/app/routers/analytics.py#L584).
+VIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses
+of executions in those releases (run's primary release) and suites
+(effective suite).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Source: [backend/app/routers/analytics.py:654](../../../backend/app/routers/analytics.py#L654).
+
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, days: int=Query(30, ge=1, le=365), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_AI_SUMMARY)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -29,6 +33,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "ai_analysis_summary_api_v1_analytics_ai_summary_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
@@ -41,17 +46,60 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
       }
     },
     {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
       "in": "query",
       "name": "days",
       "required": false,
       "schema": {
         "default": 30,
-        "maximum": 365,
-        "minimum": 1,
+        "description": "Window in days, 1-365.",
         "title": "Days",
         "type": "integer"
       }
@@ -104,7 +152,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.ai_analysis_summary(db, str(scoped) if scoped else None, days, allowed_project_ids=allowed)
+with_meta(payload, await build_meta(db, scope))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -122,7 +170,7 @@ Used by the Failures page "Classify" CTA when the AI classifier left a
 large chunk of failures uncategorized — lets the user tag them all in
 one shot rather than per-test.
 
-Source: [backend/app/routers/analytics.py:689](../../../backend/app/routers/analytics.py#L689).
+Source: [backend/app/routers/analytics.py:765](../../../backend/app/routers/analytics.py#L765).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -209,14 +257,14 @@ Coverage Stats
 
 Return test suite coverage stats aggregated over the period.
 
-Source: [backend/app/routers/analytics.py:458](../../../backend/app/routers/analytics.py#L458).
+Source: [backend/app/routers/analytics.py:513](../../../backend/app/routers/analytics.py#L513).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, days: int=Query(30, ge=1, le=365), suite_name: str | None=Query(None, min_length=1), release_id: str | None=Query(None, description='Scope to one release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_WINDOWED)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -228,6 +276,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "coverage_stats_api_v1_analytics_coverage_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
@@ -240,54 +289,62 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
       }
     },
     {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 30,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
-    {
-      "in": "query",
-      "name": "suite_name",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "minLength": 1,
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Suite Name"
-      }
-    },
-    {
-      "description": "Scope to one release",
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope to one release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -338,7 +395,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.coverage_stats(db, str(scoped) if scoped else None, days, suite_name=suite_name, allowed_project_ids=allowed, release_id=release_id)
+with_meta(payload, await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS, truncated=suite_count > shown, truncated_total=suite_count))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -349,14 +406,20 @@ List Defects
 
 Return defects for a project with optional resolution status filter.
 
-Source: [backend/app/routers/analytics.py:515](../../../backend/app/routers/analytics.py#L515).
+VIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects
+whose originating execution ran in one of the releases (the run's primary
+release) and suites (effective suite). A defect with no linked execution
+cannot be placed and is left out while either filter is set. The list has
+no time window (``meta.ignored_filters``): open defects of any age.
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Source: [backend/app/routers/analytics.py:570](../../../backend/app/routers/analytics.py#L570).
+
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, resolution_status: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+resolution_status: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -367,22 +430,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "list_defects_api_v1_analytics_defects_get",
   "parameters": [
-    {
-      "in": "query",
-      "name": "project_id",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Project Id"
-      }
-    },
     {
       "in": "query",
       "name": "resolution_status",
@@ -423,6 +470,66 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -470,7 +577,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.list_defects(db, str(scoped) if scoped else None, resolution_status, page, size, allowed_project_ids=allowed)
+with_meta(payload, await build_meta(db, scope, measured=True))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -483,7 +590,7 @@ Manual Defect Intake. Creates an OPEN defect for the project,
 best-effort attaching to the most-recent matching TestCase when
 ``test_name`` (and optionally ``suite_name``) are supplied.
 
-Source: [backend/app/routers/analytics.py:536](../../../backend/app/routers/analytics.py#L536).
+Source: [backend/app/routers/analytics.py:601](../../../backend/app/routers/analytics.py#L601).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -570,14 +677,14 @@ Failure Categories
 
 Return distribution of failure categories for AI-analysed test cases.
 
-Source: [backend/app/routers/analytics.py:311](../../../backend/app/routers/analytics.py#L311).
+Source: [backend/app/routers/analytics.py:377](../../../backend/app/routers/analytics.py#L377).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, days: int=Query(30, ge=1, le=365), suite_name: str | None=Query(None, min_length=1), release_id: str | None=Query(None, description='Scope to one release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_WINDOWED)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -589,6 +696,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "failure_categories_api_v1_analytics_failure_categories_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
@@ -601,54 +709,62 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
       }
     },
     {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 30,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
-    {
-      "in": "query",
-      "name": "suite_name",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "minLength": 1,
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Suite Name"
-      }
-    },
-    {
-      "description": "Scope to one release",
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope to one release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -699,7 +815,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.failure_categories(db, str(scoped) if scoped else None, days, suite_name=suite_name, allowed_project_ids=allowed, release_id=release_id)
+with_meta(payload, await build_meta(db, scope))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -720,7 +836,7 @@ budget the team chooses, like an error budget.
 Returns ``flake_load: null`` with a reason below the minimum run count,
 since a share computed from three runs is noise wearing a percentage sign.
 
-Source: [backend/app/routers/analytics.py:77](../../../backend/app/routers/analytics.py#L77).
+Source: [backend/app/routers/analytics.py:125](../../../backend/app/routers/analytics.py#L125).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -840,14 +956,14 @@ classifier specificity swings from 100% to no-better-than-random across
 projects, so how much authority a flaky verdict carries is a per-project
 question. It is never "may act" — see the ``policy`` field.
 
-Source: [backend/app/routers/analytics.py:109](../../../backend/app/routers/analytics.py#L109).
+Source: [backend/app/routers/analytics.py:157](../../../backend/app/routers/analytics.py#L157).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str=Query(..., description='Project to score — never a fleet average'), limit: int=Query(50, ge=1, le=200), release_id: str | None=Query(None, description='Only flaky tests that ran in this release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+limit: int=Query(50, ge=1, le=200), scope: AnalyticsScope=Depends(analytics_scope(_FLAKY_SCORES)), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -865,17 +981,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "flaky_scores_api_v1_analytics_flaky_scores_get",
   "parameters": [
     {
-      "description": "Project to score — never a fleet average",
-      "in": "query",
-      "name": "project_id",
-      "required": true,
-      "schema": {
-        "description": "Project to score — never a fleet average",
-        "title": "Project Id",
-        "type": "string"
-      }
-    },
-    {
       "in": "query",
       "name": "limit",
       "required": false,
@@ -888,21 +993,56 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Only flaky tests that ran in this release",
+      "description": "Project to read. Single-valued.",
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "description": "Project to read. Single-valued.",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Only flaky tests that ran in this release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
       }
     },
     {
@@ -953,7 +1093,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'items': [{'test_fingerprint': row.test_fingerprint, 'test_name': row.test_name, 'score': row.score, 'components': row.components, 'weights': row.weights, 'observation_count': row.observation_count, 'confidence': row.confidence, 'computed_at': row.computed_at} for row in rows], 'total': len(rows), 'suppression': decision.to_dict(), 'scope': {'membership': 'release' if release_id else 'project', 'score': 'project_window', 'release_id': release_id, 'note': 'Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.' if release_id else None}}
+{'meta': meta, 'items': [{'test_fingerprint': row.test_fingerprint, 'test_name': row.test_name, 'score': row.score, 'components': row.components, 'weights': row.weights, 'observation_count': row.observation_count, 'confidence': row.confidence, 'computed_at': row.computed_at} for row in rows], 'total': len(rows), 'suppression': decision.to_dict(), 'scope': {'membership': _membership_note(scope, 'Scores')['membership'], 'score': 'project_window', 'release_id': list(release_id) if isinstance(release_id, tuple) else release_id, 'note': 'Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.' if release_id and (not scope.suite_names) else _membership_note(scope, 'Scores')['note']}}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -964,14 +1104,14 @@ Flaky Tests
 
 Return tests with highest flakiness rate (intermittent pass/fail pattern).
 
-Source: [backend/app/routers/analytics.py:47](../../../backend/app/routers/analytics.py#L47).
+Source: [backend/app/routers/analytics.py:102](../../../backend/app/routers/analytics.py#L102).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, days: int=Query(30, ge=1, le=365), limit: int=Query(20, ge=1, le=100), suite_name: str | None=Query(None, min_length=1), release_id: str | None=Query(None, description='Scope to one release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+limit: int=Query(20, ge=1, le=100), scope: AnalyticsScope=Depends(analytics_scope(_WINDOWED)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -982,34 +1122,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "flaky_tests_api_v1_analytics_flaky_tests_get",
   "parameters": [
-    {
-      "in": "query",
-      "name": "project_id",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Project Id"
-      }
-    },
-    {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 30,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
     {
       "in": "query",
       "name": "limit",
@@ -1023,38 +1135,75 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
-      "name": "suite_name",
+      "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "minLength": 1,
             "type": "string"
           },
           {
             "type": "null"
           }
         ],
-        "title": "Suite Name"
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
       }
     },
     {
-      "description": "Scope to one release",
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope to one release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -1105,7 +1254,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.flaky_tests(db, str(scoped) if scoped else None, days, limit, suite_name=suite_name, allowed_project_ids=allowed, release_id=release_id)
+with_meta(payload, await build_meta(db, scope))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1127,7 +1276,7 @@ pipeline persisted one, computing on demand otherwise (no backfill).
 Returns ``{found: false}`` when no analyzed failure matches — the UI
 renders the plain badge then.
 
-Source: [backend/app/routers/analytics.py:365](../../../backend/app/routers/analytics.py#L365).
+Source: [backend/app/routers/analytics.py:420](../../../backend/app/routers/analytics.py#L420).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1269,7 +1418,7 @@ review feature: explicit ``test_suite_owners`` row → ``Project.manager_user_id
 Returns ``{queued: false, reason}`` when no owner can be resolved instead
 of erroring, so the UI can show a clear actionable message.
 
-Source: [backend/app/routers/analytics.py:604](../../../backend/app/routers/analytics.py#L604).
+Source: [backend/app/routers/analytics.py:680](../../../backend/app/routers/analytics.py#L680).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1354,19 +1503,21 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Suite Detail
 
-Return detailed breakdown for a single test suite:
+Return detailed breakdown for a test suite (several ``suite_name`` values
+return their union, and ``suite_name`` in the response is then the list):
   - Summary KPIs (unique tests, executions, pass rate, avg duration)
   - Per-test-case aggregates with flakiness flag
   - Last 10 test runs that included this suite
+No ``suite_name`` matches nothing (``suite_name: ""``), as before.
 
-Source: [backend/app/routers/analytics.py:484](../../../backend/app/routers/analytics.py#L484).
+Source: [backend/app/routers/analytics.py:540](../../../backend/app/routers/analytics.py#L540).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, suite_name: str='', days: int=Query(30, ge=1, le=365), release_id: str | None=Query(None, description='Scope to one release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_WINDOWED)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -1378,6 +1529,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "suite_detail_api_v1_analytics_suite_detail_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
@@ -1390,47 +1542,62 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
       }
     },
     {
-      "in": "query",
-      "name": "suite_name",
-      "required": false,
-      "schema": {
-        "default": "",
-        "title": "Suite Name",
-        "type": "string"
-      }
-    },
-    {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 30,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
-    {
-      "description": "Scope to one release",
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope to one release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -1481,7 +1648,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.suite_detail(db, str(scoped) if scoped else None, suite_name, days, allowed_project_ids=allowed, release_id=release_id)
+with_meta(payload, await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1507,14 +1674,21 @@ would send someone hunting a pattern that is not there.
 a named cause, and inventing one would be worse than admitting we cannot
 tell from the failure text.
 
-Source: [backend/app/routers/analytics.py:229](../../../backend/app/routers/analytics.py#L229).
+VIZ-202: ``release_id`` / ``suite_name`` (repeatable) select the MEMBERS
+that ran in scope -- a member is kept when it has an execution in one of
+the releases and suites -- and a cluster with no member left is dropped.
+The cluster's own statistics (size, cohesion, co-failure runs) are
+project-level and are not recomputed; ``scope`` in the response says so.
+Clusters have no time window (``meta.ignored_filters``).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Source: [backend/app/routers/analytics.py:277](../../../backend/app/routers/analytics.py#L277).
+
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str=Query(..., description='Project to read — clusters are per project'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_CLUSTERS)), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -1532,14 +1706,56 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "systemic_clusters_api_v1_analytics_systemic_clusters_get",
   "parameters": [
     {
-      "description": "Project to read — clusters are per project",
+      "description": "Project to read. Single-valued.",
       "in": "query",
       "name": "project_id",
       "required": true,
       "schema": {
-        "description": "Project to read — clusters are per project",
+        "description": "Project to read. Single-valued.",
         "title": "Project Id",
         "type": "string"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
       }
     },
     {
@@ -1590,7 +1806,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'items': [{'cluster_key': cluster.cluster_key, 'label': cluster.label, 'cause_family': cluster.cause_family, 'size': cluster.size, 'cohesion': cluster.cohesion, 'co_failure_runs': cluster.co_failure_runs, 'window_days': cluster.window_days, 'computed_at': cluster.computed_at, 'members': [{'test_fingerprint': m.test_fingerprint, 'test_name': m.test_name, 'failure_runs': m.failure_runs} for m in members_by_cluster.get(cluster.id, [])]} for cluster in clusters], 'total': len(clusters), 'empty_is_normal': 'Most projects have no systemic clusters. An empty list means no group of tests met the co-failure cohesion bar, not that clustering failed.'}
+with_meta(payload, await build_meta(db, scope, measured=True))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1601,14 +1817,14 @@ Top Failing Tests
 
 Return tests with the highest total failure count in the period.
 
-Source: [backend/app/routers/analytics.py:337](../../../backend/app/routers/analytics.py#L337).
+Source: [backend/app/routers/analytics.py:397](../../../backend/app/routers/analytics.py#L397).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, days: int=Query(30, ge=1, le=365), limit: int=Query(15, ge=1, le=50), suite_name: str | None=Query(None, min_length=1), release_id: str | None=Query(None, description='Scope to one release'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+limit: int=Query(15, ge=1, le=50), scope: AnalyticsScope=Depends(analytics_scope(_WINDOWED)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -1619,34 +1835,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "top_failing_tests_api_v1_analytics_top_failing_get",
   "parameters": [
-    {
-      "in": "query",
-      "name": "project_id",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "title": "Project Id"
-      }
-    },
-    {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 30,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
     {
       "in": "query",
       "name": "limit",
@@ -1660,38 +1848,75 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
-      "name": "suite_name",
+      "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "minLength": 1,
             "type": "string"
           },
           {
             "type": "null"
           }
         ],
-        "title": "Suite Name"
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
       }
     },
     {
-      "description": "Scope to one release",
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope to one release",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -1742,7 +1967,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await analytics_service.top_failing_tests(db, str(scoped) if scoped else None, days, limit, suite_name=suite_name, allowed_project_ids=allowed, release_id=release_id)
+with_meta(payload, await build_meta(db, scope))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

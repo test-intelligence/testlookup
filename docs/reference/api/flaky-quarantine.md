@@ -20,7 +20,7 @@ Sends a content-hash ``ETag`` and honours ``If-None-Match`` with 304 so
 CI can poll cheaply. Empty when the ``flaky_auto_quarantine`` feature
 flag is off (quarantine isn't enforced anywhere in that state).
 
-Source: [backend/app/routers/flaky_quarantine.py:287](../../../backend/app/routers/flaky_quarantine.py#L287).
+Source: [backend/app/routers/flaky_quarantine.py:303](../../../backend/app/routers/flaky_quarantine.py#L303).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -119,7 +119,7 @@ The project's quarantine lifecycle policy. A missing row means the
 code defaults apply (SLA 14d, no auto-defect, no auto-promote, promote
 after 20 passes, detection floor 20% over 10 runs).
 
-Source: [backend/app/routers/flaky_quarantine.py:347](../../../backend/app/routers/flaky_quarantine.py#L347).
+Source: [backend/app/routers/flaky_quarantine.py:363](../../../backend/app/routers/flaky_quarantine.py#L363).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -201,7 +201,7 @@ Update Quarantine Lifecycle Policy
 Create or replace the project's quarantine lifecycle policy.
 QA_LEAD+ — flaky policy ownership is a QA Lead decision.
 
-Source: [backend/app/routers/flaky_quarantine.py:384](../../../backend/app/routers/flaky_quarantine.py#L384).
+Source: [backend/app/routers/flaky_quarantine.py:400](../../../backend/app/routers/flaky_quarantine.py#L400).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -296,7 +296,7 @@ Non-admin callers see only projects they're members of. Admins see
 everything. The ``status_filter`` parameter accepts any value from
 ``FlakyQuarantineStatus``.
 
-Source: [backend/app/routers/flaky_quarantine.py:103](../../../backend/app/routers/flaky_quarantine.py#L103).
+Source: [backend/app/routers/flaky_quarantine.py:106](../../../backend/app/routers/flaky_quarantine.py#L106).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -424,7 +424,7 @@ Create Proposal
 
 Manually propose a test for quarantine. QA_LEAD+ only.
 
-Source: [backend/app/routers/flaky_quarantine.py:186](../../../backend/app/routers/flaky_quarantine.py#L186).
+Source: [backend/app/routers/flaky_quarantine.py:202](../../../backend/app/routers/flaky_quarantine.py#L202).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -511,14 +511,14 @@ Get Quarantine Stats
 
 Return status counts for the UI header.
 
-Source: [backend/app/routers/flaky_quarantine.py:136](../../../backend/app/routers/flaky_quarantine.py#L136).
+Source: [backend/app/routers/flaky_quarantine.py:145](../../../backend/app/routers/flaky_quarantine.py#L145).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[uuid.UUID]=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+scope: AnalyticsScope=Depends(analytics_scope(_STATS_SCOPE)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -530,20 +530,63 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "get_quarantine_stats_api_v1_quarantine_stats_get",
   "parameters": [
     {
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
       "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "format": "uuid",
             "type": "string"
           },
           {
             "type": "null"
           }
         ],
+        "description": "One project (single-valued). Omit for every project you can read.",
         "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
       }
     },
     {
@@ -599,7 +642,7 @@ Get Quarantine Request
 
 
 
-Source: [backend/app/routers/flaky_quarantine.py:169](../../../backend/app/routers/flaky_quarantine.py#L169).
+Source: [backend/app/routers/flaky_quarantine.py:185](../../../backend/app/routers/flaky_quarantine.py#L185).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -686,7 +729,7 @@ Approve Quarantine
 
 
 
-Source: [backend/app/routers/flaky_quarantine.py:223](../../../backend/app/routers/flaky_quarantine.py#L223).
+Source: [backend/app/routers/flaky_quarantine.py:239](../../../backend/app/routers/flaky_quarantine.py#L239).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -783,7 +826,7 @@ Reject Quarantine
 
 
 
-Source: [backend/app/routers/flaky_quarantine.py:243](../../../backend/app/routers/flaky_quarantine.py#L243).
+Source: [backend/app/routers/flaky_quarantine.py:259](../../../backend/app/routers/flaky_quarantine.py#L259).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -880,7 +923,7 @@ Release Quarantine
 
 
 
-Source: [backend/app/routers/flaky_quarantine.py:421](../../../backend/app/routers/flaky_quarantine.py#L421).
+Source: [backend/app/routers/flaky_quarantine.py:437](../../../backend/app/routers/flaky_quarantine.py#L437).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

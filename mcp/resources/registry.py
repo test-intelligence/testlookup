@@ -15,6 +15,19 @@ import json
 import client as api  # type: ignore[import]
 
 
+def without_meta(data):  # noqa: ANN001, ANN201
+    """The analytics body without its VIZ-204 ``meta`` envelope.
+
+    A resource is read passively into an assistant's context, whole: the
+    envelope (scope echo, totals, timestamps -- ~1 KB) is paid for in tokens
+    on every read and says nothing a resource's fixed scope does not. Tools
+    keep it; they are invoked for an answer and may need to cite the scope.
+    """
+    if isinstance(data, dict) and "meta" in data:
+        return {key: value for key, value in data.items() if key != "meta"}
+    return data
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     # ── Project Resources ─────────────────────────────────────────────────────
@@ -38,7 +51,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "/api/v1/metrics/summary",
             params={"project_id": project_id, "days": 7},
         )
-        return json.dumps(data, indent=2, default=str)
+        return json.dumps(without_meta(data), indent=2, default=str)
 
     @mcp.resource("testlookup://projects/{project_id}/runs/latest")
     async def latest_runs(project_id: str) -> str:
@@ -70,7 +83,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "/api/v1/analytics/flaky-tests",
             params={"project_id": project_id, "days": 30, "limit": 20},
         )
-        return json.dumps(data, indent=2, default=str)
+        return json.dumps(without_meta(data), indent=2, default=str)
 
     @mcp.resource("testlookup://projects/{project_id}/defects/open")
     async def open_defects(project_id: str) -> str:
@@ -79,7 +92,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "/api/v1/analytics/defects",
             params={"project_id": project_id, "resolution_status": "OPEN", "size": 100},
         )
-        return json.dumps(data, indent=2, default=str)
+        return json.dumps(without_meta(data), indent=2, default=str)
 
     # ── Run Resources ─────────────────────────────────────────────────────────
 

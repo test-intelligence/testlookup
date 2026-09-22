@@ -389,7 +389,7 @@ Four guards, each a real hazard rather than defensive habit:
   beyond non-empty. Prefixes outside the project's scope are refused and
   REPORTED, never deleted.
 
-Source: [backend/app/routers/runs.py:745](../../../backend/app/routers/runs.py#L745).
+Source: [backend/app/routers/runs.py:749](../../../backend/app/routers/runs.py#L749).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -783,7 +783,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:580](../../../backend/app/routers/runs.py#L580).
+Source: [backend/app/routers/runs.py:584](../../../backend/app/routers/runs.py#L584).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

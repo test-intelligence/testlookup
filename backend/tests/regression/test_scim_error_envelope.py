@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -134,11 +133,34 @@ async def test_near_prefix_does_not_receive_scim_envelope():
     assert json.loads(response.body) == {"detail": "Not found"}
 
 
-def test_application_registers_both_scim_aware_handlers():
-    main_source = (Path(__file__).parents[2] / "app" / "main.py").read_text(encoding="utf-8")
+@pytest.mark.asyncio
+async def test_application_registers_both_scim_aware_handlers():
+    # Behavioural, not textual: whatever handlers the REAL app registers for
+    # these two exception types must still answer a SCIM path with the SCIM
+    # envelope. The app's handlers are composites since VIZ-210 (analytics
+    # routes get their own body, everything else falls through to SCIM, then
+    # FastAPI's default), so a source-text match would say nothing about that.
+    from starlette.exceptions import HTTPException as StarletteHTTPException
 
-    assert "app.add_exception_handler(StarletteHTTPException, scim_http_exception_handler)" in main_source
-    assert (
-        "app.add_exception_handler(RequestValidationError, scim_validation_exception_handler)"
-        in main_source
+    from app.main import app
+
+    http_handler = app.exception_handlers[StarletteHTTPException]
+    response = await http_handler(
+        _request("/api/v1/scim/v2/Users"),
+        StarletteHTTPException(status_code=404, detail="Protocol failure"),
     )
+    assert response.status_code == 404
+    assert response.media_type == "application/scim+json"
+    assert json.loads(response.body)["schemas"] == [
+        "urn:ietf:params:scim:api:messages:2.0:Error"
+    ]
+
+    validation_handler = app.exception_handlers[RequestValidationError]
+    response = await validation_handler(
+        _request("/api/v1/scim/v2/Users"),
+        RequestValidationError(
+            [{"type": "missing", "loc": ("body", "userName"), "msg": "Field required", "input": None}]
+        ),
+    )
+    assert response.status_code == 400
+    assert response.media_type == "application/scim+json"

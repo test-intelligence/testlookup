@@ -19301,6 +19301,18 @@
             "title": "Expired",
             "type": "integer"
           },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
           "proposed": {
             "default": 0,
             "title": "Proposed",
@@ -25014,6 +25026,7 @@
             "type": "number"
           },
           "flaky_test_count": {
+            "description": "Not scoped by release_id. A test is flaky by its last N executions across the project's history (flaky_criteria) -- a run-count window, not a set of runs -- and the dashboard's flaky count and the release gate's flaky cap read that same project-wide figure; restricting it to one release's runs would be a different metric. Scoped by suite_name.",
             "title": "Flaky Test Count",
             "type": "integer"
           },
@@ -25031,6 +25044,18 @@
               }
             ],
             "title": "Latest Run At"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
           },
           "mode": {
             "enum": [
@@ -35043,10 +35068,11 @@
     },
     "/api/v1/analytics/ai-summary": {
       "get": {
-        "description": "Return summary of AI analysis results for the project.",
+        "description": "Return summary of AI analysis results for the project.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses\nof executions in those releases (run's primary release) and suites\n(effective suite).",
         "operationId": "ai_analysis_summary_api_v1_analytics_ai_summary_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -35059,17 +35085,60 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
             "in": "query",
             "name": "days",
             "required": false,
             "schema": {
               "default": 30,
-              "maximum": 365,
-              "minimum": 1,
+              "description": "Window in days, 1-365.",
               "title": "Days",
               "type": "integer"
             }
@@ -35193,6 +35262,7 @@
         "operationId": "coverage_stats_api_v1_analytics_coverage_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -35205,54 +35275,62 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "suite_name",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Suite Name"
-            }
-          },
-          {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -35305,25 +35383,9 @@
     },
     "/api/v1/analytics/defects": {
       "get": {
-        "description": "Return defects for a project with optional resolution status filter.",
+        "description": "Return defects for a project with optional resolution status filter.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects\nwhose originating execution ran in one of the releases (the run's primary\nrelease) and suites (effective suite). A defect with no linked execution\ncannot be placed and is left out while either filter is set. The list has\nno time window (``meta.ignored_filters``): open defects of any age.",
         "operationId": "list_defects_api_v1_analytics_defects_get",
         "parameters": [
-          {
-            "in": "query",
-            "name": "project_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project Id"
-            }
-          },
           {
             "in": "query",
             "name": "resolution_status",
@@ -35361,6 +35423,66 @@
               "minimum": 1,
               "title": "Size",
               "type": "integer"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
             }
           },
           {
@@ -35480,6 +35602,7 @@
         "operationId": "failure_categories_api_v1_analytics_failure_categories_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -35492,54 +35615,62 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "suite_name",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Suite Name"
-            }
-          },
-          {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -35672,17 +35803,6 @@
         "operationId": "flaky_scores_api_v1_analytics_flaky_scores_get",
         "parameters": [
           {
-            "description": "Project to score — never a fleet average",
-            "in": "query",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "description": "Project to score — never a fleet average",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -35695,21 +35815,56 @@
             }
           },
           {
-            "description": "Only flaky tests that ran in this release",
+            "description": "Project to read. Single-valued.",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued.",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Only flaky tests that ran in this release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
             }
           },
           {
@@ -35767,34 +35922,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "project_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -35806,38 +35933,75 @@
             }
           },
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
-            "name": "suite_name",
+            "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "minLength": 1,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Suite Name"
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
             }
           },
           {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -36058,10 +36222,11 @@
     },
     "/api/v1/analytics/suite-detail": {
       "get": {
-        "description": "Return detailed breakdown for a single test suite:\n  - Summary KPIs (unique tests, executions, pass rate, avg duration)\n  - Per-test-case aggregates with flakiness flag\n  - Last 10 test runs that included this suite",
+        "description": "Return detailed breakdown for a test suite (several ``suite_name`` values\nreturn their union, and ``suite_name`` in the response is then the list):\n  - Summary KPIs (unique tests, executions, pass rate, avg duration)\n  - Per-test-case aggregates with flakiness flag\n  - Last 10 test runs that included this suite\nNo ``suite_name`` matches nothing (``suite_name: \"\"``), as before.",
         "operationId": "suite_detail_api_v1_analytics_suite_detail_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -36074,47 +36239,62 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
-            "in": "query",
-            "name": "suite_name",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Suite Name",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -36167,18 +36347,60 @@
     },
     "/api/v1/analytics/systemic-clusters": {
       "get": {
-        "description": "Tests that fail TOGETHER across runs, with the shared cause named.\n\nMost flaky failures are systemic rather than independent, so the useful\ntriage unit is the cluster: \"these 14 tests flip together and it smells\nlike an external dependency\" is one investigation where 14 individual\nflags are 14.\n\n**An empty list is a normal, frequent answer.** In the source study only 10\nof 22 projects containing flaky tests contained any cluster at all. Callers\nmust render \"no clusters\" as a real result — never lower the bar until\nsomething appears, and never present a weak grouping as a cluster, which\nwould send someone hunting a pattern that is not there.\n\n``cause_family`` may be ``unknown``: a cluster is still actionable without\na named cause, and inventing one would be worse than admitting we cannot\ntell from the failure text.",
+        "description": "Tests that fail TOGETHER across runs, with the shared cause named.\n\nMost flaky failures are systemic rather than independent, so the useful\ntriage unit is the cluster: \"these 14 tests flip together and it smells\nlike an external dependency\" is one investigation where 14 individual\nflags are 14.\n\n**An empty list is a normal, frequent answer.** In the source study only 10\nof 22 projects containing flaky tests contained any cluster at all. Callers\nmust render \"no clusters\" as a real result — never lower the bar until\nsomething appears, and never present a weak grouping as a cluster, which\nwould send someone hunting a pattern that is not there.\n\n``cause_family`` may be ``unknown``: a cluster is still actionable without\na named cause, and inventing one would be worse than admitting we cannot\ntell from the failure text.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) select the MEMBERS\nthat ran in scope -- a member is kept when it has an execution in one of\nthe releases and suites -- and a cluster with no member left is dropped.\nThe cluster's own statistics (size, cohesion, co-failure runs) are\nproject-level and are not recomputed; ``scope`` in the response says so.\nClusters have no time window (``meta.ignored_filters``).",
         "operationId": "systemic_clusters_api_v1_analytics_systemic_clusters_get",
         "parameters": [
           {
-            "description": "Project to read — clusters are per project",
+            "description": "Project to read. Single-valued.",
             "in": "query",
             "name": "project_id",
             "required": true,
             "schema": {
-              "description": "Project to read — clusters are per project",
+              "description": "Project to read. Single-valued.",
               "title": "Project Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
             }
           },
           {
@@ -36236,34 +36458,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "project_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -36275,38 +36469,75 @@
             }
           },
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
-            "name": "suite_name",
+            "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "minLength": 1,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Suite Name"
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
             }
           },
           {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -44060,10 +44291,11 @@
     },
     "/api/v1/metrics/summary": {
       "get": {
-        "description": "Return aggregated KPI metrics for the Executive Dashboard.",
+        "description": "Return aggregated KPI metrics for the Executive Dashboard.\n\n``release_id`` and ``suite_name`` repeat: OR within a dimension, AND\nacross. Every release id is authorised (403/404) before any KPI runs.\n\nField-level exception: ``active_defects``, ``flaky_test_count`` and\n``new_failures_24h`` honour ``suite_name`` but NOT ``release_id`` -- they\nare project-wide inputs of the readiness verdict's hard caps\n(``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.",
         "operationId": "dashboard_summary_api_v1_metrics_summary_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -44076,54 +44308,62 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "maximum": 90,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "suite_name",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Suite Name"
-            }
-          },
-          {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-90.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-90.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -44256,6 +44496,7 @@
         "operationId": "trend_data_api_v1_metrics_trends_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -44268,54 +44509,62 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "maximum": 90,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "suite_name",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Suite Name"
-            }
-          },
-          {
-            "description": "Scope to one release",
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope to one release",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-90.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-90.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -53244,20 +53493,63 @@
         "operationId": "get_quarantine_stats_api_v1_quarantine_stats_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "format": "uuid",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
             }
           },
           {
@@ -56209,39 +56501,6 @@
         "operationId": "get_summary_report_api_v1_reports_summary_get",
         "parameters": [
           {
-            "description": "Project UUID. Required; omit returns an empty envelope.",
-            "in": "query",
-            "name": "project_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Project UUID. Required; omit returns an empty envelope.",
-              "title": "Project Id"
-            }
-          },
-          {
-            "description": "Time-window size in days.",
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "description": "Time-window size in days.",
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
             "description": "``window`` aggregates every run in the window; ``latest`` takes the most recent run per suite.",
             "in": "query",
             "name": "mode",
@@ -56258,9 +56517,9 @@
             }
           },
           {
-            "description": "Scope every number in the report to one release. Omit for all releases — the SQL is then byte-identical to before this existed.",
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
-            "name": "release_id",
+            "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -56271,8 +56530,62 @@
                   "type": "null"
                 }
               ],
-              "description": "Scope every number in the report to one release. Omit for all releases — the SQL is then byte-identical to before this existed.",
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -56331,30 +56644,6 @@
         "operationId": "export_summary_report_pdf_api_v1_reports_summary_pdf_get",
         "parameters": [
           {
-            "description": "Project UUID (required for PDF export).",
-            "in": "query",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "description": "Project UUID (required for PDF export).",
-              "format": "uuid",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
             "in": "query",
             "name": "mode",
             "required": false,
@@ -56369,21 +56658,68 @@
             }
           },
           {
-            "description": "Scope the exported report to one release.",
+            "description": "Project to read. Single-valued.",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued.",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Scope the exported report to one release.",
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
             }
           },
           {
@@ -68096,24 +68432,67 @@
     },
     "/api/v1/test-management/suites": {
       "get": {
-        "description": "Return test suites grouped by suite_name, combining automation test_cases\n(from ingested runs) and manually authored managed_test_cases.",
-        "operationId": "list_test_suites_api_v1_test_management_suites_get",
+        "description": "Return test suites grouped by suite_name, combining automation test_cases\n(from ingested runs) and manually authored managed_test_cases.\n\n``release_id`` / ``suite_name`` repeat (OR within each). A release keeps\nthe suites and counts of runs in those releases (manual cases, which never\nran in a release, are then left out); a suite name keeps those suites\n(trimmed, case-insensitive). The body stays a JSON list, so a bounded\nsummary of the analytics envelope (ids and counts, no names, <= 2 KB;\n``analytics_meta.header_summary``) travels in the ``X-Analytics-Meta``\nheader (VIZ-204).",
+        "operationId": "list_test_suites_in_scope_api_v1_test_management_suites_get",
         "parameters": [
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "format": "uuid",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
             }
           },
           {
@@ -68158,7 +68537,7 @@
             "JWT": []
           }
         ],
-        "summary": "List Test Suites",
+        "summary": "List Test Suites In Scope",
         "tags": [
           "Test Management"
         ]
@@ -68569,8 +68948,8 @@
     },
     "/api/v1/test-management/suites/{suite_name}/trend": {
       "get": {
-        "description": "Per-day trend points for one suite over the time window.\n\nReturns ``{suite_name, days, points: [{date, run_count, total_tests,\npassed_count, failed_count, skipped_count, broken_count}]}``. Empty\ndays are emitted with all-zero counts so the chart x-axis stays\ncontinuous.\n\nPowers the trend chart on /coverage/suite and the sparkline on\n/test-management Test Suites. Single source of truth lives in\n``services/suite_history_service.compute_suite_trend`` so /suites\n/reports/summary can adopt the same shape later.",
-        "operationId": "get_suite_trend_api_v1_test_management_suites__suite_name__trend_get",
+        "description": "Per-day trend points for one suite over the time window.\n\n``release_id`` repeats (OR) and keeps the runs of those releases. The\nsuite is the path segment; a ``suite_name`` query parameter cannot widen\nor narrow it and is reported in ``meta.ignored_filters``.",
+        "operationId": "get_suite_trend_in_scope_api_v1_test_management_suites__suite_name__trend_get",
         "parameters": [
           {
             "in": "path",
@@ -68582,30 +68961,52 @@
             }
           },
           {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "format": "uuid",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
             "in": "query",
             "name": "days",
             "required": false,
             "schema": {
               "default": 30,
-              "maximum": 365,
-              "minimum": 1,
+              "description": "Window in days, 1-365.",
               "title": "Days",
               "type": "integer"
             }
@@ -68652,7 +69053,7 @@
             "JWT": []
           }
         ],
-        "summary": "Get Suite Trend",
+        "summary": "Get Suite Trend In Scope",
         "tags": [
           "Test Management"
         ]
@@ -69560,10 +69961,23 @@
     },
     "/api/v1/value-metrics": {
       "get": {
-        "description": "Return operational value metrics for a project (or all) over a time\nwindow, including the US-12.1 engineer-hours-saved model (``months``\nbounds the monthly trend).",
+        "description": "Return operational value metrics for a project (or all) over a time\nwindow, including the US-12.1 engineer-hours-saved model (``months``\nbounds the monthly trend).\n\n``release_id`` / ``suite_name`` are accepted, authorised and declared in\n``meta.ignored_filters`` with the reason: these are time-based counts\nover the project, and most of them have no release or suite to filter.",
         "operationId": "get_metrics_api_v1_value_metrics_get",
         "parameters": [
           {
+            "in": "query",
+            "name": "months",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 24,
+              "minimum": 1,
+              "title": "Months",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -69576,30 +69990,61 @@
                   "type": "null"
                 }
               ],
+              "description": "One project (single-valued). Omit for every project you can read.",
               "title": "Project Id"
             }
           },
           {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
             "in": "query",
             "name": "days",
             "required": false,
             "schema": {
               "default": 30,
-              "maximum": 365,
-              "minimum": 1,
+              "description": "Window in days, 1-365.",
               "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "months",
-            "required": false,
-            "schema": {
-              "default": 6,
-              "maximum": 24,
-              "minimum": 1,
-              "title": "Months",
               "type": "integer"
             }
           },

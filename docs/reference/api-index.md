@@ -519,12 +519,12 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/test-management/suite-reviews` | List Suite Reviews | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suite-reviews/by-run/{test_run_id}` | List Reviews For Run | [Test Management](api/test-management.md) |
 | PUT | `/api/v1/test-management/suite-reviews/by-run/{test_run_id}/{suite_name}` | Upsert Review For Run Suite | [Test Management](api/test-management.md) |
-| GET | `/api/v1/test-management/suites` | List Test Suites | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/suites` | List Test Suites In Scope | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/cases` | Get Suite Test Cases | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/changes` | Get Suite Changes | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/deleted` | Get Suite Deleted | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/membership` | Get Suite Membership | [Test Management](api/test-management.md) |
-| GET | `/api/v1/test-management/suites/{suite_name}/trend` | Get Suite Trend | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/suites/{suite_name}/trend` | Get Suite Trend In Scope | [Test Management](api/test-management.md) |
 | POST | `/api/v1/training/export` | Trigger Export | [Feedback & Training](api/feedback-training.md) |
 | POST | `/api/v1/training/finetune` | Trigger Finetune | [Feedback & Training](api/feedback-training.md) |
 | POST | `/api/v1/training/promote` | Promote Model | [Feedback & Training](api/feedback-training.md) |

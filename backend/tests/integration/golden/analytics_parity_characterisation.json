@@ -1,0 +1,734 @@
+{
+ "ai_summary/member_all_projects": {
+  "body": {
+   "avg_confidence": 78.3,
+   "backend_errors": 1,
+   "flaky_detected": 2,
+   "high_confidence": 2,
+   "needs_review": 1,
+   "pod_issues": 0,
+   "total_analysed": 3
+  },
+  "status": 200
+ },
+ "ai_summary/none": {
+  "body": {
+   "avg_confidence": 78.3,
+   "backend_errors": 1,
+   "flaky_detected": 2,
+   "high_confidence": 2,
+   "needs_review": 1,
+   "pod_issues": 0,
+   "total_analysed": 3
+  },
+  "status": 200
+ },
+ "defects/member_all_projects": {
+  "body": {
+   "items": [
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T11:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": "v1.0.0-rc1 — Release Candidate",
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T10:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": "v0.6.0 — Private Beta",
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T09:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": null,
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": null,
+     "test_name": null
+    }
+   ],
+   "page": 1,
+   "pages": 1,
+   "size": 20,
+   "total": 3
+  },
+  "status": 200
+ },
+ "defects/none": {
+  "body": {
+   "items": [
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T11:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": "v1.0.0-rc1 — Release Candidate",
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": "CheckoutSuite",
+     "test_name": "testCheckoutCase02"
+    },
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T10:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": "v0.6.0 — Private Beta",
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": "InventorySuite",
+     "test_name": "testInventoryCase02"
+    },
+    {
+     "ai_confidence_score": null,
+     "created_at": "2026-09-21T09:00:00+00:00",
+     "external_status_at": null,
+     "external_status_conflict": false,
+     "failure_category": null,
+     "id": "<uuid>",
+     "jira_status": null,
+     "jira_ticket_id": null,
+     "jira_ticket_url": null,
+     "release_name": null,
+     "resolution_status": "OPEN",
+     "resolved_at": null,
+     "suite_name": null,
+     "test_name": null
+    }
+   ],
+   "page": 1,
+   "pages": 1,
+   "size": 20,
+   "total": 3
+  },
+  "status": 200
+ },
+ "quarantine_stats/member_all_projects": {
+  "body": {
+   "approved": 1,
+   "detected": 0,
+   "expired": 0,
+   "proposed": 1,
+   "quarantined": 1,
+   "re_quarantined": 0,
+   "recheck_scheduled": 0,
+   "rejected": 0,
+   "released": 1,
+   "total_live": 3
+  },
+  "status": 200
+ },
+ "quarantine_stats/none": {
+  "body": {
+   "approved": 1,
+   "detected": 0,
+   "expired": 0,
+   "proposed": 1,
+   "quarantined": 1,
+   "re_quarantined": 0,
+   "recheck_scheduled": 0,
+   "rejected": 0,
+   "released": 1,
+   "total_live": 3
+  },
+  "status": 200
+ },
+ "systemic_clusters/member_all_projects": {
+  "body": {
+   "detail": [
+    {
+     "input": null,
+     "loc": [
+      "query",
+      "project_id"
+     ],
+     "msg": "Field required",
+     "type": "missing"
+    }
+   ]
+  },
+  "status": 422
+ },
+ "systemic_clusters/none": {
+  "body": {
+   "empty_is_normal": "Most projects have no systemic clusters. An empty list means no group of tests met the co-failure cohesion bar, not that clustering failed.",
+   "items": [
+    {
+     "cause_family": "unknown",
+     "cluster_key": "viz-c",
+     "co_failure_runs": 6,
+     "cohesion": 0.7,
+     "computed_at": "2026-09-21T11:00:00+00:00",
+     "label": "cluster viz-c",
+     "members": [
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "6c61669d7cf7c1e3",
+       "test_name": "testInventoryCase05"
+      },
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "74cd38b04975719b",
+       "test_name": "testInventoryCase02"
+      }
+     ],
+     "size": 4,
+     "window_days": 60
+    },
+    {
+     "cause_family": "unknown",
+     "cluster_key": "viz-b",
+     "co_failure_runs": 5,
+     "cohesion": 0.8,
+     "computed_at": "2026-09-21T11:00:00+00:00",
+     "label": "cluster viz-b",
+     "members": [
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "0f5f170c86fcd674",
+       "test_name": "testInventoryCase03"
+      },
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "6c61669d7cf7c1e3",
+       "test_name": "testInventoryCase05"
+      }
+     ],
+     "size": 3,
+     "window_days": 60
+    },
+    {
+     "cause_family": "unknown",
+     "cluster_key": "viz-a",
+     "co_failure_runs": 4,
+     "cohesion": 0.9,
+     "computed_at": "2026-09-21T11:00:00+00:00",
+     "label": "cluster viz-a",
+     "members": [
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "0340c6f08b524cb4",
+       "test_name": "testCheckoutCase02"
+      },
+      {
+       "failure_runs": 3,
+       "test_fingerprint": "0f5f170c86fcd674",
+       "test_name": "testInventoryCase03"
+      }
+     ],
+     "size": 2,
+     "window_days": 60
+    }
+   ],
+   "total": 3
+  },
+  "status": 200
+ },
+ "tm_suite_trend/member_all_projects": {
+  "body": {
+   "days": 30,
+   "points": [],
+   "suite_name": "CheckoutSuite"
+  },
+  "status": 200
+ },
+ "tm_suite_trend/none": {
+  "body": {
+   "days": 30,
+   "points": [
+    {
+     "broken_count": 0,
+     "date": "2026-08-22",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-23",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-24",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-25",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-26",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-27",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-28",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-29",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-30",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-08-31",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-01",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-02",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-03",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-04",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-05",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-06",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-07",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-08",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-09",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-10",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-11",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-12",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-13",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-14",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-15",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-16",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-17",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-18",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-19",
+     "failed_count": 1,
+     "passed_count": 5,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-20",
+     "failed_count": 0,
+     "passed_count": 0,
+     "run_count": 0,
+     "skipped_count": 0,
+     "total_tests": 0
+    },
+    {
+     "broken_count": 0,
+     "date": "2026-09-21",
+     "failed_count": 0,
+     "passed_count": 6,
+     "run_count": 1,
+     "skipped_count": 0,
+     "total_tests": 6
+    }
+   ],
+   "suite_name": "CheckoutSuite"
+  },
+  "status": 200
+ },
+ "tm_suites/member_all_projects": {
+  "body": [],
+  "status": 200
+ },
+ "tm_suites/none": {
+  "body": [
+   {
+    "failed_count": 1,
+    "last_run_at": "2026-09-21T11:35:00+00:00",
+    "last_run_id": "<run:viz-3044>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 84.0,
+    "passed_count": 21,
+    "run_count": 45,
+    "suite_name": "CheckoutSuite",
+    "test_count": 25,
+    "total_broken": 0,
+    "total_executions": 270,
+    "total_failed": 19,
+    "total_passed": 251,
+    "total_skipped": 0
+   },
+   {
+    "failed_count": 1,
+    "last_run_at": "2026-09-21T11:35:00+00:00",
+    "last_run_id": "<run:viz-3044>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 80.0,
+    "passed_count": 4,
+    "run_count": 45,
+    "suite_name": "InventorySuite",
+    "test_count": 5,
+    "total_broken": 0,
+    "total_executions": 225,
+    "total_failed": 25,
+    "total_passed": 200,
+    "total_skipped": 0
+   },
+   {
+    "failed_count": 0,
+    "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+    "last_run_id": "<run:viz-3043>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 100.0,
+    "passed_count": 4,
+    "run_count": 44,
+    "suite_name": "NotificationSuite",
+    "test_count": 4,
+    "total_broken": 11,
+    "total_executions": 176,
+    "total_failed": 0,
+    "total_passed": 162,
+    "total_skipped": 0
+   },
+   {
+    "failed_count": 0,
+    "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+    "last_run_id": "<run:viz-3043>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 100.0,
+    "passed_count": 4,
+    "run_count": 44,
+    "suite_name": "ReportingSuite",
+    "test_count": 4,
+    "total_broken": 0,
+    "total_executions": 176,
+    "total_failed": 5,
+    "total_passed": 159,
+    "total_skipped": 9
+   },
+   {
+    "failed_count": 0,
+    "last_run_at": "2026-08-05T10:09:44.364948+00:00",
+    "last_run_id": "<run:viz-3016>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 100.0,
+    "passed_count": 3,
+    "run_count": 17,
+    "suite_name": "LegacyBatchSuite",
+    "test_count": 3,
+    "total_broken": 0,
+    "total_executions": 51,
+    "total_failed": 4,
+    "total_passed": 47,
+    "total_skipped": 0
+   },
+   {
+    "failed_count": 0,
+    "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+    "last_run_id": "<run:viz-3043>",
+    "owner_email": null,
+    "owner_full_name": null,
+    "owner_is_fallback": false,
+    "owner_user_id": null,
+    "pass_rate": 0.0,
+    "passed_count": 0,
+    "run_count": 44,
+    "suite_name": "QuarantinedSuite",
+    "test_count": 3,
+    "total_broken": 0,
+    "total_executions": 132,
+    "total_failed": 0,
+    "total_passed": 0,
+    "total_skipped": 132
+   }
+  ],
+  "status": 200
+ },
+ "value_metrics/member_all_projects": {
+  "body": {},
+  "status": 200
+ },
+ "value_metrics/none": {
+  "body": {
+   "assumptions": {
+    "blocked_run_wait_minutes": 30.0,
+    "defect_filing_minutes": 15.0,
+    "triage_minutes_per_failure": 20.0
+   },
+   "assumptions_source": "default",
+   "available": false,
+   "defects_auto_grouped": 0,
+   "defects_promoted": 0,
+   "duplicate_tickets_avoided": 0,
+   "flaky_tests_identified": 0,
+   "headline": {
+    "fte_equivalent_30d": 0.0,
+    "hours_saved_30d": 0.0
+   },
+   "insufficient_data_reason": "no automation signal in the last 30 days",
+   "intelligence_reports_generated": 0,
+   "methodology_version": 1,
+   "monthly": [
+    {
+     "auto_triaged": 3,
+     "clustered_failures": 0,
+     "duplicates_absorbed": 0,
+     "hours_dedup": 0.0,
+     "hours_quarantine": 0.0,
+     "hours_total": 0.0,
+     "hours_triage": 0.0,
+     "month": "2026-09-01",
+     "quarantine_suppressed_failures": 0,
+     "runs_unblocked_proxy": 0
+    }
+   ],
+   "period_days": 30,
+   "project_id": "<P1>",
+   "quarantine_recommended": 0,
+   "release_overrides": 0,
+   "releases_conditional": 0,
+   "risky_releases_blocked": 0,
+   "tests_grouped": 0,
+   "triage_time_saved_hours": 0.0,
+   "triage_time_saved_minutes": 0.0
+  },
+  "status": 200
+ }
+}

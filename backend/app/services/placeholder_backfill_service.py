@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid as _uuid_mod
+from typing import Any
 
 import structlog
 from sqlalchemy import func, insert as sa_insert, select
@@ -143,12 +144,15 @@ async def backfill_placeholders_all_projects(
     project_ids = [
         row[0] for row in (await db.execute(select(Project.id))).all()
     ]
-    totals = {
+    totals: dict[str, Any] = {
         "projects_scanned": 0,
         "runs_scanned": 0,
         "runs_filled": 0,
         "rows_synthesised": 0,
         "errors": 0,
+        # Projects that received rows, so the caller can bump each one's
+        # analytics epoch after its commit (VIZ-212).
+        "project_ids": [],
     }
     # NOTE: caller's session is shared across projects only for the
     # candidate-discovery; we don't commit here. The Celery wrapper
@@ -163,6 +167,8 @@ async def backfill_placeholders_all_projects(
             totals["runs_scanned"] += int(result.get("runs_scanned", 0))
             totals["runs_filled"] += int(result.get("runs_filled", 0))
             totals["rows_synthesised"] += int(result.get("rows_synthesised", 0))
+            if int(result.get("runs_filled", 0)):
+                totals["project_ids"].append(str(project_id))
         except Exception as exc:
             totals["errors"] += 1
             logger.warning(

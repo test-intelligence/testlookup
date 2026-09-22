@@ -10,6 +10,16 @@ from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, Project, TestCase, TestRun, TriageStatus
+from app.services.analytics_scope import (
+    ReleaseArg,
+    SuiteArg,
+    effective_suite_sql,
+    release_filter_sql,
+    run_label_match_sql,
+    scoped_text,
+    suite_filter_sql,
+    suite_match_sql,
+)
 from app.services.flaky_investigator import determine_likely_cause
 from app.services.flaky_signals import (
     MIN_FLIPS_FOR_INTERMITTENCY as _FLAKY_MIN_FLIPS,
@@ -31,90 +41,41 @@ def _row_dict(row) -> dict:
     return data
 
 
-def _normalise_suite_name(suite_name: str | None) -> str:
-    return (suite_name or "").strip().lower()
-
-
-def _effective_suite_sql() -> str:
-    """SQL expression for a test_case row's *effective* suite name.
-
-    For ``live_stream`` runs we trust the run-level
-    ``tr.primary_suite_name`` (the session label the SDK supplied —
-    e.g. "API Regression Multi-Class"), because those SDKs commonly
-    stamp the test class name on every per-event ``tc.suite_name``.
-    For everything else (file uploads) the per-event ``tc.suite_name``
-    is authoritative — multi-``<testsuite>`` XML inputs need each test
-    bucketed by its own suite. Shared by the filter + grouping helpers
-    so "which suite does this test belong to" is answered identically
-    everywhere.
-    """
-    return (
-        "COALESCE("
-        "CASE WHEN tr.trigger_source = 'live_stream' "
-        "THEN NULLIF(TRIM(tr.primary_suite_name), '') ELSE NULL END, "
-        "NULLIF(TRIM(tc.suite_name), '')"
-        ")"
-    )
+# The effective-suite rule and every suite / release fragment live in
+# ``analytics_scope`` (VIZ-201): five copies of the suite rule had drifted
+# apart, and ``tests/test_analytics_scope_ratchet.py`` now fails on a sixth.
+# These names stay as thin delegates for existing importers.
+_effective_suite_sql = effective_suite_sql
 
 
 def _suite_filter_sql() -> str:
-    # Match by the *effective* suite, not a loose OR. An earlier OR-based
-    # filter (``tc.suite_name = :s OR tr.primary_suite_name = :s``)
-    # over-returned: a multi-suite run whose ``primary_suite_name``
-    # matched leaked EVERY test of that run, so e.g. an Order test
-    # surfaced under "Smoke suite". Equality on the effective suite
-    # attributes each test to exactly one suite — the session label for
-    # live_stream rows, the per-event suite otherwise. (Bug 2026-05-20.)
-    return f"AND LOWER({_effective_suite_sql()}) = :suite_name"
+    """The single-suite filter fragment (``AND ... = :suite_name``)."""
+    return suite_filter_sql({}, "_")
 
 
-def _add_suite_param(params: dict, suite_name: str | None) -> str:
-    suite_key = _normalise_suite_name(suite_name)
-    if not suite_key:
-        return ""
-    params["suite_name"] = suite_key
-    return _suite_filter_sql()
+def _add_suite_param(params: dict, suite_name: SuiteArg) -> str:
+    """Suite scoping: ``""`` when none, one name exactly as before VIZ-201,
+    several as an expanding ``IN`` (OR within the dimension)."""
+    return suite_filter_sql(params, suite_name)
 
 
 def _add_release_param(
     params: dict,
-    release_id: str | uuid.UUID | None,
+    release_id: ReleaseArg,
     *,
     table_alias: str = "tr",
 ) -> str:
-    """Release scoping for raw-SQL analytics queries (S4a).
+    """Release scoping for raw-SQL analytics queries (S4a, VIZ-201).
 
-    Returns an SQL fragment, or ``""`` when no release is requested — so a
-    caller that omits ``release_id`` produces byte-identical SQL to before
-    this existed. That is NFR1, and it is what lets the read path ship
-    incrementally: every one of these endpoints keeps answering exactly as it
-    did until somebody asks it for a release.
-
-    **Deliberately a conditional fragment, not a null-tolerant predicate.**
-    The obvious alternative is to always emit
-    ``AND (:release_id IS NULL OR tr.primary_release_id = :release_id)``,
-    which reads more simply and is a well-known way to lose an index: the
-    planner cannot know at plan time which branch applies, so it stops using
-    ``ix_test_runs_project_release_created`` and falls back to a scan — for
-    every call, including the overwhelming majority that pass no release at
-    all. Appending nothing when there is nothing to filter keeps both plans
-    clean.
-
-    Reads the DENORMALIZED column rather than joining ``release_test_run_links``
-    (migration 0152): a join would add a table to every one of these queries
-    and, worse, would multiply rows for a run linked to more than one release,
-    silently inflating every COUNT and AVG in this module.
+    Returns ``""`` when no release is requested, so a caller that omits
+    ``release_id`` produces byte-identical SQL to before this existed (NFR1).
+    Deliberately a conditional fragment, never
+    ``AND (:release_id IS NULL OR tr.primary_release_id = :release_id)``: the
+    planner cannot resolve that at plan time and stops using
+    ``ix_test_runs_project_release_created`` for every call. See
+    ``analytics_scope.release_filter_sql``.
     """
-    if release_id is None:
-        return ""
-    from app.core.release_filter import is_unattributed
-
-    if is_unattributed(release_id):
-        # No bind parameter: the predicate is a NULL test, and binding a value
-        # nothing references would be dead weight.
-        return f"AND {table_alias}.primary_release_id IS NULL"
-    params["release_id"] = str(release_id)
-    return f"AND {table_alias}.primary_release_id = :release_id"
+    return release_filter_sql(params, release_id, table_alias=table_alias)
 
 
 def _tenant_filter(
@@ -183,11 +144,11 @@ async def flaky_tests(
     project_id: str | None,
     days: int,
     limit: int,
-    suite_name: str | None = None,
+    suite_name: SuiteArg = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     # S4a. None = no release filter, and the SQL is then byte-identical
-    # to before this parameter existed (NFR1).
-    release_id: Optional[str] = None,
+    # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
+    release_id: ReleaseArg = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days), "limit": limit}
     project_filter = _tenant_filter(
@@ -206,7 +167,7 @@ async def flaky_tests(
     # test_health_coach_service._MIN_FLIPS_FOR_QUARANTINE (#462), and the same one
     # the agents already enforce ("Flaky classification requires status
     # transitions (oscillation, not regression)" -- anomaly_agent).
-    query = text(
+    query = scoped_text(
         f"""
         SELECT
             test_fingerprint,
@@ -250,7 +211,8 @@ async def flaky_tests(
                ) >= {_FLAKY_MIN_FLIPS}
         ORDER BY failure_rate_pct DESC
         LIMIT :limit
-        """
+        """,
+        params,
     )
     result = await db.execute(query, params)
     items = [dict(row._mapping) for row in result.fetchall()]
@@ -287,7 +249,7 @@ async def flaky_tests(
         # EVERY release, in one list, with `source` the only hint and nothing
         # saying the two halves were scoped differently.
         m_release_filter = _add_release_param(manual_params, release_id)
-        manual_query = text(
+        manual_query = scoped_text(
             f"""
             SELECT
                 tc.test_fingerprint,
@@ -315,7 +277,8 @@ async def flaky_tests(
             GROUP BY tc.test_fingerprint
             ORDER BY last_seen DESC
             LIMIT :limit
-            """
+            """,
+            manual_params,
         )
         for row in (await db.execute(manual_query, manual_params)).fetchall():
             data = dict(row._mapping)
@@ -417,11 +380,11 @@ async def failure_categories(
     db: AsyncSession,
     project_id: str | None,
     days: int,
-    suite_name: str | None = None,
+    suite_name: SuiteArg = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     # S4a. None = no release filter, and the SQL is then byte-identical
-    # to before this parameter existed (NFR1).
-    release_id: Optional[str] = None,
+    # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
+    release_id: ReleaseArg = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days)}
     project_filter = _tenant_filter(
@@ -432,7 +395,7 @@ async def failure_categories(
     # Grouped by (category, status) so the derived failure-kind triad
     # (US-9.1) can apply its BROKEN nudge; ``items`` keeps its historical
     # per-category shape by re-aggregating in Python (rows are few).
-    query = text(
+    query = scoped_text(
         f"""
         SELECT
             COALESCE(tc.failure_category, 'UNKNOWN') AS category,
@@ -447,7 +410,8 @@ async def failure_categories(
           {release_filter}
         GROUP BY category, tc.status
         ORDER BY count DESC
-        """
+        """,
+        params,
     )
     result = await db.execute(query, params)
     raw_rows = [dict(row._mapping) for row in result.fetchall()]
@@ -497,11 +461,11 @@ async def top_failing_tests(
     project_id: str | None,
     days: int,
     limit: int,
-    suite_name: str | None = None,
+    suite_name: SuiteArg = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     # S4a. None = no release filter, and the SQL is then byte-identical
-    # to before this parameter existed (NFR1).
-    release_id: Optional[str] = None,
+    # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
+    release_id: ReleaseArg = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days), "limit": limit}
     project_filter = _tenant_filter(
@@ -509,7 +473,7 @@ async def top_failing_tests(
     )
     suite_filter = _add_suite_param(params, suite_name)
     release_filter = _add_release_param(params, release_id)
-    query = text(
+    query = scoped_text(
         f"""
         SELECT
             tc.test_fingerprint,
@@ -529,7 +493,8 @@ async def top_failing_tests(
         GROUP BY tc.test_fingerprint
         ORDER BY fail_count DESC
         LIMIT :limit
-        """
+        """,
+        params,
     )
     result = await db.execute(query, params)
     items = [dict(row._mapping) for row in result.fetchall()]
@@ -566,11 +531,11 @@ async def coverage_stats(
     db: AsyncSession,
     project_id: str | None,
     days: int,
-    suite_name: str | None = None,
+    suite_name: SuiteArg = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     # S4a. None = no release filter, and the SQL is then byte-identical
-    # to before this parameter existed (NFR1).
-    release_id: Optional[str] = None,
+    # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
+    release_id: ReleaseArg = None,
 ) -> dict:
     period_start = _period_start(days)
     params: dict = {"period_start": period_start}
@@ -588,8 +553,8 @@ async def coverage_stats(
     # helper so grouping and filtering can never drift; the extra
     # 'Unknown Suite' fallback keeps NULL-suite rows in one labelled
     # bucket rather than dropping them.
-    effective_suite = f"COALESCE({_effective_suite_sql()}, 'Unknown Suite')"
-    suite_query = text(
+    effective_suite = f"COALESCE({effective_suite_sql()}, 'Unknown Suite')"
+    suite_query = scoped_text(
         f"""
         SELECT
             {effective_suite} AS suite_name,
@@ -638,9 +603,10 @@ async def coverage_stats(
         GROUP BY {effective_suite}
         ORDER BY unique_tests DESC
         LIMIT 50
-        """
+        """,
+        params,
     )
-    total_query = text(
+    total_query = scoped_text(
         f"""
         SELECT
             COUNT(DISTINCT tc.test_fingerprint)  AS unique_tests,
@@ -673,7 +639,8 @@ async def coverage_stats(
           {project_filter}
           {suite_filter}
           {release_filter}
-        """
+        """,
+        params,
     )
     # Both halves of ONE response must share a scope. `suite_query` above was
     # release-filtered and this one was not, so the page rendered a
@@ -693,18 +660,16 @@ async def coverage_stats(
 async def suite_detail(
     db: AsyncSession,
     project_id: str | None,
-    suite_name: str,
+    suite_name: SuiteArg,
     days: int,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     # S4a. None = no release filter, and the SQL is then byte-identical
-    # to before this parameter existed (NFR1).
-    release_id: Optional[str] = None,
+    # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
+    release_id: ReleaseArg = None,
 ) -> dict:
-    params: dict = {
-        "suite_name": suite_name,
-        "suite_key": (suite_name or "").strip().lower(),
-        "period_start": _period_start(days),
-    }
+    """One suite's drill-down -- or, since VIZ-201, the union of several
+    (``suite_name`` a sequence; the echoed ``suite_name`` is then the list)."""
+    params: dict = {"period_start": _period_start(days)}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
@@ -725,8 +690,10 @@ async def suite_detail(
     # ``_effective_suite_sql`` with ``coverage_stats`` + ``_suite_filter_sql``
     # so attribution can never drift. (Same fix as Bug 2026-05-20, which
     # migrated the other analytics queries but missed this one.)
-    suite_match = f"LOWER({_effective_suite_sql()}) = :suite_key"
-    summary_query = text(
+    # No suite matches nothing (``= ''``), never everything: this query is
+    # ABOUT the suite. One suite binds ``:suite_key`` exactly as before.
+    suite_match = suite_match_sql(params, suite_name)
+    summary_query = scoped_text(
         f"""
         SELECT
             COUNT(DISTINCT tc.test_fingerprint)                              AS unique_tests,
@@ -752,9 +719,10 @@ async def suite_detail(
           AND tc.created_at >= :period_start
           {project_filter}
           {release_filter}
-        """
+        """,
+        params,
     )
-    cases_query = text(
+    cases_query = scoped_text(
         f"""
         SELECT
             tc.test_fingerprint,
@@ -786,9 +754,10 @@ async def suite_detail(
         GROUP BY tc.test_fingerprint
         ORDER BY failed DESC, total_executions DESC
         LIMIT 200
-        """
+        """,
+        params,
     )
-    runs_query = text(
+    runs_query = scoped_text(
         f"""
         SELECT
             tr.id::text                                                   AS test_run_id,
@@ -810,7 +779,8 @@ async def suite_detail(
         GROUP BY tr.id, tr.build_number, tr.created_at
         ORDER BY tr.created_at DESC
         LIMIT 15
-        """
+        """,
+        params,
     )
     summary_row = (await db.execute(summary_query, params)).one()
     cases_rows = (await db.execute(cases_query, params)).fetchall()
@@ -849,8 +819,9 @@ async def suite_detail(
             project_id=project_id,
             allowed_project_ids=allowed_project_ids,
         )
-        run_fallback_params["suite_name"] = _normalise_suite_name(suite_name)
-        run_fallback_query = text(
+        # The run's own label is the only suite evidence a run without rows has.
+        run_label_match = run_label_match_sql(run_fallback_params, suite_name)
+        run_fallback_query = scoped_text(
             f"""
             SELECT
                 COALESCE(SUM(tr.total_tests),   0)  AS unique_tests,
@@ -879,7 +850,7 @@ async def suite_detail(
                 COALESCE(ROUND(AVG(tr.duration_ms)::numeric, 0), 0) AS avg_duration_ms,
                 MAX(tr.created_at)                   AS last_run_at
             FROM test_runs tr
-            WHERE LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name
+            WHERE {run_label_match}
               AND tr.created_at >= :period_start
               AND NOT EXISTS (
                   SELECT 1 FROM test_cases tc2
@@ -887,9 +858,10 @@ async def suite_detail(
               )
               {run_fallback_project_filter}
               {release_filter}
-            """
+            """,
+            run_fallback_params,
         )
-        recent_runs_fallback_query = text(
+        recent_runs_fallback_query = scoped_text(
             f"""
             SELECT
                 tr.id::text                                  AS test_run_id,
@@ -914,7 +886,7 @@ async def suite_detail(
                     )
                 END                                          AS pass_rate
             FROM test_runs tr
-            WHERE LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name
+            WHERE {run_label_match}
               AND tr.created_at >= :period_start
               AND NOT EXISTS (
                   SELECT 1 FROM test_cases tc2
@@ -924,7 +896,8 @@ async def suite_detail(
               {release_filter}
             ORDER BY tr.created_at DESC
             LIMIT 15
-            """
+            """,
+            run_fallback_params,
         )
         fallback_summary = (
             await db.execute(run_fallback_query, run_fallback_params)
@@ -938,7 +911,7 @@ async def suite_detail(
             runs_rows = fallback_runs
 
     return {
-        "suite_name": suite_name,
+        "suite_name": list(suite_name) if isinstance(suite_name, (list, tuple)) else suite_name,
         "summary": summary,
         "test_cases": [_row_dict(row) for row in cases_rows],
         "recent_runs": [_row_dict(row) for row in runs_rows],
@@ -953,6 +926,8 @@ async def list_defects(
     page: int,
     size: int,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> dict:
     params: dict = {"limit": size, "offset": (page - 1) * size}
     # defects table is queried directly here (alias ``d``), so scope on
@@ -966,7 +941,19 @@ async def list_defects(
     status_filter = "AND d.resolution_status = :resolution_status" if resolution_status else ""
     if resolution_status:
         params["resolution_status"] = resolution_status.upper()
-    query = text(
+    # VIZ-202: release and suite place a defect through its originating
+    # execution (``tc`` / ``tr`` below). Conditional fragments, so the
+    # unfiltered statements are unchanged. ``tr.id IS NOT NULL`` keeps a defect
+    # with no execution out of a filtered list -- without it the Unattributed
+    # bucket (``tr.primary_release_id IS NULL``) would match every unlinked
+    # defect through the LEFT JOIN's NULLs.
+    scope_filter = " ".join(
+        part for part in (_add_release_param(params, release_id), _add_suite_param(params, suite_name))
+        if part
+    )
+    if scope_filter:
+        scope_filter = f"AND tr.id IS NOT NULL {scope_filter}"
+    query = scoped_text(
         f"""
         SELECT
             d.id,
@@ -998,21 +985,32 @@ async def list_defects(
         WHERE 1=1
         {project_filter}
         {status_filter}
+        {scope_filter}
         ORDER BY d.created_at DESC
         LIMIT :limit OFFSET :offset
-        """
+        """,
+        params,
     )
 
     rows = (await db.execute(query, params)).fetchall()
-    count_query = text(
+    # The count joins the execution only when a filter needs it -- and never
+    # the release link table, which would multiply a run linked twice.
+    count_joins = (
+        "LEFT JOIN test_cases tc ON tc.id = d.test_case_id "
+        "LEFT JOIN test_runs tr ON tr.id = tc.test_run_id"
+    ) if scope_filter else ""
+    count_params = {key: value for key, value in params.items() if key not in ("limit", "offset")}
+    count_query = scoped_text(
         f"""
         SELECT COUNT(*) FROM defects d
+        {count_joins}
         WHERE 1=1
         {project_filter}
         {status_filter}
-        """
+        {scope_filter}
+        """,
+        count_params,
     )
-    count_params = {key: value for key, value in params.items() if key not in ("limit", "offset")}
     total = (await db.execute(count_query, count_params)).scalar() or 0
     return {"items": [dict(row._mapping) for row in rows], "total": total, "page": page, "size": size, "pages": -(-total // size)}
 
@@ -1111,12 +1109,20 @@ async def ai_analysis_summary(
     project_id: str | None,
     days: int,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days)}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
-    query = text(
+    # VIZ-202: the analysed execution's release and effective suite.
+    # Conditional fragments: nothing is appended when nothing was asked.
+    scope_filter = " ".join(
+        part for part in (_add_release_param(params, release_id), _add_suite_param(params, suite_name))
+        if part
+    )
+    query = scoped_text(
         f"""
         SELECT
             COUNT(*)                                           AS total_analysed,
@@ -1131,7 +1137,9 @@ async def ai_analysis_summary(
         JOIN test_runs tr  ON tr.id = tc.test_run_id
         WHERE ai.created_at >= :period_start
           {project_filter}
-        """
+          {scope_filter}
+        """,
+        params,
     )
     result = await db.execute(query, params)
     return dict(result.one()._mapping)

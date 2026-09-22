@@ -252,7 +252,10 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
         # E8.3: the two review headers must be exposed, or a browser cannot read
         # them and the SPA would show an AI report with no review state.
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State"],
+        # X-Request-ID: VIZ-210 -- a cross-origin client can quote it in an error.
+        # X-Analytics-Meta: VIZ-204 -- the envelope of a list-shaped analytics
+        # body (``/test-management/suites``), unreadable cross-origin otherwise.
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.

@@ -31,6 +31,8 @@ scoped param in the path.
 """
 from __future__ import annotations
 
+from fastapi import Depends
+from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
 
 from app.bootstrap import PROTECTED_ROUTERS, PUBLIC_ROUTERS
@@ -438,16 +440,69 @@ def _body_model(field) -> object | None:
     return annotation
 
 
-def _non_path_scoped_ids(route: APIRoute) -> set[str]:
-    """Scoped ids the route accepts as a query param or body field."""
+def _scoped_ids_of(fields) -> set[str]:
     found: set[str] = set()
-    for field in list(route.dependant.query_params) + list(route.dependant.body_params):
+    for field in fields:
         if field.name in SCOPED_IDS:
             found.add(field.name)
         model_fields = getattr(_body_model(field), "model_fields", None)
         if model_fields:
             found |= {n for n in model_fields if n in SCOPED_IDS}
     return found
+
+
+def _non_path_scoped_ids(route: APIRoute) -> set[str]:
+    """Scoped ids the route accepts as a query param or body field -- its own
+    OR any sub-dependency's, at any depth.
+
+    Reading only ``route.dependant.query_params`` (the handler's own
+    signature) went blind the day VIZ-201 moved ``project_id`` /
+    ``release_id`` / ``suite_name`` of seventeen analytics routes into the
+    ``analytics_scope(policy)`` sub-dependency: ``/api/v1/metrics/summary``
+    read as taking no scoped id at all. ``get_flat_dependant`` is FastAPI's
+    own flattening -- the parameters the request is actually parsed for.
+    """
+    flat = get_flat_dependant(route.dependant, skip_repeats=True)
+    return _scoped_ids_of(list(flat.query_params) + list(flat.body_params))
+
+
+def _is_analytics_scope_dependency(call) -> bool:
+    """``call`` is a dependency built by the real ``analytics_scope(policy)``.
+
+    Identified by its ``POLICY_ATTR`` marker holding a real ``ScopePolicy``
+    AND by sharing the factory's code object -- a hand-rolled function that
+    copies the marker (or the name) is not the authoriser.
+    """
+    from app.core.analytics_errors import POLICY_ATTR
+    from app.services.analytics_scope import ScopePolicy, analytics_scope
+
+    if not isinstance(getattr(call, POLICY_ATTR, None), ScopePolicy):
+        return False
+    reference = analytics_scope(ScopePolicy())
+    return getattr(call, "__code__", None) is reference.__code__
+
+
+def _ids_outside_analytics_scope(route: APIRoute) -> tuple[set[str], bool]:
+    """``(scoped ids declared anywhere EXCEPT inside a real analytics_scope
+    sub-dependency, whether one is present)``.
+
+    ``analytics_scope`` authorises every id it declares (``authorize_scope``:
+    ``resolve_project_scope`` / ``get_accessible_project_ids`` for the project,
+    ``resolve_release_query_scopes`` for every release) before the handler
+    runs, so its OWN parameters are scope-checked. It is evidence for those
+    ids only: a scoped id the route takes some other way still needs its own.
+    """
+    found: set[str] = set()
+    has_scope = False
+    stack = [route.dependant]
+    while stack:
+        dep = stack.pop()
+        if dep is not route.dependant and _is_analytics_scope_dependency(dep.call):
+            has_scope = True
+            continue
+        found |= _scoped_ids_of(list(dep.query_params) + list(dep.body_params))
+        stack.extend(dep.dependencies)
+    return found, has_scope
 
 
 def _called_targets(func) -> list:
@@ -708,21 +763,121 @@ def _route_shows_scope_check(route: APIRoute, markers=_SCOPE_EVIDENCE) -> bool:
     return _has_evidence(_authorization_names(route), markers)
 
 
-def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
+def _route_is_unscoped_nonpath(route: APIRoute) -> bool:
+    """The route takes a scoped id outside the path and shows no check for it."""
+    if not _non_path_scoped_ids(route):
+        return False
+    if _route_shows_scope_check(route):
+        return False
+    # A real analytics_scope sub-dependency is evidence for the ids IT
+    # declares; anything the route takes besides those still needs a check.
+    residual, has_scope = _ids_outside_analytics_scope(route)
+    return not (has_scope and not residual)
+
+
+def _list_unscoped_nonpath_routes(routes=None) -> list[tuple[str, str]]:
     offenders: set[tuple[str, str]] = set()
-    for route in _collect_api_routes():
+    for route in _collect_api_routes() if routes is None else routes:
         if not route.path.startswith("/api/v1"):
             continue
         # Handled by the path-param ratchet above.
         if _scoped_params_in_path(route.path):
             continue
-        if not _non_path_scoped_ids(route):
-            continue
-        if _route_shows_scope_check(route):
+        if not _route_is_unscoped_nonpath(route):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             offenders.add((method, route.path))
     return sorted(offenders)
+
+
+# ── The analytics_scope sub-dependency (VIZ-201) ────────────────────────────
+#
+# Fixture routes for the self-test below. Module level so ``inspect.getsource``
+# (which the evidence reader uses) can read them.
+
+
+async def _hand_rolled_scope(release_id: str | None = None, project_id: str | None = None):
+    """Declares scoped ids through a sub-dependency and checks nothing."""
+    return release_id, project_id
+
+
+async def _forged_marker_scope(release_id: str | None = None):
+    return release_id
+
+
+async def _fixture_hand_rolled_handler(scope=Depends(_hand_rolled_scope)):
+    return scope
+
+
+async def _fixture_forged_handler(scope=Depends(_forged_marker_scope)):
+    return scope
+
+
+def _fixture_scope_routes():
+    """``(label -> APIRoute)``: the shapes the ratchet must tell apart."""
+    from fastapi import APIRouter
+
+    from app.core.analytics_errors import POLICY_ATTR
+    from app.services.analytics_scope import ScopePolicy, analytics_scope
+
+    # The marker copied onto a function that is not the authoriser.
+    setattr(_forged_marker_scope, POLICY_ATTR, ScopePolicy())
+    real = analytics_scope(ScopePolicy())
+
+    async def real_scope_handler(scope=Depends(real)):
+        return scope
+
+    async def real_scope_plus_raw_run_id(run_id: str, scope=Depends(real)):
+        return run_id, scope
+
+    router = APIRouter()
+    router.add_api_route("/api/v1/_fixture/hand-rolled", _fixture_hand_rolled_handler)
+    router.add_api_route("/api/v1/_fixture/forged", _fixture_forged_handler)
+    router.add_api_route("/api/v1/_fixture/real-scope", real_scope_handler)
+    router.add_api_route("/api/v1/_fixture/real-scope-plus-run", real_scope_plus_raw_run_id)
+    return {route.path.rsplit("/", 1)[1]: route for route in router.routes}
+
+
+def test_a_scoped_id_declared_in_a_sub_dependency_is_seen_and_checked() -> None:
+    """Guards the guard (VIZ-201 review).
+
+    The analytics routes' ``project_id`` / ``release_id`` moved into the
+    ``analytics_scope(policy)`` sub-dependency, and the extractor read only
+    the handler's own parameters, so the scan stopped seeing them: exactly
+    the "fails green" shape ``_body_model`` documents. A hand-rolled
+    sub-dependency declaring ``release_id`` and checking nothing must be
+    flagged; only the real ``analytics_scope`` counts, and only for its ids.
+    """
+    routes = _fixture_scope_routes()
+    assert _non_path_scoped_ids(routes["hand-rolled"]) == {"release_id", "project_id"}
+    assert _route_is_unscoped_nonpath(routes["hand-rolled"]), (
+        "a sub-dependency declaring release_id with no check passed the scan"
+    )
+    assert _route_is_unscoped_nonpath(routes["forged"]), (
+        "a copied POLICY_ATTR marker was accepted as the real analytics_scope"
+    )
+    assert not _route_is_unscoped_nonpath(routes["real-scope"])
+    assert _route_is_unscoped_nonpath(routes["real-scope-plus-run"]), (
+        "analytics_scope vouched for a run_id it never declared"
+    )
+    offenders = _list_unscoped_nonpath_routes(routes.values())
+    assert ("GET", "/api/v1/_fixture/hand-rolled") in offenders
+
+    # The live probe from the review: this route's ids live in the sub-dependency.
+    summary = next(r for r in _collect_api_routes() if r.path == "/api/v1/metrics/summary")
+    assert {"project_id", "release_id"} <= _non_path_scoped_ids(summary)
+
+
+def test_analytics_scope_really_authorises_what_it_declares() -> None:
+    """The evidence behind the exemption: ``authorize_scope`` calls the real
+    project and release checks. Delete either and this fails, not the scan."""
+    from app.core import deps
+    from app.services import analytics_scope as module
+
+    names = _function_names(module.authorize_scope)
+    assert "resolve_project_scope" in names and "get_accessible_project_ids" in names, names
+    assert "resolve_release_query_scopes" in names, names
+    assert "get_accessible_project_ids" in _function_names(deps.resolve_release_query_scopes)
 
 
 def test_the_nonpath_scan_actually_inspects_routes() -> None:
