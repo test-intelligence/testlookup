@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased - Two timing tests measure the property, not the machine
+
+Both tests asserted something true about the code by timing it on a wall
+clock, so a busy machine could fail them with nothing wrong. Both failed the
+local push gate on 2026-09-22, and the lease one failed about one local run in
+three on its own. Neither assertion is relaxed: each now measures the thing it
+was really about. No behaviour changes.
+
+**The cluster-slot lease races run on a virtual clock
+(``tests/services/test_llm_slot_lease_loss.py``).** They raced two holders of a
+0.3 s lease with real sleeps, and turned on a 15 ms margin -- less than a
+scheduler quantum on a loaded box -- so "A stopped before B was admitted"
+could flip for reasons that were not bugs. ``tests/virtual_clock.py`` is new:
+an event loop whose clock moves only when nothing is left to run, so every
+callback due at one instant runs before time advances and a cancellation
+unwinds in zero virtual time. ``ClusterSemaphore._now`` is the seam --
+deadlines are now read from the running loop's own monotonic clock instead of
+``time.monotonic``, which is the same reading under the default and uvloop
+policies, and is the clock ``asyncio.wait_for``/``sleep`` already count on. The
+assertions got stronger rather than weaker: each race now also pins *when* the
+holder stopped against the exact moment its lease would have lapsed, the
+acquire test pins the elapsed lease to the millisecond instead of to within
+10%, and the real-time margin a virtual clock cannot see is pinned in a test of
+its own. The file runs in 1 s instead of 20 s. Checked with six mutations of
+the production code (deadline timed from the reply, unbounded renew, no
+margin, ...): all six are caught.
+
+**The structural pre-parse count is checked in characters, not seconds
+(``tests/regression/test_upload_structural_count.py``).** "Doubling the report
+doubles the time" compared two sub-second readings and needed their ratio to
+stay under 3, which a parallel build was enough to break. The scan's two
+compiled patterns are now counted instead: every quantifier in them is
+possessive, so a match never backtracks, and the distance each one is asked to
+walk adds up to exactly the length of the report -- each character walked once.
+The quadratic tokenizer this replaced re-walked the tail from every quote, and
+is caught on a 4 KB canary in milliseconds rather than by hanging. The absolute
+bound (8 MB refused in under 2 s) stays, now timed on a report built
+beforehand instead of including the time to build it.
+
 ## Unreleased - Visualization Upgrade, Epic 3: every report says what it shows (VIZ-301 to VIZ-306)
 
 Everything here is behind two flags, both off by default: ``viz_multi_filters``

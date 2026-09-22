@@ -9,17 +9,37 @@ The coordinator here is an in-memory stand-in with the same lease semantics
 (acquire drops expired leases, renew fails for a lapsed one); the Redis
 scripts themselves are exercised in
 tests/integration/test_llm_cost_cap_and_slots_redis_postgres.py.
+
+Every test in this file races two holders against a lease, so all of it runs
+on a virtual clock (``tests/virtual_clock.py``): sleeps cost no real time and
+the clock only moves when the loop has nothing left to run. The assertions
+are therefore about the lease and nothing else -- a cancellation unwinds in
+zero virtual time, so "A stopped before its lease lapsed" cannot turn on how
+busy the machine is. Measured against the wall clock, the 15 ms margin these
+tests turn on was smaller than a scheduler quantum on a loaded machine, and
+this file failed the push gate and about one local run in three.
 """
 from __future__ import annotations
 
 import asyncio
-import time
+from typing import NamedTuple
 
 import pytest
 
 from app.services.llm_cluster_semaphore import ClusterSemaphore, LLMSlotLost
+from tests.virtual_clock import VirtualClockPolicy
 
 LEASE = 0.3
+
+
+@pytest.fixture
+def event_loop_policy():
+    return VirtualClockPolicy()
+
+
+def _now() -> float:
+    """The clock the semaphore measures its own deadlines on."""
+    return asyncio.get_running_loop().time()
 
 
 class _Leases:
@@ -27,7 +47,7 @@ class _Leases:
         self.expiry: dict[str, float] = {}
 
     def purge(self) -> None:
-        now = time.monotonic()
+        now = _now()
         for token in [t for t, e in self.expiry.items() if e <= now]:
             del self.expiry[token]
 
@@ -37,11 +57,19 @@ class _MemorySemaphore(ClusterSemaphore):
         super().__init__("test", 1, lease_seconds=LEASE, redis=object(), poll_interval=0.01, max_poll_interval=0.02)
         self.leases = leases
         self.renew_mode = renew
+        #: Every expiry the coordinator wrote for this holder. The last one is
+        #: when its slot would free itself if it stopped renewing now.
+        self.granted: list[float] = []
+
+    def _grant(self, token: str) -> None:
+        expiry = _now() + self.lease_seconds
+        self.leases.expiry[token] = expiry
+        self.granted.append(expiry)
 
     async def try_acquire(self, token: str) -> bool:
         self.leases.purge()
         if token in self.leases.expiry or len(self.leases.expiry) < self.limit:
-            self.leases.expiry[token] = time.monotonic() + self.lease_seconds
+            self._grant(token)
             return True
         return False
 
@@ -51,20 +79,35 @@ class _MemorySemaphore(ClusterSemaphore):
         self.leases.purge()
         if self.renew_mode == "lost" or token not in self.leases.expiry:
             return False
-        self.leases.expiry[token] = time.monotonic() + self.lease_seconds
+        self._grant(token)
         return True
 
     async def release(self, token: str) -> None:
         self.leases.expiry.pop(token, None)
 
 
-async def _race(renew_a: str = "ok", a_class: type = None) -> tuple[list, int, list[str]]:
+class _Race(NamedTuple):
+    outcome: list[tuple[str, str]]
+    peak: int
+    order: list[str]
+    #: What the clock read at each event in ``order``.
+    at: dict[str, float]
+    #: When the last lease A was granted would have lapsed on its own.
+    a_lease_lapses_at: float
+
+
+async def _race(renew_a: str = "ok", a_class: type = None) -> _Race:
     leases = _Leases()
     a_semaphore = (a_class or _MemorySemaphore)(leases, renew=renew_a)
     running: set[str] = set()
     peak = 0
-    outcome: list = []
+    outcome: list[tuple[str, str]] = []
     order: list[str] = []
+    at: dict[str, float] = {}
+
+    def mark(event: str) -> None:
+        order.append(event)
+        at[event] = _now()
 
     async def holder(name: str, semaphore: ClusterSemaphore, seconds: float) -> None:
         nonlocal peak
@@ -72,12 +115,12 @@ async def _race(renew_a: str = "ok", a_class: type = None) -> tuple[list, int, l
             async with semaphore.slot(timeout=5):
                 running.add(name)
                 peak = max(peak, len(running))
-                order.append(f"{name} in")
+                mark(f"{name} in")
                 try:
                     await asyncio.sleep(seconds)
                 finally:
                     running.discard(name)
-                    order.append(f"{name} out")
+                    mark(f"{name} out")
             outcome.append((name, "done"))
         except LLMSlotLost:
             outcome.append((name, "lost"))
@@ -86,29 +129,37 @@ async def _race(renew_a: str = "ok", a_class: type = None) -> tuple[list, int, l
     await asyncio.sleep(0.02)
     b = asyncio.create_task(holder("B", _MemorySemaphore(leases), 0.05))
     await asyncio.wait_for(asyncio.gather(a, b), timeout=10)
-    return outcome, peak, order
+    return _Race(outcome, peak, order, at, a_semaphore.granted[-1])
 
 
-@pytest.mark.asyncio
+def _assert_a_stopped_before_its_lease_could_lapse(race: _Race) -> None:
+    """The property under test: the bound is never passed, and the reason is
+    that A stops itself before the coordinator would drop it -- not that the
+    two happened to fall in that order on this machine."""
+    assert ("A", "lost") in race.outcome
+    assert race.peak == 1, race.order
+    assert race.order.index("A out") < race.order.index("B in"), race.order
+    assert race.at["A out"] < race.a_lease_lapses_at, (race.at, race.a_lease_lapses_at)
+
+
 @pytest.mark.parametrize("renew_a", ["raise", "lost"])
 async def test_a_holder_that_cannot_keep_its_lease_stops_before_another_is_admitted(renew_a):
-    outcome, peak, order = await _race(renew_a)
-    assert ("A", "lost") in outcome
-    assert ("B", "done") in outcome
-    assert peak == 1, order
-    assert order.index("A out") < order.index("B in"), order
+    race = await _race(renew_a)
+    _assert_a_stopped_before_its_lease_could_lapse(race)
+    assert ("B", "done") in race.outcome
 
 
-@pytest.mark.asyncio
 async def test_a_holder_whose_renewals_succeed_keeps_its_slot_past_the_lease():
     leases = _Leases()
-    async with _MemorySemaphore(leases).slot(timeout=1) as held:
+    semaphore = _MemorySemaphore(leases)
+    async with semaphore.slot(timeout=1) as held:
         assert held is True
         await asyncio.sleep(LEASE * 3)
     assert leases.expiry == {}
+    # It kept the slot by renewing, not because nothing was checking.
+    assert len(semaphore.granted) > 1
 
 
-@pytest.mark.asyncio
 async def test_one_failed_renewal_inside_the_lease_is_tolerated():
     """A single blip must not stop a call whose lease is still valid."""
 
@@ -138,21 +189,39 @@ def _stalling(hang: float) -> type:
     return Stalls
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("hang", [0.25, 0.5, 5.0])
 async def test_a_renew_that_stalls_cannot_keep_a_holder_past_its_lease(hang):
     """QA-B45-R2-3: the lost-lease judgement ran only after the renew returned,
     so a renew hanging two intervals let the lease lapse under a live holder:
     B was admitted at 0.33 s while A ran to 0.38 s (0.25 s hang) or 0.61 s
     (0.5 s). The renew is now bounded by the time left on the lease."""
-    outcome, peak, order = await _race(a_class=_stalling(hang))
-    assert ("A", "lost") in outcome
-    assert ("B", "done") in outcome
-    assert peak == 1, order
-    assert order.index("A out") < order.index("B in"), order
+    race = await _race(a_class=_stalling(hang))
+    _assert_a_stopped_before_its_lease_could_lapse(race)
+    assert ("B", "done") in race.outcome
+    # Bounded by the lease, not by the hang: a longer stall cannot stop A later.
+    assert race.at["A out"] < LEASE
 
 
-@pytest.mark.asyncio
+def test_the_stop_is_ordered_a_real_moment_before_the_lease_lapses():
+    """The races above run on a virtual clock, where a cancellation unwinds in
+    no time at all. In production it does not, and the margin is the real time
+    the holder's call is given to stop before the coordinator would let a
+    second one in. A virtual-time race cannot tell a 15 ms margin from none;
+    this can, so the number itself is pinned here.
+    """
+    interval = max(0.05, LEASE / 3.0)
+    margin = _MemorySemaphore(_Leases())._margin(interval)
+    # Enough real time for a cancelled call to unwind...
+    assert margin >= 0.01
+    # ...and never so much that it eats the lease it is protecting, nor more
+    # than half the gap between two attempts to renew.
+    assert margin <= interval / 2
+    assert margin < LEASE / 2
+    # It scales with the lease, down to a floor no lease can push below.
+    assert ClusterSemaphore("t", 1, lease_seconds=600)._margin(200) == pytest.approx(30.0)
+    assert ClusterSemaphore("t", 1, lease_seconds=0.05)._margin(0.05) == 0.01
+
+
 async def test_a_renew_whose_reply_is_slow_times_the_lease_from_the_send():
     """Redis extends the lease when the renew RUNS; a slow reply must not
     push the local deadline later. Renew #1 extends at once and replies
@@ -170,13 +239,10 @@ async def test_a_renew_whose_reply_is_slow_times_the_lease_from_the_send():
                 return renewed
             raise ConnectionError("redis down")
 
-    outcome, peak, order = await _race(a_class=SlowReplyThenDown)
-    assert ("A", "lost") in outcome
-    assert peak == 1, order
-    assert order.index("A out") < order.index("B in"), order
+    race = await _race(a_class=SlowReplyThenDown)
+    _assert_a_stopped_before_its_lease_could_lapse(race)
 
 
-@pytest.mark.asyncio
 async def test_a_slow_renew_that_lands_in_time_keeps_the_slot():
     leases = _Leases()
     async with _stalling(LEASE / 10)(leases).slot(timeout=1) as held:
@@ -185,7 +251,6 @@ async def test_a_slow_renew_that_lands_in_time_keeps_the_slot():
     assert leases.expiry == {}
 
 
-@pytest.mark.asyncio
 async def test_the_lease_is_timed_from_when_the_acquire_was_sent():
     """The server set the lease when the acquire ran, before it returned: a
     slow acquire reply must not stretch the holder's local deadline."""
@@ -198,12 +263,14 @@ async def test_the_lease_is_timed_from_when_the_acquire_was_sent():
             return held
 
         async def _heartbeat(self, token, owner, lost, lease_from=None):
-            seen.append(time.monotonic() - lease_from)
+            seen.append(_now() - lease_from)
             return await super()._heartbeat(token, owner, lost, lease_from)
 
     async with Slow(_Leases()).slot(timeout=1):
         await asyncio.sleep(0.01)
-    assert seen and seen[0] >= LEASE / 2 * 0.9
+    # The whole slow reply is already spent against the lease. Timed from the
+    # reply instead, this would be 0.
+    assert seen and seen[0] == pytest.approx(LEASE / 2)
 
 
 def test_a_lease_one_redis_call_could_outlast_is_refused_at_config_load():
@@ -218,7 +285,6 @@ def test_a_lease_one_redis_call_could_outlast_is_refused_at_config_load():
     assert Settings(LLM_CLUSTER_SLOT_LEASE_SECONDS=0).LLM_CLUSTER_SLOT_LEASE_SECONDS == 0  # the default
 
 
-@pytest.mark.asyncio
 async def test_an_outside_cancellation_is_still_a_cancellation():
     leases = _Leases()
 
