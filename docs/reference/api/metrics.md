@@ -31,7 +31,7 @@ zero that would read as instant detection.
 ``project_id`` is REQUIRED: detection latency is a claim about one
 project's own history, so a fleet average would be meaningless.
 
-Source: [backend/app/routers/metrics.py:199](../../../backend/app/routers/metrics.py#L199).
+Source: [backend/app/routers/metrics.py:238](../../../backend/app/routers/metrics.py#L238).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -154,7 +154,7 @@ contract as ``/metrics/tia-readiness``.
 ``project_id`` is REQUIRED: corpus depth is a claim about one project's own
 history, so a fleet average would be meaningless.
 
-Source: [backend/app/routers/metrics.py:156](../../../backend/app/routers/metrics.py#L156).
+Source: [backend/app/routers/metrics.py:195](../../../backend/app/routers/metrics.py#L195).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -261,6 +261,13 @@ Dashboard Summary
 
 Return aggregated KPI metrics for the Executive Dashboard.
 
+``include=report_metrics`` (VIZ-302, contract C6) adds the report strip's
+figures for this window and the previous one -- counts by status, total and
+average run duration, and ``previous.comparable`` with a reason when a
+delta would mislead. Unmeasured values are ``null`` with a reason, never 0.
+OPT-IN: without it the block is not computed, and the response, its SQL
+and its cache key are exactly what they were before the block existed.
+
 ``release_id`` and ``suite_name`` repeat: OR within a dimension, AND
 across. Every release id is authorised (403/404) before any KPI runs.
 
@@ -269,14 +276,14 @@ Field-level exception: ``active_defects``, ``flaky_test_count`` and
 are project-wide inputs of the readiness verdict's hard caps
 (``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.
 
-Source: [backend/app/routers/metrics.py:65](../../../backend/app/routers/metrics.py#L65).
+Source: [backend/app/routers/metrics.py:85](../../../backend/app/routers/metrics.py#L85).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-scope: AnalyticsScope=Depends(analytics_scope(METRICS_SCOPE)), db: AsyncSession=Depends(get_db)
+scope: AnalyticsScope=Depends(analytics_scope(METRICS_SCOPE)), db: AsyncSession=Depends(get_db), include: Annotated[Optional[list[str]], Query(description="Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the report strip's figures (contract C6). Unknown values are ignored.")]=None
 ```
 
 ### Declared wire contract
@@ -287,6 +294,27 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "dashboard_summary_api_v1_metrics_summary_get",
   "parameters": [
+    {
+      "description": "Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the report strip's figures (contract C6). Unknown values are ignored.",
+      "in": "query",
+      "name": "include",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the report strip's figures (contract C6). Unknown values are ignored.",
+        "title": "Include"
+      }
+    },
     {
       "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
@@ -408,7 +436,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)
-await get_dashboard_summary(db, scope.project, scope.window_days, suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta)
+await get_dashboard_summary(db, scope.project, scope.window_days, suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta, report_metrics=SUMMARY_INCLUDE_REPORT_METRICS in summary_includes(include))
 {'meta': await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)}
 ```
 
@@ -430,7 +458,7 @@ the same honesty contract as the value-metrics headline gate.
 ``project_id`` is REQUIRED: readiness is a claim about one project's own
 change/failure history, so there is no meaningful all-projects rollup.
 
-Source: [backend/app/routers/metrics.py:119](../../../backend/app/routers/metrics.py#L119).
+Source: [backend/app/routers/metrics.py:158](../../../backend/app/routers/metrics.py#L158).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -537,7 +565,7 @@ Trend Data
 
 Return daily pass/fail/skip breakdown for trend charts.
 
-Source: [backend/app/routers/metrics.py:97](../../../backend/app/routers/metrics.py#L97).
+Source: [backend/app/routers/metrics.py:136](../../../backend/app/routers/metrics.py#L136).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

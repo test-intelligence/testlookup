@@ -10,14 +10,14 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:171](../../../backend/app/routers/stream.py#L171).
+Source: [backend/app/routers/stream.py:173](../../../backend/app/routers/stream.py#L173).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[str]=None, suite_name: Optional[str]=Query(None, min_length=1), days: int=Query(7, ge=0, le=365, description='Cutoff for *completed* sessions/runs to include alongside the always-current active set. 1 = last 24 hours; 0 = no cutoff. Default 7 preserves the prior hardcoded window.'), db: AsyncSession=Depends(get_db), current_user=Depends(get_current_active_user)
+project_id: Optional[str]=None, suite_name: Annotated[Optional[list[str]], Query(description=f'Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters: sessions in any of these suites; trimmed, case-insensitive.')]=None, days: int=Query(7, ge=0, le=365, description='Cutoff for *completed* sessions/runs to include alongside the always-current active set. 1 = last 24 hours; 0 = no cutoff. Default 7 preserves the prior hardcoded window.'), db: AsyncSession=Depends(get_db), current_user=Depends(get_current_active_user)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -52,19 +52,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "Repeatable (OR, at most 50), 1-500 characters: sessions in any of these suites; trimmed, case-insensitive.",
       "in": "query",
       "name": "suite_name",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "minLength": 1,
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters: sessions in any of these suites; trimmed, case-insensitive.",
         "title": "Suite Name"
       }
     },
@@ -135,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:107](../../../backend/app/routers/stream.py#L107).
+Source: [backend/app/routers/stream.py:109](../../../backend/app/routers/stream.py#L109).
 
 Dependency chain: .
 
@@ -209,7 +213,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:130](../../../backend/app/routers/stream.py#L130).
+Source: [backend/app/routers/stream.py:132](../../../backend/app/routers/stream.py#L132).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -285,7 +289,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/stream.py:46](../../../backend/app/routers/stream.py#L46).
+Source: [backend/app/routers/stream.py:48](../../../backend/app/routers/stream.py#L48).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -372,7 +376,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:88](../../../backend/app/routers/stream.py#L88).
+Source: [backend/app/routers/stream.py:90](../../../backend/app/routers/stream.py#L90).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -445,7 +449,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:72](../../../backend/app/routers/stream.py#L72).
+Source: [backend/app/routers/stream.py:74](../../../backend/app/routers/stream.py#L74).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -531,7 +535,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:233](../../../backend/app/routers/stream.py#L233).
+Source: [backend/app/routers/stream.py:248](../../../backend/app/routers/stream.py#L248).
 
 Dependency chain: .
 

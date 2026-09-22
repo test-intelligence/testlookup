@@ -15830,6 +15830,77 @@ path: list[DrillLevel] = Field(max_length=MAX_DRILL_DEPTH)
 ```
 
 - Validator/serializer `_unique_dimension`: [backend/app/models/viz_contracts.py:837](../../backend/app/models/viz_contracts.py#L837). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — MetricsWindow
+
+[backend/app/models/viz_contracts.py:871](../../backend/app/models/viz_contracts.py#L871)
+
+Bases: `VizContract`.
+
+
+
+```python
+from_: str = Field(alias='from')
+to: str
+days: Count
+_days = field_validator('from_', 'to')(_check_day)
+```
+
+## backend/app/models/viz_contracts.py — MetricsPeriod
+
+[backend/app/models/viz_contracts.py:879](../../backend/app/models/viz_contracts.py#L879)
+
+Bases: `VizContract`.
+
+One window's figures. Every key is required; ``null`` is "not measured".
+
+```python
+runs: Count | None
+total_tests: Count | None
+passed: Count | None
+failed: Count | None
+broken: Count | None
+skipped: Count | None
+unknown: Count | None
+pass_rate: Rate | None
+total_duration_ms: Count | None
+avg_duration_ms: Count | None
+duration_runs: Count | None
+reasons: dict[str, str]
+window: MetricsWindow
+```
+
+- Validator/serializer `_metric_reason`: [backend/app/models/viz_contracts.py:897](../../backend/app/models/viz_contracts.py#L897). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — PreviousPeriod
+
+[backend/app/models/viz_contracts.py:906](../../backend/app/models/viz_contracts.py#L906)
+
+Bases: `MetricsPeriod`.
+
+The window before ``current``, and whether the two can be compared.
+
+```python
+comparable: bool
+reason: str | None
+reason_code: ComparableReasonCode | None
+```
+
+- Validator/serializer `_comparable_reason`: [backend/app/models/viz_contracts.py:914](../../backend/app/models/viz_contracts.py#L914). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — ReportMetrics
+
+[backend/app/models/viz_contracts.py:927](../../backend/app/models/viz_contracts.py#L927)
+
+Bases: `VizPayload`.
+
+``report_metrics`` on ``/metrics/summary``: the strip's figures (VIZ-302).
+
+```python
+schema_version: PositiveCount
+pass_rate_basis: Literal['executions', 'unique_tests']
+current: MetricsPeriod
+previous: PreviousPeriod
+```
+
+- Validator/serializer `_comparable_measured`: [backend/app/models/viz_contracts.py:936](../../backend/app/models/viz_contracts.py#L936). Read source for the cross-field or conversion rule.
 ## backend/app/routers/admin_maintenance.py — OutboxRequeueRequest
 
 [backend/app/routers/admin_maintenance.py:292](../../backend/app/routers/admin_maintenance.py#L292)
