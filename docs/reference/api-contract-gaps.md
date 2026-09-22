@@ -49,6 +49,7 @@ This is a documentation/typing limitation observed in source, not evidence that 
 - `POST /api/v1/ai-eval/reviewer-quality`
 - `POST /api/v1/ai-eval/tier-comparison`
 - `GET /api/v1/analytics/ai-summary`
+- `GET /api/v1/analytics/chart-data`
 - `GET /api/v1/analytics/coverage`
 - `GET /api/v1/analytics/defects`
 - `GET /api/v1/analytics/failure-categories`

@@ -35191,6 +35191,182 @@
         ]
       }
     },
+    "/api/v1/analytics/chart-data": {
+      "get": {
+        "description": "A metric over up to two dimensions, as contract C3 ``chart_series``.\n\nSeries are keyed by the second ``group_by`` and zero-filled over the first,\nso the table view and CSV export need no transformation. Each point carries\n``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is\n``y: null`` with ``measured: false`` and a reason, never 0.",
+        "operationId": "chart_data_api_v1_analytics_chart_data_get",
+        "parameters": [
+          {
+            "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "default": "executions",
+              "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+              "title": "Metric",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The axis, and optionally a second dimension to key the series by (at most two, the time dimension first). One of: branch, day, environment, failure_category, ingestion_source, project, release, status, suite, test, week",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The axis, and optionally a second dimension to key the series by (at most two, the time dimension first). One of: branch, day, environment, failure_category, ingestion_source, project, release, status, suite, test, week",
+              "title": "Group By"
+            }
+          },
+          {
+            "description": "Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite.",
+            "in": "query",
+            "name": "top_n",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite.",
+              "title": "Top N"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Chart Data",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
     "/api/v1/analytics/classify-uncategorized": {
       "post": {
         "description": "Assign ``payload.category`` to every failing test case in the project's\nwindow that's currently unlabelled (``failure_category IS NULL`` or\n``UNKNOWN``). Mirrors ``AIAnalysis.failure_category`` for any AI rows\nbacking those test cases.\n\nUsed by the Failures page \"Classify\" CTA when the AI classifier left a\nlarge chunk of failures uncategorized — lets the user tag them all in\none shot rather than per-test.",

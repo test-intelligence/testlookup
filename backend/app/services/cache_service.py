@@ -65,6 +65,18 @@ ANALYTICS_EPOCH_ALL = "__all__"
 # trip bounded by this deadline, then it gives up (and counts the failure).
 ANALYTICS_EPOCH_BUMP_TIMEOUT_SECONDS = 0.25
 
+# The READ side needs the same deadline, for the same reason. A read does
+# TWO Redis round trips before the database is touched — ``get_analytics_epoch``
+# then ``cache_get`` — and the redis client's socket timeout is 5 s, so a
+# slow-but-alive Redis added up to 10 s to a request that the database would
+# have answered in 200 ms. Worse, it did it to EVERY analytics read at once,
+# which is how one degraded dependency becomes an outage. Past this deadline
+# the epoch is "unknown" and the lookup is a miss: the read falls through to
+# the database, which is the same path Redis being unreachable already takes.
+# Each giving-up is counted (``analytics_read_degraded_total``), because a
+# bypassed cache is otherwise indistinguishable from a cold one.
+ANALYTICS_READ_TIMEOUT_SECONDS = 0.25
+
 
 def analytics_epoch_key(project_id: "str | uuid.UUID | None") -> str:
     """Redis key of the epoch counter for ``project_id`` (None = all projects)."""
@@ -91,7 +103,14 @@ async def get_analytics_epoch(project_id: "str | uuid.UUID | None") -> int | Non
     try:
         from app.db.redis_client import get_redis
 
-        raw = await get_redis().get(analytics_epoch_key(project_id))
+        raw = await asyncio.wait_for(
+            get_redis().get(analytics_epoch_key(project_id)),
+            timeout=ANALYTICS_READ_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        _count_degraded("epoch_timeout")
+        logger.warning("analytics_epoch_read_timeout", error=repr(exc))
+        return None
     except Exception as exc:
         logger.warning("analytics_epoch_read_failed", error=str(exc))
         return None
@@ -159,6 +178,16 @@ async def _repair_epoch(key: str) -> None:
         logger.warning("analytics_epoch_repaired", key=key)
     except Exception as exc:
         logger.warning("analytics_epoch_repair_failed", key=key, error=str(exc))
+
+
+def _count_degraded(reason: str) -> None:
+    """One analytics read served without the cache it should have had."""
+    try:
+        from app.core.metrics import analytics_read_degraded_total
+
+        analytics_read_degraded_total.labels(reason=reason).inc()
+    except Exception:  # telemetry must never break a read
+        pass
 
 
 def _count_bump_failure(n: int = 1) -> None:
@@ -232,16 +261,21 @@ async def bump_analytics_epochs(project_ids: Iterable["str | uuid.UUID | None"])
 async def cache_get(
     namespace: str, project_id: str | None, *, epoch: int | None, **kwargs: Any
 ) -> Any | None:
-    """Fetch a cached result. Returns None on miss, unknown epoch, or Redis failure."""
+    """Fetch a cached result. Returns None on miss, unknown epoch, Redis
+    failure, or a lookup that did not come back inside
+    :data:`ANALYTICS_READ_TIMEOUT_SECONDS` (then it is a miss, and counted)."""
     if epoch is None:
         return None
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
         key = _build_cache_key(namespace, project_id, epoch=epoch, **kwargs)
-        raw = await redis.get(key)
+        raw = await asyncio.wait_for(redis.get(key), timeout=ANALYTICS_READ_TIMEOUT_SECONDS)
         if raw is not None:
             return json.loads(raw)
+    except (asyncio.TimeoutError, TimeoutError):
+        _count_degraded("cache_timeout")
+        logger.warning("analytics_cache_get_timeout", namespace=namespace)
     except Exception:
         pass
     return None
@@ -266,7 +300,14 @@ async def cache_set(
         from app.db.redis_client import get_redis
         redis = get_redis()
         key = _build_cache_key(namespace, project_id, epoch=epoch, **kwargs)
-        await redis.set(key, json.dumps(value, default=str), ex=ttl)
+        await asyncio.wait_for(
+            redis.set(key, json.dumps(value, default=str), ex=ttl),
+            timeout=ANALYTICS_READ_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        # The answer is already computed; a slow write must not hold it back.
+        _count_degraded("cache_write_timeout")
+        logger.warning("analytics_cache_set_timeout", namespace=namespace)
     except Exception:
         pass
 

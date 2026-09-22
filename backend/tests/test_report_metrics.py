@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.models.viz_contracts import validate_contract
+from app.services import analytics_meta
 from app.services import metrics_service
 from app.services import report_metrics_service as rms
 
@@ -328,7 +329,13 @@ async def _call(db, **kw):
 async def test_an_old_shape_entry_is_never_served_as_the_new_shape():
     cache = _Cache()
     *patches, db = _wired(cache)
-    old_key = cache.key("dashboard_summary_v2", "p1", epoch=4, days=7, suite="", schema=2)
+    # The envelope's own version, not a literal: bumping META_SCHEMA_VERSION
+    # (VIZ-203 added two `meta` keys) must not read as "the legacy call stopped
+    # hitting its entry" -- what this test pins is the `metrics=` segment.
+    old_key = cache.key(
+        "dashboard_summary_v2", "p1", epoch=4, days=7, suite="",
+        schema=analytics_meta.META_SCHEMA_VERSION,
+    )
     cache.store[old_key] = {"total_executions_7d": {"value": 999}, "meta": {"generated_at": "x"}}
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
         # The legacy call (no block) still hits the entry it always hit...

@@ -62,6 +62,9 @@ _TIME_MODULES = (
     # VIZ-202 / VIZ-204 (``test_analytics_envelope_postgres.py`` shares this
     # fixture): the envelope's window and the parity routes' own clocks.
     "app.services.analytics_meta",
+    # VIZ-203 (``test_chart_data_postgres.py`` shares this fixture): the chart
+    # endpoint's own window start, bucket axis and partial-day flag.
+    "app.services.chart_data_service",
     "app.services.suite_history_service",
     "app.services.value_metrics_service",
 )
@@ -526,8 +529,12 @@ async def test_one_forbidden_release_refuses_the_whole_request(world, path, fixe
         path, params=[*base, ("release_id", str(uuid.uuid4())), ("release_id", r1)],
         headers=world.member,
     )
-    assert missing.status_code == 404, missing.text
-    assert missing.json()["code"] == "not_found"
+    # An id that does not exist is refused EXACTLY like one the caller may not
+    # read: two different answers would make this parameter an existence
+    # oracle over every release id in the install.
+    assert missing.status_code == 403, missing.text
+    assert missing.json()["code"] == "forbidden"
+    assert missing.json()["message"] == forbidden.json()["message"]
 
     # The readable id alone still answers.
     ok = await world.client.get(path, params=[*base, ("release_id", r1)], headers=world.member)
@@ -663,7 +670,12 @@ async def test_an_unhandled_error_is_json_with_the_request_id_and_no_trace(world
     )
     try:
         resp = await client.get(
-            "/api/v1/analytics/coverage", params=[("project_id", str(world.p1))],
+            # VIZ-209 caches this route: a window no earlier test in this
+            # module asked for is a guaranteed cache MISS, so the request
+            # really reaches the exploding service instead of being answered
+            # from Redis (a cached 200 would make this test vacuous).
+            "/api/v1/analytics/coverage",
+            params=[("project_id", str(world.p1)), ("days", "97")],
             headers={**world.member, "X-Request-ID": "trace-me-1"},
         )
     finally:

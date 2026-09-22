@@ -120,6 +120,33 @@ analytics_epoch_bump_failures_total = Counter(
     "Analytics epoch counters that could not be incremented after a committed mutation (cached analytics stay stale until TTL)",
 )
 
+# VIZ-209. Every read through ``core.analytics_read_layer`` is timed, on the
+# cached path as well as the computed one: a cache that stopped hitting shows
+# up as ``outcome="miss"`` growing against ``outcome="hit"`` long before the
+# latency alone crosses a threshold, and ``outcome="timeout"`` is the 503 the
+# statement timeout produced. ``route`` is the path TEMPLATE, never a path
+# with an id in it. The vocabulary is ``analytics_read_layer.ANALYTICS_OUTCOMES``.
+analytics_query_duration_seconds = Histogram(
+    "testlookup_analytics_query_duration_seconds",
+    "Analytics read latency by route, including the cache lookup",
+    ["route", "outcome"],  # outcome: hit|miss|timeout|error
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+)
+
+# VIZ-209. Each of this layer's guards fails OPEN -- an unreadable epoch, a
+# Redis read that did not come back in time, a handler that handed the layer
+# no scope, a ``SET LOCAL statement_timeout`` the session refused -- so the
+# read still answers and the latency histogram still records a plain ``miss``.
+# Nothing else distinguishes "the cache is working" from "the cache has been
+# bypassed on every request for an hour", or "queries are bounded at 5 s" from
+# "they are not bounded at all". The vocabulary is
+# ``analytics_read_layer.ANALYTICS_DEGRADED_REASONS``.
+analytics_read_degraded_total = Counter(
+    "testlookup_analytics_read_degraded_total",
+    "Analytics reads served with one of the bounded-read layer's guards inactive",
+    ["reason"],  # no_scope|epoch_timeout|cache_timeout|cache_write_timeout|statement_timeout_not_applied
+)
+
 # ── Pipeline Stages ───────────────────────────────────────────────────────────
 
 pipeline_stage_duration_seconds = Histogram(

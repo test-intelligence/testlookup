@@ -278,10 +278,18 @@ async def test_runs_a_forbidden_or_unknown_id_among_readable_ones_returns_nothin
     # The legacy single-id answer, for comparison: the same 403.
     status, _ = await _get(world, "/api/v1/runs", params + [("release_id", world.r9)])
     assert status == 403
+    # An id that does not exist answers exactly as a forbidden one does: the
+    # query-param release path must not tell a caller which ids are real
+    # (VIZ-209 review, 2026-09-22).
+    unknown = str(uuid.uuid4())
     status, body = await _get(world, "/api/v1/runs", params + [
-        ("release_id", world.r1), ("release_id", str(uuid.uuid4())),
+        ("release_id", world.r1), ("release_id", unknown),
     ])
-    assert status == 404, body
+    assert status == 403, body
+    forbidden_status, forbidden_body = await _get(
+        world, "/api/v1/runs", params + [("release_id", world.r9)]
+    )
+    assert (status, body) == (forbidden_status, forbidden_body)
 
 
 async def test_runs_the_release_cap_is_the_c1_body(world):

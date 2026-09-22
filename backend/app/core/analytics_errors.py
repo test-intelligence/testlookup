@@ -77,6 +77,7 @@ class AnalyticsQueryError(Exception):
         param: Optional[str] = None,
         allowed: Any = None,
         status_code: int = 422,
+        headers: Optional[dict] = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
@@ -84,6 +85,11 @@ class AnalyticsQueryError(Exception):
         self.param = param
         self.allowed = allowed
         self.status_code = status_code
+        #: Response headers the refusal needs to be actionable -- VIZ-209's
+        #: ``Retry-After`` on a 429 and on a 503 ``analytics_timeout``. The
+        #: frontend's chart layer waits on that header rather than showing an
+        #: error, so a refusal without it is a worse answer than no refusal.
+        self.headers = headers
 
 
 def analytics_error_contract(endpoint: _F) -> _F:
@@ -155,7 +161,7 @@ async def analytics_query_error_handler(request: Request, exc: Exception) -> Res
         param=exc.param,
         allowed=exc.allowed,
     )
-    return _json(request, exc.status_code, body)
+    return _json(request, exc.status_code, body, headers=exc.headers)
 
 
 #: Set on an analytics scope dependency (``analytics_scope.analytics_scope``)

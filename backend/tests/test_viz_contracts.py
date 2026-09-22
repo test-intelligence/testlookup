@@ -164,6 +164,9 @@ NAMED_RULES = {
     # C2
     "totals_subset",
     "truncated_total",
+    "truncated_axis",
+    "truncated_axes",
+    "outside_window",
     "measured_reason",
     "utc_instant",
     # C3

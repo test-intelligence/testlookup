@@ -1,0 +1,26 @@
+{
+  "description": "A point says it was not measured and gives no reason, so the gap is indistinguishable from a bug. Whitespace is not a reason.",
+  "violates": "measured_reason",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "day"
+    ],
+    "x_type": "time",
+    "series": [
+      {
+        "key": "checkout",
+        "label": "checkout",
+        "points": [
+          {
+            "x": "2026-09-20",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "   "
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "description": "A real GET /api/v1/analytics/chart-data body (VIZ-203): pass_rate by day and suite with top_n=2. Zero-filled days, a bucket with nothing evaluated carrying y:null with measured:false and a reason, and an 'other' series whose rate is recomputed from the merged counts rather than averaged.",
+  "payload": {
+    "kind": "series",
+    "dimensions": [
+      "day",
+      "suite"
+    ],
+    "x_type": "time",
+    "series": [
+      {
+        "key": "checkout",
+        "label": "Checkout",
+        "points": [
+          {
+            "x": "2026-09-19",
+            "y": 90.0,
+            "n": 100,
+            "measured": true,
+            "reason": null
+          },
+          {
+            "x": "2026-09-20",
+            "y": 80.0,
+            "n": 100,
+            "measured": true,
+            "reason": null
+          },
+          {
+            "x": "2026-09-21",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "no evaluated executions in this bucket: every test was skipped or had no verdict, and a rate over nothing is not 0%"
+          }
+        ]
+      },
+      {
+        "key": "payments",
+        "label": "Payments",
+        "points": [
+          {
+            "x": "2026-09-19",
+            "y": 80.0,
+            "n": 50,
+            "measured": true,
+            "reason": null
+          },
+          {
+            "x": "2026-09-20",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "no evaluated executions in this bucket: every test was skipped or had no verdict, and a rate over nothing is not 0%"
+          },
+          {
+            "x": "2026-09-21",
+            "y": 50.0,
+            "n": 50,
+            "measured": true,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "key": "__other__",
+        "label": "Other",
+        "points": [
+          {
+            "x": "2026-09-19",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "no evaluated executions in this bucket: every test was skipped or had no verdict, and a rate over nothing is not 0%"
+          },
+          {
+            "x": "2026-09-20",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "no evaluated executions in this bucket: every test was skipped or had no verdict, and a rate over nothing is not 0%"
+          },
+          {
+            "x": "2026-09-21",
+            "y": null,
+            "n": 0,
+            "measured": false,
+            "reason": "no evaluated executions in this bucket: every test was skipped or had no verdict, and a rate over nothing is not 0%"
+          }
+        ]
+      }
+    ]
+  }
+}

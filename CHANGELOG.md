@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 2 backend: one endpoint for every chart, and a bounded way to read it (VIZ-203, VIZ-209)
+
+**One guarded endpoint instead of a route per chart.**
+``GET /api/v1/analytics/chart-data`` returns one of 15 metrics grouped by up to
+two of 11 dimensions, on the shared ``AnalyticsScope`` (repeatable release and
+suite, per-release authorisation, caps) with the C2 envelope and the C3
+``chart_series`` body. Every metric and dimension is a dictionary KEY mapping to
+a hard-coded SQL fragment -- a test pins the emitted statement text, so nothing
+from a request can reach the query, an alias or a JSON key. Points carry ``y``
+and ``n``; a bucket with too small a sample is ``measured: false`` with a
+reason, never 0, and an all-skipped bucket is not 0 %. ``top_n`` adds an
+``other`` bucket whose rate is recomputed from the merged counts (averaging it
+was mutation-tested), and whose non-additive metrics say so instead of guessing.
+Weeks are ISO weeks in UTC, the current day is flagged partial, and the response
+states which grain it used: whole runs, or execution rows. A suite filter forces
+the row grain -- a run-level filter would otherwise count other suites' tests in
+a chart that says it is filtered -- and ``meta.definitions.grain_changed_by``
+names the filter that moved it.
+
+**Ranking happens in the database.** The first cut applied ``top_n`` and the
+8 series x 366 point caps in Python, after fetching every group: a
+``day x test`` chart over a year fetched 73 000 rows on a small seed, and would
+fetch ~1.4 M on a real suite, per request, with four chart requests in flight.
+The statement now ranks series in a CTE and carries a hard ``LIMIT``; the same
+chart returns 738 rows. Measured on 1 M ``test_cases`` / 5 000 runs / 400 days,
+the worst cases dropped 300-450 ms.
+
+**Reads are bounded.** ``@analytics_read`` gives the analytics GETs a Redis
+cache with a strong ETag and 304s, a 5 s ``SET LOCAL statement_timeout``
+(inside the request transaction, never leaking to a pooled connection, never to
+ingestion) answering 503 ``analytics_timeout`` with a retry hint, a per-user
+rate limit answering 429 with ``Retry-After``, and the
+``analytics_query_duration_seconds`` histogram. The browser sends at most 4
+chart requests at once. Redis being slow is now as harmless as Redis being
+down: every cache read is bounded and falls through to the database.
+
+**What three review findings changed.** The cache key was built from the raw
+query string with each parameter's values SORTED. ``group_by`` is
+order-significant, so ``suite x status`` and ``status x suite`` -- two different
+charts -- shared one entry and one ETag: a colleague was served your chart, and
+their revalidation 304'd. A repeated scalar (``metric=failed&metric=passed``)
+bound "last wins" but keyed "sorted", so a co-tenant could choose what another
+reader's chart said. The key is now built from the RESOLVED request (the parsed
+spec plus the authorised scope), which also ends the cache flooding an ignored
+parameter allowed. A decorated route that hands over no scope no longer falls
+back to one shared cache class; it stops caching and says so. The rate limit and
+the statement timeout now run BEFORE scope resolution, so a refused request is
+no longer free database work. A cached body no longer claims it was generated
+this instant: ``as_of`` stays the moment the numbers were read. An unknown
+release id in a query parameter now answers exactly as a forbidden one does.
+
+**Known gap, deliberately not hidden.** On the §5.5 dataset, row-grain metrics
+over a 365-day window still miss the 500 ms budget (``pass_rate`` by day and
+suite: 1 267 ms after the SQL ranking, from 1 602). The cost is a scan of
+``test_cases`` -- which has no ``project_id`` -- plus an external-merge sort; a
+year covers 91 % of the table, so no index helps, and raising ``work_mem``
+measured 2.4x WORSE (the planner abandons the parallel sort). 30-day windows,
+the default everywhere, are 1-170 ms. The owner's call (2026-09-22) is to ship
+it and re-measure before any chart reaches a production page; the options then
+are a shorter maximum window for row-grain metrics (declared in ``meta``) or the
+deferred rollup table as its own slice.
+
 ## Unreleased - Two timing tests measure the property, not the machine
 
 Both tests asserted something true about the code by timing it on a wall

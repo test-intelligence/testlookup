@@ -505,6 +505,50 @@ class IgnoredFilter(VizContract):
     reason: str
 
 
+class TruncatedAxis(VizContract):
+    """How much one axis lost. ``truncated_total`` is a single number and a
+    chart can lose buckets AND series at once (400 suites keyed by 12
+    environments), so "the full count" has to be answered per axis."""
+
+    dimension: str
+    kept: Count
+    total: Count
+
+    @model_validator(mode="after")
+    def _kept_is_a_subset(self) -> "TruncatedAxis":
+        if self.kept > self.total:
+            raise ValueError("truncated_axis: kept exceeds total")
+        if self.kept == self.total:
+            raise ValueError(
+                "truncated_axis: an axis that kept everything is not truncated"
+            )
+        return self
+
+
+class OutsideWindow(VizContract):
+    """Rows whose bucket fell outside the generated axis -- a run with a
+    future ``created_at``. They are not drawn; they are counted, because a
+    clock-skewed CI agent otherwise loses its run without a word."""
+
+    buckets: Count
+    executions: Count
+    first: str
+    last: str
+
+    _days = field_validator("first", "last")(_check_day)
+
+    @model_validator(mode="after")
+    def _has_something_to_report(self) -> "OutsideWindow":
+        if self.buckets < 1:
+            raise ValueError(
+                "outside_window: nothing fell outside the window; omit the key "
+                "instead of reporting a zero"
+            )
+        if self.first > self.last:
+            raise ValueError("outside_window: first is after last")
+        return self
+
+
 class EnvelopeMeta(VizPayload):
     """The additive ``meta`` object on an analytics response.
 
@@ -525,6 +569,12 @@ class EnvelopeMeta(VizPayload):
     partial_day: str | None
     generated_at: str
     as_of: str
+    # Optional and additive (VIZ-203). A producer that has nothing to report
+    # omits them, and every earlier payload stays valid; when they ARE sent
+    # they have to agree with the scalars above, which is what makes them
+    # worth sending at all.
+    truncated_axes: dict[Literal["x", "series"], TruncatedAxis] | None = None
+    outside_window: OutsideWindow | None = None
 
     _partial_day = field_validator("partial_day")(_check_day)
     _instants = field_validator("generated_at", "as_of")(_check_utc_instant)
@@ -535,6 +585,20 @@ class EnvelopeMeta(VizPayload):
             raise ValueError(
                 "truncated_total: truncated_total is required when truncated is true"
             )
+        if self.truncated_axes is not None:
+            if not self.truncated_axes:
+                raise ValueError(
+                    "truncated_axes: an empty object is not 'nothing was truncated'; omit it"
+                )
+            if not self.truncated:
+                raise ValueError(
+                    "truncated_axes: an axis was truncated but truncated is false"
+                )
+            totals = {axis.total for axis in self.truncated_axes.values()}
+            if self.truncated_total not in totals:
+                raise ValueError(
+                    "truncated_axes: truncated_total names no axis's full count"
+                )
         if not self.measured and _BLANK_RE.fullmatch(self.reason or ""):
             raise ValueError(
                 "measured_reason: a reason with a non-whitespace character is required when measured is false"
@@ -565,6 +629,22 @@ class SeriesPoint(VizContract):
     # null is "no data" and is drawn as a gap; it is never a zero.
     y: Number | None
     n: Count
+    # Optional (VIZ-203), and additive: a producer that never says "not
+    # measured" simply omits both, and every earlier payload stays valid.
+    # A null y says there is nothing to draw; these say WHY, so a chart can
+    # tell "nothing ran" from "a rate over nothing is not 0%" without the
+    # reader having to guess. ``measured`` is absent or a boolean, never null.
+    measured: bool = True
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def _measured_reason(self) -> "SeriesPoint":
+        if not self.measured and _BLANK_RE.fullmatch(self.reason or ""):
+            raise ValueError(
+                "measured_reason: a reason with a non-whitespace character is "
+                "required when measured is false"
+            )
+        return self
 
 
 class Series(VizContract):
@@ -582,6 +662,10 @@ class SeriesChart(VizContract):
     dimensions: list[str]
     x_type: Literal["time", "category"]
     series: list[Series] = Field(max_length=MAX_SERIES)
+    # Optional (VIZ-203): display names for ``x`` values that are ids rather
+    # than words -- a project or a release bucket. The KEY stays the id, because
+    # it is what a drill-down (C5) sends back; this is what the axis shows.
+    x_labels: dict[str, str] | None = None
 
     @field_validator("series")
     @classmethod

@@ -255,7 +255,13 @@ def configure_middlewares(app: FastAPI) -> None:
         # X-Request-ID: VIZ-210 -- a cross-origin client can quote it in an error.
         # X-Analytics-Meta: VIZ-204 -- the envelope of a list-shaped analytics
         # body (``/test-management/suites``), unreadable cross-origin otherwise.
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta"],
+        # ``ETag`` and ``X-Analytics-Cache`` are VIZ-209's: a browser cannot
+        # read a response header the server does not expose, so without them
+        # the SPA could never send ``If-None-Match`` (every revalidation would
+        # be a full payload) and the cache header would be invisible exactly
+        # where it is read. ``Retry-After`` -- the 429 and the 503
+        # ``analytics_timeout`` -- is already here.
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.

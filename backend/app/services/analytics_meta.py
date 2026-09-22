@@ -57,7 +57,7 @@ from app.services.analytics_scope import (
 #: payload's shape change is invisible except live, so an entry written before
 #: ``meta`` existed must never be served after a deploy. Bump it -- and the
 #: key moves with it -- whenever ``meta`` changes shape.
-META_SCHEMA_VERSION = 2
+META_SCHEMA_VERSION = 3
 
 #: Where a SUMMARY of ``meta`` travels for a list-shaped body
 #: (:func:`header_summary` -- not the C2 object, see there).
@@ -214,6 +214,36 @@ def refreshed(meta: dict) -> dict:
     """A cached ``meta``: ``as_of`` stays the moment the numbers were read,
     ``generated_at`` becomes this response's."""
     return {**meta, "generated_at": _instant(datetime.now(timezone.utc))}
+
+
+def restamped(payload: Any) -> Any:
+    """A cached ENVELOPE with :func:`refreshed` applied to its ``meta``.
+
+    Returned unchanged (the same object, so a caller can test identity and
+    skip re-rendering) when there is no ``meta`` dict to restamp. This is what
+    VIZ-209 calls on a cache hit: replaying the stored bytes verbatim made a
+    five-minute-old body claim ``generated_at`` was now, which is the one field
+    a reader uses to decide whether to trust the numbers on screen.
+    """
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    if not isinstance(meta, dict) or "generated_at" not in meta:
+        return payload
+    return {**payload, "meta": refreshed(meta)}
+
+
+def without_generated_at(payload: Any) -> Any:
+    """The same envelope with ``meta.generated_at`` removed, or unchanged (the
+    same object) when there is none.
+
+    VIZ-209's ETag is computed over THIS, not over the served bytes: an ETag
+    that moved with ``generated_at`` would change on every response and no
+    client could ever revalidate. Everything else, ``as_of`` included, stays
+    in the material.
+    """
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    if not isinstance(meta, dict) or "generated_at" not in meta:
+        return payload
+    return {**payload, "meta": {k: v for k, v in meta.items() if k != "generated_at"}}
 
 
 def _compact(value: dict) -> str:

@@ -1600,6 +1600,12 @@ async def verify_webhook_secret(
         )
 
 
+#: The ONE answer the release QUERY axis gives for a release the caller may
+#: not read — whether it is theirs, someone else's, or nothing at all. Two
+#: different answers would be an existence oracle over every release id.
+RELEASE_NOT_READABLE = "You do not have access to this release"
+
+
 async def resolve_release_query_scope(
     db: AsyncSession,
     release_id: Optional[str],
@@ -1623,11 +1629,17 @@ async def resolve_release_query_scope(
     run when the parameter is absent: that path has to stay byte-identical to
     pre-S4a behaviour (NFR1), including issuing no extra query.
 
-    404 for a release that does not exist, 403 for one the caller cannot
-    reach — matching ``require_release_access`` rather than inventing a second
-    convention. A uniform 404 would hide existence better, but having two
-    guards disagree about the same resource is the worse failure: it teaches
-    readers that the codes are arbitrary.
+    **403 for both a release that does not exist and one the caller cannot
+    reach.** It used to answer 404 for the first, which made this parameter an
+    existence oracle: an outsider could enumerate release ids and read
+    "unknown" off a 404 and "exists, not yours" off a 403, learning the id
+    space of projects they cannot see. The project half of the same request
+    already refuses both the same way (``resolve_project_scope`` 403s an
+    unknown project id as readily as a forbidden one), so a release answering
+    differently was also the inconsistency it was trying to avoid. The
+    ``release_id`` PATH guard (``require_release_access``) still 404s: that is
+    a resource identifier on its own route, shared with a dozen non-analytics
+    endpoints and their tests, and is a separate change.
     """
     if release_id is None:
         return None
@@ -1652,14 +1664,14 @@ async def resolve_release_query_scope(
         await db.execute(select(Release).where(Release.id == release_uuid))
     ).scalar_one_or_none()
     if release is None:
-        raise HTTPException(status_code=404, detail="Release not found")
+        # Same code, same words as "forbidden": the two must be
+        # indistinguishable or the parameter answers "does this id exist?".
+        raise HTTPException(status_code=403, detail=RELEASE_NOT_READABLE)
 
     accessible = await get_accessible_project_ids(db, current_user)
     # ``None`` means admin — no membership restriction.
     if accessible is not None and release.project_id not in accessible:
-        raise HTTPException(
-            status_code=403, detail="You do not have access to this release"
-        )
+        raise HTTPException(status_code=403, detail=RELEASE_NOT_READABLE)
     return str(release_uuid)
 
 
@@ -1712,15 +1724,15 @@ async def resolve_release_query_scopes(
         elif ruid is None:
             raise HTTPException(status_code=422, detail="Invalid release_id")
         elif ruid not in owners:
-            raise HTTPException(status_code=404, detail="Release not found")
+            # 403, not 404: see ``resolve_release_query_scope``. Unknown and
+            # forbidden must be one answer or the list is an existence oracle.
+            raise HTTPException(status_code=403, detail=RELEASE_NOT_READABLE)
         else:
             if not fetched:
                 accessible, fetched = await get_accessible_project_ids(db, current_user), True
             # ``None`` means admin -- no membership restriction.
             if accessible is not None and owners[ruid] not in accessible:
-                raise HTTPException(
-                    status_code=403, detail="You do not have access to this release"
-                )
+                raise HTTPException(status_code=403, detail=RELEASE_NOT_READABLE)
             resolved = str(ruid)
         if resolved not in out:
             out.append(resolved)

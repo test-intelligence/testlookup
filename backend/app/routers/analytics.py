@@ -1,11 +1,13 @@
 """Analytics endpoints: flaky tests, failure clusters, coverage, defects."""
 
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.analytics_errors import analytics_error_contract
+from app.core.analytics_read_layer import analytics_read
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
@@ -32,7 +34,7 @@ from app.models.schemas import (
     NotifyTestOwnerRequest,
     NotifyTestOwnerResponse,
 )
-from app.services import analytics_service
+from app.services import analytics_service, chart_data_service
 from app.services.analytics_meta import build_meta, with_meta
 from app.services.analytics_scope import (
     AnalyticsScope,
@@ -101,6 +103,7 @@ def _ran_in_scope(project_id, scope: AnalyticsScope):
 
 @router.get("/flaky-tests")
 @analytics_error_contract
+@analytics_read(namespace="flaky_tests")
 async def flaky_tests(
     limit: int = Query(20, ge=1, le=100),
     scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
@@ -156,6 +159,7 @@ async def flake_load(
 
 @router.get("/flaky-scores")
 @analytics_error_contract
+@analytics_read(namespace="flaky_scores")
 async def flaky_scores(
     limit: int = Query(50, ge=1, le=200),
     # ``project_id`` is required (never a fleet average). ``release_id`` (S4b,
@@ -276,6 +280,7 @@ async def flaky_scores(
 
 @router.get("/systemic-clusters")
 @analytics_error_contract
+@analytics_read(namespace="systemic_clusters")
 async def systemic_clusters(
     scope: AnalyticsScope = Depends(analytics_scope(_CLUSTERS)),
     db: AsyncSession = Depends(get_db),
@@ -376,6 +381,7 @@ async def systemic_clusters(
 
 @router.get("/failure-categories")
 @analytics_error_contract
+@analytics_read(namespace="failure_categories")
 async def failure_categories(
     scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
@@ -396,6 +402,7 @@ async def failure_categories(
 
 @router.get("/top-failing")
 @analytics_error_contract
+@analytics_read(namespace="top_failing")
 async def top_failing_tests(
     limit: int = Query(15, ge=1, le=50),
     scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
@@ -512,6 +519,7 @@ async def kind_evidence(
 
 @router.get("/coverage")
 @analytics_error_contract
+@analytics_read(namespace="coverage")
 async def coverage_stats(
     scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
@@ -539,6 +547,7 @@ async def coverage_stats(
 
 @router.get("/suite-detail")
 @analytics_error_contract
+@analytics_read(namespace="suite_detail")
 async def suite_detail(
     scope: AnalyticsScope = Depends(analytics_scope(_WINDOWED)),
     db: AsyncSession = Depends(get_db),
@@ -851,3 +860,107 @@ async def classify_uncategorized_failures(
         days=payload.days,
         suite_name=payload.suite_name,
     )
+
+
+# ── Chart data (VIZ-203) ───────────────────────────────────────────────────
+#
+# One guarded endpoint for "a metric, grouped by up to two things", so a new
+# chart does not need a new route. Everything about the numbers lives in
+# ``chart_data_service``; this handler only names the policy, hands the
+# validated spec over, and lifts the chart's truncation and definitions into
+# the VIZ-204 envelope.
+#
+# Caching, ETag, the per-user rate limit and the statement timeout are
+# VIZ-209's ``analytics_read`` (``core/analytics_read_layer.py``), applied
+# below: this route is a pure GET whose whole identity is its route, its query
+# string, the caller's project horizon and the project's analytics epoch, which
+# is exactly what that layer hashes. Its per-principal limit is the one
+# ``RATE_LIMITED_ROUTES`` already named for this path.
+_CHART_DATA = ScopePolicy(default_days=30, max_days=365)
+
+
+def _chart_data_identity(resolved: dict) -> tuple:
+    """This route's cache identity, from the RESOLVED request.
+
+    VIZ-209 keys on what it is given here rather than on the query string,
+    because the query string is not the question: ``group_by`` is
+    order-significant (first dimension is the x axis, second keys the series),
+    and a key built from sorted values made ``?group_by=status&group_by=env``
+    and its reverse -- transposes of each other -- one entry and one ETag.
+    ``cache_identity_parts`` is the seam ``chart_data_service`` owns for
+    exactly this; the spec it is given is the same one the handler builds
+    below, from the same validated arguments, so the two cannot drift.
+    """
+    # Subscripted, not ``.get``: every one of these is a parameter the route
+    # declares, so FastAPI has already bound it (to its default if absent). A
+    # KeyError here would mean the signature and this hook had drifted apart,
+    # which is exactly the thing that must not fail quietly.
+    scope: AnalyticsScope = resolved["scope"]
+    spec = chart_data_service.parse_chart_spec(
+        resolved["metric"], resolved["group_by"], resolved["top_n"], scope=scope,
+    )
+    return chart_data_service.cache_identity_parts(scope, spec)
+
+
+@router.get("/chart-data")
+@analytics_error_contract
+@analytics_read(namespace="chart_data", identity=_chart_data_identity)
+async def chart_data(
+    metric: str = Query(
+        "executions",
+        description=(
+            "What to measure. One of: "
+            + ", ".join(sorted(chart_data_service.METRICS))
+        ),
+    ),
+    group_by: Optional[list[str]] = Query(
+        None,
+        description=(
+            "The axis, and optionally a second dimension to key the series by "
+            "(at most two, the time dimension first). One of: "
+            + ", ".join(sorted(chart_data_service.DIMENSIONS))
+        ),
+    ),
+    top_n: Optional[int] = Query(
+        None,
+        description=(
+            "Keep the largest N keys and merge the rest into an 'other' "
+            "bucket. Required for group_by=test outside a single suite."
+        ),
+    ),
+    scope: AnalyticsScope = Depends(analytics_scope(_CHART_DATA)),
+    db: AsyncSession = Depends(get_db),
+):
+    """A metric over up to two dimensions, as contract C3 ``chart_series``.
+
+    Series are keyed by the second ``group_by`` and zero-filled over the first,
+    so the table view and CSV export need no transformation. Each point carries
+    ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
+    ``y: null`` with ``measured: false`` and a reason, never 0.
+    """
+    spec = chart_data_service.parse_chart_spec(metric, group_by, top_n, scope=scope)
+    # ONE clock for the whole request. The service took its own, the statement
+    # took another and this line took a third; three ``datetime.now()`` calls
+    # can straddle UTC midnight, and the answer is then an axis whose last
+    # bucket is outside the window the SQL bounded.
+    now = chart_data_service.request_clock()
+    payload = await chart_data_service.build_chart_data(db, scope, spec, now=now)
+    definitions = payload.pop("definitions")
+    envelope = {key: payload.pop(key) for key in chart_data_service.ENVELOPE_KEYS}
+    meta = await build_meta(
+        db,
+        scope,
+        pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS,
+        window_start=chart_data_service.window_start(scope.window_days, now=now),
+        truncated=bool(envelope["truncated"]),
+        truncated_total=envelope["truncated_total"],
+    )
+    meta["definitions"] = definitions
+    # Per axis, because ``truncated_total`` is one number and a chart can lose
+    # buckets AND series at once; and the runs whose bucket fell outside the
+    # generated axis, which used to disappear without a word.
+    if envelope["truncated_axes"]:
+        meta["truncated_axes"] = envelope["truncated_axes"]
+    if envelope["outside_window"]:
+        meta["outside_window"] = envelope["outside_window"]
+    return with_meta(payload, meta)
