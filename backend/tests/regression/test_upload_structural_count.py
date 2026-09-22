@@ -163,29 +163,87 @@ def _best_seconds(fn, repeat: int = 3) -> float:
     return best
 
 
-def _refuse_unclosed(units: int) -> None:
+def _refuse(report: str) -> None:
     with pytest.raises(UnreadableReport, match="never closes"):
-        upload_limits.structural_results(_unclosed(units), "cypress")
+        upload_limits.structural_results(report, "cypress")
+
+
+def _count(report: str) -> None:
+    upload_limits.structural_results(report, "cypress")
 
 
 def test_the_reviews_probe_is_refused_fast():
     """20,000 escaped quotes took 2.9 s with the quadratic tokenizer; a linear
     scan needs well under a millisecond. Checked first, so a quadratic scanner
     fails here quickly instead of hanging on the sizes below."""
-    assert _best_seconds(lambda: _refuse_unclosed(20_000), repeat=1) < 0.25
+    assert _best_seconds(lambda: _refuse(_unclosed(20_000)), repeat=1) < 0.25
 
 
-@pytest.mark.parametrize("build, sizes, bound", [
-    (_refuse_unclosed, (2_000_000, 4_000_000, 8_000_000), 2.0),
-    (lambda n: upload_limits.structural_results(_many_tests(n), "cypress"),
-     (100_000, 200_000, 400_000), 6.0),
+class _Walked:
+    """A stand-in for one of the scan's two compiled patterns that adds up how
+    much of the report the regex engine was asked to walk.
+
+    Every quantifier in both patterns is possessive, so a match never
+    backtracks: it stops where it succeeded, or -- having failed -- at the end
+    of the input. Either way the distance from where it was pointed is what
+    that step of the scan cost, and the total over a whole scan is the
+    quadratic tokenizer's tell, exactly and without a clock.
+    """
+
+    def __init__(self, pattern) -> None:
+        self._pattern = pattern
+        self.walked = 0
+
+    def _account(self, found, content: str, position: int):
+        self.walked += (found.end() if found is not None else len(content)) - position
+        return found
+
+    def search(self, content: str, position: int):
+        return self._account(self._pattern.search(content, position), content, position)
+
+    def match(self, content: str, position: int):
+        return self._account(self._pattern.match(content, position), content, position)
+
+
+def _characters_walked(scan, report: str) -> int:
+    patterns = [_Walked(upload_limits._STRUCTURAL), _Walked(upload_limits._STRING_REST)]
+    with patch.object(upload_limits, "_STRUCTURAL", patterns[0]), \
+            patch.object(upload_limits, "_STRING_REST", patterns[1]):
+        scan(report)
+    return sum(pattern.walked for pattern in patterns)
+
+
+@pytest.mark.parametrize("make, scan, sizes, bound", [
+    (_unclosed, _refuse, (2_000, 2_000_000, 4_000_000, 8_000_000), 2.0),
+    (_many_tests, _count, (1_000, 100_000, 200_000, 400_000), 6.0),
 ], ids=["unclosed-string", "many-results"])
-def test_the_count_is_linear_in_the_report(build, sizes, bound):
-    """Doubling the report doubles the time -- never quadruples it."""
-    timings = [_best_seconds(lambda n=n: build(n)) for n in sizes]
-    ratios = [later / max(earlier, 1e-4) for earlier, later in zip(timings, timings[1:])]
-    assert all(ratio < 3.0 for ratio in ratios), (timings, ratios)
-    assert timings[-1] < bound, timings
+def test_the_count_is_linear_in_the_report(make, scan, sizes, bound):
+    """Growing the report grows the scan in proportion -- never squared.
+
+    Counted in characters the scan walks, not seconds. The property is about
+    the algorithm, and timing it measured the machine too: two sub-second
+    readings whose ratio had to stay under 3 flip whenever something else on
+    the box takes the CPU, and this failed the push gate under a parallel
+    build. The scan walks each character of the report exactly once; the
+    tokenizer it replaced re-walked the tail from every quote.
+
+    The smallest size is a canary -- a quadratic scan fails on it in
+    milliseconds instead of hanging on the megabytes after it.
+    """
+    per_character = []
+    for units in sizes:
+        report = make(units)
+        walked = _characters_walked(scan, report)
+        assert walked <= 2 * len(report), (units, walked, len(report))
+        per_character.append(walked / len(report))
+    # Flat: what a character of report costs does not grow with the report.
+    assert max(per_character) / min(per_character) < 1.05, list(zip(sizes, per_character))
+
+    # ...and that constant is small enough to matter on a real upload. Timed
+    # on a report built beforehand, best of three.
+    biggest = make(sizes[-1])
+    seconds = _best_seconds(lambda: scan(biggest))
+    assert seconds < bound, (len(biggest), seconds)
 
 
 def test_the_count_still_counts_what_it_scans():

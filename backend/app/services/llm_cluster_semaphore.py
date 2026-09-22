@@ -29,7 +29,10 @@ This is the cluster bound, held in Redis:
   stalls (a hung socket, a slow Redis) is abandoned, and the holder is
   stopped before its lease can lapse, not when the stalled call returns.
   A heartbeat that wakes after the deadline (a starved event loop) stops
-  the holder at once without trying to renew.
+  the holder at once without trying to renew. Every deadline here is read
+  from the running loop's own monotonic clock (``_now``) -- the clock
+  ``asyncio``'s timeouts are counted on, so a deadline and the timeout
+  derived from it cannot drift apart.
 * Residual: a process whose event loop is BLOCKED for longer than the
   lease can neither renew nor stop its own call, so for that long the
   provider may see one call over the limit. It is stopped as soon as the
@@ -46,7 +49,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 import uuid
 from typing import Any, AsyncIterator, Optional
 
@@ -126,6 +128,21 @@ class ClusterSemaphore:
 
         return get_redis()
 
+    def _now(self) -> float:
+        """The clock every lease deadline here is measured on.
+
+        The running loop's own monotonic clock, rather than the ``time``
+        module's: a deadline computed here is turned straight into an
+        ``asyncio.wait_for``/``sleep`` timeout, and those are counted on the
+        loop's clock. Under the default (and uvloop) policies the two are the
+        same reading; keeping one clock means a deadline and the timeout
+        derived from it cannot drift apart, and it gives the tests a seam --
+        they run the whole dance on a loop whose clock only moves when
+        nothing is left to run, so the interleaving is decided by the lease
+        and never by how busy the machine is (tests/virtual_clock.py).
+        """
+        return asyncio.get_running_loop().time()
+
     async def try_acquire(self, token: str) -> bool:
         result = await self._client().eval(
             _ACQUIRE_LUA, 1, self.key, token, repr(self.lease_seconds), self.limit,
@@ -157,10 +174,10 @@ class ClusterSemaphore:
         margin = self._margin(interval)
         # The lease runs at least `lease_seconds` from when the acquire or the
         # last successful renew was SENT (QA-B45-R2-3).
-        lease_from = time.monotonic() if lease_from is None else lease_from
+        lease_from = self._now() if lease_from is None else lease_from
         while True:
             await asyncio.sleep(interval)
-            sent = time.monotonic()
+            sent = self._now()
             deadline = lease_from + self.lease_seconds - margin
             renewed: Optional[bool]
             reason = "renewal failing"
@@ -183,7 +200,7 @@ class ClusterSemaphore:
             # False: Redis says the lease is gone. None: renewal failed or
             # stalled; keep trying only while the NEXT attempt can still
             # finish before the deadline.
-            if renewed is False or time.monotonic() + interval >= deadline:
+            if renewed is False or self._now() + interval >= deadline:
                 logger.warning(
                     "llm_cluster_slot_lease_lost",
                     key=self.key,
@@ -203,12 +220,12 @@ class ClusterSemaphore:
         :class:`LLMSlotTimeout` when the cluster is full for ``timeout`` s.
         """
         token = uuid.uuid4().hex
-        deadline = time.monotonic() + max(0.0, float(timeout))
+        deadline = self._now() + max(0.0, float(timeout))
         delay = self._poll
         held = False
-        acquire_sent = time.monotonic()
+        acquire_sent = self._now()
         while True:
-            acquire_sent = time.monotonic()
+            acquire_sent = self._now()
             try:
                 held = await self.try_acquire(token)
             except Exception as exc:  # noqa: BLE001 -- degrade to the local bound
@@ -217,7 +234,7 @@ class ClusterSemaphore:
                 break
             if held:
                 break
-            if time.monotonic() >= deadline:
+            if self._now() >= deadline:
                 raise LLMSlotTimeout(
                     f"no LLM slot free within {timeout:.0f}s ({self.limit} in use cluster-wide)"
                 )
