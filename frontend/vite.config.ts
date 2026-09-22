@@ -46,6 +46,11 @@ export default defineConfig({
           // into AreaChart / BarChart / CartesianChart chunks that load only
           // on those routes — and total *less* than the forced chunk did
           // (391,686 vs 529,975 raw), because only what is used gets included.
+          //
+          // The same rule holds for the VIZ-103 chart engines: echarts, zrender
+          // and three are NEVER named here. Each ECharts chart type is its own
+          // dynamic import (components/charts/engines/registry.ts) and
+          // `npm run check:bundle` fails if any of them reaches an eager chunk.
           if (/\/node_modules\/(lucide-react|@radix-ui\/react-dialog)\//.test(nid)) return 'ui'
           return undefined
         },

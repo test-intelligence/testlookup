@@ -64,11 +64,69 @@ first load.
 3. **three.js draws the one 3D view** (an opt-in scatter), as its own lazy chunk behind the
    `viz_three_d` flag. Axes, labels, picking and rotation are ours to build, which is why the
    scope is a scatter only and why a 2D equivalent is always the default.
-4. **Tooltips return DOM nodes.** A string-returning `formatter` is forbidden under
-   `frontend/src/components/charts`, enforced by a guard, and covered by an end-to-end test
-   that ingests a hostile test name.
+4. **Tooltips return DOM nodes.** Every ECharts `formatter` is
+   `formatter: domTooltipFormatter(…)` from `components/charts/tooltip.ts`. The guards below
+   enforce it, and an end-to-end test that ingests a hostile test name covers it.
 5. **The CSP does not change.** A library that needs `eval`, `blob:` workers or a remote
-   resource is rejected rather than accommodated.
+   resource is rejected rather than accommodated. This also rules out one ECharts API:
+   **never register a map or geo type from a GeoJSON string.** `echarts.registerMap` with
+   string GeoJSON is parsed by `GeoJSONResource` with `new Function`, which `script-src 'self'`
+   blocks. If a map is ever needed, pass an already-parsed object that we build ourselves.
+
+## Guards
+
+`npm run check:theme` (`frontend/scripts/check-theme-tokens.mjs`, which calls
+`frontend/scripts/chart-guard.mjs`) and `npm run check:bundle`
+(`frontend/scripts/check-bundle-budget.mjs`) enforce the decisions above. CI and
+`scripts/push_check.py` run both. Each one runs a self-test against planted violations before it
+scans the real tree.
+
+- **Import boundary.** A value import of `echarts`, `zrender`, `echarts-gl` or `three`, including
+  deep paths such as `zrender/lib/core/util`, is allowed only under
+  `frontend/src/components/charts/engines/`. `ENGINE_DIRS` in `chart-guard.mjs` is the one list of
+  allowed directories. Side-effect imports, dynamic `import()`, `require` and re-exports count as
+  value imports. `import type`, `export type` and `typeof import(…)` are erased at build time, so
+  they are allowed everywhere. An import with only inline `type` names (`import { type X }`) is
+  flagged: under `verbatimModuleSyntax` it compiles to `import {} from 'x'`, which keeps the
+  module's side effects. The boundary keeps engine code in one directory, and it stops a partial
+  import like `zrender/lib/core/util` from reaching the eager bundle, where it would carry none of
+  the markers that `check-bundle-budget.mjs` looks for.
+- **Formatter rule.** This rule runs on the TypeScript compiler's AST, not on regex. It scans the
+  engine directory, `components/charts/**` and every file that imports an `engines/` module. It
+  fails on:
+  - a `formatter` or `*Formatter` key whose value is not a direct call to the imported
+    `domTooltipFormatter`, whatever the key's form: identifier, string, computed, method,
+    `async`, getter or class field;
+  - `x.formatter = …` and `x['formatter'] = …`;
+  - `x[k] = …` into an object whose name contains tooltip, label, legend or axis;
+  - `Object.assign`, `Object.defineProperty(ies)` or `Reflect.set/defineProperty` into a
+    tooltip, label or legend;
+  - any other string literal that is a formatter key, as in
+    `defineProperty(tip, 'formatter', …)` or `fromEntries`;
+  - a spread into a tooltip, label or legend object;
+  - a `tooltip` value the guard cannot see, such as one imported from another file;
+  - `rich` (rich-text templates interpret `{a|…}`), unless the line or the line above has
+    `// chart-guard-allow rich: <reason>`;
+  - in the engine directory, a computed key that is not a literal;
+  - a local declaration that shadows the helper.
+
+  Recharts' JSX `formatter={…}` is not matched, because React escapes it. The source rule cannot
+  see an option built from innocently named variables across several files, so a **runtime
+  check** closes that gap: `engines/useEChart.ts`, the one place an option reaches the engine,
+  calls `assertSafeChartOption` (in `tooltip.ts`) before `init` and before every `setOption`. It
+  walks the whole option (own keys incl. non-enumerable, cycle-safe, depth ≤ 32) and refuses any
+  `*formatter` key, in any case, whose value is not a function `domTooltipFormatter` produced
+  (tracked in a `WeakSet`) — a string included. A refused option puts the chart in its error
+  state; ECharts never sees it.
+- **Bundle.** `echarts`, `zrender`, `recharts` and `three` must not be in an eagerly preloaded
+  chunk. Each is detected by string literals that survive minification. three.js has two markers:
+  `__THREE__`, which is a top-level side effect that tree-shaking may drop, and
+  `WebGLRenderer: Context Lost.`, which is written from memory of three's source and has not been
+  verified. **VIZ-508 must prove both markers with an eager-import build before anyone relies on
+  them.** The lazy ECharts base chunk has a ceiling of 198 600 bytes gzip. No production route
+  renders ECharts yet, so no build tests that ceiling, and the script's output says so. The script
+  also prints the remaining eager headroom. On 2026-09-22 it measured 178 205 of 180 000 bytes,
+  which leaves 1 795 bytes (1.0%).
 
 ## Consequences
 

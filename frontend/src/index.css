@@ -35,6 +35,21 @@
    repeating ~70 values six times.
 
    Add a theme: one [data-theme] block here + one row in store/themeStore.ts.
+
+   CHART tokens (VIZ-102), read by src/components/charts/tokens.ts:
+   --chart-series-1..8  categorical, Okabe-Ito adjusted; every mark >= 3:1 on
+                        the theme's card (asserted per theme by
+                        src/test/chartTokens.test.ts). 8 = "Other" grey.
+   --chart-seq-1..7     viridis, trimmed so EVERY step (1 included) is >= 3:1
+                        on the theme's card — the no-data cell (card + hatch)
+                        can never be mistaken for the lowest step; 7 is always
+                        the SALIENT end: bright on dark cards, dark on the light
+                        card. A heatmap reverses the ramp when its low end is
+                        the concern (`salient: 'low'`, e.g. pass rate).
+   --chart-div-1..7     purple-orange (red keeps meaning "failed"); 4 is the
+                        theme's neutral midpoint.
+   --chart-grid / --chart-axis, and --status-unknown (the fifth status; flaky
+   stays an attribute marker, never a status).
    ═══════════════════════════════════════════════════════════════════════ */
 
 @layer base {
@@ -49,6 +64,8 @@
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
+    --status-unknown:#8a919c;
+    --chart-div-4:#333c49; --chart-grid:#262d38;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -66,6 +83,8 @@
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.035);
+    --status-unknown:#8a919c;
+    --chart-div-4:#303743; --chart-grid:#232833;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -83,6 +102,8 @@
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
+    --status-unknown:#8a919c;
+    --chart-div-4:#3d4856; --chart-grid:#2e3744;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -100,6 +121,8 @@
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
+    --status-unknown:#8a919c;
+    --chart-div-4:#453a2f; --chart-grid:#342b22;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -117,6 +140,11 @@
     --status-passed:#1f7a48; --status-failed:#b3352c; --status-broken:#b05816; --status-skipped:#91701c; --status-flaky:#6742ad;
     --color-purple:#6742ad; --color-cyan:#0e7490;
     --grid-dot:rgba(0,0,0,0.06);
+    --status-unknown:#666d78;
+    --chart-series-1:#bd8200; --chart-series-2:#4794bf; --chart-series-3:#009e73; --chart-series-4:#958d29; --chart-series-5:#0072b2; --chart-series-6:#d55e00; --chart-series-7:#c474a0; --chart-series-8:#4b5260;
+    --chart-seq-1:#22a186; --chart-seq-2:#238b8d; --chart-seq-3:#2c738e; --chart-seq-4:#375b8c; --chart-seq-5:#424185; --chart-seq-6:#482273; --chart-seq-7:#440154;
+    --chart-div-1:#b35806; --chart-div-2:#e08214; --chart-div-3:#fdb863; --chart-div-4:#dfe3e8; --chart-div-5:#b2abd2; --chart-div-6:#8073ac; --chart-div-7:#542788;
+    --chart-grid:#e6e9ee; --chart-axis:#5f6672;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -134,10 +162,24 @@
     --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
     --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.025);
+    --status-unknown:#8a919c;
+    --chart-div-4:#4a525c; --chart-grid:#3d444d;
     --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
     --app-bg-image:none;
+  }
+
+  /* ── Chart palette shared by the five DARK themes (one categorical set, one
+     viridis ramp, one diverging ramp: a series colour must not depend on which
+     dark theme is active). Each dark block above keeps its own diverging
+     midpoint (--chart-div-4) and --chart-grid; lab carries its own full set. ── */
+  [data-theme="signal"], [data-theme="console"], [data-theme="slate"],
+  [data-theme="ember"], [data-theme="midnight"] {
+    --chart-series-1:#e69f00; --chart-series-2:#56b4e9; --chart-series-3:#009e73; --chart-series-4:#f0e442; --chart-series-5:#0a78b5; --chart-series-6:#d55e00; --chart-series-7:#cc79a7; --chart-series-8:#b8bec8;
+    --chart-seq-1:#2a788e; --chart-seq-2:#21918c; --chart-seq-3:#22a884; --chart-seq-4:#44bf70; --chart-seq-5:#7ad151; --chart-seq-6:#bddf26; --chart-seq-7:#fde725;
+    --chart-div-1:#fdb863; --chart-div-2:#e08214; --chart-div-3:#9c5a1c; --chart-div-5:#6f64a0; --chart-div-6:#9e94cc; --chart-div-7:#cfc8ec;
+    --chart-axis:#8b94a3;
   }
 
   /* ═══════════════════════════════════════════════════════════════════

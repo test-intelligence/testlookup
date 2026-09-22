@@ -72,6 +72,137 @@ mypy is not always CI's on a file you touched: ``bootstrap.py`` counts one error
 fewer locally than in CI, which made the gate demand a baseline CI then
 rejected. ``KNOWN_MYPY_SKEW`` records such a difference with the CI evidence;
 the ratchet still fails on any change beyond it.
+## Unreleased - Visualization Upgrade, Epic 1: shared primitives, and what three reviews found (VIZ-109)
+
+**Primitives for the filter bar and drill-down.** ``components/ui`` gains
+``MultiSelect`` (search, select all/none, windowed list, ``max``), ``Chip`` /
+``ChipList``, ``Skeleton``, ``Breadcrumbs`` and ``SidePanel`` (modal or not);
+``utils/download.ts`` saves a blob. The dev page ``/__primitives`` shows each
+one, and its Playwright spec runs axe in all six themes. No page uses them yet.
+
+**Accessibility review, fixed.** A MultiSelect option's name was the label run
+into its count ("Release 137"); it is now "Release 1, 37", with the disabled
+reason. The popover is capped to the viewport, scrolls, and flips above the
+trigger, so every control is reachable at 320x256 (it ran 200 px off screen).
+Small accent text uses ``--color-accent-ink`` (4.06:1 in ``console`` before).
+A non-modal SidePanel covered 23 of 23 focused controls at 375 px: below 640 px
+it is modal, and wider it pads the page (``reserveSpaceIn``) instead of
+overlaying it; a modal one locks page scroll. A chart page had 6 alert and 17
+status live regions; one page-level ``ChartAnnouncerProvider`` now coalesces
+changes into one polite message ("5 charts updated"), and only a Retry the
+reader pressed announces assertively. Status is no longer colour-only: SVG
+patterns and dashes in the Recharts charts and legends, ECharts decals in
+status matrices. The heatmap ramp starts at >= 3:1 against the card in every
+theme (1.26:1 in ``lab`` before), a no-data cell is hatched and reads "No
+data" instead of looking like the lowest value, and ``salient`` picks which end
+is the problem (pass rate: low).
+
+**Correctness review, fixed.** A second 429 with the same Retry-After never
+retried (automatic retries are now keyed per error and capped at 3); a
+non-empty payload with ``everHadData: false`` was hidden as "never had data";
+a 401 after the refresh retry loaded forever (now "session expired", with
+sign-in); an ECharts ``init``/``setOption`` throw was an unhandled rejection
+with the chart stuck loading; table rows followed first appearance, not x;
+``Retry-After: 1.5`` parsed as a date; a request id with bidi or control
+characters was shown (now must match ``^[A-Za-z0-9._:-]{1,128}$``); a download
+URL was revoked at 0 ms (now 40 s); a chip's focus request was lost on
+re-render.
+
+**Security review, fixed.** The source rule against string tooltip formatters
+missed 7 of 8 bypasses. ``scripts/chart-guard.mjs`` replaces the regex with
+the TypeScript parser: value imports of echarts, zrender, echarts-gl and three
+are allowed only under ``components/charts/engines``, and there any
+``*formatter`` (computed key, method, ``Object.assign``/``defineProperty``,
+spread into a tooltip) must be a ``domTooltipFormatter(...)`` call; ``rich:``
+needs a reasoned allow comment. What a source rule cannot see -- an option
+assembled across files -- is refused at runtime: ``useEChart`` calls
+``assertSafeChartOption`` before ``init`` and every ``setOption``, and a
+formatter not built by the helper puts the chart in its error state. The
+bundle check gains a second three.js marker and prints its headroom
+(1 740 bytes, 1.0%) and when the ECharts base ceiling was not exercised.
+
+## Unreleased - Visualization Upgrade, Epic 1: the chart frame, its states and an accessible baseline (VIZ-101, VIZ-107, VIZ-105)
+
+**One shell for every chart.** ``components/charts/ChartFrame.tsx`` renders the
+title as a real heading at a caller-chosen level (two lines, then truncated with
+the full text in ``title``), an optional one-line takeaway (omitted, nothing is
+drawn in its place), scope and toolbar slots, and a footer with "N of M runs"
+from ``meta.totals``. The chart body is a ``role="group"`` named by the title and
+described by the takeaway plus a summary generated from the normalised series
+(chart type, axes, scope, min, max, latest). Its ref is the body, for the
+export and full-screen stories. No page uses it yet.
+
+**Every way a chart can show nothing is its own state.** ``useChartData``
+(``hooks/``) wraps SWR and returns ``loading | never-had-data | filtered-empty |
+not-measured | error | truncated | forbidden | ready``. The frame owns each
+one; the renderer mounts only for ``ready``/``truncated``, inside a per-frame
+error boundary, so one failing chart never blanks the page. ``never-had-data``
+comes only from the caller's unfiltered existence probe; ``not-measured`` shows
+"—" and the server's reason, never 0; a 422 names the rejected parameter; a 429
+waits for Retry-After; a 401 stays loading while the shared refresh retries once; a
+request superseded by a key change is aborted and never shown as an error. A
+payload is validated against the viz contracts before SWR caches it: a failure
+is an error naming the request id, never a half-drawn chart.
+
+**Chart requests no longer toast.** Axios requests accept ``suppressToast``,
+which ``shouldToastError`` honours; ``services/chartApi.ts::chartGet`` sets it
+and returns the ``X-Request-ID``. Every request that does not set it toasts
+exactly as before (regression test drives the real interceptor).
+
+**Accessible charts.** "View as table" renders a captioned table (focus moves to
+the caption, paginated above 500 rows) from the same series object the renderer
+gets; a property test pins table cells to plotted values. The heatmap is one
+focus stop: arrow keys, Home/End (Ctrl for the whole chart) move a highlighted
+cell through ECharts ``highlight``/``showTip`` -- the same tooltip the mouse
+gets -- announced in a polite live region; Escape clears it and keeps focus on
+the chart. Recharts 3 ``accessibilityLayer`` is on for all three Recharts
+components, and ``prefers-reduced-motion`` turns animation off in both engines.
+
+The dev gallery gains ``/__charts?view=states`` (one frame per state); the CI
+Playwright spec asserts each state's copy, request ids, a contract-failing
+payload and a throwing renderer staying in their frames, table cells equal to
+the fixture, the keyboard path, and axe in all six themes. Eager gzip 178 166
+before, 178 205 after (the ``suppressToast`` check in the interceptor).
+
+## Unreleased - Visualization Upgrade, Epic 1: chart tokens and a second engine (VIZ-102, VIZ-103)
+
+**Every chart colour is a per-theme token.** ``src/index.css`` gains, for all six
+themes, eight categorical series colours (Okabe-Ito, adjusted until every mark
+is at least 3:1 on the theme's card), a seven-step viridis ramp whose last step
+is always the salient one (bright on dark cards, dark on ``lab``), a
+purple-orange diverging ramp with a per-theme neutral midpoint (red keeps
+meaning "failed"), ``--chart-grid``, ``--chart-axis`` and ``--status-unknown``,
+the fifth status. The existing status hues are unchanged; "flaky" stays an
+attribute, never a status. ``components/charts/tokens.ts`` hands the values to
+both engines: ``var()`` references for Recharts' SVG, and computed values for a
+canvas, read once per theme and re-read when ``data-theme`` changes. Each status
+also has a fixed icon, pattern id and decal, so status is never colour-only.
+``TrendChart``, ``DefectDonut`` and ``PassRateGauge`` lost their hard-coded
+greys; ``TrendChart`` now draws "skipped" in the skipped hue (it borrowed the
+broken hue). A vitest suite parses index.css and measures every series and
+status mark against every theme's card.
+
+**Apache ECharts 6, lazy, one chunk per chart type.** ``echarts/core`` with only
+the canvas renderer, grid, tooltip, legend and aria; each chart type registers
+itself in its own module and is reached through ``loadChartEngine(type)``. The
+first type is the heatmap. A missing engine chunk after a deploy becomes a typed
+``StaleBuildError`` ("A new version is available -- Reload") instead of a blank
+chart. No production route renders an ECharts chart yet, so the production
+build carries none of it.
+
+**Guards, each with a built-in self-test against planted violations.**
+``npm run check:theme`` fails on any hex/rgb/hsl literal under
+``components/charts`` and on any ECharts ``formatter`` not written as
+``formatter: domTooltipFormatter(...)`` -- a string-returning formatter is an
+HTML sink, and test names come from ingested CI files. ``npm run check:bundle``
+adds echarts, zrender and three to the must-be-lazy list (matched by string
+literals from each library's core, because the name "zrender" does not survive
+minification) and caps the lazy ECharts base chunk at 198 600 bytes gzip
+(measured 180 562 + 10%). Eager gzip: 177 516 before, 178 166 after (budget
+180 000; the 650 bytes are the new CSS tokens). The dev gallery gains three
+heatmaps, one with a label of ``<img src=x onerror=...>``; the Playwright spec
+hovers it and asserts literal text, no element, no execution, zero CSP
+violations, and that ``/login`` never requests the engine.
 
 ## Unreleased - Visualization Upgrade, Wave 0: contracts before charts
 

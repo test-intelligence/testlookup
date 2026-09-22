@@ -230,6 +230,148 @@ ${tail}`
 }
 
 /**
+ * Numbers for charts, tables and filter counts (VIZ-109).
+ *
+ * One locale for every number on a page, so a count in a chip and the same
+ * count in a chart tooltip read alike. The default is FIXED rather than the
+ * browser's: a screenshot baseline, a CSV and a pasted link must not change
+ * digit grouping with the machine that rendered them. Callers pass `locale`
+ * when a surface genuinely wants the viewer's.
+ *
+ * Every formatter here returns the em-dash for "no value" — `null`,
+ * `undefined`, `NaN` and ±Infinity alike — and never a zero. A metric that was
+ * not measured must not read as a measured 0 ("absence is not health").
+ */
+export const DEFAULT_NUMBER_LOCALE = 'en-US'
+export const NO_VALUE = '—'
+
+const numberFormatCache = new Map<string, Intl.NumberFormat>()
+
+function numberFormat(locale: string, options: Intl.NumberFormatOptions): Intl.NumberFormat {
+  const key = `${locale}|${JSON.stringify(options)}`
+  let formatter = numberFormatCache.get(key)
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale, options)
+    numberFormatCache.set(key, formatter)
+  }
+  return formatter
+}
+
+const isMeasured = (value: number | null | undefined): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+/**
+ * A value that ROUNDS to zero at `fractionDigits` becomes `+0`. Intl keeps
+ * the sign of what it rounds, so `-0` and `-0.4` (at 0 digits) both render as
+ * `'-0'`, a "negative nothing" no reader can act on. Strictly less than half
+ * a unit: `-0.5` rounds away from zero (Intl's halfExpand) and keeps its sign.
+ */
+const settleZero = (value: number, fractionDigits: number): number =>
+  Math.abs(value) < 0.5 / 10 ** fractionDigits ? 0 : value
+
+export interface NumberFormatOptions {
+  locale?: string
+  /** Default 0 — counts are whole numbers. */
+  maximumFractionDigits?: number
+}
+
+/** `1234567` → `'1,234,567'`. No value → `'—'`. */
+export const formatNumber = (
+  value: number | null | undefined,
+  { locale = DEFAULT_NUMBER_LOCALE, maximumFractionDigits = 0 }: NumberFormatOptions = {},
+): string => {
+  if (!isMeasured(value)) return NO_VALUE
+  return numberFormat(locale, { maximumFractionDigits }).format(settleZero(value, maximumFractionDigits))
+}
+
+export interface PercentFormatOptions {
+  locale?: string
+  /**
+   * The scale of the INPUT. `'percent'` (default) takes percentage points,
+   * 0–100, like `formatPassRate` and the API's `pass_rate` fields; `'ratio'`
+   * takes a 0–1 fraction. Explicit because a misread scale renders a
+   * plausible-looking wrong number rather than failing.
+   */
+  from?: 'percent' | 'ratio'
+}
+
+/**
+ * One decimal, always: `87.25` → `'87.3%'`, `0` → `'0.0%'` (a real, measured
+ * zero). `null` / unmeasured → `'—'`, never `'0%'`.
+ */
+export const formatPercent = (
+  value: number | null | undefined,
+  { locale = DEFAULT_NUMBER_LOCALE, from = 'percent' }: PercentFormatOptions = {},
+): string => {
+  if (!isMeasured(value)) return NO_VALUE
+  // One decimal of a PERCENT is three decimals of the ratio Intl is given.
+  const ratio = settleZero(from === 'ratio' ? value : value / 100, 3)
+  return numberFormat(locale, {
+    style: 'percent',
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(ratio)
+}
+
+/** `1234567` → `'1.23M'`, `999` → `'999'`. No value → `'—'`. Pair with `formatCompactWithExact` for a `title`. */
+export const formatCompact = (
+  value: number | null | undefined,
+  { locale = DEFAULT_NUMBER_LOCALE }: { locale?: string } = {},
+): string => {
+  if (!isMeasured(value)) return NO_VALUE
+  return numberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(settleZero(value, 2))
+}
+
+/**
+ * The compact text plus the exact value for its `title`, so abbreviating a
+ * number relocates precision rather than destroying it:
+ * `{ text: '1.23M', title: '1,234,567' }`.
+ */
+export const formatCompactWithExact = (
+  value: number | null | undefined,
+  { locale = DEFAULT_NUMBER_LOCALE }: { locale?: string } = {},
+): { text: string; title: string } => ({
+  text: formatCompact(value, { locale }),
+  title: formatNumber(value, { locale, maximumFractionDigits: 20 }),
+})
+
+/** The slice of `Intl.Segmenter` used here; the ES2020 lib in tsconfig does not declare it. */
+type GraphemeSegmenter = new (
+  locale: string | undefined,
+  options: { granularity: 'grapheme' },
+) => { segment(input: string): Iterable<{ segment: string }> }
+
+let graphemeSegmenter: { segment(input: string): Iterable<{ segment: string }> } | null | undefined
+
+function graphemes(text: string): string[] {
+  if (graphemeSegmenter === undefined) {
+    const Segmenter = (Intl as unknown as { Segmenter?: GraphemeSegmenter }).Segmenter
+    graphemeSegmenter = typeof Segmenter === 'function' ? new Segmenter(undefined, { granularity: 'grapheme' }) : null
+  }
+  if (graphemeSegmenter === null) return Array.from(text)
+  return Array.from(graphemeSegmenter.segment(text), (part) => part.segment)
+}
+
+/**
+ * Shorten long text by cutting its MIDDLE: `'checkout-…-payments-spec'`. The
+ * two ends are what tell similar labels apart (a suite prefix, a file
+ * suffix), so an end-truncating ellipsis would render many labels alike.
+ * Counts user-perceived characters (grapheme clusters, via `Intl.Segmenter`
+ * where the runtime has it, code points otherwise), so a surrogate pair, a
+ * ZWJ emoji sequence or a letter with its combining accent is never split.
+ * Callers put the full text in `title`.
+ */
+export const truncateMiddle = (text: string, maxChars: number): string => {
+  const chars = graphemes(text)
+  if (chars.length <= maxChars) return text
+  if (maxChars <= 1) return '…'
+  const keep = maxChars - 1
+  const head = Math.ceil(keep / 2)
+  const tail = keep - head
+  return `${chars.slice(0, head).join('')}…${tail > 0 ? chars.slice(chars.length - tail).join('') : ''}`
+}
+
+/**
  * Human-readable byte size. Binary units (KiB/MiB) because that is what object
  * stores report.
  *

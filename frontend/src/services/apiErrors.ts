@@ -20,8 +20,18 @@ interface ValidationErrorItem {
  * over a ``String(N)`` column) was the documented "empty page, no error toast"
  * footgun — the request failed, SWR yielded ``undefined``, and the page rendered
  * a blank state with zero feedback. Surfacing it makes the failure diagnosable.
+ *
+ * ``request.suppressToast`` (the axios request config, see ``services/api.ts``)
+ * silences the toast for that one request — its caller owns the message.
  */
-export function shouldToastError(status: number | undefined): boolean {
+export function shouldToastError(
+  status: number | undefined,
+  request?: { suppressToast?: boolean } | null,
+): boolean {
+  // A caller that renders the failure itself (a chart frame: VIZ-107) opts out
+  // per request, so six failing charts do not raise six toasts. Every request
+  // that does not set the flag keeps exactly the policy below.
+  if (request?.suppressToast === true) return false
   return status !== 401 && status !== 404
 }
 
