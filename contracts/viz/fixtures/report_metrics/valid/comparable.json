@@ -1,0 +1,48 @@
+{
+  "description": "Both periods measured on the same basis: the strip draws deltas.",
+  "payload": {
+    "schema_version": 1,
+    "pass_rate_basis": "executions",
+    "current": {
+      "runs": 5,
+      "total_tests": 60,
+      "passed": 50,
+      "failed": 5,
+      "broken": 2,
+      "skipped": 3,
+      "unknown": 0,
+      "pass_rate": 87.7,
+      "total_duration_ms": 600000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 5,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-12",
+        "to": "2026-09-19",
+        "days": 7
+      }
+    },
+    "previous": {
+      "runs": 4,
+      "total_tests": 48,
+      "passed": 39,
+      "failed": 7,
+      "broken": 0,
+      "skipped": 2,
+      "unknown": 0,
+      "pass_rate": 84.8,
+      "total_duration_ms": 480000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 4,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-05",
+        "to": "2026-09-12",
+        "days": 7
+      },
+      "comparable": true,
+      "reason": null,
+      "reason_code": null
+    }
+  }
+}

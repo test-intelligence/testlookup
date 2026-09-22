@@ -1,9 +1,12 @@
 import useSWR from 'swr'
-import { useAuthStore } from '@/store/authStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { myFailuresService } from '@/services/myFailuresService'
 import { useReleaseScope } from './useReleaseScope'
+import { keyPart, scopeArg } from '@/lib/scopeParams'
+import { useSuiteScope } from './useSuiteScope'
+// Scoped reads opt into superseded-scope aborting (services/scopeAbort.ts).
+import { scopedFetch } from '@/services/scopeAbort'
 
 /**
  * Paginated list of the caller's auto-assigned failures.
@@ -16,16 +19,30 @@ export function useMyFailures(params: { days?: number; page?: number; size?: num
   // and nothing was sending it — the picker sat in the header changing nothing
   // on this page. An inert filter is worse than an absent one: it reads as
   // "these are 2.4.0's failures" when they are the project's.
-  const releaseId = useReleaseScope()
+  //
+  // Both axes repeat on the endpoint (VIZ-303 / E3): every selected release
+  // and every globally selected suite is sent — none → no parameter, one →
+  // the legacy scalar, several → a repeated key. The suite scope is `null`
+  // with the multi-filter flag off, so a flag-off request is unchanged.
+  const release = scopeArg(useReleaseScope())
+  const suites = scopeArg(useSuiteScope())
   return useProjectScopedSWR(
     'my-failures',
     (projectId) =>
-      myFailuresService.list({ project_id: projectId, release_id: releaseId, ...params }),
+      scopedFetch(() => myFailuresService.list({ project_id: projectId, release_id: release, suite_name: suites, ...params })),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
     // In the deps as well as the params, or switching releases serves the
-    // previous release's page from cache under the new release's name.
-    [params.days, params.page, params.size, params.scope, releaseId],
+    // previous release's page from cache under the new release's name. Lists
+    // as their joined strings: never an array rebuilt per render.
+    [params.days, params.page, params.size, params.scope, keyPart(release), ...suiteDeps(suites)],
   )
+}
+
+/** The suite axis in a dep list: nothing at all when none is selected, so a
+ *  flag-off key is byte-identical to the key before the axis existed. */
+function suiteDeps(suites: string | string[] | null): string[] {
+  const key = keyPart(suites)
+  return key ? [`suites:${key}`] : []
 }
 
 /**
@@ -42,14 +59,15 @@ export function useMyFailuresCount(params: { days?: number } = {}) {
   // Scoped with the list, not independently. The count endpoint's own comment
   // says a disagreement means "the badge advertises work the page cannot
   // show", and a release-scoped page beside a project-wide badge is exactly
-  // that.
-  const releaseId = useReleaseScope()
+  // that. Same axes, same wire rule as the list.
+  const release = scopeArg(useReleaseScope())
+  const suites = scopeArg(useSuiteScope())
   return useProjectScopedSWR(
     'my-failures-count',
     (projectId) =>
-      myFailuresService.count({ project_id: projectId, days: params.days, release_id: releaseId }),
+      scopedFetch(() => myFailuresService.count({ project_id: projectId, days: params.days, release_id: release, suite_name: suites })),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
-    [params.days, releaseId],
+    [params.days, keyPart(release), ...suiteDeps(suites)],
   )
 }
 
@@ -69,19 +87,6 @@ export function useReassignOptions(testCaseId: string | null) {
   )
 }
 
-/**
- * Non-project-scoped variant for the top-level "all my work" sidebar badge.
- *
- * Deliberately NOT release-scoped, unlike its project-scoped sibling above. A
- * release belongs to one project, so filtering a badge that spans every project
- * by one project's release would answer a question nobody asked — and
- * `useReleaseScope` returns null without a single pinned project anyway.
- */
-export function useMyFailuresCountUnscoped(params: { days?: number } = {}) {
-  const userId = useAuthStore((state) => state.user?.id ?? null)
-  return useSWR(
-    userId ? ['my-failures-count-unscoped', userId, params.days] : null,
-    () => myFailuresService.count({ days: params.days }),
-    { refreshInterval: REFRESH_INTERVALS.POLLING },
-  )
-}
+// The sidebar badge's unscoped count lives in its own module so the eager
+// Sidebar does not pull this module's scope machinery onto the critical path.
+export { useMyFailuresCountUnscoped } from './useMyFailuresCountUnscoped'

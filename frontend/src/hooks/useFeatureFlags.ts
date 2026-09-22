@@ -61,12 +61,28 @@ export function useFeatureFlags() {
  * loaded. SWR dedupes identical (key, project) lookups across components.
  */
 export function useFeatureEnabled(key: string): boolean {
+  return useFeatureFlagStatus(key) ?? false
+}
+
+/**
+ * The same resolved flag, but with "not known yet" kept distinct from "off":
+ * `undefined` while the status request is in flight — including on the first
+ * visit to each project, since the key is per project — `true`/`false` once
+ * it answers, and `false` if it FAILED (a gate that cannot be read stays
+ * closed, the answer `useFeatureEnabled` has always given).
+ *
+ * A caller that must not flicker across a project switch holds its last
+ * answer while this reads `undefined` (see `useScopeUrlSync`).
+ */
+export function useFeatureFlagStatus(key: string): boolean | undefined {
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
-  const { data } = useSWR(
+  const { data, error } = useSWR(
     ['feature-flag-status', key, projectId],
     () => featureFlagService.status(key, projectId),
     { revalidateOnFocus: false },
   )
-  return data?.enabled ?? false
+  if (data !== undefined) return data.enabled ?? false
+  if (error) return false
+  return undefined
 }

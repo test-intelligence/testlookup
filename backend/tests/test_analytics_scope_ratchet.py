@@ -65,8 +65,11 @@ _LEGACY = {
     "routers/runs.py": 2,                       # /runs suite filter (run label)
     "services/global_search_service.py": 1,     # search result grouping
     "services/run_compare_service.py": 7,       # run compare (#559)
-    "services/runs_service.py": 3,              # /runs list service
-    "services/stream_service.py": 1,            # live stream suite lookup
+    # /runs list service: the list's suite rule moved to analytics_scope
+    # (``run_list_suite_clause``, E3 multi-value); 1 left (run label grouping).
+    "services/runs_service.py": 1,
+    # services/stream_service.py: 0 -- /stream/active's suite filter is
+    # ``analytics_scope.suite_label_clause`` (E3 fix round C, multi-value).
     "services/test_management_service.py": 4,   # test-management (#560)
     "services/test_suite_service.py": 2,        # suite catalogue
 }

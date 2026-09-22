@@ -90,6 +90,56 @@ describe('MetricCard', () => {
     expect(trendRowClass('25% vs prev period')).toContain('--status-failed')
   })
 
+  // Fix round B (a11y M1): direction and good/bad are WORDS, not only the
+  // icon's shape and colour (WCAG 1.4.1 use of colour, 1.1.1 non-text).
+  it('states the direction and whether it is better or worse in text; the icon is decoration', () => {
+    const { container } = render(
+      <MetricCard
+        title="Failed"
+        metric={{ value: 9, trend: 25, trend_direction: 'up' }}
+        icon={<BarChart3 />}
+        positiveDirection="down"
+      />,
+    )
+    const row = container.querySelector('[data-metric-trend]') as HTMLElement
+    expect(row.textContent).toBe('Up25% vs prev period(worse)')
+    const svg = row.querySelector('svg') as SVGElement
+    expect(svg).toHaveAttribute('aria-hidden', 'true')
+    expect(svg.getAttribute('class')).toContain('shrink-0')
+  })
+
+  it('takes the caller change text, e.g. percentage points', () => {
+    const { container } = render(
+      <MetricCard
+        title="Pass rate"
+        metric={{ value: '91.2%', trend: 2.9, trend_direction: 'down', trend_text: '2.9 pp vs previous period' }}
+        icon={<BarChart3 />}
+      />,
+    )
+    expect(container.querySelector('[data-metric-trend]')?.textContent).toBe('Down2.9 pp vs previous period(worse)')
+  })
+
+  it('"none": a reason with no number, no direction word, no judgement', () => {
+    const { container } = render(
+      <MetricCard
+        title="Broken"
+        metric={{ value: 2, trend: null, trend_direction: 'none', trend_text: 'New: 0 in the previous period' }}
+        icon={<BarChart3 />}
+      />,
+    )
+    const row = container.querySelector('[data-metric-trend]') as HTMLElement
+    expect(row.textContent).toBe('New: 0 in the previous period')
+    expect(row.querySelector('svg')).toBeNull()
+  })
+
+  it('flat is "No change", never judged', () => {
+    const { container } = render(
+      <MetricCard title="Runs" metric={{ value: 5, trend: 0, trend_direction: 'flat' }} icon={<BarChart3 />} />,
+    )
+    expect(container.querySelector('[data-trend-direction]')?.textContent).toBe('No change')
+    expect(container.querySelector('[data-trend-judgement]')).toBeNull()
+  })
+
   it('does not announce itself as a live region (audit 1.5: no per-card aria-live)', () => {
     // A dashboard renders 6-8 cards polling via SWR; per-card role="status"
     // re-announced every value to screen readers on every refresh.

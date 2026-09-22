@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../services/api';
+import { resetReportScopeOnLogout } from './logoutReset';
 
 export interface User {
   id: string;
@@ -75,7 +76,15 @@ export const useAuthStore = create<AuthState>()(
           state.user ? { user: { ...state.user, must_change_password: false } } : {}
         ),
 
-      logout: () => set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
+      logout: () => {
+        set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 }));
+        // Security M1: the saved release/suite filters (`tl.release-filter`,
+        // `tl.suite-filter`) and the settled data scope belong to THIS user's
+        // session — the next sign-in on this browser must not inherit them.
+        // Through a registry (store/logoutReset.ts), not an import of
+        // settledScope: this store is eager, the scope machinery is not.
+        resetReportScopeOnLogout();
+      },
       logoutServer: async () => {
         try { await api.post('/api/v1/auth/logout'); }
         catch { /* local cleanup still completes when the server is unavailable */ }

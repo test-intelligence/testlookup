@@ -8,20 +8,23 @@
 import { api } from './api'
 import { getData } from './http'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
+import { scopeParam, type ScopeValue } from '@/lib/scopeParams'
 
 export interface SummaryReportParams {
   project_id: string | null
   days: number
   mode: SummaryReportMode
-  /** Scope every number to one release. Omitted = all releases. */
-  release_id?: string | null
+  /** Scope every number to one release (or, VIZ-303, several). Omitted = all
+   *  releases. */
+  release_id?: ScopeValue
 }
 
 /** Release scoping, OMITTED when absent rather than sent as null or empty —
  *  the same convention as `analyticsService.releaseParam`. One release is one
- *  scalar `release_id=a`, so the wire is unchanged for single-value callers. */
-function releaseParam(releaseId: string | null | undefined): Record<string, string> {
-  return releaseId ? { release_id: releaseId } : {}
+ *  scalar `release_id=a`, so the wire is unchanged for single-value callers;
+ *  several are a repeated `release_id` (contract C1). */
+function releaseParam(releaseId: ScopeValue): Record<string, string | string[]> {
+  return scopeParam('release_id', releaseId)
 }
 
 /**
@@ -36,7 +39,7 @@ function releaseParam(releaseId: string | null | undefined): Record<string, stri
  */
 export function summaryReportQueryParams(
   params: SummaryReportParams,
-): Record<string, string | number> {
+): Record<string, string | number | string[]> {
   return {
     ...(params.project_id ? { project_id: params.project_id } : {}),
     days: params.days,

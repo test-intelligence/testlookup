@@ -24,11 +24,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 export const ANNOUNCE_DEBOUNCE_MS = 800
 
 export interface ChartAnnouncer {
-  /** A frame's state changed (not its first load). Coalesced, polite. */
-  report(frameId: string, title: string, change: string): void
+  /**
+   * A frame's state changed (not its first load). Coalesced, polite. `kind`
+   * `'summary'` is a page-level text (the filtered-dataset line, VIZ-305): it
+   * is announced as-is, never counted as a chart.
+   */
+  report(frameId: string, title: string, change: string, kind?: AnnouncementKind): void
   /** The result of the reader's own action: announced now, assertively. */
   assertive(text: string): void
 }
+
+export type AnnouncementKind = 'chart' | 'summary'
 
 const ChartAnnouncerContext = createContext<ChartAnnouncer | null>(null)
 
@@ -40,14 +46,21 @@ export function useChartAnnouncer(): ChartAnnouncer | null {
 const chartsNoun = (n: number) => (n === 1 ? '1 chart' : `${n} charts`)
 
 /** The one message for a batch of changes. Exported for tests. */
-export function composeAnnouncement(changes: readonly { title: string; change: string }[]): string {
-  if (changes.length === 0) return ''
-  if (changes.length === 1) return `${changes[0].title} chart: ${changes[0].change}`
-  const counts = new Map<string, number>()
-  for (const { change } of changes) counts.set(change, (counts.get(change) ?? 0) + 1)
-  return [...counts]
-    .map(([change, n]) => (change === 'updated' ? `${chartsNoun(n)} updated` : `${chartsNoun(n)}: ${change}`))
-    .join(', ')
+export function composeAnnouncement(
+  changes: readonly { title: string; change: string; kind?: AnnouncementKind }[],
+): string {
+  const summaries = changes.filter((c) => c.kind === 'summary').map((c) => c.change)
+  const charts = changes.filter((c) => c.kind !== 'summary')
+  let chartText = ''
+  if (charts.length === 1) chartText = `${charts[0].title} chart: ${charts[0].change}`
+  else if (charts.length > 1) {
+    const counts = new Map<string, number>()
+    for (const { change } of charts) counts.set(change, (counts.get(change) ?? 0) + 1)
+    chartText = [...counts]
+      .map(([change, n]) => (change === 'updated' ? `${chartsNoun(n)} updated` : `${chartsNoun(n)}: ${change}`))
+      .join(', ')
+  }
+  return [...summaries, chartText].filter(Boolean).join('. ')
 }
 
 /** U+00A0: invisible, but a different string. */
@@ -59,7 +72,7 @@ const nextText = (previous: string, text: string) => (previous === text ? `${tex
 export function ChartAnnouncerProvider({ children }: { children: ReactNode }) {
   const [polite, setPolite] = useState('')
   const [assertiveText, setAssertiveText] = useState('')
-  const pending = useRef(new Map<string, { title: string; change: string }>())
+  const pending = useRef(new Map<string, { title: string; change: string; kind?: AnnouncementKind }>())
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(
@@ -69,9 +82,9 @@ export function ChartAnnouncerProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const report = useCallback((frameId: string, title: string, change: string) => {
+  const report = useCallback((frameId: string, title: string, change: string, kind?: AnnouncementKind) => {
     // Latest change per frame: a frame that changes twice in the window counts once.
-    pending.current.set(frameId, { title, change })
+    pending.current.set(frameId, { title, change, kind })
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       timer.current = null

@@ -38,7 +38,7 @@
  * Run settings persist to localStorage. Synthesis paths are tagged with
  * `coming in Phase 2` toasts on the relevant CTAs.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Bot, Check,
@@ -61,6 +61,9 @@ import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { scopeKey } from '@/lib/scopeParams'
+import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { usePermissions } from '@/hooks/usePermissions'
 import { deepInvestigationService } from '@/services/deepInvestigationService'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
@@ -1604,6 +1607,15 @@ function CardShell({
   )
 }
 
+/** Whether a run belongs to any of the selected suites (OR within the axis). */
+function runInSuites(run: TestRun, suites: readonly string[]): boolean {
+  const own = [
+    ...(run.suite_names ?? []),
+    ...(run.primary_suite_name ? [run.primary_suite_name] : []),
+  ]
+  return suites.some(name => own.some(value => suiteMatchesValue(value, name)))
+}
+
 // ── Page ────────────────────────────────────────────────────────────────
 export default function DeepInvestigationPage() {
   const { runId } = useParams<{ runId?: string }>()
@@ -1614,12 +1626,14 @@ export default function DeepInvestigationPage() {
   const { isQaEngineer } = usePermissions()
 
   const [settings, setSettings] = useState<RunSettings>(loadSettings)
-  const [selectedSuite, setSelectedSuite] = useState('')
+  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
+  // suite store with it on — see usePageSuiteFilter.
+  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteNames, suiteLabel, multiLabel, flagResolved } = usePageSuiteFilter()
   const { options: suiteOptions } = useSuiteOptions(0)
   useEffect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) }, [settings])
 
   // Recent runs to populate the past-investigations table + auto-pick a focus.
-  const { data: recentRuns, isLoading: runsLoading } = useRuns({ page: 1, size: 6, days: 0, ...(selectedSuite && { suite_name: selectedSuite }) })
+  const { data: recentRuns, isLoading: runsLoading, isValidating: runsValidating } = useRuns({ page: 1, size: 6, days: 0, ...(pageSuiteFilter && { suite_name: pageSuiteFilter }) })
   const recentItems = useMemo<TestRun[]>(() => (recentRuns?.items ?? []) as TestRun[], [recentRuns])
 
   // Auto-route to the most recent run if no runId is in the URL — preserved
@@ -1644,11 +1658,34 @@ export default function DeepInvestigationPage() {
     ?? (fallbackFetch.data as TestRun | undefined)
     ?? null)
 
+  // The user CHANGED the suite and the focused run is not in it: jump to the
+  // suite's newest run. Only a change made after mount counts. A suite that
+  // was already applied when the page opened — the global filter (VIZ-303)
+  // restored from storage or a link, or the flag resolving and revealing it —
+  // is not a request to leave a deep-linked run, and redirecting on it opened
+  // a different run than the link named. Never decided while anything it
+  // depends on is loading: the suite's run list, or the direct fetch of the
+  // focused run (it may well be in the suite, just older than the newest six).
+  const suiteKey = scopeKey(suiteNames) ?? ''
+  const suiteBaselineRef = useRef<string | null>(null)
+  const focusedRunLoading = Boolean(fallbackFetch.isLoading)
   useEffect(() => {
-    if (selectedSuite && runId && recentItems.length > 0 && !focusedRun && !runsLoading) {
-      navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
+    if (!flagResolved) return
+    if (suiteBaselineRef.current === null) {
+      suiteBaselineRef.current = suiteKey
+      return
     }
-  }, [selectedSuite, runId, recentItems, focusedRun, runsLoading, navigate])
+    if (suiteKey === suiteBaselineRef.current) return
+    if (!pageSuiteFilter || !runId) {
+      suiteBaselineRef.current = suiteKey
+      return
+    }
+    if (runsLoading || runsValidating || focusedRunLoading || recentItems.length === 0) return
+    suiteBaselineRef.current = suiteKey
+    if (recentItems.some(r => r.id === runId)) return
+    if (focusedRun && runInSuites(focusedRun, suiteNames)) return
+    navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
+  }, [flagResolved, suiteKey, suiteNames, pageSuiteFilter, runId, recentItems, focusedRun, runsLoading, runsValidating, focusedRunLoading, navigate])
 
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
   const { data: findings = [] } = useDeepFindings(runId ?? null)
@@ -1773,11 +1810,11 @@ export default function DeepInvestigationPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Semantic clustering &amp; multi-source root cause for</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {selectedSuite && (
+            {suiteLabel && (
               <>
                 <span aria-hidden>·</span>
                 <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
               </>
             )}
             {model.focusedRun && (
@@ -1821,6 +1858,7 @@ export default function DeepInvestigationPage() {
           </GhostBtn>
           <SuiteFilterSelect
             value={selectedSuite}
+            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

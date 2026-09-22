@@ -8,73 +8,78 @@ import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { useReleaseScope } from './useReleaseScope'
+import { keyPart, scopeArg, type ScopeValue } from '@/lib/scopeParams'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+// Scoped reads opt into superseded-scope aborting (VIZ-303): a request built
+// from a scope the user has since moved off is cancelled. Only these fetchers
+// are marked; see services/scopeAbort.ts.
+import { scopedFetch } from '@/services/scopeAbort'
 
 export function refreshDefects() {
   return mutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
 }
 
-export function useDashboardSummary(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useDashboardSummary(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'metrics-summary',
-    (projectId) => metricsService.getSummary(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => metricsService.getSummary(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
-export function useTrendData(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useTrendData(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'metrics-trends',
-    (projectId) => metricsService.getTrends(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => metricsService.getTrends(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
-export function useFlakyTests(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useFlakyTests(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'analytics-flaky',
-    (projectId) => analyticsService.getFlakyTests(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => analyticsService.getFlakyTests(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     // `releaseId` belongs in the deps, which become the SWR key. In the params
     // alone it would change the request without changing the cache entry, so
     // switching releases would render the previous one's numbers under the new
     // one's name.
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
-export function useFailureCategories(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useFailureCategories(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'analytics-categories',
-    (projectId) => analyticsService.getFailureCategories(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => analyticsService.getFailureCategories(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
-export function useTopFailing(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useTopFailing(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'analytics-top-failing',
-    (projectId) => analyticsService.getTopFailing(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => analyticsService.getTopFailing(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
-export function useCoverage(days = 30, suiteName?: string | null) {
-  const releaseId = useReleaseScope()
+export function useCoverage(days = 30, suiteName?: ScopeValue) {
+  const releaseId = scopeArg(useReleaseScope())
   return useProjectScopedSWR(
     'analytics-coverage',
-    (projectId) => analyticsService.getCoverage(projectId, days, suiteName, releaseId),
+    (projectId) => scopedFetch(() => analyticsService.getCoverage(projectId, days, suiteName, releaseId)),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName, releaseId],
+    [days, keyPart(suiteName), keyPart(releaseId)],
   )
 }
 
@@ -106,15 +111,17 @@ export function useSuiteDetail(
   options?: { releaseScoped?: boolean },
 ) {
   const projectId = useActiveProjectId()
-  const scopedReleaseId = useReleaseScope()
+  const scopedReleaseId = scopeArg(useReleaseScope())
   const releaseId = options?.releaseScoped === false ? null : scopedReleaseId
   const fetchProjectId = projectId === ALL_PROJECTS_ID ? null : projectId
   return useSWR(
     // This hook builds its key by hand rather than through
     // `useProjectScopedSWR`, so the release has to be added in BOTH places
-    // explicitly — the key here and the argument below.
+    // explicitly — the key here and the argument below. `keyPart`: several
+    // releases (VIZ-303) enter the key as ONE sorted joined string, never an
+    // array, and a single release stays exactly the legacy scalar.
     projectId && suiteName
-      ? ['analytics-suite-detail', projectId, suiteName, days, releaseId]
+      ? ['analytics-suite-detail', projectId, suiteName, days, keyPart(releaseId)]
       : null,
     () => analyticsService.getSuiteDetail(fetchProjectId, suiteName as string, days, releaseId),
     { revalidateOnFocus: false },

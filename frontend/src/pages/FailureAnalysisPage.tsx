@@ -84,6 +84,8 @@ import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
 } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { bulkWriteSuite } from '@/lib/scopeParams'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
   FailureCategoryItem, FailureKindCount, FlakyTestItem, TopFailingItem,
@@ -2172,9 +2174,10 @@ export default function FailureAnalysisPage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
-  const [selectedSuite, setSelectedSuite] = useState('')
+  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
+  // suite store with it on — see usePageSuiteFilter.
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
   const analyticsView = useAnalyticsView('failures')
-  const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
   // ── Compare-to-previous-window toggle ────────────────────────────────
@@ -2202,7 +2205,7 @@ export default function FailureAnalysisPage() {
   // Surface the suite of the most-recent failing run in the header so a user
   // landing on this page can immediately see which test suite owns the
   // failures they're about to triage.
-  const { data: latestFailedRuns } = useRuns({ page: 1, size: 1, days, status: 'FAILED', ...(selectedSuite && { suite_name: selectedSuite }) })
+  const { data: latestFailedRuns } = useRuns({ page: 1, size: 1, days, status: 'FAILED', ...(suiteFilter && { suite_name: suiteFilter }) })
   const latestFailedRun = latestFailedRuns?.items?.[0]
 
   const flaky      = useMemo<FlakyTestItem[]>(() => normaliseList<FlakyTestItem>(flakyData), [flakyData])
@@ -2392,6 +2395,16 @@ export default function FailureAnalysisPage() {
       toast.error('Pick a specific project to classify failures.')
       return
     }
+    // A bulk WRITE must never be broader than what is on screen. The endpoint
+    // takes one suite; with several selected (VIZ-303) sending none would tag
+    // every suite's failures, so refuse instead. The suite is the one the
+    // confirmation text names (`suiteLabel`, from the same `suiteNames`) —
+    // not the settled data scope, which trails a click by 250 ms.
+    const writeSuite = bulkWriteSuite(suiteNames)
+    if (writeSuite.kind === 'several') {
+      toast.error('Pick a single suite to classify failures.')
+      return
+    }
     if (classifying) return
     setClassifying(true)
     try {
@@ -2400,7 +2413,7 @@ export default function FailureAnalysisPage() {
         project_id: project.id,
         category,
         days,
-        ...(selectedSuite ? { suite_name: selectedSuite } : {}),
+        ...(writeSuite.kind === 'one' ? { suite_name: writeSuite.name } : {}),
       })
       toast.success(
         resp.updated > 0
@@ -2613,11 +2626,11 @@ export default function FailureAnalysisPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Project</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {selectedSuite && (
+            {suiteLabel && (
               <>
                 <span aria-hidden>·</span>
                 <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
               </>
             )}
             <span aria-hidden>·</span>
@@ -2642,13 +2655,14 @@ export default function FailureAnalysisPage() {
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
+            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"
           />
           <GhostBtn
             onClick={() => handleExportCsv({
-              topFailing, flaky, categories, project, days, suiteFilter,
+              topFailing, flaky, categories, project, days, suiteFilter: suiteLabel || null,
             })}
             title="Export failure data as CSV"
           >
@@ -2773,7 +2787,7 @@ export default function FailureAnalysisPage() {
                 current={comparison.current}
                 prior={comparison.prior}
                 windowDays={days}
-                suiteName={selectedSuite || null}
+                suiteName={suiteLabel || null}
               />
             ) : (
               <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
@@ -2854,7 +2868,7 @@ export default function FailureAnalysisPage() {
             </h2>
             <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
               Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
-              {selectedSuite && <> in <code className="font-mono">{selectedSuite}</code></>} that
+              {suiteLabel && <> in <code className="font-mono">{suiteLabel}</code></>} that
               has no category yet will be tagged with the selected category.
             </p>
 

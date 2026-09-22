@@ -12,7 +12,7 @@ import asyncio
 import json
 import re
 import uuid
-from typing import AsyncGenerator, Optional
+from typing import Annotated, AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -33,7 +33,9 @@ from app.models.schemas import (
     LiveSessionCreate,
     LiveStreamIngestRequest,
 )
+from app.models.viz_contracts import MAX_SUITE_NAME_LENGTH, MAX_SUITES
 from app.services import stream_service
+from app.services.analytics_scope import parse_suite_filter
 from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
 from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
 
@@ -171,7 +173,16 @@ async def ingest_via_api_key(
 @router.get("/active", response_model=ActiveSessionsResponse)
 async def list_active_sessions(
     project_id: Optional[str] = None,
-    suite_name: Optional[str] = Query(None, min_length=1),
+    # E3 (m3): repeatable, OR within, filtered server-side before each DB
+    # source's page cap. ``Annotated`` so a direct call that omits it gets
+    # ``None``, not FastAPI's ``Query`` object.
+    suite_name: Annotated[
+        Optional[list[str]],
+        Query(description=(
+            f"Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters: "
+            "sessions in any of these suites; trimmed, case-insensitive."
+        )),
+    ] = None,
     days: int = Query(
         7,
         ge=0,
@@ -185,6 +196,10 @@ async def list_active_sessions(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
+    # C1 before any database access: an empty, over-long or 51st suite is a
+    # 422 with the analytics error body (``suite_name_length`` / ``suite_cap``).
+    # One name reaches the service as the same string it always did.
+    suites = parse_suite_filter(suite_name)
     # Tenant isolation:
     # - ADMIN (accessible=None): sees everything; no filter.
     # - Non-admin with specific project_id: verify they are a member of that project.
@@ -218,14 +233,14 @@ async def list_active_sessions(
                 detail="You do not have access to this project",
             )
         return await stream_service.list_active_sessions(
-            db, project_id, suite_name=suite_name, days=days,
+            db, project_id, suite_name=suites, days=days,
         )
 
     return await stream_service.list_active_sessions(
         db,
         project_id=None,
         allowed_project_ids=accessible,
-        suite_name=suite_name,
+        suite_name=suites,
         days=days,
     )
 

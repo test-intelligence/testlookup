@@ -1,0 +1,51 @@
+{
+  "description": "The scope's history starts inside the previous window: not comparable, with a reason and a code; an unmeasured previous duration is null with a reason, never 0.",
+  "payload": {
+    "schema_version": 1,
+    "pass_rate_basis": "executions",
+    "current": {
+      "runs": 5,
+      "total_tests": 64,
+      "passed": 50,
+      "failed": 5,
+      "broken": 2,
+      "skipped": 3,
+      "unknown": 4,
+      "pass_rate": 87.7,
+      "total_duration_ms": 600000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 5,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-12",
+        "to": "2026-09-19",
+        "days": 7
+      }
+    },
+    "previous": {
+      "runs": 1,
+      "total_tests": 12,
+      "passed": 12,
+      "failed": 0,
+      "broken": 0,
+      "skipped": 0,
+      "unknown": 0,
+      "pass_rate": 100,
+      "total_duration_ms": null,
+      "avg_duration_ms": null,
+      "duration_runs": 0,
+      "reasons": {
+        "total_duration_ms": "No run in this period recorded a duration.",
+        "avg_duration_ms": "No run in this period recorded a duration."
+      },
+      "window": {
+        "from": "2026-09-05",
+        "to": "2026-09-12",
+        "days": 7
+      },
+      "comparable": false,
+      "reason": "The previous period may be only partly covered: this scope has no run in the 90 days before it starts on 2026-09-05, and its first run in it is on 2026-09-10.",
+      "reason_code": "partial_window"
+    }
+  }
+}

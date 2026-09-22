@@ -1,15 +1,19 @@
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { useReleaseScope } from './useReleaseScope'
+import { keyPart, scopeArg } from '@/lib/scopeParams'
 import { summaryReportService } from '@/services/summaryReportService'
+import { scopedFetch } from '@/services/scopeAbort'
 import type { SummaryReportMode } from '@/types/summaryReport'
 
 /** Everything the summary report is scoped by, apart from the project. */
 export interface SummaryReportScope {
   days: number
   mode: SummaryReportMode
-  /** Present only when a release applies — absent, never null (NFR1). */
-  release_id?: string
+  /** Present only when a release applies — absent, never null (NFR1). One
+   *  release is the scalar; several (VIZ-303, flag on) a sorted array, which
+   *  the service sends as a repeated `release_id`. */
+  release_id?: string | string[]
 }
 
 /**
@@ -28,7 +32,7 @@ export function useSummaryReportScope(params: {
   days: number
   mode: SummaryReportMode
 }): SummaryReportScope {
-  const releaseId = useReleaseScope()
+  const releaseId = scopeArg(useReleaseScope())
   return {
     days: params.days,
     mode: params.mode,
@@ -46,12 +50,16 @@ export function useSummaryReport(params: { days: number; mode: SummaryReportMode
 
   return useProjectScopedSWR(
     'summary-report',
-    (projectId) => summaryReportService.get({ project_id: projectId, ...scope }),
+    // The screen's read opts into superseded-scope aborting; the PDF export
+    // (a user-initiated download) never does (services/scopeAbort.ts).
+    (projectId) => scopedFetch(() => summaryReportService.get({ project_id: projectId, ...scope })),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     // The release belongs in the KEY, not just the request. Without it SWR
     // serves the previously-cached all-releases report on the first render
     // after a selection, so the page shows unfiltered numbers under a release
     // filter until the next revalidation.
-    [scope.days, scope.mode, scope.release_id ?? null],
+    // `keyPart`: several releases enter the key as one sorted joined string,
+    // never an array (a fresh array per render would refetch every render).
+    [scope.days, scope.mode, keyPart(scope.release_id) ?? null],
   )
 }

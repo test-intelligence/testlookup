@@ -24,6 +24,7 @@ from app.models.schemas import (
     LiveStreamIngestRequest,
     LiveStreamIngestResponse,
 )
+from app.services.analytics_scope import SuiteArg, suite_keys, suite_label_clause
 from app.services.ingestion_sanitization import (
     sanitize_test_result_payload,
     validate_live_identifier,
@@ -1625,12 +1626,16 @@ async def list_active_sessions(
     db: AsyncSession,
     project_id: Optional[str] = None,
     allowed_project_ids: Optional[set[uuid.UUID]] = None,
-    suite_name: Optional[str] = None,
+    suite_name: SuiteArg = None,
     days: int = 7,
 ) -> ActiveSessionsResponse:
     """
     List active + recent live sessions, enforcing tenant isolation.
 
+    - ``suite_name``: one name, or several (OR) -- matched trimmed and
+      case-insensitively on all three sources, BEFORE each DB source's
+      ``limit(50)``, so a matching session older than the newest 50 of the
+      unfiltered set is still listed. One name is the legacy statement.
     - ``project_id`` (when set) narrows the result to that single project.
     - ``allowed_project_ids`` (when set) constrains the result to the caller's
       accessible project set — used for non-admin callers without a pinned
@@ -1641,7 +1646,7 @@ async def list_active_sessions(
     """
     from app.streams.live_run_state import RedisLiveRunState
 
-    suite_key = (suite_name or "").strip().lower()
+    suite_filter = suite_keys(suite_name)
 
     # Soft-deleted projects are excluded for every caller. The two filters
     # below are conditional by design (a pinned project, or a non-admin's
@@ -1667,11 +1672,11 @@ async def list_active_sessions(
     elif allowed_project_ids is not None:
         allowed_str = {str(pid) for pid in allowed_project_ids}
         all_active = [s for s in all_active if s.get("project_id") in allowed_str]
-    if suite_key:
+    if suite_filter:
         all_active = [
             session
             for session in all_active
-            if (session.get("suite_name") or "").strip().lower() == suite_key
+            if (session.get("suite_name") or "").strip().lower() in suite_filter
         ]
 
     # Dedup on the CANONICAL run UUID, not the raw id.
@@ -1725,8 +1730,9 @@ async def list_active_sessions(
         if not allowed_project_ids:
             return ActiveSessionsResponse(sessions=[], count=0)
         stmt = stmt.where(LiveSession.project_id.in_(allowed_project_ids))
-    if suite_key:
-        stmt = stmt.where(func.lower(func.trim(LiveSession.suite_name)) == suite_key)
+    live_suite = suite_label_clause(LiveSession.suite_name, suite_filter)
+    if live_suite is not None:
+        stmt = stmt.where(live_suite)
 
     db_sessions = (await db.execute(stmt)).scalars().all()
     seen_run_ids = set(active_run_ids)
@@ -1759,8 +1765,9 @@ async def list_active_sessions(
             pass
     elif allowed_project_ids is not None:
         tr_stmt = tr_stmt.where(TestRun.project_id.in_(allowed_project_ids))
-    if suite_key:
-        tr_stmt = tr_stmt.where(func.lower(func.trim(TestRun.primary_suite_name)) == suite_key)
+    run_suite = suite_label_clause(TestRun.primary_suite_name, suite_filter)
+    if run_suite is not None:
+        tr_stmt = tr_stmt.where(run_suite)
 
     tr_runs = (await db.execute(tr_stmt)).scalars().all()
     for run in tr_runs:

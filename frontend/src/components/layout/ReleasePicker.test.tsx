@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReleasePicker } from './ReleasePicker'
 import { useReleaseStore } from '@/store/releaseStore'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
+import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
 
 const PROJECT_A = 'aaaaaaaa-0000-0000-0000-000000000001'
 const PROJECT_B = 'bbbbbbbb-0000-0000-0000-000000000002'
@@ -110,6 +111,12 @@ const picker = () => screen.getByRole('combobox', { name: /filter by release/i }
 describe('ReleasePicker', () => {
   beforeEach(() => {
     localStorage.clear()
+    // These are the LEGACY (flag-off) picker's tests. The flag store starts
+    // UNRESOLVED — the picker's effects wait for an answer, so a saved
+    // multi-selection is not collapsed before the flag arrives
+    // (useScopeUrlSync.flagRace.test.tsx) — so resolve it off here, as
+    // `useScopeUrlSync` does in the app when the flag says off.
+    useMultiFiltersFlagStore.setState({ enabled: false, resolved: true })
     useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     mocked.projectState = { activeProjectId: PROJECT_A }
     mocked.toast.mockClear()

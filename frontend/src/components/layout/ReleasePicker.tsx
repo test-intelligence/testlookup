@@ -4,6 +4,12 @@ import toast from 'react-hot-toast'
 import { useReleases } from '@/hooks/useReleases'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useReleaseStore } from '@/store/releaseStore'
+import { useMultiFiltersState } from '@/store/multiFiltersFlag'
+import {
+  loadMultiFiltersRuntime,
+  useMultiFiltersRuntimeStore,
+  type MultiFiltersRuntime,
+} from './multiFiltersRuntimeLoader'
 import type { Release } from '@/types/releases'
 
 /** The query-string key that carries the filter in a shared link. */
@@ -60,6 +66,14 @@ const NO_RELEASE_VALUE = ''
 export function ReleasePicker() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const activeReleaseId = useReleaseStore(s => s.activeReleaseId)
+  // `viz_multi_filters`: 'unknown' until it answers. Every effect below is the
+  // LEGACY single-release machinery and runs only once the flag has said
+  // 'off' — while it is unknown, publishing `?release=<first id>` would
+  // collapse a saved multi-selection the moment the flag says 'on' (E3 review,
+  // proof A). With it 'on', `useScopeUrlSync` owns all of this.
+  const flagState = useMultiFiltersState()
+  const multi = flagState === 'on'
+  const legacy = flagState === 'off'
   const setActiveRelease = useReleaseStore(s => s.setActiveRelease)
   const syncToProject = useReleaseStore(s => s.syncToProject)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -93,6 +107,10 @@ export function ReleasePicker() {
   // restored from localStorage may belong to a project other than the one now
   // active.
   useEffect(() => {
+    // With `viz_multi_filters` on, `useScopeUrlSync` owns project
+    // reconciliation (and names what it dropped); see effect (2). Unknown:
+    // wait for the answer.
+    if (!legacy) return
     if (!syncToProject(scopeProjectId)) return
     // Name the actual cause. Widening to All Projects is not "a different
     // project", and telling the user it was sends them looking for a bug.
@@ -102,7 +120,7 @@ export function ReleasePicker() {
         : 'Release filter cleared — it belonged to a different project',
       { icon: 'ℹ️' },
     )
-  }, [scopeProjectId, syncToProject])
+  }, [legacy, scopeProjectId, syncToProject])
 
   // (2) Keep the URL and the store agreeing, in whichever direction moved.
   //
@@ -122,6 +140,13 @@ export function ReleasePicker() {
   const lastWrittenRef = useRef<string | null>(null)
   const navigationType = useNavigationType()
   useEffect(() => {
+    // VIZ-306: with `viz_multi_filters` on, `useScopeUrlSync` (mounted once in
+    // AppLayout) REPLACES this loop — it owns `?release=` (now repeatable),
+    // `?suites=` and `?window=`. Two writers on one key would fight: this
+    // loop's `next.set(RELEASE_PARAM, activeReleaseId)` would collapse a
+    // repeated `release` to its first value on every store change. While the
+    // flag is unknown neither loop runs.
+    if (!legacy) return
     const fromUrl = searchParams.get(RELEASE_PARAM)
 
     // With no project pinned there is nothing to resolve the id against. Do
@@ -197,6 +222,7 @@ export function ReleasePicker() {
     lastWrittenRef.current = activeReleaseId
     setSearchParams(next, { replace: true })
   }, [
+    legacy,
     searchParams,
     navigationType,
     activeReleaseId,
@@ -212,6 +238,9 @@ export function ReleasePicker() {
   // from a link into a project that does not own it. Drop it rather than filter
   // by an id nothing matches.
   useEffect(() => {
+    // Flag on: `useScopeUrlSync` validates every selected id, not just the
+    // first, and names the ones it drops. Unknown: wait.
+    if (!legacy) return
     if (!listLoaded || isAllProjects) return
     // The Unattributed bucket is a real selection that will never appear in the
     // release list. Without this it would be dropped as "stale" the moment the
@@ -228,13 +257,26 @@ export function ReleasePicker() {
     if (releases.some(r => r.id === current)) return
     setActiveRelease(null, scopeProjectId)
     toast.error('That release is not in the selected project — filter cleared')
-  }, [listLoaded, activeReleaseId, isAllProjects, releases, scopeProjectId, setActiveRelease])
+  }, [legacy, listLoaded, activeReleaseId, isAllProjects, releases, scopeProjectId, setActiveRelease])
 
   const disabledReason = isAllProjects
     ? 'Pick a single project to filter by release — releases belong to one project'
     : listLoaded && releases.length === 0
       ? 'This project has no releases yet'
       : undefined
+
+  if (multi) {
+    // VIZ-303 / a11y M5: a read-only summary button, not a `<select>` (see
+    // ReleaseSummary). Lazy, with the rest of the flag-on UI.
+    return (
+      <MultiReleaseSummary
+        releases={releases}
+        listLoaded={listLoaded}
+        disabledReason={disabledReason}
+        scopeProjectId={scopeProjectId}
+      />
+    )
+  }
 
   return (
     <select
@@ -270,4 +312,19 @@ export function ReleasePicker() {
       )}
     </select>
   )
+}
+
+/**
+ * The flag-on summary, from the lazy multi-filters runtime. In the app the
+ * flag reads 'on' only once that runtime has loaded (it is what publishes
+ * 'on'), so this renders at once; the load below is a safety net for a flag
+ * set by other means (tests), and renders nothing until it lands.
+ */
+function MultiReleaseSummary(props: Parameters<MultiFiltersRuntime['ReleaseSummary']>[0]) {
+  const runtime = useMultiFiltersRuntimeStore(s => s.runtime)
+  useEffect(() => {
+    if (runtime === null) void loadMultiFiltersRuntime().catch(() => undefined)
+  }, [runtime])
+  if (runtime === null) return null
+  return <runtime.ReleaseSummary {...props} />
 }
