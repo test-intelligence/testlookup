@@ -2098,8 +2098,8 @@ frontend/src/components/charts/DefectDonut.test.tsx,test,39,,@testing-library/re
 frontend/src/components/charts/DefectDonut.tsx,implementation/configuration,60,,recharts; ./tokens; ./motion; ./patterns,DecalKind; PatternSpec; Props; DefectDonut
 frontend/src/components/charts/HeatmapChart.test.tsx,test,297,,@testing-library/react; vitest; ./HeatmapChart; ./engines/useEChart; ./engines/registry; ./engines/lazyChartEngine; ./engines/echarts/heatmapOption,TestResizeObserver; change; as
 frontend/src/components/charts/HeatmapChart.tsx,implementation/configuration,185,,react; @/lib/viz/contracts; ./tokens; ./tooltip; ./motion; ./useChartKeyboard; ./engines/echarts/heatmapOption; ./engines/lazyChartEngine; ./engines/useEChart; ./ChartErrorBoundary; ./patterns,VizStatus; NavRequest; HeatmapMatrix; HeatmapSalience; Props; HeatmapChart
-frontend/src/components/charts/PassRateGauge.test.tsx,test,37,,@testing-library/react; react; vitest; ./PassRateGauge,
-frontend/src/components/charts/PassRateGauge.tsx,implementation/configuration,37,,recharts; ./tokens; ./motion,Props; PassRateGauge
+frontend/src/components/charts/PassRateGauge.test.tsx,test,70,,@testing-library/react; react; vitest; ./PassRateGauge,
+frontend/src/components/charts/PassRateGauge.tsx,implementation/configuration,48,,recharts; ./tokens; ./motion,Props; PassRateGauge
 frontend/src/components/charts/TrendChart.test.tsx,test,75,,@testing-library/react; react; vitest; ./TrendChart,
 frontend/src/components/charts/TrendChart.tsx,implementation/configuration,134,,recharts; ./tokens; ./motion; ./patterns,LegendEntry; DataPoint; Props; TrendChart
 frontend/src/components/charts/chartMessages.ts,implementation/configuration,22,,,
@@ -2120,7 +2120,7 @@ frontend/src/components/charts/engines/useEChart.test.tsx,test,57,,@testing-libr
 frontend/src/components/charts/engines/useEChart.ts,implementation/configuration,92,,react; ../tooltip; ./lazyChartEngine; ./registry,ChartEngineType; ChartInstance; EChartStatus; useEChart; is
 frontend/src/components/charts/motion.ts,implementation/configuration,41,,react,mediaQuery; subscribe; prefersReducedMotion; usePrefersReducedMotion; useChartAnimation
 frontend/src/components/charts/patterns.tsx,implementation/configuration,142,,react; @/lib/viz/contracts; ./tokens,ReactNode; DecalKind; PatternSpec; decalMarks; renderPatterns; useChartPatternPrefix; statusPatternSpecs; LegendEntry; ChartLegend
-frontend/src/components/charts/rechartsA11y.test.tsx,test,142,,@testing-library/react; react; vitest; ./TrendChart; ./DefectDonut; ./PassRateGauge; ./motion,Listener; mockMatchMedia
+frontend/src/components/charts/rechartsA11y.test.tsx,test,143,,@testing-library/react; react; vitest; ./TrendChart; ./DefectDonut; ./PassRateGauge; ./motion,Listener; mockMatchMedia
 frontend/src/components/charts/statusPatterns.test.tsx,test,136,,@testing-library/react; react; vitest; @/lib/viz/contracts; ./TrendChart; ./DefectDonut; ./tokens,VizStatus; patternOf
 frontend/src/components/charts/tokens.test.ts,test,145,,@testing-library/react; vitest; @/lib/viz/contracts; ./tokens,fakeComputedStyle
 frontend/src/components/charts/tokens.ts,implementation/configuration,218,,react; @/lib/viz/contracts,VizStatus; ChartTokens; readChartTokens; resetChartTokenCache; seriesColor; subscribe; useChartTokens; DecalKind; StatusEncoding; ChartDecal; echartsDecal; decalOf
