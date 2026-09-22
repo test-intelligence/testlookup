@@ -22,9 +22,12 @@ from app.bootstrap import (
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
-from app.core.scim_errors import (
-    scim_http_exception_handler,
-    scim_validation_exception_handler,
+from app.core.analytics_errors import (
+    AnalyticsQueryError,
+    analytics_query_error_handler,
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
 )
 from app.db.mongo import close_mongo, ensure_indexes as ensure_mongo_indexes
 from app.db.postgres import close_db, verify_server_connection_budget
@@ -178,8 +181,16 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
-app.add_exception_handler(StarletteHTTPException, scim_http_exception_handler)  # type: ignore[arg-type]
-app.add_exception_handler(RequestValidationError, scim_validation_exception_handler)  # type: ignore[arg-type]
+# SCIM routes keep their protocol envelope and every other route FastAPI's
+# default; only endpoints marked ``@analytics_error_contract`` get the VIZ-210
+# body ``{code, message, request_id, ...}``. Each handler falls through to the
+# SCIM one (which falls through to FastAPI's) for an unmarked route.
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(AnalyticsQueryError, analytics_query_error_handler)
+# Last resort: a JSON body with the request id for analytics routes, Starlette's
+# plain "Internal Server Error" everywhere else. Never a trace.
+app.add_exception_handler(Exception, unhandled_exception_handler)
 configure_middlewares(app)
 configure_metrics(app)
 register_routers(app)

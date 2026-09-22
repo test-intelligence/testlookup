@@ -110,4 +110,8 @@ async def create_jira_defect_one_click(
     # Router owns the unit of work: the dedup recurrence bump or the new
     # Defect row staged by the service commits here.
     await db.commit()
+    # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(project_id)
     return result

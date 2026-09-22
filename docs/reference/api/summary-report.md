@@ -10,14 +10,14 @@ Get Summary Report
 
 Return the summary report payload for the active project.
 
-Source: [backend/app/routers/summary_report.py:52](../../../backend/app/routers/summary_report.py#L52).
+Source: [backend/app/routers/summary_report.py:48](../../../backend/app/routers/summary_report.py#L48).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[uuid.UUID]=Query(None, description='Project UUID. Required; omit returns an empty envelope.'), days: int=Query(7, ge=1, le=365, description='Time-window size in days.'), mode: SummaryMode=Query('window', description='``window`` aggregates every run in the window; ``latest`` takes the most recent run per suite.'), release_id: Optional[str]=Query(None, description='Scope every number in the report to one release. Omit for all releases — the SQL is then byte-identical to before this existed.'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+mode: SummaryMode=Query('window', description='``window`` aggregates every run in the window; ``latest`` takes the most recent run per suite.'), scope: AnalyticsScope=Depends(analytics_scope(_REPORT_SCOPE)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -28,39 +28,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "get_summary_report_api_v1_reports_summary_get",
   "parameters": [
-    {
-      "description": "Project UUID. Required; omit returns an empty envelope.",
-      "in": "query",
-      "name": "project_id",
-      "required": false,
-      "schema": {
-        "anyOf": [
-          {
-            "format": "uuid",
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "description": "Project UUID. Required; omit returns an empty envelope.",
-        "title": "Project Id"
-      }
-    },
-    {
-      "description": "Time-window size in days.",
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 7,
-        "description": "Time-window size in days.",
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
     {
       "description": "``window`` aggregates every run in the window; ``latest`` takes the most recent run per suite.",
       "in": "query",
@@ -78,9 +45,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Scope every number in the report to one release. Omit for all releases — the SQL is then byte-identical to before this existed.",
+      "description": "One project (single-valued). Omit for every project you can read.",
       "in": "query",
-      "name": "release_id",
+      "name": "project_id",
       "required": false,
       "schema": {
         "anyOf": [
@@ -91,8 +58,62 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             "type": "null"
           }
         ],
-        "description": "Scope every number in the report to one release. Omit for all releases — the SQL is then byte-identical to before this existed.",
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 7,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {
@@ -148,14 +169,14 @@ Export Summary Report Pdf
 
 Return the summary report as a downloadable PDF.
 
-Source: [backend/app/routers/summary_report.py:92](../../../backend/app/routers/summary_report.py#L92).
+Source: [backend/app/routers/summary_report.py:75](../../../backend/app/routers/summary_report.py#L75).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID=Query(..., description='Project UUID (required for PDF export).'), days: int=Query(7, ge=1, le=365), mode: SummaryMode=Query('window'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), release_id: Optional[str]=Query(None, description='Scope the exported report to one release.')
+mode: SummaryMode=Query('window'), scope: AnalyticsScope=Depends(analytics_scope(_PDF_SCOPE)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -166,30 +187,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "export_summary_report_pdf_api_v1_reports_summary_pdf_get",
   "parameters": [
-    {
-      "description": "Project UUID (required for PDF export).",
-      "in": "query",
-      "name": "project_id",
-      "required": true,
-      "schema": {
-        "description": "Project UUID (required for PDF export).",
-        "format": "uuid",
-        "title": "Project Id",
-        "type": "string"
-      }
-    },
-    {
-      "in": "query",
-      "name": "days",
-      "required": false,
-      "schema": {
-        "default": 7,
-        "maximum": 365,
-        "minimum": 1,
-        "title": "Days",
-        "type": "integer"
-      }
-    },
     {
       "in": "query",
       "name": "mode",
@@ -205,21 +202,68 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Scope the exported report to one release.",
+      "description": "Project to read. Single-valued.",
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "description": "Project to read. Single-valued.",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Scope the exported report to one release.",
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 7,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
       }
     },
     {

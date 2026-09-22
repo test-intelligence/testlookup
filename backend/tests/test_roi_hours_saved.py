@@ -273,6 +273,7 @@ class TestHoursSavedModel:
 
         monkeypatch.setattr(cache_service, "cache_get", AsyncMock(return_value=None))
         monkeypatch.setattr(cache_service, "cache_set", AsyncMock())
+        monkeypatch.setattr(cache_service, "get_analytics_epoch", AsyncMock(return_value=0))
 
     async def test_available_project_shape(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(

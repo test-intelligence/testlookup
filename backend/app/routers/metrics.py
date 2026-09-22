@@ -4,19 +4,25 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
-    resolve_release_query_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import User
+from app.services.analytics_meta import build_meta, utc_day_window_start
+from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_scope
 from app.services.commit_attribution_service import get_tia_readiness
 from app.services.flaky_detection_timing_service import (
     detection_timing as measure_detection_timing,
 )
 from app.services.flaky_readiness_service import get_flaky_readiness
-from app.services.metrics_service import get_dashboard_summary, get_trend_data
+from app.services.metrics_service import (
+    PASS_RATE_BASIS_EXECUTIONS,
+    get_dashboard_summary,
+    get_trend_data,
+)
 
 router = APIRouter(prefix="/api/v1/metrics", tags=["Metrics"])
 
@@ -29,81 +35,85 @@ def _project_in_scope(project_id: str, accessible: set) -> bool:
         return False
 
 
-def _require_valid_project_id(project_id: str | None) -> str | None:
-    """Reject a malformed ``project_id`` before it reaches a UUID column.
+#: The dashboard's scope (VIZ-201): ``days`` 1-90, as it always was.
+#:
+#: ``on_denied="empty"``: a non-admin who names no project, or one they are not
+#: a member of, gets the empty payload rather than a 403. The service trusts
+#: the id it is given, so this membership check is the tenant boundary
+#: (review/metrics-service, 2026-06-01) -- it now lives in the shared resolver.
+#:
+#: A malformed ``project_id`` -- the frontend-only ``"all"`` sentinel, ``""``,
+#: ``"undefined"`` -- is a 422 ``project_id_format`` before any query runs. It
+#: used to reach the UUID comparison for an ADMIN, whose accessible set is
+#: ``None`` and skips the membership check, and 500 (found 2026-08-07).
+METRICS_SCOPE = ScopePolicy(default_days=7, max_days=90, on_denied="empty")
 
-    ``ALL_PROJECTS_ID`` ("all") is a **frontend-only** sentinel; if it ever
-    reaches the API it must not be treated as an id. Non-admins were already
-    covered by accident — ``_project_in_scope`` returns False for a non-UUID,
-    so they got an empty payload. But ``get_accessible_project_ids`` returns
-    ``None`` for an ADMIN, which SKIPS that scope check entirely, so the raw
-    string reached the query layer as a UUID comparison and produced a **500**.
-    The bug was therefore role-dependent and invisible to non-admin testing.
-
-    ``None`` stays valid — it means "all projects" for a caller allowed to see
-    them. Mirrors ``/api/v1/runs``, which answers 400 "Invalid project_id".
-    """
-    if project_id is None:
-        return None
-    try:
-        uuid.UUID(str(project_id))
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid project_id — expected a UUID")
-    return project_id
+#: ``/summary`` fields that honour ``suite_name`` but NOT ``release_id``
+#: while the rest of the body honours both. ``meta.ignored_filters`` is per
+#: dimension, so this field-level exception is declared in the route's
+#: OpenAPI description and on ``schemas.DashboardSummary``, and pinned by
+#: ``tests/regression/test_summary_report_release_scope.py``. Why not scoped:
+#: they are the inputs of the readiness verdict's hard caps (open CRITICAL
+#: defects, flaky count, new failures in 24h), which the gate policy defines
+#: project-wide; scoping them to a release changes what the gate gates on --
+#: an owner decision, not a filter fix. (Pre-existing; VIZ-202 review.)
+DASHBOARD_RELEASE_UNSCOPED: tuple[str, ...] = (
+    "active_defects", "flaky_test_count", "new_failures_24h",
+)
 
 
 @router.get("/summary")
+@analytics_error_contract
 async def dashboard_summary(
-    project_id: str | None = None,
-    days: int = Query(7, ge=1, le=90),
-    suite_name: str | None = Query(None, min_length=1),
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(METRICS_SCOPE)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
-    """Return aggregated KPI metrics for the Executive Dashboard."""
-    project_id = _require_valid_project_id(project_id)
-    accessible = await get_accessible_project_ids(db, current_user)
-    if accessible is not None:
-        # Non-admin: must request a project they're a member of. Without
-        # verifying the *provided* project_id a caller could read any tenant's
-        # KPIs via ?project_id=<other-tenant-uuid> (the service trusts it).
-        if not project_id or not _project_in_scope(project_id, accessible):
-            return {}
-    # Verifies the PROVIDED release, not merely the None path. The
-    # architectural authorization ratchet checks evidence per-ROUTE and stops at
-    # the first scoped parameter it can satisfy, so this route passes the
-    # ratchet on ``project_id`` alone with the release entirely unchecked —
-    # exactly the blind spot that hid nine IDORs before. Called explicitly
-    # rather than as a dependency so the absent-release path issues no extra
-    # query and stays byte-identical (NFR1).
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    """Return aggregated KPI metrics for the Executive Dashboard.
+
+    ``release_id`` and ``suite_name`` repeat: OR within a dimension, AND
+    across. Every release id is authorised (403/404) before any KPI runs.
+
+    Field-level exception: ``active_defects``, ``flaky_test_count`` and
+    ``new_failures_24h`` honour ``suite_name`` but NOT ``release_id`` -- they
+    are project-wide inputs of the readiness verdict's hard caps
+    (``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.
+    """
+    if scope.denied:
+        # The historical empty payload, plus the envelope (VIZ-204): it names
+        # no project, so it confirms nothing the empty body did not.
+        return {"meta": await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)}
+
+    async def _meta() -> dict:
+        return await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)
+
+    # ``meta`` is built inside the service so it is cached with the payload
+    # it describes (and the cache key carries the envelope's schema version).
     return await get_dashboard_summary(
-        db, project_id, days, suite_name=suite_name, release_id=release_id
+        db, scope.project, scope.window_days,
+        suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta,
     )
 
 
 @router.get("/trends")
+@analytics_error_contract
 async def trend_data(
-    project_id: str | None = None,
-    days: int = Query(7, ge=1, le=90),
-    suite_name: str | None = Query(None, min_length=1),
-    release_id: str | None = Query(None, description="Scope to one release"),
+    scope: AnalyticsScope = Depends(analytics_scope(METRICS_SCOPE)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return daily pass/fail/skip breakdown for trend charts."""
-    project_id = _require_valid_project_id(project_id)
-    accessible = await get_accessible_project_ids(db, current_user)
-    if accessible is not None:
-        # Non-admin: only own-project trends (see dashboard_summary).
-        if not project_id or not _project_in_scope(project_id, accessible):
-            return {"data": [], "period_days": days}
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
-    data = await get_trend_data(
-        db, project_id, days, suite_name=suite_name, release_id=release_id
+    # The chart's buckets start at UTC midnight ``days - 1`` days ago
+    # (``get_trend_data``), so the envelope states that same window.
+    meta = await build_meta(
+        db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS,
+        window_start=utc_day_window_start(scope.window_days),
     )
-    return {"data": data, "period_days": days}
+    if scope.denied:
+        return {"data": [], "period_days": scope.window_days, "meta": meta}
+    data = await get_trend_data(
+        db, scope.project, scope.window_days,
+        suite_name=scope.suite_arg, release_id=scope.release_arg,
+    )
+    return {"data": data, "period_days": scope.window_days, "meta": meta}
 
 
 @router.get("/tia-readiness")

@@ -38,6 +38,19 @@ SYSTEM_DEFAULT_REFUSED_DETAIL = (
 )
 
 
+async def _policy_scope_projects(
+    db: AsyncSession, policy_project_id: Optional[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Projects whose cached readiness band an active-policy change moves
+    (VIZ-212): the policy's own project, or — for the system default, which
+    every project without a policy of its own falls back to — every project."""
+    if policy_project_id is not None:
+        return [policy_project_id]
+    from app.models.postgres import Project
+
+    return list((await db.execute(select(Project.id))).scalars().all())
+
+
 def _enforce_policy_binding(
     current_user: User, policy_project_id: Optional[uuid.UUID]
 ) -> None:
@@ -285,6 +298,10 @@ async def publish_policy(
 
     await db.commit()
     await db.refresh(policy)
+    # VIZ-212: the cached dashboard's readiness band reads the ACTIVE policy.
+    from app.services.cache_service import bump_analytics_epochs
+
+    await bump_analytics_epochs(await _policy_scope_projects(db, policy.project_id))
     logger.info("Policy published: %s v%d by %s", policy.name, policy.version, current_user.username)
     return policy
 
@@ -308,6 +325,10 @@ async def deactivate_policy(
     policy.is_active = False
     await db.commit()
     await db.refresh(policy)
+    # VIZ-212: the readiness band falls back to another policy now.
+    from app.services.cache_service import bump_analytics_epochs
+
+    await bump_analytics_epochs(await _policy_scope_projects(db, policy.project_id))
     logger.info("Policy deactivated: %s v%d by %s", policy.name, policy.version, current_user.username)
     return policy
 

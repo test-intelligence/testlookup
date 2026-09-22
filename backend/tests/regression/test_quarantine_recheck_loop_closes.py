@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -254,6 +255,9 @@ async def test_the_recheck_sweep_moves_a_re_quarantined_row():
     transition cannot satisfy either.
     """
     row = SimpleNamespace(
+        # A real FlakyQuarantineRequest always carries its project; the sweep
+        # reads it to bump that project's analytics epoch after the commit.
+        project_id=uuid.uuid4(),
         status=FlakyQuarantineStatus.RE_QUARANTINED.value,
         recheck_at=svc.datetime.now(svc.timezone.utc) - svc.timedelta(days=1),
         updated_at=None,

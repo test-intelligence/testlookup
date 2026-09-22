@@ -233,6 +233,11 @@ class DefectTriageAgent(BaseAgent):
             result = await db.execute(stmt)
             new_row = result.first()
             await db.commit()
+            if new_row is not None:
+                # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(project_id)
 
             action = "created"
 

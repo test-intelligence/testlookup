@@ -273,6 +273,12 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
     project.is_active = False
     await revoke_project_credentials(db, project)
     await db.commit()
+    # VIZ-212: all-projects analytics filter on is_active, so they must drop
+    # this project's rows now rather than at TTL. The project bump also bumps
+    # the all-projects epoch.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(project_id)
 
 
 @router.post(

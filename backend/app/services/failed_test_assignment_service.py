@@ -382,6 +382,7 @@ async def assign_failed_tests_to_suite_owners(
     # the count reports the UPDATE's rowcount (effect), not len(ids)
     # (intent). Falls back to len(ids) only when the driver doesn't report
     # a rowcount.
+    # analytics-epoch: none — sets assigned_to_user_id only; no cached analytics read reads it
     for owner_id, ids in by_owner.items():
         result = await db.execute(
             update(TestCase)

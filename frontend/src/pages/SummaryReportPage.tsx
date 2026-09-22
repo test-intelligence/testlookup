@@ -21,8 +21,9 @@ import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
-import { useSummaryReport } from '@/hooks/useSummaryReport'
+import { useSummaryReport, useSummaryReportScope } from '@/hooks/useSummaryReport'
 import { summaryReportService } from '@/services/summaryReportService'
+import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
 import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
 
@@ -106,6 +107,10 @@ export default function SummaryReportPage() {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
   }, [mode])
 
+  // ONE scope for the screen and the PDF: both requests are built from it, so
+  // the exported sign-off document cannot cover different releases from the
+  // report on screen.
+  const scope = useSummaryReportScope({ days, mode })
   const { data, isLoading, error: reportError, mutate: retryReport } = useSummaryReport({ days, mode })
 
   const windowLabel = days === 1 ? '24h' : `${days}d`
@@ -119,8 +124,7 @@ export default function SummaryReportPage() {
     try {
       const blob = await summaryReportService.downloadPdf({
         project_id: project.id,
-        days,
-        mode,
+        ...scope,
       })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -216,13 +220,11 @@ export default function SummaryReportPage() {
         subtitle={`Project: ${project.name} · ${MODE_LABELS[mode].hint}`}
         actions={
           <div className="flex items-center gap-2">
-            {/* This page is not release-scoped, and its output LEAVES the tool:
-                the PDF filename encodes project, window and mode but not a
-                release, so a report attached to a go/no-go thread carries no
-                trace of what was selected when it was generated. Marking it
-                here is the honest interim answer until the report itself can
-                answer per release. */}
-            <AllReleasesBadge reason="This report and its PDF export cover the selected time window across all releases." />
+            {/* The report's output LEAVES the tool (a PDF attached to a go/no-go
+                thread), so the badge states the release scope the SERVER
+                applied — `meta.scope.releases` — rather than what the client
+                asked for. */}
+            <SummaryScopeBadge meta={data?.meta} requestedReleaseId={scope.release_id ?? null} />
             {(['1d', '7d'] as const).map(w => (
               <button
                 key={w}
@@ -416,6 +418,75 @@ export default function SummaryReportPage() {
 
 
 // ── small components ───────────────────────────────────────────────────────
+
+const ALL_RELEASES_REASON =
+  'This report and its PDF export cover the selected time window across all releases.'
+
+const BADGE_CLASS =
+  'inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]'
+
+/**
+ * States which releases this report — and therefore its PDF export, which is
+ * requested with the same scope — actually covers.
+ *
+ * The source of truth is the response's `meta.scope.releases` (contract C2):
+ * what the SERVER applied, not what the client asked for. Three cases:
+ *
+ *   - meta names releases → say so, by name. Names are untrusted text and are
+ *     only ever rendered as React text children / a `title` attribute.
+ *   - meta names none → the report is all-releases. `AllReleasesBadge` keeps its
+ *     own semantics: it is silent when no release is selected (nothing to
+ *     explain) and says "All releases" when one is selected but was not applied.
+ *   - meta absent or unreadable (older backend, cached payload) → fall back to
+ *     client state and claim only that a release was REQUESTED; an older server
+ *     applied the release to part of the report only.
+ */
+function SummaryScopeBadge({
+  meta,
+  requestedReleaseId,
+}: {
+  meta: EnvelopeMeta | undefined
+  requestedReleaseId: string | null
+}) {
+  const checked = meta === undefined ? null : validateEnvelopeMeta(meta)
+  const envelope = checked?.ok ? checked.value : null
+
+  if (envelope) {
+    const applied = envelope.scope.releases
+    if (applied.length === 0) {
+      const ignored = envelope.ignored_filters.find(f => f.dimension === 'release')
+      return (
+        <AllReleasesBadge
+          reason={ignored ? `${ALL_RELEASES_REASON} ${ignored.reason}` : ALL_RELEASES_REASON}
+        />
+      )
+    }
+    const names = applied.map(r => (r.name.trim() ? r.name : r.id)).join(', ')
+    const one = applied.length === 1
+    return (
+      <span
+        data-testid="summary-scope-badge"
+        className={BADGE_CLASS}
+        title={`Filtered to ${one ? 'release' : 'releases'} ${names}. This report and its PDF export both cover only ${one ? 'this release' : 'these releases'} within the selected time window.`}
+      >
+        <Layers className="h-3 w-3 flex-shrink-0" />
+        <span className="truncate max-w-[220px]">{`${one ? 'Release' : 'Releases'}: ${names}`}</span>
+      </span>
+    )
+  }
+
+  if (!requestedReleaseId) return null
+  return (
+    <span
+      data-testid="summary-scope-badge"
+      className={BADGE_CLASS}
+      title="A release filter was requested, but this response does not say which releases the server applied — an older server may have applied it to only part of the report. The PDF export requests the same release."
+    >
+      <Layers className="h-3 w-3 flex-shrink-0" />
+      Release scope unconfirmed
+    </span>
+  )
+}
 
 function KpiTile({
   label, value, icon, tone, sub, title,

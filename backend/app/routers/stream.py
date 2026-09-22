@@ -61,6 +61,11 @@ async def create_session(
         db, payload, bound_project_id=bound_project_id,
     )
     await db.commit()
+    # VIZ-212: the session start commits an IN_PROGRESS TestRun stub, which
+    # the dashboard's run counts already include.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(response.project_id)
     return response
 
 
@@ -87,10 +92,15 @@ async def close_session(
     auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
 ):
     _, bound_project_id = auth
-    await stream_service.close_session(
+    closed_project_id = await stream_service.close_session(
         db, session_id, bound_project_id=bound_project_id,
     )
     await db.commit()
+    if closed_project_id is not None:
+        # VIZ-212: the close created/updated the TestRun analytics reads.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(closed_project_id)
     await stream_service.finalize_closed_session_redis(session_id)
 
 
@@ -149,6 +159,11 @@ async def ingest_via_api_key(
         for event in payload.events
     )
     if has_run_complete:
+        # VIZ-212: a run_complete closed the session inside the service call,
+        # so the commit above wrote the run analytics reads.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(auth.project_id)
         await stream_service.finalize_closed_session_redis(response.session_id)
     return response
 

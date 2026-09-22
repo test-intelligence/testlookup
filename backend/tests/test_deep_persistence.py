@@ -145,7 +145,18 @@ class _ScalarsResult:
         return iter(self._rows)
 
 
-def _fake_db(cluster_rows, finding_rows):
+class _ScalarResult:
+    """VIZ-212: the TestRun.project_id lookup ``persist_failure_cluster_snapshot``
+    makes after its commit, to bump the right project's analytics epoch."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+def _fake_db(cluster_rows, finding_rows, *, project_id=None):
     db = AsyncMock()
     db.added = []
     db.add = lambda obj: db.added.append(obj)  # sync, like the real session
@@ -153,6 +164,7 @@ def _fake_db(cluster_rows, finding_rows):
         side_effect=[
             _ScalarsResult([uuid.UUID(T1), uuid.UUID(T2), uuid.UUID(T3)]),
             _ScalarsResult(cluster_rows),
+            _ScalarResult(project_id or uuid.uuid4()),
             _ScalarsResult(cluster_rows),
             _ScalarsResult(finding_rows),
         ]

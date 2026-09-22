@@ -86,9 +86,16 @@ def test_suite_branch_uses_the_effective_suite_rule():
     """A live-stream run's per-case ``suite_name`` is often the test class, so
     the run-level label wins there. Bucketing by the raw per-case name alone
     would scatter one logical suite across dozens of fake ones."""
+    # VIZ-201: the rule is built once, in analytics_scope, and used here.
+    from app.services import analytics_scope
+
     src = inspect.getsource(metrics_service._period_stats)
-    assert 'TestRun.trigger_source == "live_stream"' in src
-    assert "primary_suite_name" in src
+    assert "effective_suite_clause(" in src
+    rule = inspect.getsource(analytics_scope.effective_suite_expr)
+    assert 'TestRun.trigger_source == "live_stream"' in rule
+    assert "primary_suite_name" in rule
+    clause = inspect.getsource(analytics_scope.effective_suite_clause)
+    assert "effective_suite_expr()" in clause
 
 
 def test_run_count_and_duration_stay_run_level_facts():

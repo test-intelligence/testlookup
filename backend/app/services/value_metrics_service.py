@@ -491,7 +491,7 @@ async def get_hours_saved_model(
     Cached in Redis for ~10 minutes; the assumptions fingerprint is part of
     the cache key so a PUT takes effect on the next read.
     """
-    from app.services.cache_service import cache_get, cache_set
+    from app.services.cache_service import cache_get, cache_set, get_analytics_epoch
 
     assumptions = await get_effective_assumptions(db, project_id)
     if project_id is None:
@@ -501,7 +501,9 @@ async def get_hours_saved_model(
 
     months = max(1, min(int(months), 24))
     cache_kwargs = {"months": months, "a": assumptions.fingerprint(), "v": METHODOLOGY_VERSION}
-    cached = await cache_get("value_metrics_hours", str(project_id), **cache_kwargs)
+    # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
+    epoch = await get_analytics_epoch(project_id)
+    cached = await cache_get("value_metrics_hours", str(project_id), epoch=epoch, **cache_kwargs)
     if cached is not None:
         return cached
 
@@ -537,7 +539,9 @@ async def get_hours_saved_model(
         "assumptions_source": assumptions.source,
         "methodology_version": METHODOLOGY_VERSION,
     }
-    await cache_set("value_metrics_hours", model, str(project_id), ttl=600, **cache_kwargs)
+    await cache_set(
+        "value_metrics_hours", model, str(project_id), ttl=600, epoch=epoch, **cache_kwargs
+    )
     return model
 
 

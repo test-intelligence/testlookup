@@ -1,12 +1,27 @@
 """Dashboard metrics aggregation service."""
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from app.models.postgres import Defect, Project, TestCase, TestRun
+from app.services.analytics_scope import (
+    ReleaseArg,
+    SuiteArg,
+    cache_identity,
+    effective_suite_clause,
+    release_filter_sql,
+    row_or_live_label_clause,
+    row_or_run_label_sql,
+    run_touches_suite_clause,
+    run_touches_suite_sql,
+    scoped_text,
+    suite_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +63,25 @@ async def count_open_critical_defects(
     existing caller is unchanged.
     """
     from app.core.release_filter import is_unattributed
+
+    if release_id is not None and not isinstance(release_id, (str, uuid.UUID)):
+        # VIZ-201: several releases are OR. The Unattributed bucket among them
+        # means "the project's open P0s" (below), which already contains every
+        # release's blockers; otherwise the union of each release's blockers,
+        # each defect counted once.
+        ids = list(dict.fromkeys(str(item) for item in release_id))
+        if len(ids) == 1:
+            return await count_open_critical_defects(db, project_id, ids[0])
+        if ids and not any(is_unattributed(item) for item in ids):
+            from app.services.release_defect_service import blocking_defects
+
+            seen: dict = {}
+            for item in ids:
+                for d in await blocking_defects(db, item, project_id):
+                    if (d.severity or "").upper() == P0_DEFECT_SEVERITY:
+                        seen[d.id] = d
+            return len(seen)
+        release_id = None
 
     if release_id is not None and not is_unattributed(release_id):
         from app.services.release_defect_service import blocking_defects
@@ -105,12 +139,7 @@ def _evaluated(passed: int, failed: int, broken: int) -> int:
     return passed + failed + broken
 
 
-def _normalize_suite_name(suite_name: str | None) -> str | None:
-    normalized = (suite_name or "").strip().lower()
-    return normalized or None
-
-
-def _suite_match_clause(suite_name: str):
+def _suite_match_clause(suite_name: SuiteArg):
     """Match either per-case suite or run-level suite attribution.
 
     Live/SDK runs can stamp the suite on ``test_runs.primary_suite_name``
@@ -139,30 +168,48 @@ def _suite_match_clause(suite_name: str):
     (#560), and it mirrors ``analytics_service._effective_suite_sql()`` — the
     run-level label wins for live_stream, per-row wins for everything else.
     """
-    return or_(
-        func.lower(func.trim(TestCase.suite_name)) == suite_name,
-        and_(
-            TestRun.trigger_source == "live_stream",
-            func.lower(func.trim(TestRun.primary_suite_name)) == suite_name,
-        ),
-    )
+    return row_or_live_label_clause(suite_name)
 
 
 async def get_dashboard_summary(
     db: AsyncSession,
     project_id: str | None,
     days: int = 7,
-    suite_name: str | None = None,
-    release_id: str | None = None,
+    suite_name: SuiteArg = None,
+    release_id: ReleaseArg = None,
+    meta_builder: Optional[Callable[[], Awaitable[dict]]] = None,
 ) -> dict:
     """Compute all Executive Dashboard KPIs for a project.
 
     P3-6: Results are cached in Redis for 60 seconds to avoid re-aggregating
     thousands of test cases on every dashboard load.
-    """
-    from app.services.cache_service import CACHE_TTL_DASHBOARD, cache_get, cache_set
 
-    suite_key = _normalize_suite_name(suite_name)
+    VIZ-204: ``meta_builder`` (the route's ``analytics_meta.build_meta``)
+    makes the payload carry ``meta``, cached WITH it -- the totals query runs
+    once per cache entry, not once per request. The payload's shape then
+    differs from an entry written before ``meta`` existed, so the key carries
+    ``schema=META_SCHEMA_VERSION``: an old entry is never served after a
+    deploy. On a hit only ``meta.generated_at`` is refreshed; ``as_of`` stays
+    the moment the numbers were read.
+    """
+    from app.services.cache_service import (
+        CACHE_TTL_DASHBOARD,
+        cache_get,
+        cache_set,
+        get_analytics_epoch,
+    )
+
+    # VIZ-201: the queries read these two; ``suite_key`` and ``release_id``
+    # below are only the cache identity -- the single value itself (so a
+    # single-value key is the pre-VIZ-201 key) or a canonical multi-value one.
+    suite_filter = suite_keys(suite_name)
+    release_filter = release_id
+    suite_key = cache_identity(suite_filter)
+    if release_filter is None or isinstance(release_filter, (str, uuid.UUID)):
+        # One value (or none): exactly the object the key was built from before.
+        release_id = release_filter
+    else:
+        release_id = cache_identity(str(item) for item in release_filter)
     # The release MUST reach the cache key, not only the query.
     #
     # This cache is Redis and the key carries no user identity, so a release
@@ -177,11 +224,27 @@ async def get_dashboard_summary(
     # ``release=`` segment would change the key for the no-release path and
     # orphan every existing entry, which is exactly the byte-identical
     # behaviour NFR1 promises callers who omit the axis.
-    release_key = {"release": release_id} if release_id else {}
-    cached = await cache_get(
-        "dashboard_summary_v2", project_id, days=days, suite=suite_key or "", **release_key
+    # Any: the values mix the release identity (str/UUID) and, conditionally,
+    # an int schema version -- both are just cache-key material, never read
+    # back typed.
+    release_key: dict[str, Any] = {"release": release_id} if release_id else {}
+    if meta_builder is not None:
+        from app.services.analytics_meta import META_SCHEMA_VERSION
+
+        # Conditional, like ``release`` above: a caller without ``meta`` keeps
+        # the pre-VIZ-204 key and payload shape.
+        release_key["schema"] = META_SCHEMA_VERSION
+    # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
+    epoch = await get_analytics_epoch(project_id)
+    cached: dict[str, Any] | None = await cache_get(
+        "dashboard_summary_v2", project_id, epoch=epoch,
+        days=days, suite=suite_key or "", **release_key
     )
     if cached is not None:
+        if meta_builder is not None and isinstance(cached.get("meta"), dict):
+            from app.services.analytics_meta import refreshed
+
+            cached["meta"] = refreshed(cached["meta"])
         return cached
 
     now = datetime.now(timezone.utc)
@@ -189,9 +252,9 @@ async def get_dashboard_summary(
     prev_period_start = now - timedelta(days=days * 2)
 
     # ── Current period stats ──────────────────────────────
-    cur = await _period_stats(db, project_id, period_start, now, suite_key, release_id)
+    cur = await _period_stats(db, project_id, period_start, now, suite_filter, release_filter)
     prev = await _period_stats(
-        db, project_id, prev_period_start, period_start, suite_key, release_id
+        db, project_id, prev_period_start, period_start, suite_filter, release_filter
     )
 
     def trend(cur_val, prev_val):
@@ -241,18 +304,18 @@ async def get_dashboard_summary(
     if project_id:
         defect_conditions.append(Defect.project_id == project_id)
     defect_stmt = select(func.count(Defect.id))
-    if suite_key:
+    if suite_filter:
         defect_stmt = (
             defect_stmt
             .join(TestCase, Defect.test_case_id == TestCase.id)
             .join(TestRun, TestCase.test_run_id == TestRun.id)
         )
-        defect_conditions.append(_suite_match_clause(suite_key))
+        defect_conditions.append(_suite_match_clause(suite_filter))
     defect_result = await db.execute(defect_stmt.where(*defect_conditions))
     active_defects = defect_result.scalar() or 0
 
     # Flaky tests (>20% failure rate over last 10 runs)
-    flaky_count = await _count_flaky_tests(db, project_id, suite_key)
+    flaky_count = await _count_flaky_tests(db, project_id, suite_filter)
 
     # New failures in last 24h.
     #
@@ -291,8 +354,8 @@ async def get_dashboard_summary(
     ]
     if project_id:
         fail_conditions.append(TestRun.project_id == project_id)
-    if suite_key:
-        fail_conditions.append(_suite_match_clause(suite_key))
+    if suite_filter:
+        fail_conditions.append(_suite_match_clause(suite_filter))
     new_fail_result = await db.execute(
         select(func.count(TestCase.id))
         .join(TestRun)
@@ -319,7 +382,7 @@ async def get_dashboard_summary(
             # ``severity == "P0"`` filter matched no rows (defects are stored
             # CRITICAL/HIGH/MEDIUM/LOW), so the cap silently never fired.
             active_p0 = await count_open_critical_defects(
-                db, project_id, release_id
+                db, project_id, release_filter
             )
             classified = classify_with_policy(
                 pass_rate=pass_rate,
@@ -387,6 +450,8 @@ async def get_dashboard_summary(
         "release_readiness_band": band,
         "release_readiness_downgrades": downgrades,
     }
+    if meta_builder is not None:
+        result_dict["meta"] = await meta_builder()
 
     # P3-6: Cache the result for subsequent requests
     await cache_set(
@@ -394,6 +459,7 @@ async def get_dashboard_summary(
         result_dict,
         project_id,
         ttl=CACHE_TTL_DASHBOARD,
+        epoch=epoch,
         days=days,
         suite=suite_key or "",
         **release_key,
@@ -406,8 +472,8 @@ async def get_trend_data(
     db: AsyncSession,
     project_id: str | None,
     days: int = 7,
-    suite_name: str | None = None,
-    release_id: str | None = None,
+    suite_name: SuiteArg = None,
+    release_id: ReleaseArg = None,
 ) -> list:
     """Return daily pass/fail/skip breakdown for the trend chart."""
     # The wire contract is UTC calendar-day buckets. A rolling ``now - N days``
@@ -418,7 +484,7 @@ async def get_trend_data(
     period_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
         days=days - 1
     )
-    suite_key = _normalize_suite_name(suite_name)
+    params: dict = {"period_start": period_start}
     # Soft-deleted projects are excluded UNCONDITIONALLY, and the pin is added
     # on top when a project is named.
     #
@@ -447,35 +513,16 @@ async def get_trend_data(
     # alternative ``AND (:release_id IS NULL OR ...)`` cannot be resolved at
     # plan time and would cost the index on EVERY call, including the majority
     # that pass no release.
-    from app.core.release_filter import is_unattributed as _unattributed
-
-    if not release_id:
-        release_filter = ""
-    elif _unattributed(release_id):
-        release_filter = "AND tr.primary_release_id IS NULL "
-    else:
-        release_filter = "AND tr.primary_release_id = :release_id "
+    release_filter = release_filter_sql(params, release_id)
     # 2026-05-15 bug fix: matching this filter via INNER JOIN test_cases
     # silently dropped every run whose ``test_cases`` rows weren't persisted
     # (a common state for live-stream ingest, which writes aggregates onto
-    # ``test_runs`` first and per-case rows asynchronously). Switch to
-    # filter via ``primary_suite_name`` + EXISTS on test_cases as backup
-    # so runs with valid aggregates but missing per-case rows still appear.
-    # Aggregates are always read from ``tr.*`` since those columns are
-    # populated even when ``test_cases`` is empty.
-    suite_filter = (
-        """
-        AND (
-          LOWER(TRIM(tr.primary_suite_name)) = :suite_name
-          OR EXISTS (
-            SELECT 1 FROM test_cases tc
-            WHERE tc.test_run_id = tr.id
-              AND LOWER(TRIM(tc.suite_name)) = :suite_name
-          )
-        )
-        """
-        if suite_key else ""
-    )
+    # ``test_runs`` first and per-case rows asynchronously). Filter via
+    # ``primary_suite_name`` + EXISTS on test_cases as backup so runs with
+    # valid aggregates but missing per-case rows still appear. Aggregates are
+    # always read from ``tr.*`` since those columns are populated even when
+    # ``test_cases`` is empty. The fragment lives in ``analytics_scope``.
+    suite_filter = run_touches_suite_sql(params, suite_name)
     # Aggregates always come from ``test_runs`` columns. Even when a suite is
     # filtered, the run-level totals are correct for the runs that survive
     # the filter — and they exist whether or not test_cases rows do.
@@ -498,7 +545,7 @@ async def get_trend_data(
           0
         ) AS pass_rate
     """
-    query = text(f"""
+    query = scoped_text(f"""
         SELECT
             DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC') AS day,
             {select_values}
@@ -509,16 +556,9 @@ async def get_trend_data(
           {suite_filter}
         GROUP BY day
         ORDER BY day ASC
-    """)
-    params: dict = {"period_start": period_start}
+    """, params)
     if project_id:
         params["project_id"] = str(project_id)
-    if suite_key:
-        params["suite_name"] = suite_key
-    # Bound only when the fragment that references it was emitted. A bind with
-    # no placeholder raises on some drivers and is dead weight on the rest.
-    if release_id and not _unattributed(release_id):
-        params["release_id"] = str(release_id)
     result = await db.execute(query, params)
     rows = result.fetchall()
 
@@ -571,8 +611,8 @@ async def _period_stats(
     project_id: str | None,
     start: datetime,
     end: datetime,
-    suite_name: str | None = None,
-    release_id: str | None = None,
+    suite_name: SuiteArg = None,
+    release_id: ReleaseArg = None,
 ) -> dict:
     conditions = [TestRun.created_at >= start, TestRun.created_at < end]
     # Release scoping (S5-3b). Reads the DENORMALIZED column added in migration
@@ -580,10 +620,15 @@ async def _period_stats(
     # rows for a run linked to more than one release, inflating every SUM in
     # this function. Appended only when asked, so a caller that omits it builds
     # the identical statement it built before this axis existed.
-    if release_id:
+    if release_id and not isinstance(release_id, (str, uuid.UUID)):
+        # VIZ-201: several releases, OR within the dimension.
+        from app.core.release_filter import release_predicate
+
+        conditions.extend(release_predicate(list(release_id)))
+    elif release_id:
         from app.core.release_filter import is_unattributed
 
-        if is_unattributed(release_id):
+        if is_unattributed(str(release_id)):
             conditions.append(TestRun.primary_release_id.is_(None))
         else:
             conditions.append(TestRun.primary_release_id == release_id)
@@ -600,7 +645,8 @@ async def _period_stats(
     )
     if project_id:
         conditions.append(TestRun.project_id == project_id)
-    if suite_name:
+    suite_filter = suite_keys(suite_name)
+    if suite_filter:
         # 2026-05-15 bug fix: live-stream runs persist their aggregates on
         # ``test_runs`` (passed_tests / failed_tests / total_tests) but
         # often DON'T persist per-test ``test_cases`` rows until later.
@@ -611,7 +657,6 @@ async def _period_stats(
         # test_cases as a backup for older data where the run-level
         # suite label wasn't set), and read aggregates from ``test_runs``
         # columns which are always populated.
-        suite_lower = suite_name  # already lowercased by _normalize_suite_name
         from sqlalchemy import select as _select
 
         # ── F-080 ────────────────────────────────────────────────────────────
@@ -640,35 +685,16 @@ async def _period_stats(
         # dashboard request. Select from TestCase explicitly and correlate
         # ONLY TestRun, so TestCase stays the subquery's FROM in both the
         # TestCase-rooted query (a) and the TestRun-rooted queries below.
-        tc_match = (
-            _select(TestCase.id)
-            .where(
-                TestCase.test_run_id == TestRun.id,
-                func.lower(func.trim(TestCase.suite_name)) == suite_lower,
-            )
-            .correlate(TestRun)
-            .exists()
-        )
-        conditions.append(
-            or_(
-                func.lower(func.trim(TestRun.primary_suite_name)) == suite_lower,
-                tc_match,
-            )
-        )
+        # The run touches the suite (label, or an EXISTS on its rows) -- the
+        # clause lives in ``analytics_scope`` with its correlation note.
+        touches_suite = run_touches_suite_clause(suite_filter)
+        in_suite = effective_suite_clause(suite_filter)
+        assert touches_suite is not None and in_suite is not None  # suite_filter is non-empty
+        conditions.append(touches_suite)
 
         # (a) Per-test rows, bucketed by effective suite. The effective-suite
         #     rule (run label wins for live_stream, per-case label otherwise)
         #     is the house pattern — see analytics_service._effective_suite_sql.
-        effective_suite = func.coalesce(
-            case(
-                (
-                    TestRun.trigger_source == "live_stream",
-                    func.nullif(func.trim(TestRun.primary_suite_name), ""),
-                ),
-                else_=None,
-            ),
-            func.nullif(func.trim(TestCase.suite_name), ""),
-        )
         case_row = (
             await db.execute(
                 _select(
@@ -685,7 +711,7 @@ async def _period_stats(
                 )
                 .select_from(TestCase)
                 .join(TestRun, TestRun.id == TestCase.test_run_id)
-                .where(*conditions, func.lower(effective_suite) == suite_lower)
+                .where(*conditions, in_suite)
             )
         ).one()
 
@@ -841,7 +867,7 @@ def flaky_count_criteria() -> dict[str, int | float]:
 async def _count_flaky_tests(
     db: AsyncSession,
     project_id: str | None,
-    suite_name: str | None = None,
+    suite_name: SuiteArg = None,
 ) -> int:
     """Count tests that show the flaky pattern over their last
     ``_FLAKY_WINDOW_RUNS`` executions.
@@ -868,14 +894,14 @@ async def _count_flaky_tests(
         if project_id
         else f"WHERE {active_filter}"
     )
-    suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_name else ""
-    suite_match_sql = "(LOWER(TRIM(tc.suite_name)) = :suite_name OR LOWER(TRIM(tr.primary_suite_name)) = :suite_name)"
+    params: dict = {}
+    suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_keys(suite_name) else ""
     # ``project_filter`` now always emits a WHERE (the active-project clause is
     # unconditional), so the suite clause is always a conjunct. The old
     # "WHERE if there is no project filter" branch is gone rather than left
     # unreachable — a dead branch here would silently drop the active-project
     # clause the day someone made the project filter conditional again.
-    suite_filter = f"AND {suite_match_sql}" if suite_name else ""
+    suite_filter = row_or_run_label_sql(params, suite_name)
     # Canonical chronological order is the natural numeric chunks in the
     # free-form build number, then the raw value and persistence timestamp.
     # The ranking below reverses that order to retain the newest N; ``seq``
@@ -911,7 +937,7 @@ async def _count_flaky_tests(
     # `seq` re-reads the bounded window in ASCENDING run order (rn DESC undoes
     # the newest-first ranking) so LAG() compares each execution with the one
     # that actually preceded it, and a flip is a genuine adjacent change.
-    query = text(f"""
+    query = scoped_text(f"""
         SELECT COUNT(DISTINCT fingerprint) FROM (
             SELECT fingerprint
             FROM (
@@ -948,12 +974,9 @@ async def _count_flaky_tests(
                        WHERE prev_failed IS NOT NULL AND prev_failed <> is_failed
                    ) >= {_FLAKY_MIN_FLIPS}
         ) flaky
-    """)
-    params: dict = {}
+    """, params)
     if project_id:
         params["project_id"] = str(project_id)
-    if suite_name:
-        params["suite_name"] = suite_name
     result = await db.execute(query, params)
     return result.scalar() or 0
 

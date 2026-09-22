@@ -132,7 +132,11 @@ def test_the_predicate_is_conditional_not_null_tolerant():
     including all the ones that pass no release at all. The cost lands on
     users who never asked for the feature.
     """
-    body = _code_only(svc._add_release_param)
+    # VIZ-201: ``_add_release_param`` delegates to the one shared builder.
+    from app.services.analytics_scope import release_filter_sql
+
+    assert "release_filter_sql(" in _code_only(svc._add_release_param)
+    body = _code_only(release_filter_sql)
     assert "IS NULL OR" not in body
     # And the empty-string early return is what makes it conditional.
     assert 'return ""' in body
@@ -143,7 +147,9 @@ def test_the_predicate_reads_the_denormalized_column_not_the_link_table():
     more than one release, silently inflating every COUNT and AVG in this
     module. The denormalized column (migration 0152) is one row per run.
     """
-    body = _code_only(svc._add_release_param)
+    from app.services.analytics_scope import release_filter_sql
+
+    body = _code_only(release_filter_sql)
     assert "primary_release_id" in body
     assert "release_test_run_links" not in body
 
@@ -225,11 +231,17 @@ def test_every_route_guards_the_release_before_using_it(fn_name):
     """
     from app.routers import analytics
 
+    # VIZ-201: the guard is the shared scope dependency, which resolves EVERY
+    # release id before the handler runs; the handler passes on only what it
+    # returned.
+    from app.services import analytics_scope
+
     src = inspect.getsource(getattr(analytics, fn_name))
-    assert "resolve_release_query_scope(db, release_id, current_user)" in src
-    guard_at = src.index("resolve_release_query_scope")
-    passed_at = src.index("release_id=release_id")
-    assert guard_at < passed_at, (
+    assert "Depends(analytics_scope(_WINDOWED))" in src
+    assert "release_id=scope.release_arg" in src
+    authorize = inspect.getsource(analytics_scope.authorize_scope)
+    guard_at = authorize.index("resolve_release_query_scopes(db, request.release_ids, user)")
+    assert guard_at < authorize.index("release_ids=tuple(releases)"), (
         "the release must be validated before it reaches the service layer"
     )
 

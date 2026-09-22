@@ -568,6 +568,10 @@ async def set_run_release(
 
     await sync_primary_release(db, run.id)
     await db.commit()
+    # VIZ-212: release-scoped analytics just re-attributed this run.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(run.project_id)
 
     return {
         "release_id": str(release.id),

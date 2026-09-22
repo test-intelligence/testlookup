@@ -6,7 +6,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -1661,3 +1661,67 @@ async def resolve_release_query_scope(
             status_code=403, detail="You do not have access to this release"
         )
     return str(release_uuid)
+
+
+async def resolve_release_query_scopes(
+    db: AsyncSession,
+    release_ids: Sequence[Optional[str]],
+    current_user: "User",
+) -> list[str]:
+    """:func:`resolve_release_query_scope` for a LIST of ids, in one query.
+
+    Answers exactly what calling the single form on each id in order would:
+    the first id (in request order) that is malformed is a 422, unknown a 404,
+    unreadable a 403 -- and nothing is returned for any id then. Otherwise the
+    resolved ids, in order, duplicates collapsed, ``None`` entries skipped.
+
+    One ``SELECT ... WHERE id IN (...)`` (an expanding bind) and at most one
+    membership lookup, instead of one of each per id: the analytics scope
+    accepts up to 20 releases (``viz_contracts.MAX_RELEASES``).
+    """
+    from app.core.release_filter import UNATTRIBUTED, is_unattributed
+    from app.models.postgres import Release
+
+    parsed: list[tuple[str, Optional[uuid.UUID]]] = []
+    for release_id in release_ids:
+        if release_id is None:
+            continue
+        if is_unattributed(release_id):
+            parsed.append((UNATTRIBUTED, None))
+            continue
+        try:
+            parsed.append((str(release_id), uuid.UUID(str(release_id))))
+        except (ValueError, TypeError, AttributeError):
+            # Kept in place: an earlier unknown/forbidden id must still win.
+            parsed.append((str(release_id), None))
+
+    wanted = sorted({ruid for _raw, ruid in parsed if ruid is not None}, key=str)
+    owners: dict[uuid.UUID, uuid.UUID] = {}
+    if wanted:
+        rows = await db.execute(
+            select(Release.id, Release.project_id).where(Release.id.in_(wanted))
+        )
+        owners = {row[0]: row[1] for row in rows.all()}
+
+    accessible: set[uuid.UUID] | None = None
+    fetched = False
+    out: list[str] = []
+    for raw, ruid in parsed:
+        if raw == UNATTRIBUTED and ruid is None:
+            resolved = UNATTRIBUTED
+        elif ruid is None:
+            raise HTTPException(status_code=422, detail="Invalid release_id")
+        elif ruid not in owners:
+            raise HTTPException(status_code=404, detail="Release not found")
+        else:
+            if not fetched:
+                accessible, fetched = await get_accessible_project_ids(db, current_user), True
+            # ``None`` means admin -- no membership restriction.
+            if accessible is not None and owners[ruid] not in accessible:
+                raise HTTPException(
+                    status_code=403, detail="You do not have access to this release"
+                )
+            resolved = str(ruid)
+        if resolved not in out:
+            out.append(resolved)
+    return out

@@ -38,8 +38,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
-from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.analytics_scope import (
+    ReleaseArg,
+    release_filter_sql,
+    scoped_text,
+    suite_label_eq_sql,
+    suite_label_in_sql,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -75,6 +82,7 @@ async def compute_suite_history(
     project_id: Optional[uuid.UUID],
     suite_names: Optional[list[str]] = None,
     days: Optional[int] = None,
+    release_id: ReleaseArg = None,
 ) -> dict[str, dict]:
     """Return one history row per suite as ``{suite_name: dict}``.
 
@@ -91,6 +99,10 @@ async def compute_suite_history(
         Window for ``test_runs.created_at >= now - days``. ``None``
         means lifetime — used by the catalog list endpoint where the
         user expects "how many runs ever".
+    release_id:
+        VIZ-202: only runs whose primary release is one of these (the
+        ``unattributed`` sentinel for none). ``None`` leaves the statement
+        unchanged.
 
     Notes
     -----
@@ -112,6 +124,10 @@ async def compute_suite_history(
         params["period_start"] = (
             datetime.now(timezone.utc) - timedelta(days=int(days))
         )
+    release_clause = release_filter_sql(params, release_id)
+    if release_clause:
+        # The shared fragment is ``AND ...``; this builder joins bare clauses.
+        where_clauses.append(release_clause.removeprefix("AND ").strip())
     if suite_names is not None:
         if not suite_names:
             return {}
@@ -122,16 +138,9 @@ async def compute_suite_history(
         # Simpler shape: build the IN clause inline. Names are bounded
         # by the caller (page size). Bind via :suite_X parameters to
         # keep escaping safe.
-        in_params = []
-        for idx, name in enumerate(suite_names):
-            key = f"suite_name_{idx}"
-            params[key] = name
-            in_params.append(f":{key}")
-        where_clauses.append(
-            "LOWER(TRIM(coalesce(effective_suite, ''))) IN ("
-            + ", ".join(f"LOWER(TRIM({p}))" for p in in_params)
-            + ")"
-        )
+        # The clause is built by ``analytics_scope`` (VIZ-201): every
+        # suite-match clause lives there.
+        where_clauses.append(suite_label_in_sql(params, "effective_suite", suite_names))
 
     suite_where = ""
     if where_clauses:
@@ -154,7 +163,7 @@ async def compute_suite_history(
     else:
         pre_where = "WHERE TRUE"
 
-    query = sa_text(f"""
+    query = scoped_text(f"""
         WITH run_effective AS (
             -- Path A: run-level primary_suite_name.
             SELECT
@@ -221,7 +230,7 @@ async def compute_suite_history(
         {suite_where}
         GROUP BY effective_suite
         HAVING effective_suite IS NOT NULL
-    """)
+    """, params)
 
     try:
         rows = (await db.execute(query, params)).fetchall()
@@ -259,13 +268,15 @@ async def compute_suite_trend(
     project_id: Optional[uuid.UUID],
     suite_name: str,
     days: int = 30,
+    release_id: ReleaseArg = None,
 ) -> list[dict]:
     """Return per-day trend points for one suite.
 
     Each point is ``{date, run_count, total_tests, passed_count,
     failed_count, skipped_count, broken_count}`` ordered ascending
     by date. Days with no runs are emitted with all-zero counts so
-    the frontend chart has a continuous x-axis.
+    the frontend chart has a continuous x-axis. ``release_id`` (VIZ-202)
+    keeps the runs of those releases; ``None`` leaves the statement unchanged.
     """
     if days <= 0:
         return []
@@ -278,8 +289,13 @@ async def compute_suite_trend(
     if project_id is not None:
         params["project_id"] = project_id
         pre_where += " AND tr.project_id = :project_id"
+    # ``release_filter_sql`` binds ``release_id`` / ``release_ids``; the
+    # suite here binds ``suite_name``, so the names cannot collide.
+    release_clause = release_filter_sql(params, release_id)
+    if release_clause:
+        pre_where += f" {release_clause.strip()}"
 
-    query = sa_text(f"""
+    query = scoped_text(f"""
         WITH run_effective AS (
             SELECT
                 tr.id AS run_id,
@@ -309,7 +325,7 @@ async def compute_suite_trend(
         filtered AS (
             SELECT *
             FROM run_effective
-            WHERE LOWER(TRIM(effective_suite)) = LOWER(TRIM(:suite_name))
+            WHERE {suite_label_eq_sql("effective_suite")}
         ),
         per_run AS (
             SELECT
@@ -343,7 +359,7 @@ async def compute_suite_trend(
         FROM per_run
         GROUP BY day
         ORDER BY day
-    """)
+    """, params)
 
     try:
         rows = (await db.execute(query, params)).fetchall()

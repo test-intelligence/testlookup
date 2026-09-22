@@ -215,6 +215,7 @@ async def preview_retention_purge(
 ):
     """Dry-run the purge NOW (synchronous, read-only): per-class cutoffs and
     candidate counts. Deliberately available while the policy is disabled."""
+    # analytics-epoch: none — mode="preview" only counts candidates; nothing is deleted
     out = await svc.run_purge(db, project_id=project_id, mode="preview")
     return RetentionPreviewResponse(
         cutoffs=out["cutoffs"],

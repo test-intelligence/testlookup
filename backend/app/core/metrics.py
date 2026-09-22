@@ -110,6 +110,16 @@ live_event_archive_failures_total = Counter(
     "Live events whose audit copy could not be written to Mongo (the event itself was still published)",
 )
 
+# VIZ-212. Every mutation bumps its project's analytics epoch AFTER the
+# commit; a bump that fails (Redis slow/unreachable, corrupt counter) cannot
+# roll the data change back, so it is logged -- and counted here, because a
+# failed bump leaves cached dashboards stale until their TTL and a log line
+# alone does not page anyone. One increment per counter that was not bumped.
+analytics_epoch_bump_failures_total = Counter(
+    "testlookup_analytics_epoch_bump_failures_total",
+    "Analytics epoch counters that could not be incremented after a committed mutation (cached analytics stay stale until TTL)",
+)
+
 # ── Pipeline Stages ───────────────────────────────────────────────────────────
 
 pipeline_stage_duration_seconds = Histogram(

@@ -3161,3 +3161,558 @@ def test_basetemp_guard_is_registered_and_the_real_tree_is_clean() -> None:
     """The rule is wired into the gate, and main satisfies it."""
     assert any(g.name == "repo.no-repo-relative-basetemp" for g in qg.GUARDS)
     assert qg._repo_no_repo_relative_basetemp() == []
+
+
+# ── backend.analytics-epoch-bump (VIZ-212) ───────────────────────────────────
+
+
+_EPOCH_BASE = "app.services.linker:sync_primary"
+
+
+def _epoch_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, router: str) -> None:
+    """A registered base, a non-committing wrapper, and one router under test."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_ANALYTICS_MUTATION_BASES", {_EPOCH_BASE: "primary release"})
+    app = tmp_path / "backend" / "app"
+    _write(app / "services" / "linker.py", """
+        async def sync_primary(db, run_id):
+            await db.execute("UPDATE test_runs")
+
+
+        async def link(db, run_id):
+            await sync_primary(db, run_id)
+    """)
+    _write(app / "routers" / "handler.py", router)
+
+
+def _epoch_messages() -> list[str]:
+    return [v.message for v in qg._backend_analytics_epoch_bump()]
+
+
+def test_epoch_bump_clean_when_bumped_after_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            await bump_analytics_epoch(pid)
+    """)
+    assert _epoch_messages() == []
+
+
+def test_epoch_bump_flags_a_missing_bump(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Planted violation: the wrapper's committing caller never bumps."""
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+    """)
+    violations = qg._backend_analytics_epoch_bump()
+    assert len(violations) == 1
+    assert violations[0].file.name == "handler.py"
+    assert violations[0].line == 5  # the mutation call, not the commit
+    assert "app.routers.handler:handler" in violations[0].message
+    assert "without bumping" in violations[0].message
+
+
+def test_epoch_bump_flags_a_bump_before_the_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Planted violation: a reader between bump and commit re-caches old data."""
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await bump_analytics_epoch(pid)
+            await db.commit()
+    """)
+    messages = _epoch_messages()
+    assert len(messages) == 1 and "BEFORE the commit" in messages[0]
+
+
+def test_epoch_bump_on_the_rollback_path_does_not_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            try:
+                await link(db, 1)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                await bump_analytics_epoch(pid)
+    """)
+    assert len(_epoch_messages()) == 1
+
+
+def test_epoch_bump_resolves_a_module_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``from app.services import linker as svc`` then ``svc.x`` is the same call."""
+    _epoch_tree(monkeypatch, tmp_path, """
+        async def handler(db, pid):
+            from app.services import linker as svc
+
+            await svc.sync_primary(db, 1)
+            await db.commit()
+    """)
+    assert len(_epoch_messages()) == 1
+
+
+def test_epoch_bump_counts_a_committing_helper_as_the_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def _finish(db):
+            await db.commit()
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await _finish(db)
+            await bump_analytics_epoch(pid)
+    """)
+    assert _epoch_messages() == []
+
+
+def test_epoch_bump_sweep_may_bump_once_after_its_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.services.cache_service import bump_analytics_epochs
+        from app.services.linker import sync_primary
+
+
+        async def sweep(make_session, runs):
+            changed = []
+            for run_id, pid in runs:
+                async with make_session() as db:
+                    await sync_primary(db, run_id)
+                    await db.commit()
+                changed.append(pid)
+            await bump_analytics_epochs(changed)
+    """)
+    assert _epoch_messages() == []
+
+
+def test_epoch_bump_self_committing_base_owes_the_bump_itself(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A base that commits is checked itself; its callers then owe nothing."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        qg, "_ANALYTICS_MUTATION_BASES", {"app.services.reset:reset_project": "reset"}
+    )
+    app = tmp_path / "backend" / "app"
+    _write(app / "services" / "reset.py", """
+        async def reset_project(db, pid):
+            await db.execute("DELETE FROM test_runs")
+            await db.commit()
+    """)
+    _write(app / "routers" / "projects.py", """
+        from app.services.reset import reset_project
+
+
+        async def reset_endpoint(db, pid):
+            return await reset_project(db, pid)
+    """)
+    violations = qg._backend_analytics_epoch_bump()
+    assert [(v.file.name, v.line) for v in violations] == [("reset.py", 1)]
+
+
+def test_epoch_bump_opt_out_needs_a_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    body = """
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            {comment}
+            await link(db, 1)
+            await db.commit()
+    """
+    _epoch_tree(monkeypatch, tmp_path, body.replace(
+        "{comment}", "# analytics-epoch: none — preview only, nothing analytics reads"
+    ))
+    assert _epoch_messages() == []
+
+    _epoch_tree(monkeypatch, tmp_path, body.replace("{comment}", "# analytics-epoch: none"))
+    assert len(_epoch_messages()) == 1
+
+
+def test_epoch_bump_registry_entry_must_name_a_function(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A renamed base must fail loudly, not silently guard nothing."""
+    _epoch_tree(monkeypatch, tmp_path, "x = 1\n")
+    monkeypatch.setattr(
+        qg, "_ANALYTICS_MUTATION_BASES",
+        {_EPOCH_BASE: "primary release", "app.services.linker:renamed_away": "gone"},
+    )
+    messages = _epoch_messages()
+    assert len(messages) == 1 and "renamed_away" in messages[0]
+
+
+def test_epoch_bump_guard_is_registered_and_the_real_tree_is_clean() -> None:
+    assert any(g.name == "backend.analytics-epoch-bump" for g in qg.GUARDS)
+    assert qg._backend_analytics_epoch_bump() == []
+
+
+# Evasions an independent review used against the first version of the guard.
+# Each one is a function that commits an analytics mutation and whose "bump"
+# does not reliably run after the commit — every one must be FLAGGED.
+
+_EPOCH_EVASIONS = {
+    "if_false": """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            if False:
+                await bump_analytics_epoch(pid)
+    """,
+    "if_zero_and_not_true": """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            if 0:
+                await bump_analytics_epoch(pid)
+            while not True:
+                await bump_analytics_epoch(pid)
+    """,
+    "wrong_name_local_function": """
+        from app.services.linker import link
+
+
+        async def bump_analytics_epoch(pid):
+            return None
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            await bump_analytics_epoch(pid)
+    """,
+    "finally": """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            try:
+                await link(db, 1)
+                await db.commit()
+            finally:
+                await bump_analytics_epoch(pid)
+    """,
+    "create_task": """
+        import asyncio
+
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            asyncio.create_task(bump_analytics_epoch(pid))
+    """,
+    "unawaited_coroutine": """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            bump_analytics_epoch(pid)
+    """,
+    "dotted_import": """
+        import app.services.linker
+
+
+        async def handler(db, pid):
+            await app.services.linker.sync_primary(db, 1)
+            await db.commit()
+    """,
+    "local_alias": """
+        from app.services import linker
+
+
+        async def handler(db, pid):
+            fn = linker.sync_primary
+            await fn(db, 1)
+            await db.commit()
+    """,
+    "module_alias": """
+        from app.services.linker import link as _link
+
+        relink = _link
+
+
+        async def handler(db, pid):
+            await relink(db, 1)
+            await db.commit()
+    """,
+    "direct_update_test_run": """
+        from sqlalchemy import update
+
+        from app.models.postgres import TestRun
+
+
+        async def handler(db, run_id):
+            await db.execute(update(TestRun).where(TestRun.id == run_id).values(status="PASSED"))
+            await db.commit()
+    """,
+    "direct_pg_insert_test_case": """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from app.models.postgres import TestCase
+
+
+        async def handler(db, rows):
+            await db.execute(pg_insert(TestCase).values(rows))
+            await db.commit()
+    """,
+    "new_test_run_added": """
+        from app.models.postgres import TestRun
+
+
+        async def handler(db, pid):
+            db.add(TestRun(project_id=pid, status="IN_PROGRESS"))
+            await db.commit()
+    """,
+    "orm_status_assignment": """
+        from sqlalchemy import select
+
+        from app.models.postgres import TestRun
+
+
+        async def handler(db, run_id):
+            result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+            run = result.scalar_one_or_none()
+            run.status = "FAILED"
+            await db.commit()
+    """,
+    "project_deactivated_via_alias": """
+        from app.models.postgres import Project as _Project
+
+
+        async def handler(db, pid):
+            project = await db.get(_Project, pid)
+            project.is_active = False
+            await db.commit()
+    """,
+    "get_db_handler_without_commit": """
+        from fastapi import APIRouter, Depends
+
+        from app.db.postgres import get_db
+        from app.services.linker import link
+
+        router = APIRouter()
+
+
+        @router.post("/runs/{run_id}/release")
+        async def handler(run_id, db=Depends(get_db)):
+            await link(db, run_id)
+    """,
+    "get_db_handler_bumps_before_teardown_commit": """
+        from fastapi import APIRouter, Depends
+
+        from app.db.postgres import get_db
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+        router = APIRouter()
+
+
+        @router.post("/runs/{run_id}/release")
+        async def handler(run_id, pid, db=Depends(get_db)):
+            await link(db, run_id)
+            await bump_analytics_epoch(pid)
+    """,
+    "depends_get_db_helper_not_a_route": """
+        from fastapi import Depends
+
+        from app.db.postgres import get_db
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def helper(run_id, pid, db=Depends(get_db)):
+            await link(db, run_id)
+            await db.commit()
+            await bump_analytics_epoch(pid)
+            await link(db, run_id)
+    """,
+}
+
+
+@pytest.mark.parametrize("evasion", sorted(_EPOCH_EVASIONS))
+def test_epoch_bump_flags_every_known_evasion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, evasion: str
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, _EPOCH_EVASIONS[evasion])
+    messages = _epoch_messages()
+    assert len(messages) == 1, f"{evasion}: {messages}"
+    assert "app.routers.handler:" in messages[0]
+
+
+def test_epoch_bump_get_db_handler_message_says_to_commit_explicitly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, _EPOCH_EVASIONS["get_db_handler_without_commit"])
+    messages = _epoch_messages()
+    assert len(messages) == 1 and "get_db commits after the handler returns" in messages[0]
+    _epoch_tree(
+        monkeypatch, tmp_path,
+        _EPOCH_EVASIONS["get_db_handler_bumps_before_teardown_commit"],
+    )
+    messages = _epoch_messages()
+    assert len(messages) == 1 and "BEFORE the commit" in messages[0]
+
+
+_EPOCH_CLEAN = {
+    "get_db_handler_commits_explicitly_then_bumps": """
+        from fastapi import APIRouter, Depends
+
+        from app.db.postgres import get_db
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+        router = APIRouter()
+
+
+        @router.post("/runs/{run_id}/release")
+        async def handler(run_id, pid, db=Depends(get_db)):
+            await link(db, run_id)
+            await db.commit()
+            await bump_analytics_epoch(pid)
+    """,
+    "dotted_import_then_bump_via_module": """
+        import app.services.linker
+        from app.services import cache_service
+
+
+        async def handler(db, pid):
+            await app.services.linker.sync_primary(db, 1)
+            await db.commit()
+            await cache_service.bump_analytics_epoch(pid)
+    """,
+    "direct_update_committed_and_bumped": """
+        from sqlalchemy import update
+
+        from app.models.postgres import TestRun
+        from app.services.cache_service import bump_analytics_epochs
+
+
+        async def handler(db, run_id, pid):
+            await db.execute(update(TestRun).where(TestRun.id == run_id).values(status="PASSED"))
+            await db.commit()
+            await bump_analytics_epochs([pid])
+    """,
+    "bump_under_if_true_counts": """
+        from app.services.cache_service import bump_analytics_epoch
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            await link(db, 1)
+            await db.commit()
+            if True:
+                await bump_analytics_epoch(pid)
+    """,
+    "status_of_an_unrelated_row_is_not_a_mutation": """
+        from sqlalchemy import select
+
+        from app.models.postgres import LiveSession, TestRun
+
+
+        async def handler(db, run):
+            live = LiveSession(run_id=run.id)
+            live.status = "completed"
+            job = (await db.execute(select(LiveSession))).scalar_one()
+            job.status = "done"
+            db.add(live)
+            await db.commit()
+    """,
+    "mutation_only_in_a_dead_branch": """
+        from app.services.linker import link
+
+
+        async def handler(db, pid):
+            if False:
+                await link(db, 1)
+            await db.commit()
+    """,
+    "update_of_another_model": """
+        from sqlalchemy import update
+
+        from app.models.postgres import Project, User
+
+
+        async def handler(db, pid):
+            await db.execute(update(User).values(status="x"))
+            await db.execute(update(Project).where(Project.id == pid).values(name="n"))
+            await db.commit()
+    """,
+}
+
+
+@pytest.mark.parametrize("case", sorted(_EPOCH_CLEAN))
+def test_epoch_bump_clean_cases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
+) -> None:
+    _epoch_tree(monkeypatch, tmp_path, _EPOCH_CLEAN[case])
+    assert _epoch_messages() == [], case
+
+
+def test_epoch_bump_guard_is_not_vacuous(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A guard that returns [] for everything passes every clean case above.
+    Three planted violations in one tree must come back as exactly three."""
+    _epoch_tree(monkeypatch, tmp_path, _EPOCH_EVASIONS["finally"])
+    app = tmp_path / "backend" / "app"
+    _write(app / "routers" / "second.py", _EPOCH_EVASIONS["direct_update_test_run"])
+    _write(app / "routers" / "third.py", _EPOCH_EVASIONS["get_db_handler_without_commit"])
+    violations = qg._backend_analytics_epoch_bump()
+    assert sorted(v.file.name for v in violations) == ["handler.py", "second.py", "third.py"]
+
+
+def test_epoch_bump_does_not_scan_backend_scripts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """backend/scripts is dev seed tooling, documented as out of scope."""
+    _epoch_tree(monkeypatch, tmp_path, "x = 1\n")
+    _write(tmp_path / "backend" / "scripts" / "seed.py", _EPOCH_EVASIONS["direct_update_test_run"])
+    assert _epoch_messages() == []

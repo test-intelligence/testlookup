@@ -1,5 +1,74 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, E2: one scope, honest totals, a cache that forgets
+
+**The analytics cache now forgets everything that changed, not just new
+ingestion.** Before this, only ingestion invalidated cached analytics. Deleting a
+run, the nightly retention purge, a project reset, deactivating a project, and
+every way a run's release can change (linking, unlinking, deleting a release, the
+Run Detail control, the nightly reconciliation sweep) left cached dashboards
+showing numbers that were no longer true until the TTL expired. Each project now
+has an analytics epoch that every one of those paths bumps after its commit, and
+the epoch is part of every cache key. When Redis cannot tell us the epoch, the
+cache is bypassed rather than trusted. The cached dashboard also reads defects,
+the active release-gate policy, quarantines and AI analyses, so their writers
+bump too. A quality-gate guard (``backend.analytics-epoch-bump``) fails the
+build if a mutation path stops bumping; it discovers writers from the source
+rather than a hand-kept list, and treats a route that relies on ``get_db``'s
+teardown commit as committing at exit. A bump is one pipelined round trip with
+a 250 ms budget, so a slow Redis cannot stall a delete or a release change, and
+failures are counted in ``analytics_epoch_bump_failures_total``.
+
+**The summary report's totals now honour the release filter.** With a release
+selected, only the top-failing list was filtered; runs, pass rate and the suite
+breakdown still counted every release. On the seeded demo project, "release
+1.0.0-rc1" reported 43 runs at 84.0% when 17 runs at 77.3% belonged to it. Every
+section now uses the same scope, including under a suite filter in "latest"
+mode, where totals and the suites table had disagreed. The Summary Report page
+used to say the report covered "all releases" and exported an all-releases PDF
+beside release-scoped numbers; it now names the releases the server applied,
+and the PDF carries the same scope as the screen. The flaky count stays
+project-wide for the release filter, as the dashboard's KPIs do, and says so.
+
+**Several releases and suites at once.** The analytics routes take ``release_id``
+and ``suite_name`` more than once (OR within a dimension, AND across), with every
+release id authorised before any query runs. The five hand-written copies of the
+"which suite does this row belong to" SQL are now one module, guarded by a
+ratchet. Single-value requests answer exactly as before: responses were captured
+from real Postgres before the change and compared after it.
+
+**Every analytics response says what it covers.** An additive ``meta`` object
+states the projects, releases, suites and UTC window the server actually
+applied, how many runs and executions matched out of how many in the window, the
+pass-rate basis, in-progress runs, whether the current day is still partial, and
+which filters a route could not honour. It follows the frozen ``contracts/viz``
+envelope and is checked against it in tests. Seven more routes gained release and
+suite filters, or declare why they cannot apply one.
+
+**Changed behaviour on the analytics routes** (no current client sends any of
+these, but a script might): a malformed ``project_id`` is 422 instead of 400; an
+empty ``project_id=`` is 422 instead of "all projects"; ``from``/``to`` are 422
+instead of being silently ignored; an empty ``suite_name=`` on
+``/analytics/suite-detail`` is 422 instead of an empty result; validation errors
+carry ``{code, param, message, allowed, request_id}`` alongside ``detail``. Every
+response carries an ``X-Request-ID`` header, and an analytics 500 logs the same
+id it returns. ``/test-management/suites`` returns a list, so it carries a
+bounded summary of its envelope (ids and counts, at most 2 KB, so it cannot
+overflow a proxy's header buffer) in ``X-Analytics-Meta``.
+
+The authorisation ratchet now looks inside sub-dependencies: when the scope
+parameters moved into ``analytics_scope``, the routes that used it had silently
+dropped out of the scan that once found nine IDORs.
+
+**The pre-push gate can now pass a change that rewrites an existing API
+parameter.** It treated every deleted line in ``openapi.json``/``schemas.md`` as
+local toolchain skew, which is right for skew and wrong for a real change: making
+``release_id`` repeatable rewrites its schema. When deletions appear, the gate
+now generates the references locally for ``origin/main`` and for the checkout in
+two throwaway worktrees -- the skew is the same on both sides and cancels -- and
+passes only if the committed file is CI's file plus that delta. The raw local
+generation still fails, as before.
+
 ## Unreleased - Visualization Upgrade, Wave 0: contracts before charts
 
 Nothing a user sees changes in this release. It lays the ground the chart work

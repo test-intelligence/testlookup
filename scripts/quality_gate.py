@@ -1343,6 +1343,665 @@ def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violati
     return violations
 
 
+# ── backend.analytics-epoch-bump (VIZ-212) ──────────────────────────────────
+#
+# Analytics cache keys carry a per-project epoch; a mutation that commits
+# without bumping it leaves every cached report answering from the old data
+# until TTL. The class of paths, not one module, is guarded.
+#
+# WHAT IS A MUTATION
+# * The REGISTRY (``_ANALYTICS_MUTATION_BASES``) names base functions that
+#   change what the cached analytics read — primary release, live close/drain,
+#   run deletion, retention purge, reset, deactivation, suite repair,
+#   placeholder rows, ingestion finalize, and (for the cached dashboard and
+#   hours-saved model) defects, the active release-gate policy, quarantine
+#   requests, AI analyses and failure clusters. Keys are ``module:qualname``.
+# * SOURCE DISCOVERY finds writers the registry does not name. In any
+#   function: ``update(M)`` / ``delete(M)`` / ``insert(M)`` (any import alias,
+#   e.g. ``pg_insert``) of ``TestRun`` or ``TestCase``, and ``update(Project)``
+#   whose ``.values()`` sets ``is_active``; ``TestRun(...)`` / ``TestCase(...)``
+#   constructed in a function that ``.add()``s / ``.add_all()``s; ``db.delete(x)``
+#   of such a row; and an assignment to ``status`` / ``primary_release_id`` /
+#   ``primary_suite_name`` / ``is_active`` on a variable bound to one of those
+#   models (``x = TestRun(...)``, ``x = await db.get(TestRun, …)``,
+#   ``x = …select(TestRun)…`` and names derived from it, ``for x in <that>``,
+#   ``x: TestRun``). Model names are resolved through imports (``_Project``).
+#
+# WHAT IS A COMMIT
+# * A ``.commit()`` call, or a call to a function in backend/app that itself
+#   calls ``.commit()``.
+# * A FastAPI route handler (a ``@<router>.get/post/put/patch/delete/api_route``
+#   decorator) or any function with a ``Depends(get_db)`` parameter commits
+#   AGAIN at its exit: ``get_db`` commits in its teardown, after the handler
+#   has returned. A mutation left for that commit cannot be bumped from inside
+#   the handler — every bump in the handler runs before it. Such a handler
+#   must ``await db.commit()`` explicitly, then bump.
+#
+# THE RULE
+# * A function that reaches a mutation (directly, or through a function that
+#   does and does not commit after it) and does not commit after it passes the
+#   obligation to ITS callers. A function that commits after the mutation must
+#   ``await`` a bump — ``bump_analytics_epoch[s]`` / ``invalidate_analytics_cache``
+#   RESOLVED BY IMPORT to ``app.services.cache_service`` (a local function of
+#   the same name is not a bump) — AFTER that commit.
+# * A bump before the commit is a violation: a reader between the bump and the
+#   commit re-caches the old data under the new epoch.
+# * Not a bump: one in an ``except`` handler or a ``finally:`` block (it runs
+#   on the rollback path too), one in a statically dead branch (``if False``,
+#   ``if 0``, ``while False``, the ``else`` of ``if True``), or one that is not
+#   directly awaited (``asyncio.create_task(bump(...))``, an un-awaited
+#   coroutine): its ordering against the commit is not guaranteed. Dead
+#   branches are ignored for mutations and commits too.
+# * Calls resolve through imports, module-level and local aliases
+#   (``fn = release_linker.sync_primary_release``), and dotted module paths
+#   (``app.services.release_linker.sync_primary_release(...)``).
+# * Opt-out, with a reason, anywhere in the function or on the line above it:
+#   ``# analytics-epoch: none — <reason>``.
+#
+# SCOPE: backend/app only. backend/scripts (dev seed data, one-off tools) is
+# deliberately not scanned — it runs against dev databases, outside the
+# serving processes whose caches it would invalidate.
+#
+# Deliberate blind spots: ``getattr``, a callable passed as an argument, and
+# rows reached through a relationship (``run.project.is_active = …``) are not
+# resolved; line order stands in for control flow; a function that only
+# commits BEFORE its mutation is treated as not committing it (the obligation
+# moves to its callers); a mutation reached only from a Celery
+# ``.delay``/``apply_async`` dispatch is checked where it commits, not where
+# it is dispatched.
+#
+# Registered writers NOT listed, because nothing cached reads what they write:
+# release-gate policy create/update (drafts only — the readiness band reads
+# the ACTIVE policy), Defect ``approval_status`` / Jira-field updates
+# (``action_policy``, ``defect_jira_service.sync_external_statuses``), quarantine
+# ``stale_notified_at`` (``mark_stale_quarantines``), and AI-analysis
+# ``failure_category`` corrections (counts read rows, not categories).
+
+_ANALYTICS_MUTATION_BASES: dict[str, str] = {
+    # Every writer of test_runs.primary_release_id goes through this one:
+    # link_run_to_release / auto_link_release / link_run_or_default,
+    # release_service.link_test_run / unlink_test_run / delete_release, the
+    # Run Detail control and the reconcile_primary_releases sweep.
+    "app.services.release_linker:sync_primary_release": "primary release",
+    "app.services.stream_service:close_session": "live session close",
+    "app.services.live_session_drainer:drain_run_buffer": "live buffer drain",
+    "app.services.run_deletion_service:perform_run_deletion": "run deletion",
+    "app.services.retention_service:run_purge": "retention purge",
+    "app.services.project_reset_service:reset_project": "project reset",
+    "app.routers.projects:delete_project": "project deactivation",
+    "app.services.live_run_recovery_service:repair_clobbered_primary_suite_names": (
+        "primary suite repair"
+    ),
+    "app.services.placeholder_backfill_service:backfill_placeholders_for_project": (
+        "placeholder test cases"
+    ),
+    "app.services.ingestion_pipeline:finalize_run": "batch ingestion finalize",
+    "app.services.ingestion:process_sentinel": "sentinel ingestion",
+    # Cached dashboard summary: open / open-critical defect counts.
+    "app.agents.triage_agent:DefectTriageAgent._triage_one": "defect (triage agent)",
+    "app.agents.defect_commander:DefectCommander._persist_defect": (
+        "defect (defect commander)"
+    ),
+    "app.services.defect_promotion_service:promote_cluster": "defect (cluster promotion)",
+    "app.routers.integrations:_stage_pending_jira_defect": "defect (Jira integration)",
+    "app.services.analytics_service:create_manual_defect": "defect (manual)",
+    "app.services.defect_jira_service:create_or_link_issue": "defect (Jira one-click)",
+    "app.services.feedback_service:jira_resolution_webhook": "defect resolution",
+    "app.services.flaky_quarantine_service:_stage_internal_defect": (
+        "defect (quarantine approval)"
+    ),
+    # Cached dashboard summary: the readiness band reads the ACTIVE policy.
+    "app.routers.release_gate_policies:publish_policy": "release-gate policy activation",
+    "app.routers.release_gate_policies:deactivate_policy": (
+        "release-gate policy deactivation"
+    ),
+    # Cached hours-saved model: quarantine requests, AI analyses, clusters.
+    "app.services.flaky_quarantine_service:propose_quarantine": "quarantine proposal",
+    "app.services.flaky_quarantine_service:approve": "quarantine approval",
+    "app.services.flaky_quarantine_service:reject": "quarantine rejection",
+    "app.services.flaky_quarantine_service:release": "quarantine release",
+    "app.services.flaky_quarantine_service:expire_stale_proposals": "quarantine expiry",
+    "app.services.flaky_quarantine_service:schedule_pending_rechecks": (
+        "quarantine recheck scheduling"
+    ),
+    "app.services.flaky_quarantine_service:run_recheck_cycle": "quarantine recheck",
+    "app.services.flaky_quarantine_service:update_quarantine_stability": (
+        "quarantine stability release"
+    ),
+    "app.agents.analysis_agent:AnalysisAgent._batch_upsert_analyses": "AI analyses",
+    "app.routers.analyze:analyze_test_case": "AI analysis (single test)",
+    "app.agents.deep_persistence:persist_failure_cluster_snapshot": "failure clusters",
+}
+_ANALYTICS_BUMP_TARGETS = frozenset({
+    "app.services.cache_service:bump_analytics_epoch",
+    "app.services.cache_service:bump_analytics_epochs",
+    "app.services.cache_service:invalidate_analytics_cache",
+})
+_ANALYTICS_OPT_OUT_RE = re.compile(r"#\s*analytics-epoch:\s*none\s*(?:—|--|-)\s*\S")
+# Discovery: which models, and which ORM attributes of them, analytics read.
+_ANALYTICS_ROW_MODELS = frozenset({"TestRun", "TestCase"})
+_ANALYTICS_TAGGED_MODELS = frozenset({"TestRun", "TestCase", "Project"})
+_ANALYTICS_FIELDS: dict[str, frozenset[str]] = {
+    "TestRun": frozenset({"status", "primary_release_id", "primary_suite_name", "is_active"}),
+    "TestCase": frozenset({"status", "primary_release_id", "primary_suite_name", "is_active"}),
+    "Project": frozenset({"is_active"}),
+}
+_ROUTE_DECORATOR_ATTRS = frozenset({
+    "get", "post", "put", "patch", "delete", "api_route", "websocket",
+})
+
+
+@dataclass
+class _EpochUnit:
+    key: str
+    module: str
+    cls: Optional[str]
+    path: Path
+    node: ast.AST
+    start: int
+    end: int
+    imports: dict[str, str]
+
+
+def _epoch_import_map(
+    nodes: Iterable[ast.AST], module: str, is_package: bool
+) -> dict[str, str]:
+    """Local name -> dotted target for every import among ``nodes``."""
+    out: dict[str, str] = {}
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                pkg = module.split(".") if is_package else module.split(".")[:-1]
+                pkg = pkg[: max(len(pkg) - (node.level - 1), 0)]
+                base = ".".join([*pkg, base] if base else pkg)
+            for alias in node.names:
+                out[alias.asname or alias.name] = f"{base}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    out[alias.asname] = alias.name
+                else:
+                    head = alias.name.split(".")[0]
+                    out[head] = head
+    return out
+
+
+def _epoch_module_level_nodes(tree: ast.Module) -> list[ast.AST]:
+    """Every node outside a function body (imports under if/try included)."""
+    found: list[ast.AST] = []
+
+    def walk(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            found.append(child)
+            walk(child)
+
+    walk(tree)
+    return found
+
+
+def _epoch_units(root: Path, module_root: Path) -> tuple[
+    dict[str, _EpochUnit], dict[str, dict[str, str]], dict[str, set[str]],
+    dict[str, list[ast.AST]],
+]:
+    units: dict[str, _EpochUnit] = {}
+    module_imports: dict[str, dict[str, str]] = {}
+    module_defs: dict[str, set[str]] = {}
+    module_nodes: dict[str, list[ast.AST]] = {}
+    for path in iter_files(root, (".py",)):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, ValueError, UnicodeDecodeError, OSError):
+            continue
+        parts = list(path.relative_to(module_root).with_suffix("").parts)
+        is_package = parts[-1] == "__init__"
+        if is_package:
+            parts = parts[:-1]
+        module = ".".join(parts)
+        top = _epoch_module_level_nodes(tree)
+        module_nodes[module] = top
+        module_imports[module] = _epoch_import_map(top, module, is_package)
+        defs: set[str] = set()
+        module_defs[module] = defs
+
+        def add(fn: ast.AST, qual: str, cls: Optional[str]) -> None:
+            assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            start = min([fn.lineno] + [d.lineno for d in fn.decorator_list])
+            key = f"{module}:{qual}"
+            units[key] = _EpochUnit(
+                key=key, module=module, cls=cls, path=path, node=fn,
+                start=start, end=getattr(fn, "end_lineno", None) or fn.lineno,
+                imports=_epoch_import_map(ast.walk(fn), module, is_package),
+            )
+
+        for stmt in tree.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defs.add(stmt.name)
+                add(stmt, stmt.name, None)
+            elif isinstance(stmt, ast.ClassDef):
+                for item in stmt.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        add(item, f"{stmt.name}.{item.name}", stmt.name)
+    return units, module_imports, module_defs, module_nodes
+
+
+def _epoch_split(dotted: str) -> str:
+    head, _, tail = dotted.rpartition(".")
+    return f"{head}:{tail}" if head else dotted
+
+
+def _epoch_dotted(node: ast.AST) -> Optional[list[str]]:
+    """``a.b.c`` -> ["a", "b", "c"]; None when the chain is not all names."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return parts[::-1]
+
+
+def _epoch_static_truth(test: ast.AST) -> Optional[bool]:
+    """The truth of a constant condition (``False``, ``0``, ``not 1``), else None."""
+    if isinstance(test, ast.Constant):
+        return bool(test.value)
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _epoch_static_truth(test.operand)
+        return None if inner is None else not inner
+    return None
+
+
+@dataclass
+class _EpochCtx:
+    parent: Optional[ast.AST]
+    handler: bool  # inside an ``except`` handler or a ``finally:`` block
+
+
+def _epoch_live_nodes(fn: ast.AST) -> list[tuple[ast.AST, _EpochCtx]]:
+    """Every node of ``fn`` that can run, with its parent and whether it sits
+    on the failure path. Statically dead branches are pruned."""
+    out: list[tuple[ast.AST, _EpochCtx]] = []
+
+    def visit(node: ast.AST, parent: Optional[ast.AST], handler: bool) -> None:
+        out.append((node, _EpochCtx(parent, handler)))
+        if isinstance(node, (ast.If, ast.While)):
+            truth = _epoch_static_truth(node.test)
+            visit(node.test, node, handler)
+            if truth is not False:
+                for child in node.body:
+                    visit(child, node, handler)
+            if truth is not True or isinstance(node, ast.While):
+                for child in node.orelse:
+                    visit(child, node, handler)
+            return
+        if isinstance(node, ast.IfExp):
+            truth = _epoch_static_truth(node.test)
+            visit(node.test, node, handler)
+            if truth is not False:
+                visit(node.body, node, handler)
+            if truth is not True:
+                visit(node.orelse, node, handler)
+            return
+        if isinstance(node, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+            for child in [*node.body, *node.orelse]:
+                visit(child, node, handler)
+            for h in node.handlers:
+                visit(h, node, True)
+            for child in node.finalbody:
+                visit(child, node, True)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, node, handler)
+
+    visit(fn, None, False)
+    return out
+
+
+def _backend_analytics_epoch_bump(root: Optional[Path] = None) -> list[Violation]:
+    """Every committed analytics mutation bumps the analytics epoch after it."""
+    root = root or (REPO_ROOT / "backend" / "app")
+    module_root = root.parent
+    units, module_imports, module_defs, module_nodes = _epoch_units(root, module_root)
+    violations: list[Violation] = []
+
+    for key in sorted(_ANALYTICS_MUTATION_BASES):
+        if key not in units:
+            module, _, qual = key.partition(":")
+            path = module_root.joinpath(*module.split(".")).with_suffix(".py")
+            violations.append(Violation(
+                path if path.exists() else REPO_ROOT / "scripts" / "quality_gate.py", 0,
+                f"analytics-epoch registry entry {key!r} names no function — "
+                "a renamed mutation is an unguarded one; update "
+                "_ANALYTICS_MUTATION_BASES",
+            ))
+
+    def aliases_in(nodes: Iterable[ast.AST]) -> dict[str, ast.AST]:
+        """``name = <dotted name>`` assignments (a callable alias)."""
+        found: dict[str, ast.AST] = {}
+        for node in nodes:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and _epoch_dotted(node.value) is not None
+            ):
+                found[node.targets[0].id] = node.value
+        return found
+
+    module_aliases = {m: aliases_in(nodes) for m, nodes in module_nodes.items()}
+
+    def resolve(
+        func: ast.AST, unit: _EpochUnit, local_aliases: dict[str, ast.AST], depth: int = 0
+    ) -> Optional[str]:
+        """``module:qualname`` a call target names, through imports and aliases."""
+        chain = _epoch_dotted(func)
+        if chain is None or depth > 4:
+            return None
+        head, rest = chain[0], chain[1:]
+        mod_imports = module_imports.get(unit.module, {})
+        if not rest:
+            alias = local_aliases.get(head)
+            if alias is None and head not in unit.imports:
+                alias = module_aliases.get(unit.module, {}).get(head)
+            if alias is not None:
+                return resolve(alias, unit, local_aliases, depth + 1)
+            if head in unit.imports:
+                return _epoch_split(unit.imports[head])
+            if head in module_defs.get(unit.module, set()):
+                return f"{unit.module}:{head}"
+            if head in mod_imports:
+                return _epoch_split(mod_imports[head])
+            return None
+        if head in ("self", "cls") and unit.cls and len(rest) == 1:
+            return f"{unit.module}:{unit.cls}.{rest[0]}"
+        target = unit.imports.get(head) or mod_imports.get(head)
+        if target is None:
+            alias = local_aliases.get(head) or module_aliases.get(unit.module, {}).get(head)
+            alias_chain = _epoch_dotted(alias) if alias is not None else None
+            if alias_chain is None:
+                return None
+            resolved = resolve(alias, unit, local_aliases, depth + 1)
+            if resolved is None:
+                return None
+            target = resolved.replace(":", ".")
+        dotted = ".".join([target, *rest])
+        return _epoch_split(dotted)
+
+    def model_of(node: ast.AST, unit: _EpochUnit) -> Optional[str]:
+        """The analytics model a name/attribute refers to (through imports)."""
+        chain = _epoch_dotted(node)
+        if chain is None:
+            return None
+        if len(chain) == 1:
+            target = unit.imports.get(chain[0]) or module_imports.get(unit.module, {}).get(
+                chain[0]
+            )
+            name = target.rsplit(".", 1)[-1] if target else chain[0]
+        else:
+            name = chain[-1]
+        return name if name in _ANALYTICS_TAGGED_MODELS else None
+
+    def stmt_kind(func: ast.AST, unit: _EpochUnit, aliases: dict[str, ast.AST]) -> str:
+        """'update' / 'delete' / 'insert' for a SQLAlchemy statement builder."""
+        chain = _epoch_dotted(func)
+        if chain is None:
+            return ""
+        if len(chain) == 1:
+            target = resolve(func, unit, aliases)
+            name = target.rsplit(":", 1)[-1] if target else chain[0]
+        else:
+            name = chain[-1]  # sa.update(...); db.delete(obj) has no model arg
+        return name if name in ("update", "delete", "insert") else ""
+
+    # Per unit: resolved calls with their lines, commits, bumps, direct writes.
+    calls: dict[str, list[tuple[int, str]]] = {}
+    commits: dict[str, list[int]] = {}
+    bumps: dict[str, list[int]] = {}
+    writes: dict[str, list[tuple[int, str]]] = {}
+    teardown: set[str] = set()
+    opted_out: set[str] = set()
+    for key, unit in units.items():
+        fn = unit.node
+        assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        live = _epoch_live_nodes(fn)
+        local_aliases = aliases_in(n for n, _ in live)
+        resolved: list[tuple[int, str]] = []
+        direct_commits: list[int] = []
+        bump_lines: list[int] = []
+        found_writes: list[tuple[int, str]] = []
+        adds = any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr in ("add", "add_all")
+            for n, _ in live
+        )
+
+        # Variables bound to TestRun / TestCase / Project rows, in line order.
+        tagged: dict[str, str] = {}
+        for arg in [*fn.args.args, *fn.args.kwonlyargs]:
+            if arg.annotation is not None:
+                model = model_of(arg.annotation, unit)
+                if model:
+                    tagged[arg.arg] = model
+
+        def rhs_model(value: ast.AST) -> Optional[str]:
+            """The model of the row(s) an expression yields, if it is one:
+            ``TestRun(...)``, ``db.get(TestRun, …)``, anything around
+            ``select(TestRun)``, or a result/row derived from a tagged name
+            (``result.scalar_one_or_none()``, ``rows[0]``). An attribute OF a
+            tagged row (``run.project_id``) is a column, not a row."""
+            stripped = value
+            while True:
+                if isinstance(stripped, ast.Await):
+                    stripped = stripped.value
+                elif isinstance(stripped, ast.Call) and isinstance(
+                    stripped.func, ast.Attribute
+                ):
+                    stripped = stripped.func.value
+                elif isinstance(stripped, ast.Subscript):
+                    stripped = stripped.value
+                else:
+                    break
+            if isinstance(stripped, ast.Name) and stripped.id in tagged:
+                return tagged[stripped.id]
+            if isinstance(stripped, ast.Call) and model_of(stripped.func, unit) in (
+                _ANALYTICS_ROW_MODELS
+            ):
+                return model_of(stripped.func, unit)  # TestRun(...)
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.Call):
+                    callee = (_epoch_dotted(sub.func) or [""])[-1]
+                    if callee in ("select", "get", "query") and sub.args:
+                        model = model_of(sub.args[0], unit)
+                        if model:
+                            return model
+            return None
+
+        for node, ctx in sorted(
+            live, key=lambda item: (getattr(item[0], "lineno", 0), getattr(item[0], "col_offset", 0))
+        ):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                model = None
+                if isinstance(node, ast.AnnAssign):
+                    model = model_of(node.annotation, unit)
+                if model is None and node.value is not None:
+                    model = rhs_model(node.value)
+                for target in targets:
+                    names = [
+                        t.id for t in ast.walk(target)
+                        if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)
+                    ]
+                    for name in names:
+                        if model:
+                            tagged[name] = model
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                model = rhs_model(node.iter)
+                if model and isinstance(node.target, ast.Name):
+                    tagged[node.target.id] = model
+            # Attribute writes on a tagged row.
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id in tagged
+                        and target.attr in _ANALYTICS_FIELDS[tagged[target.value.id]]
+                    ):
+                        found_writes.append((
+                            node.lineno,
+                            f"{tagged[target.value.id]}.{target.attr} assignment",
+                        ))
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            chain = _epoch_dotted(func) or []
+            if isinstance(func, ast.Attribute) and func.attr == "commit":
+                direct_commits.append(node.lineno)
+            target = resolve(func, unit, local_aliases)
+            if target in _ANALYTICS_BUMP_TARGETS:
+                if isinstance(ctx.parent, ast.Await) and not ctx.handler:
+                    bump_lines.append(node.lineno)
+                continue
+            if target and target != key:
+                resolved.append((node.lineno, target))
+            # Direct writes.
+            kind = stmt_kind(func, unit, local_aliases)
+            if kind and node.args:
+                model = model_of(node.args[0], unit)
+                if model in _ANALYTICS_ROW_MODELS:
+                    found_writes.append((node.lineno, f"{kind}({model})"))
+            if chain and chain[-1] == "values" and isinstance(func, ast.Attribute):
+                root_call = func.value
+                while isinstance(root_call, ast.Call) and isinstance(
+                    root_call.func, ast.Attribute
+                ) and not stmt_kind(root_call.func, unit, local_aliases):
+                    root_call = root_call.func.value
+                if (
+                    isinstance(root_call, ast.Call)
+                    and stmt_kind(root_call.func, unit, local_aliases) == "update"
+                    and root_call.args
+                    and model_of(root_call.args[0], unit) == "Project"
+                    and any(kw.arg in _ANALYTICS_FIELDS["Project"] for kw in node.keywords)
+                ):
+                    found_writes.append((node.lineno, "update(Project).values(is_active)"))
+            model = model_of(func, unit)
+            if model in _ANALYTICS_ROW_MODELS and adds:
+                found_writes.append((node.lineno, f"new {model} row"))
+            if (
+                len(chain) == 2
+                and chain[-1] == "delete"
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+                and tagged.get(node.args[0].id) in _ANALYTICS_ROW_MODELS
+            ):
+                found_writes.append((node.lineno, f"delete of a {tagged[node.args[0].id]} row"))
+
+        is_route = any(
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Attribute)
+            and d.func.attr in _ROUTE_DECORATOR_ATTRS
+            for d in fn.decorator_list
+        )
+        takes_get_db = any(
+            isinstance(default, ast.Call)
+            and (_epoch_dotted(default.func) or [""])[-1] == "Depends"
+            and default.args
+            and (_epoch_dotted(default.args[0]) or [""])[-1] == "get_db"
+            for default in [*fn.args.defaults, *fn.args.kw_defaults]
+            if default is not None
+        )
+        if is_route or takes_get_db:
+            teardown.add(key)
+        calls[key] = resolved
+        commits[key] = direct_commits
+        bumps[key] = bump_lines
+        writes[key] = sorted(found_writes)
+        lines = _source_lines(unit.path)[max(unit.start - 2, 0):unit.end]
+        if any(_ANALYTICS_OPT_OUT_RE.search(line) for line in lines):
+            opted_out.add(key)
+
+    committing_units = {key for key, lines in commits.items() if lines}
+
+    def commit_points(key: str) -> list[int]:
+        via_calls = [line for line, target in calls[key] if target in committing_units]
+        points = commits[key] + via_calls
+        if key in teardown:
+            # get_db commits once more after the handler returns.
+            points.append(units[key].end + 1)
+        return sorted(points)
+
+    def mutation_lines(key: str, mutations: set[str]) -> list[tuple[int, str]]:
+        found = [(line, target) for line, target in calls[key] if target in mutations]
+        found.extend(writes[key])
+        if key in _ANALYTICS_MUTATION_BASES:
+            found.append((units[key].start, key))
+        return sorted(found)
+
+    # Fixpoint over "mutates and leaves the commit to its caller". A base that
+    # commits its own mutation (reset_project, drain_run_buffer, finalize_run)
+    # is a committer: it owes the bump itself and its callers owe nothing.
+    # ``>=``: a call that is both the last mutation and the last commit point
+    # is a function that committed BEFORE mutating, so its caller commits.
+    mutations: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for key in units:
+            if key in mutations or key in opted_out:
+                continue
+            found = mutation_lines(key, mutations)
+            if not found:
+                continue
+            points = commit_points(key)
+            if not points or found[-1][0] >= points[-1]:
+                mutations.add(key)
+                changed = True
+
+    for key, unit in sorted(units.items()):
+        if key in opted_out or key in mutations:
+            continue
+        found = mutation_lines(key, mutations)
+        if not found:
+            continue
+        points = commit_points(key)
+        for line, target in found:
+            later = [p for p in points if p > line]
+            if not later:
+                continue
+            commit_line = later[0]
+            if any(b > commit_line for b in bumps[key]):
+                continue
+            node = unit.node
+            assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            at = node.lineno if target == key else line
+            what = _ANALYTICS_MUTATION_BASES.get(target, target)
+            if any(line < b <= commit_line for b in bumps[key]):
+                message = (
+                    f"{unit.key} bumps the analytics epoch BEFORE the commit of "
+                    f"its analytics mutation ({what}) — a reader in between "
+                    "re-caches the old data under the new epoch"
+                )
+            else:
+                message = (
+                    f"{unit.key} commits an analytics mutation ({what}) without "
+                    "bumping the analytics epoch after the commit — cached "
+                    "reports stay stale until TTL"
+                )
+            if key in teardown and commit_line == unit.end + 1:
+                message += (
+                    " (get_db commits after the handler returns: commit "
+                    "explicitly with `await db.commit()`, then bump)"
+                )
+            violations.append(Violation(unit.path, at, message))
+            break
+    return violations
+
+
 # ── Frontend guards ──────────────────────────────────────────────────────────
 
 _CLIPBOARD_RE = re.compile(r"navigator\.clipboard\.writeText\b")
@@ -5285,6 +5944,27 @@ GUARDS: list[Guard] = [
             "genuinely needed, extend services/retention_service.py (the "
             "audit-clock deleter) rather than deleting inline — the model "
             "docstrings promise exactly that boundary."
+        ),
+    ),
+    Guard(
+        name="backend.analytics-epoch-bump",
+        description=(
+            "Every function that commits an analytics mutation (registry of "
+            "base writers, source-discovered TestRun/TestCase/Project writes, "
+            "and their callers) awaits a cache_service epoch bump AFTER the "
+            "commit (VIZ-212). A get_db route handler commits again at exit."
+        ),
+        check=_backend_analytics_epoch_bump,
+        fix_hint=(
+            "After the commit: `from app.services.cache_service import "
+            "bump_analytics_epoch` then `await bump_analytics_epoch(project_id)` "
+            "(bump_analytics_epochs(ids) for a sweep, once per project). Never "
+            "before the commit, never in except/finally, never via "
+            "create_task. A get_db route handler must `await db.commit()` "
+            "explicitly and bump after it — get_db's own commit runs after the "
+            "handler returns. A path that truly changes nothing analytics "
+            "reads: `# analytics-epoch: none — <reason>`. A new primitive "
+            "writer goes in _ANALYTICS_MUTATION_BASES."
         ),
     ),
     Guard(

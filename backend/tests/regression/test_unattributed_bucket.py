@@ -276,15 +276,18 @@ class TestEveryFilterPointRecognisesIt:
 class TestTheNullBranchBindsNothing:
     def test_the_raw_sql_paths_do_not_bind_a_parameter_they_never_mention(self):
         from app.services import analytics_service, metrics_service
+        from app.services.analytics_scope import release_filter_sql
 
-        helper = inspect.getsource(analytics_service._add_release_param)
-        # The NULL predicate references no bind. Setting one anyway is dead
-        # weight at best, and on some drivers a bind with no placeholder raises.
-        null_branch = helper.split("IS NULL")[0].split("is_unattributed")[-1]
-        assert 'params["release_id"]' not in null_branch
-
+        # VIZ-201: both raw-SQL paths use the one builder. Behaviour, not text:
+        # the NULL predicate references no bind, and setting one anyway is dead
+        # weight at best -- on some drivers a bind with no placeholder raises.
+        for sentinel in (UNATTRIBUTED, "Unattributed", [UNATTRIBUTED]):
+            params: dict = {}
+            assert release_filter_sql(params, sentinel) == "AND tr.primary_release_id IS NULL"
+            assert params == {}, sentinel
+        assert "release_filter_sql(" in inspect.getsource(analytics_service._add_release_param)
         trend = inspect.getsource(metrics_service.get_trend_data)
-        assert "not _unattributed(release_id)" in trend
+        assert "release_filter_sql(params, release_id)" in trend
 
 
 class TestTheTwoHalvesCannotDrift:

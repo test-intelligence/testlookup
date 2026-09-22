@@ -6,9 +6,12 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
+from app.services.analytics_meta import build_meta, ignored, with_meta
+from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_scope
 from app.services.value_metrics_service import get_methodology, get_value_metrics
 
 router = APIRouter(prefix="/api/v1/value-metrics", tags=["Value Metrics"])
@@ -22,25 +25,61 @@ def _project_in_scope(project_id: str, accessible: set) -> bool:
         return False
 
 
+#: VIZ-201/202: the shared scope. A non-admin who names no project, or one
+#: they cannot read, gets the historical empty payload (``on_denied="empty"``).
+_VALUE_SCOPE = ScopePolicy(default_days=30, max_days=365, on_denied="empty")
+
+#: Why value metrics do not take release or suite (VIZ-202). Stated in
+#: ``meta.ignored_filters`` whenever either is sent -- never dropped silently.
+_VALUE_IGNORED = {
+    "release": (
+        "Value metrics count product activity over time (clusters, duplicate "
+        "tickets, promoted defects, coach results, release decisions, the "
+        "hours-saved model). Several of those carry no release, so filtering "
+        "only the ones that do would mix two scopes in one total."
+    ),
+    "suite": (
+        "Value metrics are project-level counts over time; defects, coach "
+        "results and the hours-saved model carry no suite, so a suite filter "
+        "cannot be applied to the totals consistently."
+    ),
+}
+
+
 @router.get("")
+@analytics_error_contract
 async def get_metrics(
-    project_id: Optional[str] = Query(None),
-    days: int = Query(30, ge=1, le=365),
     months: int = Query(6, ge=1, le=24),
+    scope: AnalyticsScope = Depends(analytics_scope(_VALUE_SCOPE)),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Return operational value metrics for a project (or all) over a time
     window, including the US-12.1 engineer-hours-saved model (``months``
-    bounds the monthly trend)."""
-    accessible = await get_accessible_project_ids(db, current_user)
-    if accessible is not None:
-        # Non-admin: verify the provided project_id too — otherwise a caller
-        # could read any tenant's value metrics via ?project_id=<foreign-uuid>.
-        if not project_id or not _project_in_scope(project_id, accessible):
-            return {}
-    pid = uuid.UUID(project_id) if project_id else None
-    return await get_value_metrics(db, project_id=pid, days=days, months=months)
+    bounds the monthly trend).
+
+    ``release_id`` / ``suite_name`` are accepted, authorised and declared in
+    ``meta.ignored_filters`` with the reason: these are time-based counts
+    over the project, and most of them have no release or suite to filter.
+    """
+    declared = [
+        ignored(dimension, _VALUE_IGNORED[dimension])
+        for dimension, sent in (("release", scope.release_ids), ("suite", scope.suite_names))
+        if sent
+    ]
+    # Every counter here is windowed and project-scoped, not run-derived: an
+    # all-zero answer is a measurement, so ``measured`` is not tied to runs.
+    meta = await build_meta(
+        db, scope, ignored_filters=declared, measured=None if scope.denied else True,
+    )
+    if scope.denied:
+        # Non-admin: the provided project_id is verified by the scope --
+        # otherwise a caller could read any tenant's value metrics via
+        # ?project_id=<foreign-uuid>. The historical empty payload.
+        return {"meta": meta}
+    payload = await get_value_metrics(
+        db, project_id=scope.project_id, days=scope.window_days, months=months,
+    )
+    return with_meta(payload, meta)
 
 
 @router.get("/methodology")

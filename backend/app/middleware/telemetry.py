@@ -2,7 +2,11 @@
 TestLookup — Telemetry middleware.
 
 For every HTTP request:
-  1. Assigns a unique X-Request-ID (respects client-supplied header if present).
+  1. Assigns a unique X-Request-ID. A client-supplied header is kept only when
+     it is well formed (``_REQUEST_ID_RE``: 1-128 of ``A-Z a-z 0-9 . _ : -``);
+     anything else -- too long, a CR/LF, markup, a space -- is replaced by a
+     fresh UUID, because the value is echoed into a response header, every log
+     line and the VIZ-210 error body.
   2. Binds request_id, method, and path into structlog context variables so every
      log statement emitted during the request automatically carries those fields.
   3. Emits a structured access-log line with status_code, duration_ms, and client IP
@@ -16,6 +20,7 @@ The ``REQUEST_ID_CTX`` context variable is available for non-structlog code
 request's correlation ID.
 """
 import contextvars
+import re
 import time
 import uuid
 
@@ -33,6 +38,17 @@ REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
 )
 
+#: What an incoming ``X-Request-ID`` may look like to be trusted (VIZ-210).
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+def accepted_request_id(value: str | None) -> str:
+    """The incoming id when well formed, otherwise a new UUID4."""
+    if value and _REQUEST_ID_RE.fullmatch(value):
+        return value
+    return str(uuid.uuid4())
+
+
 # Paths that generate too much noise if logged on every request
 _SKIP_PATHS = frozenset(
     {"/health", "/health/live", "/health/ready", "/metrics", "/", "/favicon.ico"}
@@ -49,7 +65,11 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request_id = accepted_request_id(request.headers.get("X-Request-ID"))
+        # On the request state too: the unhandled-error handler runs OUTSIDE
+        # this middleware (after the context below is cleared) and still has to
+        # put the id in the error body and header.
+        request.state.request_id = request_id
         start = time.perf_counter()
 
         # Set correlation ID for non-structlog consumers

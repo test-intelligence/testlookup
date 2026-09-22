@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from sqlalchemy import case, desc, func, select, text
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -39,7 +39,18 @@ from app.models.postgres import (
     TestStatus,
     TestStep,
 )
-from app.services.analytics_service import _effective_suite_sql
+from app.services.analytics_scope import (
+    ReleaseArg,
+    SuiteArg,
+    effective_suite_clause,
+    effective_suite_expr,
+    effective_suite_sql,
+    run_in_suite_scope_clause,
+    run_label_match_sql,
+    scoped_text,
+    suite_filter_sql,
+    suite_keys,
+)
 from app.services.metrics_service import (  # F-067: one vocabulary, two surfaces
     PASS_RATE_BASIS_LABELS,
     PASS_RATE_BASIS_UNIQUE_TESTS,
@@ -50,6 +61,19 @@ from app.services.metrics_service import (  # F-067: one vocabulary, two surface
 
 SummaryMode = Literal["window", "latest"]
 ALLOWED_MODES: tuple[SummaryMode, ...] = ("window", "latest")
+
+#: Why ``flaky_test_count`` ignores ``release_id`` while the rest of the
+#: body honours it. ``meta.ignored_filters`` is per dimension and the body IS
+#: release-scoped, so the exception is declared on the field itself
+#: (``SummaryReportResponse.flaky_test_count``) and pinned by
+#: ``tests/regression/test_summary_report_release_scope.py``.
+FLAKY_COUNT_SCOPE_NOTE = (
+    "Not scoped by release_id. A test is flaky by its last N executions "
+    "across the project's history (flaky_criteria) -- a run-count window, "
+    "not a set of runs -- and the dashboard's flaky count and the release "
+    "gate's flaky cap read that same project-wide figure; restricting it to "
+    "one release's runs would be a different metric. Scoped by suite_name."
+)
 
 
 
@@ -97,12 +121,28 @@ def _release_filter(params: dict, release_id, alias: str = "tr") -> str:
     return _add_release_param(params, release_id, table_alias=alias)
 
 
+def _suite_filter(suite_name: SuiteArg) -> str:
+    """``AND`` the row's effective suite is requested (``tc`` / ``tr``); ``""``
+    when none. Bound by :func:`_p`."""
+    return suite_filter_sql({}, suite_name)
+
+
+def _suite_label_filter(suite_name: SuiteArg) -> str:
+    """``AND`` the run's own suite label (``tr``) is requested -- ONLY for
+    runs whose per-test rows never landed, where the label is the only suite
+    a run has. ``""`` when none."""
+    if not suite_keys(suite_name):
+        return ""
+    return "AND " + run_label_match_sql({}, suite_name)
+
+
 async def build_summary_report(
     db: AsyncSession,
     project_id: Optional[uuid.UUID],
     days: int,
     mode: SummaryMode = "window",
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> dict:
     """Compose the summary report for a project.
 
@@ -118,6 +158,19 @@ async def build_summary_report(
         which suites are considered "active".
     mode:
         ``"window"`` or ``"latest"`` — see module docstring.
+    release_id, suite_name:
+        The report's scope. EVERY section honours it -- totals, run count,
+        per-suite rows, step success and top failing tests. Until VIZ-202 only
+        the top-failing list did, so a release-scoped report put project-wide
+        totals and suites under a header naming the release. ``None`` builds
+        exactly the unscoped report. A suite filter selects rows by their
+        EFFECTIVE suite in every section, and a run is counted when it has
+        such a row (or, rows never landed, carries the suite as its label)
+        -- :func:`~app.services.analytics_scope.run_in_suite_scope_clause`;
+        the totals are then the sum of the suites table's rows, in both
+        modes, so headline, run count, suites and top-failing agree.
+        ``flaky_test_count`` honours the suite (the dashboard's flaky rule)
+        but NOT the release: :data:`FLAKY_COUNT_SCOPE_NOTE`.
 
     The envelope always carries the same top-level keys so the UI can
     render without branching on mode.
@@ -132,20 +185,41 @@ async def build_summary_report(
 
     project_name = await _resolve_project_name(db, project_id)
 
+    # release_id and suite_name are typed per-parameter (ReleaseArg / SuiteArg
+    # each admit a different union), so every call site names them explicitly
+    # rather than splatting one merged dict -- a merged dict's value type is
+    # the UNION of both, which lets mypy see (e.g.) a UUID reaching the
+    # suite_name slot even though it never actually would at runtime.
     if mode == "window":
         totals, run_count, avg_duration_ms, latest_run_at = await _window_totals(
-            db, project_id, period_start, now
+            db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
         )
-        suites = await _per_suite_breakdown_window(db, project_id, period_start, now)
+        suites = await _per_suite_breakdown_window(
+            db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
+        )
+        if suite_keys(suite_name):
+            # Under a suite filter the headline IS the suites table: its
+            # unique-test rows plus, for a requested suite whose runs never
+            # landed rows, those runs' aggregates. The project-wide rule
+            # (fall back to aggregates only when NO row exists anywhere)
+            # dropped a rowless live suite from the headline while the
+            # table beside it listed it. Unfiltered keeps that rule.
+            totals = _sum_suite_rows(suites)
     else:  # latest
         totals, run_count, avg_duration_ms, latest_run_at = await _latest_totals(
-            db, project_id, period_start, now
+            db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
         )
-        suites = await _per_suite_breakdown_latest(db, project_id, period_start, now)
+        suites = await _per_suite_breakdown_latest(
+            db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
+        )
 
-    flaky_count = await _count_flaky_tests(db, str(project_id), None)
+    # Suite-scoped by the dashboard's own flaky rule, so this equals the
+    # Overview's flaky_test_count under the same suite filter. NOT release-
+    # scoped: see FLAKY_COUNT_SCOPE_NOTE (declared on the response field).
+    flaky_count = await _count_flaky_tests(db, str(project_id), suite_name)
     top_failing = await _top_failing_tests(
-        db, project_id, period_start, now, limit=10, release_id=release_id
+        db, project_id, period_start, now, limit=10,
+        release_id=release_id, suite_name=suite_name,
     )
     # Phase 5 enrichment (additive, no migration): attach the LATEST-RUN-ONLY
     # granular step snapshot to each top-failing test so reports/PDF can show
@@ -160,10 +234,11 @@ async def build_summary_report(
     # model (``SummarySuiteRow``) and the frontend contract; same
     # ``_effective_suite_sql()`` grouping as the breakdown so labels line up.
     step_success_by_suite = await _per_suite_step_success(
-        db, project_id, period_start, now
+        db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
     )
     for s in suites:
-        m = step_success_by_suite.get(s.get("suite_name"))
+        suite_key = s.get("suite_name")
+        m = step_success_by_suite.get(suite_key) if isinstance(suite_key, str) else None
         if m:
             s["step_success_rate"] = m["step_pass_rate_pct"]
             s["passed_steps"] = m["passed_steps"]
@@ -313,7 +388,8 @@ async def _window_totals(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> tuple[_Totals, int, int, Optional[datetime]]:
     """Project-wide unique-test totals across the window.
 
@@ -333,6 +409,7 @@ async def _window_totals(
     # headline was release-scoped and whose per-suite rows were not would
     # answer two different questions under one heading.
     release_filter = _release_filter({}, release_id)
+    suite_filter = _suite_filter(suite_name)
     run_stmt = select(
         func.count(TestRun.id).label("runs"),
         func.coalesce(func.avg(TestRun.duration_ms), 0).label("avg_duration_ms"),
@@ -353,9 +430,18 @@ async def _window_totals(
         TestRun.created_at >= start,
         TestRun.created_at < end,
     )
+    in_scope = run_in_suite_scope_clause(suite_name)
+    if in_scope is not None:
+        # A run is in a suite-scoped report when it has a row in the suite by
+        # EFFECTIVE suite -- the rule every other section reads rows by -- or,
+        # its rows never having landed, its label is the suite (the suites
+        # table's run-level fallback). NOT a label match alone: an upload
+        # labelled ``Smoke`` whose rows are all ``Orders`` is not a Smoke run,
+        # and counting it inflated run_count / runs_per_day.
+        run_stmt = run_stmt.where(in_scope)
     run_row = (await db.execute(run_stmt)).one()
 
-    uniq_stmt = text(
+    uniq_stmt = scoped_text(
         f"""
         WITH latest_per_fp AS (
             SELECT DISTINCT ON (tc.test_fingerprint)
@@ -367,6 +453,7 @@ async def _window_totals(
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
+              {suite_filter}
               AND tc.test_fingerprint IS NOT NULL
             ORDER BY tc.test_fingerprint, tr.created_at DESC
         )
@@ -377,12 +464,13 @@ async def _window_totals(
             COUNT(*) FILTER (WHERE status = 'SKIPPED') AS skipped,
             COUNT(*) FILTER (WHERE status = 'BROKEN')  AS broken
         FROM latest_per_fp
-        """
+        """,
+        _p(project_id, start, end, release_id, suite_name),
     )
     uniq_row = (
         await db.execute(
             uniq_stmt,
-            _p(project_id, start, end, release_id),
+            _p(project_id, start, end, release_id, suite_name),
         )
     ).one()
 
@@ -418,19 +506,31 @@ async def _latest_totals(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> tuple[_Totals, int, int, Optional[datetime]]:
     """Sum aggregates across the latest TestRun per primary_suite_name.
 
     A run with no ``primary_suite_name`` (legacy or imperfect ingest)
     still counts so the user sees their data — falls back to grouping
     by run id itself.
+
+    Under a suite filter the totals are instead the SAME rows the suites
+    table shows (:func:`_latest_scoped_totals`): each requested suite's
+    latest run, counted by EFFECTIVE suite. Filtering this label-keyed sum
+    by label kept an upload labelled ``Smoke`` whose rows are all ``Orders``
+    under ``suite_name=Smoke`` while the suites table and top-failing
+    (effective suite) showed nothing for it, and dropped it from
+    ``suite_name=Orders`` while they showed its Orders rows. The unfiltered
+    report keeps the label-keyed sum it has always had.
     """
+    if suite_keys(suite_name):
+        return await _latest_scoped_totals(db, project_id, start, end, release_id, suite_name)
     # This query reads test_runs unaliased, so the predicate names the
     # column directly rather than through "tr.".
     release_filter_bare = _release_filter({}, release_id, alias="test_runs")
     release_filter_bare = release_filter_bare.replace("test_runs.", "")
-    query = text(
+    query = scoped_text(
         f"""
         WITH latest_per_suite AS (
             SELECT DISTINCT ON (COALESCE(primary_suite_name, id::text))
@@ -453,12 +553,13 @@ async def _latest_totals(
             COALESCE(AVG(duration_ms), 0) AS avg_duration_ms,
             MAX(created_at) AS latest
         FROM latest_per_suite
-        """
+        """,
+        _p(project_id, start, end, release_id, suite_name),
     )
     row = (
         await db.execute(
             query,
-            _p(project_id, start, end, release_id),
+            _p(project_id, start, end, release_id, suite_name),
         )
     ).one()
     return (
@@ -480,7 +581,8 @@ async def _per_suite_breakdown_window(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> list[dict]:
     """Per-suite stats across every test_case row in the window.
 
@@ -511,7 +613,9 @@ async def _per_suite_breakdown_window(
     # One fragment per statement in this helper, so a release-scoped
     # headline cannot sit above per-suite rows that ignored it.
     release_filter = _release_filter({}, release_id)
-    query = text(
+    suite_filter = _suite_filter(suite_name)
+    suite_label = _suite_label_filter(suite_name)
+    query = scoped_text(
         f"""
         WITH latest_per_fp AS (
             -- One row per (suite, fingerprint): the most recent
@@ -540,19 +644,13 @@ async def _per_suite_breakdown_window(
             FROM test_cases tc
             JOIN test_runs tr ON tr.id = tc.test_run_id
             CROSS JOIN LATERAL (
-                SELECT COALESCE(
-                    CASE
-                        WHEN tr.trigger_source = 'live_stream'
-                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
-                        ELSE NULL
-                    END,
-                    NULLIF(TRIM(tc.suite_name), '')
-                ) AS effective_suite
+                SELECT {effective_suite_sql()} AS effective_suite
             ) eff
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
+              {suite_filter}
               AND effective_suite IS NOT NULL
               AND tc.test_fingerprint IS NOT NULL
             ORDER BY effective_suite, tc.test_fingerprint, tr.created_at DESC
@@ -583,6 +681,7 @@ async def _per_suite_breakdown_window(
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
+              {suite_label}
               AND tr.primary_suite_name IS NOT NULL
               AND TRIM(tr.primary_suite_name) <> ''
               AND NOT EXISTS (
@@ -631,13 +730,16 @@ async def _per_suite_breakdown_window(
             MAX(last_run_at) AS last_run_at
         FROM merged
         GROUP BY suite_name
-        ORDER BY total DESC
-        """
+        -- The name breaks ties: equal totals used to come back in plan order,
+        -- so two reads of one report could list the suites differently.
+        ORDER BY total DESC, suite_name
+        """,
+        _p(project_id, start, end, release_id, suite_name),
     )
     rows = (
         await db.execute(
             query,
-            _p(project_id, start, end, release_id),
+            _p(project_id, start, end, release_id, suite_name),
         )
     ).all()
     return [_suite_row_to_dict(r) for r in rows]
@@ -648,7 +750,8 @@ async def _per_suite_breakdown_latest(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> list[dict]:
     """Per-suite stats from each suite's most recent run only.
 
@@ -665,11 +768,90 @@ async def _per_suite_breakdown_latest(
     Without the second path, suites with active runs that haven't
     persisted per-test rows yet are silently invisible on the report.
     """
+    query = scoped_text(
+        _latest_per_suite_ctes(release_id, suite_name)
+        + """
+        SELECT * FROM cases_path
+        UNION ALL
+        SELECT * FROM runs_path
+        ORDER BY total DESC, suite_name
+        """,
+        _p(project_id, start, end, release_id, suite_name),
+    )
+    rows = (
+        await db.execute(
+            query,
+            _p(project_id, start, end, release_id, suite_name),
+        )
+    ).all()
+    return [_suite_row_to_dict(r) for r in rows]
+
+
+async def _latest_scoped_totals(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    release_id: ReleaseArg,
+    suite_name: SuiteArg,
+) -> tuple[_Totals, int, int, Optional[datetime]]:
+    """``latest`` mode under a suite filter: the totals ARE the suites table.
+
+    Built on the exact CTEs of :func:`_per_suite_breakdown_latest`, so the
+    headline is the sum of the rows listed under it and ``run_count`` is the
+    number of distinct runs those rows came from (a run that is the latest
+    of two requested suites counts once).
+    """
+    query = scoped_text(
+        _latest_per_suite_ctes(release_id, suite_name)
+        + """
+        , suite_rows AS (
+            SELECT * FROM cases_path
+            UNION ALL
+            SELECT * FROM runs_path
+        ),
+        latest_runs AS (
+            SELECT DISTINCT tr3.id, tr3.duration_ms, tr3.created_at
+            FROM latest_run_per_suite l
+            JOIN test_runs tr3 ON tr3.id = l.test_run_id
+        )
+        SELECT
+            (SELECT COUNT(*) FROM latest_runs)                     AS runs,
+            (SELECT COALESCE(SUM(total), 0)   FROM suite_rows)     AS total,
+            (SELECT COALESCE(SUM(passed), 0)  FROM suite_rows)     AS passed,
+            (SELECT COALESCE(SUM(failed), 0)  FROM suite_rows)     AS failed,
+            (SELECT COALESCE(SUM(skipped), 0) FROM suite_rows)     AS skipped,
+            (SELECT COALESCE(SUM(broken), 0)  FROM suite_rows)     AS broken,
+            (SELECT COALESCE(AVG(duration_ms), 0) FROM latest_runs) AS avg_duration_ms,
+            (SELECT MAX(created_at) FROM latest_runs)              AS latest
+        """,
+        _p(project_id, start, end, release_id, suite_name),
+    )
+    row = (await db.execute(query, _p(project_id, start, end, release_id, suite_name))).one()
+    return (
+        _Totals(
+            total=int(row.total or 0),
+            passed=int(row.passed or 0),
+            failed=int(row.failed or 0),
+            skipped=int(row.skipped or 0),
+            broken=int(row.broken or 0),
+        ),
+        int(row.runs or 0),
+        int(row.avg_duration_ms or 0),
+        row.latest,
+    )
+
+
+def _latest_per_suite_ctes(release_id: ReleaseArg, suite_name: SuiteArg) -> str:
+    """The ``WITH`` clause of the latest-run-per-suite snapshot: candidates,
+    ``latest_run_per_suite``, ``cases_path`` and ``runs_path``. Shared by the
+    suites table and its suite-scoped totals, so the two cannot drift."""
     # One fragment per statement in this helper, so a release-scoped
     # headline cannot sit above per-suite rows that ignored it.
     release_filter = _release_filter({}, release_id)
-    query = text(
-        f"""
+    suite_filter = _suite_filter(suite_name)
+    suite_label = _suite_label_filter(suite_name)
+    return f"""
         WITH all_candidates AS (
             -- Test-cases-driven candidates: every (suite, run) pair where
             -- per-test rows have landed for the run.
@@ -683,14 +865,7 @@ async def _per_suite_breakdown_latest(
             -- ``<testsuite name="…">``) so multi-suite XML inputs keep
             -- their breakdown.
             SELECT
-                COALESCE(
-                    CASE
-                        WHEN tr.trigger_source = 'live_stream'
-                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
-                        ELSE NULL
-                    END,
-                    NULLIF(TRIM(tc.suite_name), '')
-                ) AS suite_name,
+                {effective_suite_sql()} AS suite_name,
                 tc.test_run_id,
                 tr.created_at AS run_created_at,
                 FALSE AS uses_run_aggregate
@@ -700,14 +875,8 @@ async def _per_suite_breakdown_latest(
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
-              AND COALESCE(
-                    CASE
-                        WHEN tr.trigger_source = 'live_stream'
-                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
-                        ELSE NULL
-                    END,
-                    NULLIF(TRIM(tc.suite_name), '')
-                  ) IS NOT NULL
+              {suite_filter}
+              AND {effective_suite_sql()} IS NOT NULL
             UNION ALL
             -- Run-level fallback: runs whose per-test rows didn't land.
             SELECT
@@ -720,6 +889,7 @@ async def _per_suite_breakdown_latest(
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
+              {suite_label}
               AND tr.primary_suite_name IS NOT NULL
               AND TRIM(tr.primary_suite_name) <> ''
               AND NOT EXISTS (
@@ -760,14 +930,7 @@ async def _per_suite_breakdown_latest(
             JOIN test_runs tr2 ON tr2.id = l.test_run_id
             JOIN test_cases tc
               ON tc.test_run_id = l.test_run_id
-             AND COALESCE(
-                    CASE
-                        WHEN tr2.trigger_source = 'live_stream'
-                            THEN NULLIF(TRIM(tr2.primary_suite_name), '')
-                        ELSE NULL
-                    END,
-                    NULLIF(TRIM(tc.suite_name), '')
-                 ) = l.suite_name
+             AND {effective_suite_sql('tr2')} = l.suite_name
             WHERE l.uses_run_aggregate = FALSE
             GROUP BY l.suite_name
         ),
@@ -784,31 +947,31 @@ async def _per_suite_breakdown_latest(
             JOIN test_runs tr ON tr.id = l.test_run_id
             WHERE l.uses_run_aggregate = TRUE
         )
-        SELECT * FROM cases_path
-        UNION ALL
-        SELECT * FROM runs_path
-        ORDER BY total DESC
         """
-    )
-    rows = (
-        await db.execute(
-            query,
-            _p(project_id, start, end, release_id),
-        )
-    ).all()
-    return [_suite_row_to_dict(r) for r in rows]
 
 
-def _p(project_id, start, end, release_id) -> dict:
-    """Params for this module's queries, WITH the release bind.
+def _p(project_id, start, end, release_id, suite_name: SuiteArg = None) -> dict:
+    """Params for this module's queries, WITH the release and suite binds.
 
     One builder, because the defect this fixes elsewhere in the codebase was a
     fresh params dict that did not carry a bind the interpolated SQL referenced
-    — a StatementError, surfacing as a 500.
+    — a StatementError, surfacing as a 500. The suite fragments (row-level and
+    run-label) bind the same names, so one bind serves both.
     """
     params: dict = {"project_id": str(project_id), "start": start, "end": end}
     _release_filter(params, release_id)
+    suite_filter_sql(params, suite_name)
     return params
+
+
+def _sum_suite_rows(suites: list[dict]) -> _Totals:
+    return _Totals(
+        total=sum(int(s["total"]) for s in suites),
+        passed=sum(int(s["passed"]) for s in suites),
+        failed=sum(int(s["failed"]) for s in suites),
+        skipped=sum(int(s["skipped"]) for s in suites),
+        broken=sum(int(s["broken"]) for s in suites),
+    )
 
 
 def _suite_row_to_dict(r) -> dict:
@@ -840,7 +1003,8 @@ async def _per_suite_step_success(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> dict[str, dict]:
     """Per-suite granular STEP success-rate (Phase 5 enrichment).
 
@@ -855,11 +1019,12 @@ async def _per_suite_step_success(
     effective suite from its window test_cases rows, then its snapshot steps are
     summed. One batched query — no N+1 over tests.
     """
-    effective_suite = _effective_suite_sql()
+    effective_suite = effective_suite_sql()
     # One fragment per statement in this helper, so a release-scoped
     # headline cannot sit above per-suite rows that ignored it.
     release_filter = _release_filter({}, release_id)
-    query = text(
+    suite_filter = _suite_filter(suite_name)
+    query = scoped_text(
         f"""
         WITH tests_in_suite AS (
             -- One (suite, canonical) pair per logical test in the window.
@@ -876,6 +1041,7 @@ async def _per_suite_step_success(
               AND tr.created_at >= :start
               AND tr.created_at < :end
               {release_filter}
+              {suite_filter}
               AND tc.canonical_test_case_id IS NOT NULL
               AND {effective_suite} IS NOT NULL
         ),
@@ -898,12 +1064,13 @@ async def _per_suite_step_success(
         FROM tests_in_suite tis
         JOIN step_counts sc ON sc.canonical_id = tis.canonical_id
         GROUP BY tis.suite_name
-        """
+        """,
+        _p(project_id, start, end, release_id, suite_name),
     )
     rows = (
         await db.execute(
             query,
-            _p(project_id, start, end, release_id),
+            _p(project_id, start, end, release_id, suite_name),
         )
     ).all()
     out: dict[str, dict] = {}
@@ -927,7 +1094,8 @@ async def _top_failing_tests(
     start: datetime,
     end: datetime,
     limit: int,
-    release_id: Optional[str] = None,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
 ) -> list[dict]:
     """Top tests by failure count in the window. Grouped by (suite, class, name).
 
@@ -937,16 +1105,7 @@ async def _top_failing_tests(
     (which can be the test class name), so a failing test's count isn't split
     across divergent suite labels and the label matches the suites table.
     """
-    effective_suite = func.coalesce(
-        case(
-            (
-                TestRun.trigger_source == "live_stream",
-                func.nullif(func.trim(TestRun.primary_suite_name), ""),
-            ),
-            else_=None,
-        ),
-        func.nullif(func.trim(TestCase.suite_name), ""),
-    )
+    effective_suite = effective_suite_expr()
     stmt = (
         select(
             effective_suite.label("suite_name"),
@@ -975,6 +1134,9 @@ async def _top_failing_tests(
         .order_by(desc("failures"))
         .limit(limit)
     )
+    in_suite = effective_suite_clause(suite_name)
+    if in_suite is not None:
+        stmt = stmt.where(in_suite)
     rows = (await db.execute(stmt)).all()
     return [
         {

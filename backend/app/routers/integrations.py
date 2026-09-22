@@ -76,6 +76,10 @@ async def create_jira_defect(
             policy_result=policy_result,
         )
         await db.commit()
+        # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(owning_project_id)
         return JiraIssueResponse(
             approval_status=ActionStatus.PENDING_REVIEW.value,
             requires_approval=True,

@@ -2,9 +2,6 @@
 
 The router is thin (one service call per endpoint). These tests pin:
 
-  * Authorisation: a caller who is not a member of the target project
-    gets 403 (when ``get_accessible_project_ids`` returns a non-None
-    set that doesn't contain the project_id).
   * Happy path: returns the service's envelope as a Pydantic
     ``SummaryReportResponse``.
   * PDF endpoint hands the JSON payload to the renderer and streams the
@@ -13,11 +10,9 @@ The router is thin (one service call per endpoint). These tests pin:
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 
 def _envelope(project_id: uuid.UUID, mode: str = "window") -> dict:
@@ -54,38 +49,26 @@ def _envelope(project_id: uuid.UUID, mode: str = "window") -> dict:
     }
 
 
-# ── _enforce_project_access ────────────────────────────────────────────────
+# Authorisation lives in the shared scope dependency (VIZ-201,
+# ``analytics_scope.authorize_scope``) and is pinned by
+# ``tests/test_analytics_scope.py`` and the Postgres authz matrix; the router's
+# own ``_enforce_project_access`` had no caller left and was removed.
 
 
-@pytest.mark.asyncio
-async def test_enforce_project_access_allows_admin_seeing_all():
-    """ADMIN-style callers (``get_accessible_project_ids`` returns None) skip the check."""
-    from app.routers.summary_report import _enforce_project_access
+def _scope(project_id):
+    from app.services.analytics_scope import AnalyticsScope
 
-    db = AsyncMock()
-    user = SimpleNamespace(id=uuid.uuid4())
-    with patch(
-        "app.routers.summary_report.get_accessible_project_ids",
-        new=AsyncMock(return_value=None),
-    ):
-        await _enforce_project_access(db, user, uuid.uuid4())  # does not raise
+    return AnalyticsScope(project_id, None, (), (), 7)
 
 
-@pytest.mark.asyncio
-async def test_enforce_project_access_rejects_non_member():
-    from app.routers.summary_report import _enforce_project_access
-
-    db = AsyncMock()
-    user = SimpleNamespace(id=uuid.uuid4())
-    target = uuid.uuid4()
-    accessible = {uuid.uuid4(), uuid.uuid4()}  # target NOT in this set
-    with patch(
-        "app.routers.summary_report.get_accessible_project_ids",
-        new=AsyncMock(return_value=accessible),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await _enforce_project_access(db, user, target)
-        assert exc_info.value.status_code == 403
+@pytest.fixture(autouse=True)
+def _stub_envelope():
+    """The VIZ-204 envelope reads the database; these tests hand the router a
+    mocked session, so ``build_meta`` is stubbed. ``meta`` itself is pinned
+    against real Postgres in ``tests/integration/test_analytics_envelope_postgres.py``."""
+    stub = AsyncMock(return_value={"schema_version": 2})
+    with patch("app.routers.summary_report.build_meta", new=stub):
+        yield stub
 
 
 # ── GET /api/v1/reports/summary ────────────────────────────────────────────
@@ -96,24 +79,17 @@ async def test_get_summary_report_returns_service_envelope():
     from app.routers.summary_report import get_summary_report
 
     project_id = uuid.uuid4()
-    user = SimpleNamespace(id=uuid.uuid4())
     db = AsyncMock()
 
     with patch(
-        "app.routers.summary_report.get_accessible_project_ids",
-        new=AsyncMock(return_value=None),
-    ), patch(
         "app.services.summary_report_service.build_summary_report",
         new=AsyncMock(return_value=_envelope(project_id)),
     ):
         result = await get_summary_report(
-            project_id=project_id, days=7, mode="window",
-            # Explicit, because this calls the handler DIRECTLY. FastAPI
-            # resolves `Query(None)` to None per request; a direct call gets
-            # the Query OBJECT, which the release resolver then tries to parse
-            # as a UUID and rejects with a 422.
-            release_id=None,
-            db=db, current_user=user,
+            # Called DIRECTLY, so the scope FastAPI would resolve (VIZ-201's
+            # shared dependency) is passed in already authorised, and ``mode``
+            # explicitly: a direct call would otherwise get the Query OBJECT.
+            mode="window", scope=_scope(project_id), db=db,
         )
 
     assert result.project_id == str(project_id)
@@ -138,7 +114,6 @@ async def test_get_summary_report_preserves_phase5_step_fields():
     from app.routers.summary_report import get_summary_report
 
     project_id = uuid.uuid4()
-    user = SimpleNamespace(id=uuid.uuid4())
     db = AsyncMock()
 
     payload = _envelope(project_id)
@@ -173,20 +148,14 @@ async def test_get_summary_report_preserves_phase5_step_fields():
     ]
 
     with patch(
-        "app.routers.summary_report.get_accessible_project_ids",
-        new=AsyncMock(return_value=None),
-    ), patch(
         "app.services.summary_report_service.build_summary_report",
         new=AsyncMock(return_value=payload),
     ):
         result = await get_summary_report(
-            project_id=project_id, days=7, mode="window",
-            # Explicit, because this calls the handler DIRECTLY. FastAPI
-            # resolves `Query(None)` to None per request; a direct call gets
-            # the Query OBJECT, which the release resolver then tries to parse
-            # as a UUID and rejects with a 422.
-            release_id=None,
-            db=db, current_user=user,
+            # Called DIRECTLY, so the scope FastAPI would resolve (VIZ-201's
+            # shared dependency) is passed in already authorised, and ``mode``
+            # explicitly: a direct call would otherwise get the Query OBJECT.
+            mode="window", scope=_scope(project_id), db=db,
         )
 
     # Per-suite step success-rate survives validation (Critical/High findings).
@@ -209,7 +178,6 @@ async def test_get_summary_report_works_with_no_project_id():
     """Omitted project_id must NOT 500 — service returns an empty envelope."""
     from app.routers.summary_report import get_summary_report
 
-    user = SimpleNamespace(id=uuid.uuid4())
     db = AsyncMock()
     empty_envelope = {
         **_envelope(uuid.uuid4()),
@@ -228,8 +196,7 @@ async def test_get_summary_report_works_with_no_project_id():
         new=AsyncMock(return_value=empty_envelope),
     ):
         result = await get_summary_report(
-            project_id=None, days=7, mode="window", release_id=None,
-            db=db, current_user=user,
+            mode="window", scope=_scope(None), db=db,
         )
 
     assert result.project_id is None
@@ -244,14 +211,10 @@ async def test_pdf_endpoint_streams_pdf_bytes():
     from app.routers.summary_report import export_summary_report_pdf
 
     project_id = uuid.uuid4()
-    user = SimpleNamespace(id=uuid.uuid4())
     db = AsyncMock()
     fake_pdf = b"%PDF-1.4 ...fake bytes..."
 
     with patch(
-        "app.routers.summary_report.get_accessible_project_ids",
-        new=AsyncMock(return_value=None),
-    ), patch(
         "app.services.summary_report_service.build_summary_report",
         new=AsyncMock(return_value=_envelope(project_id)),
     ), patch(
@@ -259,13 +222,10 @@ async def test_pdf_endpoint_streams_pdf_bytes():
         new=MagicMock(return_value=fake_pdf),
     ):
         response = await export_summary_report_pdf(
-            project_id=project_id, days=7, mode="window",
-            # Explicit, because this calls the handler DIRECTLY. FastAPI
-            # resolves `Query(None)` to None per request; a direct call gets
-            # the Query OBJECT, which the release resolver then tries to parse
-            # as a UUID and rejects with a 422.
-            release_id=None,
-            db=db, current_user=user,
+            # Called DIRECTLY, so the scope FastAPI would resolve (VIZ-201's
+            # shared dependency) is passed in already authorised, and ``mode``
+            # explicitly: a direct call would otherwise get the Query OBJECT.
+            mode="window", scope=_scope(project_id), db=db,
         )
 
     assert response.media_type == "application/pdf"

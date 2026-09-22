@@ -591,9 +591,27 @@ async def list_requests(
 
 
 async def stats_by_status(
-    db: AsyncSession, project_ids: Optional[set[uuid.UUID]] = None,
+    db: AsyncSession,
+    project_ids: Optional[set[uuid.UUID]] = None,
+    *,
+    release_id: Any = None,
+    suite_name: Any = None,
 ) -> dict[str, int]:
+    """Request counts per status.
+
+    VIZ-202: ``release_id`` / ``suite_name`` (one value or several, OR within
+    each) count only the requests whose test RAN in scope -- an execution of
+    the fingerprint, in the request's own project, in one of the releases
+    (run's primary release) and suites (effective suite). A quarantine is a
+    per-test decision with no release of its own, so membership is the only
+    honest reading. Omitted, the statement is unchanged.
+    """
     from sqlalchemy import func as _func
+
+    from app.core.release_filter import release_predicate
+    from app.models.postgres import TestCase, TestRun
+    from app.services.analytics_scope import effective_suite_clause
+
     stmt = select(
         FlakyQuarantineRequest.status,
         _func.count(FlakyQuarantineRequest.id).label("count"),
@@ -602,6 +620,20 @@ async def stats_by_status(
         if not project_ids:
             return {}
         stmt = stmt.where(FlakyQuarantineRequest.project_id.in_(project_ids))
+    in_suite = effective_suite_clause(suite_name)
+    if release_id is not None or in_suite is not None:
+        ran = (
+            select(TestCase.id)
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == FlakyQuarantineRequest.project_id,
+                TestCase.test_fingerprint == FlakyQuarantineRequest.test_fingerprint,
+                *release_predicate(release_id),
+            )
+        )
+        if in_suite is not None:
+            ran = ran.where(in_suite)
+        stmt = stmt.where(ran.correlate(FlakyQuarantineRequest).exists())
     stmt = stmt.group_by(FlakyQuarantineRequest.status)
     result = await db.execute(stmt)
     return {row.status: int(row.count) for row in result.all()}
@@ -769,6 +801,10 @@ async def propose_quarantine(
                 existing.updated_at = now
                 await db.commit()
                 await db.refresh(existing)
+                # VIZ-212: the cached hours-saved model reads these requests.
+                from app.services.cache_service import bump_analytics_epoch
+
+                await bump_analytics_epoch(project_id)
                 await _audit(
                     db, actor,
                     action="refresh_proposal",
@@ -799,6 +835,9 @@ async def propose_quarantine(
             db.add(row)
             await db.commit()
             await db.refresh(row)
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(project_id)
             await _audit(
                 db, actor,
                 action="create",
@@ -882,6 +921,10 @@ async def approve(
     row.updated_at = now
     await db.commit()
     await db.refresh(row)
+    # VIZ-212: the cached hours-saved model reads quarantine requests.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(row.project_id)
     await _audit(
         db, actor,
         action="approve",
@@ -967,6 +1010,10 @@ async def reject(
     row.updated_at = now
     await db.commit()
     await db.refresh(row)
+    # VIZ-212: the cached hours-saved model reads quarantine requests.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(row.project_id)
     await _audit(
         db, actor,
         action="reject",
@@ -1010,6 +1057,10 @@ async def release(
     row.updated_at = now
     await db.commit()
     await db.refresh(row)
+    # VIZ-212: the cached hours-saved model reads quarantine requests.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(row.project_id)
     await _audit(
         db, actor,
         action="release",
@@ -1067,6 +1118,10 @@ async def expire_stale_proposals() -> int:
             expired += 1
         if rows:
             await db.commit()
+            # VIZ-212: the cached hours-saved model reads quarantine requests.
+            from app.services.cache_service import bump_analytics_epochs
+
+            await bump_analytics_epochs(row.project_id for row in rows)
             # Audit AFTER the commit (every other caller in this module does
             # too): ``_audit`` writes + commits on its OWN session, so auditing
             # mid-loop would make the "expire" rows durable even if this batch
@@ -1130,6 +1185,10 @@ async def schedule_pending_rechecks() -> int:
             moved += 1
         if rows:
             await db.commit()
+            # VIZ-212: the cached hours-saved model reads quarantine requests.
+            from app.services.cache_service import bump_analytics_epochs
+
+            await bump_analytics_epochs(row.project_id for row in rows)
     return moved
 
 
@@ -1269,6 +1328,10 @@ async def run_recheck_cycle() -> dict[str, int]:
 
         if rows:
             await db.commit()
+            # VIZ-212: the cached hours-saved model reads quarantine requests.
+            from app.services.cache_service import bump_analytics_epochs
+
+            await bump_analytics_epochs(row.project_id for row in rows)
 
     # PMF US-7.1 — test.unquarantined for auto-released rows, AFTER the
     # commit so the notification never claims a rolled-back release.
@@ -1512,6 +1575,11 @@ async def update_quarantine_stability(run_id: uuid.UUID) -> dict[str, int]:
 
         if tracked:
             await db.commit()
+            # VIZ-212: an auto-promotion RELEASEs a quarantine the cached
+            # hours-saved model counts.
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(project_id)
 
     # Audit + notify AFTER the commit (same ordering rationale as
     # ``expire_stale_proposals``): never log/announce a rolled-back change.

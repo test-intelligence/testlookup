@@ -346,6 +346,11 @@ class TestTheTransactionContract:
 # user chose.
 
 
+# The run's project, selected with each row so the task can bump that
+# project's analytics epoch after its commit (VIZ-212).
+_PID = uuid.uuid4()
+
+
 def _rows_db(rows, *, execute_error: Exception | None = None):
     """The repair sweep reads ``.all()`` tuples, not ``.scalars()``."""
     db = AsyncMock()
@@ -366,18 +371,18 @@ class TestSuiteNameRepairSkips:
         """The docstring's idempotency claim: "when the two already match, the
         row is left alone". Without this the sweep rewrites every live run on
         every hourly beat."""
-        db = _rows_db([(uuid.uuid4(), "Smoke", "Smoke")])
+        db = _rows_db([(uuid.uuid4(), "Smoke", "Smoke", _PID)])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
-        assert counts == {"candidates": 1, "repaired": 0}
+        assert counts == {"candidates": 1, "repaired": 0, "project_ids": []}
         assert db.execute.await_count == 1, "only the SELECT should have run"
 
     @pytest.mark.asyncio
     async def test_labels_differing_only_by_whitespace_are_the_same_label(self):
         """Both sides are stripped before comparison, so padding is not a
         difference worth a write."""
-        db = _rows_db([(uuid.uuid4(), "  Smoke  ", "Smoke")])
+        db = _rows_db([(uuid.uuid4(), "  Smoke  ", "Smoke", _PID)])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
@@ -388,7 +393,7 @@ class TestSuiteNameRepairSkips:
     async def test_a_blank_session_label_never_clobbers_a_real_one(self):
         """`LiveSession.suite_name` of "   " must not replace "Smoke" with
         nothing — the sweep exists to restore a label, not to erase one."""
-        db = _rows_db([(uuid.uuid4(), "Smoke", "   ")])
+        db = _rows_db([(uuid.uuid4(), "Smoke", "   ", _PID)])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
@@ -405,16 +410,17 @@ class TestSuiteNameRepairWrites:
             uuid.uuid4(),
             "com.example.OrderApiRegressionTests",
             "API Regression Multi-Class",
+            _PID,
         )])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
-        assert counts == {"candidates": 1, "repaired": 1}
+        assert counts == {"candidates": 1, "repaired": 1, "project_ids": [str(_PID)]}
         assert db.execute.await_count == 2, "SELECT then UPDATE"
 
     @pytest.mark.asyncio
     async def test_a_run_with_no_label_yet_gets_one(self):
-        db = _rows_db([(uuid.uuid4(), None, "Smoke")])
+        db = _rows_db([(uuid.uuid4(), None, "Smoke", _PID)])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
@@ -435,21 +441,23 @@ class TestSuiteNameRepairWrites:
     @pytest.mark.asyncio
     async def test_it_repairs_each_differing_row_and_skips_the_rest(self):
         db = _rows_db([
-            (uuid.uuid4(), "wrong", "right"),
-            (uuid.uuid4(), "same", "same"),
-            (uuid.uuid4(), None, "also-right"),
+            (uuid.uuid4(), "wrong", "right", _PID),
+            (uuid.uuid4(), "same", "same", _PID),
+            (uuid.uuid4(), None, "also-right", _PID),
         ])
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
-        assert counts == {"candidates": 3, "repaired": 2}
+        assert counts == {"candidates": 3, "repaired": 2, "project_ids": [str(_PID)]}, (
+            "a project with several repaired runs is named once"
+        )
 
     @pytest.mark.asyncio
     async def test_it_does_not_commit(self):
         """Same contract as its sibling: the caller owns the transaction. This
         one stages real UPDATEs, so committing here would end the caller's unit
         of work mid-sweep."""
-        db = _rows_db([(uuid.uuid4(), "wrong", "right")])
+        db = _rows_db([(uuid.uuid4(), "wrong", "right", _PID)])
 
         await svc.repair_clobbered_primary_suite_names(db)
 
@@ -467,7 +475,7 @@ class TestSuiteNameRepairNeverFailsTheBeat:
 
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
-        assert counts == {"candidates": 0, "repaired": 0}
+        assert counts == {"candidates": 0, "repaired": 0, "project_ids": []}
 
     @pytest.mark.asyncio
     async def test_one_failing_update_does_not_stop_the_others(self):
@@ -482,7 +490,10 @@ class TestSuiteNameRepairNeverFailsTheBeat:
         first, second = uuid.uuid4(), uuid.uuid4()
         db = AsyncMock()
         result = MagicMock()
-        result.all.return_value = [(first, "wrong", "right"), (second, "wrong2", "right2")]
+        other = uuid.uuid4()
+        result.all.return_value = [
+            (first, "wrong", "right", _PID), (second, "wrong2", "right2", other),
+        ]
 
         calls = {"n": 0}
 
@@ -500,3 +511,5 @@ class TestSuiteNameRepairNeverFailsTheBeat:
         assert counts["candidates"] == 2
         assert counts["repaired"] == 1, "the second row must still be attempted"
         assert "errors" not in counts
+        # Only the project whose UPDATE ran is named for the epoch bump.
+        assert counts["project_ids"] == [str(other)]

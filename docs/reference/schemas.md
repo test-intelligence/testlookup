@@ -20709,6 +20709,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Expired",
       "type": "integer"
     },
+    "meta": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Meta"
+    },
     "proposed": {
       "default": 0,
       "title": "Proposed",
@@ -26872,6 +26884,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "number"
     },
     "flaky_test_count": {
+      "description": "Not scoped by release_id. A test is flaky by its last N executions across the project's history (flaky_criteria) -- a run-count window, not a set of runs -- and the dashboard's flaky count and the release gate's flaky cap read that same project-wide figure; restricting it to one release's runs would be a different metric. Scoped by suite_name.",
       "title": "Flaky Test Count",
       "type": "integer"
     },
@@ -26889,6 +26902,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Latest Run At"
+    },
+    "meta": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Meta"
     },
     "mode": {
       "enum": [
