@@ -2015,19 +2015,20 @@ docker-compose.release.yml,implementation/configuration,482,,,let
 docker-compose.yml,implementation/configuration,576,,,
 frontend/Dockerfile,implementation/configuration,71,,,
 frontend/eslint.config.js,implementation/configuration,123,,@eslint/js; globals; eslint-plugin-react-hooks; eslint-plugin-react-refresh; typescript-eslint,error; in
-frontend/package-lock.json,implementation/configuration,10123,,,
-frontend/package.json,implementation/configuration,91,,,
+frontend/package-lock.json,implementation/configuration,10155,,,
+frontend/package.json,implementation/configuration,92,,,
 frontend/playwright.ci.config.ts,implementation/configuration,24,,@playwright/test,
 frontend/playwright.config.ts,implementation/configuration,31,,@playwright/test,
 frontend/playwright.docs.config.ts,implementation/configuration,34,,@playwright/test,
 frontend/playwright.visual.config.ts,implementation/configuration,39,,@playwright/test; ./playwright.ci.config,
 frontend/postcss.config.js,implementation/configuration,5,,,
 frontend/probe-live.config.ts,implementation/configuration,21,,@playwright/test,
-frontend/scripts/check-bundle-budget.mjs,implementation/configuration,112,,node:zlib; node:fs; node:path; node:url,
-frontend/scripts/check-theme-tokens.mjs,implementation/configuration,211,,node:fs; node:path; node:url,walk; themeBlock; token
+frontend/scripts/chart-guard.mjs,implementation/configuration,405,,typescript; x; x; ../../tooltip; ./shared; ../../tooltip; ../../tooltip; echarts/core; zrender/lib/core/util; echarts/charts; echarts/core; echarts/core; echarts; echarts/core; echarts; echartsy; three-ish; echarts/core; echarts/charts,in; parse; lineOf; unwrap; isStringish; keyOf; importBoundaryViolations; A; optionViolations; field; EChartsType; outside; outside; E; runSelfTest
+frontend/scripts/check-bundle-budget.mjs,implementation/configuration,278,,node:zlib; node:crypto; node:fs; node:path; node:url; echarts; echarts/core,is; too; splits; evaluate; report; onContextLost
+frontend/scripts/check-theme-tokens.mjs,implementation/configuration,322,,node:fs; node:path; node:url; ./chart-guard.mjs,walk; themeBlock; token; lineOf; chartColourViolations; walkAll
 frontend/src/App.routeTargets.test.ts,test,144,,vitest,fix; declaredRoutes; toMatcher; routeLiteralsIn; isNonRoute
 frontend/src/App.routes.test.tsx,test,37,,@testing-library/react; react-router-dom; vitest; ./App,
-frontend/src/App.tsx,implementation/configuration,355,,react; react-router-dom; @/components/layout/AppLayout; @/components/auth/ProtectedRoute; @/components/ui/LoadingSpinner; @/components/ErrorBoundary; @/hooks/useWebVitals; @/hooks/usePermissions; @/hooks/useDocumentTitle; @/pages/LoginPage; @/pages/ResetPasswordPage,ComponentType; LazyExoticComponent; lazyWithRetry; AppRoute; RouteFallback; RouteErrorFallback; renderLazyRoute; ManagementGuard; App
+frontend/src/App.tsx,implementation/configuration,364,,react; react-router-dom; @/components/layout/AppLayout; @/components/auth/ProtectedRoute; @/components/ui/LoadingSpinner; @/components/ErrorBoundary; @/hooks/useWebVitals; @/hooks/usePermissions; @/hooks/useDocumentTitle; @/pages/LoginPage; @/pages/ResetPasswordPage,ComponentType; LazyExoticComponent; lazyWithRetry; AppRoute; RouteFallback; RouteErrorFallback; renderLazyRoute; ManagementGuard; App
 frontend/src/components/ErrorBoundary.test.tsx,test,88,,react; @testing-library/react; vitest; ./ErrorBoundary,Thrower
 frontend/src/components/ErrorBoundary.tsx,implementation/configuration,84,,react; ../utils/errorReporting,Props; State; ErrorBoundary
 frontend/src/components/SwrMutateBridge.tsx,implementation/configuration,20,,react; swr; @/utils/swrCacheMutate,SwrMutateBridge
@@ -2070,12 +2071,44 @@ frontend/src/components/analytics/WidgetPicker.tsx,implementation/configuration,
 frontend/src/components/analytics/widgetRegistry.ts,implementation/configuration,180,,,ChartType; WidgetDef; VisualizationInstance; getPageWidgets; getDefaultWidgetIds; randomUUID; createInstance; getDefaultInstances; normalizeInstances
 frontend/src/components/auth/ProtectedRoute.test.tsx,test,86,,@testing-library/react; react-router-dom; vitest; ./ProtectedRoute,AuthState; renderWithRoutes
 frontend/src/components/auth/ProtectedRoute.tsx,implementation/configuration,79,,react; react-router-dom; ../../store/authStore; ../ui/LoadingSpinner,ProtectedRoute
+frontend/src/components/charts/ChartAnnouncer.tsx,implementation/configuration,101,,react,ReactNode; ChartAnnouncer; useChartAnnouncer; composeAnnouncement; ChartAnnouncerProvider
+frontend/src/components/charts/ChartErrorBoundary.tsx,implementation/configuration,67,,react; ./engines/lazyChartEngine,ErrorInfo; ReactNode; Props; State; ChartErrorBoundary
+frontend/src/components/charts/ChartFrame.test.tsx,test,591,,@testing-library/react; react; swr; vitest; @/lib/viz/contracts; @/hooks/useChartData; ./ChartFrame; ./ChartAnnouncer; ./chartMessages; ./ChartTable; ./chartState; ./chartText; ./engines/lazyChartEngine,ReactNode; ChartFrameProps; ChartState; FakeRenderer; frame; Boom; Stale; Flaky; recordText; page; Chart
+frontend/src/components/charts/ChartFrame.tsx,implementation/configuration,437,,react; @/lib/viz/contracts; @/utils/formatters; @/components/ui/Skeleton; ./ChartErrorBoundary; ./ChartTable; ./chartState; ./chartText; ./engines/lazyChartEngine; ./chartMessages; ./ChartAnnouncer,ReactNode; Ref; ChartState; ChartAxes; ValueFormatter; ChartHeadingLevel; ChartFrameProps; receives; assignRef; Message; StateBody; totalsLine; ChartFrame
+frontend/src/components/charts/ChartTable.tsx,implementation/configuration,118,,react; @/lib/viz/contracts; ./chartText,ChartAxes; ValueFormatter; Props; ChartTable
 frontend/src/components/charts/DefectDonut.test.tsx,test,39,,@testing-library/react; react; vitest; ./DefectDonut,
-frontend/src/components/charts/DefectDonut.tsx,implementation/configuration,30,,recharts,Props; DefectDonut
+frontend/src/components/charts/DefectDonut.tsx,implementation/configuration,60,,recharts; ./tokens; ./motion; ./patterns,DecalKind; PatternSpec; Props; DefectDonut
+frontend/src/components/charts/HeatmapChart.test.tsx,test,297,,@testing-library/react; vitest; ./HeatmapChart; ./engines/useEChart; ./engines/registry; ./engines/lazyChartEngine; ./engines/echarts/heatmapOption,TestResizeObserver; change; as
+frontend/src/components/charts/HeatmapChart.tsx,implementation/configuration,185,,react; @/lib/viz/contracts; ./tokens; ./tooltip; ./motion; ./useChartKeyboard; ./engines/echarts/heatmapOption; ./engines/lazyChartEngine; ./engines/useEChart; ./ChartErrorBoundary; ./patterns,VizStatus; NavRequest; HeatmapMatrix; HeatmapSalience; Props; HeatmapChart
 frontend/src/components/charts/PassRateGauge.test.tsx,test,37,,@testing-library/react; react; vitest; ./PassRateGauge,
-frontend/src/components/charts/PassRateGauge.tsx,implementation/configuration,32,,recharts,Props; PassRateGauge
+frontend/src/components/charts/PassRateGauge.tsx,implementation/configuration,37,,recharts; ./tokens; ./motion,Props; PassRateGauge
 frontend/src/components/charts/TrendChart.test.tsx,test,75,,@testing-library/react; react; vitest; ./TrendChart,
-frontend/src/components/charts/TrendChart.tsx,implementation/configuration,96,,recharts,DataPoint; Props; TrendChart
+frontend/src/components/charts/TrendChart.tsx,implementation/configuration,134,,recharts; ./tokens; ./motion; ./patterns,LegendEntry; DataPoint; Props; TrendChart
+frontend/src/components/charts/chartMessages.ts,implementation/configuration,22,,,
+frontend/src/components/charts/chartState.test.ts,test,328,,vitest; @/lib/viz/contracts; ./engines/lazyChartEngine; ./chartState,ChartResponse; ChartState; resolve
+frontend/src/components/charts/chartState.ts,implementation/configuration,455,,@/lib/viz/contracts; ./engines/lazyChartEngine; @/services/chartApi; @/utils/formatters; no matches,ChartSeries; EnvelopeMeta; ValidationResult; ChartResponse; ChartErrorKind; ChartError; ChartState; ChartStatus; hasChartData; ChartRequestSuperseded; ChartPayloadError; validateChartResponse; validateChartPayload; HttpLike; cleanParam; rejectedParam; parseHttpDate; retryAfterSeconds; ClassifiedError; isSuperseded; classifyChartError; isChartSeriesEmpty; shownCount; ChartAccessors; ResolveChartStateInput; resolveChartState
+frontend/src/components/charts/chartText.test.ts,test,254,,vitest; @/lib/viz/contracts; ./chartText,
+frontend/src/components/charts/chartText.ts,implementation/configuration,286,,@/lib/viz/contracts; @/utils/formatters,ValueFormatter; defaultFormatter; formatChartValue; ChartAxes; SummaryInput; Extreme; extremes; seriesSentences; matrixSentences; summarizeChart; ChartTableRow; ChartTableModel; orderedXs; seriesTable; chartTableModel
+frontend/src/components/charts/engines/echarts/core.ts,implementation/configuration,19,,echarts/core; echarts/renderers; echarts/components,
+frontend/src/components/charts/engines/echarts/heatmap.ts,implementation/configuration,11,,echarts/charts; echarts/components; ./core,
+frontend/src/components/charts/engines/echarts/heatmapOption.test.ts,test,222,,vitest; ../../tokens; ../../tooltip; ./heatmapOption,ChartTokens; NumericMatrix; StatusMatrix; Loose
+frontend/src/components/charts/engines/echarts/heatmapOption.ts,implementation/configuration,233,,echarts/core; echarts/charts; echarts/components; @/lib/viz/contracts; ../../tokens; ../../tooltip; ../../chartText,ChartTokens; TooltipContent; HeatmapOption; NumericMatrix; StatusMatrix; HeatmapMatrix; HeatmapSalience; defaultSalient; HeatmapOptionInput; formatHeatmapValue; Cell; heatmapTooltipContent; heatmapTarget; cellOf; buildHeatmapOption
+frontend/src/components/charts/engines/lazyChartEngine.test.ts,test,56,,vitest; ./lazyChartEngine,
+frontend/src/components/charts/engines/lazyChartEngine.ts,implementation/configuration,58,,,is; StaleBuildError; isStaleBuildError; isChunkLoadFailure; lazyChartEngine
+frontend/src/components/charts/engines/registry.test.ts,test,47,,vitest,once
+frontend/src/components/charts/engines/registry.ts,implementation/configuration,54,,./lazyChartEngine,on; plus; by; ChartInstance; ChartEngine; ChartEngineType; loadChartEngine; resetChartEngineCache
+frontend/src/components/charts/engines/useEChart.test.tsx,test,57,,@testing-library/react; vitest; ../tooltip; ./useEChart,EChartStatus; NoopResizeObserver; Probe
+frontend/src/components/charts/engines/useEChart.ts,implementation/configuration,92,,react; ../tooltip; ./lazyChartEngine; ./registry,ChartEngineType; ChartInstance; EChartStatus; useEChart; is
+frontend/src/components/charts/motion.ts,implementation/configuration,41,,react,mediaQuery; subscribe; prefersReducedMotion; usePrefersReducedMotion; useChartAnimation
+frontend/src/components/charts/patterns.tsx,implementation/configuration,142,,react; @/lib/viz/contracts; ./tokens,ReactNode; DecalKind; PatternSpec; decalMarks; renderPatterns; useChartPatternPrefix; statusPatternSpecs; LegendEntry; ChartLegend
+frontend/src/components/charts/rechartsA11y.test.tsx,test,142,,@testing-library/react; react; vitest; ./TrendChart; ./DefectDonut; ./PassRateGauge; ./motion,Listener; mockMatchMedia
+frontend/src/components/charts/statusPatterns.test.tsx,test,136,,@testing-library/react; react; vitest; @/lib/viz/contracts; ./TrendChart; ./DefectDonut; ./tokens,VizStatus; patternOf
+frontend/src/components/charts/tokens.test.ts,test,145,,@testing-library/react; vitest; @/lib/viz/contracts; ./tokens,fakeComputedStyle
+frontend/src/components/charts/tokens.ts,implementation/configuration,218,,react; @/lib/viz/contracts,VizStatus; ChartTokens; readChartTokens; resetChartTokenCache; seriesColor; subscribe; useChartTokens; DecalKind; StatusEncoding; ChartDecal; echartsDecal; decalOf
+frontend/src/components/charts/tooltip.test.ts,test,90,,vitest; ./tooltip,nested
+frontend/src/components/charts/tooltip.ts,implementation/configuration,139,,,that; TooltipRow; TooltipContent; textElement; buildTooltipNode; as; domTooltipFormatter; built; findUnsafeFormatter; assertSafeChartOption; tooltipText
+frontend/src/components/charts/useChartKeyboard.test.tsx,test,123,,@testing-library/react; vitest; ./useChartKeyboard,NavRequest; Harness
+frontend/src/components/charts/useChartKeyboard.ts,implementation/configuration,147,,react,FocusEvent; KeyboardEvent; NavKey; NavRequest; isNavKey; GridCell; moveInMatrix; ChartKeyboardOptions; useChartKeyboard
 frontend/src/components/chat/AssistantMessageExtras.test.tsx,test,185,,@testing-library/react; vitest; ./AssistantMessageExtras; @/types/chat; @/types/chat,
 frontend/src/components/chat/AssistantMessageExtras.tsx,implementation/configuration,118,,react; lucide-react; @/components/ai/AISuggestion; @/components/defects/CreateJiraIssueModal; @/components/quarantine/ProposeQuarantineModal; @/types/chat,AssistantMessageExtras
 frontend/src/components/compliance/CompliancePackPanel.tsx,implementation/configuration,155,,react; lucide-react; react-hot-toast; @/components/ui/LoadingSpinner; @/hooks/useCompliancePacks; @/services/compliancePackService; @/hooks/usePermissions,Props; CompliancePackPanel; handleGenerate; handleDownload
@@ -2120,7 +2153,7 @@ frontend/src/components/mfa/MfaSecuritySection.test.tsx,test,261,,@testing-libra
 frontend/src/components/mfa/MfaSecuritySection.tsx,implementation/configuration,416,,react; lucide-react; react-hot-toast; @/hooks/useMfaStatus; @/types/mfa; @/utils/mfaErrors; ./MfaCodeField; ./MfaEnrollPanel; ./RecoveryCodesPanel,MfaErrorInfo; MfaFactorMode; Panel; formatEnrolledAt; MfaSecuritySection
 frontend/src/components/mfa/OtpAuthQr.tsx,implementation/configuration,118,,react; qrcode.react; lucide-react; @/utils/clipboard; @/utils/mfaFormat,Props; OtpAuthQr
 frontend/src/components/mfa/RecoveryCodesPanel.tsx,implementation/configuration,140,,react; lucide-react; @/utils/clipboard,Props; RecoveryCodesPanel
-frontend/src/components/modalKeyboardContract.test.tsx,test,146,,@testing-library/react; react; swr; vitest; ./ai/CorrectClassificationModal; ./ai/DefectPromotionModal; ./defects/CreateJiraIssueModal; ./defects/DefectIntakeModal; ./quarantine/ProposeQuarantineModal; ./runs/UploadReportModal; ./testManagement/TransitionReasonDialog,ReactElement; Render; Harness; open
+frontend/src/components/modalKeyboardContract.test.tsx,test,185,,@testing-library/react; react; swr; vitest; ./ai/CorrectClassificationModal; ./ai/DefectPromotionModal; ./defects/CreateJiraIssueModal; ./defects/DefectIntakeModal; ./quarantine/ProposeQuarantineModal; ./runs/UploadReportModal; ./testManagement/TransitionReasonDialog; ./ui/SidePanel,ReactElement; Render; Harness; open; keyboardContract
 frontend/src/components/onboarding/FirstRunGuide.test.tsx,test,463,,@testing-library/react; react-router-dom; vitest; ./FirstRunGuide; ./firstRunSteps; @/services/reportUploadService; @/services/api; @/store/projectStore,renderGuide
 frontend/src/components/onboarding/FirstRunGuide.tsx,implementation/configuration,164,,react; react-router-dom; @/components/ui/ScopedLink; lucide-react; @/utils/clipboard; @/services/api; ./firstRunSteps,CommandRow; FirstRunGuide
 frontend/src/components/onboarding/firstRunSteps.ts,implementation/configuration,214,,react; @/services/reportUploadService,ReportFormat; firstRunDismissKey; isFirstRunGuideDismissed; dismissFirstRunGuide; Step; uploadCommand; ingestApiCommand; buildSteps
@@ -2177,6 +2210,10 @@ frontend/src/components/testManagement/TransitionReasonDialog.tsx,implementation
 frontend/src/components/ui/AllReleasesBadge.test.tsx,test,102,,@testing-library/react; vitest; ./AllReleasesBadge; @/store/releaseStore; @/store/projectStore,
 frontend/src/components/ui/AllReleasesBadge.tsx,implementation/configuration,52,,lucide-react; @/hooks/useReleaseScope,AllReleasesBadge
 frontend/src/components/ui/AppLogo.tsx,implementation/configuration,56,,,AppLogoProps; AppLogo
+frontend/src/components/ui/Breadcrumbs.test.tsx,test,65,,@testing-library/react; react-router-dom; vitest; ./Breadcrumbs,
+frontend/src/components/ui/Breadcrumbs.tsx,implementation/configuration,75,,lucide-react; react-router-dom,BreadcrumbItem; BreadcrumbsProps; Breadcrumbs
+frontend/src/components/ui/Chip.test.tsx,test,174,,@testing-library/react; react; vitest; ./Chip,ChipItem; Harness; Deferred
+frontend/src/components/ui/Chip.tsx,implementation/configuration,176,,lucide-react; react; @/utils/formatters,Ref; RefObject; ChipProps; Chip; ChipItem; ChipListProps; ChipList
 frontend/src/components/ui/DataUnavailable.tsx,implementation/configuration,65,,lucide-react; @/utils/loadError,Props; DataUnavailable
 frontend/src/components/ui/EmptyState.test.tsx,test,31,,@testing-library/react; lucide-react; vitest; ./EmptyState,
 frontend/src/components/ui/EmptyState.tsx,implementation/configuration,16,,react,Props; EmptyState
@@ -2188,6 +2225,8 @@ frontend/src/components/ui/LoadingSpinner.test.tsx,test,23,,@testing-library/rea
 frontend/src/components/ui/LoadingSpinner.tsx,implementation/configuration,15,,clsx,Props; LoadingSpinner
 frontend/src/components/ui/MetricCard.test.tsx,test,103,,@testing-library/react; lucide-react; vitest; ./MetricCard,trendRowClass
 frontend/src/components/ui/MetricCard.tsx,implementation/configuration,71,,react; lucide-react; clsx,MetricData; Props; MetricCard
+frontend/src/components/ui/MultiSelect.test.tsx,test,630,,@testing-library/react; react; vitest; ./MultiSelect,MultiSelectOption; MultiSelectProps; HarnessProps; Harness; openWithKeyboard
+frontend/src/components/ui/MultiSelect.tsx,implementation/configuration,767,,lucide-react; react; react-dom; @/utils/formatters; ./popoverContainer,KeyboardEvent; MultiSelectOption; MultiSelectProps; Row; nextTabbableAfter; MultiSelect
 frontend/src/components/ui/PageHeader.test.tsx,test,51,,@testing-library/react; react-router-dom; vitest; @/hooks/useDocumentTitle; ./PageHeader,RouteTitleHarness
 frontend/src/components/ui/PageHeader.tsx,implementation/configuration,26,,react; @/hooks/useDocumentTitle,Props; PageHeader
 frontend/src/components/ui/Pagination.test.tsx,test,41,,@testing-library/react; vitest; ./Pagination,
@@ -2198,6 +2237,10 @@ frontend/src/components/ui/ScopedLink.test.tsx,test,138,,@testing-library/react;
 frontend/src/components/ui/ScopedLink.tsx,implementation/configuration,82,,react-router-dom; clsx; @/config/routeScope; @/store/projectStore,Props; ScopedLink
 frontend/src/components/ui/SectionErrorBoundary.test.tsx,test,95,,vitest; @testing-library/react; ./SectionErrorBoundary,ThrowingChild
 frontend/src/components/ui/SectionErrorBoundary.tsx,implementation/configuration,69,,react; lucide-react,Props; State; SectionErrorBoundary
+frontend/src/components/ui/SidePanel.test.tsx,test,218,,@testing-library/react; react; vitest; ./SidePanel,Harness; openPanel; atViewportWidth; Reserving
+frontend/src/components/ui/SidePanel.tsx,implementation/configuration,242,,lucide-react; react; react-dom; @/hooks/useModalFocus,ReactNode; RefObject; SidePanelProps; PanelBodyProps; subscribeWide; isWide; lockPageScroll; reserveInlineSpace; PanelContents; NonModalSidePanel; ModalSidePanel; SidePanel
+frontend/src/components/ui/Skeleton.test.tsx,test,52,,@testing-library/react; vitest; ./Skeleton,
+frontend/src/components/ui/Skeleton.tsx,implementation/configuration,100,,react,SkeletonVariant; SkeletonProps; Skeleton
 frontend/src/components/ui/SortableHeader.test.tsx,test,71,,@testing-library/react; vitest; ./SortableHeader; @/hooks/useTableSort,renderHeader
 frontend/src/components/ui/SortableHeader.tsx,implementation/configuration,45,,lucide-react; @/hooks/useTableSort,Props; SortableHeader
 frontend/src/components/ui/StatusBadge.test.tsx,test,28,,@testing-library/react; vitest; ./StatusBadge,
@@ -2209,6 +2252,7 @@ frontend/src/components/ui/ThemePicker.test.tsx,test,42,,vitest; @testing-librar
 frontend/src/components/ui/ThemePicker.tsx,implementation/configuration,109,,react; lucide-react; @/store/themeStore; @/components/ui/HeaderPopover,ThemePicker
 frontend/src/components/ui/TimingCell.test.tsx,test,93,,@testing-library/react; vitest; ./TimingCell,
 frontend/src/components/ui/TimingCell.tsx,implementation/configuration,90,,clsx; @/utils/formatters,TimingCell
+frontend/src/components/ui/popoverContainer.ts,implementation/configuration,17,,,resolvePopoverContainer
 frontend/src/components/workflow/WorkflowTimeline.test.tsx,test,152,,@testing-library/react; vitest; ./WorkflowTimeline,
 frontend/src/components/workflow/WorkflowTimeline.tsx,implementation/configuration,803,,react; lucide-react; clsx; @/components/ui/EmptyState,ElementType; WorkflowStageNode; WorkflowEventNode; WorkflowTimelineProps; StageMeta; formatValue; formatDuration; stageKey; stageDisplayName; eventLabel; EventIcon; if; StageNode; WorkflowEventFeed; WorkflowTimeline
 frontend/src/components/workflow/workflowPresets.test.ts,test,536,,vitest; @/services/releaseCouncilService; ./workflowPresets,as
@@ -2242,6 +2286,8 @@ frontend/src/hooks/useAnalyticsView.ts,implementation/configuration,209,,react; 
 frontend/src/hooks/useApiKeys.ts,implementation/configuration,24,,swr; @/utils/swrCacheMutate; @/services/apiKeyService,useApiKeys; refreshApiKeys
 frontend/src/hooks/useAuditDashboard.test.ts,test,164,,react; @testing-library/react; vitest; swr,ReactNode; wrapper
 frontend/src/hooks/useAuditDashboard.ts,implementation/configuration,74,,swr; @/services/auditDashboardService,AuditCategory; AuditEvent; TenantObservability; useAuditCategories; useAuditEvents; useProjectObservability
+frontend/src/hooks/useChartData.test.tsx,test,281,,@testing-library/react; react; swr; vitest; @/lib/viz/contracts; @/components/charts/chartState; @/services/chartApi; ./useChartData,ChartResponse; ChartFetcher; Key; deferred
+frontend/src/hooks/useChartData.ts,implementation/configuration,176,,react; swr; @/lib/viz/contracts; @/services/chartApi; @/components/charts/chartState,SWRConfiguration; ChartAccessors; ChartResponse; ChartState; ChartKey; ChartFetcher; UseChartDataOptions; useChartData
 frontend/src/hooks/useChat.ts,implementation/configuration,116,,react; swr; @/services/chatService; @/types/chat; @/config/refreshIntervals,useRunSummaries; useChatSessions; useChatMessages; UseChatReturn; useChat
 frontend/src/hooks/useCommitAttribution.ts,implementation/configuration,57,,swr; @/services/commitAttributionService,useCommitRange; useSuspects
 frontend/src/hooks/useCompliancePacks.ts,implementation/configuration,24,,swr; @/services/compliancePackService,CompliancePackRead; useCompliancePacks
@@ -2451,9 +2497,14 @@ frontend/src/pages/ValueMetricsPage.tsx,implementation/configuration,702,,react;
 frontend/src/pages/WorkflowEditorPage.test.tsx,test,249,,@testing-library/react; react-router-dom; swr; vitest; ./WorkflowEditorPage; @/services/workflowService; @/types/workflowDefinition,item; renderPage
 frontend/src/pages/WorkflowEditorPage.tsx,implementation/configuration,607,,react; react-router-dom; swr; lucide-react; react-hot-toast; @/components/ui/LoadingSpinner; @/components/ui/PageHeader; @/components/ui/ProjectRequiredEmptyState; @/components/ui/DataUnavailable; @/hooks/usePermissions; @/services/workflowService; @/store/projectStore; @/types/workflowDefinition,GraphNode; GraphEdge; WorkflowGraph; buildWorkflowGraph; bodyFromItem; parseBody; errorMessage; formatCoverage; ref; GraphPreview; ValidationPanel; WorkflowEditorPage; choose; refreshAndChoose; handleSave; handleValidate; handleFork; handleEvaluate; handlePublish
 frontend/src/pages/copyAgreement.test.ts,test,58,,vitest,rather
-frontend/src/pages/dev/ChartGalleryPage.test.tsx,test,115,,@testing-library/react; react; react-router-dom; vitest; ./ChartGalleryPage; ./chartGalleryFixtures,renderAt
-frontend/src/pages/dev/ChartGalleryPage.tsx,implementation/configuration,130,,react; react-router-dom; @/components/charts/TrendChart; @/components/charts/DefectDonut; @/components/charts/PassRateGauge; @/store/themeStore; ./chartGalleryFixtures,ThemeId; GalleryItem; resolveTheme; renderChart; ChartGalleryPage
-frontend/src/pages/dev/chartGalleryFixtures.ts,implementation/configuration,138,,,error; GalleryTrendPoint; GalleryItemBase; GalleryItem
+frontend/src/pages/dev/ChartGalleryPage.test.tsx,test,174,,@testing-library/react; react; react-router-dom; vitest; ./ChartGalleryPage; ./chartGalleryFixtures; ./chartStatesFixtures,renderAt
+frontend/src/pages/dev/ChartGalleryPage.tsx,implementation/configuration,170,,react; react-router-dom; @/components/charts/TrendChart; @/components/charts/DefectDonut; @/components/charts/PassRateGauge; @/components/charts/HeatmapChart; @/components/charts/ChartAnnouncer; @/store/themeStore; ./chartGalleryFixtures; ./chartStatesFixtures; ./ChartStatesGallery,ThemeId; GalleryItem; resolveTheme; renderChart; ChartGalleryPage
+frontend/src/pages/dev/ChartStatesGallery.tsx,implementation/configuration,150,,react; @/components/charts/ChartFrame; @/components/charts/HeatmapChart; @/components/charts/engines/echarts/heatmapOption; @/components/charts/engines/lazyChartEngine; @/components/charts/chartState; @/lib/viz/contracts; @/hooks/useChartData; ./chartGalleryFixtures; ./chartStatesFixtures,ChartState; StateItemId; stateFromError; ThrowingRenderer; renderHeatmap; InvalidPayloadFrame; ChartStatesGallery
+frontend/src/pages/dev/PrimitivesPage.test.tsx,test,68,,@testing-library/react; react-router-dom; vitest; ./PrimitivesPage; ./primitivesFixtures,renderAt
+frontend/src/pages/dev/PrimitivesPage.tsx,implementation/configuration,276,,react; react-router-dom; @/components/ui/Breadcrumbs; @/components/ui/Chip; @/components/ui/MultiSelect; @/components/ui/SidePanel; @/components/ui/Skeleton; @/store/themeStore; @/utils/download; @/utils/formatters; ./primitivesFixtures,ReactNode; ChipItem; ThemeId; resolveTheme; Section; PrimitivesPage
+frontend/src/pages/dev/chartGalleryFixtures.ts,implementation/configuration,267,,,error; GalleryTrendPoint; GalleryMatrix; GalleryStatusMatrix; galleryChartHeight; GalleryItemBase; GalleryItem; galleryEngine
+frontend/src/pages/dev/chartStatesFixtures.ts,implementation/configuration,183,,@/lib/viz/contracts; ./chartGalleryFixtures,GalleryMatrix; StateItemId; StateItem
+frontend/src/pages/dev/primitivesFixtures.ts,implementation/configuration,52,,@/components/ui/Chip; @/components/ui/MultiSelect,
 frontend/src/pages/exhaustiveDeps.promotion.test.ts,test,47,,vitest; ../../eslint.config.js?raw; ./ReleasesPage.tsx?raw; ./TestManagementPage.tsx?raw,
 frontend/src/pages/keyScopeOptions.ts,implementation/configuration,6,,,
 frontend/src/pages/outageRendersAsNoData.lists.test.tsx,test,119,,@testing-library/react; react-router-dom; swr; vitest; @/hooks/useRuns; @/hooks/useReleases; @/services/summaryReportService; ./IntelligenceHubPage; ./ReleasesPage; ./RunsPage; ./SummaryReportPage,renderPage
@@ -2521,14 +2572,17 @@ frontend/src/services/analyticsService.ts,implementation/configuration,136,,@/ty
 frontend/src/services/api.backendUrl.test.ts,test,70,,vitest,loadBackendUrl
 frontend/src/services/api.mfaRefresh.test.ts,test,136,,axios; vitest,AxiosResponse; InternalAxiosRequestConfig; stubStatus
 frontend/src/services/api.paramsSerializer.test.ts,test,42,,vitest; ./api,or
-frontend/src/services/api.ts,implementation/configuration,192,,axios; react-hot-toast; ../store/authStore; ./apiErrors,backendUrl; isSameOriginRequest; shouldAttemptTokenRefresh; processQueue
-frontend/src/services/apiErrors.test.ts,test,73,,vitest; ./apiErrors,
-frontend/src/services/apiErrors.ts,implementation/configuration,68,,,ValidationErrorItem; shouldToastError; extractErrorMessage
+frontend/src/services/api.suppressToast.test.ts,test,71,,axios; vitest,AxiosResponse; InternalAxiosRequestConfig; stubStatus
+frontend/src/services/api.ts,implementation/configuration,202,,axios; react-hot-toast; ../store/authStore; ./apiErrors,AxiosRequestConfig; backendUrl; isSameOriginRequest; shouldAttemptTokenRefresh; processQueue
+frontend/src/services/apiErrors.test.ts,test,86,,vitest; ./apiErrors,
+frontend/src/services/apiErrors.ts,implementation/configuration,78,,,ValidationErrorItem; shouldToastError; extractErrorMessage
 frontend/src/services/apiKeyService.ts,implementation/configuration,14,,./http; @/types/apiKey,
 frontend/src/services/appSettingsService.ts,implementation/configuration,257,,axios; ./api,SmtpConfigRead; SmtpConfigUpdate; SmtpTestResult; AnalysisMode; AIConfigRead; AIConfigUpdate; ModelPurpose; RequiredModel; FallbackChainEntry; AIModelStatusRead; IntegrationsConfigRead; IntegrationsConfigUpdate; StorageConfigRead; StorageConfigUpdate
 frontend/src/services/auditDashboardService.ts,implementation/configuration,72,,./api,AuditEvent; AuditCategory; TenantObservability; listAuditEvents; listCategories; getProjectObservability; exportAuditCSV
 frontend/src/services/authService.test.ts,test,48,,vitest; ./api; ./http; ./authService,
 frontend/src/services/authService.ts,implementation/configuration,42,,@/store/authStore; @/types/mfa; ./api; ./http,loginWithPassword; fetchCurrentUser
+frontend/src/services/chartApi.test.ts,test,61,,axios; vitest,
+frontend/src/services/chartApi.ts,implementation/configuration,87,,axios; ./api,ChartFetchResult; cleanValue; cleanId; headerValue; requestIdOf; ChartGetOptions; chartGet
 frontend/src/services/chatService.ts,implementation/configuration,35,,@/types/chat; ./http,
 frontend/src/services/commitAttributionService.ts,implementation/configuration,76,,./api,RangeCommit; CommitRange; SuspectRationale; Suspect; SuspectRanking; SuspectQuery
 frontend/src/services/compliancePackService.ts,implementation/configuration,50,,./http; ./api,CompliancePackRead; CompliancePackGenerateBody
@@ -2602,6 +2656,8 @@ frontend/src/store/releaseStore.ts,implementation/configuration,103,,zustand; zu
 frontend/src/store/themeStore.ts,implementation/configuration,53,,zustand; zustand/middleware,ThemeId; ThemeState; applyTheme
 frontend/src/store/timeWindowStore.test.ts,test,91,,vitest; ./timeWindowStore,migrate
 frontend/src/store/timeWindowStore.ts,implementation/configuration,120,,zustand; zustand/middleware; never chose,TimeWindowStore; snapToAllowed
+frontend/src/test/chartTokens.test.ts,test,155,,vitest; @/store/themeStore; ./readSourceFile,themeTokens; luminance; contrast
+frontend/src/test/readSourceFile.ts,test,25,,node:fs,NodeFs; readSourceFile
 frontend/src/test/setup.ts,test,31,,@testing-library/jest-dom; vitest; @testing-library/react,ResizeObserverMock
 frontend/src/test/smoke.test.ts,test,87,,vitest; @/utils/formatters,
 frontend/src/types/agent.publicStatus.test.ts,test,83,,vitest; ./agent,PublicPipelineStatus
@@ -2645,13 +2701,16 @@ frontend/src/utils/calendarDay.test.ts,test,92,,vitest; ./calendarDay,
 frontend/src/utils/calendarDay.ts,implementation/configuration,80,,,utcDayIso; shiftDayIso; dayIsoToUtcMs; formatDayIso; daysBetweenDayIso; relativeDayLabel
 frontend/src/utils/clipboard.test.ts,test,150,,vitest; ./clipboard,setClipboard; setSecureContext; restore
 frontend/src/utils/clipboard.ts,implementation/configuration,27,,,copyTextToClipboard
+frontend/src/utils/download.test.ts,test,154,,vitest; ./download,
+frontend/src/utils/download.ts,implementation/configuration,104,,,isInvisibleOrControl; sanitizeFilename; downloadBlob
 frontend/src/utils/emptyWindow.test.ts,test,98,,vitest; ./emptyWindow; none in this window,at
 frontend/src/utils/emptyWindow.ts,implementation/configuration,75,,,EmptyWindowState; EmptyWindowInput; describeEmptyWindow; formatAgeDays
 frontend/src/utils/errorReporting.test.ts,test,202,,vitest; ./errorReporting,Sent; installBeacon; pushBoundaryError; deliveredErrorCount
 frontend/src/utils/errorReporting.ts,implementation/configuration,344,,web-vitals,FrontendError; WebVitalReport; TelemetryBatch; _scheduleFlush; _sizeOf; _partition; _transmit; flush; _enforceBufferBounds; _sanitizeStack; _sanitizeMessage; _capture; reportBoundaryError; installGlobalErrorHandlers; reportWebVital
 frontend/src/utils/failureKind.ts,implementation/configuration,54,,,FailureKind; FailureKindDef; kindDef; failureKindOf
+frontend/src/utils/formatters.numbers.test.ts,test,194,,vitest; ./formatters,
 frontend/src/utils/formatters.test.ts,test,252,,vitest; ./formatters,
-frontend/src/utils/formatters.ts,implementation/configuration,251,,date-fns,TimingRangeParts
+frontend/src/utils/formatters.ts,implementation/configuration,393,,date-fns,TimingRangeParts; numberFormat; NumberFormatOptions; PercentFormatOptions; GraphemeSegmenter; graphemes
 frontend/src/utils/liveSessionFreshness.test.ts,test,125,,vitest; ./liveSessionFreshness,iso
 frontend/src/utils/liveSessionFreshness.ts,implementation/configuration,69,,,FreshnessSession; isActivelyRunning; isStaleRunning
 frontend/src/utils/loadError.test.ts,test,82,,"there is
@@ -2681,10 +2740,11 @@ frontend/src/utils/testManagementTotals.ts,implementation/configuration,68,,,Cas
 frontend/src/vite-env.d.ts,implementation/configuration,1,,,
 frontend/tailwind.config.js,implementation/configuration,86,,,system
 frontend/tests/ci-e2e/accessibility-keyboard.spec.ts,test,143,,@playwright/test; @axe-core/playwright,Page; Route; json; seedSession; installApi
-frontend/tests/ci-e2e/chart-gallery.spec.ts,test,185,,@playwright/test; @axe-core/playwright; ../../src/pages/dev/chartGalleryFixtures,Page; watchErrors; openGallery; drawnMarks
+frontend/tests/ci-e2e/chart-gallery.spec.ts,test,592,,@playwright/test; @axe-core/playwright; ../../src/pages/dev/chartGalleryFixtures; ../../src/pages/dev/chartStatesFixtures,Locator; Page; watchCsp; paintedColoursIn; watchErrors; openGallery; drawnMarks; expectNoBlockingViolations; openStates
 frontend/tests/ci-e2e/critical-journeys.spec.ts,test,93,,@playwright/test,Page; Route; json; installHermeticApi
 frontend/tests/ci-e2e/intelligence-table-geometry.spec.ts,test,220,,@playwright/test,Page; Route; json; installApi; seedAuth; Geometry; measure
 frontend/tests/ci-e2e/journey-spine.spec.ts,test,398,,@playwright/test,Page; Route; json; installSpineApi; signIn; expectFailureSurfaced
+frontend/tests/ci-e2e/primitives.spec.ts,test,545,,@playwright/test; @axe-core/playwright; ../../src/pages/dev/primitivesFixtures,name; Locator; Page; watchErrors; openPrimitives; activeOption; expectFocusInside; boxOf; expectTarget24
 frontend/tests/ci-e2e/project-isolation-outage.spec.ts,test,131,,@playwright/test,Route; run; json
 frontend/tests/ci-e2e/review-gate.spec.ts,test,178,,@playwright/test,Page; Route; ReviewState; json; seedSession; review; installApi
 frontend/tests/diagram-harness/harness.tsx,test,106,,react; react-dom/client; react-router-dom; ../../src/index.css; ../../src/pages/DocsPage; ../../src/components/guide/MermaidDiagram; ../../src/components/guide/mermaidConfig,pagesWithDiagrams; Harness; Window
@@ -2776,10 +2836,10 @@ frontend/tests/probe-uat-upload2.spec.ts,test,46,,@playwright/test,
 frontend/tests/probe-uat-verify002.spec.ts,test,23,,@playwright/test,
 frontend/tests/probe-upload-deeplink.spec.ts,test,139,,@playwright/test,login
 frontend/tests/probe-value-metrics-allprojects.spec.ts,test,47,,@playwright/test,login
-frontend/tests/visual/chart-gallery.visual.spec.ts,test,45,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures,
+frontend/tests/visual/chart-gallery.visual.spec.ts,test,61,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures,
 frontend/tsconfig.json,implementation/configuration,25,,,
 frontend/tsconfig.node.json,implementation/configuration,11,,,
-frontend/vite.config.ts,implementation/configuration,55,,vite; @vitejs/plugin-react; path,form
+frontend/vite.config.ts,implementation/configuration,60,,vite; @vitejs/plugin-react; path,form; is
 frontend/vitest.config.ts,implementation/configuration,54,,vitest/config; @vitejs/plugin-react; path,
 homelabsetup/bootstrap-homelab.sh,implementation/configuration,791,,fresh Linux nodes with SSH access,the
 homelabsetup/deploy-homelab.sh,implementation/configuration,1412,,,digest; local

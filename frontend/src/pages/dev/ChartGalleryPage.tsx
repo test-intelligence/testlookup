@@ -23,10 +23,22 @@ import { useSearchParams } from 'react-router-dom'
 import TrendChart from '@/components/charts/TrendChart'
 import DefectDonut from '@/components/charts/DefectDonut'
 import PassRateGauge from '@/components/charts/PassRateGauge'
+import HeatmapChart from '@/components/charts/HeatmapChart'
+import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import { THEMES, type ThemeId } from '@/store/themeStore'
-import { GALLERY_CANVAS, GALLERY_ITEMS, type GalleryItem } from './chartGalleryFixtures'
+import {
+  GALLERY_CANVAS,
+  GALLERY_ITEMS,
+  galleryChartHeight,
+  galleryEngine,
+  type GalleryItem,
+} from './chartGalleryFixtures'
+import { STATES_VIEW_PARAM } from './chartStatesFixtures'
+import ChartStatesGallery from './ChartStatesGallery'
 
 const THEME_QUERY_PARAM = 'theme'
+/** `?view=states` renders every ChartFrame state (VIZ-107) instead of the chart items. */
+const VIEW_QUERY_PARAM = 'view'
 
 /** A registry id, or `null` for anything that is not one. */
 function resolveTheme(requested: string | null): ThemeId | null {
@@ -50,12 +62,24 @@ function renderChart(item: GalleryItem) {
     case 'gauge':
       // The gauge is square; fill the canvas height so its arc is a real size.
       return <PassRateGauge value={item.value} size={GALLERY_CANVAS.height} animate={false} />
+    case 'heatmap':
+      // ECharts, canvas, lazy: the engine chunk is fetched when this mounts.
+      return (
+        <HeatmapChart
+          data={item.data}
+          description={item.description}
+          width={GALLERY_CANVAS.width}
+          height={galleryChartHeight(item)}
+          animate={false}
+        />
+      )
   }
 }
 
 export default function ChartGalleryPage() {
   const [params] = useSearchParams()
   const theme = resolveTheme(params.get(THEME_QUERY_PARAM))
+  const statesView = params.get(VIEW_QUERY_PARAM) === STATES_VIEW_PARAM
 
   useEffect(() => {
     if (theme === null) return
@@ -72,6 +96,7 @@ export default function ChartGalleryPage() {
     <main
       data-testid="chart-gallery"
       data-gallery-theme={theme ?? 'default'}
+      data-gallery-view={statesView ? 'states' : 'charts'}
       className="min-h-screen bg-[var(--color-bg)] px-4 py-6 text-[var(--color-text)]"
     >
       <header className="mb-6">
@@ -84,10 +109,23 @@ export default function ChartGalleryPage() {
               {' '}
               — add <code>?theme=</code> one of {THEMES.map((t) => t.id).join(', ')}.
             </>
+          )}{' '}
+          {statesView ? (
+            <>Showing every chart frame state.</>
+          ) : (
+            <>
+              Add <code>?view=states</code> for every chart frame state.
+            </>
           )}
         </p>
       </header>
 
+      {statesView ? (
+        // One live region for every frame on the page (ChartAnnouncer).
+        <ChartAnnouncerProvider>
+          <ChartStatesGallery />
+        </ChartAnnouncerProvider>
+      ) : (
       <div className="flex flex-col gap-6">
         {GALLERY_ITEMS.map((item) => {
           const headingId = `gallery-${item.id}-title`
@@ -96,6 +134,7 @@ export default function ChartGalleryPage() {
               key={item.id}
               data-gallery-item={item.id}
               data-gallery-empty={item.empty ? 'true' : 'false'}
+              data-gallery-engine={galleryEngine(item)}
               aria-labelledby={headingId}
               className="w-fit max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4"
             >
@@ -125,6 +164,7 @@ export default function ChartGalleryPage() {
           )
         })}
       </div>
+      )}
     </main>
   )
 }

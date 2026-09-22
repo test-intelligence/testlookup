@@ -3,6 +3,16 @@ import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 import { extractErrorMessage, shouldToastError } from './apiErrors'
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Do not raise the global error toast for this request: the caller renders
+     * the failure itself (chart frames, VIZ-107). Omitted = today's behaviour.
+     */
+    suppressToast?: boolean
+  }
+}
+
 // When VITE_API_BASE_URL is unset, use same-origin relative URLs. This makes
 // the production bundle deploy-target agnostic — it works behind any ingress
 // (k8s/homelab/gcp/aws) over both http and https without mixed-content or CORS
@@ -184,7 +194,7 @@ api.interceptors.response.use(
     // For non-401 errors or exhausted retries, surface a toast. 422 is now
     // surfaced (was silently swallowed — the "empty page, no error" footgun);
     // 401/404 stay quiet. See services/apiErrors.
-    if (shouldToastError(error.response?.status)) {
+    if (shouldToastError(error.response?.status, originalRequest)) {
       toast.error(extractErrorMessage(error.response?.data?.detail, error.message))
     }
     return Promise.reject(error)

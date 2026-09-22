@@ -19,6 +19,19 @@ describe('shouldToastError', () => {
     expect(shouldToastError(400)).toBe(true)
     expect(shouldToastError(undefined)).toBe(true)
   })
+
+  it('honours a per-request suppressToast opt-out (VIZ-107 chart requests)', () => {
+    expect(shouldToastError(500, { suppressToast: true })).toBe(false)
+    expect(shouldToastError(undefined, { suppressToast: true })).toBe(false)
+  })
+
+  it('keeps the old policy for a request that does not opt out', () => {
+    for (const request of [undefined, null, {}, { suppressToast: false }]) {
+      expect(shouldToastError(500, request)).toBe(true)
+      expect(shouldToastError(422, request)).toBe(true)
+      expect(shouldToastError(404, request)).toBe(false)
+    }
+  })
 })
 
 describe('extractErrorMessage', () => {

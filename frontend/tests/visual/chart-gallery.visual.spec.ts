@@ -14,7 +14,16 @@
  * new one is admitted only through `npm run test:visual:update`.
  */
 import { expect, test } from '@playwright/test'
-import { GALLERY_DRAWN_ITEMS, GALLERY_ITEM_IDS } from '../../src/pages/dev/chartGalleryFixtures'
+import {
+  GALLERY_DRAWN_SVG_ITEMS,
+  GALLERY_ITEM_IDS,
+  GALLERY_ITEMS,
+  galleryEngine,
+} from '../../src/pages/dev/chartGalleryFixtures'
+
+const GALLERY_CANVAS_ITEM_IDS = GALLERY_ITEMS.filter((item) => galleryEngine(item) === 'echarts').map(
+  (item) => item.id,
+)
 
 const THEMES = ['signal', 'lab'] as const
 
@@ -27,10 +36,17 @@ for (const theme of THEMES) {
       await expect(page.locator('[data-gallery-item]')).toHaveCount(GALLERY_ITEM_IDS.length)
       // Every chart has measured and drawn before any item is captured, so a
       // screenshot never races ResponsiveContainer's first layout pass.
-      for (const item of GALLERY_DRAWN_ITEMS) {
+      for (const item of GALLERY_DRAWN_SVG_ITEMS) {
         await expect(
           page.locator(`[data-gallery-item="${item.id}"] .recharts-wrapper > svg.recharts-surface path`).first(),
         ).toBeVisible()
+      }
+      // ECharts items (canvas) report ready once the engine has drawn — and
+      // every one does, empty ones included, so none is captured mid-load.
+      for (const id of GALLERY_CANVAS_ITEM_IDS) {
+        await expect(
+          page.locator(`[data-gallery-item="${id}"] [data-chart-engine="echarts"]`),
+        ).toHaveAttribute('data-chart-status', 'ready')
       }
     })
 

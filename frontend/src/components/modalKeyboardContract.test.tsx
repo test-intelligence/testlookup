@@ -10,12 +10,13 @@
  *
  * The seven are the five the audit counted, the correct reference
  * implementation (TransitionReasonDialog, now on the shared hook), and
- * UploadReportModal.
+ * UploadReportModal; the eighth is the shared SidePanel in modal mode (VIZ-109),
+ * and a NON-modal SidePanel on a phone-width screen, where it renders modal.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
 import { SWRConfig } from 'swr'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hooks/useJiraDefects', () => ({
   useJiraDefectMetadata: () => ({
@@ -50,6 +51,7 @@ import DefectIntakeModal from './defects/DefectIntakeModal'
 import ProposeQuarantineModal from './quarantine/ProposeQuarantineModal'
 import UploadReportModal from './runs/UploadReportModal'
 import TransitionReasonDialog from './testManagement/TransitionReasonDialog'
+import SidePanel from './ui/SidePanel'
 
 type Render = (onClose: () => void) => ReactElement
 
@@ -79,6 +81,12 @@ const MODALS: Array<[string, Render]> = [
       title="Archive" description="Archive this case." confirmLabel="Archive"
       onCancel={onClose} onConfirm={vi.fn()}
     />
+  )],
+  // VIZ-109: the shared side panel in its modal shape.
+  ['SidePanel (modal)', (onClose) => (
+    <SidePanel open modal title="Run details" onClose={onClose}>
+      <button type="button">Inside</button>
+    </SidePanel>
   )],
 ]
 
@@ -116,7 +124,7 @@ function open(modal: Render) {
 const press = (key: string, shiftKey = false) =>
   fireEvent.keyDown(document.activeElement ?? document.body, { key, shiftKey })
 
-describe.each(MODALS)('%s keyboard contract', (_name, modal) => {
+function keyboardContract(modal: Render) {
   it('takes focus when it opens', () => {
     const { dialog } = open(modal)
     expect(dialog.contains(document.activeElement)).toBe(true)
@@ -143,4 +151,35 @@ describe.each(MODALS)('%s keyboard contract', (_name, modal) => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(trigger).toHaveFocus()
   })
+}
+
+describe.each(MODALS)('%s keyboard contract', (_name, modal) => {
+  keyboardContract(modal)
+})
+
+// VIZ-109 review: below the sm breakpoint a NON-modal SidePanel has no room
+// beside the page and is rendered modal — so it owes the same contract.
+describe('SidePanel (non-modal, on a phone) keyboard contract', () => {
+  const realMatchMedia = window.matchMedia
+  beforeEach(() => {
+    window.matchMedia = ((query: string) => ({
+      matches: false, // a 375 px screen matches no min-width breakpoint
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+  })
+  afterEach(() => {
+    window.matchMedia = realMatchMedia
+  })
+
+  keyboardContract((onClose) => (
+    <SidePanel open title="Run details" onClose={onClose}>
+      <button type="button">Inside</button>
+    </SidePanel>
+  ))
 })

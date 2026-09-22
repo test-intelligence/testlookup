@@ -17,6 +17,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ENGINE_DIRS, importBoundaryViolations, inEngineDir, optionViolations, runSelfTest } from './chart-guard.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CSS = readFileSync(join(ROOT, 'src', 'index.css'), 'utf8')
@@ -26,7 +27,7 @@ const STORE = readFileSync(join(ROOT, 'src', 'store', 'themeStore.ts'), 'utf8')
 const DARK = ['signal', 'console', 'slate', 'ember', 'midnight']
 const LIGHT = 'lab'
 const ALL = [...DARK, LIGHT]
-const STATUSES = ['status-passed', 'status-failed', 'status-broken', 'status-skipped', 'status-flaky']
+const STATUSES = ['status-passed', 'status-failed', 'status-broken', 'status-skipped', 'status-flaky', 'status-unknown']
 const WEBFONTS = ['Sora', 'Plus Jakarta Sans', 'Space Grotesk', 'Archivo', 'IBM Plex Mono', 'JetBrains Mono']
 const RETIRED_GREENS = ['#7ce0a0', '#43e0a0', '#3fb950']
 
@@ -171,6 +172,112 @@ for (const file of walk(SRC_DIR)) {
   }
 }
 
+// 6. The chart kit (VIZ-102 / VIZ-103).
+//
+//    a. NO colour literal of any kind under src/components/charts/** — not just
+//       the status hues above. Every chart colour comes from
+//       components/charts/tokens.ts, which reads the per-theme --chart-* /
+//       --status-* tokens; a literal is a colour that ignores the theme
+//       (TrendChart hard-coded its grid, axis and tooltip before this rule).
+//       Test files are scanned too: a fixture colour is written as a token
+//       name or a CSS keyword, never as hex.
+//    b. The ENGINE guards (ADR decision 4), in ./chart-guard.mjs, on a real
+//       TypeScript parse — the regex rule they replace missed 7 of 8 bypasses
+//       in the 2026-09-22 security review:
+//         - IMPORT BOUNDARY over every file in src/ (tests included): a value
+//           import of echarts / zrender / echarts-gl / three is allowed only
+//           under ENGINE_DIRS; `import type` is allowed everywhere.
+//         - OPTION RULES over ENGINE_DIRS, src/components/charts/** and any
+//           file that imports an engines/ module: a formatter is only ever
+//           `formatter: domTooltipFormatter(…)`; no computed/bracket/spread/
+//           Object.assign/defineProperty route around that; no `rich:`
+//           without an allow-list reason. Test files are not scanned for the
+//           option rules; they mock formatters.
+//
+// Every rule runs a SELF-TEST first, against planted violations held in
+// memory: a matcher that silently stopped matching would otherwise turn this
+// into a guard that always passes.
+const CHART_DIR = join(SRC_DIR, 'components', 'charts')
+const COLOUR_LITERAL = [
+  /(?<![\w&])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi,
+  /\b(?:rgba?|hsla?|hwb|oklch|oklab|lch|lab)\s*\(/gi,
+]
+
+function lineOf(text, index) {
+  return text.slice(0, index).split('\n').length
+}
+
+function chartColourViolations(rel, text) {
+  const out = []
+  for (const pattern of COLOUR_LITERAL) {
+    for (const m of text.matchAll(pattern)) {
+      out.push(`${rel}:${lineOf(text, m.index)} has colour literal "${m[0].trim()}" — chart colours come from components/charts/tokens.ts (CHART_VARS / useChartTokens)`)
+    }
+  }
+  return out
+}
+
+function walkAll(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) out.push(...walkAll(full))
+    else if (/\.(ts|tsx)$/.test(entry)) out.push(full)
+  }
+  return out
+}
+
+let selfTestCount = 0
+{
+  const selfTest = []
+  const expectHit = (name, found) => {
+    selfTestCount += 1
+    if (found.length === 0) selfTest.push(`self-test: the planted ${name} was NOT caught`)
+  }
+  const expectClean = (name, found) => {
+    selfTestCount += 1
+    if (found.length !== 0) selfTest.push(`self-test: the clean ${name} was flagged: ${found.join('; ')}`)
+  }
+  expectHit('hex literal', chartColourViolations('planted.tsx', "const grid = '#1e293b'"))
+  expectHit('short hex literal', chartColourViolations('planted.tsx', 'fill="#fff"'))
+  expectHit('rgb() literal', chartColourViolations('planted.tsx', "stroke: 'rgb(12 34 56)'"))
+  expectHit('hsla() literal', chartColourViolations('planted.tsx', "color: 'hsla(210, 10%, 20%, 0.5)'"))
+  expectClean('token reference', chartColourViolations('clean.tsx', "fill={CHART_VARS.grid} stroke=\"var(--chart-axis)\" fill=\"url(#totalGrad)\""))
+  const engine = runSelfTest()
+  selfTestCount += engine.count
+  selfTest.push(...engine.problems)
+  if (selfTest.length) {
+    console.error('Theme token check FAILED (chart-kit guard self-test — the guard itself is broken):')
+    for (const f of selfTest) console.error(`  - ${f}`)
+    process.exit(1)
+  }
+}
+
+let chartFiles = 0
+let engineFiles = 0
+let boundaryFiles = 0
+let optionFiles = 0
+const ENGINE_IMPORT = /\bfrom\s+['"][^'"]*\/engines\/|\bimport\(\s*['"][^'"]*\/engines\//
+for (const file of walkAll(SRC_DIR)) {
+  const rel = file.slice(ROOT.length + 1).split('\\').join('/')
+  const text = readFileSync(file, 'utf8')
+  const isTest = /\.(test|spec)\./.test(file)
+  const inCharts = file.startsWith(CHART_DIR)
+  boundaryFiles += 1
+  fail.push(...importBoundaryViolations(rel, text))
+  if (inCharts) {
+    chartFiles += 1
+    fail.push(...chartColourViolations(rel, text))
+  }
+  if (inEngineDir(rel)) engineFiles += 1
+  if (!isTest && (inCharts || inEngineDir(rel) || ENGINE_IMPORT.test(text))) {
+    optionFiles += 1
+    fail.push(...optionViolations(rel, text))
+  }
+}
+if (chartFiles === 0) fail.push('scanned 0 files under src/components/charts — the chart-kit guard is measuring nothing')
+if (engineFiles === 0) fail.push(`scanned 0 files under ${ENGINE_DIRS.join(', ')} — ENGINE_DIRS no longer matches the tree, so the import boundary allows nothing and guards nothing`)
+
 if (HTML.includes('fonts.googleapis.com/css2')) {
   fail.push('index.html loads Google Fonts again. TestLookup is offline-first: in an air-gapped deployment that request stalls until timeout rather than failing fast.')
 }
@@ -208,4 +315,8 @@ if (fail.length) {
   process.exit(1)
 }
 console.log(`OK — ${ALL.length} themes: status hues unified across ${DARK.length} dark themes, ` +
-  `light palette distinct, system fonts only, no remote font origins, picker swatches match their tokens.`)
+  `light palette distinct, system fonts only, no remote font origins, picker swatches match their tokens; ` +
+  `chart kit (${chartFiles} files): no colour literals; engine packages value-imported only under ` +
+  `${ENGINE_DIRS.join(', ')} (${boundaryFiles} files checked, ${engineFiles} inside); ` +
+  `ECharts options (${optionFiles} files): formatters only via domTooltipFormatter, no rich: ` +
+  `(self-test: ${selfTestCount} cases passed).`)

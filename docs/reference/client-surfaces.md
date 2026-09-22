@@ -205,6 +205,7 @@ path: string
 { path: 'ownership', component: OwnershipEditorPage },
 <Route path="/login" element={<LoginPage />} />
 <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
+<Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
 <Route path="/reset-password" element={<ResetPasswordPage />} />
 <Route path="/*" element={<AppLayout />}>
 <Route key={path} path={path} element={renderLazyRoute(component)} />

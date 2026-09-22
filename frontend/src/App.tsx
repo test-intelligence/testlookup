@@ -140,6 +140,12 @@ const ChatPage = lazy(() => import('@/pages/ChatPage'))
 const ChartGalleryPage = import.meta.env.DEV
   ? reactLazy(() => import('@/pages/dev/ChartGalleryPage'))
   : null
+// `/__primitives` — the UI-primitives gallery (VIZ-109), the subject of
+// `tests/ci-e2e/primitives.spec.ts`. Same DEV-only guard and plain
+// `reactLazy` as the chart gallery above, for the same reasons.
+const PrimitivesPage = import.meta.env.DEV
+  ? reactLazy(() => import('@/pages/dev/PrimitivesPage'))
+  : null
 
 type AppRoute = {
   path: string
@@ -326,6 +332,9 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       {import.meta.env.DEV && ChartGalleryPage && (
         <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
+      )}
+      {import.meta.env.DEV && PrimitivesPage && (
+        <Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
       )}
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />

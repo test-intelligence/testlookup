@@ -1,0 +1,233 @@
+/**
+ * Pure option builder for the heatmap renderer — no ECharts import (types are
+ * erased), so it is unit-testable in jsdom and costs nothing until a heatmap
+ * actually renders.
+ *
+ * Colours come only from resolved chart tokens; the tooltip only from
+ * `domTooltipFormatter` (labels are untrusted CI text). ECharts' own aria label
+ * is OFF: the wrapper in `HeatmapChart` names the chart once, and our summary
+ * describes it (ADR: ECharts' generated text is not useful).
+ *
+ *   - no-data (`null`) cells are drawn by a second series, `no-data`: the card
+ *     colour with a hatch decal in the axis colour. Every ramp step is >= 3:1
+ *     against the card (asserted per theme), so an empty cell can never read as
+ *     the lowest value.
+ *   - `salient`: which end of the value range is the concern. The ramp's most
+ *     salient step (7) goes there — for a pass rate that is the LOW end.
+ *   - the active (keyboard-highlighted) cell: a 2px text-colour outline with a
+ *     card-colour halo, so on any ramp step one of the two rings is >= 3:1.
+ *   - a `status` matrix is coloured by status AND carries each status decal
+ *     (never colour-only).
+ */
+import type { ComposeOption } from 'echarts/core'
+import type { HeatmapSeriesOption } from 'echarts/charts'
+import type {
+  AriaComponentOption,
+  GridComponentOption,
+  TooltipComponentOption,
+  VisualMapComponentOption,
+} from 'echarts/components'
+import type { MatrixChart, VizStatus } from '@/lib/viz/contracts'
+import { decalOf, echartsDecal, STATUS_ENCODING, type ChartTokens } from '../../tokens'
+import { domTooltipFormatter, type TooltipContent } from '../../tooltip'
+import { NO_DATA, formatPlainValue, formatRateValue } from '../../chartText'
+
+export type HeatmapOption = ComposeOption<
+  HeatmapSeriesOption | GridComponentOption | TooltipComponentOption | VisualMapComponentOption | AriaComponentOption
+>
+
+/** A matrix whose cells are numbers (`rate` 0..1 or `count`), `null` = no data. */
+export interface NumericMatrix extends Omit<MatrixChart, 'value_type' | 'cells'> {
+  value_type: 'rate' | 'count'
+  cells: { x: number; y: number; value: number | null; n: number }[]
+}
+
+/** A matrix whose cells are statuses, `null` = no data. */
+export interface StatusMatrix extends Omit<MatrixChart, 'value_type' | 'cells'> {
+  value_type: 'status'
+  cells: { x: number; y: number; value: VizStatus | null; n: number }[]
+}
+
+export type HeatmapMatrix = NumericMatrix | StatusMatrix
+
+/** Which end of the value range is the problem, and so gets the ramp's most salient colour. */
+export type HeatmapSalience = 'low' | 'high'
+
+/** Per metric: a low pass RATE is the concern; a high COUNT (failures, …) is. */
+export function defaultSalient(valueType: NumericMatrix['value_type']): HeatmapSalience {
+  return valueType === 'rate' ? 'low' : 'high'
+}
+
+export const NO_DATA_SERIES_ID = 'no-data'
+
+export interface HeatmapOptionInput {
+  data: HeatmapMatrix
+  tokens: ChartTokens
+  /** Our own one-sentence description for assistive tech (read by the wrapper). */
+  description: string
+  animate?: boolean
+  /** Defaults per metric (`defaultSalient`). Ignored for a status matrix. */
+  salient?: HeatmapSalience
+}
+
+export function formatHeatmapValue(valueType: HeatmapMatrix['value_type'], value: number | VizStatus): string {
+  if (typeof value === 'string') return STATUS_ENCODING[value]?.label ?? value
+  return valueType === 'rate' ? formatRateValue(value) : formatPlainValue(value)
+}
+
+type Cell = HeatmapMatrix['cells'][number]
+
+/**
+ * A cell's tooltip content. The mouse tooltip (via the formatter) and the
+ * keyboard announcement both come from here, so they cannot differ.
+ */
+export function heatmapTooltipContent(data: HeatmapMatrix, cell: Cell): TooltipContent {
+  return {
+    title: data.y_labels[cell.y] ?? '',
+    rows: [
+      { label: data.x_labels[cell.x] ?? '', value: cell.value === null ? NO_DATA : formatHeatmapValue(data.value_type, cell.value) },
+      { label: 'Samples', value: formatPlainValue(cell.n) },
+    ],
+  }
+}
+
+/**
+ * Where cell `index` is drawn, for ECharts' `highlight` / `showTip` actions:
+ * measured cells are series 0 (same index), no-data cells are their position
+ * in the `no-data` series (1).
+ */
+export function heatmapTarget(data: HeatmapMatrix, index: number): { seriesIndex: number; dataIndex: number } {
+  if (data.cells[index]?.value !== null) return { seriesIndex: 0, dataIndex: index }
+  let position = 0
+  for (let i = 0; i < index; i++) if (data.cells[i].value === null) position += 1
+  return { seriesIndex: 1, dataIndex: position }
+}
+
+/** The cell a tooltip is for, recovered from ECharts' params without trusting their shape. */
+function cellOf(params: unknown): { x: number; y: number } | null {
+  const first = Array.isArray(params) ? params[0] : params
+  const value = (first as { value?: unknown } | undefined)?.value
+  if (!Array.isArray(value)) return null
+  const [x, y] = value
+  return typeof x === 'number' && typeof y === 'number' ? { x, y } : null
+}
+
+export function buildHeatmapOption({ data, tokens, animate = false, salient }: HeatmapOptionInput): HeatmapOption {
+  const byCell = new Map<string, Cell>(data.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
+  const empty = data.cells.filter((cell) => cell.value === null)
+
+  const axisLabel = { color: tokens.axis }
+  const axisLine = { lineStyle: { color: tokens.grid } }
+  // Active cell: 2px outline in the text colour + a halo in the card colour.
+  const emphasis = {
+    itemStyle: { borderColor: tokens.text, borderWidth: 2, shadowColor: tokens.card, shadowBlur: 6 },
+  }
+
+  const measuredSeries: HeatmapSeriesOption =
+    data.value_type === 'status'
+      ? {
+          type: 'heatmap',
+          id: 'cells',
+          data: data.cells.map((cell) => {
+            // Undrawn here (the no-data series draws it); kept so dataIndex === cell index.
+            if (cell.value === null) return [cell.x, cell.y, '-']
+            const decal = echartsDecal(cell.value, tokens)
+            return {
+              value: [cell.x, cell.y, 0],
+              itemStyle: { color: tokens.status[cell.value], ...(decal ? { decal } : {}) },
+            }
+          }),
+          itemStyle: { borderColor: tokens.card, borderWidth: 1 },
+          emphasis,
+        }
+      : {
+          type: 'heatmap',
+          id: 'cells',
+          // `null` stays "no data" — ECharts leaves a '-' cell undrawn; the no-data series draws it.
+          data: data.cells.map((cell) => [cell.x, cell.y, cell.value ?? '-']),
+          itemStyle: { borderColor: tokens.card, borderWidth: 1 },
+          emphasis,
+        }
+
+  const series: HeatmapSeriesOption[] = [measuredSeries]
+  if (empty.length > 0) {
+    series.push({
+      type: 'heatmap',
+      id: NO_DATA_SERIES_ID,
+      data: empty.map((cell) => [cell.x, cell.y, 0]),
+      itemStyle: {
+        color: tokens.card,
+        borderColor: tokens.grid,
+        borderWidth: 1,
+        decal: decalOf('diagonal', tokens.axis) ?? undefined,
+      },
+      emphasis,
+    })
+  }
+
+  // ECharts requires EVERY heatmap series to be targeted by a visualMap. The
+  // colour ramp targets the measured numeric series only; the series that are
+  // coloured per item (status cells, no-data cells) get a hidden visualMap
+  // that maps nothing but opacity 1, so their own colours and decals stand.
+  const visualMap: VisualMapComponentOption[] = []
+  const selfColoured: number[] = []
+  if (data.value_type === 'status') selfColoured.push(0)
+  else {
+    let max = 1
+    if (data.value_type === 'count') {
+      // A loop, not Math.max(...spread): a spread past ~100k arguments overflows the stack.
+      for (const cell of data.cells) if (cell.value !== null && cell.value > max) max = cell.value
+    }
+    const direction = salient ?? defaultSalient(data.value_type)
+    visualMap.push({
+      type: 'continuous',
+      id: 'ramp',
+      seriesIndex: 0,
+      min: 0,
+      max,
+      calculable: false,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 0,
+      itemHeight: 120,
+      // Step 7 is the salient end: put it where the problem is.
+      inRange: { color: direction === 'high' ? [...tokens.seq] : [...tokens.seq].reverse() },
+      textStyle: { color: tokens.axis },
+    })
+  }
+  if (empty.length > 0) selfColoured.push(1)
+  if (selfColoured.length > 0) {
+    visualMap.push({
+      type: 'continuous',
+      id: 'self-coloured',
+      show: false,
+      seriesIndex: selfColoured,
+      min: 0,
+      max: 1,
+      inRange: { opacity: 1 },
+      outOfRange: { opacity: 1 },
+    })
+  }
+
+  return {
+    animation: animate,
+    // Off: the wrapper names the chart (once) and the frame's summary describes it.
+    aria: { enabled: false },
+    grid: { top: 8, right: 16, bottom: 56, left: 120 },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: tokens.card,
+      borderColor: tokens.border,
+      textStyle: { color: tokens.text },
+      formatter: domTooltipFormatter((params: unknown) => {
+        const at = cellOf(params)
+        const cell = at ? byCell.get(`${at.x}:${at.y}`) : undefined
+        return cell ? heatmapTooltipContent(data, cell) : { rows: [] }
+      }),
+    },
+    xAxis: { type: 'category', data: data.x_labels, axisLabel, axisLine, splitArea: { show: false } },
+    yAxis: { type: 'category', data: data.y_labels, axisLabel, axisLine, splitArea: { show: false } },
+    visualMap,
+    series,
+  }
+}
