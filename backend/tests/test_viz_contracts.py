@@ -183,6 +183,11 @@ NAMED_RULES = {
     "unique_instance_id",
     # C5
     "unique_dimension",
+    # C6
+    "rate_range",
+    "metric_reason",
+    "comparable_reason",
+    "comparable_measured",
 }
 FIELD_RULES = {
     # C1
@@ -205,6 +210,8 @@ FIELD_RULES = {
     "depth_cap": "path|too_long|",
     "dimension_enum": "path.0.dimension|literal_error|",
     "value_length": "path.0.value|string_too_short|",
+    # C6
+    "comparable_reason_code": "previous.reason_code|literal_error|",
 }
 
 

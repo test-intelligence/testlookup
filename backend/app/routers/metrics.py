@@ -1,5 +1,6 @@
 """Dashboard metrics endpoints."""
 import uuid
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,14 +62,49 @@ DASHBOARD_RELEASE_UNSCOPED: tuple[str, ...] = (
     "active_defects", "flaky_test_count", "new_failures_24h",
 )
 
+#: ``include`` tokens ``/summary`` understands (VIZ-302). Opt-in blocks: a
+#: request that names none pays nothing for them -- no query, and the cache
+#: key and payload the response has always had.
+SUMMARY_INCLUDE_REPORT_METRICS = "report_metrics"
+SUMMARY_INCLUDES: frozenset[str] = frozenset({SUMMARY_INCLUDE_REPORT_METRICS})
+
+
+def summary_includes(values: Optional[list[str]]) -> frozenset[str]:
+    """The known ``include`` tokens in ``values`` (repeated and/or
+    comma-separated; surrounding whitespace and case ignored). An unknown token
+    is ignored, like an unknown query parameter: ``include`` only ever ADDS a
+    block, so a token this server does not know cannot change any field."""
+    tokens = {
+        token.strip().lower()
+        for value in (values or ())
+        for token in str(value).split(",")
+    }
+    return frozenset(tokens & SUMMARY_INCLUDES)
+
 
 @router.get("/summary")
 @analytics_error_contract
 async def dashboard_summary(
     scope: AnalyticsScope = Depends(analytics_scope(METRICS_SCOPE)),
     db: AsyncSession = Depends(get_db),
+    # ``Annotated`` so a direct call (tests, jobs) that omits it gets ``None``,
+    # not FastAPI's ``Query`` object.
+    include: Annotated[
+        Optional[list[str]],
+        Query(description=(
+            "Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the "
+            "report strip's figures (contract C6). Unknown values are ignored."
+        )),
+    ] = None,
 ):
     """Return aggregated KPI metrics for the Executive Dashboard.
+
+    ``include=report_metrics`` (VIZ-302, contract C6) adds the report strip's
+    figures for this window and the previous one -- counts by status, total and
+    average run duration, and ``previous.comparable`` with a reason when a
+    delta would mislead. Unmeasured values are ``null`` with a reason, never 0.
+    OPT-IN: without it the block is not computed, and the response, its SQL
+    and its cache key are exactly what they were before the block existed.
 
     ``release_id`` and ``suite_name`` repeat: OR within a dimension, AND
     across. Every release id is authorised (403/404) before any KPI runs.
@@ -80,7 +116,9 @@ async def dashboard_summary(
     """
     if scope.denied:
         # The historical empty payload, plus the envelope (VIZ-204): it names
-        # no project, so it confirms nothing the empty body did not.
+        # no project, so it confirms nothing the empty body did not. No
+        # ``report_metrics`` either: the strip reads ``meta.measured`` /
+        # ``meta.reason`` and shows every tile unmeasured.
         return {"meta": await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)}
 
     async def _meta() -> dict:
@@ -91,6 +129,7 @@ async def dashboard_summary(
     return await get_dashboard_summary(
         db, scope.project, scope.window_days,
         suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta,
+        report_metrics=SUMMARY_INCLUDE_REPORT_METRICS in summary_includes(include),
     )
 
 

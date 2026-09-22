@@ -1,10 +1,15 @@
 import type { AxiosRequestConfig } from 'axios'
 import { api } from './api'
+import { isScopedFetchActive } from './scopeAbortCore'
 
 type RequestConfig = Omit<AxiosRequestConfig, 'data' | 'method' | 'url'>
 
 export function getData<T>(url: string, config?: RequestConfig): Promise<T> {
-  return api.get<T>(url, config).then(({ data }) => data)
+  // Inside a scoped hook's SWR fetcher (`scopedFetch`), opt the read into
+  // superseded-scope aborting (services/scopeAbort.ts). Anywhere else the
+  // config is passed through untouched.
+  const effective = isScopedFetchActive() ? { ...config, scopeTracked: true } : config
+  return api.get<T>(url, effective).then(({ data }) => data)
 }
 
 export function postData<TResponse, TBody = unknown>(

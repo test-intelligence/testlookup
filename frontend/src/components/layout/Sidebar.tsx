@@ -10,7 +10,7 @@ import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { useAIConfig } from '@/hooks/useAIConfig'
-import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailures'
+import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailuresCountUnscoped'
 import AppLogo from '@/components/ui/AppLogo'
 import AppVersionBadge from '@/components/layout/AppVersionBadge'
 

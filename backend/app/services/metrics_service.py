@@ -178,6 +178,7 @@ async def get_dashboard_summary(
     suite_name: SuiteArg = None,
     release_id: ReleaseArg = None,
     meta_builder: Optional[Callable[[], Awaitable[dict]]] = None,
+    report_metrics: bool = False,
 ) -> dict:
     """Compute all Executive Dashboard KPIs for a project.
 
@@ -191,6 +192,15 @@ async def get_dashboard_summary(
     ``schema=META_SCHEMA_VERSION``: an old entry is never served after a
     deploy. On a hit only ``meta.generated_at`` is refreshed; ``as_of`` stays
     the moment the numbers were read.
+
+    VIZ-302 (E3): ``report_metrics=True`` adds the ``report_metrics`` block
+    (contract C6, ``report_metrics_service``) -- the strip's counts, durations
+    and the previous period with ``comparable`` -- over the same scope. Every
+    existing key is unchanged. The key then carries
+    ``metrics=REPORT_METRICS_SCHEMA_VERSION`` (conditional, like ``schema``),
+    so an entry cached before the block existed, or in an older shape of it,
+    is never served as the new shape; a hit that lacks the block anyway is
+    treated as a miss.
     """
     from app.services.cache_service import (
         CACHE_TTL_DASHBOARD,
@@ -234,12 +244,19 @@ async def get_dashboard_summary(
         # Conditional, like ``release`` above: a caller without ``meta`` keeps
         # the pre-VIZ-204 key and payload shape.
         release_key["schema"] = META_SCHEMA_VERSION
+    if report_metrics:
+        from app.services.report_metrics_service import REPORT_METRICS_SCHEMA_VERSION
+
+        release_key["metrics"] = REPORT_METRICS_SCHEMA_VERSION
     # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
     epoch = await get_analytics_epoch(project_id)
     cached: dict[str, Any] | None = await cache_get(
         "dashboard_summary_v2", project_id, epoch=epoch,
         days=days, suite=suite_key or "", **release_key
     )
+    if cached is not None and report_metrics and not isinstance(cached.get("report_metrics"), dict):
+        # Never serve a payload without the block as the shape that has it.
+        cached = None
     if cached is not None:
         if meta_builder is not None and isinstance(cached.get("meta"), dict):
             from app.services.analytics_meta import refreshed
@@ -452,6 +469,12 @@ async def get_dashboard_summary(
     }
     if meta_builder is not None:
         result_dict["meta"] = await meta_builder()
+    if report_metrics:
+        from app.services import report_metrics_service
+
+        result_dict["report_metrics"] = await report_metrics_service.build_report_metrics(
+            db, project_id, days, suite_filter, release_filter, now=now,
+        )
 
     # P3-6: Cache the result for subsequent requests
     await cache_set(

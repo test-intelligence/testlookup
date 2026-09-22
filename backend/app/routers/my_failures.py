@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Annotated, Any, Optional, cast
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -36,9 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import (
     get_current_active_user,
     get_db,
-    resolve_release_query_scope,
 )
-from app.core.release_filter import release_predicate
+from app.core.release_filter import UNATTRIBUTED, release_predicate
 from app.models.postgres import (
     Project,
     TestCase,
@@ -49,6 +48,12 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import MyFailureItem, MyFailureListResponse, TriageStatusUpdate
+from app.models.viz_contracts import MAX_RELEASES, MAX_SUITE_NAME_LENGTH, MAX_SUITES
+from app.services.analytics_scope import (
+    effective_suite_clause,
+    parse_suite_filter,
+    resolve_release_query_scope_list,
+)
 from app.services.failed_test_reassignment_service import (
     ReassignmentError,
     get_reassignment_options,
@@ -88,6 +93,27 @@ def _live_projects_only():
     )
 
 
+#: VIZ-303: ``release_id`` and ``suite_name`` repeat, OR within. ``Annotated``
+#: so a direct call (tests, jobs) that omits one gets ``None``, not FastAPI's
+#: ``Query`` object. Both endpoints describe them in the same words.
+_RELEASE_REPEATABLE = (
+    f"Repeatable (OR, at most {MAX_RELEASES}): a release UUID or '{UNATTRIBUTED}'."
+)
+_SuiteParam = Annotated[
+    Optional[list[str]],
+    Query(description=(
+        f"Only failures in these suites (effective suite, case-insensitive). "
+        f"Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters."
+    )),
+]
+
+
+def _suite_predicate(suites) -> list:
+    """The effective-suite clause as a splat-able list: ``[]`` for no suite."""
+    clause = effective_suite_clause(suites)
+    return [] if clause is None else [clause]
+
+
 def _parse_project_id(raw: Optional[str]) -> Optional[uuid.UUID]:
     """Honour the All-Projects sentinel — ``"all"`` and empty both mean unscoped."""
     if not raw or raw == "all":
@@ -105,9 +131,11 @@ def _parse_project_id(raw: Optional[str]) -> Optional[uuid.UUID]:
 async def list_my_assigned_failures(
     project_id: Optional[str] = Query(None, description='Project UUID or "all"'),
     days: int = Query(30, ge=1, le=365, description="Time window (created_at)"),
-    release_id: Optional[str] = Query(
-        None, description="Only failures from runs in this release."
-    ),
+    release_id: Annotated[
+        Optional[list[str]],
+        Query(description="Only failures from runs in this release. " + _RELEASE_REPEATABLE),
+    ] = None,
+    suite_name: _SuiteParam = None,
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
     scope: str = Query(
@@ -133,8 +161,14 @@ async def list_my_assigned_failures(
     """
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    # C1 first (no database): a bad or 51st suite is a 422 ``suite_name_length``
+    # / ``suite_cap`` with the analytics error body.
+    suites = parse_suite_filter(suite_name)
     # Access-checked and sentinel-aware, like every other release-scoped read.
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    # One id is the legacy ``resolve_release_query_scope`` call; several are
+    # each authorised (one forbidden id is a 403 and no rows for the others).
+    # The service argument (``None``, one id, or a tuple) replaces the raw list.
+    release_id = cast(Any, await resolve_release_query_scope_list(db, current_user, release_id))
 
     # Team scope is only honoured for QA_LEAD / ADMIN. Anyone else
     # silently falls back to ``mine`` so the URL can't be tampered with
@@ -195,6 +229,10 @@ async def list_my_assigned_failures(
     # differently, which is the "one response, two scopes" defect this epic
     # produced twice elsewhere.
     base_filters.extend(release_predicate(release_id))
+    # The suite axis, same list for the same reason: a failure row is in a
+    # suite by its EFFECTIVE suite (a live-stream run's label, else the row's
+    # own), the rule every report figure uses. Nothing when none is asked.
+    base_filters.extend(_suite_predicate(suites))
 
     if scoped_project_id is not None:
         base_filters.append(TestRun.project_id == scoped_project_id)
@@ -350,9 +388,11 @@ async def list_my_assigned_failures(
 async def my_assigned_failures_count(
     project_id: Optional[str] = Query(None),
     days: int = Query(30, ge=1, le=365),
-    release_id: Optional[str] = Query(
-        None, description="Only failures from runs in this release."
-    ),
+    release_id: Annotated[
+        Optional[list[str]],
+        Query(description="Only failures from runs in this release. " + _RELEASE_REPEATABLE),
+    ] = None,
+    suite_name: _SuiteParam = None,
     scope: str = Query("mine", pattern="^(mine|team)$"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -366,8 +406,10 @@ async def my_assigned_failures_count(
     """
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
-    # Access-checked and sentinel-aware, exactly as the list endpoint does it.
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    # Parsed and access-checked exactly as the list endpoint does it.
+    suites = parse_suite_filter(suite_name)
+    # The service argument (``None``, one id, or a tuple) replaces the raw list.
+    release_id = cast(Any, await resolve_release_query_scope_list(db, current_user, release_id))
 
     effective_scope = scope
     if scope == "team" and current_user.role not in (
@@ -425,6 +467,7 @@ async def my_assigned_failures_count(
     # `release_predicate` contributes nothing when no release is selected, so
     # the badge's SQL is byte-identical for every existing caller.
     filters.extend(release_predicate(release_id))
+    filters.extend(_suite_predicate(suites))
     if scoped_project_id is not None:
         filters.append(TestRun.project_id == scoped_project_id)
     elif allowed_project_ids is not None:

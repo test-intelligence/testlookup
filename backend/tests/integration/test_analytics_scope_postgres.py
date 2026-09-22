@@ -717,6 +717,11 @@ async def test_single_release_trend_uses_the_project_release_index_under_a_gener
     # index; a custom plan would fold the NULL test away and hide the loss.
     conn = await asyncpg.connect(_env("TESTLOOKUP_POSTGRES_TEST_DSN").replace("+asyncpg", ""))
     try:
+        # The throwaway database is emptied between runs, so autovacuum may have
+        # recorded ``test_runs`` at 0 rows; with no statistics the planner's
+        # index choice is a coin toss. Fresh statistics make the plan a property
+        # of the query, which is what this test asserts.
+        await conn.execute("ANALYZE test_runs")
         await conn.execute("SET plan_cache_mode = force_generic_plan")
         await conn.execute("SET enable_seqscan = off")
         await conn.execute(f"PREPARE vizscope_plan AS {statement}")

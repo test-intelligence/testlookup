@@ -74,6 +74,7 @@ import {
   daysBetweenDayIso, formatDayIso, relativeDayLabel, shiftDayIso, utcDayIso,
 } from '@/utils/calendarDay'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
@@ -1544,9 +1545,10 @@ export default function TrendsPage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
-  const [selectedSuite, setSelectedSuite] = useState('')
+  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
+  // suite store with it on — see usePageSuiteFilter.
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
   const analyticsView = useAnalyticsView('trends')
-  const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
   // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
@@ -1560,7 +1562,7 @@ export default function TrendsPage() {
   const { data: dashSummary }                              = useDashboardSummary(days, suiteFilter)
   const { data: coverageData }                             = useCoverage(days, suiteFilter)
   const { data: flakyData }                                = useFlakyTests(days, suiteFilter)
-  const { data: latestRuns }                               = useRuns({ page: 1, size: 1, days, ...(selectedSuite && { suite_name: selectedSuite }) })
+  const { data: latestRuns }                               = useRuns({ page: 1, size: 1, days, ...(suiteFilter && { suite_name: suiteFilter }) })
 
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
   const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
@@ -1718,11 +1720,11 @@ export default function TrendsPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Project</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {selectedSuite && (
+            {suiteLabel && (
               <>
                 <span aria-hidden>·</span>
                 <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
               </>
             )}
             <span aria-hidden>·</span>
@@ -1747,6 +1749,7 @@ export default function TrendsPage() {
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
+            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

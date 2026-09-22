@@ -28,6 +28,7 @@ vi.mock('recharts', () => {
     Tooltip: () => <div />,
     Legend: () => <div />,
     Cell: () => <div />,
+    PolarAngleAxis: () => <div />,
     Line: mark,
     Area: mark,
     Bar: mark,

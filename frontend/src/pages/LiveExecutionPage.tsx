@@ -46,6 +46,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
 import { useLiveExecution, computeLiveStats } from '@/hooks/useLiveExecution'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
@@ -570,7 +571,9 @@ export default function LiveExecutionPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   // In All Projects mode, pass undefined so polling returns all sessions
   const projectId = isAllProjects ? undefined : selectedProject?.id?.toString()
-  const [selectedSuite, setSelectedSuite] = useState('')
+  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
+  // suite store with it on — see usePageSuiteFilter.
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
   // Cutoff (in days) for completed sessions shown alongside the always-current
   // active set. 1 = last 24 hours; 0 = no cutoff. Sourced from the
   // shared user-level preference so selecting "24h" here propagates to
@@ -585,7 +588,12 @@ export default function LiveExecutionPage() {
     recentEvents: rawRecentEvents,
     wsStatus,
     isLoading,
-  } = useLiveExecution(projectId, selectedSuite || null, days)
+    // The SETTLED suite scope (250 ms after the last change, VIZ-303): one
+    // suite is the scalar `suite_name` it always was, several a repeated
+    // `suite_name` — filtered server-side, so the completed-session cap cannot
+    // drop matching sessions. The memos below still narrow the WebSocket
+    // events, which arrive unfiltered. Flag off: the page-local suite.
+  } = useLiveExecution(projectId, suiteFilter, days)
 
   const [sortField, setSortField] = useState<SortField>('started_at')
   const [sortDir,   setSortDir]   = useState<SortDir>('desc')
@@ -597,22 +605,24 @@ export default function LiveExecutionPage() {
   const { options: suiteOptions } = useSuiteOptions(7)
 
   const recentEvents = useMemo(() => {
-    if (!selectedSuite) return rawRecentEvents
+    if (suiteNames.length === 0) return rawRecentEvents
+    const matchesAny = (value: string | null | undefined) =>
+      suiteNames.some(name => suiteMatchesValue(value, name))
     const visibleRunIds = new Set(
       sessions
-        .filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
+        .filter(s => matchesAny(s.suite_name))
         .map(s => s.run_id),
     )
     return rawRecentEvents.filter(event =>
-      suiteMatchesValue(event.suite_name, selectedSuite)
+      matchesAny(event.suite_name)
       || (event.run_id ? visibleRunIds.has(event.run_id) : false),
     )
-  }, [rawRecentEvents, selectedSuite, sessions])
+  }, [rawRecentEvents, suiteNames, sessions])
 
   const suiteScopedSessions = useMemo(() => {
-    if (!selectedSuite) return sessions
-    return sessions.filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
-  }, [sessions, selectedSuite])
+    if (suiteNames.length === 0) return sessions
+    return sessions.filter(s => suiteNames.some(name => suiteMatchesValue(s.suite_name, name)))
+  }, [sessions, suiteNames])
   // A run is "active" only when it's still emitting telemetry. A run that
   // stops sending events stays as ``status='running'`` in the DB until the
   // 10-min reaper picks it up — those sessions are kept visible (with an
@@ -907,9 +917,9 @@ export default function LiveExecutionPage() {
                 {selectedProject.name}
               </span>
             )}
-            {selectedSuite && (
+            {suiteLabel && (
               <span className="font-mono text-[10px] px-2 py-0.5 rounded-full border bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-muted)]">
-                {selectedSuite}
+                {suiteLabel}
               </span>
             )}
           </div>
@@ -921,6 +931,7 @@ export default function LiveExecutionPage() {
           <LiveWindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
+            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

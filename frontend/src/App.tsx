@@ -146,6 +146,11 @@ const ChartGalleryPage = import.meta.env.DEV
 const PrimitivesPage = import.meta.env.DEV
   ? reactLazy(() => import('@/pages/dev/PrimitivesPage'))
   : null
+// `/__report-context` — the report chrome gallery (VIZ-301..305), the subject
+// of `tests/ci-e2e/report-context.spec.ts`. Same DEV-only guard.
+const ReportContextPage = import.meta.env.DEV
+  ? reactLazy(() => import('@/pages/dev/ReportContextPage'))
+  : null
 
 type AppRoute = {
   path: string
@@ -335,6 +340,9 @@ export default function App() {
       )}
       {import.meta.env.DEV && PrimitivesPage && (
         <Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
+      )}
+      {import.meta.env.DEV && ReportContextPage && (
+        <Route path="/__report-context" element={renderLazyRoute(ReportContextPage)} />
       )}
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />

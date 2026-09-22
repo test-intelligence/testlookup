@@ -34,8 +34,9 @@ check: every rule id listed here must have at least one `invalid/` fixture.
    `1.0` — JavaScript cannot tell it from `1`, so only the backend can catch it) and at most
    2⁵³ − 1 (`safe_integer`), so JavaScript reads it exactly. "Count" means every field typed
    `int` below: `n`, `totals.*`, `includes_in_progress`, `truncated_total`, `schema_version`,
-   `version`, the envelope's `scope.window.days`, matrix `x`/`y`, and matrix `value` when
-   `value_type` is `count`. Two refinements keep the ids unambiguous:
+   `version`, the envelope's `scope.window.days`, matrix `x`/`y`, matrix `value` when
+   `value_type` is `count`, and every C6 period count (`runs` … `duration_runs`, `window.days`).
+   Two refinements keep the ids unambiguous:
    - The **C1 scope** `window.days` is not covered here: every bad value there (fraction, 0,
      366, 2⁵³) reports `window_days_range`.
    - Matrix `x`/`y` below 0 report `non_negative`; `cell_index_range` is for an index ≥ 0 that
@@ -172,6 +173,40 @@ describes what is **written** from now on, and is not applied to legacy rows on 
 | `dimension_enum` | `day, week, project, release, suite, status, failure_category, branch, environment, ingestion_source, test, error_signature` |
 | `value_length` | 1–2 000 characters. |
 | `status_vocab` | When `dimension` is `status`, `value` ∈ `passed, failed, broken, skipped, unknown`. |
+
+## C6 · Report metrics — `fixtures/report_metrics`
+
+The additive, **opt-in** `report_metrics` object on `GET /api/v1/metrics/summary`: present
+only when the request carries `include=report_metrics` (repeatable or comma-separated;
+unknown tokens are ignored). Without it the block is not computed and the response, its
+SQL and its cache key are exactly those of the endpoint before the block existed; a client
+that wants the block must ask for it. It holds the numbers the
+report metrics strip (VIZ-302) shows, for the current window and the one before it, computed
+over the SAME scope and basis as the endpoint's existing fields (`total_executions_7d`,
+`avg_pass_rate_7d`, `avg_duration_ms` keep their shapes and values). Counts are
+run-aggregate test executions (`pass_rate_basis` `executions`); under a suite filter a run
+contributes its rows in the suite by effective suite, or its run totals while its rows have
+not landed. Durations are run wall-clock (`test_runs.duration_ms`) of the runs in scope.
+
+A **period** is `{runs, total_tests, passed, failed, broken, skipped, unknown, pass_rate,
+total_duration_ms, avg_duration_ms, duration_runs, reasons, window}`. `unknown` is the tests
+with no verdict (`total_tests` minus the four statuses, per run, never below 0).
+`duration_runs` is how many of `runs` reported a duration, so a partial total is visible.
+`window` is `{from, to, days}` (`YYYY-MM-DD`, UTC).
+
+| Field | Type | Rule id | Rule |
+|---|---|---|---|
+| all fields below | | `required_field` | Every key is required, in both periods; a nullable one is sent as `null`, never left out. |
+| `schema_version` | int ≥ 1 | | |
+| `pass_rate_basis` | `"executions"` \| `"unique_tests"` | | The population the counts and the rate are over. |
+| `current`, `previous` | period | | `previous` is the window of the same length ending where `current` starts. |
+| period counts | int \| `null` | `non_negative`, `integer_count`, `safe_integer` | Change rule 3. A value that was not measured is `null`, never `0`. |
+| period `pass_rate` | number \| `null` | `rate_range` | 0–100: passed over evaluated (passed + failed + broken). `null` when nothing was evaluated. |
+| period `reasons` | `{metric: string}` | `metric_reason` | Every metric that is `null` has a reason under its own name with a non-whitespace character. |
+| `previous.comparable` | bool | `comparable_reason` | `false` carries a non-blank `reason` and a `reason_code`; `true` carries neither (both `null`). |
+| | | `comparable_measured` | `true` only when both periods have runs (`runs` ≥ 1). A delta is drawn only when `true`. |
+| `previous.reason_code` | string \| `null` | `comparable_reason_code` | `no_data`, `partial_window`, `different_basis`, `not_measured` |
+| `previous.reason` | string \| `null` | | Human text for the code: the previous window has no runs; the scope's history starts inside it (no run in the scope in the 90 days before the previous window opens -- a bounded lookback, so a scope silent for longer reads as starting there); one period counts whole-run totals where the other counts suite rows; the current window has no runs. |
 
 ## Feature flags — `flags.json`
 

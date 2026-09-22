@@ -66,6 +66,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { formatCompactWithExact, truncateMiddle } from '@/utils/formatters'
@@ -99,6 +100,10 @@ export interface MultiSelectProps {
   className?: string
   /** Hook for tests and the gallery. */
   'data-testid'?: string
+  /** The trigger button, for a caller that must move focus to it (a dismissed notice). */
+  triggerRef?: RefObject<HTMLButtonElement | null>
+  /** `data-*` attributes for the trigger button (`data-report-filter="release"`). */
+  triggerData?: Record<`data-${string}`, string>
 }
 
 /** A listed row: an option, or a selected value that is not among the options. */
@@ -159,6 +164,8 @@ export default function MultiSelect({
   filterPlaceholder = 'Filter…',
   className = '',
   'data-testid': testId,
+  triggerRef: externalTriggerRef,
+  triggerData,
 }: MultiSelectProps) {
   const baseId = useId()
   const popoverId = `${baseId}-popover`
@@ -166,7 +173,14 @@ export default function MultiSelect({
   const reasonId = `${baseId}-reason`
   const optionId = (position: number) => `${baseId}-option-${position}`
 
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const setTriggerNode = useCallback(
+    (node: HTMLButtonElement | null) => {
+      triggerRef.current = node
+      if (externalTriggerRef) externalTriggerRef.current = node
+    },
+    [externalTriggerRef],
+  )
   const popoverRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -312,16 +326,33 @@ export default function MultiSelect({
     popover.style.top = `${top}px`
   }, [])
 
+  /**
+   * Whether the list REALLY scrolls, measured after positioning. The row count
+   * alone (`scrollable`) misses the common case: a popover capped by the room
+   * below its trigger shrinks the list (flex) under ten rows, and a region that
+   * scrolls with nothing focusable inside is unreachable from the keyboard
+   * (axe scrollable-region-focusable) — the options are not focusable, the
+   * field keeps focus via aria-activedescendant.
+   */
+  const [overflowing, setOverflowing] = useState(false)
+  const measureOverflow = useCallback(() => {
+    const node = scrollerRef.current
+    setOverflowing(node !== null && node.scrollHeight > node.clientHeight + 1)
+  }, [])
+
   useLayoutEffect(() => {
     if (!open) return
     reposition()
+    measureOverflow()
     inputRef.current?.focus()
-  }, [open, reposition])
+  }, [open, reposition, measureOverflow])
 
   // Size changes (show more, filtering) can require a flip.
   useLayoutEffect(() => {
-    if (open) reposition()
-  }, [open, visible.length, reposition])
+    if (!open) return
+    reposition()
+    measureOverflow()
+  }, [open, visible.length, reposition, measureOverflow])
 
   useEffect(() => {
     if (!open) return
@@ -331,7 +362,11 @@ export default function MultiSelect({
       reposition()
     }
     window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', reposition)
+    const onResize = () => {
+      reposition()
+      measureOverflow()
+    }
+    window.addEventListener('resize', onResize)
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node
       if (triggerRef.current?.contains(target)) return // the trigger toggles itself
@@ -341,10 +376,10 @@ export default function MultiSelect({
     document.addEventListener('mousedown', onPointerDown)
     return () => {
       window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', reposition)
+      window.removeEventListener('resize', onResize)
       document.removeEventListener('mousedown', onPointerDown)
     }
-  }, [open, reposition, close])
+  }, [open, reposition, close, measureOverflow])
 
   // Keep the active option in view (non-windowed lists; windowed ones scroll in moveTo).
   useEffect(() => {
@@ -505,7 +540,8 @@ export default function MultiSelect({
 
   const trigger = (
     <button
-      ref={triggerRef}
+      ref={setTriggerNode}
+      {...triggerData}
       type="button"
       aria-haspopup="dialog"
       // Spelled out: a badge's bare "2" concatenates into "Release2".
@@ -625,10 +661,14 @@ export default function MultiSelect({
               // A region that scrolls must be reachable without a mouse (axe
               // scrollable-region-focusable): the options themselves are not
               // focusable — the field keeps focus — so the scroller is a tab stop
-              // whenever it has more rows than it shows.
-              tabIndex={scrollable ? 0 : undefined}
-              role={scrollable ? 'group' : undefined}
-              aria-label={scrollable ? `${label} list` : undefined}
+              // whenever it has more rows than it shows: by row count, or as
+              // MEASURED once the popover is placed (a capped popover shrinks
+              // the list). From the field, ArrowUp/Down scroll the active
+              // option into view instead (the effect below).
+              tabIndex={scrollable || overflowing ? 0 : undefined}
+              role={scrollable || overflowing ? 'group' : undefined}
+              aria-label={scrollable || overflowing ? `${label} list` : undefined}
+              data-scrolls={scrollable || overflowing ? 'true' : undefined}
               onMouseDown={(event) => event.preventDefault() /* keep focus in the field */}
               onScroll={windowed ? (event) => onWindowedScroll(event.currentTarget) : undefined}
               className={`shrink overflow-y-auto overscroll-contain rounded ${FOCUS_RING}`}

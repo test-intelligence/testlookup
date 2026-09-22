@@ -628,3 +628,40 @@ describe('MultiSelect — controlled edge cases (review fix 11)', () => {
     expect(error.mock.calls.filter(([m]) => String(m).includes('same key'))).toEqual([])
   })
 })
+
+describe('MultiSelect — a list that really scrolls is keyboard-reachable (E3 fix round B, m6)', () => {
+  /** jsdom lays nothing out: pretend the placed popover squeezed the list to 200 px. */
+  function squeezeScroller() {
+    const isScroller = (el: Element) => el.hasAttribute('data-multiselect-scroller')
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return isScroller(this) ? 320 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return isScroller(this) ? 200 : 0
+    })
+  }
+
+  it('ten rows (not "scrollable" by count) squeezed by the popover: the scroller becomes a named tab stop', () => {
+    squeezeScroller()
+    render(<Harness />)
+    openWithKeyboard()
+    const scroller = document.querySelector('[data-multiselect-scroller]') as HTMLElement
+    expect(options()).toHaveLength(10)
+    expect(scroller).toHaveAttribute('tabindex', '0')
+    expect(scroller).toHaveAttribute('role', 'group')
+    expect(scroller).toHaveAccessibleName('Release list')
+  })
+
+  it('ten rows with room to show them all: no extra tab stop', () => {
+    render(<Harness />)
+    openWithKeyboard()
+    expect(document.querySelector('[data-multiselect-scroller]')).not.toHaveAttribute('tabindex')
+  })
+
+  it('passes data-* attributes and a ref to the trigger', () => {
+    const ref = { current: null as HTMLButtonElement | null }
+    render(<Harness triggerRef={ref} triggerData={{ 'data-report-filter': 'release' }} />)
+    expect(ref.current).toBe(trigger())
+    expect(trigger()).toHaveAttribute('data-report-filter', 'release')
+  })
+})

@@ -1,5 +1,5 @@
 /**
- * Visualization contracts C1–C5 — types plus hand-written runtime guards.
+ * Visualization contracts C1–C6 — types plus hand-written runtime guards.
  *
  * The spec is `contracts/viz/README.md` at the repo root. The fixtures beside it
  * are checked by this module (`contracts.test.ts`) AND by the backend's Pydantic
@@ -1211,6 +1211,145 @@ export const validateDrillPath = guard<DrillPath>((input, fail) => {
   }
 })
 
+// ── C6 · Report metrics ───────────────────────────────────────────────────
+
+/** A period's metrics, in the strip's order. `null` = not measured. */
+export const REPORT_METRIC_KEYS = [
+  'runs',
+  'total_tests',
+  'passed',
+  'failed',
+  'broken',
+  'skipped',
+  'unknown',
+  'pass_rate',
+  'total_duration_ms',
+  'avg_duration_ms',
+  'duration_runs',
+] as const
+export type ReportMetricKey = (typeof REPORT_METRIC_KEYS)[number]
+
+export const COMPARABLE_REASON_CODES = [
+  'no_data',
+  'partial_window',
+  'different_basis',
+  'not_measured',
+] as const
+export type ComparableReasonCode = (typeof COMPARABLE_REASON_CODES)[number]
+
+export type MetricsPeriod = { [K in ReportMetricKey]: number | null } & {
+  reasons: Partial<Record<ReportMetricKey, string>>
+  window: { from: string; to: string; days: number }
+}
+
+export interface ReportMetrics {
+  schema_version: number
+  pass_rate_basis: 'executions' | 'unique_tests'
+  current: MetricsPeriod
+  previous: MetricsPeriod & {
+    comparable: boolean
+    reason: string | null
+    reason_code: ComparableReasonCode | null
+  }
+}
+
+/** One period; returns its `runs` when that is a valid count. */
+function checkMetricsPeriod(period: unknown, where: string, fail: Fail): number | null {
+  if (!isDict(period)) {
+    fail('invalid_type', `${where} must be an object, got ${show(period)}`)
+    return null
+  }
+  const prefix = `${where}.`
+  let runs: number | null = null
+  for (const key of REPORT_METRIC_KEYS) {
+    if (!has(period, key, prefix, fail) || period[key] === null) continue
+    if (key === 'pass_rate') {
+      const rate = period[key]
+      if (!isNumber(rate)) fail('invalid_type', `${prefix}pass_rate must be a number, got ${show(rate)}`)
+      else if (rate < 0 || rate > 100) fail('rate_range', `${prefix}pass_rate ${rate} is not within 0–100`)
+      continue
+    }
+    const value = count(period[key], `${prefix}${key}`, fail)
+    if (key === 'runs') runs = value
+  }
+  if (has(period, 'reasons', prefix, fail)) {
+    const reasons = period.reasons
+    if (!isDict(reasons)) {
+      fail('invalid_type', `${prefix}reasons must be an object, got ${show(reasons)}`)
+    } else {
+      for (const [key, reason] of Object.entries(reasons)) {
+        if (typeof reason !== 'string') {
+          fail('invalid_type', `${prefix}reasons.${key} must be a string, got ${show(reason)}`)
+        }
+      }
+      for (const key of REPORT_METRIC_KEYS) {
+        const reason = Object.prototype.hasOwnProperty.call(reasons, key) ? reasons[key] : undefined
+        if (period[key] === null && (typeof reason !== 'string' || isBlank(reason))) {
+          fail('metric_reason', `${prefix}${key} is null, so ${prefix}reasons.${key} must say why`)
+        }
+      }
+    }
+  }
+  if (has(period, 'window', prefix, fail)) {
+    const window = period.window
+    if (!isDict(window)) {
+      fail('invalid_type', `${prefix}window must be an object, got ${show(window)}`)
+    } else {
+      for (const key of ['from', 'to']) {
+        if (has(window, key, `${prefix}window.`, fail) && dayNumber(window[key]) === null) {
+          fail('invalid_value', `${prefix}window.${key} ${show(window[key])} is not a YYYY-MM-DD day`)
+        }
+      }
+      requireCount(window, 'days', `${prefix}window.`, fail)
+    }
+  }
+  return runs
+}
+
+export const validateReportMetrics = guard<ReportMetrics>((input, fail) => {
+  if (!isDict(input)) {
+    fail('invalid_type', `report_metrics must be an object, got ${show(input)}`)
+    return
+  }
+  const schemaVersion = requireCount(input, 'schema_version', '', fail)
+  if (schemaVersion !== null && schemaVersion < 1) {
+    fail('invalid_value', `schema_version ${schemaVersion} < 1`)
+  }
+  requireEnum(input, 'pass_rate_basis', PASS_RATE_BASES, 'invalid_value', '', fail)
+  const currentRuns = has(input, 'current', '', fail)
+    ? checkMetricsPeriod(input.current, 'current', fail)
+    : null
+  if (!has(input, 'previous', '', fail)) return
+  const previous = input.previous
+  const previousRuns = checkMetricsPeriod(previous, 'previous', fail)
+  if (!isDict(previous)) return
+  requireBoolean(previous, 'comparable', 'previous.', fail)
+  const hasReason = has(previous, 'reason', 'previous.', fail)
+  const hasCode = has(previous, 'reason_code', 'previous.', fail)
+  if (!hasReason || !hasCode) return
+  const { comparable, reason, reason_code: code } = previous
+  if (reason !== null && typeof reason !== 'string') {
+    fail('invalid_type', `previous.reason must be a string or null, got ${show(reason)}`)
+    return
+  }
+  if (code !== null && !oneOf(COMPARABLE_REASON_CODES, code)) {
+    fail(
+      'comparable_reason_code',
+      `previous.reason_code ${show(code)} is not one of ${COMPARABLE_REASON_CODES.join(', ')}`,
+    )
+    return
+  }
+  if (comparable === true) {
+    if (reason !== null || code !== null) {
+      fail('comparable_reason', 'a comparable period carries no reason and no reason_code')
+    } else if (!((currentRuns ?? 0) >= 1 && (previousRuns ?? 0) >= 1)) {
+      fail('comparable_measured', 'comparable is true only when both periods have runs')
+    }
+  } else if (comparable === false && (reason === null || isBlank(reason) || code === null)) {
+    fail('comparable_reason', 'a period that is not comparable needs a reason and a reason_code')
+  }
+})
+
 // ── Dispatch by fixture folder ────────────────────────────────────────────
 
 const VALIDATORS = {
@@ -1219,6 +1358,7 @@ const VALIDATORS = {
   chart_series: validateChartSeries,
   widget_config: validateWidgetConfig,
   drill_path: validateDrillPath,
+  report_metrics: validateReportMetrics,
 } as const
 
 /** Contract names — the folder names under `contracts/viz/fixtures/`. */
@@ -1231,6 +1371,7 @@ export interface ContractTypes {
   chart_series: ChartSeries
   widget_config: WidgetConfig
   drill_path: DrillPath
+  report_metrics: ReportMetrics
 }
 
 export function validateContract<K extends ContractKind>(

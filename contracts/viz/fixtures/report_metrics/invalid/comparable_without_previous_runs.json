@@ -1,0 +1,53 @@
+{
+  "description": "A delta against a period with no runs is not a comparison.",
+  "violates": "comparable_measured",
+  "payload": {
+    "schema_version": 1,
+    "pass_rate_basis": "executions",
+    "current": {
+      "runs": 5,
+      "total_tests": 60,
+      "passed": 50,
+      "failed": 5,
+      "broken": 2,
+      "skipped": 3,
+      "unknown": 0,
+      "pass_rate": 87.7,
+      "total_duration_ms": 600000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 5,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-12",
+        "to": "2026-09-19",
+        "days": 7
+      }
+    },
+    "previous": {
+      "runs": 0,
+      "total_tests": 0,
+      "passed": 0,
+      "failed": 0,
+      "broken": 0,
+      "skipped": 0,
+      "unknown": 0,
+      "pass_rate": null,
+      "total_duration_ms": null,
+      "avg_duration_ms": null,
+      "duration_runs": 0,
+      "reasons": {
+        "pass_rate": "Nothing was evaluated.",
+        "total_duration_ms": "No run recorded a duration.",
+        "avg_duration_ms": "No run recorded a duration."
+      },
+      "window": {
+        "from": "2026-09-05",
+        "to": "2026-09-12",
+        "days": 7
+      },
+      "comparable": true,
+      "reason": null,
+      "reason_code": null
+    }
+  }
+}

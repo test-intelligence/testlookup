@@ -27,8 +27,9 @@ export default defineConfig({
       output: {
         // vite 8 bundles with rolldown, which only accepts the function form
         // of manualChunks (the object form fails the build with "manualChunks
-        // is not a function"). Same vendor/charts/ui grouping as the previous
-        // object form.
+        // is not a function"). Started as the previous object form's
+        // vendor/charts/ui grouping; charts and lucide-react have since been
+        // dropped from it (below).
         manualChunks(id: string) {
           // Normalize Windows separators so one pattern covers both.
           const nid = id.split('\\').join('/')
@@ -51,7 +52,15 @@ export default defineConfig({
           // and three are NEVER named here. Each ECharts chart type is its own
           // dynamic import (components/charts/engines/registry.ts) and
           // `npm run check:bundle` fails if any of them reaches an eager chunk.
-          if (/\/node_modules\/(lucide-react|@radix-ui\/react-dialog)\//.test(nid)) return 'ui'
+          //
+          // lucide-react is no longer named either — the same defect at a
+          // smaller scale. The named `ui` chunk held EVERY icon any page
+          // imports, and because the TopBar/Sidebar icons made it shared with
+          // the entry it was modulepreloaded on every route: ~13.6 KB gzip of
+          // mostly lazy-page icons on the critical path. Left to natural
+          // chunking, each icon follows the chunk that uses it. Measured on
+          // Viz Epic 3: eager 179,776 -> 172,698 gzip.
+          if (/\/node_modules\/(@radix-ui\/react-dialog)\//.test(nid)) return 'ui'
           return undefined
         },
       },

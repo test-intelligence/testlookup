@@ -1,5 +1,6 @@
 import { getData, putData } from './http'
 import type { MyFailureItem, MyFailureListResponse, TriageStatus } from '@/types/myFailures'
+import { scopeParam, type ScopeValue } from '@/lib/scopeParams'
 
 export interface ReassignmentOption {
   user_id: string
@@ -21,7 +22,15 @@ export const myFailuresService = {
    * ``project_id`` is optional; the backend honours ``"all"`` and missing as
    * "no project filter." Default time window is 30 days (server-side default).
    */
-  list: (params: { project_id?: string | null; days?: number; page?: number; size?: number; scope?: 'mine' | 'team'; release_id?: string | null }) =>
+  list: (params: {
+    project_id?: string | null
+    days?: number
+    page?: number
+    size?: number
+    scope?: 'mine' | 'team'
+    release_id?: ScopeValue
+    suite_name?: ScopeValue
+  }) =>
     getData<MyFailureListResponse>('/api/v1/me/assigned-failures', {
       params: {
         // null → omit so the server runs the unscoped path; sending the
@@ -33,19 +42,28 @@ export const myFailuresService = {
         ...(params.scope ? { scope: params.scope } : {}),
         // Omitted entirely when absent, like every param above: the backend's
         // release fragment is conditional so the SQL stays byte-identical for
-        // callers that send none.
-        ...(params.release_id ? { release_id: params.release_id } : {}),
+        // callers that send none. One value is the legacy scalar; several go
+        // out as a repeated key (C1 wire rule, `lib/scopeParams`).
+        ...scopeParam('release_id', params.release_id),
+        ...scopeParam('suite_name', params.suite_name),
       },
     }),
 
   /** Lightweight count for the sidebar badge — no row hydration. */
-  count: (params: { project_id?: string | null; days?: number; scope?: 'mine' | 'team'; release_id?: string | null }) =>
+  count: (params: {
+    project_id?: string | null
+    days?: number
+    scope?: 'mine' | 'team'
+    release_id?: ScopeValue
+    suite_name?: ScopeValue
+  }) =>
     getData<{ count: number }>('/api/v1/me/assigned-failures/count', {
       params: {
         ...(params.project_id ? { project_id: params.project_id } : {}),
         ...(params.days != null ? { days: params.days } : {}),
         ...(params.scope ? { scope: params.scope } : {}),
-        ...(params.release_id ? { release_id: params.release_id } : {}),
+        ...scopeParam('release_id', params.release_id),
+        ...scopeParam('suite_name', params.suite_name),
       },
     }),
 

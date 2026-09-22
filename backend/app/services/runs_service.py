@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, or_, select
+from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -308,26 +308,13 @@ async def fetch_release_map(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[
     }
 
 
-def _normalise_suite_name(suite_name: str | None) -> str:
-    return (suite_name or "").strip().lower()
+def _run_suite_filter(suite_name: str | tuple[str, ...] | None):
+    """The run list's suite rule -- one name or several (OR). The clause lives
+    in ``analytics_scope`` (VIZ-201 "one rule, one module"); one name compiles
+    to exactly the statement this function built before it took a list."""
+    from app.services.analytics_scope import run_list_suite_clause
 
-
-def _run_suite_filter(suite_name: str | None):
-    suite_key = _normalise_suite_name(suite_name)
-    if not suite_key:
-        return None
-    case_exists = (
-        select(TestCase.id)
-        .where(
-            TestCase.test_run_id == TestRun.id,
-            func.lower(func.trim(func.coalesce(TestCase.suite_name, "Unknown Suite"))) == suite_key,
-        )
-        .exists()
-    )
-    return or_(
-        func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "Unknown Suite"))) == suite_key,
-        case_exists,
-    )
+    return run_list_suite_clause(suite_name)
 
 
 async def list_project_runs(
@@ -336,12 +323,17 @@ async def list_project_runs(
     page: int,
     size: int,
     status: str | None = None,
-    release_id: str | None = None,
+    release_id: str | tuple[str, ...] | None = None,
     accessible_project_ids: set | None = None,
     days: int | None = 6,
-    suite_name: str | None = None,
+    suite_name: str | tuple[str, ...] | None = None,
 ):
     """Paginated test run listing, enriched with release + project_name.
+
+    ``release_id`` and ``suite_name`` take one value (the legacy call, whose
+    statements are unchanged) or a tuple of several: OR within each, AND
+    across. The router resolves and authorises every release id first
+    (``analytics_scope.resolve_release_query_scope_list``).
 
     Performance notes:
       * Filters are built once and reused by both the count query and the
@@ -388,7 +380,15 @@ async def list_project_runs(
         filters.append(TestRun.project_id.in_(accessible_project_ids))
     if status:
         filters.append(TestRun.status == status)
-    if release_id:
+    if release_id and not isinstance(release_id, (str, uuid.UUID)):
+        # VIZ-303: several releases, OR within the dimension -- the shared
+        # predicate on the same denormalised column (the sentinel among them
+        # adds ``IS NULL``). A malformed id cannot reach here: the router
+        # parses every id (C1 ``release_id_format``) before any query.
+        from app.core.release_filter import release_predicate
+
+        filters.extend(release_predicate(list(release_id)))
+    elif release_id:
         # Filters the DENORMALIZED primary column, not membership of
         # ``release_test_run_links``.
         #
@@ -408,7 +408,7 @@ async def list_project_runs(
         # introducing a new exclusion.
         from app.core.release_filter import is_unattributed
 
-        if is_unattributed(release_id):
+        if is_unattributed(str(release_id)):
             filters.append(TestRun.primary_release_id.is_(None))
             release_uuid = None
         else:

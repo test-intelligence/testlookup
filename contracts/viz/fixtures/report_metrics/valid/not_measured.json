@@ -1,0 +1,60 @@
+{
+  "description": "No runs in the current window: every current metric is null with its reason, and nothing is compared.",
+  "payload": {
+    "schema_version": 1,
+    "pass_rate_basis": "executions",
+    "current": {
+      "runs": null,
+      "total_tests": null,
+      "passed": null,
+      "failed": null,
+      "broken": null,
+      "skipped": null,
+      "unknown": null,
+      "pass_rate": null,
+      "total_duration_ms": null,
+      "avg_duration_ms": null,
+      "duration_runs": null,
+      "reasons": {
+        "runs": "No runs match this scope in the window.",
+        "total_tests": "No runs match this scope in the window.",
+        "passed": "No runs match this scope in the window.",
+        "failed": "No runs match this scope in the window.",
+        "broken": "No runs match this scope in the window.",
+        "skipped": "No runs match this scope in the window.",
+        "unknown": "No runs match this scope in the window.",
+        "pass_rate": "No runs match this scope in the window.",
+        "total_duration_ms": "No runs match this scope in the window.",
+        "avg_duration_ms": "No runs match this scope in the window.",
+        "duration_runs": "No runs match this scope in the window."
+      },
+      "window": {
+        "from": "2026-09-12",
+        "to": "2026-09-19",
+        "days": 7
+      }
+    },
+    "previous": {
+      "runs": 4,
+      "total_tests": 48,
+      "passed": 39,
+      "failed": 7,
+      "broken": 0,
+      "skipped": 2,
+      "unknown": 0,
+      "pass_rate": 84.8,
+      "total_duration_ms": 480000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 4,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-05",
+        "to": "2026-09-12",
+        "days": 7
+      },
+      "comparable": false,
+      "reason": "No runs match this scope in the current window, so there is nothing to compare.",
+      "reason_code": "not_measured"
+    }
+  }
+}

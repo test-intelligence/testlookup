@@ -1,5 +1,89 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Epic 3: every report says what it shows (VIZ-301 to VIZ-306)
+
+Everything here is behind two flags, both off by default: ``viz_multi_filters``
+(the filter model and URL) and ``viz_report_context`` (the report chrome). With
+both off, every request, SWR key and persisted value is what it was on main;
+tests pin that. The chrome renders only with BOTH on, so its header can never
+describe filters the page underneath is not applying.
+
+**Release and suite are multi-select filters shared by every report
+(VIZ-303).** ``store/suiteStore.ts`` is new and ``releaseStore`` gains
+``activeReleaseIds`` (caps 20 and 50, "Limit reached (20)" in the picker). The
+persisted release entry keeps its version-0 shape as a superset, so a rollback
+to an older build still reads the first release instead of discarding the
+saved filter (zustand drops state whose version it cannot migrate). On the
+wire, no selection sends no parameter, one sends ``release_id=R1`` exactly as
+before, several send repeated keys (never ``release_id[]=``); SWR keys are
+sorted, joined strings. Seven pages lost their local suite state. Existence
+probes ("has this project ever had a run?") never receive a filter. Data
+requests wait 250 ms after the last filter change and requests for a replaced
+filter are aborted, silently; only requests that opt in can be aborted, so
+downloads and writes never are. The flag has an explicit "unknown" state, and
+nothing applies or writes filters until it resolves, so a slow flag can no
+longer cut a saved two-release selection to one. With the flag on, the top-bar
+release picker and the page suite selects show "2 releases" as a button: an
+arrow key used to replace a multi-selection silently. Logout clears the saved
+filters.
+
+**Filters live in the URL (VIZ-306).** ``lib/scopeUrl.ts`` and one
+``useScopeUrlSync`` in the layout: ``release`` (repeatable, ``unattributed``
+kept), ``suites`` and ``window``; page-local ``?suite`` and ``?days`` are never
+touched. The URL wins over saved state, refinements replace history instead of
+pushing, and ids that are unknown, inaccessible or over the cap are dropped and
+named in a notice -- validated against the project's full suite list and each
+release individually, never a first page. Signing in from a filtered link used
+to lose the query string; it now returns to the full path.
+
+**The report chrome (VIZ-301, 302, 304, 305).** On the 13 report routes the
+layout mounts, once: a context header (a ``<dl>`` of Project, Release, Test
+Suite, Window, Basis, Generated) that shows the scope the SERVER applied; the
+filter bar; removable filter chips ("Remove filter Release R2", focus moves to
+the next chip); a one-line summary ("Showing 18 of 143 runs · 412 of 3,960
+executions · …", announced once per change, never on page load); and a metrics
+strip. Unmeasured values show "—" with the reason as visible text; pass-rate
+change is in percentage points, counts in relative %, and direction is written
+("Up 2.9 pp vs previous period (better)"), not only coloured. ``MetricCard`` no
+longer fails axe while loading or contrast in ``lab``. Dev gallery:
+``/__report-context``.
+
+**Backend.** ``/runs``, ``/me/assigned-failures`` (and its count) and
+``/stream/active`` accept repeated ``release_id``/``suite_name`` through the
+shared ``AnalyticsScope`` helpers: every release is authorised, caps are
+checked before any query, and one value runs the same SQL as before (captured
+and compared). With several values they previously kept only the last one.
+``/metrics/summary?include=report_metrics`` adds a ``report_metrics`` block
+(contract C6): passed/failed/broken/skipped/unknown, durations and a previous
+period with ``comparable`` and a reason; not measured is ``null``, never 0.
+Without ``include`` the response, SQL and cache key are identical to main.
+A new architecture guard fails any route that takes ``release_id`` without
+calling a release resolver (deleting the check from ``/runs`` used to leave
+every existing ratchet green). The generic-plan index test now runs ``ANALYZE``
+first: on an emptied test database the planner's index choice was a coin toss,
+on main too.
+
+**The first download got smaller, not bigger.** The filter runtime (URL sync,
+validation, abort tracker, summary button, report chrome) is one lazy chunk
+that a flag-off session never downloads (a test watches the import); logout
+clears saved filters without importing the stores. ``vite.config.ts`` no
+longer names ``lucide-react`` in the ``ui`` manual chunk: that chunk held every
+icon in the app and was preloaded on every route (13.7 KB gzip; 4.5 KB of icons
+are actually needed up front). Eager gzip: 178 260 on main, 186 635 with the
+filters before this, 172 698 now (budget 180 000).
+
+**The pass-rate gauge was two rings.** Reviewing the first Linux screenshot
+baselines showed the value arc drawn beside its grey track, not on it:
+``PassRateGauge`` passed Recharts two rows (a 100 "track" and the value), which
+it lays out as two concentric bars. It was always so; Epic 1 recoloured the
+track from near-black to the grid colour, which made it visible. It is now one
+bar over its own ``background`` track on a fixed 0–100 angle axis, clamped,
+with the true value still in the label. The baselines are regenerated after
+this merges.
+
+Reviewed by three independent agents (correctness, accessibility, security):
+13 major findings, all fixed with failing-first tests and mutation checks.
+
 ## Unreleased - Visualization Upgrade, E2: one scope, honest totals, a cache that forgets
 
 **The analytics cache now forgets everything that changed, not just new

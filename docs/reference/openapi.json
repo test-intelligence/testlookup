@@ -43467,21 +43467,45 @@
             }
           },
           {
-            "description": "Only failures from runs in this release.",
+            "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Only failures from runs in this release.",
+              "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+              "title": "Suite Name"
             }
           },
           {
@@ -43604,21 +43628,45 @@
             }
           },
           {
-            "description": "Only failures from runs in this release.",
+            "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Only failures from runs in this release.",
+              "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
               "title": "Release Id"
+            }
+          },
+          {
+            "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+              "title": "Suite Name"
             }
           },
           {
@@ -44291,9 +44339,30 @@
     },
     "/api/v1/metrics/summary": {
       "get": {
-        "description": "Return aggregated KPI metrics for the Executive Dashboard.\n\n``release_id`` and ``suite_name`` repeat: OR within a dimension, AND\nacross. Every release id is authorised (403/404) before any KPI runs.\n\nField-level exception: ``active_defects``, ``flaky_test_count`` and\n``new_failures_24h`` honour ``suite_name`` but NOT ``release_id`` -- they\nare project-wide inputs of the readiness verdict's hard caps\n(``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.",
+        "description": "Return aggregated KPI metrics for the Executive Dashboard.\n\n``include=report_metrics`` (VIZ-302, contract C6) adds the report strip's\nfigures for this window and the previous one -- counts by status, total and\naverage run duration, and ``previous.comparable`` with a reason when a\ndelta would mislead. Unmeasured values are ``null`` with a reason, never 0.\nOPT-IN: without it the block is not computed, and the response, its SQL\nand its cache key are exactly what they were before the block existed.\n\n``release_id`` and ``suite_name`` repeat: OR within a dimension, AND\nacross. Every release id is authorised (403/404) before any KPI runs.\n\nField-level exception: ``active_defects``, ``flaky_test_count`` and\n``new_failures_24h`` honour ``suite_name`` but NOT ``release_id`` -- they\nare project-wide inputs of the readiness verdict's hard caps\n(``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.",
         "operationId": "dashboard_summary_api_v1_metrics_summary_get",
         "parameters": [
+          {
+            "description": "Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the report strip's figures (contract C6). Unknown values are ignored.",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt-in blocks, repeatable or comma-separated. `report_metrics` adds the report strip's figures (contract C6). Unknown values are ignored.",
+              "title": "Include"
+            }
+          },
           {
             "description": "One project (single-valued). Omit for every project you can read.",
             "in": "query",
@@ -57051,18 +57120,23 @@
             }
           },
           {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
             "in": "query",
             "name": "release_id",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
               "title": "Release Id"
             }
           },
@@ -57088,21 +57162,23 @@
             }
           },
           {
-            "description": "Filter runs by suite name, case-insensitive",
+            "description": "Repeatable (OR, at most 50), 1-500 characters: runs labelled with, or holding a test in, the suite; case-insensitive.",
             "in": "query",
             "name": "suite_name",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "minLength": 1,
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Filter runs by suite name, case-insensitive",
+              "description": "Repeatable (OR, at most 50), 1-500 characters: runs labelled with, or holding a test in, the suite; case-insensitive.",
               "title": "Suite Name"
             }
           },
@@ -62938,19 +63014,23 @@
             }
           },
           {
+            "description": "Repeatable (OR, at most 50), 1-500 characters: sessions in any of these suites; trimmed, case-insensitive.",
             "in": "query",
             "name": "suite_name",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "minLength": 1,
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters: sessions in any of these suites; trimmed, case-insensitive.",
               "title": "Suite Name"
             }
           },

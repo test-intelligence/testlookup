@@ -58,6 +58,7 @@ import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
@@ -1744,7 +1745,9 @@ export default function RunsPage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
-  const [selectedSuite, setSelectedSuite] = useState('')
+  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
+  // suite store with it on — see usePageSuiteFilter.
+  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   // Client-side table pagination. Analytics widgets (signature clustering,
   // build velocity, KPIs) continue to consume the full fetched window so
@@ -1764,7 +1767,7 @@ export default function RunsPage() {
   // on an empty page after narrowing the window. Done during render via
   // previous-value tracking (the React-recommended way to reset state on a
   // dependency change) rather than a cascading setState-in-effect.
-  const runsFilterKey = `${days}|${statusFilter}|${selectedSuite}`
+  const runsFilterKey = `${days}|${statusFilter}|${suiteLabel}`
   const [prevRunsFilterKey, setPrevRunsFilterKey] = useState(runsFilterKey)
   if (prevRunsFilterKey !== runsFilterKey) {
     setPrevRunsFilterKey(runsFilterKey)
@@ -1779,7 +1782,7 @@ export default function RunsPage() {
     size: ANALYTICS_FETCH_SIZE,
     days: days || undefined,
     ...(statusFilter && { status: statusFilter }),
-    ...(selectedSuite && { suite_name: selectedSuite }),
+    ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
   })
   // Provenance rows must report when this client actually received the
   // payload. Both of this page's rows previously rendered a hardcoded
@@ -2061,11 +2064,11 @@ export default function RunsPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Jenkins builds for</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {selectedSuite && (
+            {suiteLabel && (
               <>
                 <span aria-hidden>·</span>
                 <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
               </>
             )}
             <span aria-hidden>·</span>
@@ -2123,6 +2126,7 @@ export default function RunsPage() {
           />
           <SuiteFilterSelect
             value={selectedSuite}
+            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

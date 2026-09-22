@@ -2,8 +2,10 @@ import useSWR from 'swr'
 import { runsService } from '@/services/runsService'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { useReleaseScope } from './useReleaseScope'
+import { keyPart, scopeArg } from '@/lib/scopeParams'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+import { scopedFetch } from '@/services/scopeAbort'
 
 interface UseRunsOptions {
   /**
@@ -34,26 +36,54 @@ export function useRuns(
   params?: Record<string, unknown>,
   opts?: UseRunsOptions,
 ) {
-  const globalReleaseId = useReleaseScope()
-  const releaseId = opts?.ignoreGlobalRelease ? null : globalReleaseId
+  // `/runs` takes a repeatable `release_id` and `suite_name` (VIZ-303 / E3):
+  // none → no parameter, one → the legacy scalar, several → a repeated key.
+  const globalRelease = scopeArg(useReleaseScope())
+  const release = opts?.ignoreGlobalRelease ? null : globalRelease
+  // A page's `suite_name` (VIZ-303 hands pages a list) is normalised the same
+  // way: a scalar or absent `suite_name` leaves `params` untouched (same
+  // object, same key), so every flag-off caller is unaffected.
+  const effectiveParams = normalizedSuiteParams(params)
   return useProjectScopedSWR(
     'runs',
+    // `scopedFetch`: this read follows the report scope, so it opts into
+    // superseded-scope aborting (services/scopeAbort.ts).
     (projectId) =>
-      runsService.list(projectId, {
-        // Global filter first, caller's params second, so an EXPLICIT
-        // `release_id` from a page that is already about one release wins over
-        // the header picker rather than being silently overridden by it.
-        ...(releaseId ? { release_id: releaseId } : {}),
-        ...params,
-      }),
+      scopedFetch(() =>
+        runsService.list(projectId, {
+          // Global filter first, caller's params second, so an EXPLICIT
+          // `release_id` from a page that is already about one release wins
+          // over the header picker rather than being silently overridden by it.
+          ...(release !== null ? { release_id: release } : {}),
+          ...effectiveParams,
+        }),
+      ),
     { refreshInterval: REFRESH_INTERVALS.ACTIVE },
     // The EFFECTIVE release, in the deps and not just the params: without it,
     // switching releases would reuse the previous release's cached run list
     // under the new release's name — and an opted-out query would share a
-    // cache entry with the filtered one and get whichever landed first.
-    [params, releaseId],
+    // cache entry with the filtered one and get whichever landed first. A
+    // list reaches the key as its sorted, joined string (`keyPart`), never an
+    // array rebuilt per render.
+    [keyedParams(effectiveParams), keyPart(release)],
     opts?.enabled ?? true,
   )
+}
+
+/** A list `suite_name` → `scopeArg` (scalar for one, sorted for several, gone for none). */
+function normalizedSuiteParams(
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!params || !Array.isArray(params.suite_name)) return params
+  const { suite_name: suites, ...rest } = params
+  const arg = scopeArg(suites as string[])
+  return arg === null ? rest : { ...rest, suite_name: arg }
+}
+
+/** `params` for the SWR key: a list `suite_name` as its joined string. */
+function keyedParams(params: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!params || !Array.isArray(params.suite_name)) return params
+  return { ...params, suite_name: keyPart(params.suite_name as string[]) }
 }
 
 export function useRun(runId?: string) {

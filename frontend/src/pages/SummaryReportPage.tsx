@@ -446,7 +446,8 @@ function SummaryScopeBadge({
   requestedReleaseId,
 }: {
   meta: EnvelopeMeta | undefined
-  requestedReleaseId: string | null
+  /** One release (scalar) or, with `viz_multi_filters`, several. */
+  requestedReleaseId: string | readonly string[] | null
 }) {
   const checked = meta === undefined ? null : validateEnvelopeMeta(meta)
   const envelope = checked?.ok ? checked.value : null

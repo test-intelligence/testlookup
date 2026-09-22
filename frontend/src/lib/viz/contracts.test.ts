@@ -70,7 +70,7 @@ const FIXTURES: Fixture[] = Object.entries(FIXTURE_SOURCES)
 const of = (verdict: 'valid' | 'invalid') =>
   FIXTURES.filter((f) => f.verdict === verdict).map((f) => [`${f.kind}/${f.name}`, f] as const)
 
-const EXPECTED_KINDS = ['chart_series', 'drill_path', 'envelope', 'scope', 'widget_config']
+const EXPECTED_KINDS = ['chart_series', 'drill_path', 'envelope', 'report_metrics', 'scope', 'widget_config']
 
 /** The rule id an error string starts with. */
 const ruleOf = (error: string) => error.slice(0, error.indexOf(':'))
@@ -84,7 +84,7 @@ describe('contracts/viz fixtures are present (fail closed)', () => {
     expect(FIXTURES.length, 'the fixture glob matched nothing').toBeGreaterThan(0)
   })
 
-  it('covers exactly the five contracts the guards dispatch on', () => {
+  it('covers exactly the six contracts the guards dispatch on', () => {
     expect([...new Set(FIXTURES.map((f) => f.kind))].sort()).toEqual(EXPECTED_KINDS)
     expect([...CONTRACT_KINDS].sort()).toEqual(EXPECTED_KINDS)
   })

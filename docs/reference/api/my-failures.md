@@ -18,14 +18,14 @@ Pagination notes:
     don't yet have a "resolved" concept; future-proofed by keeping both
     fields distinct now.
 
-Source: [backend/app/routers/my_failures.py:104](../../../backend/app/routers/my_failures.py#L104).
+Source: [backend/app/routers/my_failures.py:130](../../../backend/app/routers/my_failures.py#L130).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[str]=Query(None, description='Project UUID or "all"'), days: int=Query(30, ge=1, le=365, description='Time window (created_at)'), release_id: Optional[str]=Query(None, description='Only failures from runs in this release.'), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=100), scope: str=Query('mine', pattern='^(mine|team)$', description="'mine' = caller's assigned failures only; 'team' = all failures across project (QA_LEAD/ADMIN only)"), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: Optional[str]=Query(None, description='Project UUID or "all"'), days: int=Query(30, ge=1, le=365, description='Time window (created_at)'), release_id: Annotated[Optional[list[str]], Query(description='Only failures from runs in this release. ' + _RELEASE_REPEATABLE)]=None, suite_name: _SuiteParam=None, page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=100), scope: str=Query('mine', pattern='^(mine|team)$', description="'mine' = caller's assigned failures only; 'team' = all failures across project (QA_LEAD/ADMIN only)"), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -69,21 +69,45 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Only failures from runs in this release.",
+      "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Only failures from runs in this release.",
+        "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+        "title": "Suite Name"
       }
     },
     {
@@ -180,14 +204,14 @@ serves, but the sidebar polls independently of the page state, so a
 dedicated endpoint keeps the badge fresh without fetching 25 rows on
 every poll.
 
-Source: [backend/app/routers/my_failures.py:349](../../../backend/app/routers/my_failures.py#L349).
+Source: [backend/app/routers/my_failures.py:387](../../../backend/app/routers/my_failures.py#L387).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[str]=Query(None), days: int=Query(30, ge=1, le=365), release_id: Optional[str]=Query(None, description='Only failures from runs in this release.'), scope: str=Query('mine', pattern='^(mine|team)$'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: Optional[str]=Query(None), days: int=Query(30, ge=1, le=365), release_id: Annotated[Optional[list[str]], Query(description='Only failures from runs in this release. ' + _RELEASE_REPEATABLE)]=None, suite_name: _SuiteParam=None, scope: str=Query('mine', pattern='^(mine|team)$'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -227,21 +251,45 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Only failures from runs in this release.",
+      "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
       "in": "query",
       "name": "release_id",
       "required": false,
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
           }
         ],
-        "description": "Only failures from runs in this release.",
+        "description": "Only failures from runs in this release. Repeatable (OR, at most 20): a release UUID or 'unattributed'.",
         "title": "Release Id"
+      }
+    },
+    {
+      "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Only failures in these suites (effective suite, case-insensitive). Repeatable (OR, at most 50), 1-500 characters.",
+        "title": "Suite Name"
       }
     },
     {
@@ -325,7 +373,7 @@ Returns the updated ``MyFailureItem`` so the frontend can drop the
 new row into the (now-correct) owner's view without re-fetching the
 whole list. The caller's own list shrinks by one on the next poll.
 
-Source: [backend/app/routers/my_failures.py:469](../../../backend/app/routers/my_failures.py#L469).
+Source: [backend/app/routers/my_failures.py:512](../../../backend/app/routers/my_failures.py#L512).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -431,7 +479,7 @@ Same authorisation contract as the PUT: caller must be QA_LEAD or
 ADMIN on the project. Returning 403 here (instead of an empty
 payload) keeps the UI honest about WHY the picker is unavailable.
 
-Source: [backend/app/routers/my_failures.py:446](../../../backend/app/routers/my_failures.py#L446).
+Source: [backend/app/routers/my_failures.py:489](../../../backend/app/routers/my_failures.py#L489).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -541,7 +589,7 @@ The row drops off ``GET /assigned-failures`` (and the count badge)
 on the next poll once status moves off PENDING_REVIEW — that's the
 primary mechanism for "resolving" an inbox item.
 
-Source: [backend/app/routers/my_failures.py:553](../../../backend/app/routers/my_failures.py#L553).
+Source: [backend/app/routers/my_failures.py:596](../../../backend/app/routers/my_failures.py#L596).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

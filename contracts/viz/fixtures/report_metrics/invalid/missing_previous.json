@@ -1,0 +1,27 @@
+{
+  "description": "The previous period is required, even when not comparable.",
+  "violates": "required_field",
+  "payload": {
+    "schema_version": 1,
+    "pass_rate_basis": "executions",
+    "current": {
+      "runs": 5,
+      "total_tests": 60,
+      "passed": 50,
+      "failed": 5,
+      "broken": 2,
+      "skipped": 3,
+      "unknown": 0,
+      "pass_rate": 87.7,
+      "total_duration_ms": 600000,
+      "avg_duration_ms": 120000,
+      "duration_runs": 5,
+      "reasons": {},
+      "window": {
+        "from": "2026-09-12",
+        "to": "2026-09-19",
+        "days": 7
+      }
+    }
+  }
+}

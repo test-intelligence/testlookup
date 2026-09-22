@@ -10,7 +10,7 @@ import { useUnreadCount, useNotificationHistory, invalidateNotifications } from 
 import { notificationService } from '@/services/notificationService'
 import ThemePicker from '@/components/ui/ThemePicker'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
-import { formatCompactDateTime } from '@/utils/formatters'
+import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 
 const AVATAR_BG: Record<string, string> = {
   slate: 'bg-[var(--color-bg-hover)]', red: 'bg-[var(--status-failed-bg)]', orange: 'bg-[var(--status-broken-bg)]',

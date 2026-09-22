@@ -2,7 +2,7 @@
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select, update
@@ -13,8 +13,8 @@ from app.core.deps import (
     get_current_active_user,
     require_role,
     require_run_access,
-    resolve_release_query_scope,
 )
+from app.core.release_filter import UNATTRIBUTED
 from app.db.postgres import get_db
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User, UserRole
 from app.models.schemas import (
@@ -24,6 +24,8 @@ from app.models.schemas import (
     TestCaseHistoryResponse,
     TestCaseListResponse,
 )
+from app.models.viz_contracts import MAX_RELEASES, MAX_SUITE_NAME_LENGTH, MAX_SUITES
+from app.services.analytics_scope import parse_suite_filter, resolve_release_query_scope_list
 from app.services.runs_service import (
     get_run_with_release,
     list_project_runs,
@@ -65,7 +67,15 @@ async def list_runs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=500),
     status: str | None = None,
-    release_id: str | None = None,
+    # VIZ-303: repeatable, OR within (at most 20; each a UUID or
+    # ``unattributed``). One value is the legacy scalar call, unchanged.
+    release_id: Annotated[
+        Optional[list[str]],
+        Query(description=(
+            f"Repeatable (OR, at most {MAX_RELEASES}): a release UUID or "
+            f"'{UNATTRIBUTED}' for runs no release claims."
+        )),
+    ] = None,
     # 30, not 6. A six-day default assumed a project ships runs most days;
     # when one does not, every caller that omits ``days`` — including the
     # agents page's suite+build picker — renders an empty list and the product
@@ -73,20 +83,31 @@ async def list_runs(
     # were 8-10 days old. Matches DEFAULT_TIME_WINDOW_DAYS in the frontend
     # store; the two are meant to agree.
     days: int | None = Query(30, ge=0, le=365, description="Show runs from last N days (0 = all time)"),
-    suite_name: str | None = Query(None, min_length=1, description="Filter runs by suite name, case-insensitive"),
+    suite_name: Annotated[
+        Optional[list[str]],
+        Query(description=(
+            f"Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters: "
+            "runs labelled with, or holding a test in, the suite; case-insensitive."
+        )),
+    ] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     # days=0 means no date filter (all time)
     effective_days = days if days and days > 0 else None
-    # Verify the PROVIDED release. This route was the only one accepting
+    # C1 before any database access: a bad or 51st suite is a 422 with the
+    # analytics error body (``suite_name_length`` / ``suite_cap``).
+    suites = parse_suite_filter(suite_name)
+    # Verify the PROVIDED release(s). This route was the only one accepting
     # ``release_id`` that skipped the check: a malformed value reached
     # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than
     # 422, and a well-formed id belonging to another tenant was never checked
     # at all. The architectural authorization ratchet cannot see it, because it
     # stops at the first scoped parameter a route satisfies and this route
-    # satisfies it on ``project_id``.
-    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    # satisfies it on ``project_id``. With several ids EVERY one is authorised
+    # (one forbidden id is a 403 and no rows for the others) -- the shared
+    # resolver, not a second copy; one id is the legacy single-id check.
+    releases = await resolve_release_query_scope_list(db, current_user, release_id)
     # Filter by accessible projects when no explicit project_id
     if not project_id:
         accessible = await get_accessible_project_ids(db, current_user)
@@ -99,10 +120,10 @@ async def list_runs(
             page,
             size,
             status,
-            release_id,
+            releases,
             accessible_project_ids=accessible,
             days=effective_days,
-            suite_name=suite_name,
+            suite_name=suites,
         )
     else:
         # Explicit project_id: verify the caller can read it (closes the
@@ -114,10 +135,10 @@ async def list_runs(
             page,
             size,
             status,
-            release_id,
+            releases,
             accessible_project_ids=accessible,
             days=effective_days,
-            suite_name=suite_name,
+            suite_name=suites,
         )
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 

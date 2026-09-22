@@ -15,6 +15,7 @@ import liveStreamService from '@/services/liveStreamService'
 import { useAuthStore } from '@/store/authStore'
 import type { LiveSessionState } from '@/types/live-stream'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+import { keyPart, type ScopeValue } from '@/lib/scopeParams'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -81,9 +82,11 @@ export function computeLiveStats(
 
 // ── Active sessions SWR hook ───────────────────────────────────────────────
 
-export function useActiveSessions(projectId?: string, suiteName?: string | null, days?: number) {
+export function useActiveSessions(projectId?: string, suiteName?: ScopeValue, days?: number) {
   return useSWR(
-    ['live-active', projectId, suiteName, days],
+    // `keyPart`: one suite stays the scalar key it always was; several enter
+    // as one sorted joined string, never an array rebuilt per render.
+    ['live-active', projectId, keyPart(suiteName), days],
     () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
@@ -122,7 +125,7 @@ export function mergeBridgedSessions(
 
 // ── Full live execution hook (sessions + WebSocket) ────────────────────────
 
-export function useLiveExecution(projectId?: string, suiteName?: string | null, days?: number) {
+export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, days?: number) {
   const [sessions, setSessions] = useState<LiveSessionState[]>([])
   const [recentEvents, setRecentEvents] = useState<LiveEvent[]>([])
   const [wsStatus, setWsStatus] = useState<WsStatus>('closed')
@@ -142,7 +145,9 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
 
   // ── SWR polling (initial load + fallback when WS is down) ──────────────
   const { data, mutate } = useSWR(
-    ['live-active', projectId, suiteName, days],
+    // `keyPart`: one suite stays the scalar key it always was; several enter
+    // as one sorted joined string, never an array rebuilt per render.
+    ['live-active', projectId, keyPart(suiteName), days],
     () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     {
       refreshInterval: wsStatus === 'open' ? 10_000 : 5_000,

@@ -1698,3 +1698,257 @@ def test_review_ids_are_scanned_and_every_review_route_is_guarded() -> None:
     assert len(scoped) >= 3, "expected the review get/accept/reject routes to be mounted"
     assert [route.path for route in scoped if not _route_is_protected(route)] == []
     assert not any("{review_id}" in path for _method, path in KNOWN_EXEMPT)
+
+
+# ── A release id outside the path needs a RELEASE resolver (E3 fix round C, M2) ──
+#
+# The non-path scan above accepts ANY scope evidence for a route: one project
+# check vouches for every id it takes. ``/runs`` and the inbox check the
+# project (and the inbox filters by ``current_user.id``), so deleting their
+# release check left both green -- the one line that stopped a caller reading
+# another tenant's release by id. A release id needs a release resolver of its
+# own: this section asks exactly that, read from the AST (a call that runs,
+# resolving to the real function), never from text.
+
+#: Calling one of these authorises the release ids a caller named, and the
+#: module that defines the real one. A call counts only when its name resolves
+#: to that very object (a local stand-in with the same name checks nothing).
+RELEASE_RESOLVERS: dict[str, str] = {
+    "resolve_release_query_scope": "app.core.deps",
+    "resolve_release_query_scopes": "app.core.deps",
+    "resolve_release_query_scope_list": "app.services.analytics_scope",
+    "require_release_access": "app.core.deps",
+}
+
+#: Routes taking ``release_id`` outside the path that resolve no release, each
+#: read by hand. Every one is a FILTER inside an already project-guarded read:
+#: the query is ANDed with the guarded project, so a foreign release id matches
+#: nothing and reveals nothing (not even existence -- the answer is the same
+#: empty page as an unknown id). Adding an entry needs that argument, in words.
+RELEASE_RESOLVER_EXEMPT: dict[tuple[str, str], str] = {
+    ("GET", "/api/v1/projects/{project_id}/activity"): (
+        "require_project_access on the path project; activity_filters' release_id "
+        "is ANDed with ActivityEvent.project_id == that project (activity/query.py)"
+    ),
+    ("GET", "/api/v1/projects/{project_id}/activity/export"): (
+        "same filter object and project pin as the feed, plus _assert_can_export"
+    ),
+    ("POST", "/api/v1/reports/email-trends"): (
+        "body release_id: resolve_project_scope on body.project_id, and the trend "
+        "query is WHERE tr.project_id = :project_id AND the release (report_service)"
+    ),
+}
+
+
+def _declares_release_outside_analytics_scope(route: APIRoute) -> bool:
+    """``release_id`` is a query or body parameter of the route (its own or a
+    sub-dependency's) that a real ``analytics_scope`` did not declare -- that
+    one authorises every release it declares (``authorize_scope``)."""
+    if "{release_id}" in route.path:
+        return False  # the path ratchet: require_release_access
+    residual, _has_scope = _ids_outside_analytics_scope(route)
+    return "release_id" in residual
+
+
+def _resolves_to_the_real_resolver(namespace: dict, fn: ast.AST, name: str) -> bool:
+    import importlib
+
+    real = getattr(importlib.import_module(RELEASE_RESOLVERS[name]), name, None)
+    if real is None:
+        return False
+    if isinstance(fn, ast.Name):
+        return namespace.get(fn.id) is real
+    if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+        owner = namespace.get(fn.value.id)
+        return inspect.ismodule(owner) and getattr(owner, fn.attr, None) is real
+    return False
+
+
+def _release_resolver_calls(func) -> set[str]:
+    """The release resolvers ``func`` really CALLS (live code, real objects)."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return set()
+    namespace = {**getattr(func, "__globals__", {}), **_imported_names(tree)}
+    found: set[str] = set()
+    for node in _live_nodes(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _plain_name(node.func)
+        if name in RELEASE_RESOLVERS and _resolves_to_the_real_resolver(namespace, node.func, name):
+            found.add(name)
+    return found
+
+
+def _route_release_resolvers(route: APIRoute) -> set[str]:
+    """Resolvers in the dependency tree, called by the handler, or called by a
+    function the handler calls (one level down, as ``_endpoint_names``)."""
+    found = {
+        part
+        for qualname in _walk_deps(route.dependant)
+        for part in qualname.split(".")
+        if part == "require_release_access"
+    }
+    endpoint = route.endpoint
+    found |= _release_resolver_calls(endpoint)
+    module = inspect.getmodule(endpoint)
+    if module is not None:
+        for qualifier, name in _called_targets(endpoint):
+            if name in _NEVER_SCOPE_EVIDENCE:
+                continue
+            owner = module if qualifier is None else getattr(module, qualifier, None)
+            target = getattr(owner, name, None) if owner is not None else None
+            if target is not None and callable(target):
+                found |= _release_resolver_calls(target)
+    return found
+
+
+def _release_routes_without_a_resolver(routes=None) -> list[tuple[str, str]]:
+    offenders: set[tuple[str, str]] = set()
+    for route in _collect_api_routes() if routes is None else routes:
+        if not route.path.startswith("/api/v1"):
+            continue
+        if not _declares_release_outside_analytics_scope(route):
+            continue
+        if _route_release_resolvers(route):
+            continue
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            offenders.add((method, route.path))
+    return sorted(offenders)
+
+
+def test_every_release_id_outside_the_path_is_resolved() -> None:
+    offenders = [o for o in _release_routes_without_a_resolver() if o not in RELEASE_RESOLVER_EXEMPT]
+    assert not offenders, (
+        "these routes take release_id (query or body) and never call a release "
+        "resolver (resolve_release_query_scope / _scopes / _scope_list, "
+        "require_release_access, or the analytics_scope dependency) -- a caller "
+        "could name another tenant's release:\n  "
+        + "\n  ".join(f"{m} {p}" for m, p in offenders)
+    )
+
+
+def test_the_release_resolver_exemptions_are_not_stale() -> None:
+    """An exempt route that now resolves its release, or is gone, must leave."""
+    still = set(_release_routes_without_a_resolver())
+    stale = sorted(set(RELEASE_RESOLVER_EXEMPT) - still)
+    assert not stale, "delete these RELEASE_RESOLVER_EXEMPT entries:\n  " + "\n  ".join(
+        f"{m} {p}" for m, p in stale
+    )
+    assert all(reason.strip() for reason in RELEASE_RESOLVER_EXEMPT.values())
+
+
+def test_the_release_scan_sees_the_routes_it_exists_for() -> None:
+    """Not vacuous: the routes that motivated it are carriers AND are
+    recognised by their resolver -- ``/runs`` and the inbox through
+    ``resolve_release_query_scope_list``, flaky-coach through the single form."""
+    by_path = {route.path: route for route in _collect_api_routes()}
+    expected = {
+        "/api/v1/runs": "resolve_release_query_scope_list",
+        "/api/v1/me/assigned-failures": "resolve_release_query_scope_list",
+        "/api/v1/me/assigned-failures/count": "resolve_release_query_scope_list",
+        "/api/v1/projects/{project_id}/flaky-coach": "resolve_release_query_scope",
+    }
+    for path, resolver in expected.items():
+        route = by_path[path]
+        assert _declares_release_outside_analytics_scope(route), path
+        assert resolver in _route_release_resolvers(route), (path, _route_release_resolvers(route))
+    # The analytics routes carry release_id inside the real analytics_scope.
+    assert not _declares_release_outside_analytics_scope(by_path["/api/v1/metrics/summary"])
+
+
+def test_the_list_resolver_really_resolves_every_release() -> None:
+    """The evidence behind accepting ``resolve_release_query_scope_list``: it
+    calls the real single and batched resolvers, and they check membership.
+    Delete either call and this fails, not the scan."""
+    from app.core import deps
+    from app.services import analytics_scope as module
+
+    calls = _release_resolver_calls(module.resolve_release_query_scope_list)
+    assert {"resolve_release_query_scope", "resolve_release_query_scopes"} <= calls, calls
+    assert "get_accessible_project_ids" in _function_names(deps.resolve_release_query_scope)
+    assert "get_accessible_project_ids" in _function_names(deps.resolve_release_query_scopes)
+
+
+# Fixture routes for the self-test. Module level: the scan reads their source.
+
+
+async def _release_param_unresolved(release_id: str | None = None, project_id: str | None = None,
+                                    db=None, current_user=None):
+    """``/runs`` with its release check deleted: the project is checked, the release is not."""
+    from app.core.deps import get_accessible_project_ids
+
+    await get_accessible_project_ids(db, current_user)
+    return release_id, project_id
+
+
+async def _release_param_resolved(release_id: str | None = None, db=None, current_user=None):
+    from app.services.analytics_scope import resolve_release_query_scope_list
+
+    return await resolve_release_query_scope_list(db, current_user, release_id)
+
+
+async def _release_param_resolved_through_the_module(release_id: str | None = None, db=None,
+                                                     current_user=None):
+    from app.core import deps as real_deps
+
+    return await real_deps.resolve_release_query_scope(db, release_id, current_user)
+
+
+async def _release_param_only_mentioned(release_id: str | None = None):
+    """Calls resolve_release_query_scope_list(db, user, release_id) -- in prose only."""
+    # resolve_release_query_scope(db, release_id, current_user)
+    return "resolve_release_query_scopes", release_id
+
+
+async def resolve_release_query_scope_list(*_args):
+    """A module-local stand-in spelled like the real resolver: checks nothing."""
+    return None
+
+
+async def _release_param_fake_resolver(release_id: str | None = None):
+    return await resolve_release_query_scope_list(None, None, release_id)
+
+
+async def _release_param_resolver_on_an_object(release_id: str | None = None, helper=None):
+    return await helper.resolve_release_query_scope_list(None, None, release_id)
+
+
+async def _release_param_dead_branch(release_id: str | None = None, db=None, current_user=None):
+    from app.services.analytics_scope import resolve_release_query_scope_list as real
+
+    if False:
+        await real(db, current_user, release_id)
+    return release_id
+
+
+async def _release_param_in_a_hand_rolled_dependency(scope=Depends(_hand_rolled_scope)):
+    return scope
+
+
+def test_the_release_guard_catches_a_route_without_a_resolver() -> None:
+    """Guards the guard: planted routes, one per shape it must tell apart."""
+    from fastapi import APIRouter
+
+    router = APIRouter()
+    shapes = {
+        "unresolved": _release_param_unresolved,
+        "resolved": _release_param_resolved,
+        "resolved-module": _release_param_resolved_through_the_module,
+        "mentioned": _release_param_only_mentioned,
+        "fake": _release_param_fake_resolver,
+        "on-object": _release_param_resolver_on_an_object,
+        "dead-branch": _release_param_dead_branch,
+        "sub-dependency": _release_param_in_a_hand_rolled_dependency,
+    }
+    for label, handler in shapes.items():
+        router.add_api_route(f"/api/v1/_fixture/release/{label}", handler)
+    offenders = {path.rsplit("/", 1)[1] for _m, path in _release_routes_without_a_resolver(router.routes)}
+    assert offenders == {
+        "unresolved", "mentioned", "fake", "on-object", "dead-branch", "sub-dependency",
+    }, offenders
+    # The shape that motivated it passes the GENERIC scan (a project check is
+    # "evidence"), which is why this guard exists.
+    unresolved = next(r for r in router.routes if r.path.endswith("/unresolved"))
+    assert not _route_is_unscoped_nonpath(unresolved)

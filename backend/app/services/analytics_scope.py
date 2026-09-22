@@ -356,6 +356,46 @@ async def resolve_analytics_scope(
     return await authorize_scope(db, user, parsed, policy)
 
 
+async def resolve_release_query_scope_list(
+    db: AsyncSession, user: Any, values: Any
+) -> Union[None, str, tuple[str, ...]]:
+    """The release axis for a route that keeps its own project handling (the
+    ``/runs`` list, the ``/me/assigned-failures`` inbox) -- the same parse and
+    the same batched authorisation as :func:`authorize_scope`, without the
+    project half those routes answer differently.
+
+    * none: ``None``, and no query;
+    * ONE value: exactly the legacy ``resolve_release_query_scope`` call the
+      route made before it took a list (same query, same 422/404/403 bodies),
+      so a single-value request is byte-identical;
+    * several: :func:`parse_release_ids` (C1 ``release_id_format`` /
+      ``release_cap``, raised as :class:`AnalyticsQueryError` before any
+      database access), then ``resolve_release_query_scopes`` over EVERY id --
+      one forbidden or unknown id among readable ones is the 403/404 the
+      analytics routes give, and no data for any of them.
+
+    Returns the service argument: ``None``, one id (a list that collapsed to
+    one after de-duplication included), or a tuple.
+    """
+    from app.core import deps
+
+    raw = _as_list(values)
+    if not raw:
+        return None
+    if len(raw) == 1:
+        return await deps.resolve_release_query_scope(db, raw[0], user)
+    parsed = parse_release_ids(raw)
+    resolved = await deps.resolve_release_query_scopes(db, parsed, user)
+    return _single_or_tuple(tuple(resolved))
+
+
+def parse_suite_filter(values: Any) -> Union[None, str, tuple[str, ...]]:
+    """The suite axis for the same routes: :func:`parse_suite_names` (C1
+    ``suite_name_length`` / ``suite_cap``), then ``None``, the one name, or a
+    tuple -- the service argument shape :class:`AnalyticsScope` hands out."""
+    return _single_or_tuple(parse_suite_names(values))
+
+
 def analytics_scope(policy: ScopePolicy) -> Callable[..., Awaitable[AnalyticsScope]]:
     """The FastAPI dependency for one route's policy.
 
@@ -595,6 +635,19 @@ def _in_or_eq(column: ColumnElement, keys: tuple[str, ...]) -> ColumnElement:
     return column.in_(keys) if len(keys) > 1 else column == keys[0]
 
 
+def suite_label_clause(column: Any, suite_name: SuiteArg) -> Optional[ColumnElement]:
+    """Core: ``LOWER(TRIM(<column>))`` is one of the requested suites.
+
+    One suite compiles to exactly ``lower(trim(col)) = :key`` -- the scalar
+    comparison a single-suite route wrote before VIZ-201 -- several to one
+    ``IN``. ``None`` when no suite was asked for (a blank name is none).
+    """
+    keys = suite_keys(suite_name)
+    if not keys:
+        return None
+    return _in_or_eq(func.lower(func.trim(column)), keys)
+
+
 def row_or_live_label_clause(suite_name: SuiteArg) -> Optional[ColumnElement]:
     """Core: the row's suite, or a ``live_stream`` run's label, matches."""
     from app.models.postgres import TestCase, TestRun
@@ -650,6 +703,49 @@ def run_touches_suite_clause(suite_name: SuiteArg) -> Optional[ColumnElement]:
         .exists()
     )
     return or_(_in_or_eq(func.lower(func.trim(TestRun.primary_suite_name)), keys), tc_match)
+
+
+#: The run list's name for a run or row that carries no suite at all.
+RUN_LIST_UNKNOWN_SUITE = "Unknown Suite"
+
+
+def run_list_suite_clause(suite_name: SuiteArg) -> Optional[ColumnElement]:
+    """Core, correlated to ``TestRun``: the ``/runs`` list's suite rule.
+
+    A run is listed under a suite when its run-level label is that suite OR any
+    of its rows is -- a NULL label on either side reads as
+    :data:`RUN_LIST_UNKNOWN_SUITE`, which is what the list shows for it, so
+    filtering by that name finds those runs. This is the run LIST's rule (a run
+    is kept whole), not the effective suite the report figures use.
+
+    Moved here from ``runs_service._run_suite_filter`` unchanged: for one suite
+    the statement compiles to exactly the text it compiled to there (pinned by
+    ``tests/regression/test_runs_multi_scope.py``); several are one ``IN``.
+    ``None`` when no suite was asked for.
+    """
+    from app.models.postgres import TestCase, TestRun
+
+    keys = suite_keys(suite_name)
+    if not keys:
+        return None
+    case_exists = (
+        select(TestCase.id)
+        .where(
+            TestCase.test_run_id == TestRun.id,
+            _in_or_eq(
+                func.lower(func.trim(func.coalesce(TestCase.suite_name, RUN_LIST_UNKNOWN_SUITE))),
+                keys,
+            ),
+        )
+        .exists()
+    )
+    return or_(
+        _in_or_eq(
+            func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, RUN_LIST_UNKNOWN_SUITE))),
+            keys,
+        ),
+        case_exists,
+    )
 
 
 def run_in_suite_scope_clause(suite_name: SuiteArg) -> Optional[ColumnElement]:

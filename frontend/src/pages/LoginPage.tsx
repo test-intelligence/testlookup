@@ -21,6 +21,7 @@ import {
   type TokenResponse,
 } from '@/types/mfa';
 import { describeMfaError, formatRetryAfter } from '@/utils/mfaErrors';
+import { returnPathFrom } from '@/utils/returnPath';
 
 const DEV_ROLES = [
   { label: 'Admin',       value: 'admin',       colour: 'text-[var(--status-failed)]' },
@@ -68,8 +69,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const fromPath = location.state?.from?.pathname;
-  const from = fromPath && fromPath !== '/reset-password' ? fromPath : '/overview';
+  const from = returnPathFrom(location.state?.from);
   const isDev = import.meta.env.DEV;
 
   // Live confirm-password check. The submit handler still blocks on a mismatch,
