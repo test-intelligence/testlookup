@@ -1,7 +1,7 @@
 {
   "http_operations": 550,
   "http_paths": 460,
-  "inventory_files": 3013,
+  "inventory_files": 3073,
   "mcp": {
     "prompt": 7,
     "resource": 11,
