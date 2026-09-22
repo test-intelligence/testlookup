@@ -72,6 +72,15 @@ icon in the app and was preloaded on every route (13.7 KB gzip; 4.5 KB of icons
 are actually needed up front). Eager gzip: 178 260 on main, 186 635 with the
 filters before this, 172 698 now (budget 180 000).
 
+**The pass-rate gauge was two rings.** Reviewing the first Linux screenshot
+baselines showed the value arc drawn beside its grey track, not on it:
+``PassRateGauge`` passed Recharts two rows (a 100 "track" and the value), which
+it lays out as two concentric bars. It was always so; Epic 1 recoloured the
+track from near-black to the grid colour, which made it visible. It is now one
+bar over its own ``background`` track on a fixed 0–100 angle axis, clamped,
+with the true value still in the label. The baselines are regenerated after
+this merges.
+
 Reviewed by three independent agents (correctness, accessibility, security):
 13 major findings, all fixed with failing-first tests and mutation checks.
 
