@@ -720,8 +720,17 @@ def release_filter_sql(params: dict, release_id: ReleaseArg, *, table_alias: str
 
     One id emits exactly the pre-VIZ-201 fragment. Several are one expanding
     ``IN``; the ``unattributed`` sentinel among them adds ``OR ... IS NULL``.
-    Reads the denormalised ``primary_release_id`` (migration 0152): joining the
-    link table would multiply rows for a run linked to two releases.
+
+    Two shapes this must never emit, both guarded by source tests that read
+    this function with its docstring stripped (so naming them here is safe):
+
+    * ``(:release_id IS NULL OR tr.primary_release_id = :release_id)`` -- the
+      planner cannot tell which branch applies, stops using
+      ``ix_test_runs_project_release_created`` and scans, for every caller,
+      including the ones that asked for no release at all;
+    * a join through ``release_test_run_links`` -- a run linked to two releases
+      would be counted twice. The denormalised ``primary_release_id``
+      (migration 0152) is one row per run.
     """
     ids = _release_list(release_id)
     column = f"{table_alias}.primary_release_id"
