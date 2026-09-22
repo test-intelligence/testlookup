@@ -1,0 +1,55 @@
+{
+  "description": "An axis that kept every key it had is not truncated.",
+  "violates": "truncated_axis",
+  "payload": {
+    "schema_version": 1,
+    "scope": {
+      "projects": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "name": "Checkout"
+        }
+      ],
+      "releases": [
+        {
+          "id": "22222222-2222-4222-8222-222222222221",
+          "name": "2026.09",
+          "status": "in_progress"
+        }
+      ],
+      "suites": [
+        "payments",
+        "cart"
+      ],
+      "window": {
+        "from": "2026-08-20",
+        "to": "2026-09-19",
+        "days": 30,
+        "timezone": "UTC"
+      }
+    },
+    "totals": {
+      "matched_runs": 18,
+      "total_runs": 143,
+      "matched_executions": 412,
+      "total_executions": 3960
+    },
+    "pass_rate_basis": "executions",
+    "ignored_filters": [],
+    "truncated": true,
+    "truncated_total": 400,
+    "truncated_axes": {
+      "x": {
+        "dimension": "suite",
+        "kept": 400,
+        "total": 400
+      }
+    },
+    "measured": true,
+    "reason": null,
+    "includes_in_progress": 0,
+    "partial_day": null,
+    "generated_at": "2026-09-19T10:42:07Z",
+    "as_of": "2026-09-19T10:42:07Z"
+  }
+}

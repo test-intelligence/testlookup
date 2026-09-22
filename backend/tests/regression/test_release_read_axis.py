@@ -221,6 +221,66 @@ async def test_a_malformed_release_id_is_rejected_before_the_database():
     db.execute.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batched", [False, True])
+async def test_an_unknown_release_is_refused_exactly_like_a_forbidden_one(batched):
+    """The release QUERY axis must not be an existence oracle.
+
+    404 for "no such release" and 403 for "not yours" let anyone holding a
+    session enumerate release ids and read which ones exist in projects they
+    cannot see. The project half of the same request already refuses both the
+    same way, so the two guards now agree: one status, one message.
+    """
+    import uuid as _uuid
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import HTTPException
+
+    from app.core import deps
+
+    mine, theirs = _uuid.uuid4(), _uuid.uuid4()
+    known, ghost = _uuid.uuid4(), _uuid.uuid4()
+
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+        def scalar_one_or_none(self):
+            return self._rows[0] if self._rows else None
+
+    class _Db:
+        async def execute(self, stmt):
+            compiled = stmt.compile()
+            wanted = next(iter(compiled.params.values()))
+            wanted = wanted if isinstance(wanted, list) else [wanted]
+            rows = [r for r in wanted if r == known]
+            if len(stmt.selected_columns) == 2:
+                return _Rows([(r, theirs) for r in rows])
+            return _Rows([SimpleNamespace(id=r, project_id=theirs) for r in rows])
+
+    async def _refuse(release_id):
+        with patch("app.core.deps.get_accessible_project_ids", AsyncMock(return_value={mine})):
+            with pytest.raises(HTTPException) as caught:
+                if batched:
+                    await deps.resolve_release_query_scopes(_Db(), [str(release_id)], object())
+                else:
+                    await deps.resolve_release_query_scope(_Db(), str(release_id), object())
+        return caught.value
+
+    unknown = await _refuse(ghost)
+    forbidden = await _refuse(known)
+    assert (unknown.status_code, unknown.detail) == (forbidden.status_code, forbidden.detail), (
+        "an unknown release answers differently from a forbidden one, so the "
+        "parameter reports whether an id exists"
+    )
+    assert unknown.status_code == 403
+    assert unknown.detail == deps.RELEASE_NOT_READABLE
+
+
 @pytest.mark.parametrize("fn_name", RUN_BACKED)
 def test_every_route_guards_the_release_before_using_it(fn_name):
     """The parameter must be validated on the way in, not trusted.

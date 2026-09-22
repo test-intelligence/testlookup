@@ -66,6 +66,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/ai-eval/runs/evaluate/{dataset_id}` | Run Evaluation | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/tier-comparison` | Run Tier Comparison | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/analytics/ai-summary` | Ai Analysis Summary | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/chart-data` | Chart Data | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/classify-uncategorized` | Classify Uncategorized Failures | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/coverage` | Coverage Stats | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects` | List Defects | [Analytics](api/analytics.md) |
@@ -559,4 +560,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **550 HTTP operations**, **460 paths**, **81 domain pages**.
+Total: **551 HTTP operations**, **461 paths**, **81 domain pages**.

@@ -15576,9 +15576,45 @@ dimension: Literal['release', 'suite', 'window']
 reason: str
 ```
 
-## backend/app/models/viz_contracts.py — EnvelopeMeta
+## backend/app/models/viz_contracts.py — TruncatedAxis
 
 [backend/app/models/viz_contracts.py:508](../../backend/app/models/viz_contracts.py#L508)
+
+Bases: `VizContract`.
+
+How much one axis lost. ``truncated_total`` is a single number and a
+chart can lose buckets AND series at once (400 suites keyed by 12
+environments), so "the full count" has to be answered per axis.
+
+```python
+dimension: str
+kept: Count
+total: Count
+```
+
+- Validator/serializer `_kept_is_a_subset`: [backend/app/models/viz_contracts.py:518](../../backend/app/models/viz_contracts.py#L518). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — OutsideWindow
+
+[backend/app/models/viz_contracts.py:528](../../backend/app/models/viz_contracts.py#L528)
+
+Bases: `VizContract`.
+
+Rows whose bucket fell outside the generated axis -- a run with a
+future ``created_at``. They are not drawn; they are counted, because a
+clock-skewed CI agent otherwise loses its run without a word.
+
+```python
+buckets: Count
+executions: Count
+first: str
+last: str
+_days = field_validator('first', 'last')(_check_day)
+```
+
+- Validator/serializer `_has_something_to_report`: [backend/app/models/viz_contracts.py:541](../../backend/app/models/viz_contracts.py#L541). Read source for the cross-field or conversion rule.
+## backend/app/models/viz_contracts.py — EnvelopeMeta
+
+[backend/app/models/viz_contracts.py:552](../../backend/app/models/viz_contracts.py#L552)
 
 Bases: `VizPayload`.
 
@@ -15601,14 +15637,16 @@ includes_in_progress: Count
 partial_day: str | None
 generated_at: str
 as_of: str
+truncated_axes: dict[Literal['x', 'series'], TruncatedAxis] | None = None
+outside_window: OutsideWindow | None = None
 _partial_day = field_validator('partial_day')(_check_day)
 _instants = field_validator('generated_at', 'as_of')(_check_utc_instant)
 ```
 
-- Validator/serializer `_conditional_fields`: [backend/app/models/viz_contracts.py:533](../../backend/app/models/viz_contracts.py#L533). Read source for the cross-field or conversion rule.
+- Validator/serializer `_conditional_fields`: [backend/app/models/viz_contracts.py:583](../../backend/app/models/viz_contracts.py#L583). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — SeriesPoint
 
-[backend/app/models/viz_contracts.py:563](../../backend/app/models/viz_contracts.py#L563)
+[backend/app/models/viz_contracts.py:627](../../backend/app/models/viz_contracts.py#L627)
 
 Bases: `VizContract`.
 
@@ -15618,11 +15656,14 @@ Bases: `VizContract`.
 x: str
 y: Number | None
 n: Count
+measured: bool = True
+reason: str | None = None
 ```
 
+- Validator/serializer `_measured_reason`: [backend/app/models/viz_contracts.py:641](../../backend/app/models/viz_contracts.py#L641). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — Series
 
-[backend/app/models/viz_contracts.py:570](../../backend/app/models/viz_contracts.py#L570)
+[backend/app/models/viz_contracts.py:650](../../backend/app/models/viz_contracts.py#L650)
 
 Bases: `VizContract`.
 
@@ -15637,7 +15678,7 @@ _point_cap = field_validator('points', mode='before')(_cap('point_cap', MAX_POIN
 
 ## backend/app/models/viz_contracts.py — SeriesChart
 
-[backend/app/models/viz_contracts.py:580](../../backend/app/models/viz_contracts.py#L580)
+[backend/app/models/viz_contracts.py:660](../../backend/app/models/viz_contracts.py#L660)
 
 Bases: `VizContract`.
 
@@ -15648,12 +15689,13 @@ kind: Literal['series']
 dimensions: list[str]
 x_type: Literal['time', 'category']
 series: list[Series] = Field(max_length=MAX_SERIES)
+x_labels: dict[str, str] | None = None
 ```
 
-- Validator/serializer `_unique_series_key`: [backend/app/models/viz_contracts.py:588](../../backend/app/models/viz_contracts.py#L588). Read source for the cross-field or conversion rule.
+- Validator/serializer `_unique_series_key`: [backend/app/models/viz_contracts.py:672](../../backend/app/models/viz_contracts.py#L672). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — MatrixCell
 
-[backend/app/models/viz_contracts.py:597](../../backend/app/models/viz_contracts.py#L597)
+[backend/app/models/viz_contracts.py:681](../../backend/app/models/viz_contracts.py#L681)
 
 Bases: `VizContract`.
 
@@ -15668,7 +15710,7 @@ n: Count
 
 ## backend/app/models/viz_contracts.py — MatrixChart
 
-[backend/app/models/viz_contracts.py:605](../../backend/app/models/viz_contracts.py#L605)
+[backend/app/models/viz_contracts.py:689](../../backend/app/models/viz_contracts.py#L689)
 
 Bases: `VizContract`.
 
@@ -15683,10 +15725,10 @@ cells: list[MatrixCell] = Field(max_length=MAX_MATRIX_CELLS)
 _cell_cap = field_validator('cells', mode='before')(_cap('cell_cap', MAX_MATRIX_CELLS, 'cells'))
 ```
 
-- Validator/serializer `_cells`: [backend/app/models/viz_contracts.py:617](../../backend/app/models/viz_contracts.py#L617). Read source for the cross-field or conversion rule.
+- Validator/serializer `_cells`: [backend/app/models/viz_contracts.py:701](../../backend/app/models/viz_contracts.py#L701). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — TreeNode
 
-[backend/app/models/viz_contracts.py:643](../../backend/app/models/viz_contracts.py#L643)
+[backend/app/models/viz_contracts.py:727](../../backend/app/models/viz_contracts.py#L727)
 
 Bases: `VizContract`.
 
@@ -15702,7 +15744,7 @@ measure: Number | None
 
 ## backend/app/models/viz_contracts.py — TreeChart
 
-[backend/app/models/viz_contracts.py:651](../../backend/app/models/viz_contracts.py#L651)
+[backend/app/models/viz_contracts.py:735](../../backend/app/models/viz_contracts.py#L735)
 
 Bases: `VizContract`.
 
@@ -15714,10 +15756,10 @@ nodes: list[TreeNode] = Field(max_length=MAX_TREE_NODES)
 _node_cap = field_validator('nodes', mode='before')(_cap('node_cap', MAX_TREE_NODES, 'tree nodes'))
 ```
 
-- Validator/serializer `_forest`: [backend/app/models/viz_contracts.py:661](../../backend/app/models/viz_contracts.py#L661). Read source for the cross-field or conversion rule.
+- Validator/serializer `_forest`: [backend/app/models/viz_contracts.py:745](../../backend/app/models/viz_contracts.py#L745). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — GraphNode
 
-[backend/app/models/viz_contracts.py:696](../../backend/app/models/viz_contracts.py#L696)
+[backend/app/models/viz_contracts.py:780](../../backend/app/models/viz_contracts.py#L780)
 
 Bases: `VizContract`.
 
@@ -15731,7 +15773,7 @@ size: NonNegativeNumber
 
 ## backend/app/models/viz_contracts.py — GraphEdge
 
-[backend/app/models/viz_contracts.py:702](../../backend/app/models/viz_contracts.py#L702)
+[backend/app/models/viz_contracts.py:786](../../backend/app/models/viz_contracts.py#L786)
 
 Bases: `VizContract`.
 
@@ -15745,7 +15787,7 @@ weight: UnitNumber
 
 ## backend/app/models/viz_contracts.py — GraphChart
 
-[backend/app/models/viz_contracts.py:708](../../backend/app/models/viz_contracts.py#L708)
+[backend/app/models/viz_contracts.py:792](../../backend/app/models/viz_contracts.py#L792)
 
 Bases: `VizContract`.
 
@@ -15758,10 +15800,10 @@ edges: list[GraphEdge]
 _node_cap = field_validator('nodes', mode='before')(_cap('node_cap', MAX_GRAPH_NODES, 'graph nodes'))
 ```
 
-- Validator/serializer `_edges_join_nodes`: [backend/app/models/viz_contracts.py:718](../../backend/app/models/viz_contracts.py#L718). Read source for the cross-field or conversion rule.
+- Validator/serializer `_edges_join_nodes`: [backend/app/models/viz_contracts.py:802](../../backend/app/models/viz_contracts.py#L802). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — WidgetInstance
 
-[backend/app/models/viz_contracts.py:757](../../backend/app/models/viz_contracts.py#L757)
+[backend/app/models/viz_contracts.py:841](../../backend/app/models/viz_contracts.py#L841)
 
 Bases: `VizContract`.
 
@@ -15786,10 +15828,10 @@ stack: Literal['none', 'absolute', 'percent'] | None = None
 bucket: Literal['day', 'week'] | None = None
 ```
 
-- Validator/serializer `_optional_is_not_nullable`: [backend/app/models/viz_contracts.py:780](../../backend/app/models/viz_contracts.py#L780). Read source for the cross-field or conversion rule.
+- Validator/serializer `_optional_is_not_nullable`: [backend/app/models/viz_contracts.py:864](../../backend/app/models/viz_contracts.py#L864). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — WidgetConfig
 
-[backend/app/models/viz_contracts.py:796](../../backend/app/models/viz_contracts.py#L796)
+[backend/app/models/viz_contracts.py:880](../../backend/app/models/viz_contracts.py#L880)
 
 Bases: `VizPayload`.
 
@@ -15802,10 +15844,10 @@ version: PositiveCount
 instances: list[WidgetInstance] = Field(max_length=MAX_INSTANCES)
 ```
 
-- Validator/serializer `_unique_instance_id`: [backend/app/models/viz_contracts.py:807](../../backend/app/models/viz_contracts.py#L807). Read source for the cross-field or conversion rule.
+- Validator/serializer `_unique_instance_id`: [backend/app/models/viz_contracts.py:891](../../backend/app/models/viz_contracts.py#L891). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — DrillLevel
 
-[backend/app/models/viz_contracts.py:819](../../backend/app/models/viz_contracts.py#L819)
+[backend/app/models/viz_contracts.py:903](../../backend/app/models/viz_contracts.py#L903)
 
 Bases: `VizContract`.
 
@@ -15816,10 +15858,10 @@ dimension: Dimension
 value: str = Field(min_length=1, max_length=MAX_DRILL_VALUE_LENGTH)
 ```
 
-- Validator/serializer `_status_vocab`: [backend/app/models/viz_contracts.py:824](../../backend/app/models/viz_contracts.py#L824). Read source for the cross-field or conversion rule.
+- Validator/serializer `_status_vocab`: [backend/app/models/viz_contracts.py:908](../../backend/app/models/viz_contracts.py#L908). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — DrillPath
 
-[backend/app/models/viz_contracts.py:830](../../backend/app/models/viz_contracts.py#L830)
+[backend/app/models/viz_contracts.py:914](../../backend/app/models/viz_contracts.py#L914)
 
 Bases: `VizPayload`.
 
@@ -15829,10 +15871,10 @@ Ordered from the top level down.
 path: list[DrillLevel] = Field(max_length=MAX_DRILL_DEPTH)
 ```
 
-- Validator/serializer `_unique_dimension`: [backend/app/models/viz_contracts.py:837](../../backend/app/models/viz_contracts.py#L837). Read source for the cross-field or conversion rule.
+- Validator/serializer `_unique_dimension`: [backend/app/models/viz_contracts.py:921](../../backend/app/models/viz_contracts.py#L921). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — MetricsWindow
 
-[backend/app/models/viz_contracts.py:871](../../backend/app/models/viz_contracts.py#L871)
+[backend/app/models/viz_contracts.py:955](../../backend/app/models/viz_contracts.py#L955)
 
 Bases: `VizContract`.
 
@@ -15847,7 +15889,7 @@ _days = field_validator('from_', 'to')(_check_day)
 
 ## backend/app/models/viz_contracts.py — MetricsPeriod
 
-[backend/app/models/viz_contracts.py:879](../../backend/app/models/viz_contracts.py#L879)
+[backend/app/models/viz_contracts.py:963](../../backend/app/models/viz_contracts.py#L963)
 
 Bases: `VizContract`.
 
@@ -15869,10 +15911,10 @@ reasons: dict[str, str]
 window: MetricsWindow
 ```
 
-- Validator/serializer `_metric_reason`: [backend/app/models/viz_contracts.py:897](../../backend/app/models/viz_contracts.py#L897). Read source for the cross-field or conversion rule.
+- Validator/serializer `_metric_reason`: [backend/app/models/viz_contracts.py:981](../../backend/app/models/viz_contracts.py#L981). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — PreviousPeriod
 
-[backend/app/models/viz_contracts.py:906](../../backend/app/models/viz_contracts.py#L906)
+[backend/app/models/viz_contracts.py:990](../../backend/app/models/viz_contracts.py#L990)
 
 Bases: `MetricsPeriod`.
 
@@ -15884,10 +15926,10 @@ reason: str | None
 reason_code: ComparableReasonCode | None
 ```
 
-- Validator/serializer `_comparable_reason`: [backend/app/models/viz_contracts.py:914](../../backend/app/models/viz_contracts.py#L914). Read source for the cross-field or conversion rule.
+- Validator/serializer `_comparable_reason`: [backend/app/models/viz_contracts.py:998](../../backend/app/models/viz_contracts.py#L998). Read source for the cross-field or conversion rule.
 ## backend/app/models/viz_contracts.py — ReportMetrics
 
-[backend/app/models/viz_contracts.py:927](../../backend/app/models/viz_contracts.py#L927)
+[backend/app/models/viz_contracts.py:1011](../../backend/app/models/viz_contracts.py#L1011)
 
 Bases: `VizPayload`.
 
@@ -15900,7 +15942,7 @@ current: MetricsPeriod
 previous: PreviousPeriod
 ```
 
-- Validator/serializer `_comparable_measured`: [backend/app/models/viz_contracts.py:936](../../backend/app/models/viz_contracts.py#L936). Read source for the cross-field or conversion rule.
+- Validator/serializer `_comparable_measured`: [backend/app/models/viz_contracts.py:1020](../../backend/app/models/viz_contracts.py#L1020). Read source for the cross-field or conversion rule.
 ## backend/app/routers/admin_maintenance.py — OutboxRequeueRequest
 
 [backend/app/routers/admin_maintenance.py:292](../../backend/app/routers/admin_maintenance.py#L292)
@@ -17774,6 +17816,110 @@ project_id: Optional[uuid.UUID]
 release_ids: tuple[str, ...]
 suite_names: tuple[str, ...]
 days: Optional[int]
+```
+
+## backend/app/services/chart_data_service.py — DimensionDef
+
+[backend/app/services/chart_data_service.py:120](../../backend/app/services/chart_data_service.py#L120)
+
+Bases: ``.
+
+One group-by dimension: its hard-coded SQL and how it is labelled.
+
+```python
+sql: str
+label_sql: Optional[str] = None
+row_level: bool = False
+time: bool = False
+high_cardinality: bool = False
+entity: Optional[str] = None
+```
+
+## backend/app/services/chart_data_service.py — MetricDef
+
+[backend/app/services/chart_data_service.py:204](../../backend/app/services/chart_data_service.py#L204)
+
+Bases: ``.
+
+One metric: how it is aggregated in each grain, and how it combines.
+
+```python
+row_sql: Optional[str]
+run_sql: Optional[str]
+row_sample: str
+run_sample: str
+additive: bool
+rate: bool = False
+integer: bool = True
+zero_fill: bool = True
+```
+
+## backend/app/services/chart_data_service.py — ChartSpec
+
+[backend/app/services/chart_data_service.py:323](../../backend/app/services/chart_data_service.py#L323)
+
+Bases: ``.
+
+A validated request: nothing here came from the caller as text.
+
+```python
+metric: str
+group_by: tuple[str, ...]
+top_n: Optional[int]
+```
+
+## backend/app/services/chart_data_service.py — Cell
+
+[backend/app/services/chart_data_service.py:508](../../backend/app/services/chart_data_service.py#L508)
+
+Bases: `NamedTuple`.
+
+One ``(bucket, series)`` group as SQL returned it.
+
+```python
+x: str
+x_label: str
+series: str
+series_label: str
+passed: int
+failed: int
+broken: int
+skipped: int
+unknown: int
+executions: int
+runs: int
+value: Optional[float]
+sample: int
+merged: int = 1
+```
+
+## backend/app/services/chart_data_service.py — AxisCounts
+
+[backend/app/services/chart_data_service.py:533](../../backend/app/services/chart_data_service.py#L533)
+
+Bases: ``.
+
+How many distinct keys each axis really had, before ranking.
+
+SQL ranks and caps now, so the keys Python sees ARE the kept ones and
+counting them would report the cap back as the truth. ``None`` means
+"count what you were given" -- the pure-assembly path the unit tests drive.
+
+```python
+series: Optional[int] = None
+bucket: Optional[int] = None
+```
+
+## backend/app/services/chart_data_service.py — _Accumulator
+
+[backend/app/services/chart_data_service.py:909](../../backend/app/services/chart_data_service.py#L909)
+
+Bases: ``.
+
+The component counts of one ``(series, bucket)`` cell, mergeable.
+
+```python
+__slots__ = ('passed', 'failed', 'broken', 'skipped', 'unknown', 'executions', 'runs', 'value', 'sample', 'merged')
 ```
 
 ## backend/app/services/codeowners_service.py — CodeownersEntry

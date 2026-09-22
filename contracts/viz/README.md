@@ -111,7 +111,9 @@ Additive `meta` object on every analytics response.
 | `totals` | `{matched_runs, total_runs, matched_executions, total_executions}` | `non_negative`, `integer_count`, `safe_integer`, `totals_subset` | `matched_* ≤ total_*`. Totals ignore release and suite filters but respect project and window. |
 | `pass_rate_basis` | `"executions"` \| `"unique_tests"` \| `null` | | |
 | `ignored_filters[]` | `{dimension, reason}` | `ignored_dimension` | `dimension` ∈ `release`, `suite`, `window`. |
-| `truncated` / `truncated_total` | bool / int \| `null` | `truncated_total` | `truncated_total` is required (non-null) when `truncated` is true. |
+| `truncated` / `truncated_total` | bool / int \| `null` | `truncated_total` | `truncated_total` is required (non-null) when `truncated` is true. With `truncated_axes`, it is the full count of the axis that lost whole buckets (`x`), else of the series axis. |
+| `truncated_axes` | `{x?, series?: {dimension, kept, total}}` \| absent | `truncated_axis`, `truncated_axes` | Optional and additive (VIZ-203). Present only when something was truncated; never `{}`. Each entry has `kept < total`, `truncated` must be true, and `truncated_total` must equal one of the entries' `total`. One number cannot answer for two axes: 400 suite buckets keyed by 12 environments truncates both. |
+| `outside_window` | `{buckets, executions, first, last}` \| absent | `outside_window` | Optional and additive (VIZ-203). Rows whose bucket fell outside a generated axis — a run with a future `created_at`. They are not drawn; they are counted, so a clock-skewed agent does not lose its run in silence. `buckets ≥ 1` and `first ≤ last`: a zero here is nothing to report, so the key is omitted instead. |
 | `measured` / `reason` | bool / string \| `null` | `measured_reason` | A `reason` with at least one non-whitespace character is required when `measured` is false. |
 | `includes_in_progress` | int ≥ 0 | `non_negative` | Number of in-progress runs inside the scope. |
 | `partial_day` | `YYYY-MM-DD` \| `null` | | The current UTC day when it is still accumulating. |
@@ -125,7 +127,7 @@ navigation all read. Discriminated by `kind` (`kind_enum`): `series`, `matrix`, 
 | Kind | Shape | Rule ids |
 |---|---|---|
 | any | `{kind, …}` | `kind_enum` (`kind` is one of the four below) |
-| `series` | `{dimensions: string[], x_type: "time"\|"category", series: [{key, label, points: [{x: string, y: number\|null, n: int}]}]}` | `series_cap` (≤ 8 series), `unique_series_key`, `point_cap` (≤ 366 points per series), `non_negative` (`n`) |
+| `series` | `{dimensions: string[], x_type: "time"\|"category", series: [{key, label, points: [{x: string, y: number\|null, n: int, measured?: bool, reason?: string\|null}]}], x_labels?: {string: string}}` | `series_cap` (≤ 8 series), `unique_series_key`, `point_cap` (≤ 366 points per series), `non_negative` (`n`), `measured_reason` (a point saying it was not measured carries a non-whitespace reason) |
 | `matrix` | `{value_type: "rate"\|"count"\|"status", x_labels, y_labels, cells: [{x: int, y: int, value, n: int}]}` | `cell_index_range`, `cell_cap` (≤ 5 400 cells), `status_vocab` (when `value_type` is `status`, `value` ∈ `passed, failed, broken, skipped, unknown` or `null`), `non_negative` and `integer_count` (when `value_type` is `count`, `value` is an integer ≥ 0 or `null`) |
 | `tree` | `{nodes: [{id, parent_id\|null, label, value: number ≥ 0, measure: number\|null}]}` | `tree_parent_exists`, `tree_acyclic` (no cycles and no self-parent; a **non-empty** tree has ≥ 1 root; an empty `nodes` list is valid and means no data), `unique_node_id`, `node_cap` (≤ 500 nodes) |
 | `graph` | `{nodes: [{id, label, size ≥ 0}], edges: [{source, target, weight}]}` | `edge_endpoints`, `weight_range` (0–1), `unique_node_id`, `node_cap` (≤ 200 nodes) |
@@ -133,6 +135,13 @@ navigation all read. Discriminated by `kind` (`kind_enum`): `series`, `matrix`, 
 `y: null` and `value: null` mean **no data** and are drawn as a gap or an empty cell, never as zero.
 Numbers are finite: `NaN` and `±Infinity` are rejected wherever a number is allowed.
 A whole-number value keeps its integer form on a round trip (`3` stays `3`, never `3.0`).
+
+Two optional, additive keys on `series` (VIZ-203). A point may carry **measured** and
+**reason**: a null `y` says there is nothing to draw, these say why, so a reader can tell
+"nothing ran here" from "a rate over nothing is not 0%". Both may be absent; `measured`
+is a boolean, never null. A chart may carry **x_labels**, display names for `x` values that
+are ids (a project or release bucket) — the `x` key stays the id, because that is what a
+drill-down (C5) sends back.
 
 ## C4 · Widget config — `fixtures/widget_config`
 

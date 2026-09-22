@@ -165,6 +165,33 @@ export interface EnvelopeMeta {
   partial_day: string | null
   generated_at: string
   as_of: string
+  /**
+   * Optional (VIZ-203): what each axis lost, because `truncated_total` is one
+   * number and a chart can lose buckets AND series at once — 400 suite
+   * buckets keyed by 12 environments truncates both, and the single counter
+   * could only ever name one of them. Present only when something was
+   * truncated; the chart frame badges it per axis.
+   */
+  truncated_axes?: { x?: TruncatedAxis; series?: TruncatedAxis }
+  /**
+   * Optional (VIZ-203): rows whose bucket fell outside a generated axis — a
+   * run with a future `created_at`. They cannot be drawn; they are counted,
+   * so a clock-skewed CI agent does not lose its run in silence.
+   */
+  outside_window?: {
+    buckets: number
+    executions: number
+    first: string
+    last: string
+  }
+}
+
+export interface TruncatedAxis {
+  /** The dimension on that axis (`suite`, `environment`, `test`, …). */
+  dimension: string
+  kept: number
+  /** How many distinct keys there really were. Always above `kept`. */
+  total: number
 }
 
 // ── C3 · ChartSeries ──────────────────────────────────────────────────────
@@ -175,6 +202,10 @@ export interface SeriesPoint {
   y: number | null
   /** Sample size behind `y`. */
   n: number
+  /** Optional (VIZ-203): `false` when `y` could not be computed here. */
+  measured?: boolean
+  /** Why `measured` is false. Required, non-blank, when it is. */
+  reason?: string | null
 }
 
 export interface SeriesChart {
@@ -182,6 +213,8 @@ export interface SeriesChart {
   dimensions: string[]
   x_type: 'time' | 'category'
   series: { key: string; label: string; points: SeriesPoint[] }[]
+  /** Optional (VIZ-203): display names for `x` values that are ids. */
+  x_labels?: Record<string, string>
 }
 
 export interface MatrixChart {
@@ -780,6 +813,77 @@ function checkTotals(totals: unknown, fail: Fail): void {
   }
 }
 
+/**
+ * Per-axis truncation (VIZ-203), optional and additive.
+ *
+ * Absent means the producer has nothing to say; `{}` does not, because
+ * "nothing was truncated" is already `truncated: false` and an empty object
+ * here would be a second, silent way to say it. Every entry must lose
+ * something (`kept < total`), `truncated` must agree, and `truncated_total`
+ * must be one of these totals -- otherwise the scalar and the detail describe
+ * two different charts.
+ */
+function checkTruncatedAxes(input: Dict, fail: Fail): void {
+  if (!('truncated_axes' in input)) return
+  const axes = input.truncated_axes
+  if (!isDict(axes)) {
+    fail('invalid_type', `truncated_axes must be an object, got ${show(axes)}`)
+    return
+  }
+  const names = Object.keys(axes)
+  if (names.length === 0) {
+    fail('truncated_axes', 'truncated_axes is empty; omit it instead')
+    return
+  }
+  if (input.truncated !== true) {
+    fail('truncated_axes', 'an axis was truncated but truncated is false')
+  }
+  const totals: number[] = []
+  for (const name of names) {
+    const where = `truncated_axes.${name}.`
+    if (name !== 'x' && name !== 'series') {
+      fail('truncated_axes', `truncated_axes.${name} is neither x nor series`)
+      continue
+    }
+    const axis = axes[name]
+    if (!isDict(axis)) {
+      fail('invalid_type', `truncated_axes.${name} must be an object, got ${show(axis)}`)
+      continue
+    }
+    requireString(axis, 'dimension', where, fail)
+    const kept = requireCount(axis, 'kept', where, fail)
+    const total = requireCount(axis, 'total', where, fail)
+    if (total !== null) totals.push(total)
+    if (kept !== null && total !== null && kept >= total) {
+      fail('truncated_axis', `${where}kept ${kept} is not below total ${total}`)
+    }
+  }
+  if (totals.length > 0 && typeof input.truncated_total === 'number'
+      && !totals.includes(input.truncated_total)) {
+    fail('truncated_axes', 'truncated_total names no axis’s full count')
+  }
+}
+
+/** Buckets outside a generated axis (VIZ-203), optional and additive. */
+function checkOutsideWindow(input: Dict, fail: Fail): void {
+  if (!('outside_window' in input)) return
+  const outside = input.outside_window
+  if (!isDict(outside)) {
+    fail('invalid_type', `outside_window must be an object, got ${show(outside)}`)
+    return
+  }
+  const buckets = requireCount(outside, 'buckets', 'outside_window.', fail)
+  if (buckets === 0) {
+    fail('outside_window', 'outside_window with no buckets is nothing to report; omit it')
+  }
+  requireCount(outside, 'executions', 'outside_window.', fail)
+  for (const key of ['first', 'last']) {
+    if (has(outside, key, 'outside_window.', fail) && dayNumber(outside[key]) === null) {
+      fail('invalid_value', `outside_window.${key} ${show(outside[key])} is not a YYYY-MM-DD day`)
+    }
+  }
+}
+
 export const validateEnvelopeMeta = guard<EnvelopeMeta>((input, fail) => {
   if (!isDict(input)) {
     fail('invalid_type', `meta must be an object, got ${show(input)}`)
@@ -825,6 +929,8 @@ export const validateEnvelopeMeta = guard<EnvelopeMeta>((input, fail) => {
       fail('truncated_total', 'truncated is true, so truncated_total must carry the full count')
     }
   }
+  checkTruncatedAxes(input, fail)
+  checkOutsideWindow(input, fail)
 
   requireBoolean(input, 'measured', '', fail)
   if (has(input, 'reason', '', fail)) {
@@ -863,6 +969,28 @@ function nullableNumber(v: unknown, label: string, fail: Fail): void {
   }
 }
 
+/**
+ * A point's optional `measured` / `reason` (VIZ-203).
+ *
+ * Both are additive, so a payload that carries neither is valid and unchanged.
+ * `measured` is a boolean when present, never null; a `false` needs a reason
+ * with a non-whitespace character, for the same rule the envelope states: a
+ * gap the reader cannot explain is indistinguishable from a bug.
+ */
+function checkPointMeasured(point: Dict, at: string, fail: Fail): void {
+  const measured = point.measured
+  if (measured !== undefined && typeof measured !== 'boolean') {
+    fail('invalid_type', `${at}measured must be a boolean, got ${show(measured)}`)
+  }
+  const reason = point.reason
+  if (reason !== undefined && reason !== null && typeof reason !== 'string') {
+    fail('invalid_type', `${at}reason must be a string or null, got ${show(reason)}`)
+  }
+  if (measured === false && (typeof reason !== 'string' || isBlank(reason))) {
+    fail('measured_reason', `${at}measured is false, so reason must say why`)
+  }
+}
+
 function checkSeriesChart(input: Dict, fail: Fail): void {
   requireStringArray(input, 'dimensions', '', fail)
   requireEnum(input, 'x_type', ['time', 'category'], 'invalid_value', '', fail)
@@ -895,6 +1023,7 @@ function checkSeriesChart(input: Dict, fail: Fail): void {
       requireString(point, 'x', at, fail)
       if (has(point, 'y', at, fail)) nullableNumber(point.y, `${at}y`, fail)
       requireCount(point, 'n', at, fail)
+      checkPointMeasured(point, at, fail)
     })
   })
   const keys = series.map((entry) => (isDict(entry) ? entry.key : undefined))
