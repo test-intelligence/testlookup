@@ -67,7 +67,11 @@ local toolchain skew, which is right for skew and wrong for a real change: makin
 now generates the references locally for ``origin/main`` and for the checkout in
 two throwaway worktrees -- the skew is the same on both sides and cancels -- and
 passes only if the committed file is CI's file plus that delta. The raw local
-generation still fails, as before.
+generation still fails, as before. The gate's mypy check also learned that local
+mypy is not always CI's on a file you touched: ``bootstrap.py`` counts one error
+fewer locally than in CI, which made the gate demand a baseline CI then
+rejected. ``KNOWN_MYPY_SKEW`` records such a difference with the CI evidence;
+the ratchet still fails on any change beyond it.
 
 ## Unreleased - Visualization Upgrade, Wave 0: contracts before charts
 

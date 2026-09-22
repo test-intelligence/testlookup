@@ -394,6 +394,36 @@ class TestTheMypyRatchetIsActuallyChecked:
         _, msg = push_check.check_mypy_touched()
         assert "Do NOT run --update" in msg
 
+    def _skewed(self, monkeypatch, local, baseline, skew):
+        monkeypatch.setattr(push_check, "_touched_backend_modules",
+                            lambda: {"app/skewed.py"})
+        out = f"  app/skewed.py: {local} errors (baseline {baseline})\n"
+        monkeypatch.setattr(push_check, "run", lambda *a, **k: (1, out))
+        monkeypatch.setattr(push_check, "KNOWN_MYPY_SKEW",
+                            {"app/skewed.py": (skew, "CI log shows +1")})
+
+    def test_a_documented_skew_that_explains_the_gap_passes(self, monkeypatch):
+        # PR #153: CI counts bootstrap.py at 2, local mypy at 1. The baseline
+        # holds CI's 2; the local 1 is not a drop to "tighten".
+        self._skewed(monkeypatch, local=1, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is True, msg
+
+    def test_a_skew_does_not_excuse_a_further_change(self, monkeypatch):
+        # One more real error than the skew accounts for still fails ...
+        self._skewed(monkeypatch, local=2, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is False and "rose" in msg
+        # ... and so does a real fix beyond it.
+        self._skewed(monkeypatch, local=0, baseline=2, skew=1)
+        ok, msg = push_check.check_mypy_touched()
+        assert ok is False and "DROPPED" in msg
+
+    def test_every_documented_skew_names_its_evidence(self):
+        for path, (delta, why) in push_check.KNOWN_MYPY_SKEW.items():
+            assert path.startswith("app/") and delta != 0
+            assert "CI" in why and len(why) > 40, f"{path}: say where CI showed it"
+
     def test_no_backend_change_skips_the_slow_mypy_run(self, monkeypatch):
         called = []
         monkeypatch.setattr(push_check, "_touched_backend_modules", lambda: set())

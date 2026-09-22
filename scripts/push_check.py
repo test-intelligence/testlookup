@@ -352,6 +352,19 @@ def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[s
 
 _RATCHET_LINE = re.compile(r"^\s+(app/\S+\.py): (\d+) errors \(baseline (\d+)\)")
 
+# Touched files whose local mypy count is known to differ from CI's: CI's
+# count minus the local count, with the evidence. The baseline holds CI's
+# number, so the local count is shifted by this before it is compared.
+# Add an entry only with a CI log that shows the difference; the ratchet then
+# still fails on any change beyond it, in either direction.
+KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
+    "app/bootstrap.py": (1, (
+        "CI (py3.11, its starlette/uvicorn stubs) reports bootstrap.py:~303 "
+        "'add_middleware ... type[ProxyHeadersMiddleware]' [arg-type]; the local "
+        "install does not. Seen on PR #153 run 35683876813: CI 2, local 1."
+    )),
+}
+
 
 def _touched_backend_modules() -> set[str]:
     """Backend modules this branch changed, as the ratchet names them (app/...)."""
@@ -394,7 +407,14 @@ def check_mypy_touched() -> tuple[bool, str]:
         m = _RATCHET_LINE.match(line)
         if m:
             violations.append((m.group(1), int(m.group(2)), int(m.group(3))))
-    mine = [v for v in violations if v[0] in touched]
+    mine = [
+        (path, now + KNOWN_MYPY_SKEW.get(path, (0, ""))[0], base)
+        for path, now, base in violations
+        if path in touched
+    ]
+    # A documented local/CI difference that accounts exactly for the gap is
+    # not a violation; anything else still is.
+    mine = [v for v in mine if v[1] != v[2]]
     if not mine:
         return True, (
             f"{len(violations)} untouched module(s) differ locally (known "

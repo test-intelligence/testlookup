@@ -13,7 +13,7 @@
 6 app/agents/release_risk_agent.py
 1 app/agents/summary_agent.py
 7 app/agents/workflow.py
-1 app/bootstrap.py
+2 app/bootstrap.py
 1 app/core/deps.py
 1 app/core/scim_errors.py
 1 app/db/mongo.py
