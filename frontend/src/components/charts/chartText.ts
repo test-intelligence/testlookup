@@ -21,10 +21,37 @@ export const NO_DATA = 'No data'
 
 export type ValueFormatter = (value: number) => string
 
+/**
+ * How a chart's values are formatted. ONE formatter for every series, or one
+ * PER SERIES keyed on `series.key` — a chart whose series are a duration and a
+ * run count has two units, and a single formatter prints "10 runs" as "10ms"
+ * in the table AND in the generated summary. `DEFAULT_FORMAT_KEY` is the
+ * fallback inside a keyed record; a key with no entry falls back to the
+ * chart's own default.
+ */
+export type SeriesFormat = ValueFormatter | Readonly<Record<string, ValueFormatter>>
+
+/** The entry a keyed `SeriesFormat` uses for every series it does not name. */
+export const DEFAULT_FORMAT_KEY = '*'
+
+/** The formatter for one series. `seriesKey` is `undefined` for a chart that has none. */
+export function formatterFor(
+  format: SeriesFormat | undefined,
+  seriesKey: string | undefined,
+  fallback: ValueFormatter,
+): ValueFormatter {
+  if (!format) return fallback
+  if (typeof format === 'function') return format
+  const named = seriesKey === undefined ? undefined : format[seriesKey]
+  return named ?? format[DEFAULT_FORMAT_KEY] ?? fallback
+}
+
 /** Up to two decimals, grouped: `0.1 + 0.2` reads "0.3", never "0.30000000000000004". */
 export const formatPlainValue: ValueFormatter = (v) => formatNumber(v, { maximumFractionDigits: 2 })
 /** A 0..1 ratio as a one-decimal percentage. */
 export const formatRateValue: ValueFormatter = (v) => formatPercent(v, { from: 'ratio' })
+/** Percentage POINTS (0..100), as the 100% mode and the donut's shares carry them. */
+export const formatPercentPoints: ValueFormatter = (v) => formatPercent(v)
 
 /** Rate matrices are 0..1 and read as a percentage; everything else is a plain number. */
 export function defaultFormatter(series: ChartSeries): ValueFormatter {
@@ -50,7 +77,7 @@ export interface SummaryInput {
   axes?: ChartAxes
   /** The scope the data covers, e.g. "Project payments, last 7 days". */
   scope?: string
-  format?: ValueFormatter
+  format?: SeriesFormat
 }
 
 interface Extreme {
@@ -71,18 +98,26 @@ function extremes(points: { value: number | null; where: string }[]): { min: Ext
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
-function seriesSentences(chart: SeriesChart, format: ValueFormatter): string[] {
+function seriesSentences(chart: SeriesChart, format: SeriesFormat | undefined, fallback: ValueFormatter): string[] {
   const out: string[] = []
+  const labels = chart.x_labels ?? {}
+  const name = (x: string) => labels[x] ?? x
   for (const s of chart.series) {
-    const found = extremes(s.points.map((p) => ({ value: p.y, where: p.x })))
+    // Per series: a duration and a run count in one chart are two units.
+    const fmt = formatterFor(format, s.key, fallback)
+    const found = extremes(s.points.map((p) => ({ value: p.y, where: name(p.x) })))
     if (!found) {
       out.push(`${s.label}: no data.`)
       continue
     }
     const measured = s.points.filter((p) => p.y !== null)
     const latest = measured[measured.length - 1]
+    // "Latest" is only a fact on a TIME axis. On a category axis the last
+    // point is wherever the server happened to put it, not the newest.
+    const tail =
+      chart.x_type === 'time' ? `, latest ${fmt(latest.y as number)} (${name(latest.x)})` : ''
     out.push(
-      `${s.label}: min ${format(found.min.value)} (${found.min.where}), max ${format(found.max.value)} (${found.max.where}), latest ${format(latest.y as number)} (${latest.x}).`,
+      `${s.label}: min ${fmt(found.min.value)} (${found.min.where}), max ${fmt(found.max.value)} (${found.max.where})${tail}.`,
     )
   }
   return out
@@ -129,7 +164,8 @@ function matrixSentences(chart: MatrixChart, format: ValueFormatter): string[] {
 
 /** The generated description a chart's `aria-describedby` points at. */
 export function summarizeChart({ chartType, series, axes = {}, scope, format }: SummaryInput): string {
-  const fmt = format ?? defaultFormatter(series)
+  // The chart-wide fallback; a keyed `format` picks per series below.
+  const fmt = formatterFor(format, undefined, defaultFormatter(series))
   const parts: string[] = []
   switch (series.kind) {
     case 'series': {
@@ -152,7 +188,7 @@ export function summarizeChart({ chartType, series, axes = {}, scope, format }: 
       break
   }
   if (scope) parts.push(`Scope: ${scope}.`)
-  if (series.kind === 'series') parts.push(...seriesSentences(series, fmt))
+  if (series.kind === 'series') parts.push(...seriesSentences(series, format, defaultFormatter(series)))
   if (series.kind === 'matrix') parts.push(...matrixSentences(series, fmt))
   if (series.kind === 'tree') {
     const found = extremes(series.nodes.map((n) => ({ value: n.value, where: n.label })))
@@ -204,7 +240,15 @@ function orderedXs(chart: SeriesChart): string[] {
   )
 }
 
-function seriesTable(chart: SeriesChart, axes: ChartAxes, fmt: ValueFormatter): ChartTableModel {
+function seriesTable(
+  chart: SeriesChart,
+  axes: ChartAxes,
+  format: SeriesFormat | undefined,
+  fallback: ValueFormatter,
+): ChartTableModel {
+  // One formatter PER COLUMN: the columns are the series, and two series in
+  // one chart can be two different units.
+  const formatters = chart.series.map((s) => formatterFor(format, s.key, fallback))
   // Every value per (series, x), in the order given: a duplicate x is KEPT.
   const values = chart.series.map((s) => {
     const byX = new Map<string, (number | null)[]>()
@@ -225,22 +269,26 @@ function seriesTable(chart: SeriesChart, axes: ChartAxes, fmt: ValueFormatter): 
       if (count > depth) depth = count
     })
     for (let k = 0; k < depth; k++) {
-      const cells = values.map((byX) => {
+      const cells = values.map((byX, s) => {
         const list = byX.get(x)
-        return list && k < list.length ? formatChartValue(list[k], fmt) : NO_VALUE
+        return list && k < list.length ? formatChartValue(list[k], formatters[s]) : NO_VALUE
       })
-      rows.push(k === 0 ? { header: x, cells } : { header: `${x}${DUPLICATE_SUFFIX}`, cells, duplicate: true })
+      const header = (chart.x_labels ?? {})[x] ?? x
+      rows.push(
+        k === 0 ? { header, cells } : { header: `${header}${DUPLICATE_SUFFIX}`, cells, duplicate: true },
+      )
     }
   }
   return { columns: [axes.x ?? chart.dimensions[0] ?? 'x', ...chart.series.map((s) => s.label)], rows, warnings }
 }
 
 /** The table for "View as table": exactly the plotted values, formatted once. */
-export function chartTableModel(series: ChartSeries, axes: ChartAxes = {}, format?: ValueFormatter): ChartTableModel {
-  const fmt = format ?? defaultFormatter(series)
+export function chartTableModel(series: ChartSeries, axes: ChartAxes = {}, format?: SeriesFormat): ChartTableModel {
+  const fallback = defaultFormatter(series)
+  const fmt = formatterFor(format, undefined, fallback)
   switch (series.kind) {
     case 'series':
-      return seriesTable(series, axes, fmt)
+      return seriesTable(series, axes, format, fallback)
     case 'matrix': {
       const byCell = new Map(series.cells.map((cell) => [`${cell.x}:${cell.y}`, cell.value]))
       return {

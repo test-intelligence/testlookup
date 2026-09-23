@@ -15,6 +15,7 @@
  */
 import { expect, test } from '@playwright/test'
 import {
+  GALLERY_DRAWN_DOM_ITEMS,
   GALLERY_DRAWN_SVG_ITEMS,
   GALLERY_ITEM_IDS,
   GALLERY_ITEMS,
@@ -24,6 +25,48 @@ import {
 const GALLERY_CANVAS_ITEM_IDS = GALLERY_ITEMS.filter((item) => galleryEngine(item) === 'echarts').map(
   (item) => item.id,
 )
+
+/**
+ * The Wave-2 baselines (VIZ-401 / VIZ-402). The per-item tests below are
+ * generated from the fixtures, so these get a screenshot each without being
+ * named here — but a dropped edge case would then silently lose its baseline
+ * and nothing would fail. So they ARE named, once, and asserted to still be in
+ * the gallery. Their PNGs are generated on CI (`npm run test:visual:update`);
+ * none is committed from a developer machine, where fonts and DPI differ.
+ */
+const WAVE_2_ITEM_IDS = [
+  'donut-status',
+  'donut-status-unknown',
+  'donut-single-status',
+  'donut-tiny-slice',
+  'donut-all-zero',
+  'bar-ranked',
+  'bar-ranked-ties',
+  'bar-long-names',
+  'bar-diverging',
+  'bar-paginated',
+  'bar-hostile-label',
+  'bar-stacked',
+  'bar-stacked-100',
+  'bar-grouped',
+  'breakdown-four-categories',
+  'breakdown-six-categories',
+  // VIZ-403 — the time series. Every pixel here is fixed by `GALLERY_NOW` and
+  // `GALLERY_TIME_ZONE`: without them the partial-day note and the tooltip's
+  // local equivalent would differ by machine and by the day the baseline ran.
+  'timeseries-trend-releases',
+  'timeseries-single-point',
+  'timeseries-zoomed-axis',
+  // VIZ-406 — the duration charts.
+  'duration-histogram',
+  'duration-histogram-empty',
+  'duration-band',
+  'slowest-tests',
+] as const
+
+test('every Wave-2 edge case still has a gallery item, and so a baseline', () => {
+  for (const id of WAVE_2_ITEM_IDS) expect(GALLERY_ITEM_IDS, id).toContain(id)
+})
 
 const THEMES = ['signal', 'lab'] as const
 
@@ -47,6 +90,14 @@ for (const theme of THEMES) {
         await expect(
           page.locator(`[data-gallery-item="${id}"] [data-chart-engine="echarts"]`),
         ).toHaveAttribute('data-chart-status', 'ready')
+      }
+      // A `dom` item (the ranked slowest-tests list) has no engine to report
+      // ready, so wait on its own first bar: a screenshot must not race React's
+      // first paint any more than it may race ResponsiveContainer's.
+      for (const item of GALLERY_DRAWN_DOM_ITEMS) {
+        await expect(
+          page.locator(`[data-gallery-item="${item.id}"] [data-testid="ranked-bar"]`).first(),
+        ).toBeVisible()
       }
     })
 

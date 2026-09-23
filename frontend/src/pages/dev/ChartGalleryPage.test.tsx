@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ChartGalleryPage from './ChartGalleryPage'
-import { GALLERY_ITEM_IDS, GALLERY_ITEMS, galleryEngine } from './chartGalleryFixtures'
+import { GALLERY_ITEM_IDS, GALLERY_ITEMS, galleryCanvasSize, galleryEngine, galleryFramed } from './chartGalleryFixtures'
 import { STATE_ITEM_IDS, STATE_ITEMS } from './chartStatesFixtures'
 
 // Recharts is mocked the way the chart component tests mock it (jsdom has no
@@ -20,6 +20,9 @@ vi.mock('recharts', () => {
     LineChart: box,
     AreaChart: box,
     BarChart: box,
+    // Wave 2 (VIZ-403 / VIZ-406): the time series and the p50/p95 band draw a
+    // line and an area on one chart.
+    ComposedChart: box,
     PieChart: box,
     RadialBarChart: box,
     CartesianGrid: () => <div />,
@@ -29,6 +32,11 @@ vi.mock('recharts', () => {
     Legend: () => <div />,
     Cell: () => <div />,
     PolarAngleAxis: () => <div />,
+    // Wave 2: the donut's centre total, the ranked bar's value labels and the
+    // diverging chart's zero baseline.
+    Label: () => <div />,
+    LabelList: () => <div />,
+    ReferenceLine: () => <div />,
     Line: mark,
     Area: mark,
     Bar: mark,
@@ -76,18 +84,37 @@ describe('ChartGalleryPage', () => {
     for (const item of GALLERY_ITEMS) {
       const section = container.querySelector(`[data-gallery-item="${item.id}"]`)
       expect(section).not.toBeNull()
-      const heading = screen.getByRole('heading', { level: 2, name: item.title })
-      expect(section?.getAttribute('aria-labelledby')).toBe(heading.id)
+      // Exactly ONE level-2 heading per item, and it names the section: a
+      // framed item is named by the FRAME's own heading (the gallery adds
+      // none above it), an unframed one by the gallery's.
+      const headings = screen.getAllByRole('heading', { level: 2, name: item.title })
+      expect(headings, `${item.id}: heading drawn ${headings.length} times`).toHaveLength(1)
+      if (galleryFramed(item)) {
+        expect(section?.getAttribute('aria-label')).toBe(item.title)
+        expect(section?.getAttribute('aria-labelledby')).toBeNull()
+      } else {
+        expect(section?.getAttribute('aria-labelledby')).toBe(headings[0].id)
+      }
+      // A Wave-2 item draws a whole ChartFrame, so its box is taller.
+      const canvas = galleryCanvasSize(item)
       expect(section?.querySelector(`[data-gallery-canvas="${item.id}"]`)).toHaveStyle({
-        width: '640px',
-        height: '320px',
+        width: `${canvas.width}px`,
+        height: `${canvas.height}px`,
       })
     }
   })
 
   it('has one explicit empty item per chart component', () => {
     const empties = GALLERY_ITEMS.filter((item) => item.empty)
-    expect(empties.map((item) => item.chart).sort()).toEqual(['donut', 'gauge', 'heatmap', 'trend'])
+    expect(empties.map((item) => item.chart).sort()).toEqual([
+      'donut',
+      // VIZ-406: nothing timed at all — no value can go on a log axis.
+      'duration-histogram',
+      'gauge',
+      'heatmap',
+      'status-donut',
+      'trend',
+    ])
     const { container } = renderAt()
     expect(container.querySelectorAll('[data-gallery-empty="true"]')).toHaveLength(empties.length)
     // The donut's own empty state, not a blank box.
@@ -97,9 +124,17 @@ describe('ChartGalleryPage', () => {
   it('passes animate={false} through every chart to every Recharts series', () => {
     const { container } = renderAt()
     const marks = [...container.querySelectorAll('[data-animate]')]
-    // line 4 + area 2 + bar 4 + pie 1 + radial bar 1, plus the empty trend (4)
-    // and the zero gauge (1). The empty donut draws no Pie at all.
-    expect(marks.length).toBe(17)
+    // Wave 1: line 4 + area 2 + bar 4 + pie 1 + radial bar 1, plus the empty
+    // trend (4) and the zero gauge (1) = 17. The empty donut draws no Pie.
+    // Wave 2: four status donuts (1 Pie each; the all-zero one hands over to
+    // the frame and draws nothing), six ranked bars (1 Bar each), three
+    // status charts (4 Bars each) and the registry's two (a Pie and a Bar) = 24.
+    // VIZ-403 / VIZ-406: three time series (a Bar and a Line each = 6), the
+    // duration histogram (1 Bar; the "nothing timed" one has no bucket to draw,
+    // so it renders its empty text and no Bar at all) and the p50/p95 band (the
+    // band Area + the two percentile Lines = 3) = 10. `slowest-tests` adds
+    // nothing: it is a list of <div> bars, not a Recharts chart.
+    expect(marks.length).toBe(17 + 24 + 10)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 

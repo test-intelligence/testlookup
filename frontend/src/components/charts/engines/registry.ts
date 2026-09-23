@@ -25,6 +25,9 @@ export interface ChartEngine {
 
 const LOADERS = {
   heatmap: () => import('./echarts/heatmap').then((m): ChartEngine => m.echarts),
+  // Only for a series past `SVG_POINT_LIMIT` points (VIZ-403); a short trend
+  // stays in Recharts and never fetches this chunk.
+  timeSeries: () => import('./echarts/timeSeries').then((m): ChartEngine => m.echarts),
 } satisfies Record<string, () => Promise<ChartEngine>>
 
 export type ChartEngineType = keyof typeof LOADERS
