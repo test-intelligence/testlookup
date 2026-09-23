@@ -80,6 +80,18 @@ describe('ChartExportMenu — the menu button', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
+  // Baseline review A: nothing on screen said "Export" opens a menu rather
+  // than downloading at once. A chevron does; it is decoration, so the name
+  // stays exactly "Export".
+  it('shows a menu chevron that is hidden from the accessible name', () => {
+    const { trigger } = setup()
+    const chevron = trigger.querySelector('[data-chart-export-chevron]')
+    expect(chevron?.tagName.toLowerCase()).toBe('svg')
+    expect(chevron).toHaveAttribute('aria-hidden', 'true')
+    expect(trigger).toHaveAccessibleName(EXPORT_LABELS.trigger)
+    expect(trigger.querySelector('[data-chart-export-busy]')).toBeNull()
+  })
+
   it('opens INLINE (inside its own wrapper, not portalled) with focus on the first item', () => {
     const { trigger, container } = setup()
     fireEvent.click(trigger)

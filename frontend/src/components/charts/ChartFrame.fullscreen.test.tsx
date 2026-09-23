@@ -159,12 +159,12 @@ describe('ChartFrame outside full screen — unchanged apart from the new button
   it('the new buttons come AFTER the existing toolbar content, full screen last', () => {
     frame({ toolbar: <button type="button">Caller action</button> })
     const toolbar = screen.getByRole('toolbar', { name: 'Pass rate by suite actions' })
-    expect(within(toolbar).getAllByRole('button').map((b) => b.textContent || b.getAttribute('aria-label'))).toEqual([
-      'Caller action',
-      CHART_MESSAGES.viewTable,
-      'Export',
-      CHART_MESSAGES.fullScreen,
-    ])
+    // By accessible NAME: the table toggle lays out both of its labels (one
+    // hidden) so it keeps one width, and its textContent is both of them.
+    const buttons = within(toolbar).getAllByRole('button')
+    const expected = ['Caller action', CHART_MESSAGES.viewTable, 'Export', CHART_MESSAGES.fullScreen]
+    expect(buttons).toHaveLength(expected.length)
+    buttons.forEach((button, i) => expect(button).toHaveAccessibleName(expected[i]))
   })
 
   it('outside full screen: context is the pass-through (height as given, no portal container)', () => {

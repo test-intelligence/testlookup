@@ -111,6 +111,8 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
     markersOutside: (range) => (model ? markersOutsideRange(model.markers, xs, range).length : 0),
   })
   const { range } = zoomState
+  // The strip's context: the pass rate over the WHOLE window, gaps kept.
+  const spark = useMemo(() => (model ? [model.points.map((point) => point.rate)] : undefined), [model])
 
   // What is DRAWN: the full model, or its zoomed slice.
   const view = useMemo(() => (model ? sliceTimeSeriesModel(model, range) : null), [model, range])
@@ -172,7 +174,11 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
             now={now}
             trendOverlays={viewAnalysis ? { analysis: viewAnalysis, shown, onShownChange: setShown } : undefined}
           />
-          {zoomState.brush ? <ChartRangeBrush {...zoomState.brush} /> : null}
+          {zoomState.brush ? (
+            // A BAND scale: the execution bars give every day a slot, so the
+            // strip's days are slots too, centred as the bars are.
+            <ChartRangeBrush {...zoomState.brush} scale="band" spark={spark} />
+          ) : null}
         </>
       ) : null}
     </ChartFrame>

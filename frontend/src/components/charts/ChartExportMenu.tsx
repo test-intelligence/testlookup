@@ -26,6 +26,7 @@
  * on a light page.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { ChevronDown, Loader2 } from 'lucide-react'
 import type { ChartSeries } from '@/lib/viz/contracts'
 import { buildChartCsv, EXPORT_PIXEL_RATIO, exportFilename, type ChartProvenance } from '@/lib/viz/chartExport'
 import { csvBlob } from '@/lib/viz/csv'
@@ -78,7 +79,7 @@ export const EXPORT_LABELS = {
 } as const
 
 const TRIGGER =
-  'min-h-6 rounded border border-[var(--color-border-light)] px-3 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] aria-disabled:opacity-60'
+  'inline-flex min-h-6 items-center gap-1 rounded border border-[var(--color-border-light)] px-3 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] aria-disabled:opacity-60'
 const ITEM =
   'flex min-h-6 w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] aria-disabled:cursor-not-allowed aria-disabled:opacity-60'
 
@@ -236,11 +237,22 @@ export default function ChartExportMenu(props: ChartExportMenuProps) {
         aria-controls={open ? menuId : undefined}
         aria-describedby={error ? errorId : undefined}
         aria-disabled={busy || undefined}
+        // While busy the NAME says so; the visible word stays "Export" (which
+        // the name still contains, SC 2.5.3) so the button keeps its width
+        // and the title beside the toolbar never re-wraps mid-export.
+        aria-label={busy ? EXPORT_LABELS.busy : undefined}
         onClick={() => (open ? close(false) : openMenu('first'))}
         onKeyDown={onTriggerKeyDown}
         className={TRIGGER}
       >
-        {busy ? EXPORT_LABELS.busy : EXPORT_LABELS.trigger}
+        {EXPORT_LABELS.trigger}
+        {/* The chevron says "this opens a menu", not "this downloads now"
+            (baseline review A); a spinner takes its place, at its size, while busy. */}
+        {busy ? (
+          <Loader2 aria-hidden="true" data-chart-export-busy="" className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+        ) : (
+          <ChevronDown aria-hidden="true" data-chart-export-chevron="" className="h-3 w-3" />
+        )}
       </button>
       {open && (
         <div

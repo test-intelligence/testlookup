@@ -96,6 +96,17 @@ describe('MultiSeriesChartFrame — VIZ-407 zoom', () => {
     expect(screen.queryByRole('slider')).toBeNull()
   })
 
+  // Baseline review B: a line chart places its days as POINTS, edge to edge.
+  it('hands the brush a point scale, and a sparkline of the shown lines only', () => {
+    const { container } = mount(three)
+    expect(container.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-scale', 'point')
+    const moves = () => container.querySelector('[data-chart-brush-spark]')?.getAttribute('d')?.match(/M/g)?.length ?? 0
+    const before = moves()
+    expect(before).toBeGreaterThanOrEqual(3)
+    fireEvent.click(container.querySelector('[data-legend-series="cart"]') as HTMLElement)
+    expect(moves()).toBeLessThan(before)
+  })
+
   it('a hidden series stays hidden through a zoom and its reset', () => {
     const { container } = mount(three)
     fireEvent.click(container.querySelector('[data-legend-series="cart"]') as HTMLButtonElement)

@@ -6,6 +6,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { cloneElement, type ReactElement, type ReactNode } from 'react'
 import { tooltipText } from './tooltip'
+import { NBSP } from '@/lib/trendStats'
 import { readTooltip } from './tooltipTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ANNOUNCE_DEBOUNCE_MS, ChartAnnouncerProvider } from './ChartAnnouncer'
@@ -175,8 +176,8 @@ describe('the shared tooltip', () => {
     const content = multiSeriesTipContent(zoomed, 0, tipContentAt(zoomed, 0, { hidden: new Set(), format }), format)
     expect(content.title).toBe(day(1))
     // The same words the unzoomed chart says for that day.
-    expect(detailOf(content, 'search')).toBe('100 samples, +14 pts vs previous day')
-    expect(detailOf(content, 'payments')).toBe('100 samples, −1 pts vs previous day')
+    expect(detailOf(content, 'search')).toBe(`100 samples, +14${NBSP}pts vs previous day`)
+    expect(detailOf(content, 'payments')).toBe(`100 samples, −1${NBSP}pts vs previous day`)
     // A zoom starting on the first day of the data has no previous day to state.
     const atStart = sliceMultiSeriesModel(model3, { start: 0, end: 1 })
     expect(detailOf(multiSeriesTipContent(atStart, 0, tipContentAt(atStart, 0, { hidden: new Set(), format }), format), 'search')).toBe('100 samples')
@@ -184,7 +185,7 @@ describe('the shared tooltip', () => {
 
   it('states a RATE’s change in percentage points and a COUNT’s as the count (Wave 2.4 F5)', () => {
     const rate = multiSeriesTipContent(model3, 1, tipContentAt(model3, 1, { hidden: new Set(), format: (v) => `${v}%` }), (v) => `${v}%`)
-    expect(detailOf(rate, 'search')).toBe('100 samples, +14 pts vs previous day')
+    expect(detailOf(rate, 'search')).toBe(`100 samples, +14${NBSP}pts vs previous day`)
     const counts = buildMultiSeriesModel({ series: THREE, metric: { kind: 'count', title: 'Failures' }, seriesNoun: 'suites' })
     const count = multiSeriesTipContent(counts, 1, tipContentAt(counts, 1, { hidden: new Set(), format: (v) => `${v}` }), (v) => `${v}`)
     expect(detailOf(count, 'search')).toBe('100 samples, +14 vs previous day')
@@ -216,8 +217,8 @@ describe('the shared tooltip', () => {
     // a rate's change in percentage POINTS, as the single-series chart says it
     // (Wave 2.4 F5) — then, as in the tooltip, after the values, why "—" is "—".
     expect(assertive?.textContent).toBe(
-      `Pass rate by suite: ${day(1)}. search: 98.0% (100 samples, +14 pts vs previous day). ` +
-        'payments: 96.0% (100 samples, −1 pts vs previous day). cart: —. cart: cart ran nothing that day',
+      `Pass rate by suite: ${day(1)}. search: 98.0% (100 samples, +14${NBSP}pts vs previous day). ` +
+        `payments: 96.0% (100 samples, −1${NBSP}pts vs previous day). cart: —. cart: cart ran nothing that day`,
     )
     const readout = container.querySelector('[data-chart-readout]') as HTMLElement
     expect([...readout.querySelectorAll('[data-tip-series]')].map((row) => row.getAttribute('data-tip-series'))).toEqual([

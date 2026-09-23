@@ -142,6 +142,16 @@ const MultiSeriesChartFrame = forwardRef<HTMLDivElement, MultiSeriesChartFramePr
   const view = useMemo(() => (model ? sliceMultiSeriesModel(model, zoomState.range) : null), [model, zoomState.range])
 
   const series = useMemo(() => (view ? multiSeriesToChartSeries(view, hidden) : null), [view, hidden])
+  // The strip's context: every SHOWN line over the whole window, gaps kept.
+  const spark = useMemo(() => {
+    if (!model) return undefined
+    return model.lines
+      .filter((line) => !hidden.has(line.key))
+      .map((line) => {
+        const byDay = new Map(line.points.map((point) => [point.x, point.y]))
+        return model.xs.map((x) => byDay.get(x) ?? null)
+      })
+  }, [model, hidden])
   const format = multiSeriesFormat(model)
   const axes = useMemo(() => (model ? { x: model.xTitle, y: model.metric.title } : undefined), [model])
   const legendLabel = model && change ? visibilityAnnouncement(model, hidden, change) : undefined
@@ -185,7 +195,11 @@ const MultiSeriesChartFrame = forwardRef<HTMLDivElement, MultiSeriesChartFramePr
             height={height}
             animate={animate}
           />
-          {brush ? <ChartRangeBrush {...brush} /> : null}
+          {brush ? (
+            // A POINT scale: a line chart, whose first and last days sit on the
+            // plot's edges — and so do the strip's.
+            <ChartRangeBrush {...brush} scale="point" spark={spark} />
+          ) : null}
         </>
       ) : null}
     </ChartFrame>

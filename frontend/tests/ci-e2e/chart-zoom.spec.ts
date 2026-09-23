@@ -321,6 +321,181 @@ test.describe('VIZ-407 zoom and brush', () => {
   })
 })
 
+/**
+ * Baseline review B: the strip was inset a fixed 24 px from the frame, so it
+ * began under the y-axis labels and ran past the plot — and it spaced its days
+ * as equal slots on every chart, while a line chart puts its first and last
+ * days ON the plot's edges. The strip is the plot's overview, so with the
+ * whole window drawn, its first day must sit under the plot's first day and
+ * its last under the last — for a bar chart (band scale) and for both line
+ * charts (point scale), on the page, in full screen (where the chart is drawn
+ * scaled by 15/11) and after the window is resized.
+ */
+const ALIGN_TOLERANCE_PX = 2
+const ALIGNED_ITEMS = [
+  { id: TREND, marks: 'bars', days: 42 },
+  { id: 'multi-series-zoom-hidden', marks: 'line', days: 14 },
+  { id: 'duration-band-zoomed', marks: 'line', days: 6 },
+] as const
+
+interface Alignment {
+  chart: [number, number]
+  strip: [number, number]
+  ticks: [number, number] | null
+  days: number
+}
+
+/**
+ * The chart's first and last day x (bar centres, or a line's first and last
+ * point), and the strip's first and last day x — computed from the track's own
+ * box and the scale it declares (`band` when it declares none, which is how
+ * the strip placed days before it declared one), so a strip that is not under
+ * the plot fails here even with no ticks drawn.
+ */
+async function alignment(root: Locator, marks: 'bars' | 'line'): Promise<Alignment> {
+  return root.evaluate((el, kind) => {
+    const chart: number[] = []
+    if (kind === 'bars') {
+      const bars = [...el.querySelectorAll('.recharts-bar-rectangle path')]
+        .map((node) => node.getBoundingClientRect())
+        .filter((box) => box.width > 0)
+        .map((box) => box.left + box.width / 2)
+      chart.push(Math.min(...bars), Math.max(...bars))
+    } else {
+      const ends = [...el.querySelectorAll('path.recharts-line-curve')].flatMap((node) => {
+        const path = node as SVGPathElement
+        const matrix = path.getScreenCTM()
+        const length = path.getTotalLength()
+        if (!matrix || length <= 0) return []
+        return [path.getPointAtLength(0).matrixTransform(matrix).x, path.getPointAtLength(length).matrixTransform(matrix).x]
+      })
+      chart.push(Math.min(...ends), Math.max(...ends))
+    }
+    const track = el.querySelector('[data-chart-brush-track]') as HTMLElement
+    const box = track.getBoundingClientRect()
+    const k = track.offsetWidth > 0 ? box.width / track.offsetWidth : 1
+    const left = box.left + track.clientLeft * k
+    const width = track.clientWidth * k
+    const count = Number(el.querySelector('[data-chart-brush-handle="end"]')?.getAttribute('aria-valuemax')) + 1
+    const scale = track.getAttribute('data-chart-brush-scale') ?? 'band'
+    const at = (i: number) => left + width * (scale === 'point' ? i / (count - 1) : (i + 0.5) / count)
+    const ticks = [...el.querySelectorAll('[data-chart-brush-tick]')].map((tick) => tick.getBoundingClientRect().left)
+    return {
+      chart: [chart[0], chart[1]] as [number, number],
+      strip: [at(0), at(count - 1)] as [number, number],
+      ticks: ticks.length ? ([ticks[0], ticks[ticks.length - 1]] as [number, number]) : null,
+      days: count,
+    }
+  }, marks)
+}
+
+function expectAligned(a: Alignment, label: string, days: number) {
+  expect(a.days, `${label}: days on the strip`).toBe(days)
+  expect(Math.abs(a.strip[0] - a.chart[0]), `${label}: first day, strip ${a.strip[0]} vs chart ${a.chart[0]}`).toBeLessThanOrEqual(ALIGN_TOLERANCE_PX)
+  expect(Math.abs(a.strip[1] - a.chart[1]), `${label}: last day, strip ${a.strip[1]} vs chart ${a.chart[1]}`).toBeLessThanOrEqual(ALIGN_TOLERANCE_PX)
+  // The ticks drawn on the strip are where the strip says its days are.
+  expect(a.ticks, `${label}: no day ticks on the strip`).not.toBeNull()
+  expect(Math.abs((a.ticks as [number, number])[0] - a.strip[0]), `${label}: first tick`).toBeLessThanOrEqual(1)
+  expect(Math.abs((a.ticks as [number, number])[1] - a.strip[1]), `${label}: last tick`).toBeLessThanOrEqual(1)
+}
+
+test.describe('VIZ-407 zoom — the strip lies under the plot (baseline review B)', () => {
+  test('first and last day of the strip sit under the chart\'s own, for a bar chart and both line charts', async ({ page }) => {
+    await openGallery(page)
+    for (const { id, marks, days } of ALIGNED_ITEMS) {
+      const item = galleryItem(page, id)
+      await item.scrollIntoViewIfNeeded()
+      // The whole window, so the plot draws every day the strip shows.
+      await item.getByRole('button', { name: RESET }).click()
+      await expect(selectionLabel(item)).toHaveText(`Showing all ${days} days`)
+      await expect(item.locator('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-aligned', 'plot')
+      await expect.poll(async () => {
+        const a = await alignment(item, marks)
+        return Math.max(Math.abs(a.strip[0] - a.chart[0]), Math.abs(a.strip[1] - a.chart[1]))
+      }, { message: `${id}: the strip never lined up` }).toBeLessThanOrEqual(ALIGN_TOLERANCE_PX)
+      expectAligned(await alignment(item, marks), id, days)
+      // The kind the chart uses: bars are a band scale, lines a point scale.
+      await expect(item.locator('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-scale', marks === 'bars' ? 'band' : 'point')
+    }
+  })
+
+  test('…and still in full screen, where the chart is drawn at 15/11', async ({ page }) => {
+    await openGallery(page)
+    for (const { id, marks, days } of ALIGNED_ITEMS) {
+      const item = galleryItem(page, id)
+      await item.scrollIntoViewIfNeeded()
+      await item.getByRole('button', { name: RESET }).click()
+      await item.getByRole('button', { name: 'Full screen' }).click()
+      const dialog = page.locator('[data-chart-fullscreen]')
+      await expect(dialog).toBeVisible()
+      await expect.poll(async () => {
+        const a = await alignment(dialog, marks)
+        return Math.max(Math.abs(a.strip[0] - a.chart[0]), Math.abs(a.strip[1] - a.chart[1]))
+      }, { message: `${id}: the strip never lined up in full screen` }).toBeLessThanOrEqual(ALIGN_TOLERANCE_PX)
+      const a = await alignment(dialog, marks)
+      expectAligned(a, `${id} (full screen)`, days)
+      // It really is the bigger drawing: the plot is far wider than on the page.
+      expect(a.chart[1] - a.chart[0], `${id}: full screen did not enlarge the plot`).toBeGreaterThan(600)
+      await dialog.getByRole('button', { name: 'Exit full screen' }).click()
+      await expect(dialog).toHaveCount(0)
+    }
+  })
+
+  test('…and after the window is resized', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    // Fluid: the frames follow the window instead of the pinned 640 px canvas.
+    await openGallery(page, '?canvas=fluid')
+    for (const { id } of ALIGNED_ITEMS) await galleryItem(page, id).getByRole('button', { name: RESET }).click()
+    for (const width of [1280, 700]) {
+      await page.setViewportSize({ width, height: 900 })
+      for (const { id, marks, days } of ALIGNED_ITEMS) {
+        const item = galleryItem(page, id)
+        await item.scrollIntoViewIfNeeded()
+        await expect.poll(async () => {
+          const a = await alignment(item, marks)
+          return Math.max(Math.abs(a.strip[0] - a.chart[0]), Math.abs(a.strip[1] - a.chart[1]))
+        }, { message: `${id} at ${width} px: the strip never lined up` }).toBeLessThanOrEqual(ALIGN_TOLERANCE_PX)
+        expectAligned(await alignment(item, marks), `${id} at ${width} px`, days)
+      }
+    }
+  })
+
+  // Baseline review B: zoomed, the footer's totals are still the WHOLE window's
+  // and sat right above "the summary, table and export show these days only".
+  test('the footer labels the totals as the window\'s while zoomed, and not otherwise', async ({ page }) => {
+    await openGallery(page)
+    const item = galleryItem(page, TREND)
+    await item.scrollIntoViewIfNeeded()
+    const totals = item.locator('[data-chart-totals]')
+    await expect(totals).toHaveText('Window totals: 78 of 78 runs · 8,064 of 8,064 executions')
+    await item.getByRole('button', { name: RESET }).click()
+    await expect(item.locator('[data-chart-zoom-note]')).toHaveCount(0)
+    expect(await totals.textContent()).toBe('78 of 78 runs · 8,064 of 8,064 executions')
+  })
+
+  // Baseline review B: the strip's outline must be visible against the card
+  // (SC 1.4.11, 3:1) — it was about 1.1:1 on the dark themes.
+  for (const theme of ['signal', 'lab', 'midnight', 'console', 'slate', 'ember']) {
+    test(`the strip's outline has at least 3:1 against the card (${theme})`, async ({ page }) => {
+      await openGallery(page, `?theme=${theme}`)
+      const item = galleryItem(page, TREND)
+      const ratio = await item.evaluate((el) => {
+        const parse = (css: string) => (css.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+        const lum = ([r, g, b]: number[]) => {
+          const c = [r, g, b].map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+          return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        }
+        const track = el.querySelector('[data-chart-brush-track]') as HTMLElement
+        const card = el.querySelector('[data-chart-frame]') as HTMLElement
+        const a = lum(parse(getComputedStyle(track).borderTopColor))
+        const b = lum(parse(getComputedStyle(card).backgroundColor))
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+      })
+      expect(ratio).toBeGreaterThanOrEqual(3)
+    })
+  }
+})
+
 test.describe('VIZ-407 zoom — a finger has a single-pointer way too (SC 2.5.7)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 

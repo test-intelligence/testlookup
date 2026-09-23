@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import TimeSeriesChart, { TimeSeriesTooltip } from './TimeSeriesChart'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import { tooltipText } from './tooltip'
+import { NBSP } from '@/lib/trendStats'
 import { readTooltip } from './tooltipTestUtils'
 import {
   AXIS_NOT_ZERO_LABEL,
@@ -374,7 +375,7 @@ describe('VIZ-601 · the day tooltip: n, the change vs the previous day, placeme
   it('states the sample size n behind the rate, and the change vs the previous day in points', () => {
     const { content } = tipOf({ label: '2026-03-04' })
     expect(content.rows).toContainEqual({ kind: 'sample', label: 'Samples', value: '20' })
-    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: '+5 pts' })
+    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: `+5${NBSP}pts` })
     // The order every tooltip uses: dimensions, values, n, share, change, notes.
     expect(content.rows.map((row) => row.kind)).toEqual(['dimension', 'value', 'value', 'sample', 'change'])
   })
@@ -398,7 +399,7 @@ describe('VIZ-601 · the day tooltip: n, the change vs the previous day, placeme
     // What the zoom builder hands the chart: the visible slice, and the day before it.
     const zoomed = { ...four, points: four.points.slice(3), precedingPoint: four.points[2] }
     const { content } = tipOf({ label: '2026-03-04', model: zoomed })
-    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: '+5 pts' })
+    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: `+5${NBSP}pts` })
     // …and a range that starts at the series' own first day has nothing before it.
     const atStart = { ...four, points: four.points.slice(0, 2), precedingPoint: null }
     expect(tipOf({ label: '2026-03-01', model: atStart }).content.rows.some((row) => row.kind === 'change')).toBe(false)

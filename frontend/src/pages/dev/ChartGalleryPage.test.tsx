@@ -236,4 +236,25 @@ describe('ChartGalleryPage', () => {
       spy.mockRestore()
     }
   })
+
+  // Baseline review B: the hostile-release item rebuilt the headline trend
+  // from its points alone, so the still-filling 03-10 lost its partial mark
+  // and was drawn as a finished low bar, and two of its releases went missing.
+  it('draws the hostile-release trend with the headline trend\'s partial day and every release', () => {
+    const { container } = renderAt()
+    const item = container.querySelector('[data-gallery-item="timeseries-hostile-release"]')
+    expect(item?.querySelector('[data-chart-partial-note]')).toHaveTextContent('2026-03-10 is still filling')
+    const headline = container.querySelector('[data-gallery-item="timeseries-trend-releases"]')
+    // The same notes as the item it is built from: the one release before the
+    // window is stated there too, so no release was dropped on the way.
+    const notes = (root: Element | null) =>
+      [...(root?.querySelectorAll('[data-chart="time-series"] p') ?? [])].map((p) => p.textContent)
+    expect(notes(item)).toEqual(notes(headline))
+  })
+
+  // Baseline review A (D3): a frame title is plain text, so Markdown code-span
+  // backticks were drawn as literal characters.
+  it('names no gallery item with Markdown backticks', () => {
+    for (const item of GALLERY_ITEMS) expect(item.title, item.id).not.toMatch(/`/)
+  })
 })

@@ -208,7 +208,8 @@ describe('TimeSeriesChartFrame — VIZ-407 zoom', () => {
     const trendTable = screen.getByRole('table', { name: 'Trend analysis by day' })
     const row = (day: string) => within(trendTable).getByRole('rowheader', { name: day }).parentElement as HTMLElement
     // …with the rule and the numbers the unzoomed analysis gave.
-    expect(row(D(28))).toHaveTextContent(anomalyRuleText(anomaly))
+    // textContent, not toHaveTextContent: that one folds the rule's no-break spaces into plain ones.
+    expect(row(D(28)).textContent).toContain(anomalyRuleText(anomaly))
     expect(row(D(26))).toHaveTextContent(formatTrendPercent(average.value))
     expect(within(trendTable).getAllByRole('rowheader')).toHaveLength(10)
     // The table says its statistics are the whole window’s.
@@ -314,6 +315,15 @@ describe('TimeSeriesChartFrame — VIZ-407 zoom', () => {
     // Back to the first days: the dropped zoom does not return.
     rerender(view(model35))
     expect(screen.queryByRole('button', { name: RESET_ZOOM_LABEL })).toBeNull()
+  })
+
+  // Baseline review B: the execution bars give each day a slot, so the strip is a BAND scale.
+  it('hands the brush a band scale and the pass rate as its sparkline', () => {
+    const { container } = render(
+      <TimeSeriesChartFrame title="Pass rate trend" headingLevel={3} model={model35} state={READY} zoom />,
+    )
+    expect(container.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-scale', 'band')
+    expect(container.querySelector('[data-chart-brush-spark]')).not.toBeNull()
   })
 
   it('can open zoomed', () => {

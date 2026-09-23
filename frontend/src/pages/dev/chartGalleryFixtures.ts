@@ -1215,7 +1215,9 @@ export const GALLERY_ITEMS: GalleryItem[] = [
   },
   {
     id: 'bar-csv-locale-names',
-    title: 'BarChart - names a first-character check misses (`;`, full-width ＝)',
+    // Plain text: a frame title is not Markdown, so code-span backticks were
+    // drawn as literal characters (baseline review A, D3).
+    title: 'BarChart - names a first-character check misses (; and full-width ＝)',
     chart: 'bars',
     variant: 'ranked',
     dimension: 'Test',
@@ -1229,6 +1231,16 @@ export const GALLERY_ITEMS: GalleryItem[] = [
   // Each opens on `zoom.initial`, so its baseline is the zoomed state with no
   // interaction: the brush, Reset zoom, the footer's zoom note and — where a
   // release falls outside the view — the table's "(outside the zoomed view)".
+  //
+  // Their canvases are measured under the CI runner's fonts, not a
+  // developer's: text there is WIDER (DejaVu Sans, what `system-ui` resolves
+  // to on Ubuntu), so titles, the takeaway, the brush hint and the zoom note
+  // wrap onto more lines. `timeseries-zoom-trend` measured 728 px on Windows
+  // and 779 px on Linux, in a 760 px canvas sized from the Windows number: its
+  // footer was scrolled out of the baseline (baseline review B). Each height
+  // below is the Linux measurement plus 75-90 px, room for about four more
+  // wrapped lines. The chart-gallery spec fails any item whose frame does not
+  // fit its canvas.
   {
     id: 'timeseries-zoom-trend',
     title: 'TimeSeriesChart · zoomed, with trend statistics and releases',
@@ -1241,10 +1253,10 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // A real scope: the footer's "N of M", and exports stamped with the project,
     // the window and the zoom note (VIZ-606's "local zoom is reflected and stated").
     scoped: true,
-    // Frame measured at 684 px (Chromium, 640 px wide): the trend controls, the
-    // plot, the brush, the statistics strip and the zoom note. 760 leaves the
-    // same kind of headroom as the VIZ-405 items for a line that wraps on CI.
-    canvasHeight: 760,
+    // Frame measured at 779 px under Linux fonts (728 on Windows): the trend
+    // controls, the plot, the statistics strip, the brush, the window totals
+    // and a three-line zoom note.
+    canvasHeight: 860,
     empty: false,
     // 14 days in view, one of them a run-free Saturday (03-21): 13 execution
     // bars, the rate line, the moving average and the trend line over their
@@ -1262,9 +1274,9 @@ export const GALLERY_ITEMS: GalleryItem[] = [
       initial: { from: '2026-03-02', to: '2026-03-08' },
       applyAsWindow: { windowOptions: GALLERY_REPORT_WINDOW_OPTIONS },
     },
-    // Frame measured at 540 px: the plot, the brush with its disabled Apply and
-    // the reason under it, and the zoom note.
-    canvasHeight: 620,
+    // Frame measured at 591 px under Linux fonts (540 on Windows): the plot, the
+    // brush with its disabled Apply and the reason under it, and the zoom note.
+    canvasHeight: 680,
     empty: false,
     // 03-02..03-08 has runs on 03-02, 03-03, 03-06, 03-07 and 03-08 (03-04 and
     // 03-05 are the weekend with none): 5 execution bars and the rate line = 6.
@@ -1276,7 +1288,7 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     chart: 'multi-series',
     comparison: { series: GALLERY_THREE_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites', initialHidden: ['cart'] },
     zoom: { initial: { from: galleryDay(COMPARISON_START, 3), to: galleryDay(COMPARISON_START, 10) } },
-    canvasHeight: 620, // frame measured at 544 px
+    canvasHeight: 660, // frame measured at 584 px under Linux fonts (568 on Windows)
     empty: false,
     minMarks: 2, // cart is hidden: two lines, over the eight days in view
   },
@@ -1287,7 +1299,7 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // 03-07..03-09 of the band's six days: the inverted 03-08 is in view (the
     // figure says "1 day"), the unmeasured 03-06 is not.
     zoom: { initial: { from: '2026-03-07', to: '2026-03-09' } },
-    canvasHeight: 600, // frame measured at 512 px
+    canvasHeight: 640, // frame measured at 552 px under Linux fonts (536 on Windows)
     empty: false,
     // No gap in view, so nothing is split: the range area draws its fill and
     // its two edges (3 paths — counted in Chromium, the unzoomed item's floor

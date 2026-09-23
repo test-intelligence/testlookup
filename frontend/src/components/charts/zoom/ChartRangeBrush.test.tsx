@@ -4,11 +4,12 @@
  * "Apply as time filter" action with its visible reason.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { addUtcDays } from '../seriesAlignment'
 import FilterChips from '@/components/filters/FilterChips'
 import ChartRangeBrush, { APPLY_AS_FILTER_LABEL, RESET_ZOOM_LABEL } from './ChartRangeBrush'
+import type { BrushScale } from './brushScale'
 import { applyAsWindowLabel, windowAppliedAnnouncement } from './windowWords'
 import { PROMOTE_NOT_LATEST_REASON, RELATIVE_DAY_WORDS, type PromoteDecision, type ZoomRange } from './zoomModel'
 
@@ -21,6 +22,9 @@ function Harness({
   promote,
   onPromote,
   words,
+  scale,
+  spark,
+  plot,
 }: {
   initial?: ZoomRange | null
   xs?: readonly string[]
@@ -28,10 +32,15 @@ function Harness({
   promote?: PromoteDecision | null
   onPromote?: (days: number) => void
   words?: typeof RELATIVE_DAY_WORDS
+  scale?: BrushScale
+  spark?: readonly (readonly (number | null)[])[]
+  /** Stands in for the chart drawn above the brush. */
+  plot?: ReactNode
 }) {
   const [range, setRange] = useState<ZoomRange | null>(initial)
   return (
     <div data-chart-body="" tabIndex={-1}>
+      {plot}
       <ChartRangeBrush
         xs={xs}
         range={range}
@@ -43,6 +52,8 @@ function Harness({
         promote={promote}
         onPromote={onPromote}
         words={words}
+        scale={scale}
+        spark={spark}
       />
     </div>
   )
@@ -393,5 +404,108 @@ describe('ChartRangeBrush — Reset zoom and Apply as time filter', () => {
   it('adds no live region of its own', () => {
     const { container } = render(<Harness initial={{ start: 3, end: 9 }} />)
     expect(container.querySelector('[aria-live], [role="status"], [role="alert"]')).toBeNull()
+  })
+})
+
+// ── Baseline review B: the strip lies under the plot, placed as the chart places its days ──
+
+describe('ChartRangeBrush — under the plot', () => {
+  const box = (left: number, width: number) => () =>
+    ({ left, width, right: left + width, top: 0, height: 32, bottom: 32, x: left, y: 0, toJSON: () => ({}) }) as DOMRect
+
+  it('spans the measured plot: its padding box starts and ends where the plot does', () => {
+    // The row measures in jsdom as 0 wide until stubbed; the grid is the plot.
+    const rowBox = box(100, 600)
+    const gridBox = box(160, 520)
+    const original = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.hasAttribute('data-chart-brush-row') ? rowBox() : original.call(this)
+    }
+    try {
+      render(<Harness plot={<svg><g className="recharts-cartesian-grid" ref={(g) => { if (g) g.getBoundingClientRect = gridBox }} /></svg>} />)
+      const row = document.querySelector('[data-chart-brush-row]') as HTMLElement
+      // 60 px to the plot's left edge, 20 px from its right edge to the row's —
+      // less the track's 1 px border, which sits just outside the plot.
+      expect(row.style.paddingLeft).toBe('59px')
+      expect(row.style.paddingRight).toBe('19px')
+      expect(document.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-aligned', 'plot')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = original
+    }
+  })
+
+  it('with no plot to measure it keeps a whole handle each side, as before', () => {
+    render(<Harness />)
+    const row = document.querySelector('[data-chart-brush-row]') as HTMLElement
+    expect(row.style.paddingLeft).toBe('24px')
+    expect(row.style.paddingRight).toBe('24px')
+    expect(document.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-aligned', 'fallback')
+  })
+
+  it('a POINT scale puts the first and last days on the strip\'s edges, as a line chart does', () => {
+    const xs = XS.slice(0, 5)
+    render(<Harness xs={xs} scale="point" initial={{ start: 1, end: 3 }} />)
+    const selection = document.querySelector('[data-chart-brush-selection]') as HTMLElement
+    // Days at 0, 25, 50, 75, 100 %: days 1-3 run from halfway between 0 and 1
+    // to halfway between 3 and 4.
+    expect(selection.style.left).toBe('12.5%')
+    expect(selection.style.width).toBe('75%')
+    expect(start().style.left).toBe('12.5%')
+    expect(end().style.left).toBe('87.5%')
+    const ticks = [...document.querySelectorAll('[data-chart-brush-tick]')].map((t) => Number(t.getAttribute('x1')))
+    expect(ticks).toEqual([0, 250, 500, 750, 1000])
+    expect(document.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-scale', 'point')
+  })
+
+  it('a BAND scale (the default) centres each day in its own slot, as bars are', () => {
+    const xs = XS.slice(0, 4)
+    render(<Harness xs={xs} initial={{ start: 1, end: 2 }} />)
+    const selection = document.querySelector('[data-chart-brush-selection]') as HTMLElement
+    expect(selection.style.left).toBe('25%')
+    expect(selection.style.width).toBe('50%')
+    const ticks = [...document.querySelectorAll('[data-chart-brush-tick]')].map((t) => Number(t.getAttribute('x1')))
+    expect(ticks).toEqual([125, 375, 625, 875])
+  })
+
+  it('a point-scale click lands on the day whose point is nearest', () => {
+    const onChange = vi.fn()
+    render(<Harness xs={XS.slice(0, 5)} scale="point" onChange={onChange} />)
+    const track = document.querySelector('[data-chart-brush-track]') as HTMLElement
+    track.getBoundingClientRect = box(0, 400)
+    // Points at 0, 100, 200, 300, 400 px. 140 px is nearest day 1 (a band
+    // scale would have said day 1 too, so take 160: band says 1, point says 2).
+    for (const clientX of [160, 390]) {
+      fireEvent.pointerDown(track, { clientX, clientY: 10, pointerId: 1, button: 0, pointerType: 'mouse' })
+      fireEvent.pointerUp(track, { clientX, clientY: 10, pointerId: 1, pointerType: 'mouse' })
+    }
+    expect(onChange).toHaveBeenLastCalledWith({ start: 2, end: 4 })
+  })
+
+  it('draws the series over the whole window faintly, broken at its gaps, and hides it from assistive technology', () => {
+    render(<Harness xs={XS.slice(0, 6)} spark={[[90, 92, null, 94, 93, null]]} />)
+    const context = document.querySelector('[data-chart-brush-context]') as SVGElement
+    expect(context).toHaveAttribute('aria-hidden', 'true')
+    const d = document.querySelector('[data-chart-brush-spark]')?.getAttribute('d') ?? ''
+    // Two runs: days 0-1, then days 3-4. A gap is never drawn through.
+    expect(d.match(/M/g)).toHaveLength(2)
+    expect(d).not.toContain('NaN')
+  })
+
+  it('draws no sparkline without a series, and a day alone between gaps as a dot', () => {
+    const { unmount } = render(<Harness xs={XS.slice(0, 4)} />)
+    expect(document.querySelector('[data-chart-brush-spark]')).toBeNull()
+    unmount()
+    render(<Harness xs={XS.slice(0, 4)} spark={[[null, 50, null, null]]} />)
+    expect(document.querySelector('[data-chart-brush-spark]')?.getAttribute('d')).toMatch(/^M[\d.]+ [\d.]+h0$/)
+  })
+
+  // Baseline review B: the unselected strip was about 1.1:1 against the card in
+  // the dark themes. `text-muted` is at least 3:1 against the card and the
+  // strip's fill in all six (scratchpad contrast check; SC 1.4.11).
+  it('outlines the strip with the text-muted token, not the faint border token', () => {
+    render(<Harness />)
+    const track = document.querySelector('[data-chart-brush-track]') as HTMLElement
+    expect(track.className).toContain('border-[var(--color-text-muted)]')
+    expect(track.className).not.toContain('border-[var(--color-border)]')
   })
 })

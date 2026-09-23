@@ -127,8 +127,11 @@ export function shareRow(part: number, whole: number, label = SHARE_LABEL): Tool
  * A RATE's change, in percentage POINTS: "95.0% → 96.2%" is "+1.2 pts".
  * "+1.2%" would read as a RELATIVE change (1.2 % of 95, about 1.1 points).
  * Every chart that states a rate's change uses this (Wave 2.4 review F5).
+ * A no-break space keeps the number and "pts" on one line wherever the text
+ * wraps (baseline review B), as `trendStats` does for its sentences.
  */
-export const formatRatePoints = (points: number) => `${formatNumber(points, { maximumFractionDigits: 1 })} pts`
+export const formatRatePoints = (points: number) =>
+  `${formatNumber(points, { maximumFractionDigits: 1 })}${String.fromCharCode(0xa0)}pts`
 
 /** `+1.2 pts`, `−340ms`, `no change`: a signed difference, magnitude formatted by the caller. */
 export function formatChange(delta: number, formatMagnitude: (value: number) => string): string {

@@ -67,6 +67,7 @@ import {
 } from './BarChart.model'
 import DonutChart, { handOverWhenEmpty } from './DonutChart'
 import { categoryDonutModel } from './DonutChart.model'
+import SwapLabel from './SwapLabel'
 import { useChartAnimation } from './motion'
 import {
   ChartLegend,
@@ -106,6 +107,11 @@ const CATEGORY_GAP = `${BAR_CATEGORY_GAP * 100}%`
  * frame's toolbar puts these side by side with them, and a 22 px control next
  * to a 26 px one is both a smaller target and a visibly ragged row.
  */
+/** The stacked bars' mode toggle names the mode it switches TO. */
+export const SHOW_PERCENT_LABEL = 'Show 100%'
+export const SHOW_COUNTS_LABEL = 'Show counts'
+const MODE_TOGGLE_LABELS = [SHOW_PERCENT_LABEL, SHOW_COUNTS_LABEL] as const
+
 const TOOLBAR_BUTTON =
   'rounded border border-[var(--color-border-light)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50 aria-disabled:opacity-50'
 
@@ -762,7 +768,9 @@ export default function BarChart({
         data-bar-mode-toggle={mode}
         onClick={() => setMode(mode === 'percent' ? 'absolute' : 'percent')}
       >
-        {mode === 'percent' ? 'Show counts' : 'Show 100%'}
+        {/* One width for both labels ("Show counts" is the wider): pressing it
+            must not re-wrap the frame's title beside it. */}
+        <SwapLabel labels={MODE_TOGGLE_LABELS} current={mode === 'percent' ? SHOW_COUNTS_LABEL : SHOW_PERCENT_LABEL} />
       </button>
     ) : undefined
 

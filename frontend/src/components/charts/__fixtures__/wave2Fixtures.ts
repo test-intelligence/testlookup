@@ -33,7 +33,7 @@ import {
   type DurationHistogramModel,
   type SlowestTestsModel,
 } from '../durationBuckets'
-import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '../timeSeriesModel'
+import { buildTimeSeriesModel, timeSeriesFromTrends, type ReleaseInput, type TimeSeriesModel } from '../timeSeriesModel'
 import type { TrendPoint } from '@/types/metrics'
 
 const day = (date: string, passed: number, failed: number, skipped = 0, broken = 0): TrendPoint => ({
@@ -71,6 +71,20 @@ const META = (over: Partial<EnvelopeMeta>): EnvelopeMeta =>
   }) as EnvelopeMeta
 
 /**
+ * The headline trend's envelope meta and releases, exported so a variant built
+ * from its days (the gallery's hostile-release item) keeps the still-filling
+ * last day and every release. `buildTimeSeriesModel` marks the partial day from
+ * the META, not from the points it is handed, so a variant that passes only
+ * `points` draws 03-10 as a finished, suspiciously low bar.
+ */
+export const trendWithReleasesMeta: EnvelopeMeta = META({ partial_day: '2026-03-10', includes_in_progress: 2 })
+export const trendWithReleasesReleases: readonly ReleaseInput[] = [
+  { id: 'r0', name: '1.3.0', date: '2026-02-24T10:00:00Z' },
+  { id: 'r1', name: '1.4.0', date: '2026-03-03T00:00:00Z' },
+  { id: 'r2', name: '1.4.1', date: '2026-03-08T16:30:00Z' },
+]
+
+/**
  * The headline trend: ten UTC days, TWO of them with no runs (a weekend), two
  * releases inside the window and one dated before it, and the last day still
  * filling. Exercises gaps, markers, the outside-window notice and the partial
@@ -90,12 +104,8 @@ export const trendWithReleasesFixture: TimeSeriesModel = buildTimeSeriesModel({
     ],
     { from: '2026-03-01', to: '2026-03-10' },
   ),
-  meta: META({ partial_day: '2026-03-10', includes_in_progress: 2 }),
-  releases: [
-    { id: 'r0', name: '1.3.0', date: '2026-02-24T10:00:00Z' },
-    { id: 'r1', name: '1.4.0', date: '2026-03-03T00:00:00Z' },
-    { id: 'r2', name: '1.4.1', date: '2026-03-08T16:30:00Z' },
-  ],
+  meta: trendWithReleasesMeta,
+  releases: trendWithReleasesReleases,
 })
 
 /** The single-point case: a dot, never a line. */

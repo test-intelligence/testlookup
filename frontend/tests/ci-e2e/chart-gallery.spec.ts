@@ -1107,6 +1107,86 @@ test.describe('chart gallery (/__charts)', () => {
     )
     // Nothing was placed, so the "N of M placed" line is absent rather than 0.
     await expect(item.locator('[data-chart-counted]')).toHaveCount(0)
+    // Nothing drawn, so nothing to act on (baseline review B): no table, no
+    // Export, no Full screen — hidden, not disabled (VIZ-101).
+    await expect(item.getByRole('button', { name: 'View as table' })).toHaveCount(0)
+    await expect(item.getByRole('button', { name: 'Export' })).toHaveCount(0)
+    await expect(item.getByRole('button', { name: 'Full screen' })).toHaveCount(0)
+    await expect(item.locator('[data-chart-toolbar]')).toHaveCount(0)
+  })
+
+  /**
+   * Baseline review B: `timeseries-zoom-trend` grew past its 760 px canvas on
+   * Linux CI and its footer was scrolled out of the screenshot — which the
+   * baseline would then have made the expected output. Only three bar items
+   * and the comparisons were ever checked against their canvas. EVERY item is
+   * now: its content, bottom border and padding included, must end inside the
+   * canvas it is screenshotted in.
+   */
+  test('every gallery item fits its canvas, bottom border and padding included', async ({ page }) => {
+    await openGallery(page)
+    await expect(page.locator('[data-gallery-canvas]')).toHaveCount(GALLERY_ITEM_IDS.length)
+    // Let every chart draw: an svg item's marks, a canvas item's engine.
+    for (const item of GALLERY_DRAWN_SVG_ITEMS) {
+      await expect(page.locator(`[data-gallery-item="${item.id}"] ${CHART_SVG}`).first()).toBeVisible()
+    }
+    const spills = await page.locator('[data-gallery-canvas]').evaluateAll((canvases) =>
+      canvases.flatMap((canvas) => {
+        const box = canvas.getBoundingClientRect()
+        // The frame for a framed item; for the others, whatever the canvas holds.
+        const content = [...canvas.children].map((child) => child.getBoundingClientRect())
+        const bottom = Math.max(...content.map((b) => b.bottom), box.top)
+        const right = Math.max(...content.map((b) => b.right), box.left)
+        const id = canvas.getAttribute('data-gallery-canvas')
+        const out: string[] = []
+        if (bottom > box.bottom + 0.5) out.push(`${id}: ${Math.round(bottom - box.top)} px tall in a ${Math.round(box.height)} px canvas`)
+        if (right > box.right + 0.5) out.push(`${id}: ${Math.round(right - box.left)} px wide in a ${Math.round(box.width)} px canvas`)
+        // Nothing scrolls inside the canvas either: that is content cut off too.
+        if (canvas.scrollHeight > canvas.clientHeight + 1) out.push(`${id}: scrolls ${canvas.scrollHeight - canvas.clientHeight} px`)
+        return out
+      }),
+    )
+    expect(spills).toEqual([])
+  })
+
+  /**
+   * Baseline review A (D1): the frame's toolbar never yields width to the
+   * title, so a button whose label changes width re-wrapped the title — and
+   * moved the plot — every time it was pressed. Each label-swapping button
+   * keeps ONE width, the widest label's.
+   */
+  test('a toolbar button that swaps its label keeps its width', async ({ page }) => {
+    await openGallery(page)
+    const width = async (button: Locator) => ((await button.boundingBox()) as { width: number }).width
+    const titleHeight = async (item: Locator) => ((await item.getByRole('heading', { level: 2 }).boundingBox()) as { height: number }).height
+
+    // The stacked bars' mode toggle, in both of its gallery items.
+    for (const id of ['bar-stacked', 'bar-stacked-100']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const toggle = item.locator('[data-bar-mode-toggle]')
+      const [w0, h0] = [await width(toggle), await titleHeight(item)]
+      const name0 = await toggle.textContent()
+      await toggle.click()
+      await expect(toggle, `${id}: the toggle did not toggle`).not.toHaveAttribute('data-bar-mode-toggle', id === 'bar-stacked' ? 'absolute' : 'percent')
+      expect(await toggle.getAttribute('aria-pressed')).not.toBeNull()
+      expect(Math.abs((await width(toggle)) - w0), `${id}: the toggle changed width`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs((await titleHeight(item)) - h0), `${id}: the title re-wrapped`).toBeLessThanOrEqual(0.5)
+      expect(name0).toBe(await toggle.textContent()) // both labels laid out; only the name changed
+    }
+    await expect(page.locator('[data-gallery-item="bar-stacked"]').getByRole('button', { name: 'Show counts' })).toBeVisible()
+
+    // "View as table" / "Hide table", on a frame of every kind that has it.
+    for (const id of ['bar-stacked-100', 'timeseries-trend-releases', 'multi-series-three-suites', 'duration-band']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const open = item.getByRole('button', { name: 'View as table' })
+      const w0 = await width(open)
+      await open.click()
+      const hide = item.getByRole('button', { name: 'Hide table' })
+      await expect(hide).toBeVisible()
+      expect(Math.abs((await width(hide)) - w0), `${id}: the table toggle changed width`).toBeLessThanOrEqual(0.5)
+      await hide.click()
+      await expect(item.getByRole('button', { name: 'View as table' })).toBeVisible()
+    }
   })
 
   test('the p50/p95 band reports a disagreement instead of silently reordering it', async ({ page }) => {

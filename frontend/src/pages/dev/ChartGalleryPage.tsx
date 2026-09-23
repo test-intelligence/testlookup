@@ -44,6 +44,8 @@ import {
   trendAnalysisSparseFixture,
   trendSinglePointFixture,
   trendWithReleasesFixture,
+  trendWithReleasesMeta,
+  trendWithReleasesReleases,
   trendZoomedAxisFixture,
   trendZoomReleasesFixture,
   trendZoomReleasesMeta,
@@ -125,14 +127,23 @@ function timeSeriesState(key: GalleryTimeSeriesFixture, scoped: boolean | undefi
 const SCOPED_ZOOM_STATE: ChartState<unknown> = { status: 'ready', data: null, meta: trendZoomReleasesMeta, revalidating: false }
 
 /**
- * VIZ-601 scenario 3 on a time series: the headline trend's days, with its
- * in-window release renamed to markup. Built here rather than in
- * `wave2Fixtures` because `HOSTILE_LABEL` lives in the gallery's fixtures — the
- * one string every spec compares against. Module-level: built once.
+ * VIZ-601 scenario 3 on a time series: the headline trend — its days, its
+ * envelope meta and its releases — with the 03-03 release renamed to markup.
+ * Built here rather than in `wave2Fixtures` because `HOSTILE_LABEL` lives in
+ * the gallery's fixtures — the one string every spec compares against.
+ * Module-level: built once.
+ *
+ * The META is passed too: the model marks the still-filling day from it, and
+ * without it 03-10 was drawn as a finished bar of 96 executions — a drop the
+ * product would never draw for these data (baseline review B).
  */
+const HOSTILE_RELEASE_ID = 'r1' // 1.4.0, dated 03-03: inside the window, so it is drawn
 const trendHostileReleaseFixture: TimeSeriesModel = buildTimeSeriesModel({
   points: trendWithReleasesFixture.points,
-  releases: [{ id: 'hostile', name: HOSTILE_LABEL, date: '2026-03-03T00:00:00Z' }],
+  meta: trendWithReleasesMeta,
+  releases: trendWithReleasesReleases.map((release) =>
+    release.id === HOSTILE_RELEASE_ID ? { ...release, name: HOSTILE_LABEL } : release,
+  ),
 })
 
 /**

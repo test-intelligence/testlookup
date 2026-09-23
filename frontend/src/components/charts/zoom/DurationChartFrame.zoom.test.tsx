@@ -66,6 +66,14 @@ describe('DurationChartFrame trend — VIZ-407 zoom', () => {
     expect(band.inverted).toBe(2)
   })
 
+  // Baseline review B: the strip must place days as the chart does. A duration
+  // trend is an area and lines with no bar: a POINT scale.
+  it('hands the brush a point scale and the p50 as its sparkline', () => {
+    const { container } = mount(true)
+    expect(container.querySelector('[data-chart-brush-track]')).toHaveAttribute('data-chart-brush-scale', 'point')
+    expect(container.querySelector('[data-chart-brush-spark]')).not.toBeNull()
+  })
+
   it('zooms the plot and the table to the days in view, and says so', () => {
     const { container } = mount(true)
     fireEvent.keyDown(startHandle(), { key: 'PageUp' }) // days 7..9

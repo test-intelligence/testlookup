@@ -104,6 +104,8 @@ const DurationTrendFrame = forwardRef<HTMLDivElement, TrendFrameProps>(function 
   const windowMax = useMemo(() => (band ? durationBandMax(band) : undefined), [band])
   const yMax = view !== null && view !== band ? windowMax : undefined
   const series = useMemo(() => (view ? bandToChartSeries(view) : null), [view])
+  // The strip's context: the p50 over the WHOLE window, gaps kept.
+  const spark = useMemo(() => (band ? [band.points.map((point) => point.p50)] : undefined), [band])
   return (
     <ChartFrame
       {...frameProps}
@@ -135,8 +137,19 @@ const DurationTrendFrame = forwardRef<HTMLDivElement, TrendFrameProps>(function 
     >
       {view ? (
         <>
-          <DurationTrend model={view} title={frameProps.title} height={height} animate={animate} yMax={yMax} />
-          {zoomState.brush ? <ChartRangeBrush {...zoomState.brush} /> : null}
+          <DurationTrend
+            model={view}
+            title={frameProps.title}
+            height={height}
+            animate={animate}
+            yMax={yMax}
+            brushRoom={zoomState.brush !== null}
+          />
+          {zoomState.brush ? (
+            // A POINT scale: an area and lines, no bar, so the first and last
+            // days sit on the plot's edges, and so do the strip's.
+            <ChartRangeBrush {...zoomState.brush} scale="point" spark={spark} />
+          ) : null}
         </>
       ) : null}
     </ChartFrame>

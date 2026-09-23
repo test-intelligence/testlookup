@@ -71,7 +71,19 @@ export interface DurationTrendProps {
    * window's maximum has EXACTLY the unzoomed axis, ticks and all.
    */
   yMax?: number
+  /**
+   * Leave room right of the plot for the range brush's end handle (VIZ-407).
+   * The strip under the chart spans the PLOT, and each handle sits OUTSIDE its
+   * edge; with the usual 8 px margin a handle at the last day ran onto the
+   * frame's border. Only a zoomable trend asks for it, so every other duration
+   * trend draws exactly as before.
+   */
+  brushRoom?: boolean
 }
+
+/** The plot's right margin, and the larger one a brush's end handle needs (a whole handle, 24 px). */
+const PLOT_MARGIN_RIGHT = 8
+const PLOT_MARGIN_RIGHT_WITH_BRUSH = 24
 
 /**
  * The duration axis: from zero to a NICE top over `max` (ms), with its ticks
@@ -144,6 +156,7 @@ export default function DurationTrend({
   height: requestedHeight = 260,
   animate: requested,
   yMax,
+  brushRoom = false,
 }: DurationTrendProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the caption and notice under it.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
@@ -213,7 +226,11 @@ export default function DurationTrend({
       >
       <ChartResponsive height={height}>
         {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
-        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} accessibilityLayer={false}>
+        <ComposedChart
+          data={rows}
+          margin={{ top: 8, right: brushRoom ? PLOT_MARGIN_RIGHT_WITH_BRUSH : PLOT_MARGIN_RIGHT, left: 8, bottom: 8 }}
+          accessibilityLayer={false}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
           <XAxis
             dataKey="x"

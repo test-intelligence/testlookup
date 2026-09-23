@@ -56,19 +56,20 @@ import { Maximize2, Minimize2 } from 'lucide-react'
 import type { ChartSeries } from '@/lib/viz/contracts'
 // `totalsLine` is shared with the export so the footer and an exported file
 // can never state the scope differently.
-import { provenanceFromMeta, totalsLine, type ChartProvenance } from '@/lib/viz/chartExport'
+import { provenanceFromMeta, totalsLine, WINDOW_TOTALS_LABEL, type ChartProvenance } from '@/lib/viz/chartExport'
 import { formatNumber } from '@/utils/formatters'
 import { useFullscreen } from '@/hooks/useFullscreen'
 import Skeleton from '@/components/ui/Skeleton'
 import ChartErrorBoundary from './ChartErrorBoundary'
 import ChartExportMenu from './ChartExportMenu'
 import ChartTable from './ChartTable'
-import { hasChartData, type ChartState } from './chartState'
+import { hasChartData, seriesHasPoints, type ChartState } from './chartState'
 import { NO_VALUE, summarizeChart, type ChartAxes, type SeriesFormat } from './chartText'
 import { STALE_BUILD_ACTION, STALE_BUILD_MESSAGE } from './engines/lazyChartEngine'
 import { CHART_MESSAGES } from './chartMessages'
 import { ChartAnnouncerOutlet, useChartAnnouncer } from './ChartAnnouncer'
 import { ChartFrameContext, type ChartFrameContextValue } from './chartFrameContext'
+import SwapLabel from './SwapLabel'
 
 export type ChartHeadingLevel = 2 | 3 | 4 | 5 | 6
 
@@ -161,6 +162,8 @@ const CHANGE_LABEL: Record<Exclude<ChartState['status'], 'loading'>, string> = {
   error: 'error',
   forbidden: 'no access',
 }
+
+const TABLE_TOGGLE_LABELS = [CHART_MESSAGES.viewTable, CHART_MESSAGES.hideTable] as const
 
 const BUTTON =
   'rounded border border-[var(--color-border-light)] px-3 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]'
@@ -497,14 +500,20 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
 
   const Heading = `h${headingLevel}` as 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
   const describedBy = [takeaway ? takeawayId : null, summary ? summaryId : null].filter(Boolean).join(' ') || undefined
-  const canTable = drawn && series !== null
+  // A drawn frame whose series has NO points — the histogram with nothing
+  // timed states its empty sentence inside a ready state — has no table to
+  // open, nothing to export and nothing to enlarge. Hidden, like everything
+  // else with nothing to act on (VIZ-101); a frame handed no series at all
+  // keeps full screen, as before.
+  const plotted = drawn && (series === null || seriesHasPoints(series))
+  const canTable = plotted && series !== null
   const showTable = canTable && tableOpen
   const meta = 'meta' in state ? state.meta : null
   const totals = totalsLine(meta)
   const revalidating = drawn && state.revalidating
   // Hidden, never disabled, when there is nothing to act on (VIZ-101) — except
   // that a frame already full screen keeps its way out whatever its state.
-  const canFullscreen = drawn || isFullscreen
+  const canFullscreen = plotted || isFullscreen
   const exportProvenance = useMemo(
     () => (provenanceProp !== undefined ? provenanceProp : provenanceFromMeta(meta, null, zoomNote)),
     [provenanceProp, meta, zoomNote],
@@ -585,7 +594,11 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
                   onClick={() => setTableOpen((open) => !open)}
                   className={BUTTON}
                 >
-                  {tableOpen ? CHART_MESSAGES.hideTable : CHART_MESSAGES.viewTable}
+                  {/* One width for both labels, so opening the table never re-wraps the title. */}
+                  <SwapLabel
+                    labels={TABLE_TOGGLE_LABELS}
+                    current={tableOpen ? CHART_MESSAGES.hideTable : CHART_MESSAGES.viewTable}
+                  />
                 </button>
               )}
               {/* Export needs what the table needs: a drawn chart and its series. */}
@@ -668,7 +681,11 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
                 )}
               </span>
             )}
-            {totals && <span data-chart-totals="">{totals}</span>}
+            {/* While zoomed the totals are still the WHOLE window's (the
+                envelope has no per-day run counts), and they sit right above a
+                note saying the chart shows only some days: labelled as the
+                window's, as the export labels them. */}
+            {totals && <span data-chart-totals="">{zoomNote ? `${WINDOW_TOTALS_LABEL}: ${totals}` : totals}</span>}
             {zoomNote && <span data-chart-zoom-note="">{zoomNote}</span>}
             {footer}
           </div>
