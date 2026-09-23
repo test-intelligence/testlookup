@@ -2,7 +2,7 @@ path,role,lines,module_description,imports,top_level_symbols
 .codacy.yaml,implementation/configuration,35,,,
 .github/dependabot.yml,implementation/configuration,109,,,
 .github/workflows/aws-infra-validate.yml,implementation/configuration,86,,,
-.github/workflows/ci.yml,implementation/configuration,1735,,,error; check; error; already; error
+.github/workflows/ci.yml,implementation/configuration,1745,,,error; check; error; already; error
 .github/workflows/codacy.yml,implementation/configuration,91,,,
 .github/workflows/deploy-aks.yml,implementation/configuration,41,,,
 .github/workflows/deploy-eks.yml,implementation/configuration,49,,,
