@@ -114,6 +114,73 @@ export const trendZoomedAxisFixture: TimeSeriesModel = buildTimeSeriesModel({
   zoomRateAxis: true,
 })
 
+/**
+ * VIZ-405, trend overlays: 30 UTC days (2026-03-01 to 2026-03-30), three of
+ * the four Saturdays without runs (27 days with runs), a slow slide of roughly
+ * 0.8 pts a week, one 3-test day at 100 % that the execution weighting must
+ * keep from swinging the trend and that is under the anomaly rule's 50-execution
+ * minimum (2026-03-10), and one day far below the Mondays before it
+ * (2026-03-23, 79 % against 94.4, 94.1 and 93.4 %) for the anomaly marker.
+ */
+export const trendAnalysisFixture: TimeSeriesModel = buildTimeSeriesModel({
+  points: timeSeriesFromTrends(
+    [
+      day('2026-03-01', 203, 9),
+      day('2026-03-02', 187, 11),
+      day('2026-03-03', 215, 11),
+      day('2026-03-04', 193, 12),
+      day('2026-03-05', 220, 11),
+      day('2026-03-06', 180, 10),
+      day('2026-03-08', 208, 11),
+      day('2026-03-09', 192, 12),
+      day('2026-03-10', 3, 0),
+      day('2026-03-11', 213, 15),
+      day('2026-03-12', 190, 11),
+      day('2026-03-13', 202, 13),
+      day('2026-03-15', 210, 12),
+      day('2026-03-16', 183, 13),
+      day('2026-03-17', 198, 12),
+      day('2026-03-18', 217, 16),
+      day('2026-03-19', 195, 12),
+      day('2026-03-20', 176, 12),
+      day('2026-03-22', 211, 13),
+      day('2026-03-23', 169, 45),
+      day('2026-03-24', 186, 13),
+      day('2026-03-25', 213, 17),
+      day('2026-03-26', 196, 13),
+      day('2026-03-27', 202, 15),
+      day('2026-03-28', 180, 13),
+      day('2026-03-29', 212, 14),
+      day('2026-03-30', 195, 16),
+    ],
+    { from: '2026-03-01', to: '2026-03-30' },
+  ),
+  // Zoomed: on a 0-100 axis the rate, the average and the trend line all sit
+  // in the top tenth of the plot and cannot be told apart. The axis then says
+  // it does not start at 0.
+  zoomRateAxis: true,
+})
+
+/**
+ * VIZ-405, too little data: 14 days with runs on only 6 of them — below the
+ * 7 the overlays need, so their toggles are disabled with the reason. The
+ * last week against the previous one IS still measurable, and is still shown:
+ * a thin long window must not hide a recent drop.
+ */
+export const trendAnalysisSparseFixture: TimeSeriesModel = buildTimeSeriesModel({
+  points: timeSeriesFromTrends(
+    [
+      day('2026-03-01', 190, 10),
+      day('2026-03-03', 188, 12),
+      day('2026-03-05', 191, 9),
+      day('2026-03-08', 146, 54),
+      day('2026-03-10', 142, 58),
+      day('2026-03-12', 150, 50),
+    ],
+    { from: '2026-03-01', to: '2026-03-14' },
+  ),
+})
+
 /** Runs still executing on the partial day, named in its tooltip. */
 export const inProgressRunsFixture = [{ x: '2026-03-10', names: ['nightly-regression run 4181', 'smoke run 9902'] }]
 

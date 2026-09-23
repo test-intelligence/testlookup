@@ -28,6 +28,8 @@ import DonutChart from '@/components/charts/DonutChart'
 import BarChart, { BreakdownChart } from '@/components/charts/BarChart'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
+import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
+import { buildMultiSeriesModel, readComparability, type MultiSeriesModel } from '@/components/charts/multiSeriesModel'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { ChartResponse, ChartState } from '@/components/charts/chartState'
 import type { TimeSeriesModel } from '@/components/charts/timeSeriesModel'
@@ -38,6 +40,8 @@ import {
   durationHistogramFixture,
   inProgressRunsFixture,
   slowestTestsFixture,
+  trendAnalysisFixture,
+  trendAnalysisSparseFixture,
   trendSinglePointFixture,
   trendWithReleasesFixture,
   trendZoomedAxisFixture,
@@ -59,6 +63,7 @@ import {
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_FRAME_HEADING_LEVEL,
   type GalleryCategorySeries,
+  type GalleryComparison,
   type GalleryHistogramFixture,
   type GalleryItem,
   type GalleryTimeSeriesFixture,
@@ -118,8 +123,19 @@ function timeSeriesFixture(key: GalleryTimeSeriesFixture): TimeSeriesModel {
       return trendSinglePointFixture
     case 'trend-zoomed-axis':
       return trendZoomedAxisFixture
+    case 'trend-analysis':
+      return trendAnalysisFixture
+    case 'trend-analysis-sparse':
+      return trendAnalysisSparseFixture
   }
 }
+
+/**
+ * VIZ-405: what a `trendOverlays` item hands the frame — both overlays start
+ * ON, so the baseline shows them drawn. One object for every render: the frame
+ * reads it once, as its initial state.
+ */
+const GALLERY_TREND_ANALYSIS = { initialShown: { movingAverage: true, trendLine: true } } as const
 
 function histogramFixture(key: GalleryHistogramFixture): DurationHistogramModel {
   switch (key) {
@@ -128,6 +144,28 @@ function histogramFixture(key: GalleryHistogramFixture): DurationHistogramModel 
     case 'duration-histogram-empty':
       return durationHistogramEmptyFixture
   }
+}
+
+/**
+ * The VIZ-404 model for a comparison fixture, built ONCE per item: the model
+ * is what the plot, the tooltip, the cursor and the table read, and a new one
+ * on every render would restart the keyboard cursor under the reader.
+ */
+const comparisonModels = new Map<GalleryComparison, MultiSeriesModel>()
+function comparisonModel(comparison: GalleryComparison): MultiSeriesModel {
+  let model = comparisonModels.get(comparison)
+  if (!model) {
+    model = buildMultiSeriesModel({
+      series: comparison.series,
+      metric: comparison.metric,
+      alignment: comparison.alignment,
+      // The API's wire shape, read by the SAME reader as a real envelope's.
+      comparability: comparison.comparability ? readComparability(comparison.comparability) : null,
+      seriesNoun: comparison.seriesNoun,
+    })
+    comparisonModels.set(comparison, model)
+  }
+  return model
 }
 
 function renderChart(item: GalleryItem) {
@@ -213,6 +251,8 @@ function renderChart(item: GalleryItem) {
           now={GALLERY_NOW}
           timeZone={GALLERY_TIME_ZONE}
           locale={GALLERY_LOCALE}
+          // Undefined for every VIZ-403 item, which then renders exactly as before.
+          trendAnalysis={item.trendOverlays ? GALLERY_TREND_ANALYSIS : undefined}
         />
       )
     case 'duration-histogram':
@@ -248,6 +288,20 @@ function renderChart(item: GalleryItem) {
           slowest={slowestTestsFixture}
           headingLevel={GALLERY_FRAME_HEADING_LEVEL}
           height={GALLERY_FRAME_PLOT_HEIGHT}
+        />
+      )
+    case 'multi-series':
+      // No `now` / `timeZone` to pin: the comparison reads neither — its days
+      // are the fixture's literal UTC days, drawn and tabled as given.
+      return (
+        <MultiSeriesChartFrame
+          title={item.title}
+          state={DRAWN_STATE}
+          model={comparisonModel(item.comparison)}
+          initialHidden={item.comparison.initialHidden}
+          headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+          height={GALLERY_FRAME_PLOT_HEIGHT}
+          animate={false}
         />
       )
   }

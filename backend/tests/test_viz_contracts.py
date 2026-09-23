@@ -167,6 +167,7 @@ NAMED_RULES = {
     "truncated_axis",
     "truncated_axes",
     "outside_window",
+    "comparability_reason",
     "measured_reason",
     "utc_instant",
     # C3
@@ -201,6 +202,7 @@ FIELD_RULES = {
     "required_field": "|missing|",
     "timezone_utc": "scope.window.timezone|literal_error|",
     "ignored_dimension": "ignored_filters.0.dimension|literal_error|",
+    "comparability_reason_code": "comparability.reason_code|literal_error|",
     # C3
     "series_cap": "series.series|too_long|",
     # C4
@@ -884,6 +886,58 @@ def _only_error(kind: str, payload) -> str:
     rendered = _rendered(caught.value)
     assert len(rendered) == 1, rendered
     return rendered[0]
+
+
+# -- comparability (VIZ-404) -----------------------------------------------------------------
+
+
+def _readme_comparability_codes() -> list[str]:
+    for line in _readme_sections()["envelope"]:
+        cells = _cells(line) if line.startswith("|") else []
+        if cells and cells[0] == "`comparability.reason_code`":
+            return [code.strip("` ") for code in cells[-1].split(",")]
+    raise AssertionError("the C2 table has no comparability.reason_code row")
+
+
+def test_comparability_reason_codes_match_the_readme():
+    assert list(vc.COMPARABILITY_REASON_CODES) == _readme_comparability_codes()
+
+
+def test_comparability_is_optional_but_never_null_and_agrees_with_itself():
+    """Absent is "not assessed" -- every envelope before VIZ-404 stays valid.
+    A null would be a second, silent spelling of that, so it is refused."""
+    assert _accepts("envelope", _envelope())
+    assert not _accepts("envelope", _envelope() | {"comparability": None})
+
+    def judged(**comparability) -> dict:
+        return _envelope() | {"comparability": comparability}
+
+    for code in vc.COMPARABILITY_REASON_CODES:
+        assert _accepts("envelope", judged(comparable=False, reason="Why.", reason_code=code))
+    assert _accepts("envelope", judged(comparable=True, reason=None, reason_code=None))
+    # comparable:true explains nothing; comparable:false explains itself.
+    assert "comparability_reason:" in _only_error(
+        "envelope", judged(comparable=True, reason="Why.", reason_code=None)
+    )
+    assert "comparability_reason:" in _only_error(
+        "envelope", judged(comparable=True, reason=None, reason_code="different_suites")
+    )
+    assert "comparability_reason:" in _only_error(
+        "envelope", judged(comparable=False, reason="Why.", reason_code=None)
+    )
+    assert "comparability_reason:" in _only_error(
+        "envelope", judged(comparable=False, reason=" 　", reason_code="partial_coverage")
+    )
+    # Every key is required inside the object, a nullable one included.
+    assert "comparability.reason_code|missing|" in _only_error(
+        "envelope", _envelope() | {"comparability": {"comparable": True, "reason": None}}
+    )
+    # Strict, like every other boolean here.
+    assert not _accepts("envelope", judged(comparable="false", reason="Why.",
+                                           reason_code="different_suites"))
+    # The round trip keeps an absent key absent and a present one present.
+    dumped = vc.dump_contract(vc.validate_contract("envelope", _envelope()))
+    assert "comparability" not in dumped
 
 
 # -- utc_instant -----------------------------------------------------------------------------

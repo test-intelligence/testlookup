@@ -288,8 +288,16 @@ export const GALLERY_HOSTILE_BARS: (readonly [string, number])[] = [
 // an exhaustive switch — a renamed or deleted fixture is a type error there,
 // not a blank box in the gallery.
 
-/** The fixture keys `ChartGalleryPage` maps to the VIZ-403 time-series models. */
-export type GalleryTimeSeriesFixture = 'trend-with-releases' | 'trend-single-point' | 'trend-zoomed-axis'
+/**
+ * The fixture keys `ChartGalleryPage` maps to the VIZ-403 time-series models,
+ * and to the two VIZ-405 trend-overlay ones (`trend-analysis*`).
+ */
+export type GalleryTimeSeriesFixture =
+  | 'trend-with-releases'
+  | 'trend-single-point'
+  | 'trend-zoomed-axis'
+  | 'trend-analysis'
+  | 'trend-analysis-sparse'
 /** The fixture keys for the VIZ-406 duration histogram. */
 export type GalleryHistogramFixture = 'duration-histogram' | 'duration-histogram-empty'
 
@@ -308,6 +316,159 @@ export const GALLERY_NOW = new Date('2026-03-10T09:00:00Z')
 export const GALLERY_TIME_ZONE = 'UTC'
 /** Fixed too: an unset locale would take the machine's, and month names differ. */
 export const GALLERY_LOCALE = 'en-US'
+
+// -- Wave 2 - the VIZ-404 multi-series comparison -----------------------------
+//
+// C3 series spelt out, as everywhere else in this file, and built by
+// `ChartGalleryPage` into the model the chart draws. The days are LITERALS
+// (UTC, before `GALLERY_NOW`): the chart reads no clock and no zone of its own,
+// so nothing here can move with the machine or the day the baseline ran.
+
+/** One C3 point (`SeriesPoint`), spelt out. */
+export interface GallerySeriesPoint {
+  x: string
+  y: number | null
+  n: number
+  measured?: boolean
+  reason?: string | null
+}
+
+export interface GalleryComparisonSeries {
+  key: string
+  label: string
+  points: GallerySeriesPoint[]
+}
+
+/** What a VIZ-404 gallery item hands `buildMultiSeriesModel`. */
+export interface GalleryComparison {
+  series: GalleryComparisonSeries[]
+  metric: { kind: 'rate' | 'count'; title: string }
+  alignment?: 'absolute' | 'release-start'
+  /**
+   * The envelope's `meta.comparability`, in the API's own wire shape — the
+   * gallery hands it to the model exactly as `chart-data` would.
+   */
+  comparability?: GalleryComparability
+  seriesNoun: string
+  /** Series hidden when the item first draws (the legend-toggle edge case). */
+  initialHidden?: string[]
+}
+
+/** `YYYY-MM-DD`, `offset` UTC days after `from`. Pure arithmetic on a literal: no clock. */
+export function galleryDay(from: string, offset: number): string {
+  const at = Date.parse(`${from}T00:00:00Z`) + offset * 86_400_000
+  return new Date(at).toISOString().slice(0, 10)
+}
+
+const COMPARISON_START = '2026-02-24'
+const COMPARISON_DAYS = 14
+
+/** A rate series from literal values; `n` is the executions behind each day. */
+function rateSeries(key: string, values: readonly (number | null)[], n: number, from = COMPARISON_START): GalleryComparisonSeries {
+  return {
+    key,
+    label: key,
+    points: values.map((y, i) =>
+      y === null
+        ? {
+            x: galleryDay(from, i),
+            y: null,
+            n: 0,
+            measured: false,
+            reason: 'no evaluated executions in this bucket: every test was skipped',
+          }
+        : { x: galleryDay(from, i), y, n },
+    ),
+  }
+}
+
+export const GALLERY_RATE_METRIC = { kind: 'rate', title: 'Pass rate %' } as const
+export const GALLERY_COUNT_METRIC = { kind: 'count', title: 'Executions' } as const
+
+/**
+ * The story's own three suites. payments and cart END within half a point of
+ * each other, so their direct labels have to be nudged apart to be read.
+ */
+export const GALLERY_THREE_SUITES: GalleryComparisonSeries[] = [
+  rateSeries('payments', [96.2, 97.0, 95.8, 96.4, 97.3, 96.9, 95.1, 96.0, 96.8, 97.2, 96.5, 95.9, 94.6, 93.8], 420),
+  rateSeries('cart', [88.4, 89.9, 90.3, 88.7, 91.2, 92.0, 91.5, 90.8, 92.4, 93.1, 92.7, 93.5, 94.0, 94.3], 310),
+  rateSeries('search', [78.1, 80.4, 79.2, 82.6, 81.0, 83.3, 84.9, 83.8, 85.2, 84.1, 86.0, 85.4, 86.9, 87.3], 260),
+]
+
+/**
+ * Twelve suites of daily executions: past the eight-line limit, so the 7 with
+ * the most executions are drawn and the other 5 are folded into "Other".
+ * Deterministic arithmetic, no randomness.
+ */
+export const GALLERY_TWELVE_SUITES: GalleryComparisonSeries[] = [
+  'checkout',
+  'auth',
+  'search',
+  'billing',
+  'reports',
+  'admin',
+  'catalog',
+  'profile',
+  'ledger',
+  'audit',
+  'exports',
+  'webhooks',
+].map((key, s) => ({
+  key,
+  label: key,
+  points: Array.from({ length: COMPARISON_DAYS }, (_, d) => {
+    const y = 60 + (11 - s) * 22 + ((s * 7 + d * 13) % 17)
+    return { x: galleryDay(COMPARISON_START, d), y, n: y }
+  }),
+}))
+
+/**
+ * search is not measured on four days: three the server sent as
+ * `measured: false` with its reason, and one it never sent at all. Both are
+ * gaps, never zeros — and day 7 is an ISOLATED measured day, drawn as a dot.
+ */
+const GAPPY_SEARCH = rateSeries('search', [78.1, 80.4, 79.2, null, null, 83.3, null, 83.8, 0, 84.1, 86.0, 85.4, 86.9, 87.3], 260)
+export const GALLERY_GAPPY_SUITES: GalleryComparisonSeries[] = [
+  GALLERY_THREE_SUITES[0],
+  GALLERY_THREE_SUITES[1],
+  // Day 8 is missing from the payload altogether (its placeholder is dropped here).
+  { ...GAPPY_SEARCH, points: GAPPY_SEARCH.points.filter((point) => point.x !== galleryDay(COMPARISON_START, 8)) },
+]
+
+/** C2 `meta.comparability`, spelt out (the `Comparability` contract, without an app import). */
+export interface GalleryComparability {
+  comparable: boolean
+  reason: string | null
+  reason_code: 'different_suites' | 'partial_coverage' | null
+}
+
+/** Two branches whose suites differ: the envelope says `comparable: false`. */
+export const GALLERY_BRANCHES: GalleryComparisonSeries[] = [
+  rateSeries('main', [95.1, 95.4, 94.8, 95.9, 96.2, 95.7, 96.4, 96.0, 96.8, 97.1, 96.6, 97.0, 97.4, 97.2], 520),
+  rateSeries('release/2.4', [91.2, 90.4, 92.1, 91.7, 90.9, 92.8, 93.0, 92.2, 93.5, 94.1, 93.6, 94.4, 94.0, 94.9], 380),
+]
+/**
+ * What `chart-data` says about them, word for word as `judge_comparability`
+ * (backend/app/services/chart_data_service.py) builds it for two branches
+ * whose suites differ: COUNTS only, never a suite or branch name — a name in
+ * the banner would be text the caller's scope did not produce. 14 suites ran
+ * on one branch or the other, 12 on both: release/2.4 ran 2 that main did not.
+ */
+export const GALLERY_NOT_COMPARABLE: GalleryComparability = {
+  comparable: false,
+  reason:
+    'The 2 series compared by branch did not run the same suites in this scope: 14 suites ran in at least one of them, 12 in all of them.',
+  reason_code: 'different_suites',
+}
+
+/**
+ * Two releases on the CALENDAR: R1 from 2 Feb, R2 from 20 Feb. Aligned on
+ * "days since release start", both begin at day 0.
+ */
+export const GALLERY_RELEASES: GalleryComparisonSeries[] = [
+  { ...rateSeries('R1', [71.0, 76.4, 80.2, 83.9, 86.1, 88.0, 89.4, 90.6, 91.1, 92.3, 92.0, 93.1], 300, '2026-02-02'), key: 'r1' },
+  { ...rateSeries('R2', [79.5, 84.2, 87.9, 90.1, 91.8, 92.6, 93.9, 94.2, 95.0, 95.3], 340, '2026-02-20'), key: 'r2' },
+]
 
 interface GalleryItemBase {
   /** `data-gallery-item` value, and the screenshot's file name. */
@@ -357,10 +518,28 @@ export type GalleryItem =
       fixture: GalleryTimeSeriesFixture
       /** Name the runs still executing on the partial day, in its tooltip. */
       inProgress?: boolean
+      /**
+       * VIZ-405: offer the trend overlays, with both the moving average and
+       * the trend line starting ON. Left out, the frame is the VIZ-403 frame.
+       */
+      trendOverlays?: boolean
+      /**
+       * A taller box than `GALLERY_TALL_FRAME_CANVAS`, for a frame that carries
+       * the trend controls above its plot and the statistics strip under it.
+       * MEASURED, like the other canvases.
+       */
+      canvasHeight?: number
     })
   | (GalleryItemBase & { chart: 'duration-histogram'; fixture: GalleryHistogramFixture })
   | (GalleryItemBase & { chart: 'duration-band' })
   | (GalleryItemBase & { chart: 'slowest-tests' })
+  // Wave 2 (VIZ-404): a whole chart again, inside a real ChartFrame.
+  | (GalleryItemBase & {
+      chart: 'multi-series'
+      comparison: GalleryComparison
+      /** MEASURED, like the other framed canvases: too short and the frame spills over the next item. */
+      canvasHeight: number
+    })
 
 /**
  * Which engine draws a gallery item, and therefore what a spec may assert on:
@@ -388,6 +567,7 @@ export function galleryFramed(item: GalleryItem): boolean {
     case 'duration-histogram':
     case 'duration-band':
     case 'slowest-tests':
+    case 'multi-series':
       return true
     default:
       return false
@@ -437,11 +617,14 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
     case 'slowest-tests':
       return GALLERY_LIST_CANVAS
     case 'time-series':
+      return item.canvasHeight ? { width: GALLERY_TALL_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_TALL_FRAME_CANVAS
     case 'duration-histogram':
     case 'duration-band':
       return GALLERY_TALL_FRAME_CANVAS
     case 'bars':
       return item.canvasHeight ? { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_FRAME_CANVAS
+    case 'multi-series':
+      return { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight }
     default:
       return galleryFramed(item) ? GALLERY_FRAME_CANVAS : GALLERY_CANVAS
   }
@@ -795,6 +978,108 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // 0 because there are no SVG marks to count: this one renders `<div>` bars.
     // Its geometry is asserted separately, on the ranked bars themselves.
     minMarks: 0,
+  },
+
+  // -- Wave 2 - VIZ-404: one item per multi-series edge case --------------------
+  //
+  // Each `minMarks` is the number of LINES drawn (one path each); dots on an
+  // isolated measured day come on top of that.
+  {
+    id: 'multi-series-three-suites',
+    title: 'MultiSeriesChart · three suites',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_THREE_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites' },
+    canvasHeight: 490,
+    empty: false,
+    minMarks: 3,
+  },
+  {
+    id: 'multi-series-folded',
+    title: 'MultiSeriesChart · 12 suites, top 7 + Other',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_TWELVE_SUITES, metric: GALLERY_COUNT_METRIC, seriesNoun: 'suites' },
+    canvasHeight: 530,
+    empty: false,
+    minMarks: 8, // 7 kept + "Other"
+  },
+  {
+    id: 'multi-series-gaps',
+    title: 'MultiSeriesChart · a suite with unmeasured days',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_GAPPY_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites' },
+    canvasHeight: 510,
+    empty: false,
+    minMarks: 3,
+  },
+  {
+    id: 'multi-series-not-comparable',
+    title: 'MultiSeriesChart · not comparable',
+    chart: 'multi-series',
+    comparison: {
+      series: GALLERY_BRANCHES,
+      metric: GALLERY_RATE_METRIC,
+      seriesNoun: 'branches',
+      comparability: GALLERY_NOT_COMPARABLE,
+    },
+    canvasHeight: 530,
+    empty: false,
+    minMarks: 2,
+  },
+  {
+    id: 'multi-series-release-aligned',
+    title: 'MultiSeriesChart · release over release',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_RELEASES, metric: GALLERY_RATE_METRIC, seriesNoun: 'releases', alignment: 'release-start' },
+    canvasHeight: 510,
+    empty: false,
+    minMarks: 2,
+  },
+  {
+    id: 'multi-series-hidden',
+    title: 'MultiSeriesChart · one series hidden',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_THREE_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites', initialHidden: ['cart'] },
+    canvasHeight: 490,
+    empty: false,
+    minMarks: 2, // cart is hidden: two lines
+  },
+
+  // -- Wave 2 - VIZ-405: the trend overlays -------------------------------------
+  //
+  // The SAME time-series chart, with the trend controls above the plot, the
+  // overlays drawn on it and the statistics strip under it — which is why each
+  // has a measured `canvasHeight` of its own rather than the VIZ-403 box.
+  {
+    id: 'timeseries-trend-analysis',
+    title: 'TimeSeriesChart · trend overlays + anomaly',
+    chart: 'time-series',
+    fixture: 'trend-analysis',
+    trendOverlays: true,
+    // Frame measured at 506 px (Chromium, 640 px, every theme); 600 leaves
+    // room for the strip or a note to wrap onto another line under CI fonts.
+    canvasHeight: 600,
+    empty: false,
+    // 30 UTC days, 3 of them run-free Saturdays: 27 execution bars, the rate
+    // line, the two overlays and the card-coloured halo under each (one path
+    // each), and the anomaly triangle = 33. The floor is the exact count, so a
+    // dropped overlay OR a dropped halo fails it (at 30 it did not: an overlay
+    // could go missing and the triangle kept the total up).
+    minMarks: 33,
+  },
+  {
+    id: 'timeseries-trend-insufficient',
+    title: 'TimeSeriesChart · trend overlays unavailable',
+    chart: 'time-series',
+    fixture: 'trend-analysis-sparse',
+    trendOverlays: true,
+    // Frame measured at 435 px; the same headroom as above.
+    canvasHeight: 520,
+    empty: false,
+    // 6 days with runs, none next to another: 6 execution bars, 6 rate DOTS
+    // (an isolated day is a dot, since a line needs two neighbours) and the
+    // rate line's own path = 13, measured. No overlay is drawn — below 7 days
+    // with runs there is none to draw — so the floor is the exact count.
+    minMarks: 13,
   },
 ]
 

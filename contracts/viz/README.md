@@ -114,10 +114,39 @@ Additive `meta` object on every analytics response.
 | `truncated` / `truncated_total` | bool / int \| `null` | `truncated_total` | `truncated_total` is required (non-null) when `truncated` is true. With `truncated_axes`, it is the full count of the axis that lost whole buckets (`x`), else of the series axis. |
 | `truncated_axes` | `{x?, series?: {dimension, kept, total}}` \| absent | `truncated_axis`, `truncated_axes` | Optional and additive (VIZ-203). Present only when something was truncated; never `{}`. Each entry has `kept < total`, `truncated` must be true, and `truncated_total` must equal one of the entries' `total`. One number cannot answer for two axes: 400 suite buckets keyed by 12 environments truncates both. |
 | `outside_window` | `{buckets, executions, first, last}` \| absent | `outside_window` | Optional and additive (VIZ-203). Rows whose bucket fell outside a generated axis — a run with a future `created_at`. They are not drawn; they are counted, so a clock-skewed agent does not lose its run in silence. `buckets ≥ 1` and `first ≤ last`: a zero here is nothing to report, so the key is omitted instead. |
+| `comparability` | `{comparable, reason, reason_code}` \| absent | `comparability_reason` | Optional and additive (VIZ-404). `comparable: false` carries a `reason` with at least one non-whitespace character and a `reason_code`; `comparable: true` carries neither (both `null`). All three keys are required inside the object; the object itself is never `null`. |
+| `comparability.reason_code` | string \| `null` | `comparability_reason_code` | `different_suites`, `partial_coverage` |
 | `measured` / `reason` | bool / string \| `null` | `measured_reason` | A `reason` with at least one non-whitespace character is required when `measured` is false. |
 | `includes_in_progress` | int ≥ 0 | `non_negative` | Number of in-progress runs inside the scope. |
 | `partial_day` | `YYYY-MM-DD` \| `null` | | The current UTC day when it is still accumulating. |
 | `generated_at`, `as_of` | UTC instant | `utc_instant` | Exactly `YYYY-MM-DDTHH:MM:SS`, optionally `.` and 1–6 digits, then `Z` or `+00:00` — an RFC 3339 profile. The date is a real calendar date, the hour is 00–23, minutes and seconds are 00–59 (no leap second). No space separator, no `+0000`, no `-00:00`, no basic format. |
+
+**`comparability` (VIZ-404)** says whether the series of a comparison chart can be read
+like-for-like. `/analytics/chart-data` sends it only when the second `group_by` (the series
+dimension) is `release` or `branch` **and** the chart has at least two series to compare
+(an `__other__` roll-up counts as one). Every other response — every other route, a single
+`group_by`, a series dimension of `suite`, `environment` …, a chart with one series — omits
+it. **Absent means "not assessed", never "comparable"**: a reader must not draw a
+"comparable" badge from a missing key.
+
+The judgement is made over exactly the scope the chart was drawn from (project, releases,
+suites, window, the tenant filter) and over the series the chart kept. It compares the
+**effective suites** (a live-stream run's own label, else the row's suite; trimmed and
+matched case-insensitively, as every suite filter is) that each series' runs executed:
+
+- `partial_coverage` — at least one compared series has runs in scope but **no per-test
+  rows** at all (a live-stream run whose rows have not landed, an upload that carried only
+  totals), so the suites it ran are unknown. Checked first: an unknown set is not a
+  different one. The `reason` says how many of the compared series have no per-test results.
+- `different_suites` — every series has per-test rows, but the sets of effective suites
+  differ. The `reason` says how many series were compared, how many suites ran in at least
+  one of them and how many ran in all of them.
+
+`reason` names counts only — never a suite, release or branch — so it cannot carry a
+name from outside the caller's scope into a banner. `comparable: true` means every compared
+series ran exactly the same set of suites. The window is the same for every series by
+construction (one `window` per request), so window length is not a reason this API reports;
+a partially-landed series (some runs with rows, some without) is judged on the rows it has.
 
 ## C3 · ChartSeries — `fixtures/chart_series`
 

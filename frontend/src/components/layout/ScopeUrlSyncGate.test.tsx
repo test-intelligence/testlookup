@@ -118,12 +118,18 @@ describe('ScopeUrlSyncGate', () => {
       if (s.enabled && !prev.enabled) runtimeAtOn.push(useMultiFiltersRuntimeStore.getState().runtime !== null)
     })
     mount()
-    await waitFor(() => expect(useMultiFiltersFlagStore.getState().enabled).toBe(true))
+    // These two waits span a COLD dynamic import of the whole runtime chunk
+    // (URL sync, validation, report chrome). Under coverage instrumentation on
+    // a loaded machine that import alone passed waitFor's 1 s default and
+    // failed the pre-push gate (2026-09-23) with nothing wrong. Its duration is
+    // not the property under test -- the ORDER is, asserted by `runtimeAtOn` --
+    // so the ceiling is generous; waitFor still returns the moment it holds.
+    await waitFor(() => expect(useMultiFiltersFlagStore.getState().enabled).toBe(true), { timeout: 10_000 })
     unsubscribe()
     expect(runtimeImported).toHaveBeenCalledTimes(1)
     expect(runtimeAtOn).toEqual([true])
     // The saved two-release selection survives and is published whole.
-    await waitFor(() => expect(router.state.location.search).toContain(R2))
+    await waitFor(() => expect(router.state.location.search).toContain(R2), { timeout: 10_000 })
     expect(new URLSearchParams(router.state.location.search).getAll('release').sort()).toEqual([R1, R2])
     expect(selectReleaseIds(useReleaseStore.getState())).toEqual([R1, R2])
     expect(releaseHistory, 'no URL may carry a one-release collapse of the selection').not.toContainEqual([R1])

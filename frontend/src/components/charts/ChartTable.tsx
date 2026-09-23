@@ -6,6 +6,13 @@
  *
  * Above `PAGINATE_ABOVE` rows it paginates (`PAGE_SIZE` a page) rather than
  * putting thousands of rows in the DOM.
+ *
+ * The table sits in a capped, scrolling box (`max-h-96`), and nothing inside
+ * a table is in the tab order — the caption is `tabIndex={-1}` — so the box
+ * itself is the keyboard's way in: a focusable `role="region"` named after
+ * the caption, with a visible focus ring. Without it (axe
+ * `scrollable-region-focusable`) a keyboard user could never scroll to the
+ * rows past the cap: in a day-by-day table, the LATEST days.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ChartSeries } from '@/lib/viz/contracts'
@@ -41,7 +48,14 @@ export default function ChartTable({ caption, series, axes, format, autoFocus = 
   }, [autoFocus])
 
   return (
-    <div data-chart-table className="mt-3 max-h-96 overflow-auto rounded border border-[var(--color-border)]">
+    <div
+      data-chart-table
+      role="region"
+      aria-label={caption}
+      // Focusable so the arrow keys, Page Up/Down and Home/End scroll it.
+      tabIndex={0}
+      className="mt-3 max-h-96 overflow-auto rounded border border-[var(--color-border)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+    >
       {model.warnings.length > 0 && (
         <ul data-chart-table-warnings="" className="border-b border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text)]">
           {model.warnings.map((warning, index) => (

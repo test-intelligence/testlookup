@@ -37,11 +37,21 @@ vi.mock('recharts', () => {
     Label: () => <div />,
     LabelList: () => <div />,
     ReferenceLine: () => <div />,
+    // VIZ-405: the anomaly triangle. A marker on the plot, not a series: it
+    // takes no `isAnimationActive`, so it is not counted below.
+    ReferenceDot: () => <div />,
     Line: mark,
     Area: mark,
     Bar: mark,
     Pie: mark,
     RadialBar: mark,
+    // VIZ-404: the direct labels read the plot area and the y scale from the
+    // chart context; with no layout there is none, and they draw nothing.
+    usePlotArea: () => undefined,
+    useYAxisScale: () => undefined,
+    // …and its pinned tooltip reads the chart width and the x scale.
+    useChartWidth: () => undefined,
+    useXAxisScale: () => undefined,
   }
 })
 
@@ -134,7 +144,16 @@ describe('ChartGalleryPage', () => {
     // so it renders its empty text and no Bar at all) and the p50/p95 band (the
     // band Area + the two percentile Lines = 3) = 10. `slowest-tests` adds
     // nothing: it is a list of <div> bars, not a Recharts chart.
-    expect(marks.length).toBe(17 + 24 + 10)
+    // VIZ-404: one Line per SHOWN series — three suites (3), twelve folded to
+    // 7 + Other (8), the gaps item (3), two branches (2), two releases (2) and
+    // three suites with one hidden (2) = 20.
+    // VIZ-405: the two trend-overlay time series. Both draw the VIZ-403 Bar and
+    // rate Line (2 each = 4); the one with 27 days of runs adds the moving
+    // average and the trend line, both started ON, each drawn over a
+    // card-coloured halo Line (4), while the sparse one (6 days with runs,
+    // under the 7 the overlays need) draws none of them = 8. The anomaly
+    // marker is a ReferenceDot, not a series.
+    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 

@@ -22,6 +22,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  COMPARABILITY_REASON_CODES,
   CONTRACT_KINDS,
   LOCAL_RULE_IDS,
   VIZ_LIMITS,
@@ -869,6 +870,31 @@ describe('envelope cross-field rules', () => {
     expect(rules({ totals: { ...totals, total_runs: true } })).toEqual(['invalid_type'])
     expect(rules({ totals: { ...totals, total_runs: Number.MAX_SAFE_INTEGER } })).toEqual([])
     expect(rules({ totals: { ...totals, total_runs: 2 ** 53 } })).toEqual(['safe_integer'])
+  })
+
+  it('reads comparability (VIZ-404): optional, never null, and explained only when false', () => {
+    // Absent is "not assessed" — every envelope before VIZ-404 stays valid.
+    expect(rules({})).toEqual([])
+    expect(rules({ comparability: null })).toEqual(['invalid_type'])
+    const judged = (comparable: unknown, reason: unknown, reason_code: unknown) =>
+      rules({ comparability: { comparable, reason, reason_code } })
+    for (const code of COMPARABILITY_REASON_CODES) expect(judged(false, 'Why.', code)).toEqual([])
+    expect(judged(true, null, null)).toEqual([])
+    expect(judged(true, 'Why.', null)).toEqual(['comparability_reason'])
+    expect(judged(true, null, 'different_suites')).toEqual(['comparability_reason'])
+    expect(judged(false, 'Why.', null)).toEqual(['comparability_reason'])
+    expect(judged(false, ' 　', 'partial_coverage')).toEqual(['comparability_reason'])
+    expect(judged(false, 'Why.', 'different_days')).toEqual(['comparability_reason_code'])
+    expect(judged('false', 'Why.', 'different_suites')).toEqual(['invalid_type'])
+    expect(rules({ comparability: { comparable: true, reason: null } })).toEqual(['required_field'])
+  })
+
+  it('names the same comparability reason codes as the README', () => {
+    const row = README.split('\n').find((line) => line.startsWith('| `comparability.reason_code` |'))
+    expect(row, 'the C2 table has no comparability.reason_code row').toBeDefined()
+    const cells = (row ?? '').split(/(?<!\\)\|/).slice(1, -1)
+    const listed = (cells[cells.length - 1] ?? '').split(',').map((code) => code.trim().replace(/`/g, ''))
+    expect(listed).toEqual([...COMPARABILITY_REASON_CODES])
   })
 
   it('wants a reason only when measured is false, and a total only when truncated', () => {

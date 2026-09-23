@@ -30,16 +30,22 @@
  *             announced at once, assertively, like Retry's result.
  *   sight     the same text is drawn in a readout inside the chart body, so a
  *             sighted keyboard user sees what the reader hears. A tooltip that
- *             follows the pointer cannot serve a keyboard at all.
+ *             follows the pointer cannot serve a keyboard at all. The readout
+ *             WRAPS — a day's text can run to hundreds of characters (an
+ *             anomaly explained, a local-time equivalent), and one truncated
+ *             line showed a third of it — and it is rendered BELOW the plot,
+ *             in the flow, never laid over the data it describes.
  *   1.4.13    Escape dismisses the HOVER tooltip too (the chart passes
  *             `tipProps` to Recharts' `<Tooltip>`, which makes `active`
  *             controlled), and pointing at the chart again brings it back.
  *             The wrapper also gets `pointer-events: auto`, so the tooltip is
  *             something the pointer can be over at all — Recharts' default
- *             `none` fails Hoverable before the pointer has moved. It is only
- *             half of Hoverable: this tooltip is still placed relative to the
- *             cursor, so it moves as the pointer approaches it. PINNING it is
- *             the other half, and it is not done yet.
+ *             `none` fails Hoverable before the pointer has moved. That is
+ *             half of Hoverable; the other half is PINNING, so the tooltip
+ *             does not slide away as the pointer approaches it. A chart pins
+ *             its own tooltip (it knows where its days are):
+ *             `MultiSeriesChart` places it a fixed offset from the day's x
+ *             and holds the day while the pointer is on it.
  *
  * Pure UI: it holds an index and some text, fetches nothing and knows nothing
  * about any chart's model.
@@ -230,7 +236,8 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
   const readout = point ? (
     <p
       data-chart-readout=""
-      className="mt-1 truncate text-xs text-[var(--color-text)]"
+      // Wraps: never one truncated line. Placed by the chart, below its plot.
+      className="mt-1 whitespace-normal break-words text-xs text-[var(--color-text)]"
       // Not a live region: the page's one announcer has already said it.
       aria-hidden="true"
     >

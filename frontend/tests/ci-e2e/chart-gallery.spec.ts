@@ -16,7 +16,9 @@
  * Nothing is mocked: the gallery fetches nothing.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import AxeBuilder from '@axe-core/playwright'
+// The axe gate (tags, themes, ratcheted allowlist) is shared with the VIZ-405 spec.
+import { ALL_THEMES, expectNoBlockingViolations, type KnownViolation } from '../lib/axe-gate'
+import { textEscapes } from '../lib/chart-text-escapes'
 import {
   GALLERY_CANVAS,
   GALLERY_CHANGE_BARS,
@@ -35,7 +37,14 @@ import {
   galleryCanvasSize,
   galleryChartHeight,
   GALLERY_FLUID_CANVAS_PARAM,
+  GALLERY_GAPPY_SUITES,
+  GALLERY_NOT_COMPARABLE,
+  GALLERY_BRANCHES,
+  GALLERY_RELEASES,
+  GALLERY_THREE_SUITES,
 } from '../../src/pages/dev/chartGalleryFixtures'
+// VIZ-404: the model only `import type`s from `@/…`, so it resolves in plain Node too.
+import { ALIGNED_X_TITLE, HIDDEN_SUFFIX } from '../../src/components/charts/multiSeriesModel'
 // Imported rather than retyped, so a reworded indicator fails here instead of
 // quietly passing. `timeSeriesModel` only `import type`s from `@/…`, so it
 // resolves in Playwright's plain-Node transform with no alias.
@@ -308,63 +317,12 @@ test.describe('chart gallery (/__charts)', () => {
    * the test fails until the entry is deleted. A green run therefore means
    * "no NEW violation", never "none".
    */
-  const KNOWN_VIOLATIONS: { theme: string; rule: string; nodeHtmlIncludes: string }[] = [
+  const KNOWN_VIOLATIONS: KnownViolation[] = [
     { theme: 'lab', rule: 'color-contrast', nodeHtmlIncludes: 'No defect data' },
   ]
 
-  /**
-   * The rules the gate runs. Every WCAG level this product claims, plus axe's
-   * own best practices.
-   *
-   * It used to run axe's DEFAULT rule set and then keep only `serious` and
-   * `critical` findings. That is two filters at once, and both of them hide
-   * exactly the kind of defect a chart has: `heading-order`, a duplicated
-   * accessible name, a `tabindex` on something with no role and an unnamed
-   * `role="application"` are all `moderate` or `minor`, and several of them
-   * are best-practice rules the default tag set never even ran. This gate
-   * reports EVERY impact under the full tag set; the allowlist below is the
-   * only escape, it is per rule AND per node, and it is ratcheted.
-   */
-  const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'] as const
-
-  /**
-   * No axe violation, at any impact, except an allowlisted one — and every
-   * allowlisted one must still fire (the ratchet), so a fix shrinks the list.
-   */
-  async function expectNoBlockingViolations(
-    page: Page,
-    theme: string,
-    known: { theme: string; rule: string; nodeHtmlIncludes: string }[],
-  ) {
-    const result = await new AxeBuilder({ page }).withTags([...AXE_TAGS]).analyze()
-    const isKnown = (rule: string, html: string) =>
-      known.some((entry) => entry.rule === rule && html.includes(entry.nodeHtmlIncludes))
-
-    const blocking = result.violations
-      .map((violation) => ({
-        id: `${violation.id} [${violation.impact}]`,
-        nodes: violation.nodes.filter((node) => !isKnown(violation.id, node.html)).map((node) => node.html),
-      }))
-      .filter((violation) => violation.nodes.length > 0)
-    expect(blocking, `axe (${theme})`).toEqual([])
-
-    // The ratchet: an allowlisted violation that no longer occurs is a fix,
-    // and the allowlist must shrink with it.
-    for (const entry of known) {
-      const stillPresent = result.violations.some(
-        (violation) =>
-          violation.id === entry.rule &&
-          violation.nodes.some((node) => node.html.includes(entry.nodeHtmlIncludes)),
-      )
-      expect(
-        stillPresent,
-        `${entry.rule} on "${entry.nodeHtmlIncludes}" (${theme}) no longer fires — remove it from KNOWN_VIOLATIONS`,
-      ).toBe(true)
-    }
-  }
-
-  // Every theme the app ships: a contrast regression can hide in any one of them.
-  const ALL_THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
+  // The gate itself (every impact, the full WCAG + best-practice tag set, the
+  // ratchet) and the six themes live in `tests/lib/axe-gate.ts`.
 
   for (const theme of ALL_THEMES) {
     test(`has no automated accessibility violations at any impact (${theme})`, async ({
@@ -1287,37 +1245,7 @@ test.describe('chart gallery (/__charts)', () => {
       const frame = page.locator(`[data-gallery-item="${id}"] [data-chart-frame]`)
       await expect(frame.locator('[data-donut]'), id).toBeVisible()
       await expect.poll(() => drawnMarks(page, id)).toBeGreaterThanOrEqual(1)
-      const clipped = await frame.evaluate((root) => {
-        const frameBox = root.getBoundingClientRect()
-        const problems: string[] = []
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          const text = (node.textContent ?? '').trim()
-          const element = node.parentElement
-          if (!text || !element) continue
-          // Visible text only: `sr-only` is a 1 px clipped box on purpose.
-          const layout = element.getBoundingClientRect()
-          if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
-          if (!(element instanceof SVGElement) && (layout.width <= 1 || layout.height <= 1)) continue
-          const range = document.createRange()
-          range.selectNodeContents(node)
-          const box = range.getBoundingClientRect()
-          if (box.width === 0 && box.height === 0) continue
-          const inside = (outer: DOMRect) =>
-            box.left >= outer.left - 0.5 &&
-            box.right <= outer.right + 0.5 &&
-            box.top >= outer.top - 0.5 &&
-            box.bottom <= outer.bottom + 0.5
-          if (!inside(frameBox)) problems.push(`"${text}" is outside the frame`)
-          // An svg clips its own overflow: text past its edge is cut off.
-          const svg = element instanceof SVGElement ? element.ownerSVGElement : null
-          if (svg && !inside(svg.getBoundingClientRect())) problems.push(`"${text}" is cut off by its svg`)
-          if (!(element instanceof SVGElement) && element.clientWidth > 0 && element.scrollWidth > element.clientWidth) {
-            problems.push(`"${text}" overflows its box (${element.scrollWidth} > ${element.clientWidth})`)
-          }
-        }
-        return problems
-      })
+      const clipped = await frame.evaluate(textEscapes)
       expect(clipped, id).toEqual([])
     }
 
@@ -1551,6 +1479,613 @@ test.describe('chart gallery (/__charts)', () => {
     expect(new Set(steps).size, JSON.stringify(values)).toBe(1)
     expect(isNiceStep(steps[0])).toBe(true)
   })
+
+  // ── Wave 2 · the multi-series comparison (VIZ-404) ───────────────────────────
+
+  const MULTI_SERIES_ITEMS = GALLERY_ITEMS.filter((item) => item.chart === 'multi-series')
+  const multiItem = (page: Page, id: string) => page.locator(`[data-gallery-item="${id}"]`)
+  /** The drawn line paths of one item (Recharts: one `.recharts-line-curve` per line). */
+  const linePaths = (page: Page, id: string) => multiItem(page, id).locator(`${CHART_SVG} path.recharts-line-curve`)
+
+  test('VIZ-404: every edge case is in the gallery, and each draws its lines', async ({ page }) => {
+    expect(MULTI_SERIES_ITEMS.map((item) => item.id)).toEqual([
+      'multi-series-three-suites',
+      'multi-series-folded',
+      'multi-series-gaps',
+      'multi-series-not-comparable',
+      'multi-series-release-aligned',
+      'multi-series-hidden',
+    ])
+    await openGallery(page)
+    for (const item of MULTI_SERIES_ITEMS) {
+      await expect(linePaths(page, item.id), item.id).toHaveCount(item.minMarks)
+      // Told apart by DASH as well as colour: no two drawn lines share a pattern.
+      const dashes = await linePaths(page, item.id).evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute('stroke-dasharray') ?? 'solid'),
+      )
+      expect(new Set(dashes).size, `${item.id}: ${dashes.join(' | ')}`).toBe(dashes.length)
+    }
+    // 12 suites: 7 kept + "Other", with a notice naming what was folded.
+    const folded = multiItem(page, 'multi-series-folded')
+    await expect(folded.locator('[data-legend-series]')).toHaveCount(8)
+    await expect(folded.locator('[data-legend-series="__other__"]')).toHaveText('Other')
+    await expect(folded.locator('[data-chart-fold-notice]')).toHaveText(
+      '12 suites: the 7 with the most executions are drawn, and the other 5 are folded into "Other".',
+    )
+    // comparable:false → a banner with the API's reason, and the comparison still drawn.
+    // The reason is the API's whole sentence; the banner keeps ONE full stop.
+    const branches = multiItem(page, 'multi-series-not-comparable')
+    const reason = GALLERY_NOT_COMPARABLE.reason ?? ''
+    expect(reason.endsWith('.'), reason).toBe(true)
+    await expect(branches.locator('[data-chart-comparable-banner]')).toHaveText(
+      `Not directly comparable: ${reason.slice(0, -1)}. The comparison is still shown.`,
+    )
+    // Counts only, as the API sends it: no branch is named in the caveat.
+    for (const series of GALLERY_BRANCHES) {
+      await expect(branches.locator('[data-chart-comparable-banner]')).not.toContainText(series.key)
+    }
+    await expect(linePaths(page, 'multi-series-not-comparable')).toHaveCount(2)
+    // Gaps, not zeros: counted in words, and the isolated measured days are dots.
+    const gaps = multiItem(page, 'multi-series-gaps')
+    await expect(gaps.locator('[data-chart-gap-note]')).toContainText('never as 0')
+    await expect.poll(() => gaps.locator(`${CHART_SVG} .recharts-line-dots circle`).count()).toBeGreaterThan(0)
+  })
+
+  test('VIZ-404: direct labels never overlap, and each sits inside its svg', async ({ page }) => {
+    await openGallery(page)
+    for (const item of MULTI_SERIES_ITEMS) {
+      const section = multiItem(page, item.id)
+      const labels = section.locator('[data-direct-label] text')
+      // One label per drawn line: a hidden series' label goes with it.
+      await expect(labels, item.id).toHaveCount(item.minMarks)
+      const boxes = await textBoxes(labels)
+      expect(overlaps(boxes), `${item.id}: direct labels overlap`).toEqual([])
+      const svg = await section.locator(CHART_SVG).first().boundingBox()
+      if (!svg) throw new Error(`${item.id}: no svg`)
+      for (const box of boxes) {
+        expect(box.right, `${item.id}: "${box.text}" is cut off on the right`).toBeLessThanOrEqual(svg.x + svg.width + 0.5)
+        expect(box.top, `${item.id}: "${box.text}" is above the svg`).toBeGreaterThanOrEqual(svg.y - 0.5)
+        expect(box.bottom, `${item.id}: "${box.text}" is below the svg`).toBeLessThanOrEqual(svg.y + svg.height + 0.5)
+      }
+    }
+    // The three-suites fixture ENDS payments and cart half a point apart: their
+    // labels were nudged, not stacked, and the hidden item draws no cart label.
+    await expect(multiItem(page, 'multi-series-hidden').locator('[data-direct-label="cart"]')).toHaveCount(0)
+  })
+
+  test('VIZ-404: the shared tooltip lists every series for the day, sorted descending, unmeasured last', async ({ page }) => {
+    await openGallery(page)
+    const section = multiItem(page, 'multi-series-gaps')
+    await section.scrollIntoViewIfNeeded()
+    // The plot's box, from its horizontal grid lines (the first is the 0 line, at the BOTTOM).
+    const grid = await section.locator('.recharts-cartesian-grid-horizontal line').evaluateAll((nodes) => {
+      const boxes = nodes.map((node) => node.getBoundingClientRect())
+      return { x: boxes[0].x, width: boxes[0].width, top: Math.min(...boxes.map((b) => b.y)), bottom: Math.max(...boxes.map((b) => b.y)) }
+    })
+    // Day 3 of 14: search was not measured that day. Two moves: Recharts reacts
+    // to movement INTO the plot, not to a pointer that is simply placed there.
+    const at = { x: grid.x + (grid.width * 3) / 13, y: (grid.top + grid.bottom) / 2 }
+    await page.mouse.move(at.x - 20, at.y - 20)
+    await page.mouse.move(at.x, at.y)
+    const tip = section.locator('[data-chart-tooltip]')
+    await expect(tip).toBeVisible()
+    const day = (await tip.locator('.font-semibold').first().textContent())?.trim() ?? ''
+    const rows = await tip.locator('[data-tip-series]').evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        key: node.getAttribute('data-tip-series') ?? '',
+        value: node.querySelector('[data-tip-value]')?.textContent ?? '',
+      })),
+    )
+    // The expected order is computed from the fixture, not copied from the page.
+    const expected = GALLERY_GAPPY_SUITES.map((series) => ({
+      key: series.key,
+      y: series.points.find((point) => point.x === day)?.y ?? null,
+    }))
+    const measured = expected.filter((e) => e.y !== null).sort((a, b) => (b.y as number) - (a.y as number))
+    const unmeasured = expected.filter((e) => e.y === null)
+    expect(unmeasured.length, `day ${day} should have an unmeasured series`).toBeGreaterThan(0)
+    expect(rows.map((row) => row.key)).toEqual([...measured, ...unmeasured].map((e) => e.key))
+    expect(rows[rows.length - 1].value).toBe('—')
+    await expect(tip.locator('[data-tip-reason-visible="search"]')).toContainText('every test was skipped')
+  })
+
+  test('VIZ-404: the keyboard reads each day through the ONE announcer, sorted the same way', async ({ page }) => {
+    await openGallery(page)
+    const surface = multiItem(page, 'multi-series-three-suites').locator('[data-multi-series-plot]')
+    await expect(surface).toHaveAttribute('role', 'group')
+    await expect(surface).toHaveAttribute('aria-label', /Use the arrow keys/)
+    await surface.focus()
+    await page.keyboard.press('End')
+    const last = GALLERY_THREE_SUITES.map((s) => ({ key: s.key, y: s.points[s.points.length - 1].y as number })).sort(
+      (a, b) => b.y - a.y,
+    )
+    const announcer = page.locator('[data-chart-announcer="assertive"]')
+    const lastDay = GALLERY_THREE_SUITES[0].points[GALLERY_THREE_SUITES[0].points.length - 1].x
+    await expect(announcer).toContainText(lastDay)
+    const text = (await announcer.textContent()) ?? ''
+    const positions = last.map((s) => text.indexOf(`${s.key} `))
+    expect(positions.every((p) => p >= 0), text).toBe(true)
+    expect([...positions].sort((a, b) => a - b), `announced out of order: ${text}`).toEqual(positions)
+    await expect(multiItem(page, 'multi-series-three-suites').locator('[data-chart-readout]')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(multiItem(page, 'multi-series-three-suites').locator('[data-chart-readout]')).toHaveCount(0)
+    await expect(surface).toBeFocused()
+  })
+
+  test('VIZ-404: the legend toggles by keyboard, the change is announced, and the table reflects it', async ({ page }) => {
+    await openGallery(page)
+    const id = 'multi-series-three-suites'
+    const title = GALLERY_ITEMS.find((item) => item.id === id)?.title ?? ''
+    const section = multiItem(page, id)
+    const polite = page.locator('[data-chart-announcer="polite"]')
+
+    const cart = section.locator('[data-legend-series="cart"]')
+    await expect(cart).toHaveAttribute('aria-pressed', 'true')
+    await cart.focus()
+    await page.keyboard.press('Enter')
+    await expect(cart).toHaveAttribute('aria-pressed', 'false')
+    await expect(linePaths(page, id)).toHaveCount(2)
+    await expect(section.locator('[data-direct-label="cart"]')).toHaveCount(0)
+    await expect(polite).toHaveText(`${title} chart: cart hidden, 2 of 3 series shown`)
+
+    // The table KEEPS cart, marked hidden.
+    await section.getByRole('button', { name: 'View as table' }).click()
+    const table = section.getByRole('table')
+    await expect(table.getByRole('columnheader', { name: `cart${HIDDEN_SUFFIX}` })).toBeVisible()
+    await expect(table.getByRole('columnheader')).toHaveCount(4)
+
+    // Shift+Enter shows one series alone; the SAME gesture undoes it.
+    const search = section.locator('[data-legend-series="search"]')
+    await search.focus()
+    await page.keyboard.press('Shift+Enter')
+    await expect(linePaths(page, id)).toHaveCount(1)
+    await expect(polite).toHaveText(`${title} chart: only search shown, 1 of 3 series shown`)
+    await expect(table.getByRole('columnheader', { name: `payments${HIDDEN_SUFFIX}` })).toBeVisible()
+    await page.keyboard.press('Shift+Enter')
+    await expect(linePaths(page, id)).toHaveCount(3)
+    await expect(polite).toHaveText(`${title} chart: all 3 series shown`)
+  })
+
+  test('VIZ-404: release over release starts both lines at day 0 on a relative axis', async ({ page }) => {
+    await openGallery(page)
+    const section = multiItem(page, 'multi-series-release-aligned')
+    // Recharts 3 draws axis titles in a z-index layer of their own, outside `.recharts-xAxis`.
+    await expect(section.locator(`${CHART_SVG} .recharts-label`, { hasText: ALIGNED_X_TITLE })).toBeVisible()
+    await expect(section.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`).first()).toHaveText('0')
+    // Both paths begin at the same x: day 0 of each release.
+    const starts = await linePaths(page, 'multi-series-release-aligned').evaluateAll((nodes) =>
+      nodes.map((node) => Number(/^M\s*([\d.]+)/.exec(node.getAttribute('d') ?? '')?.[1])),
+    )
+    expect(starts).toHaveLength(2)
+    expect(Math.abs(starts[0] - starts[1])).toBeLessThan(0.5)
+    // Fix round B: R2's missing tail is past its range, not "not measured".
+    const [long, short] = GALLERY_RELEASES.map((release) => release.points.length)
+    expect(short, 'the fixture needs a shorter second release').toBeLessThan(long)
+    await expect(section.locator('[data-chart-gap-note]')).toHaveCount(0)
+    await expect(section.locator('[data-chart-range-note]')).toHaveText(
+      `R2 has ${short} days; ${long - short === 1 ? `day ${short} is` : `days ${short}–${long - 1} are`} past its range.`,
+    )
+    // The table names the relative day AND each release's absolute date.
+    await section.getByRole('button', { name: 'View as table' }).click()
+    await expect(section.getByRole('rowheader').first()).toHaveText('Day 0 (R1 2026-02-02; R2 2026-02-20)')
+  })
+
+  // ── VIZ-404 fix round B: a leader can never be mistaken for data ─────────────
+
+  /**
+   * The steepest a leader's angled step may be on the twelve-suite chart, as
+   * |dy| / dx. The old leader, straight from the line's end to a label pushed
+   * down seven rows, fell ~44 px over 9 px (~4.9) and read as a crash; the
+   * labels now settle in centred clusters and the step has 20 px to turn in.
+   */
+  const MAX_FOLDED_LEADER_SLOPE = 1.5
+
+  /**
+   * Every direct label of one item, with its series' drawn style: the line
+   * paths are drawn in legend order, less the hidden ones. All in screen px.
+   */
+  async function directLabelGeometry(section: Locator) {
+    return section.evaluate((root) => {
+      const screen = (el: SVGGraphicsElement, x: number, y: number) => {
+        const m = el.getScreenCTM()
+        if (!m) throw new Error('no CTM')
+        return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f }
+      }
+      const keys = Array.from(root.querySelectorAll('[data-legend-series][data-legend-hidden="false"]')).map(
+        (node) => node.getAttribute('data-legend-series') ?? '',
+      )
+      const paths = Array.from(root.querySelectorAll<SVGPathElement>('path.recharts-line-curve'))
+      if (paths.length !== keys.length) throw new Error(`${paths.length} paths for ${keys.length} shown series`)
+      const series: Record<string, { stroke: string; dash: string; lastX: number }> = {}
+      keys.forEach((key, i) => {
+        const path = paths[i]
+        const box = path.getBBox()
+        series[key] = {
+          stroke: getComputedStyle(path).stroke,
+          dash: path.getAttribute('stroke-dasharray') ?? 'none',
+          lastX: screen(path, box.x + box.width, box.y).x,
+        }
+      })
+      const grid = Array.from(root.querySelectorAll('.recharts-cartesian-grid-horizontal line')).map((n) => n.getBoundingClientRect())
+      const plotRight = Math.max(...grid.map((b) => b.right))
+      const labels = Array.from(root.querySelectorAll('[data-direct-label]')).map((group) => {
+        const key = group.getAttribute('data-direct-label') ?? ''
+        const leader = group.querySelector<SVGPolylineElement>('[data-direct-label-leader]')
+        const swatch = group.querySelector<SVGLineElement>('[data-direct-label-swatch]')
+        const text = group.querySelector('text')?.getBoundingClientRect()
+        const swatchBox = swatch?.getBoundingClientRect()
+        return {
+          key,
+          leader: leader
+            ? {
+                stroke: getComputedStyle(leader).stroke,
+                dash: leader.getAttribute('stroke-dasharray') ?? 'none',
+                points: Array.from(leader.points).map((p) => screen(leader, p.x, p.y)),
+              }
+            : null,
+          swatch:
+            swatch && swatchBox
+              ? {
+                  stroke: getComputedStyle(swatch).stroke,
+                  dash: swatch.getAttribute('stroke-dasharray') ?? 'none',
+                  left: swatchBox.left,
+                  right: swatchBox.right,
+                  y: swatchBox.top + swatchBox.height / 2,
+                }
+              : null,
+          text: text ? { left: text.left, y: text.top + text.height / 2 } : null,
+        }
+      })
+      return { series, plotRight, labels }
+    })
+  }
+
+  for (const theme of ['signal', 'lab'] as const) {
+    test(`VIZ-404 fix B: every leader is a connector, never data; the swatch before each name matches its line (${theme})`, async ({
+      page,
+    }) => {
+      await openGallery(page, `?theme=${theme}`)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      let checked = 0
+      for (const item of MULTI_SERIES_ITEMS) {
+        const section = multiItem(page, item.id)
+        await expect.poll(() => linePaths(page, item.id).count(), { message: item.id }).toBe(item.minMarks)
+        await expect(section.locator('[data-direct-label]'), item.id).toHaveCount(item.minMarks)
+        const { series, plotRight, labels } = await directLabelGeometry(section)
+        for (const label of labels) {
+          const where = `${item.id} / ${label.key}`
+          const line = series[label.key]
+          expect(line, `${where}: no drawn line`).toBeDefined()
+          expect(label.leader, `${where}: no leader`).not.toBeNull()
+          expect(label.swatch, `${where}: no swatch`).not.toBeNull()
+          expect(label.text, `${where}: no name`).not.toBeNull()
+          if (!line || !label.leader || !label.swatch || !label.text) continue
+          // Not the line's colour, not the line's dash.
+          expect(label.leader.stroke, `${where}: leader colour`).not.toBe(line.stroke)
+          expect(label.leader.dash, `${where}: leader dash`).not.toBe(line.dash)
+          // Clear of the line's end, and only in the gutter.
+          expect(label.leader.points.length, where).toBeGreaterThanOrEqual(2)
+          expect(label.leader.points[0].x - line.lastX, `${where}: leader starts on the line`).toBeGreaterThanOrEqual(3)
+          for (const point of label.leader.points) {
+            expect(point.x, `${where}: leader enters the plot`).toBeGreaterThanOrEqual(plotRight - 0.5)
+          }
+          // The match: the line's own colour AND dash, right before the name, on its row.
+          expect(label.swatch.stroke, `${where}: swatch colour`).toBe(line.stroke)
+          expect(label.swatch.dash, `${where}: swatch dash`).toBe(line.dash)
+          expect(label.swatch.right, `${where}: swatch after the name`).toBeLessThanOrEqual(label.text.left)
+          expect(label.text.left - label.swatch.right, `${where}: swatch far from the name`).toBeLessThanOrEqual(8)
+          expect(label.swatch.left, `${where}: swatch over the leader`).toBeGreaterThanOrEqual(
+            Math.max(...label.leader.points.map((p) => p.x)),
+          )
+          expect(Math.abs(label.swatch.y - label.text.y), `${where}: swatch off the name's row`).toBeLessThan(2)
+          checked += 1
+        }
+      }
+      expect(checked, 'no direct label was checked').toBeGreaterThan(0)
+    })
+  }
+
+  test(`VIZ-404 fix B: on the twelve-suite chart no leader is steeper than ${MAX_FOLDED_LEADER_SLOPE}`, async ({ page }) => {
+    await openGallery(page)
+    const section = multiItem(page, 'multi-series-folded')
+    await expect.poll(() => linePaths(page, 'multi-series-folded').count()).toBe(8)
+    const { labels } = await directLabelGeometry(section)
+    expect(labels).toHaveLength(8)
+    const slopes = labels.map((label) => {
+      const points = label.leader?.points ?? []
+      let steepest = 0
+      for (let i = 1; i < points.length; i++) {
+        const dx = points[i].x - points[i - 1].x
+        const dy = Math.abs(points[i].y - points[i - 1].y)
+        // A vertical step is infinitely steep: it has to move across as it moves down.
+        steepest = Math.max(steepest, dx > 0 ? dy / dx : dy > 0 ? Number.POSITIVE_INFINITY : 0)
+      }
+      return { key: label.key, steepest }
+    })
+    for (const { key, steepest } of slopes) {
+      expect(steepest, `${key}: leader slope ${steepest.toFixed(2)}`).toBeLessThanOrEqual(MAX_FOLDED_LEADER_SLOPE)
+    }
+    // …and the check is not vacuous: some labels DID have to be nudged off their line's end.
+    expect(Math.max(...slopes.map((s) => s.steepest))).toBeGreaterThan(0)
+  })
+
+  test('VIZ-404: no text escapes its frame, and every gallery box contains its frame', async ({ page }) => {
+    await openGallery(page)
+    for (const item of MULTI_SERIES_ITEMS) {
+      const frame = multiItem(page, item.id).locator('[data-chart-frame]')
+      await expect.poll(() => linePaths(page, item.id).count(), { message: item.id }).toBe(item.minMarks)
+      const problems = await frame.evaluate(textEscapes)
+      expect(problems, item.id).toEqual([])
+      const canvas = await page.locator(`[data-gallery-canvas="${item.id}"]`).boundingBox()
+      const box = await frame.boundingBox()
+      expect(canvas && box, item.id).toBeTruthy()
+      expect((box?.y ?? 0) + (box?.height ?? 0), `${item.id}: the frame spills out of its gallery box`).toBeLessThanOrEqual(
+        (canvas?.y ?? 0) + (canvas?.height ?? 0) + 1,
+      )
+    }
+  })
+
+  // ── VIZ-404 fix round A: the review's accessibility findings, in geometry ────
+
+  /** The plot area of one item: the box of its horizontal grid lines. */
+  async function plotBox(section: Locator) {
+    return section.locator('.recharts-cartesian-grid-horizontal line').evaluateAll((nodes) => {
+      const boxes = nodes.map((node) => node.getBoundingClientRect())
+      const left = Math.min(...boxes.map((b) => b.left))
+      const right = Math.max(...boxes.map((b) => b.right))
+      return { left, right, width: right - left, top: Math.min(...boxes.map((b) => b.top)), bottom: Math.max(...boxes.map((b) => b.bottom)) }
+    })
+  }
+
+  /**
+   * Every screen point the focused day draws: where each line crosses the
+   * cursor's reference line, and any dot on it. Sampled off the real paths, so
+   * a readout laid over the plot shows up as a point inside its box.
+   */
+  async function focusedDayPoints(section: Locator) {
+    return section.evaluate((root) => {
+      const focus = root.querySelector('.recharts-reference-line line')
+      if (!focus) return { x: null as number | null, points: [] as { x: number; y: number }[] }
+      const fx = focus.getBoundingClientRect().left
+      const points: { x: number; y: number }[] = []
+      for (const path of Array.from(root.querySelectorAll<SVGPathElement>('path.recharts-line-curve'))) {
+        const m = path.getScreenCTM()
+        if (!m) continue
+        const length = path.getTotalLength()
+        for (let d = 0; d <= length; d += 0.5) {
+          const p = path.getPointAtLength(d)
+          const x = m.a * p.x + m.c * p.y + m.e
+          const y = m.b * p.x + m.d * p.y + m.f
+          if (Math.abs(x - fx) < 1) points.push({ x, y })
+        }
+      }
+      for (const dot of Array.from(root.querySelectorAll('.recharts-line-dots circle'))) {
+        const box = dot.getBoundingClientRect()
+        if (Math.abs(box.left + box.width / 2 - fx) < 1) points.push({ x: box.left + box.width / 2, y: box.top + box.height / 2 })
+      }
+      return { x: fx, points }
+    })
+  }
+
+  /** Text that does not fit its box: the element scrolls, or an ellipsis cuts it. */
+  const clippedText = (root: Element) =>
+    [root, ...Array.from(root.querySelectorAll('*'))]
+      .filter((node) => {
+        const style = getComputedStyle(node)
+        const scrolls = node.scrollWidth > node.clientWidth + 1 && node.clientWidth > 0
+        return scrolls || (style.textOverflow === 'ellipsis' && style.overflow !== 'visible')
+      })
+      .map((node) => `${node.tagName.toLowerCase()} "${(node.textContent ?? '').slice(0, 40)}" ${node.scrollWidth}>${node.clientWidth}`)
+
+  for (const [label, viewport, search] of [
+    ['640 px', { width: 1280, height: 900 }, ''],
+    ['320 px', { width: 320, height: 900 }, `?canvas=${GALLERY_FLUID_CANVAS_PARAM}`],
+  ] as const) {
+    test(`VIZ-404 fix A (M2): the keyboard readout wraps whole, OUTSIDE the plot, at ${label}`, async ({ page }) => {
+      await page.setViewportSize(viewport)
+      await openGallery(page, search)
+      for (const [id, steps] of [
+        // Day 3: search is unmeasured, so the readout carries its reason too.
+        ['multi-series-gaps', 3],
+        // Eight rows: the tallest readout.
+        ['multi-series-folded', 6],
+      ] as const) {
+        const section = multiItem(page, id)
+        await expect.poll(() => linePaths(page, id).count()).toBeGreaterThan(0)
+        const surface = section.locator('[data-multi-series-plot]')
+        await surface.focus()
+        await page.keyboard.press('Home')
+        for (let i = 0; i < steps; i++) await page.keyboard.press('ArrowRight')
+        const readout = section.locator('[data-chart-readout]')
+        await expect(readout).toBeVisible()
+        expect(await readout.evaluate(clippedText), `${id}: readout text is cut off`).toEqual([])
+        const box = await readout.boundingBox()
+        if (!box) throw new Error(`${id}: no readout box`)
+        const frame = await section.locator('[data-chart-frame]').boundingBox()
+        expect(box.x + box.width, `${id}: the readout runs past its frame`).toBeLessThanOrEqual((frame?.x ?? 0) + (frame?.width ?? 0) + 0.5)
+        // It hides none of the day it describes…
+        const { x, points } = await focusedDayPoints(section)
+        expect(x, `${id}: no focus line`).not.toBeNull()
+        expect(points.length, `${id}: the focused day drew no points`).toBeGreaterThan(0)
+        const covered = points.filter((p) => p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height)
+        expect(covered, `${id}: the readout covers the focused day's points`).toEqual([])
+        // …because it is not over the plot at all.
+        const plot = await plotBox(section)
+        expect(box.y, `${id}: the readout overlaps the plot`).toBeGreaterThanOrEqual(plot.bottom)
+        await page.keyboard.press('Escape')
+      }
+
+      // The shared `useChartCursor` readout (every other Wave-2 chart) wraps too:
+      // the time series' last day carries its local-time equivalent.
+      const series = page.locator('[data-gallery-item="timeseries-trend-releases"]')
+      await series.locator('[data-time-series-plot]').focus()
+      await page.keyboard.press('End')
+      const shared = series.locator('[data-chart-readout]')
+      await expect(shared).toBeVisible()
+      expect(await shared.evaluate(clippedText), 'the shared readout is cut off').toEqual([])
+    })
+  }
+
+  test('VIZ-404 fix A (M8): the pointer tooltip is pinned to its DAY — moving onto it, it stays put and open', async ({ page }) => {
+    await openGallery(page)
+    const id = 'multi-series-three-suites'
+    const section = multiItem(page, id)
+    await section.scrollIntoViewIfNeeded()
+    const plot = await plotBox(section)
+    const days = GALLERY_THREE_SUITES[0].points.length
+    const step = plot.width / (days - 1)
+    const dayX = plot.left + step * 5
+    const tip = section.locator('[data-chart-tooltip]')
+
+    // Onto day 5 from below: the tooltip sits at the TOP of the plot, and a
+    // pointer that arrives on it holds whatever day it names.
+    await page.mouse.move(dayX - 4, plot.bottom - 10)
+    await page.mouse.move(dayX, plot.bottom - 10)
+    await expect(tip).toBeVisible()
+    const pinned = await tip.boundingBox()
+    if (!pinned) throw new Error('no tooltip box')
+    const same = (box: { x: number; y: number } | null) =>
+      box !== null && Math.abs(box.x - pinned.x) < 0.5 && Math.abs(box.y - pinned.y) < 0.5
+    // A fixed offset from the day's x, beside it — not over it.
+    expect(pinned.x > dayX || pinned.x + pinned.width < dayX, 'the tooltip covers its own day').toBe(true)
+
+    // Anywhere on the same day, the pointer's own position never moves it.
+    for (const up of [40, 90, 140, 180]) {
+      await page.mouse.move(dayX + 2, plot.bottom - up)
+      expect(same(await tip.boundingBox()), `the tooltip moved with the pointer, ${up}px up`).toBe(true)
+    }
+
+    // Now walk straight onto it, a pixel at a time, at its own height.
+    const y = pinned.y + Math.min(pinned.height / 2, 20)
+    await page.mouse.move(dayX, y)
+    const right = pinned.x > dayX
+    const target = right ? pinned.x + 16 : pinned.x + pinned.width - 16
+    for (let x = dayX; right ? x <= target : x >= target; x += right ? 1 : -1) {
+      await page.mouse.move(x, y)
+      expect(await tip.isVisible(), `the tooltip closed at x=${x}`).toBe(true)
+      expect(same(await tip.boundingBox()), `the tooltip moved at x=${x}`).toBe(true)
+    }
+    const onTip = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-chart-tooltip]'), { x: target, y })
+    expect(onTip, 'the pointer is on the tooltip').toBe(true)
+    // …and moving about ON it keeps it — the day it names does not change under the pointer.
+    const title = await tip.locator('.font-semibold').first().textContent()
+    await page.mouse.move(target + (right ? 30 : -30), y + 4)
+    expect(same(await tip.boundingBox())).toBe(true)
+    await expect(tip.locator('.font-semibold').first()).toHaveText(title ?? '')
+  })
+
+  test('VIZ-404 fix A (M6): at 320 px the line-end labels give way to the legend, and the plot gets the room', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 })
+    await openGallery(page, `?canvas=${GALLERY_FLUID_CANVAS_PARAM}`)
+    for (const item of MULTI_SERIES_ITEMS) {
+      const section = multiItem(page, item.id)
+      await expect.poll(() => linePaths(page, item.id).count(), { message: item.id }).toBe(item.minMarks)
+      await expect(section.locator('[data-chart-labels-note]'), item.id).toBeVisible()
+      await expect(section.locator('[data-direct-label]'), item.id).toHaveCount(0)
+      const svg = await section.locator(CHART_SVG).first().boundingBox()
+      const plot = await plotBox(section)
+      if (!svg) throw new Error(`${item.id}: no svg`)
+      // No 104 px gutter held open for labels that are not drawn.
+      expect(svg.x + svg.width - plot.right, `${item.id}: gutter`).toBeLessThanOrEqual(17)
+      expect(plot.width, `${item.id}: plot width`).toBeGreaterThan(120)
+    }
+    // …while the 640 px canvas keeps them.
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await openGallery(page)
+    await expect(multiItem(page, 'multi-series-three-suites').locator('[data-direct-label]')).toHaveCount(3)
+  })
+
+  test('VIZ-404 fix A (M7, m4): "Show all series" hands focus to the legend; toggles are 24 px and the group is named', async ({ page }) => {
+    await openGallery(page)
+    const id = 'multi-series-three-suites'
+    const title = GALLERY_ITEMS.find((item) => item.id === id)?.title ?? ''
+    const section = multiItem(page, id)
+    // The legend group says WHICH chart's series these are.
+    await expect(section.getByRole('group', { name: `Series shown on ${title}`, exact: true })).toHaveAttribute(
+      'data-multi-series-legend',
+      '',
+    )
+    for (const box of await section.locator('[data-legend-series]').evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().height))) {
+      expect(box).toBeGreaterThanOrEqual(24)
+    }
+    for (const length of await section.locator('[data-multi-series-legend] [data-series-swatch]').evaluateAll((nodes) =>
+      nodes.map((n) => n.getBoundingClientRect().width),
+    )) {
+      expect(length).toBeGreaterThanOrEqual(32)
+    }
+    await section.locator('[data-legend-series="cart"]').click()
+    const showAll = section.locator('[data-legend-show-all]')
+    await showAll.focus()
+    await page.keyboard.press('Enter')
+    await expect(showAll).toHaveCount(0)
+    await expect(section.locator('[data-legend-series="payments"]')).toBeFocused()
+  })
+
+  /** WCAG contrast of two computed `rgb()` colours. */
+  const contrastOf = (a: string, b: string) => {
+    const lum = (rgb: string) => {
+      const [r, g, bl] = (rgb.match(/[\d.]+/g) ?? []).slice(0, 3).map((v) => {
+        const s = Number(v) / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+    }
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+    return (hi + 0.05) / (lo + 0.05)
+  }
+
+  for (const theme of ALL_THEMES) {
+    test(`VIZ-404 fix A (M1): every multi-series table scrolls by keyboard, and axe passes with them all open (${theme})`, async ({
+      page,
+    }) => {
+      await openGallery(page, `?theme=${theme}`)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      let scrolled = 0
+      for (const item of MULTI_SERIES_ITEMS) {
+        const section = multiItem(page, item.id)
+        await expect.poll(() => linePaths(page, item.id).count(), { message: item.id }).toBe(item.minMarks)
+        await section.getByRole('button', { name: 'View as table' }).click()
+        const region = section.getByRole('region', { name: `${item.title} — data table` })
+        await expect(region).toHaveAttribute('tabindex', '0')
+        await region.focus()
+        await expect(region).toBeFocused()
+        const scrolls = await region.evaluate((el) => el.scrollHeight > el.clientHeight + 1)
+        if (scrolls) {
+          scrolled += 1
+          await page.keyboard.press('End')
+          await expect
+            .poll(() => region.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1), { message: item.id })
+            .toBe(true)
+          // The latest day — the row the review found hidden — is on screen.
+          const rows = await region.evaluate((el) => {
+            const box = el.getBoundingClientRect()
+            const last = el.querySelector('tbody tr:last-child')?.getBoundingClientRect()
+            return last ? { lastBottom: last.bottom, boxBottom: box.bottom } : null
+          })
+          expect(rows && rows.lastBottom <= rows.boxBottom + 1, `${item.id}: last row still hidden`).toBe(true)
+        }
+      }
+      expect(scrolled, 'no multi-series table is long enough to scroll: the test proves nothing').toBeGreaterThan(0)
+
+      // m3: the not-comparable banner's border is a real boundary (3:1) against both sides.
+      const banner = multiItem(page, 'multi-series-not-comparable').locator('[data-chart-comparable-banner]')
+      await expect(banner).toHaveAttribute('role', 'note')
+      const colours = await banner.evaluate((el) => {
+        const frame = el.closest('[data-chart-frame]') as HTMLElement
+        return { border: getComputedStyle(el).borderLeftColor, inside: getComputedStyle(el).backgroundColor, outside: getComputedStyle(frame).backgroundColor }
+      })
+      expect(contrastOf(colours.border, colours.inside), `banner border vs its fill (${theme})`).toBeGreaterThanOrEqual(3)
+      expect(contrastOf(colours.border, colours.outside), `banner border vs the card (${theme})`).toBeGreaterThanOrEqual(3)
+
+      // No allowlist: with every table open, nothing fires.
+      await expectNoBlockingViolations(
+        page,
+        theme,
+        [],
+        MULTI_SERIES_ITEMS.map((item) => `[data-gallery-item="${item.id}"]`),
+      )
+    })
+  }
 
   // ── Chart frame states (VIZ-107) and the accessible-chart baseline (VIZ-105) ──
 
