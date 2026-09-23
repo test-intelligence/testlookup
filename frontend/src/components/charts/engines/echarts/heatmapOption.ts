@@ -29,7 +29,8 @@ import type {
 } from 'echarts/components'
 import type { MatrixChart, VizStatus } from '@/lib/viz/contracts'
 import { decalOf, echartsDecal, STATUS_ENCODING, type ChartTokens } from '../../tokens'
-import { domTooltipFormatter, type TooltipContent } from '../../tooltip'
+import { domTooltipFormatter, sampleRow, tipContent, type TooltipContent } from '../../tooltip'
+import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
 import { NO_DATA, formatPlainValue, formatRateValue } from '../../chartText'
 
 export type HeatmapOption = ComposeOption<
@@ -117,17 +118,23 @@ export function formatHeatmapValue(valueType: HeatmapMatrix['value_type'], value
 type Cell = HeatmapMatrix['cells'][number]
 
 /**
- * A cell's tooltip content. The mouse tooltip (via the formatter) and the
- * keyboard announcement both come from here, so they cannot differ.
+ * A cell's tooltip content, in the shared model (VIZ-601): its row as the
+ * title, its column and exact value, and the sample size n behind it. The
+ * mouse tooltip (via the formatter) and the keyboard announcement both come
+ * from here, so they cannot differ. No change against a neighbouring cell:
+ * a matrix does not say its columns are ordered in time, and a "change vs
+ * previous" across two failure categories would be a number about nothing.
  */
 export function heatmapTooltipContent(data: HeatmapMatrix, cell: Cell): TooltipContent {
-  return {
-    title: data.y_labels[cell.y] ?? '',
-    rows: [
-      { label: data.x_labels[cell.x] ?? '', value: cell.value === null ? NO_DATA : formatHeatmapValue(data.value_type, cell.value) },
-      { label: 'Samples', value: formatPlainValue(cell.n) },
-    ],
-  }
+  return tipContent(data.y_labels[cell.y] ?? '', [
+    {
+      kind: 'value',
+      key: 'value',
+      label: data.x_labels[cell.x] ?? '',
+      value: cell.value === null ? NO_DATA : formatHeatmapValue(data.value_type, cell.value),
+    },
+    { ...sampleRow(cell.n), value: formatPlainValue(cell.n) },
+  ])
 }
 
 /**
@@ -150,6 +157,12 @@ function cellOf(params: unknown): { x: number; y: number } | null {
   const [x, y] = value
   return typeof x === 'number' && typeof y === 'number' ? { x, y } : null
 }
+
+/** A heatmap tooltip's mark: the cell ECharts hands the `position` callback, else the pointer. */
+export const heatmapCellMark: EchartsMarkOf = (point, rect) =>
+  rect
+    ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height }
+    : { left: point[0] ?? 0, top: point[1] ?? 0, width: 0, height: 0 }
 
 /** A colour-ramp end as the tooltip would print that value: "100.0%" for a rate, "42" for a count. */
 export function rampEndLabel(valueType: NumericMatrix['value_type'], value: number): string {
@@ -280,9 +293,20 @@ export function buildHeatmapOption({
     grid: { ...HEATMAP_GRID },
     tooltip: {
       trigger: 'item',
+      // The same box the Recharts tooltips draw (`TIP_BOX_STYLE`).
       backgroundColor: tokens.card,
       borderColor: tokens.border,
+      borderWidth: 1,
+      borderRadius: 8,
+      padding: [4, 8],
       textStyle: { color: tokens.text },
+      // VIZ-601: beside the cell (ECharts hands the callback the cell's own
+      // rect), never over it; flipped at an edge; inside the chart
+      // (`confine`); and something the pointer can move onto (`enterable`,
+      // SC 1.4.13 Hoverable). The keyboard's `showTip` lands here too.
+      confine: true,
+      enterable: true,
+      position: echartsTipPosition(heatmapCellMark),
       formatter: domTooltipFormatter((params: unknown) => {
         const at = cellOf(params)
         const cell = at ? byCell.get(`${at.x}:${at.y}`) : undefined

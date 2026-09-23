@@ -18,6 +18,8 @@ import { CHART_MESSAGES } from './chartMessages'
 import { CHART_VARS } from './tokens'
 import { TREND_OVERLAY_STYLE } from './TimeSeriesChartOverlayStyle'
 import { trendAnalysisFixture, trendAnalysisSparseFixture } from './__fixtures__/wave2Fixtures'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
 import {
   ANOMALY_RULE,
   INSUFFICIENT_DATA_REASON,
@@ -37,6 +39,8 @@ interface Captured {
 const captured: Captured = { chartData: [], lines: [], dots: [], tooltips: [] }
 
 vi.mock('recharts', () => ({
+  // The plot area the pinned tooltip reads its day's column from (VIZ-601).
+  usePlotArea: () => ({ x: 40, y: 16, width: 400, height: 200 }),
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children, data }: { children: ReactNode; data: Record<string, unknown>[] }) => {
     captured.chartData = data
@@ -323,10 +327,18 @@ describe('VIZ-405 · the keyboard cursor reads the overlays', () => {
     for (let i = 0; i < 22; i++) fireEvent.keyDown(surface, { key: 'ArrowRight' })
     const said = document.querySelector('[data-chart-announcer="assertive"]')?.textContent ?? ''
     expect(said).toMatch(/2026-03-23/)
-    expect(said).toMatch(/7-day moving average \d+\.\d%/)
-    expect(said).toMatch(/Trend line \d+\.\d%/)
+    // VIZ-601: "Label: value", the one shape every chart's cursor speaks.
+    expect(said).toMatch(/7-day moving average: \d+\.\d%/)
+    expect(said).toMatch(/Trend line: \d+\.\d%/)
     expect(said).toContain(ANOMALY_RULE)
     expect(document.querySelector('[data-chart-readout]')?.textContent).toContain(ANOMALY_RULE)
+
+    // …and it is exactly what the pointer's tooltip shows for that day.
+    const tip = captured.tooltips[captured.tooltips.length - 1].content as ReactElement<Record<string, unknown>>
+    const hover = render(cloneElement(tip, { active: true, label: '2026-03-23', coordinate: { x: 200, y: 50 } }))
+    const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+    expect(said).toBe(`Pass rate: ${tooltipText(pointed)}`)
+    expect(readTooltip(document.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
   })
 })
 

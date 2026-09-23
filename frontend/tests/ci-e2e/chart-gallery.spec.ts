@@ -656,7 +656,8 @@ test.describe('chart gallery (/__charts)', () => {
     const announcer = page.locator('[data-chart-announcer="assertive"]')
 
     for (const [item, plot, expected] of [
-      ['donut-status', '[data-donut]', /Passed 880/],
+      // VIZ-601: the donut speaks its tooltip — value, n and share, in that order.
+      ['donut-status', '[data-donut]', /Passed\. Executions: 880\. Samples: 1,000\. Share of total: 88\.0%/],
       ['bar-ranked', '[data-bar-chart="ranked"]', /:\s/],
       ['bar-stacked', '[data-bar-chart="stacked"]', /Passed/],
       // …and fix round B's charts: the time series and the two SVG duration ones.
@@ -774,9 +775,9 @@ test.describe('chart gallery (/__charts)', () => {
     // pointer events. Recharts' wrapper is `pointer-events: none`, which makes
     // hovering the content impossible by construction — the pointer passes
     // straight through it, so the criterion fails before the pointer has
-    // moved. (Reaching it is a second question: this tooltip is still placed
-    // relative to the cursor, so it moves as the pointer approaches. Pinning
-    // it is the remaining half, and it is NOT done here.)
+    // moved. (Reaching it is the other half: since VIZ-601 every Recharts
+    // tooltip is pinned beside its mark by `PinnedTip`, and walking onto it is
+    // asserted in `chart-tooltip.spec.ts`, "hoverable (SC 1.4.13)".)
     const wrapper = item.locator('.recharts-tooltip-wrapper').first()
     expect(await wrapper.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('auto')
     // …and the tooltip itself is a real hit target, not a 0x0 box.
@@ -1495,6 +1496,10 @@ test.describe('chart gallery (/__charts)', () => {
       'multi-series-not-comparable',
       'multi-series-release-aligned',
       'multi-series-hidden',
+      // Wave 2.4: a series named with markup (VIZ-601) and a zoomed frame with
+      // one series hidden (VIZ-407) — lines drawn and dashed like the rest.
+      'multi-series-hostile-label',
+      'multi-series-zoom-hidden',
     ])
     await openGallery(page)
     for (const item of MULTI_SERIES_ITEMS) {
@@ -1603,7 +1608,7 @@ test.describe('chart gallery (/__charts)', () => {
     const lastDay = GALLERY_THREE_SUITES[0].points[GALLERY_THREE_SUITES[0].points.length - 1].x
     await expect(announcer).toContainText(lastDay)
     const text = (await announcer.textContent()) ?? ''
-    const positions = last.map((s) => text.indexOf(`${s.key} `))
+    const positions = last.map((s) => text.indexOf(`${s.key}: `))
     expect(positions.every((p) => p >= 0), text).toBe(true)
     expect([...positions].sort((a, b) => a - b), `announced out of order: ${text}`).toEqual(positions)
     await expect(multiItem(page, 'multi-series-three-suites').locator('[data-chart-readout]')).toBeVisible()
@@ -1926,7 +1931,16 @@ test.describe('chart gallery (/__charts)', () => {
     })
   }
 
-  test('VIZ-404 fix A (M8): the pointer tooltip is pinned to its DAY — moving onto it, it stays put and open', async ({ page }) => {
+  // Wave 2.4 (review A2/F3) changed what "pinned" means, deliberately. The
+  // tooltip is still pinned to its DAY — a fixed offset from the day's x, never
+  // over it, never following the pointer across — but it no longer holds its
+  // height against a pointer moving up and down the day: it keeps OFF the
+  // pointer's line, so a sweep along the days never runs into it (the old,
+  // fixed box sat on that line and held the sweep on one day for its whole
+  // width). It holds its day for a pointer that comes to it FROM the day.
+  test('VIZ-404 fix A (M8): the pointer tooltip is pinned to its DAY — beside it, off the pointer’s line, held once reached from the day', async ({
+    page,
+  }) => {
     await openGallery(page)
     const id = 'multi-series-three-suites'
     const section = multiItem(page, id)
@@ -1937,39 +1951,45 @@ test.describe('chart gallery (/__charts)', () => {
     const dayX = plot.left + step * 5
     const tip = section.locator('[data-chart-tooltip]')
 
-    // Onto day 5 from below: the tooltip sits at the TOP of the plot, and a
-    // pointer that arrives on it holds whatever day it names.
+    // Onto day 5 from below.
     await page.mouse.move(dayX - 4, plot.bottom - 10)
     await page.mouse.move(dayX, plot.bottom - 10)
     await expect(tip).toBeVisible()
     const pinned = await tip.boundingBox()
     if (!pinned) throw new Error('no tooltip box')
-    const same = (box: { x: number; y: number } | null) =>
-      box !== null && Math.abs(box.x - pinned.x) < 0.5 && Math.abs(box.y - pinned.y) < 0.5
     // A fixed offset from the day's x, beside it — not over it.
     expect(pinned.x > dayX || pinned.x + pinned.width < dayX, 'the tooltip covers its own day').toBe(true)
+    const title = await tip.locator('.font-semibold').first().textContent()
 
-    // Anywhere on the same day, the pointer's own position never moves it.
+    // Anywhere up and down the same day it stays at the day's x, names the
+    // day, and is never on the pointer's line.
     for (const up of [40, 90, 140, 180]) {
-      await page.mouse.move(dayX + 2, plot.bottom - up)
-      expect(same(await tip.boundingBox()), `the tooltip moved with the pointer, ${up}px up`).toBe(true)
+      const y = plot.bottom - up
+      await page.mouse.move(dayX + 2, y)
+      const box = await tip.boundingBox()
+      if (!box) throw new Error(`the tooltip closed ${up}px up`)
+      expect(Math.abs(box.x - pinned.x), `the tooltip moved across with the pointer, ${up}px up`).toBeLessThan(0.5)
+      expect(y < box.y || y > box.y + box.height, `the tooltip is on the pointer's line, ${up}px up`).toBe(true)
+      await expect(tip.locator('.font-semibold').first()).toHaveText(title ?? '')
     }
 
-    // Now walk straight onto it, a pixel at a time, at its own height.
-    const y = pinned.y + Math.min(pinned.height / 2, 20)
-    await page.mouse.move(dayX, y)
-    const right = pinned.x > dayX
-    const target = right ? pinned.x + 16 : pinned.x + pinned.width - 16
-    for (let x = dayX; right ? x <= target : x >= target; x += right ? 1 : -1) {
-      await page.mouse.move(x, y)
-      expect(await tip.isVisible(), `the tooltip closed at x=${x}`).toBe(true)
-      expect(same(await tip.boundingBox()), `the tooltip moved at x=${x}`).toBe(true)
+    // Now walk from the day onto it, a pixel at a time, heading for its middle.
+    const at = (await tip.boundingBox()) as { x: number; y: number; width: number; height: number }
+    const same = (box: { x: number; y: number } | null) => box !== null && Math.abs(box.x - at.x) < 0.5 && Math.abs(box.y - at.y) < 0.5
+    const right = at.x > dayX
+    const target = { x: right ? at.x + 16 : at.x + at.width - 16, y: at.y + at.height / 2 }
+    const from = { x: dayX, y: plot.bottom - 180 }
+    await page.mouse.move(from.x, from.y)
+    const steps = Math.ceil(Math.abs(target.x - from.x))
+    for (let i = 1; i <= steps; i++) {
+      await page.mouse.move(from.x + ((target.x - from.x) * i) / steps, from.y + ((target.y - from.y) * i) / steps)
+      expect(await tip.isVisible(), `the tooltip closed at step ${i}`).toBe(true)
+      expect(same(await tip.boundingBox()), `the tooltip moved at step ${i}`).toBe(true)
     }
-    const onTip = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-chart-tooltip]'), { x: target, y })
+    const onTip = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-chart-tooltip]'), target)
     expect(onTip, 'the pointer is on the tooltip').toBe(true)
     // …and moving about ON it keeps it — the day it names does not change under the pointer.
-    const title = await tip.locator('.font-semibold').first().textContent()
-    await page.mouse.move(target + (right ? 30 : -30), y + 4)
+    await page.mouse.move(target.x + (right ? 30 : -30), target.y + 4)
     expect(same(await tip.boundingBox())).toBe(true)
     await expect(tip.locator('.font-semibold').first()).toHaveText(title ?? '')
   })

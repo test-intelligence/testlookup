@@ -484,6 +484,14 @@ export interface TimeSeriesModel {
   gaps: number
   renderer: TimeSeriesRenderer
   caption: string
+  /**
+   * When the model is a zoomed slice (VIZ-407), the day just before the
+   * visible range, so the first visible day can still state its change vs the
+   * previous day. `null` when the slice starts on the first day of the data
+   * (there is no previous day); absent on an unzoomed model, whose first day
+   * has no predecessor either.
+   */
+  precedingPoint?: TimeSeriesPoint | null
 }
 
 export interface BuildTimeSeriesInput {

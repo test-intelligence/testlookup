@@ -96,6 +96,8 @@ import {
 } from '@/utils/failureKind'
 import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
+import { csvBlob, csvCell } from '@/lib/viz/csv'
+import { downloadBlob } from '@/utils/download'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -104,14 +106,12 @@ const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
 
 // ── CSV export ────────────────────────────────────────────────────────────
-/** Wrap a CSV cell. Fields containing comma / quote / newline must be
- *  quoted, and inner double-quotes must be escaped by doubling. */
-function csvCell(value: unknown): string {
-  if (value == null) return ''
-  const s = String(value)
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
-  return s
-}
+// Cells go through the shared ``csvCell`` (lib/viz/csv.ts, VIZ-606) — the
+// same RFC 4180 quoting this page always used — which ALSO neutralises
+// formula injection: test and suite names come from ingested CI reports, and
+// a test named ``=HYPERLINK(…)`` must not be evaluated by the spreadsheet
+// that opens this file — nor ``x;=…`` in the locales that split on ``;``
+// (csv.ts says how). Plain numbers are untouched.
 
 interface ExportSources {
   topFailing: TopFailingItem[]
@@ -216,18 +216,13 @@ function handleExportCsv({
   })
   // BOM so Excel opens the file with UTF-8 encoding by default;
   // without it, non-ASCII test names (German umlauts, Japanese
-  // characters in suite labels, etc.) render as mojibake.
-  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
+  // characters in suite labels, etc.) render as mojibake. ``csvBlob`` adds it.
+  const blob = csvBlob(csv)
   const projectSlug = project ? slugifyProjectName(project.name) : 'all-projects'
   const suiteSlug = suiteFilter ? `-${slugifyProjectName(suiteFilter)}` : ''
-  a.download = `failures-${projectSlug}${suiteSlug}-${windowLabel}.csv`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  // ``downloadBlob`` revokes the object URL only AFTER the browser has read
+  // the blob; the synchronous revoke this used to do can cancel the download.
+  downloadBlob(blob, `failures-${projectSlug}${suiteSlug}-${windowLabel}.csv`)
   toast.success(`Exported ${topFailing.length} failing test${topFailing.length === 1 ? '' : 's'}`)
 }
 // ── Verdict ────────────────────────────────────────────────────────────────

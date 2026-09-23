@@ -5,14 +5,26 @@
  * and the series order the component actually asked for.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChartSeries, SeriesChart } from '@/lib/viz/contracts'
-import BarChart, { BreakdownChart, RankedTooltip } from './BarChart'
-import { rankedModel } from './BarChart.model'
+import BarChart, { BreakdownChart, RankedBarPlot, RankedTooltip, StatusTooltip, barMark, rankedShareWhole, rankedWhole } from './BarChart'
+import { OTHER_KEY } from './multiSeriesModel'
+import { rankedModel, statusBarModel } from './BarChart.model'
+import { ChartAnnouncerProvider } from './ChartAnnouncer'
+import { ChartFrameContext } from './chartFrameContext'
 import type { ChartResponse, ChartState } from './chartState'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
+
+/** Every `<Tooltip>` a plot asked Recharts for, so its `content` can be rendered as Recharts would. */
+const tips = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }))
 
 vi.mock('recharts', () => ({
+  // `ChartTooltip`'s column geometry; bars place their tooltip by `useXAxisScale` instead.
+  usePlotArea: () => undefined,
+  // The value axis's scale, for the tooltip's mark: 100 px + 2 px per unit.
+  useXAxisScale: () => (value: unknown) => 100 + 2 * (value as number),
   ResponsiveContainer: ({ children, height }: { children?: ReactNode; height?: number }) => (
     <div data-container-height={height}>{children}</div>
   ),
@@ -39,7 +51,10 @@ vi.mock('recharts', () => ({
   YAxis: ({ type, dataKey }: { type?: string; dataKey?: string }) => <g data-yaxis={type} data-datakey={dataKey} />,
   CartesianGrid: () => null,
   ReferenceLine: ({ x }: { x?: number }) => <line data-reference-x={String(x)} />,
-  Tooltip: () => null,
+  Tooltip: (props: Record<string, unknown>) => {
+    tips.props.push(props)
+    return null
+  },
   Legend: ({ content }: { content?: () => ReactNode }) => <div>{typeof content === 'function' ? content() : null}</div>,
   // For the donut half of BreakdownChart.
   PieChart: ({ children }: { children?: ReactNode }) => (
@@ -193,6 +208,151 @@ describe('BarChart — ranked', () => {
     expect(container.querySelector('img')).toBeNull()
   })
 
+  it('a bar on page 2 states its share of EVERY page — not of the page it is on (Wave 2.4 T1)', () => {
+    tips.props.length = 0
+    // 120 bars, 1000 down to 881: 112,860 in all; page 2 alone holds 46,275.
+    const many: [string, number][] = Array.from({ length: 120 }, (_, i) => [`test-${String(i).padStart(3, '0')}`, 1000 - i])
+    const { container } = render(
+      <BarChart title="Top failing tests" state={ready(categorySeries(many))} variant="ranked" valueAxisLabel="Failures" animate={false} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Next bars' }))
+    expect(container.querySelector('[data-bar-chart="ranked"]')?.getAttribute('data-bar-page')).toBe('1')
+    const content = tips.props[tips.props.length - 1].content as ReactElement<{ whole?: number | null }>
+    expect(content.props.whole).toBe(112_860)
+    // The first bar of page 2, test-050 (950): 950 / 112,860 = 0.8 %, where page 2 alone would say 2.1 %.
+    const surface = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
+    fireEvent.keyDown(surface, { key: 'Home' })
+    expect(tooltipText(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement))).toBe(
+      'test-050. Failures: 950. Share of total: 0.8%',
+    )
+  })
+
+  it('states NO share of total when the server returned only the top N of M, with no "Other" (Wave 2.4 F1)', () => {
+    tips.props.length = 0
+    // The top 3 of 400: the three bars sum to 60 of an unknown total.
+    const top3 = categorySeries([
+      ['checkout', 30],
+      ['auth', 20],
+      ['search', 10],
+    ])
+    const meta = {
+      schema_version: 1,
+      scope: { projects: [], releases: [], suites: [], window: { from: '2026-09-01', to: '2026-09-07', days: 7, timezone: 'UTC' as const } },
+      totals: { matched_runs: 42, total_runs: 50, matched_executions: 1260, total_executions: 1500 },
+      pass_rate_basis: 'executions' as const,
+      ignored_filters: [],
+      truncated: true,
+      truncated_total: 400,
+      measured: true,
+      reason: null,
+      includes_in_progress: 0,
+      partial_day: null,
+      generated_at: '2026-09-08T00:00:00Z',
+      as_of: '2026-09-08T00:00:00Z',
+    }
+    const truncated: ChartState<ChartResponse> = { status: 'truncated', data: { meta, series: top3 }, meta, shown: 3, total: 400, revalidating: false }
+    const { container } = render(<BarChart title="Top failing tests" state={truncated} variant="ranked" valueAxisLabel="Failures" animate={false} />)
+    const content = tips.props[tips.props.length - 1].content as ReactElement<{ whole?: number | null }>
+    expect(content.props.whole).toBeNull()
+    fireEvent.keyDown(container.querySelector('[data-bar-chart="ranked"]') as HTMLElement, { key: 'Home' })
+    const readout = tooltipText(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement))
+    // The value still; no share of a whole the chart does not have.
+    expect(readout).toBe('checkout. Failures: 30')
+    // The same bars, not truncated, do state it.
+    expect(rankedShareWhole([{ key: 'a', value: 30 }, { key: 'b', value: 20 }], false)).toBe(50)
+    // Truncated but carrying the "Other" roll-up: the bars ARE the whole again.
+    expect(rankedShareWhole([{ key: 'a', value: 30 }, { key: OTHER_KEY, value: 70 }], true)).toBe(100)
+    expect(rankedShareWhole([{ key: 'a', value: 30 }], true)).toBeNull()
+  })
+
+  it('states the exact value and its share of every bar on every page (VIZ-601)', () => {
+    const model = rankedModel([
+      { key: 'a', label: 'checkout', value: 30 },
+      { key: 'b', label: 'auth', value: 10 },
+    ])
+    const { container } = render(
+      <RankedTooltip active payload={[{ payload: model.bars[0] }]} valueTitle="Failures" whole={rankedWhole([{ value: 30 }, { value: 10 }, { value: 60 }])} />,
+    )
+    expect(readTooltip(container.querySelector('[data-chart-tooltip]') as HTMLElement)).toEqual({
+      title: 'checkout',
+      rows: [
+        { kind: 'value', label: 'Failures', value: '30' },
+        { kind: 'share', label: 'Share of total', value: '30.0%' },
+      ],
+    })
+  })
+
+  it('states no share on a diverging (change) chart: a sum of rises and falls is not a whole', () => {
+    expect(rankedWhole([{ value: 5 }, { value: -3 }])).toBeNull()
+    expect(rankedWhole([{ value: 0 }])).toBeNull()
+    expect(rankedWhole([{ value: 2 }, { value: 6 }])).toBe(8)
+  })
+
+  it('pointer and keyboard read the SAME content for every bar (VIZ-601)', () => {
+    tips.props = []
+    const { container } = render(
+      <ChartAnnouncerProvider>
+        <BarChart
+          title="Top failing"
+          state={ready(categorySeries([['checkout', 30], ['auth', 10]]))}
+          variant="ranked"
+          valueAxisLabel="Failures"
+          animate={false}
+        />
+      </ChartAnnouncerProvider>,
+    )
+    const content = tips.props[tips.props.length - 1].content as ReactElement<Record<string, unknown>>
+    const surface = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
+    const model = rankedModel([
+      { key: 'checkout', label: 'checkout', value: 30 },
+      { key: 'auth', label: 'auth', value: 10 },
+    ])
+    model.bars.forEach((drawn, index) => {
+      fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+      const heard = document.querySelector('[data-chart-announcer="assertive"]')?.textContent ?? ''
+      const readout = readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement)
+      const hover = render(cloneElement(content, { active: true, payload: [{ payload: drawn }] }))
+      const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+      hover.unmount()
+      expect(heard).toBe(`Top failing: ${tooltipText(pointed)}`)
+      expect(readout).toEqual(pointed)
+    })
+    expect(tooltipText(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement))).toBe(
+      'auth. Failures: 10. Share of total: 25.0%',
+    )
+  })
+
+  it('keeps the tooltip beside the bar: the mark runs from zero to the bar end, over the bar', () => {
+    const scale = (value: number) => 100 + 2 * value
+    expect(barMark([30], 16, 50, scale)).toEqual({ left: 100, top: 42, width: 60, height: 16 })
+    // A negative (diverging) bar runs LEFT of zero.
+    expect(barMark([-10], 16, 50, scale)).toEqual({ left: 80, top: 42, width: 20, height: 16 })
+    // No geometry yet: no mark, and no placement guessed.
+    expect(barMark([30], 16, undefined, scale)).toBeNull()
+    expect(barMark([30], 16, 50, undefined)).toBeNull()
+  })
+
+  it('renders a hostile test name as literal text in the tooltip, the readout and the table', () => {
+    const hostile = '<img src=x onerror="window.__xss=1">'
+    tips.props = []
+    const { container } = render(
+      <ChartAnnouncerProvider>
+        <BarChart title="Hostile" state={ready(categorySeries([[hostile, 3], ['benign', 1]]))} variant="ranked" animate={false} />
+      </ChartAnnouncerProvider>,
+    )
+    const surface = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
+    fireEvent.keyDown(surface, { key: 'Home' })
+    expect(container.querySelector('[data-chart-readout] .chart-tooltip-title')?.textContent).toBe(hostile)
+    const content = tips.props[tips.props.length - 1].content as ReactElement<Record<string, unknown>>
+    const model = rankedModel([{ key: hostile, label: hostile, value: 3 }])
+    const hover = render(cloneElement(content, { active: true, payload: [{ payload: model.bars[0] }] }))
+    expect(hover.container.querySelector('[data-chart-tooltip] .chart-tooltip-title')?.textContent).toBe(hostile)
+    fireEvent.click(screen.getByRole('button', { name: 'View as table' }))
+    expect(screen.getByRole('table').textContent).toContain(hostile)
+    expect(document.querySelector('img')).toBeNull()
+    expect((window as { __xss?: unknown }).__xss).toBeUndefined()
+  })
+
   it('grows the plot for a 50-bar page instead of squeezing it into a 5-bar height', () => {
     const many: [string, number][] = Array.from({ length: 60 }, (_, i) => [`suite-${i}`, 300 - i * 2])
     const { container } = render(
@@ -317,5 +477,85 @@ describe('BreakdownChart — the registry picks the chart type', () => {
     expect(container.querySelector('[data-chart-offers-pie]')?.getAttribute('data-chart-offers-pie')).toBe('false')
     expect(container.querySelector('[data-donut]')).toBeNull()
     expect(container.querySelector('[data-bar-chart="ranked"]')).not.toBeNull()
+  })
+})
+
+describe('BarChart — full screen (VIZ-608)', () => {
+  it('grows the plot to the frame body in full screen, and not otherwise', () => {
+    const plot = (fullscreen: boolean) => {
+      const { container, unmount } = render(
+        <ChartFrameContext.Provider value={{ fullscreen, bodyHeight: fullscreen ? 900 : null, portalContainer: null }}>
+          {/* The plot as the frame's body holds it: the frame provides this context there. */}
+          <RankedBarPlot
+            title="Top failing"
+            model={rankedModel([
+              { key: 'a', label: 'a', value: 3 },
+              { key: 'b', label: 'b', value: 1 },
+            ])}
+            height={260}
+            animate={false}
+          />
+        </ChartFrameContext.Provider>,
+      )
+      const height = container.querySelector('[data-container-height]')?.getAttribute('data-container-height')
+      const shown = (container.querySelector('[data-chart-presentation]') as HTMLElement | null)?.style.height ?? null
+      unmount()
+      return { height, shown }
+    }
+    // Outside full screen: the page height, and no scaling wrapper at all.
+    expect(plot(false)).toEqual({ height: '260', shown: null })
+    // Full screen: 900 px on screen, LAID OUT at 900 × 11/15 = 660 and scaled
+    // up by 15/11, so the 11 px names read at 15 px in the space reserved for
+    // them (Wave 2.4 review A5).
+    expect(plot(true)).toEqual({ height: '660', shown: '900px' })
+  })
+})
+
+describe('BarChart — the status tooltip (VIZ-601)', () => {
+  const rows: [string, Record<string, number>][] = [
+    ['checkout', { passed: 80, failed: 15, broken: 5 }],
+    ['auth', { passed: 45, failed: 5 }],
+  ]
+
+  it('lists every segment with its TRUE count and share of the bar, then the bar total as n', () => {
+    const model = statusBarModel(
+      [{ key: 'checkout', label: 'checkout', counts: { passed: 80, failed: 15, broken: 5 } }],
+      { layout: 'stacked', mode: 'percent' },
+    )
+    const row = { key: 'checkout', label: 'checkout', short: 'checkout', total: 100, bar: model.bars[0] }
+    const { container } = render(<StatusTooltip active payload={[{ payload: row }]} layout="stacked" />)
+    const tip = readTooltip(container.querySelector('[data-chart-tooltip]') as HTMLElement)
+    // 100% mode still says the COUNT: flipping the toggle never changes what a bar holds.
+    expect(tooltipText(tip)).toBe(
+      'checkout. Passed: 80 (80.0% of bar). Failed: 15 (15.0% of bar). Broken: 5 (5.0% of bar). Samples: 100',
+    )
+  })
+
+  it('pointer and keyboard read the SAME content for every bar, in either mode', () => {
+    for (const initialMode of ['absolute', 'percent'] as const) {
+      tips.props = []
+      const { container, unmount } = render(
+        <ChartAnnouncerProvider>
+          <BarChart title="Results" state={ready(statusSeries(rows))} variant="stacked" initialMode={initialMode} animate={false} />
+        </ChartAnnouncerProvider>,
+      )
+      const content = tips.props[tips.props.length - 1].content as ReactElement<Record<string, unknown>>
+      const model = statusBarModel(
+        rows.map(([suite, counts]) => ({ key: suite, label: suite, counts })),
+        { layout: 'stacked', mode: initialMode },
+      )
+      const surface = container.querySelector('[data-bar-chart="stacked"]') as HTMLElement
+      model.bars.forEach((bar, index) => {
+        fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+        const heard = document.querySelector('[data-chart-announcer="assertive"]')?.textContent ?? ''
+        const row = { key: bar.key, label: bar.label, short: bar.short, total: bar.total, bar }
+        const hover = render(cloneElement(content, { active: true, payload: [{ payload: row }] }))
+        const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+        hover.unmount()
+        expect(heard).toBe(`Results: ${tooltipText(pointed)}`)
+        expect(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
+      })
+      unmount()
+    }
   })
 })

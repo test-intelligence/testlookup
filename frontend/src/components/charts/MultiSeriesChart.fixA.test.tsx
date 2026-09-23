@@ -147,17 +147,46 @@ describe('M8: the pointer tooltip is pinned per DAY', () => {
     expect(box.style.left).toBe(`${460 - 12 - 200}px`)
   })
 
-  it('holds its day while the pointer is on it: pointer moves over it never reach the chart', () => {
+  it('holds its day while a pointer that came from the day is on it: its moves there never reach the chart', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(150)
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(60)
     const onParentMove = vi.fn()
     const { container } = render(
       <div onMouseMove={onParentMove}>
-        <MultiSeriesTip active label={day(1)} model={model3} hidden={new Set()} format={(v) => `${v}`} />
+        <MultiSeriesTip active label={day(1)} coordinate={{ x: 260, y: 150 }} model={model3} hidden={new Set()} format={(v) => `${v}`} />
       </div>,
     )
     const box = container.querySelector('[data-chart-tooltip]') as HTMLElement
     expect(box.style.pointerEvents).toBe('auto')
-    fireEvent.mouseMove(box)
+    // Day 1 is the line at x 260; the box is 12 px right of it, at the plot's top (y 16-76).
+    expect({ left: box.style.left, top: box.style.top }).toEqual({ left: '272px', top: '16px' })
+    // From the day, up and right, onto the box …
+    for (const [x, y] of [
+      [262, 150],
+      [268, 110],
+      [276, 60],
+    ]) {
+      fireEvent.mouseMove(box.parentElement as HTMLElement, { clientX: x, clientY: y })
+    }
+    onParentMove.mockClear()
+    fireEvent.mouseMove(box, { clientX: 300, clientY: 50 })
     expect(onParentMove).not.toHaveBeenCalled()
+  })
+
+  it('does NOT hold a pointer that ran into it along the days: its moves go on to the chart (Wave 2.4 A2/F3)', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(150)
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(60)
+    const onParentMove = vi.fn()
+    const { container } = render(
+      <div onMouseMove={onParentMove}>
+        <MultiSeriesTip active label={day(1)} coordinate={{ x: 260, y: 150 }} model={model3} hidden={new Set()} format={(v) => `${v}`} />
+      </div>,
+    )
+    const box = container.querySelector('[data-chart-tooltip]') as HTMLElement
+    // A pointer arriving on the box from beyond it, not from its day.
+    fireEvent.mouseMove(box.parentElement as HTMLElement, { clientX: 460, clientY: 50 })
+    fireEvent.mouseMove(box, { clientX: 440, clientY: 50 })
+    expect(onParentMove).toHaveBeenCalledTimes(2)
   })
 
   it('reaches Recharts with a fixed origin and no slide animation', () => {

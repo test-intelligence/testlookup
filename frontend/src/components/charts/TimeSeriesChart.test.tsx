@@ -5,10 +5,12 @@
  * straight through a day nobody ran anything.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import TimeSeriesChart, { TimeSeriesTooltip } from './TimeSeriesChart'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
 import {
   AXIS_NOT_ZERO_LABEL,
   EXECUTIONS_AXIS_TITLE,
@@ -43,6 +45,8 @@ const captured: Captured = {
 }
 
 vi.mock('recharts', () => ({
+  // The plot area the pinned tooltip reads its day's column from (VIZ-601).
+  usePlotArea: () => ({ x: 40, y: 16, width: 400, height: 200 }),
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children, data, ...props }: { children: ReactNode; data: unknown[] } & Record<string, unknown>) => {
     captured.chartData = data
@@ -350,6 +354,102 @@ describe('TimeSeriesTooltip', () => {
   it('renders nothing when it is not active', () => {
     const { container } = render(<TimeSeriesTooltip label="2026-03-01" model={built} />)
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('VIZ-601 · the day tooltip: n, the change vs the previous day, placement', () => {
+  const four = buildTimeSeriesModel({
+    points: timeSeriesFromTrends([
+      ...trends,
+      { date: '2026-03-04', passed: 17, failed: 3, skipped: 0, broken: 0, total: 20, pass_rate: 85 },
+    ]),
+  })
+  const tipOf = (props: Partial<Parameters<typeof TimeSeriesTooltip>[0]> & { label: string }) => {
+    const { container, unmount } = render(<TimeSeriesTooltip active model={four} timeZone="UTC" locale="en-US" {...props} />)
+    const el = container.querySelector('[data-chart-tooltip]') as HTMLElement
+    const out = { content: readTooltip(el), el }
+    return { ...out, unmount }
+  }
+
+  it('states the sample size n behind the rate, and the change vs the previous day in points', () => {
+    const { content } = tipOf({ label: '2026-03-04' })
+    expect(content.rows).toContainEqual({ kind: 'sample', label: 'Samples', value: '20' })
+    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: '+5 pts' })
+    // The order every tooltip uses: dimensions, values, n, share, change, notes.
+    expect(content.rows.map((row) => row.kind)).toEqual(['dimension', 'value', 'value', 'sample', 'change'])
+  })
+
+  it('says a change is unknown — never "no change" — when the previous day was a gap', () => {
+    const { content } = tipOf({ label: '2026-03-03' })
+    expect(content.rows).toContainEqual({
+      kind: 'change',
+      label: 'Change vs previous day',
+      value: '—',
+      detail: '2026-03-02 not measured',
+    })
+  })
+
+  it('states no change on the first day, and none on a day with no rate of its own', () => {
+    expect(tipOf({ label: '2026-03-01' }).content.rows.some((row) => row.kind === 'change')).toBe(false)
+    expect(tipOf({ label: '2026-03-02' }).content.rows.some((row) => row.kind === 'change')).toBe(false)
+  })
+
+  it('reads the change of a ZOOMED first day against the day before the visible range', () => {
+    // What the zoom builder hands the chart: the visible slice, and the day before it.
+    const zoomed = { ...four, points: four.points.slice(3), precedingPoint: four.points[2] }
+    const { content } = tipOf({ label: '2026-03-04', model: zoomed })
+    expect(content.rows).toContainEqual({ kind: 'change', label: 'Change vs previous day', value: '+5 pts' })
+    // …and a range that starts at the series' own first day has nothing before it.
+    const atStart = { ...four, points: four.points.slice(0, 2), precedingPoint: null }
+    expect(tipOf({ label: '2026-03-01', model: atStart }).content.rows.some((row) => row.kind === 'change')).toBe(false)
+  })
+
+  it('pins the tooltip BESIDE its day at the top of the plot, flipping left near the right edge', () => {
+    // Plot 40..440 wide (mocked), four days: a 100 px band, the 14 px bar at its centre.
+    const right = tipOf({ label: '2026-03-01', coordinate: { x: 90, y: 150 } })
+    // Right of the bar (90 + 7) by the gap (12), at the plot's top (16).
+    expect(right.el.style.left).toBe('109px')
+    expect(right.el.style.top).toBe('16px')
+    expect(right.el.getAttribute('data-tip-side')).toBe('right')
+    right.unmount()
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(150)
+    const left = tipOf({ label: '2026-03-04', coordinate: { x: 390, y: 150 } })
+    // 390 + 7 + 12 + 150 > 440: it goes LEFT of the bar, ending 12 px short of it.
+    expect(left.el.style.left).toBe(`${390 - 7 - 12 - 150}px`)
+    expect(left.el.getAttribute('data-tip-side')).toBe('left')
+    width.mockRestore()
+  })
+
+  it('keeps a hostile release name literal: no element is created, nothing runs', () => {
+    const hostile = '<img src=x onerror="window.__xss=1">'
+    const marked = buildTimeSeriesModel({
+      points: timeSeriesFromTrends(trends),
+      releases: [{ id: 'r', name: hostile, date: '2026-03-01T00:00:00Z' }],
+    })
+    reset()
+    withAnnouncer(<TimeSeriesChart model={marked} title="Pass rate" timeZone="UTC" locale="en-US" />)
+    fireEvent.keyDown(document.querySelector('[data-chart-cursor]') as HTMLElement, { key: 'Home' })
+    expect(document.querySelector('[data-chart-readout]')?.textContent).toContain(hostile)
+    expect(announced()).toContain(hostile)
+    const { content } = tipOf({ label: '2026-03-01', model: marked })
+    expect(content.rows).toContainEqual({ kind: 'dimension', label: 'Release', value: hostile })
+    expect(document.querySelector('img')).toBeNull()
+    expect((window as { __xss?: unknown }).__xss).toBeUndefined()
+  })
+
+  it('pointer and keyboard read the SAME content for every day', () => {
+    reset()
+    withAnnouncer(<TimeSeriesChart model={four} title="Pass rate" timeZone="UTC" locale="en-US" />)
+    const surface = document.querySelector('[data-chart-cursor]') as HTMLElement
+    const content = captured.tooltips[captured.tooltips.length - 1].content as ReactElement<Record<string, unknown>>
+    four.points.forEach((point, index) => {
+      fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+      const hover = render(cloneElement(content, { active: true, label: point.x, coordinate: { x: 100, y: 40 } }))
+      const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+      hover.unmount()
+      expect(announced()).toBe(`Pass rate: ${tooltipText(pointed)}`)
+      expect(readTooltip(document.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
+    })
   })
 })
 

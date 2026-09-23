@@ -278,6 +278,39 @@ export const GALLERY_HOSTILE_BARS: (readonly [string, number])[] = [
   ['benign', 4],
 ]
 
+/**
+ * VIZ-606: test names a spreadsheet would EVALUATE — one per character OWASP
+ * lists (`=`, `+`, `-`, `@`). The chart draws them as text like any name; the
+ * exported CSV must hand each one over inert (a leading `'`), while the
+ * negative-looking VALUES stay numbers. Ranked by value, so their order is fixed.
+ */
+export const GALLERY_FORMULA_BARS: (readonly [string, number])[] = [
+  ['=HYPERLINK("https://example.test","open")', 12],
+  ['+1+1', 9],
+  ['-2+3', 6],
+  ['@SUM(A1:A2)', 3],
+]
+
+/**
+ * Wave 2.4 review A6/F9 and A11: test names that get past a FIRST-character
+ * check. One hides a formula after a `;` — the list separator Excel splits a
+ * double-clicked `.csv` on in de-DE, fr-FR and most of continental Europe, so
+ * `=1+2` becomes a cell of its own there; one starts with a FULL-WIDTH `＝`
+ * (U+FF1D), which input normalisation folds to `=`. The exported CSV must
+ * hand both over inert: the first as `x;'=1+2` (quoted), the second as
+ * `'＝SUM(A1:A2)`. Ranked by value, so their order is fixed.
+ */
+export const GALLERY_CSV_LOCALE_BARS: (readonly [string, number])[] = [
+  ['x;=1+2', 8],
+  ['＝SUM(A1:A2)', 5],
+]
+
+/** A stacked bar whose SUITE is markup (VIZ-601 scenario 3): two statuses, so each bar has two segments. */
+export const GALLERY_HOSTILE_SUITE_STATUS: (readonly [string, GalleryStatusCounts])[] = [
+  [HOSTILE_LABEL, { passed: 12, failed: 3 }],
+  ['benign', { passed: 9, failed: 1 }],
+]
+
 // -- Wave 2 - the VIZ-403 time series and the VIZ-406 duration charts --------
 //
 // Their MODELS live in `src/components/charts/__fixtures__/wave2Fixtures`, that
@@ -298,6 +331,10 @@ export type GalleryTimeSeriesFixture =
   | 'trend-zoomed-axis'
   | 'trend-analysis'
   | 'trend-analysis-sparse'
+  // VIZ-407: 42 days with trend statistics and releases either side of a zoom.
+  | 'trend-zoom-releases'
+  // VIZ-601: the headline trend, its release renamed to `HOSTILE_LABEL`.
+  | 'trend-hostile-release'
 /** The fixture keys for the VIZ-406 duration histogram. */
 export type GalleryHistogramFixture = 'duration-histogram' | 'duration-histogram-empty'
 
@@ -470,6 +507,30 @@ export const GALLERY_RELEASES: GalleryComparisonSeries[] = [
   { ...rateSeries('R2', [79.5, 84.2, 87.9, 90.1, 91.8, 92.6, 93.9, 94.2, 95.0, 95.3], 340, '2026-02-20'), key: 'r2' },
 ]
 
+/**
+ * VIZ-601 scenario 3 on a comparison: a SERIES named with markup, beside a
+ * benign one. The key stays plain (it is an id, not a name); the label is what
+ * the legend, the direct label, the tooltip and the table all print.
+ */
+export const GALLERY_HOSTILE_SUITES: GalleryComparisonSeries[] = [
+  { ...rateSeries('hostile', GALLERY_THREE_SUITES[0].points.map((point) => point.y), 420), label: HOSTILE_LABEL },
+  GALLERY_THREE_SUITES[2],
+]
+
+/**
+ * VIZ-407: the `zoom` a gallery item hands its frame — `ChartZoomOptions`,
+ * spelt out (that module is not importable from plain Node). `initial` opens
+ * the item ALREADY zoomed, so its baseline is the zoomed state and needs no
+ * interaction; the days are literals, like every other day in this file.
+ */
+export interface GalleryZoom {
+  initial?: { from: string; to: string }
+  applyAsWindow?: { windowOptions: readonly number[] }
+}
+
+/** The report pages' window options (`REPORT_WINDOW_OPTIONS`), spelt out for the same reason. */
+export const GALLERY_REPORT_WINDOW_OPTIONS: readonly number[] = [1, 7, 14, 30, 90]
+
 interface GalleryItemBase {
   /** `data-gallery-item` value, and the screenshot's file name. */
   id: string
@@ -529,9 +590,18 @@ export type GalleryItem =
        * MEASURED, like the other canvases.
        */
       canvasHeight?: number
+      /** VIZ-407: make the frame zoomable (and, with `initial`, open it zoomed). */
+      zoom?: GalleryZoom
+      /**
+       * Hand the frame its fixture's envelope `meta` (project, suites, window,
+       * totals, a fixed generated-at), so its footer and its exports (VIZ-606)
+       * carry a real scope. Left out, the frame gets `meta: null` like every
+       * other item, and exports say "Scope unavailable".
+       */
+      scoped?: boolean
     })
   | (GalleryItemBase & { chart: 'duration-histogram'; fixture: GalleryHistogramFixture })
-  | (GalleryItemBase & { chart: 'duration-band' })
+  | (GalleryItemBase & { chart: 'duration-band'; zoom?: GalleryZoom; canvasHeight?: number })
   | (GalleryItemBase & { chart: 'slowest-tests' })
   // Wave 2 (VIZ-404): a whole chart again, inside a real ChartFrame.
   | (GalleryItemBase & {
@@ -539,6 +609,8 @@ export type GalleryItem =
       comparison: GalleryComparison
       /** MEASURED, like the other framed canvases: too short and the frame spills over the next item. */
       canvasHeight: number
+      /** VIZ-407: make the frame zoomable (and, with `initial`, open it zoomed). */
+      zoom?: GalleryZoom
     })
 
 /**
@@ -618,8 +690,9 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
       return GALLERY_LIST_CANVAS
     case 'time-series':
       return item.canvasHeight ? { width: GALLERY_TALL_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_TALL_FRAME_CANVAS
-    case 'duration-histogram':
     case 'duration-band':
+      return item.canvasHeight ? { width: GALLERY_TALL_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_TALL_FRAME_CANVAS
+    case 'duration-histogram':
       return GALLERY_TALL_FRAME_CANVAS
     case 'bars':
       return item.canvasHeight ? { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_FRAME_CANVAS
@@ -1080,6 +1153,146 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // rate line's own path = 13, measured. No overlay is drawn — below 7 days
     // with runs there is none to draw — so the floor is the exact count.
     minMarks: 13,
+  },
+
+  // -- Wave 2.4 - VIZ-601 scenario 3: a hostile name in every kind of chart ----
+  //
+  // `HOSTILE_LABEL` executes if anything renders it as markup. The heatmap and
+  // the ranked bar already carry it; these four put it where the other charts
+  // print a NAME — a donut slice, a stacked bar's category, a release marker and
+  // a comparison series — for the spec that hovers, keys, tables and exports
+  // each one (`tests/ci-e2e/chart-hostile-names.spec.ts`).
+  {
+    id: 'donut-hostile-label',
+    title: 'Registry - a donut with a hostile category name',
+    chart: 'breakdown',
+    dimension: 'Category',
+    data: gallerySeries(GALLERY_HOSTILE_BARS, 'failure_category', 'failures', 'Failures'),
+    preferred: 'donut',
+    empty: false,
+    // Two categories, under the pie limit: the registry draws a donut, one sector each.
+    minMarks: GALLERY_HOSTILE_BARS.length,
+  },
+  {
+    id: 'bar-stacked-hostile-label',
+    title: 'BarChart - a stacked bar with a hostile suite name',
+    chart: 'bars',
+    variant: 'stacked',
+    dimension: 'Suite',
+    data: galleryStatusRowsSeries(GALLERY_HOSTILE_SUITE_STATUS),
+    empty: false,
+    // Two suites × the two statuses they have (passed, failed): 4 segments.
+    minMarks: GALLERY_HOSTILE_SUITE_STATUS.length * 2,
+  },
+  {
+    id: 'timeseries-hostile-release',
+    title: 'TimeSeriesChart · a hostile release name',
+    chart: 'time-series',
+    fixture: 'trend-hostile-release',
+    empty: false,
+    // `trend-with-releases`' own days: 8 execution bars and the rate line = 9.
+    minMarks: 9,
+  },
+  {
+    id: 'multi-series-hostile-label',
+    title: 'MultiSeriesChart · a hostile series name',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_HOSTILE_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites' },
+    canvasHeight: 490,
+    empty: false,
+    minMarks: GALLERY_HOSTILE_SUITES.length, // one line per series
+  },
+
+  {
+    id: 'bar-formula-names',
+    title: 'BarChart - test names a spreadsheet would evaluate',
+    chart: 'bars',
+    variant: 'ranked',
+    dimension: 'Test',
+    data: gallerySeries(GALLERY_FORMULA_BARS, 'test', 'failures', 'Failures'),
+    empty: false,
+    minMarks: GALLERY_FORMULA_BARS.length, // one bar per name
+  },
+  {
+    id: 'bar-csv-locale-names',
+    title: 'BarChart - names a first-character check misses (`;`, full-width ＝)',
+    chart: 'bars',
+    variant: 'ranked',
+    dimension: 'Test',
+    data: gallerySeries(GALLERY_CSV_LOCALE_BARS, 'test', 'failures', 'Failures'),
+    empty: false,
+    minMarks: GALLERY_CSV_LOCALE_BARS.length, // one bar per name
+  },
+
+  // -- Wave 2.4 - VIZ-407: zoomable frames, opened ALREADY zoomed ---------------
+  //
+  // Each opens on `zoom.initial`, so its baseline is the zoomed state with no
+  // interaction: the brush, Reset zoom, the footer's zoom note and — where a
+  // release falls outside the view — the table's "(outside the zoomed view)".
+  {
+    id: 'timeseries-zoom-trend',
+    title: 'TimeSeriesChart · zoomed, with trend statistics and releases',
+    chart: 'time-series',
+    fixture: 'trend-zoom-releases',
+    trendOverlays: true,
+    // 2026-03-15 to 2026-03-28 of the 42 days: the flagged 2026-03-23 and the
+    // 2.1.0 release are in view; 2.0.0 (02-24) and 2.1.1 (03-29) are not.
+    zoom: { initial: { from: '2026-03-15', to: '2026-03-28' } },
+    // A real scope: the footer's "N of M", and exports stamped with the project,
+    // the window and the zoom note (VIZ-606's "local zoom is reflected and stated").
+    scoped: true,
+    // Frame measured at 684 px (Chromium, 640 px wide): the trend controls, the
+    // plot, the brush, the statistics strip and the zoom note. 760 leaves the
+    // same kind of headroom as the VIZ-405 items for a line that wraps on CI.
+    canvasHeight: 760,
+    empty: false,
+    // 14 days in view, one of them a run-free Saturday (03-21): 13 execution
+    // bars, the rate line, the moving average and the trend line over their
+    // card-coloured halos (4), and the anomaly triangle = 13 + 1 + 4 + 1 = 19.
+    minMarks: 19,
+  },
+  {
+    id: 'timeseries-zoom-apply-disabled',
+    title: 'TimeSeriesChart · zoomed off the latest day (Apply unavailable)',
+    chart: 'time-series',
+    fixture: 'trend-with-releases',
+    // Seven days, but NOT ending on the latest (03-10): "Apply as time filter"
+    // is offered disabled, with its reason on screen.
+    zoom: {
+      initial: { from: '2026-03-02', to: '2026-03-08' },
+      applyAsWindow: { windowOptions: GALLERY_REPORT_WINDOW_OPTIONS },
+    },
+    // Frame measured at 540 px: the plot, the brush with its disabled Apply and
+    // the reason under it, and the zoom note.
+    canvasHeight: 620,
+    empty: false,
+    // 03-02..03-08 has runs on 03-02, 03-03, 03-06, 03-07 and 03-08 (03-04 and
+    // 03-05 are the weekend with none): 5 execution bars and the rate line = 6.
+    minMarks: 6,
+  },
+  {
+    id: 'multi-series-zoom-hidden',
+    title: 'MultiSeriesChart · zoomed, one series hidden',
+    chart: 'multi-series',
+    comparison: { series: GALLERY_THREE_SUITES, metric: GALLERY_RATE_METRIC, seriesNoun: 'suites', initialHidden: ['cart'] },
+    zoom: { initial: { from: galleryDay(COMPARISON_START, 3), to: galleryDay(COMPARISON_START, 10) } },
+    canvasHeight: 620, // frame measured at 544 px
+    empty: false,
+    minMarks: 2, // cart is hidden: two lines, over the eight days in view
+  },
+  {
+    id: 'duration-band-zoomed',
+    title: 'DurationTrend · zoomed onto the inverted day',
+    chart: 'duration-band',
+    // 03-07..03-09 of the band's six days: the inverted 03-08 is in view (the
+    // figure says "1 day"), the unmeasured 03-06 is not.
+    zoom: { initial: { from: '2026-03-07', to: '2026-03-09' } },
+    canvasHeight: 600, // frame measured at 512 px
+    empty: false,
+    // No gap in view, so nothing is split: the range area draws its fill and
+    // its two edges (3 paths — counted in Chromium, the unzoomed item's floor
+    // of 3 predates that count) and each percentile line is one path = 5.
+    minMarks: 5,
   },
 ]
 

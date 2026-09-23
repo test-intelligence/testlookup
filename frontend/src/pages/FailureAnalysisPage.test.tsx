@@ -560,6 +560,95 @@ describe('FailureAnalysisPage', () => {
   })
 })
 
+// VIZ-606: the page's private csvCell was replaced by the shared one
+// (lib/viz/csv.ts). Ordinary data must come out byte-for-byte as before; a
+// formula-shaped name — test names come from ingested CI reports — is made inert.
+describe('buildFailuresCsv — shared csvCell (VIZ-606 regression)', () => {
+  const meta = { projectName: 'Shop', windowLabel: '7d', suiteName: null, generatedAt: '2026-05-16T11:00:00.000Z' }
+
+  it('a normal export is byte-for-byte what the page always wrote', () => {
+    const csv = buildFailuresCsv({
+      topFailing: [
+        {
+          test_name: 'test_pay',
+          suite_name: 'PaymentSuite',
+          class_name: 'Checkout, "v2"',
+          failure_category: 'PRODUCT_BUG',
+          fail_count: 5,
+          last_failed: '2026-05-16T10:00:00Z',
+        } as never,
+      ],
+      categories: [{ category: 'INFRA_FAILURE', count: 4 } as never],
+      flaky: [{ test_name: 'flaky_a', suite_name: null, total_runs: 12, fail_count: 3, failure_rate_pct: 25 } as never],
+      meta,
+    })
+    expect(csv).toBe(
+      [
+        '# TestLookup — Failure analysis export',
+        '# Project,Shop',
+        '# Window,7d',
+        '# Suite filter,All suites',
+        '# Generated,2026-05-16T11:00:00.000Z',
+        '',
+        '# Top failing tests',
+        'test_name,suite_name,class_name,failure_category,fail_count,last_failed',
+        'test_pay,PaymentSuite,"Checkout, ""v2""",PRODUCT_BUG,5,2026-05-16T10:00:00Z',
+        '',
+        '# Failure categories',
+        'category,count',
+        'INFRA_FAILURE,4',
+        '',
+        '# Flaky tests',
+        'test_name,suite_name,total_runs,fail_count,failure_rate_pct',
+        'flaky_a,,12,3,25',
+        '',
+      ].join('\r\n'),
+    )
+  })
+
+  it('a formula-shaped test, suite or project is neutralised; a negative number is not', () => {
+    const csv = buildFailuresCsv({
+      topFailing: [
+        {
+          test_name: '=HYPERLINK("http://x","y")',
+          suite_name: '-2+3',
+          class_name: '@SUM(A1)',
+          failure_category: null,
+          fail_count: -1,
+          last_failed: null,
+        } as never,
+      ],
+      categories: [],
+      flaky: [],
+      meta: { ...meta, projectName: '+evil' },
+    })
+    expect(csv).toContain(`\r\n"'=HYPERLINK(""http://x"",""y"")",'-2+3,'@SUM(A1),,-1,\r\n`)
+    expect(csv).toContain(`# Project,'+evil\r\n`)
+  })
+
+  // Review A6 / F9: Excel in a `;` list-separator locale splits on `;` and
+  // honours our quotes only at a line start; a test named `x;=…` must not
+  // leave a cell `=…` behind. Full-width and space-led forms (A11) too.
+  it('a formula hidden after a `;`, behind a space or in full width is neutralised', () => {
+    const csv = buildFailuresCsv({
+      topFailing: [
+        {
+          test_name: 'x;=1+1;',
+          suite_name: ' =1',
+          class_name: '＝SUM(A1)',
+          failure_category: null,
+          fail_count: 3,
+          last_failed: null,
+        } as never,
+      ],
+      categories: [],
+      flaky: [],
+      meta,
+    })
+    expect(csv).toContain(`\r\n"x;'=1+1;",' =1,'＝SUM(A1),,3,\r\n`)
+  })
+})
+
 describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   beforeEach(() => {
     try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }

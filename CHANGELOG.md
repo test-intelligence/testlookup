@@ -1,5 +1,107 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 2: tooltip, export, full screen and zoom (VIZ-601, VIZ-606, VIZ-608, VIZ-407)
+
+The charts still live on the dev gallery ``/__charts`` only. The one change a
+production page sees is the CSV export on Coverage and Failure analysis (below).
+
+**One tooltip (VIZ-601).** Every Wave-2 chart, in both engines, renders one
+content model: the dimension values, the exact value, the sample size n, the
+share of the total where there is one, and the change from the previous day on
+time charts. The React tooltip (``ChartTooltip``) and the ECharts DOM tooltip
+build the same markup, compared node by node, and every name reaches the page
+as text. The keyboard readout and the announcement are the same content, so a
+keyboard user hears what a mouse user sees. The tooltip sits beside its mark,
+above or below the pointer's line, never over the mark. It holds the pointer
+only when the pointer comes from its own mark, so sweeping across a chart visits
+every day and every bar. Where there is no room beside the mark (320 px), it
+goes to the readout under the plot. Hovering 60 times re-renders the plot zero
+times. A share is left out when the server truncated the list without an
+"Other" bar, because a share of the bars that came back is not a share of the
+total. A change in a rate is stated in points everywhere.
+
+**Export (VIZ-606).** An "Export" menu on every drawn chart gives a PNG at twice
+the pixel ratio, an SVG and a CSV. The image carries the title, the legend and a
+footer stating project, releases, suites, window, "N of M", generated-at (UTC)
+and the app version. The footer is painted into the pixels, so it cannot be
+cropped off. Colours are resolved, so an exported file needs no stylesheet, and
+"Light background" re-resolves them in the light theme without switching the
+page. The file is named ``testlookup_<chart>_<project>_<yyyymmdd-hhmm>Z``, with
+path separators, ``..``, reserved Windows names and bidi overrides removed. The
+CSV holds exactly the plotted values: a gap is an empty cell, never 0. It starts
+with ``#`` lines that state the same scope. A PNG export took 63-90 ms from
+click to download (budget 1 s). No new dependency.
+
+**CSV formula neutralising, including the ``;`` locales.** Cells starting with
+``=``, ``+``, ``-``, ``@``, TAB, CR or LF get a leading ``'``, as do their
+full-width forms and the same characters behind leading spaces or invisible
+characters. A plain negative number stays a number. Excel in de-DE, fr-FR and
+most of Europe opens a ``.csv`` split on ``;`` and honours a quote only at the
+start of a cell. So a name like ``x;=1+cmd|' /C calc'!A0`` hid a live formula
+behind the first-character check. Such a field is now quoted, and each segment
+after a ``;``, TAB, CR or LF is neutralised too (``x;'=1+2``). The Coverage and
+Failure-analysis exports now share this writer. Before, they neutralised
+nothing and revoked the download URL immediately. Their output for ordinary
+data is byte-identical, which the golden-output tests prove.
+
+**Full screen (VIZ-608).** "Full screen" uses the Fullscreen API and falls back
+to a maximised ``role="dialog"`` overlay when the API is missing, refuses, or
+never answers (1.5 s). In both modes:
+- focus is trapped and the page behind is inert;
+- Escape closes the innermost thing first (menu, then tooltip, then full screen);
+- on exit, focus returns to the button and the scroll position is restored.
+
+A late answer from the browser can no longer re-open full screen after the
+reader has left. Chromium hides the page's live regions from assistive
+technology while an element is full screen, so the page's one announcer speaks
+through a region inside the full-screen chart for that time, and never in two
+places at once. The chart is laid out at page size and scaled up (15/11), so
+text grows without being clipped; a check fails if any text leaves its SVG.
+Outside full screen the frame's markup is unchanged apart from the two new
+buttons, proven against main's frame byte for byte.
+
+**Zoom (VIZ-407).** Time-series, multi-series and duration-trend frames can offer
+a range brush under the plot. You can drag it; click a first day then a last day
+(a single-pointer alternative to dragging); or use two keyboard handles (day,
+week, ends; they cannot cross; 24 px targets). "Reset zoom" appears while
+zoomed. Zoom slices the model that was already built: the trend analysis still
+looks back over the full window, the "top 7 + Other" grouping, colours and
+hidden series do not reshuffle, the axes keep the window's scale, and the first
+visible day still states its change from the day before. Release markers
+outside the zoom move to the table. The summary, table, footer and exports say
+the chart is zoomed, and an export's totals are labelled as the window's. Zoom
+is local: any scope change clears it. Zoom is off unless a page asks for it.
+
+**"Apply as time filter" is deliberately narrow.** The page window is "last N
+days" (the API has no from/to), and each page rounds it to its own list of
+lengths. So the action is offered only when the zoomed range ends on the latest
+day AND its length is one the page offers. Otherwise it is disabled, and a
+visible reason tied to the button says why ("The page window can be 1, 7, 14,
+30 or 90 days; this range is 12 days"). It never applies a different window
+than the one chosen. Arbitrary ranges need ``from``/``to`` on the API
+(VIZ-203/210).
+
+**What the reviews changed.** Two independent reviews (correctness;
+accessibility and security) found 11 major defects in the first build. All are
+fixed with tests that fail on the old code:
+- a tooltip that blocked the pointer from reaching the next days;
+- tooltips that covered their own mark at 320 px;
+- a share of total computed over the returned bars only;
+- the silent announcer in real full screen;
+- a late full-screen promise re-entering;
+- one Escape both dismissing a tooltip and leaving full screen;
+- a drag-only brush (SC 2.5.7);
+- a full-screen toolbar that scrolled sideways at 320 px;
+- text clipped in full screen;
+- the ``;``-locale CSV bypass.
+
+**Known limits.** Past 366 days the time series draws on a canvas, and its
+tooltip still moves as the pointer approaches it. Zooming to 366 days or fewer
+switches to the SVG chart. In a small plot a tall tooltip can move to the
+readout mid-sweep and shift the content under the chart. The filter bar, the
+filter chip and the dataset summary each keep a private copy of the "last 24
+hours" wording.
+
 ## Unreleased - Visualization Upgrade, Wave 2: comparing series, and telling signal from noise (VIZ-404, VIZ-405)
 
 Both charts live on the dev gallery ``/__charts`` only; no production page draws

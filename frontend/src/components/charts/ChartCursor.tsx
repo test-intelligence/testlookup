@@ -28,8 +28,12 @@
  *             `ChartAnnouncer` — never a live region per chart (VIZ-105).
  *             It is the result of the reader's own keypress, so it is
  *             announced at once, assertively, like Retry's result.
- *   sight     the same text is drawn in a readout inside the chart body, so a
- *             sighted keyboard user sees what the reader hears. A tooltip that
+ *   sight     the same content is drawn in a readout inside the chart body, so
+ *             a sighted keyboard user sees what the reader hears. A point that
+ *             carries its tooltip CONTENT (VIZ-601: `cursorPoint`) is drawn by
+ *             the tooltip's own `ChartTooltipBody` — the same rows, in the same
+ *             order, that the pointer's tooltip shows — and its spoken text is
+ *             `tooltipText` of that same content. A tooltip that
  *             follows the pointer cannot serve a keyboard at all. The readout
  *             WRAPS — a day's text can run to hundreds of characters (an
  *             anomaly explained, a local-time equivalent), and one truncated
@@ -44,8 +48,12 @@
  *             half of Hoverable; the other half is PINNING, so the tooltip
  *             does not slide away as the pointer approaches it. A chart pins
  *             its own tooltip (it knows where its days are):
- *             `MultiSeriesChart` places it a fixed offset from the day's x
- *             and holds the day while the pointer is on it.
+ *             `MultiSeriesChart` placed it a fixed offset from the day's x
+ *             and held the day while the pointer was on it; VIZ-601 made
+ *             that every chart's (`PinnedTip`, `tipPlacement.ts`).
+ *   hover     pointing at the chart re-renders NOTHING here: the pointer
+ *             handler only lifts a dismissal, and it reads a ref first, so a
+ *             pointer sweeping over the chart sets no state at all.
  *
  * Pure UI: it holds an index and some text, fetches nothing and knows nothing
  * about any chart's model.
@@ -61,6 +69,8 @@ import {
   type ReactNode,
 } from 'react'
 import { useChartAnnouncer } from './ChartAnnouncer'
+import { ChartTooltipBody, TIP_BOX_STYLE } from './ChartTooltip'
+import { tooltipText, type TooltipContent } from './tooltip'
 
 /** One thing the cursor can stop on: a bar, a slice, a day. */
 export interface ChartCursorPoint {
@@ -68,6 +78,17 @@ export interface ChartCursorPoint {
   key: string
   /** Everything the reader is told about this point, already formatted. */
   text: string
+  /**
+   * The point's tooltip content (VIZ-601). When present, the readout draws it
+   * with the tooltip's own markup, and `text` must be `tooltipText(content)` —
+   * `cursorPoint` builds both from the one content, so they cannot differ.
+   */
+  content?: TooltipContent
+}
+
+/** A cursor stop whose spoken text and readout both come from ONE tooltip content. */
+export function cursorPoint(key: string, content: TooltipContent): ChartCursorPoint {
+  return { key, text: tooltipText(content), content }
 }
 
 export interface ChartCursorOptions {
@@ -139,6 +160,12 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
   const announcer = useChartAnnouncer()
   const [index, setIndex] = useState(-1)
   const [dismissed, setDismissed] = useState(false)
+  // Read by the pointer handler, so a pointer sweeping over the chart sets no
+  // state (and re-renders nothing) unless there is a dismissal to lift.
+  const dismissedRef = useRef(false)
+  useEffect(() => {
+    dismissedRef.current = dismissed
+  }, [dismissed])
   const count = points.length
 
   // The points changed under the cursor (a page turn, a filter): start over
@@ -206,8 +233,10 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
 
   const onFocus = useCallback(() => setDismissed(false), [])
   const onBlur = useCallback(() => setIndex(-1), [])
-  // Moving the pointer again asks for the tooltip back.
-  const onPointerMove = useCallback(() => setDismissed(false), [])
+  // Moving the pointer again asks for the tooltip back — and does nothing else.
+  const onPointerMove = useCallback(() => {
+    if (dismissedRef.current) setDismissed(false)
+  }, [])
 
   const point = index >= 0 ? (points[index] ?? null) : null
 
@@ -233,7 +262,19 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
     [dismissed],
   )
 
-  const readout = point ? (
+  const readout = point?.content ? (
+    <div
+      data-chart-readout=""
+      // The tooltip's own box and rows. Wraps; placed by the chart, below its
+      // plot, in the flow — never laid over the data it describes.
+      className="mt-1 whitespace-normal break-words text-xs text-[var(--color-text)]"
+      style={{ ...TIP_BOX_STYLE, width: 'fit-content', maxWidth: '100%' }}
+      // Not a live region: the page's one announcer has already said it.
+      aria-hidden="true"
+    >
+      <ChartTooltipBody content={point.content} />
+    </div>
+  ) : point ? (
     <p
       data-chart-readout=""
       // Wraps: never one truncated line. Placed by the chart, below its plot.

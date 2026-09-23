@@ -122,43 +122,106 @@ export const trendZoomedAxisFixture: TimeSeriesModel = buildTimeSeriesModel({
  * minimum (2026-03-10), and one day far below the Mondays before it
  * (2026-03-23, 79 % against 94.4, 94.1 and 93.4 %) for the anomaly marker.
  */
+const ANALYSIS_DAYS: TrendPoint[] = [
+  day('2026-03-01', 203, 9),
+  day('2026-03-02', 187, 11),
+  day('2026-03-03', 215, 11),
+  day('2026-03-04', 193, 12),
+  day('2026-03-05', 220, 11),
+  day('2026-03-06', 180, 10),
+  day('2026-03-08', 208, 11),
+  day('2026-03-09', 192, 12),
+  day('2026-03-10', 3, 0),
+  day('2026-03-11', 213, 15),
+  day('2026-03-12', 190, 11),
+  day('2026-03-13', 202, 13),
+  day('2026-03-15', 210, 12),
+  day('2026-03-16', 183, 13),
+  day('2026-03-17', 198, 12),
+  day('2026-03-18', 217, 16),
+  day('2026-03-19', 195, 12),
+  day('2026-03-20', 176, 12),
+  day('2026-03-22', 211, 13),
+  day('2026-03-23', 169, 45),
+  day('2026-03-24', 186, 13),
+  day('2026-03-25', 213, 17),
+  day('2026-03-26', 196, 13),
+  day('2026-03-27', 202, 15),
+  day('2026-03-28', 180, 13),
+  day('2026-03-29', 212, 14),
+  day('2026-03-30', 195, 16),
+]
+/** The VIZ-405 overlay model over those days (the VIZ-407 fixture below reuses them). */
 export const trendAnalysisFixture: TimeSeriesModel = buildTimeSeriesModel({
-  points: timeSeriesFromTrends(
-    [
-      day('2026-03-01', 203, 9),
-      day('2026-03-02', 187, 11),
-      day('2026-03-03', 215, 11),
-      day('2026-03-04', 193, 12),
-      day('2026-03-05', 220, 11),
-      day('2026-03-06', 180, 10),
-      day('2026-03-08', 208, 11),
-      day('2026-03-09', 192, 12),
-      day('2026-03-10', 3, 0),
-      day('2026-03-11', 213, 15),
-      day('2026-03-12', 190, 11),
-      day('2026-03-13', 202, 13),
-      day('2026-03-15', 210, 12),
-      day('2026-03-16', 183, 13),
-      day('2026-03-17', 198, 12),
-      day('2026-03-18', 217, 16),
-      day('2026-03-19', 195, 12),
-      day('2026-03-20', 176, 12),
-      day('2026-03-22', 211, 13),
-      day('2026-03-23', 169, 45),
-      day('2026-03-24', 186, 13),
-      day('2026-03-25', 213, 17),
-      day('2026-03-26', 196, 13),
-      day('2026-03-27', 202, 15),
-      day('2026-03-28', 180, 13),
-      day('2026-03-29', 212, 14),
-      day('2026-03-30', 195, 16),
-    ],
-    { from: '2026-03-01', to: '2026-03-30' },
-  ),
+  points: timeSeriesFromTrends(ANALYSIS_DAYS, { from: '2026-03-01', to: '2026-03-30' }),
   // Zoomed: on a 0-100 axis the rate, the average and the trend line all sit
   // in the top tenth of the plot and cannot be told apart. The axis then says
   // it does not start at 0.
   zoomRateAxis: true,
+})
+
+/**
+ * VIZ-407, a window long enough to zoom into: 42 UTC days (2026-02-17 to
+ * 2026-03-30). The last 30 are `trendAnalysisFixture`'s own days — its
+ * run-free Saturdays and its one flagged day (2026-03-23) included — and the
+ * twelve before them repeat its first week's numbers, so no new day stands
+ * out. Three releases: one before any zoom the gallery opens on (2026-02-24),
+ * one inside it (2026-03-18) and one after it (2026-03-29), so a zoomed view
+ * has markers on both sides that it must still list in its table.
+ */
+const FIRST_WEEK: readonly (readonly [number, number])[] = [
+  [203, 9],
+  [187, 11],
+  [215, 11],
+  [193, 12],
+  [220, 11],
+  [180, 10],
+  [208, 11],
+]
+export const trendZoomReleasesFixture: TimeSeriesModel = buildTimeSeriesModel({
+  points: timeSeriesFromTrends(
+    [
+      ...Array.from({ length: 12 }, (_, i) => {
+        const [passed, failed] = FIRST_WEEK[i % FIRST_WEEK.length]
+        return day(`2026-02-${String(17 + i).padStart(2, '0')}`, passed, failed)
+      }),
+      ...ANALYSIS_DAYS,
+    ],
+    { from: '2026-02-17', to: '2026-03-30' },
+  ),
+  zoomRateAxis: true,
+  releases: [
+    { id: 'z1', name: '2.0.0', date: '2026-02-24T09:00:00Z' },
+    { id: 'z2', name: '2.1.0', date: '2026-03-18T09:00:00Z' },
+    { id: 'z3', name: '2.1.1', date: '2026-03-29T09:00:00Z' },
+  ],
+})
+
+/**
+ * The envelope `meta` behind that window, so the gallery item carries a real
+ * SCOPE: its frame footer states "N of M", and its exports (VIZ-606) stamp
+ * the project, suites, window, totals and generated-at — plus the zoom note —
+ * instead of "Scope unavailable". Every number is derived from the fixture:
+ * the executions are the model's own, and the runs are two per day with runs.
+ * `generated_at` is fixed, so the export's file name is too.
+ */
+const ZOOM_EXECUTIONS = trendZoomReleasesFixture.points.reduce((sum, point) => sum + (point.executions ?? 0), 0)
+const ZOOM_RUNS = 2 * trendZoomReleasesFixture.points.filter((point) => (point.executions ?? 0) > 0).length
+export const trendZoomReleasesMeta: EnvelopeMeta = META({
+  scope: {
+    projects: [{ id: 'p1', name: 'payments' }],
+    releases: [],
+    suites: ['checkout', 'payments-api'],
+    window: { from: '2026-02-17', to: '2026-03-30', days: 42, timezone: 'UTC' },
+  },
+  totals: {
+    matched_runs: ZOOM_RUNS,
+    total_runs: ZOOM_RUNS,
+    matched_executions: ZOOM_EXECUTIONS,
+    total_executions: ZOOM_EXECUTIONS,
+  },
+  generated_at: '2026-03-30T09:00:00Z',
+  as_of: '2026-03-30T09:00:00Z',
 })
 
 /**
