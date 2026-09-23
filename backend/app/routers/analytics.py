@@ -947,6 +947,9 @@ async def chart_data(
     payload = await chart_data_service.build_chart_data(db, scope, spec, now=now)
     definitions = payload.pop("definitions")
     envelope = {key: payload.pop(key) for key in chart_data_service.ENVELOPE_KEYS}
+    # VIZ-404: present only when release/branch series were compared. Absent
+    # means "not assessed", so it is never defaulted to anything here.
+    comparability = payload.pop("comparability", None)
     meta = await build_meta(
         db,
         scope,
@@ -963,4 +966,6 @@ async def chart_data(
         meta["truncated_axes"] = envelope["truncated_axes"]
     if envelope["outside_window"]:
         meta["outside_window"] = envelope["outside_window"]
+    if comparability is not None:
+        meta["comparability"] = comparability
     return with_meta(payload, meta)

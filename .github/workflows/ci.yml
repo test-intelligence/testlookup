@@ -693,6 +693,7 @@ jobs:
           tests/integration/test_analytics_epoch_redis_postgres.py
           tests/integration/test_analytics_envelope_postgres.py
           tests/integration/test_chart_data_postgres.py
+          tests/integration/test_chart_data_comparability_postgres.py
           tests/integration/test_analytics_read_layer_postgres.py
           tests/integration/test_runs_inbox_multi_scope_postgres.py
           tests/integration/test_report_metrics_postgres.py

@@ -184,6 +184,25 @@ export interface EnvelopeMeta {
     first: string
     last: string
   }
+  /**
+   * Optional (VIZ-404): whether the series of a comparison chart can be read
+   * like-for-like. `/analytics/chart-data` sends it only when the series are
+   * keyed by `release` or `branch` and there are at least two of them.
+   * ABSENT MEANS "NOT ASSESSED", never "comparable".
+   */
+  comparability?: Comparability
+}
+
+/** C2 `comparability_reason_code`; the README says what each one means. */
+export const COMPARABILITY_REASON_CODES = ['different_suites', 'partial_coverage'] as const
+export type ComparabilityReasonCode = (typeof COMPARABILITY_REASON_CODES)[number]
+
+export interface Comparability {
+  comparable: boolean
+  /** Human text naming counts only; `null` exactly when `comparable` is true. */
+  reason: string | null
+  /** `null` exactly when `comparable` is true. */
+  reason_code: ComparabilityReasonCode | null
 }
 
 export interface TruncatedAxis {
@@ -884,6 +903,41 @@ function checkOutsideWindow(input: Dict, fail: Fail): void {
   }
 }
 
+/**
+ * Series comparability (VIZ-404), optional and additive. Absent is "not
+ * assessed"; `null` would be a second, silent spelling of that and is
+ * refused. Inside the object every key is required, a nullable one included.
+ */
+function checkComparability(input: Dict, fail: Fail): void {
+  if (!('comparability' in input)) return
+  const judged = input.comparability
+  if (!isDict(judged)) {
+    fail('invalid_type', `comparability must be an object, got ${show(judged)}`)
+    return
+  }
+  requireBoolean(judged, 'comparable', 'comparability.', fail)
+  const hasReason = has(judged, 'reason', 'comparability.', fail)
+  const hasCode = has(judged, 'reason_code', 'comparability.', fail)
+  if (!hasReason || !hasCode) return
+  const { comparable, reason, reason_code: code } = judged
+  if (reason !== null && typeof reason !== 'string') {
+    fail('invalid_type', `comparability.reason must be a string or null, got ${show(reason)}`)
+    return
+  }
+  if (code !== null && !oneOf(COMPARABILITY_REASON_CODES, code)) {
+    fail(
+      'comparability_reason_code',
+      `comparability.reason_code ${show(code)} is not one of ${COMPARABILITY_REASON_CODES.join(', ')}`,
+    )
+    return
+  }
+  if (comparable === true && (reason !== null || code !== null)) {
+    fail('comparability_reason', 'comparable series carry no reason and no reason_code')
+  } else if (comparable === false && (reason === null || isBlank(reason) || code === null)) {
+    fail('comparability_reason', 'series that are not comparable need a reason and a reason_code')
+  }
+}
+
 export const validateEnvelopeMeta = guard<EnvelopeMeta>((input, fail) => {
   if (!isDict(input)) {
     fail('invalid_type', `meta must be an object, got ${show(input)}`)
@@ -931,6 +985,7 @@ export const validateEnvelopeMeta = guard<EnvelopeMeta>((input, fail) => {
   }
   checkTruncatedAxes(input, fail)
   checkOutsideWindow(input, fail)
+  checkComparability(input, fail)
 
   requireBoolean(input, 'measured', '', fail)
   if (has(input, 'reason', '', fail)) {

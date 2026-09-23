@@ -1,5 +1,69 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 2: comparing series, and telling signal from noise (VIZ-404, VIZ-405)
+
+Both charts live on the dev gallery ``/__charts`` only; no production page draws
+them yet.
+
+**Several series on one chart (VIZ-404).** ``MultiSeriesChart`` draws one line
+per suite, release or branch, each with its own dash pattern as well as its own
+colour, a direct label at the line's end (nudged apart; below about 200 px of
+plot the labels give way to the legend and say so) and one shared tooltip that
+lists every series for the day, highest first, unmeasured last with the reason.
+More than eight series are shown as the seven with the most executions plus
+"Other" -- a rate for "Other" is the merged-count rate, never an average -- and
+the notice says how many were folded and how a tie at seventh place was broken.
+A day with no runs is a gap. Releases can be aligned on "days since release
+start", and the caption says whether day 0 is a given start date or the first
+day with runs. Clicking a legend entry hides or isolates a series; the change
+is announced once, the table marks the series hidden instead of dropping it,
+and "Show all series" hands focus back to the legend. The still-filling day is
+drawn hollow and never anchors a label.
+
+**"Not comparable" is now something the API says (C2 contract).** When
+``chart-data`` compares releases or branches, ``meta.comparability`` reports
+``comparable`` with a ``reason`` and a ``reason_code`` -- ``different_suites``
+when the series did not run the same (lower-cased) effective suites in scope,
+``partial_coverage`` when one of them has no per-test results to compare. The
+reason gives counts only, never names. It is absent on every other request, and
+absent means "not assessed", never "comparable". It is one bounded extra query
+(about 31 ms on 189 000 rows), run only for those requests, whose cache
+identity carries the new shape. The chart shows the reason in a banner, reads
+it into the chart's description, and still draws the comparison.
+
+**Trend overlays (VIZ-405).** ``lib/trendStats.ts`` is a pure, deterministic
+module: an execution-weighted 7-day moving average (a gap is skipped, not read
+as 0 %), an execution-weighted least-squares trend in points per week (on the
+gallery fixture: 0.8 falling, where the unweighted fit would say 0.9), a slope
+no larger than its own standard error reads as flat, and "last 7 days vs the
+previous 7" beside every long-window number, because a long window hides a
+recent incident. The chart draws the overlays on a card-coloured halo (3.4-13.7:1
+against the bars, from 1.0-1.8:1), marks unusual days with a triangle and states
+the rule, and explains every statistic on hover and focus. All of it is off by
+default: the existing time-series charts render exactly as before.
+
+**What two independent reviews changed.** The first unusual-day rule compared a
+day with the median of the previous seven days. A suite that runs lower at
+weekends -- the most common real pattern -- has a seven-day baseline with zero
+spread, so every Saturday and Sunday was flagged (16 of 52 days). A day is now
+compared with the same weekday in the previous four weeks and must be lower
+than every one of them: the weekday/weekend and alternating series flag
+nothing, the fixture's real incident is still flagged, and a six-day outage is
+flagged on all six days instead of four. It needs 50 executions on a day to
+judge it. The "last 7 vs previous 7" headline had no minimum sample, so one
+test run at 0 % read "down 95.0 pts"; each week now needs 100 executions on 3
+days, and the sentence states them. A fitted trend is clamped for display and
+marked "(fit)" instead of reading 102.3 %; weekly buckets can no longer pass as
+daily. Long chart tables could not be scrolled by keyboard past about 13 rows
+-- true of every chart's table view -- and are now a focusable, named region.
+The keyboard readout was one truncated line placed over the plot (hiding a
+third of the lines it described); it wraps and sits below the plot. The pointer
+tooltip slid away from the pointer; it is pinned to its day. The explanations
+closed when the pointer crossed a 4 px gap and ignored Escape when opened by
+hover. The overlay toggles' pressed state was a tint at 1.07-1.22:1; it is a
+check mark and an accent border now. The rotated "Pass rate %" title sat 3 px
+outside the chart on every time-series chart; its baselines are regenerated.
+
 ## Unreleased - Visualization Upgrade: what the first screenshots showed, and a visual gate in CI
 
 Reading the first Linux screenshot baselines of the 35 chart-gallery items (in

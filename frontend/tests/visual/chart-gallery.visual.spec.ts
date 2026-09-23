@@ -62,6 +62,18 @@ const WAVE_2_ITEM_IDS = [
   'duration-histogram-empty',
   'duration-band',
   'slowest-tests',
+  // VIZ-404 — the multi-series comparison, one item per edge case. The chart
+  // reads no clock and no zone: its days are the fixture's literal UTC days.
+  'multi-series-three-suites',
+  'multi-series-folded',
+  'multi-series-gaps',
+  'multi-series-not-comparable',
+  'multi-series-release-aligned',
+  'multi-series-hidden',
+  // VIZ-405 — the trend overlays: both drawn (with the flagged day), and both
+  // unavailable with the reason. Pinned to `GALLERY_NOW` like the time series.
+  'timeseries-trend-analysis',
+  'timeseries-trend-insufficient',
 ] as const
 
 test('every Wave-2 edge case still has a gallery item, and so a baseline', () => {

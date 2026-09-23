@@ -1207,6 +1207,193 @@ def _merge(accumulators: Iterable[Optional[_Accumulator]]) -> Optional[_Accumula
     return out
 
 
+# ── Series comparability (VIZ-404) ─────────────────────────────────────────
+#
+# A chart whose series are releases (or branches) invites a like-for-like
+# reading: "2.0 passes less than 1.9". That reading is only honest when both
+# ran the same suites; otherwise 2.0 may simply have run a harder suite 1.9
+# never ran. The chart is still drawn -- the story says so -- but the envelope
+# says, with counts, why it is not like-for-like (C2 ``comparability``).
+
+#: The series dimensions whose comparison this module judges. ``suite`` is not
+#: here (its series ARE the suites), nor ``environment`` / ``ingestion_source``
+#: / ``project`` -- the story names releases, and a branch is the same kind of
+#: "version of the code under test".
+COMPARABILITY_DIMENSIONS = frozenset({"release", "branch"})
+#: Every compared series has per-test rows, and their effective suites differ.
+REASON_DIFFERENT_SUITES = "different_suites"
+#: A compared series has no per-test rows at all, so its suites are unknown.
+REASON_PARTIAL_COVERAGE = "partial_coverage"
+#: Part of the cache identity of every request that is assessed (see
+#: :func:`cache_identity_parts`). Bump it whenever ``comparability`` changes
+#: shape or meaning: an entry cached before must never be served after.
+COMPARABILITY_SHAPE_VERSION = 1
+
+
+@dataclass(frozen=True)
+class SuiteCoverage:
+    """How many distinct effective suites each compared series ran.
+
+    A series with no per-test rows in scope is ABSENT from ``per_series`` (or
+    0): SQL cannot report a set it has no evidence for.
+    """
+
+    per_series: dict[str, int]
+    #: Suites that ran in at least one series with rows.
+    union: int
+    #: Suites that ran in every series with rows.
+    common: int
+
+
+def compares_series(spec: ChartSpec) -> bool:
+    """Whether this chart's series are a comparison this module judges."""
+    return spec.series_dimension in COMPARABILITY_DIMENSIONS
+
+
+def judge_comparability(
+    dimension: str, keys: Sequence[str], coverage: SuiteCoverage
+) -> Optional[dict]:
+    """The C2 ``comparability`` object for the series ``keys``, or ``None``
+    when there is nothing to compare (fewer than two series).
+
+    ``None`` becomes an ABSENT key -- "not assessed" -- never
+    ``comparable: true``: one release on its own is not like-for-like with
+    anything. The reason carries counts only, never a key: a name in the
+    banner is text the caller's scope did not produce.
+    """
+    if len(keys) < 2:
+        return None
+    total = len(keys)
+    unknown = sum(1 for key in keys if not coverage.per_series.get(key))
+    if unknown:
+        # First: a series with no rows has an UNKNOWN set, not an empty one,
+        # and "different suites" would blame the release for missing evidence.
+        many = unknown != 1
+        return {
+            "comparable": False,
+            "reason": (
+                f"{unknown} of the {total} series compared by {dimension} "
+                f"{'have' if many else 'has'} no per-test results in this scope, "
+                f"so the suites {'they' if many else 'it'} ran cannot be compared."
+            ),
+            "reason_code": REASON_PARTIAL_COVERAGE,
+        }
+    if coverage.common < coverage.union:
+        return {
+            "comparable": False,
+            "reason": (
+                f"The {total} series compared by {dimension} did not run the same "
+                f"suites in this scope: {coverage.union} suites ran in at least one "
+                f"of them, {coverage.common} in all of them."
+            ),
+            "reason_code": REASON_DIFFERENT_SUITES,
+        }
+    return {"comparable": True, "reason": None, "reason_code": None}
+
+
+def build_comparability_statement(
+    spec: ChartSpec,
+    scope: AnalyticsScope,
+    keys: Sequence[str],
+    *,
+    now: Optional[datetime] = None,
+) -> tuple[str, dict]:
+    """``(sql, params)`` for the suite coverage of the compared series.
+
+    ONE grouped statement, whatever the number of series (at most
+    ``MAX_SERIES``, so the answer is at most that many rows): the distinct
+    ``(series, effective suite)`` pairs, then per series how many suites and,
+    over all of them, how many suites ran anywhere and how many everywhere.
+
+    It reads the SAME population as the chart: the window, the tenant filter,
+    the release and suite fragments are the ones :func:`build_statement` uses,
+    and the suite key is the chart's own ``suite`` dimension -- the effective
+    suite, trimmed and lower-cased, so ``Checkout`` and ``checkout`` are one
+    suite here exactly as they are one series there. The compared keys came
+    out of the chart's aggregate and travel as an expanding bind; nothing from
+    the request reaches the text. When the chart rolled series into
+    ``__other__``, every key it did not keep is folded into that one series,
+    because that is what the "other" line counted.
+    """
+    series_dim = spec.series_dimension
+    if series_dim is None:
+        raise ValueError("comparability needs a series dimension")
+    series_sql = DIMENSIONS[series_dim].sql
+    kept = [key for key in keys if key != OTHER_KEY]
+    params: dict[str, Any] = {
+        "period_start": window_start(scope.window_days, now=now),
+        "cmp_series_keys": kept,
+        "cmp_row_cap": MAX_SERIES + 1,
+    }
+    if OTHER_KEY in keys:
+        params["chart_other_key"] = OTHER_KEY
+        series_out = (
+            f"CASE WHEN {series_sql} IN :cmp_series_keys "
+            f"THEN {series_sql} ELSE :chart_other_key END"
+        )
+        key_filter = ""
+    else:
+        series_out = series_sql
+        key_filter = f"AND {series_sql} IN :cmp_series_keys"
+
+    sql = f"""
+        WITH suite_coverage AS (
+            SELECT DISTINCT
+                {series_out} AS series_key,
+                {DIMENSIONS['suite'].sql} AS suite_key
+            FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
+            WHERE tr.created_at >= :period_start
+              {tenant_filter_sql(
+                  params,
+                  project_id=scope.project,
+                  allowed_project_ids=scope.allowed_project_ids,
+              )}
+              {release_filter_sql(params, scope.release_arg)}
+              {suite_filter_sql(params, scope.suite_arg)}
+              {key_filter}
+        ), per_series AS (
+            SELECT series_key, COUNT(*) AS suites
+            FROM suite_coverage
+            GROUP BY series_key
+        ), per_suite AS (
+            SELECT suite_key, COUNT(*) AS series_count
+            FROM suite_coverage
+            GROUP BY suite_key
+        )
+        SELECT
+            ps.series_key,
+            ps.suites,
+            (SELECT COUNT(*) FROM per_suite) AS union_suites,
+            (SELECT COUNT(*) FROM per_suite
+              WHERE series_count = (SELECT COUNT(*) FROM per_series)) AS common_suites
+        FROM per_series ps
+        ORDER BY ps.series_key
+        LIMIT :cmp_row_cap
+    """
+    return sql, params
+
+
+async def _fetch_suite_coverage(
+    db: AsyncSession,
+    spec: ChartSpec,
+    scope: AnalyticsScope,
+    keys: Sequence[str],
+    *,
+    now: Optional[datetime] = None,
+) -> SuiteCoverage:
+    from sqlalchemy import bindparam
+
+    sql, params = build_comparability_statement(spec, scope, keys, now=now)
+    statement = scoped_text(sql, params).bindparams(
+        bindparam("cmp_series_keys", expanding=True)
+    )
+    rows = (await db.execute(statement, params)).fetchall()
+    per_series = {str(row.series_key): int(row.suites or 0) for row in rows}
+    union = int(rows[0].union_suites or 0) if rows else 0
+    common = int(rows[0].common_suites or 0) if rows else 0
+    return SuiteCoverage(per_series=per_series, union=union, common=common)
+
+
 def _label(spec: ChartSpec, key: str, observed: dict, resolved: dict) -> str:
     if spec.series_dimension is None:
         return spec.metric
@@ -1430,8 +1617,16 @@ def cache_identity_parts(scope: AnalyticsScope, spec: ChartSpec) -> tuple[str, .
     produce the same tuple, so the cache cannot hold two entries for one
     answer. It deliberately does NOT include the epoch, the caller's project
     set or the schema version -- VIZ-209 owns those and composes them with this.
+
+    A request whose series are judged for comparability (VIZ-404) carries one
+    more part. Its payload grew ``meta.comparability``, and an entry cached
+    before that would be served as "not assessed" -- the very silence the key
+    was added to end. ``META_SCHEMA_VERSION`` is NOT bumped for this: it is
+    every analytics route's ``meta.schema_version`` and every such route's
+    cache key, and nothing about those responses changed. Every other chart
+    keeps the identity it had, so no other entry is orphaned by the deploy.
     """
-    return (
+    parts: tuple[str, ...] = (
         f"metric={spec.metric}",
         "group_by=" + ",".join(spec.group_by),
         f"top_n={spec.top_n if spec.top_n is not None else ''}",
@@ -1440,6 +1635,9 @@ def cache_identity_parts(scope: AnalyticsScope, spec: ChartSpec) -> tuple[str, .
         f"suite={cache_identity(suite_keys(scope.suite_names)) or ''}",
         f"days={scope.days if scope.days is not None else ''}",
     )
+    if compares_series(spec):
+        parts += (f"comparability={COMPARABILITY_SHAPE_VERSION}",)
+    return parts
 
 
 # ── The entry point ────────────────────────────────────────────────────────
@@ -1495,6 +1693,17 @@ async def build_chart_data(
         if names:
             payload["x_labels"] = {**payload.get("x_labels", {}), **names}
 
+    # VIZ-404: the series the chart KEPT (and its "other", if it drew one) are
+    # judged over the chart's own scope. Fewer than two is not a comparison,
+    # and the key is then absent -- "not assessed", never "comparable".
+    if compares_series(spec) and not scope.denied and series_dim is not None:
+        compared = [series["key"] for series in payload["series"]]
+        if len(compared) >= 2:
+            coverage = await _fetch_suite_coverage(db, spec, scope, compared, now=now)
+            judged = judge_comparability(series_dim, compared, coverage)
+            if judged is not None:
+                payload["comparability"] = judged
+
     payload["definitions"] = definitions(
         spec, grain, now, grain_changed_by=grain_forced_by(spec, scope)
     )
@@ -1518,9 +1727,17 @@ ENVELOPE_KEYS = ("truncated", "truncated_total", "truncated_axes", "outside_wind
 
 __all__ = [
     "AxisCounts",
+    "COMPARABILITY_DIMENSIONS",
+    "COMPARABILITY_SHAPE_VERSION",
     "Cell",
     "ChartSpec",
     "DIMENSIONS",
+    "REASON_DIFFERENT_SUITES",
+    "REASON_PARTIAL_COVERAGE",
+    "SuiteCoverage",
+    "build_comparability_statement",
+    "compares_series",
+    "judge_comparability",
     "ENVELOPE_KEYS",
     "GRAIN_ROW",
     "GRAIN_RUN",

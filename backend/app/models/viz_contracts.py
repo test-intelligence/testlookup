@@ -549,6 +549,37 @@ class OutsideWindow(VizContract):
         return self
 
 
+#: C2 ``comparability_reason_code`` (VIZ-404). What the README says each means.
+ComparabilityReasonCode = Literal["different_suites", "partial_coverage"]
+COMPARABILITY_REASON_CODES: tuple[str, ...] = get_args(ComparabilityReasonCode)
+
+
+class Comparability(VizContract):
+    """Whether the series of a comparison chart can be read like-for-like.
+
+    Absent from ``meta`` means NOT ASSESSED, never "comparable"; so the object
+    is never ``null`` either (a null would be a third, silent way to say
+    "nobody looked"). All three keys are required inside it.
+    """
+
+    comparable: bool
+    reason: str | None
+    reason_code: ComparabilityReasonCode | None
+
+    @model_validator(mode="after")
+    def _comparability_reason(self) -> "Comparability":
+        if self.comparable:
+            if self.reason is not None or self.reason_code is not None:
+                raise ValueError(
+                    "comparability_reason: comparable series carry no reason and no reason_code"
+                )
+        elif _BLANK_RE.fullmatch(self.reason or "") or self.reason_code is None:
+            raise ValueError(
+                "comparability_reason: series that are not comparable need a reason and a reason_code"
+            )
+        return self
+
+
 class EnvelopeMeta(VizPayload):
     """The additive ``meta`` object on an analytics response.
 
@@ -575,9 +606,24 @@ class EnvelopeMeta(VizPayload):
     # worth sending at all.
     truncated_axes: dict[Literal["x", "series"], TruncatedAxis] | None = None
     outside_window: OutsideWindow | None = None
+    # Optional and additive (VIZ-404): present only where chart-data compared
+    # release or branch series. The default is never validated, so ``None``
+    # here means "absent"; an explicit ``null`` is refused below.
+    comparability: Comparability | None = None
 
     _partial_day = field_validator("partial_day")(_check_day)
     _instants = field_validator("generated_at", "as_of")(_check_utc_instant)
+
+    @field_validator("comparability", mode="before")
+    @classmethod
+    def _comparability_is_absent_not_null(cls, value: Any) -> Any:
+        # Runs only for a key that was SENT: absent is "not assessed", and a
+        # null would be a second spelling of it that a reader could misread.
+        if value is None:
+            raise ValueError(
+                "comparability must be an object; omit it when it was not assessed"
+            )
+        return value
 
     @model_validator(mode="after")
     def _conditional_fields(self) -> "EnvelopeMeta":

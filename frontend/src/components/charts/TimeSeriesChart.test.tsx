@@ -153,6 +153,16 @@ describe('TimeSeriesChart — the rate axis', () => {
     expect(labels.some((label) => label?.value === EXECUTIONS_AXIS_TITLE)).toBe(true)
   })
 
+  it('insets the rotated rate-axis title as the multi-series chart does, so it is not cut off by the svg', () => {
+    // At Recharts' default offset (5) the rotated title's line box overhung the
+    // svg's left edge by 3.1 px on every time-series item; `MultiSeriesChart`
+    // uses 14 for the same axis title.
+    reset()
+    render(<TimeSeriesChart model={model()} />)
+    const rate = captured.axes.find((axis) => axis.yAxisId === 'rate')
+    expect(rate?.label).toMatchObject({ value: RATE_AXIS_TITLE, position: 'insideLeft', offset: 14 })
+  })
+
   it('shows no zero-baseline indicator on a 0–100 axis', () => {
     reset()
     render(<TimeSeriesChart model={model()} />)

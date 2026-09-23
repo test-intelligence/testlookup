@@ -35,8 +35,23 @@
  * Past `SVG_POINT_LIMIT` points the ECharts renderer takes over (canvas +
  * `sampling`); the engine is reached only through `useEChart`, and its tooltip
  * only through `domTooltipFormatter`.
+ *
+ * TREND OVERLAYS (VIZ-405) are OFF unless `trendOverlays` is passed, and with
+ * it absent this component renders exactly what it rendered before they
+ * existed — no toolbar, no caption, no extra row key — because every existing
+ * gallery item is compared against a committed screenshot
+ * (`TimeSeriesChart.defaultRender.test.tsx` pins the DOM). The one deliberate
+ * exception is the rate-axis title's `offset: 14`, which fixed a 3.1 px
+ * overhang on every time-series item and moved their baselines. With it: two
+ * toggles above the plot, the moving average and the least-squares line drawn
+ * dashed in a token colour of their own on a card-coloured halo (so neither
+ * dissolves into the execution bars it crosses), flagged days marked with a triangle,
+ * the statistics strip under the notes, and every overlay value and anomaly
+ * rule in the tooltip and the keyboard cursor's text. The numbers all come
+ * from `lib/trendStats`. The canvas renderer takes no overlays: the analysis
+ * itself stops at 366 days and says so.
  */
-import { useId, useMemo, type ReactElement } from 'react'
+import { useId, useMemo, useState, type ReactElement } from 'react'
 import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   Bar,
@@ -45,12 +60,29 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import {
+  analyzeTrend,
+  trendRowsForDay,
+  type TrendAnalysis,
+  type TrendDayRow,
+  type TrendOverlayState,
+} from '@/lib/trendStats'
+import { AnomalyMarker, TrendOverlayControls, TrendStatsStrip } from './TimeSeriesChartOverlays'
+import {
+  TREND_OVERLAYS_OFF,
+  TREND_OVERLAY_HALO_WIDTH,
+  TREND_OVERLAY_HALO_Z_INDEX,
+  TREND_OVERLAY_KEYS,
+  TREND_OVERLAY_STYLE,
+  TREND_OVERLAY_WIDTH,
+} from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
 import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens } from './tokens'
 import { NO_VALUE } from './chartText'
@@ -91,6 +123,29 @@ export interface TimeSeriesChartProps {
   now?: Date
   /** One sentence for assistive tech, when the frame's own name is not enough. */
   description?: string
+  /**
+   * VIZ-405 trend overlays. Leave it out and nothing about the chart changes.
+   * `{}` offers the toggles (both off, state kept here); pass `shown` +
+   * `onShownChange` to control them from outside (`TimeSeriesChartFrame`
+   * does, because its takeaway follows them).
+   */
+  trendOverlays?: TimeSeriesTrendOverlays
+}
+
+export interface TimeSeriesTrendOverlays {
+  /** Computed from `model.points` when omitted — pass it to share one analysis with the frame. */
+  analysis?: TrendAnalysis
+  /** Controlled state. */
+  shown?: TrendOverlayState
+  onShownChange?: (next: TrendOverlayState) => void
+  /** Uncontrolled starting state. Both overlays start off. */
+  initialShown?: Partial<TrendOverlayState>
+}
+
+/** The analysis as the renderer needs it: available, and which overlays to draw. */
+interface DrawnTrend {
+  analysis: Extract<TrendAnalysis, { available: true }>
+  shown: TrendOverlayState
 }
 
 const NOTE = 'text-xs text-[var(--color-text-secondary)]'
@@ -103,15 +158,32 @@ interface Row {
   rate: number | null
   executions: number | null
   partial: boolean
+  /** Present only while trend overlays are requested — the default rows are unchanged. */
+  movingAverage?: number | null
+  trendLine?: number | null
 }
 
-const toRows = (model: TimeSeriesModel): Row[] =>
-  model.points.map((point) => ({
+const toRows = (model: TimeSeriesModel, trend: DrawnTrend | null = null): Row[] => {
+  if (!trend) {
+    return model.points.map((point) => ({
+      x: point.x,
+      rate: point.rate,
+      executions: point.executions,
+      partial: point.partial,
+    }))
+  }
+  const average = new Map(trend.analysis.movingAverage.map((point) => [point.x, point.value]))
+  const fitted = new Map(trend.analysis.fit.line.map((point) => [point.x, point.value]))
+  return model.points.map((point) => ({
     x: point.x,
     rate: point.rate,
     executions: point.executions,
     partial: point.partial,
+    // `null`, not a number, on a day with no average: the overlay breaks there too.
+    movingAverage: average.get(point.x) ?? null,
+    trendLine: fitted.get(point.x) ?? null,
   }))
+}
 
 // ── The tooltip ──────────────────────────────────────────────────────────────
 
@@ -124,6 +196,11 @@ export interface TimeSeriesTooltipProps {
   timeZone?: string
   locale?: string
   inProgressRuns?: readonly InProgressRuns[]
+  /**
+   * VIZ-405: what the trend analysis says about the day (overlay values, and
+   * the rule that flagged an anomaly), listed after the VIZ-403 rows.
+   */
+  overlayRows?: (x: string) => readonly TrendDayRow[]
 }
 
 /**
@@ -137,10 +214,12 @@ export function TimeSeriesTooltip({
   timeZone,
   locale,
   inProgressRuns,
+  overlayRows,
 }: TimeSeriesTooltipProps) {
   const index = model.points.findIndex((point) => point.x === String(label))
   if (!active || index < 0) return null
   const content = timeSeriesTooltipContent({ model, index, locale, timeZone, inProgressRuns })
+  const extra = overlayRows ? overlayRows(model.points[index].x) : []
   return (
     <div
       data-chart-tooltip=""
@@ -153,6 +232,20 @@ export function TimeSeriesTooltip({
           <span className="ml-auto font-medium tabular-nums">{row.value}</span>
         </div>
       ))}
+      {extra.map((row) =>
+        row.key === 'anomaly' ? (
+          // The rule is a sentence, not a number: it wraps under its label.
+          <div key={row.key} data-trend-tooltip-row={row.key} className="mt-1 max-w-xs">
+            <span className="font-semibold">{row.label}: </span>
+            <span>{row.value}</span>
+          </div>
+        ) : (
+          <div key={row.key} data-trend-tooltip-row={row.key} className="flex items-baseline gap-3">
+            <span className="text-[var(--color-text-secondary)]">{row.label}</span>
+            <span className="ml-auto font-medium tabular-nums">{row.value}</span>
+          </div>
+        ),
+      )}
     </div>
   )
 }
@@ -171,6 +264,7 @@ function SvgTimeSeries({
   timeZone,
   inProgressRuns,
   partialDrawn,
+  trend,
 }: {
   model: TimeSeriesModel
   rows: Row[]
@@ -184,6 +278,8 @@ function SvgTimeSeries({
   inProgressRuns?: readonly InProgressRuns[]
   /** True only when a DRAWN bucket is the partial one — see the figure below. */
   partialDrawn: boolean
+  /** VIZ-405: `null` unless trend overlays were requested AND the analysis is available. */
+  trend: DrawnTrend | null
 }) {
   // Isolated points (a single-point series included) MUST be dots: a line
   // renderer draws nothing for a point with no measured neighbour.
@@ -197,22 +293,31 @@ function SvgTimeSeries({
   if (partialDrawn) {
     legend.push({ key: 'partial', label: `${PARTIAL_LEGEND_LABEL} (${model.partialDay})`, fill: `url(#${patternId})` })
   }
+  // An overlay's legend swatch is drawn with the SAME dash and colour as the line.
+  for (const key of ['movingAverage', 'trendLine'] as const) {
+    if (!trend?.shown[key]) continue
+    const style = TREND_OVERLAY_STYLE[key]
+    legend.push({ key, label: style.label, stroke: style.stroke, dash: style.dash })
+  }
 
   /**
    * One cursor stop per bucket, worded by the SAME builder the mouse tooltip
    * uses — so the keyboard reader and the pointer reader are told the same
-   * thing about the same day, down to the local equivalent.
+   * thing about the same day, down to the local equivalent. With trend
+   * overlays on, the day's overlay values and any anomaly rule follow, from
+   * the same `trendRowsForDay` the tooltip lists.
    */
   const cursorPoints = useMemo<ChartCursorPoint[]>(
     () =>
       model.points.map((point, index) => {
         const content = timeSeriesTooltipContent({ model, index, locale, timeZone, inProgressRuns })
+        const extra = trend ? trendRowsForDay(trend.analysis, point.x, trend.shown) : []
         return {
           key: point.x,
-          text: [content.title, ...content.rows.map((row) => `${row.label} ${row.value}`)].join(', '),
+          text: [content.title, ...[...content.rows, ...extra].map((row) => `${row.label} ${row.value}`)].join(', '),
         }
       }),
-    [model, locale, timeZone, inProgressRuns],
+    [model, locale, timeZone, inProgressRuns, trend],
   )
   const cursor = useChartCursor({ title, chartType: 'line and bar chart', points: cursorPoints, noun: 'day' })
 
@@ -250,7 +355,9 @@ function SvgTimeSeries({
           axisLine={false}
           tickLine={false}
           tick={RECHARTS_AXIS_TICK}
-          label={{ value: RATE_AXIS_TITLE, angle: -90, position: 'insideLeft', fill: CHART_VARS.axis, fontSize: 11 }}
+          // `offset: 14`, as `MultiSeriesChart`: at the default 5 the rotated
+          // title's line box overhung the svg's left edge by 3.1 px.
+          label={{ value: RATE_AXIS_TITLE, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
         />
         <YAxis
           yAxisId="executions"
@@ -292,6 +399,35 @@ function SvgTimeSeries({
             />
           ))}
         </Bar>
+        {/*
+          VIZ-405 halos: a wider, solid, CARD-coloured copy of each shown
+          overlay, drawn over the bars and under the rate line. Without it the
+          overlays ran across the execution bars at 1.48-1.75:1 (dark themes)
+          and 1.02:1 (lab) — 82 % of the moving average and 70 % of the trend
+          line lie over a bar — so a dashed overlay dissolved into the bar it
+          crossed. On the halo the overlay is always seen against the card,
+          the contrast its token was chosen for. Under the RATE line, so the
+          measured series is never erased where an overlay runs beside it.
+        */}
+        {TREND_OVERLAY_KEYS.filter((key) => trend?.shown[key]).map((key) => (
+          <Line
+            key={`halo-${key}`}
+            yAxisId="rate"
+            type={TREND_OVERLAY_STYLE[key].curve}
+            dataKey={key}
+            className="trend-overlay-halo"
+            zIndex={TREND_OVERLAY_HALO_Z_INDEX}
+            stroke={CHART_VARS.card}
+            strokeWidth={TREND_OVERLAY_HALO_WIDTH}
+            strokeLinecap="round"
+            connectNulls={false}
+            dot={false}
+            activeDot={false}
+            legendType="none"
+            tooltipType="none"
+            isAnimationActive={animate}
+          />
+        ))}
         <Line
           yAxisId="rate"
           type="monotone"
@@ -305,6 +441,52 @@ function SvgTimeSeries({
           activeDot={{ r: 4 }}
           isAnimationActive={animate}
         />
+        {/*
+          VIZ-405 overlays: dashed, in a token colour of their own, never a
+          colour-only difference from the rate line. Neither bridges a gap.
+        */}
+        {trend?.shown.movingAverage && (
+          <Line
+            yAxisId="rate"
+            type={TREND_OVERLAY_STYLE.movingAverage.curve}
+            dataKey="movingAverage"
+            name={TREND_OVERLAY_STYLE.movingAverage.label}
+            className="trend-overlay-moving-average"
+            stroke={TREND_OVERLAY_STYLE.movingAverage.stroke}
+            strokeDasharray={TREND_OVERLAY_STYLE.movingAverage.dash}
+            strokeWidth={TREND_OVERLAY_WIDTH}
+            connectNulls={false}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={animate}
+          />
+        )}
+        {trend?.shown.trendLine && (
+          <Line
+            yAxisId="rate"
+            type={TREND_OVERLAY_STYLE.trendLine.curve}
+            dataKey="trendLine"
+            name={TREND_OVERLAY_STYLE.trendLine.label}
+            className="trend-overlay-trend-line"
+            stroke={TREND_OVERLAY_STYLE.trendLine.stroke}
+            strokeDasharray={TREND_OVERLAY_STYLE.trendLine.dash}
+            strokeWidth={TREND_OVERLAY_WIDTH}
+            connectNulls={false}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={animate}
+          />
+        )}
+        {trend?.analysis.anomalies.map((anomaly) => (
+          <ReferenceDot
+            key={`anomaly-${anomaly.x}`}
+            yAxisId="rate"
+            x={anomaly.x}
+            y={anomaly.rate}
+            r={6}
+            shape={(props: { cx?: number; cy?: number }) => <AnomalyMarker cx={props.cx} cy={props.cy} day={anomaly.x} />}
+          />
+        ))}
         {model.markers.map((marker) => (
           <ReferenceLine
             key={marker.x}
@@ -390,10 +572,47 @@ export default function TimeSeriesChart({
   locale,
   now,
   description = 'Pass rate and execution volume over time',
+  trendOverlays,
 }: TimeSeriesChartProps) {
   const animate = useChartAnimation(requestedAnimate)
   const patternId = `${useId().replace(/[^A-Za-z0-9_-]/g, '')}-partial-day`
-  const rows = useMemo(() => toRows(model), [model])
+
+  // ── VIZ-405: nothing below changes the render unless `trendOverlays` is given ──
+  const trendRequested = trendOverlays !== undefined
+  const givenAnalysis = trendOverlays?.analysis
+  const analysis = useMemo(
+    () => (trendRequested ? (givenAnalysis ?? analyzeTrend(model.points)) : null),
+    [trendRequested, givenAnalysis, model],
+  )
+  const [ownShown, setOwnShown] = useState<TrendOverlayState>(() => ({
+    ...TREND_OVERLAYS_OFF,
+    ...trendOverlays?.initialShown,
+  }))
+  const controlled = trendOverlays?.shown !== undefined
+  const shown = trendOverlays?.shown ?? ownShown
+  const onShownChange = trendOverlays?.onShownChange
+  const setShown = (next: TrendOverlayState) => {
+    if (!controlled) setOwnShown(next)
+    onShownChange?.(next)
+  }
+  // Drawn only when the analysis is available: below the minimum sample a
+  // requested overlay is simply not drawn, and the toggle says why.
+  // Keyed on the two VALUES: a controlling parent may hand a fresh object each render.
+  const showAverage = shown.movingAverage
+  const showLine = shown.trendLine
+  const trend = useMemo<DrawnTrend | null>(
+    () =>
+      analysis?.available && model.renderer === 'svg'
+        ? { analysis, shown: { movingAverage: showAverage, trendLine: showLine } }
+        : null,
+    [analysis, model.renderer, showAverage, showLine],
+  )
+  const overlayRows = useMemo(
+    () => (trend ? (x: string) => trendRowsForDay(trend.analysis, x, trend.shown) : undefined),
+    [trend],
+  )
+
+  const rows = useMemo(() => toRows(model, trend), [model, trend])
   const latest = model.points[model.points.length - 1] ?? null
   const todayNote = utcTodayNote({ latest, now: now ?? new Date(), timeZone })
   /**
@@ -425,6 +644,8 @@ export default function TimeSeriesChart({
         </defs>
       </svg>
 
+      {analysis && <TrendOverlayControls analysis={analysis} shown={trend ? shown : TREND_OVERLAYS_OFF} onChange={setShown} />}
+
       {model.renderer === 'echarts' ? (
         <CanvasTimeSeries
           model={model}
@@ -447,8 +668,15 @@ export default function TimeSeriesChart({
           timeZone={timeZone}
           inProgressRuns={inProgressRuns}
           partialDrawn={partialDrawn}
+          trend={trend}
           tooltip={
-            <TimeSeriesTooltip model={model} timeZone={timeZone} locale={locale} inProgressRuns={inProgressRuns} />
+            <TimeSeriesTooltip
+              model={model}
+              timeZone={timeZone}
+              locale={locale}
+              inProgressRuns={inProgressRuns}
+              overlayRows={overlayRows}
+            />
           }
         />
       )}
@@ -486,6 +714,7 @@ export default function TimeSeriesChart({
           gap rather than 0%.
         </p>
       )}
+      {analysis && <TrendStatsStrip analysis={analysis} />}
     </figure>
   )
 }
