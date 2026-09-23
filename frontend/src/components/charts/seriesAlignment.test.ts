@@ -54,7 +54,7 @@ describe('alignByReleaseStart', () => {
     // R1 has three days, R2 four: R1's day 3 is past what the API returned.
     expect(a.points[3].y).toBeNull()
     expect(a.points[3].measured).toBe(false)
-    expect(a.points[3].reason).toMatch(/R1 has no data for day 3 \(2026-03-05\)/)
+    expect(a.points[3].reason).toMatch(/R1 has no day 3 \(2026-03-05\)/)
   })
 
   it('keeps a gap the API sent as a gap, with the API reason', () => {
@@ -94,8 +94,29 @@ describe('alignByReleaseStart', () => {
     const holey = { key: 'r4', label: 'R4', points: days('2026-02-02', [70, 71, 72, 73]).filter((p) => p.x !== '2026-02-03') }
     const [h] = alignByReleaseStart([holey, r2]).series
     expect(h.points[1].reason).toBe('R4 reported nothing for day 1 (2026-02-03)')
-    // Past its last returned day, it IS outside the window.
-    expect(alignByReleaseStart([r1, r2]).series[0].points[3].reason).toMatch(/outside the returned window/)
+    // Past its last returned day, it is past the release's range: it has no such day yet.
+    expect(alignByReleaseStart([r1, r2]).series[0].points[3].reason).toBe(
+      "R1 has no day 3 (2026-03-05) in the returned window: it is past this release's range",
+    )
+  })
+
+  it("says how many days each release's range covers: the rest of the axis is past it", () => {
+    const aligned = alignByReleaseStart([r1, r2])
+    expect(aligned.xs).toHaveLength(4)
+    expect(aligned.series.map((s) => s.rangeDays)).toEqual([3, 4])
+    // …never more than the axis, when the axis is cropped.
+    expect(alignByReleaseStart([r1, r2], { maxDays: 2 }).series.map((s) => s.rangeDays)).toEqual([2, 2])
+  })
+
+  it('a day the API DID return without a value or a reason is unmeasured, not outside the window', () => {
+    const bare = {
+      key: 'r5',
+      label: 'R5',
+      points: [...days('2026-02-02', [70]), { x: '2026-02-03', y: null, n: 4 }, ...days('2026-02-04', [72])],
+    }
+    const [b] = alignByReleaseStart([bare]).series
+    expect(b.points[1].reason).toBe('R5 has no measured value for day 1 (2026-02-03)')
+    expect(b.rangeDays).toBe(3)
   })
 
   it('names the relative day AND every absolute date in the row header', () => {

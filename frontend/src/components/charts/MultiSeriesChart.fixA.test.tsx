@@ -12,7 +12,14 @@ import type { ChartState } from './chartState'
 import { DIRECT_LABEL_GUTTER, LABELS_DROPPED_NOTE, MultiSeriesTip, NO_GUTTER, SHOW_ALL_LABEL } from './MultiSeriesChart'
 import MultiSeriesChartFrame from './MultiSeriesChartFrame'
 import { addUtcDays } from './seriesAlignment'
-import { buildMultiSeriesModel, type MultiSeriesInputSeries, type MultiSeriesModel } from './multiSeriesModel'
+import {
+  LABEL_ROW,
+  LABEL_SWATCH_LENGTH,
+  LEADER_DASH,
+  buildMultiSeriesModel,
+  type MultiSeriesInputSeries,
+  type MultiSeriesModel,
+} from './multiSeriesModel'
 import { CHART_VARS } from './tokens'
 
 interface Captured {
@@ -231,12 +238,70 @@ describe('m4: the legend and the leaders', () => {
     }
   })
 
-  it('draws each direct label\'s leader in its line\'s dash', () => {
+  // Fix round B: a leader in its line's colour AND dash read as the line
+  // itself crashing on the last day. The leader is now a thin axis-coloured
+  // connector, clear of the line, in the gutter; the swatch carries the match.
+  it('draws each leader in the axis colour and its own pattern — never its line\'s colour or dash', () => {
     const { container } = mount(model3)
     for (const line of model3.lines) {
-      const leader = container.querySelector(`[data-direct-label="${line.key}"] line`)
-      expect(leader?.getAttribute('stroke-dasharray') ?? undefined, line.key).toBe(line.dash)
+      const leader = container.querySelector(`[data-direct-label="${line.key}"] [data-direct-label-leader]`)
+      expect(leader, line.key).not.toBeNull()
+      expect(leader?.getAttribute('stroke')).toBe(CHART_VARS.axis)
+      expect(leader?.getAttribute('stroke')).not.toBe(CHART_VARS.series[line.styleIndex])
+      expect(leader?.getAttribute('stroke-dasharray')).toBe(LEADER_DASH)
+      expect(leader?.getAttribute('stroke-dasharray') ?? undefined).not.toBe(line.dash)
+      expect(Number(leader?.getAttribute('stroke-width'))).toBe(1)
     }
+  })
+
+  it('starts each leader clear of the plot edge and keeps it in the gutter, flat before it turns', () => {
+    const { container } = mount(model3)
+    const edge = geometry.plot.x + geometry.plot.width
+    for (const line of model3.lines) {
+      const points = (container.querySelector(`[data-direct-label="${line.key}"] [data-direct-label-leader]`)?.getAttribute('points') ?? '')
+        .trim()
+        .split(/\s+/)
+        .map((pair) => pair.split(',').map(Number))
+      expect(points, line.key).toHaveLength(3)
+      expect(points[0][0]).toBe(edge + LABEL_ROW.leaderStart)
+      for (const [x] of points) expect(x).toBeGreaterThanOrEqual(edge + 3)
+      // Flat at the height the line ends, then one step to the label's row.
+      expect(points[1][1]).toBe(points[0][1])
+      const text = container.querySelector(`[data-direct-label="${line.key}"] text`)
+      expect(points[2][1]).toBe(Number(text?.getAttribute('y')))
+    }
+  })
+
+  it('puts a swatch of the line\'s own colour AND dash right before each name', () => {
+    const { container } = mount(model3)
+    const edge = geometry.plot.x + geometry.plot.width
+    for (const line of model3.lines) {
+      const group = container.querySelector(`[data-direct-label="${line.key}"]`) as Element
+      const swatch = group.querySelector('[data-direct-label-swatch]')
+      const text = group.querySelector('text')
+      expect(swatch?.getAttribute('stroke'), line.key).toBe(CHART_VARS.series[line.styleIndex])
+      expect(swatch?.getAttribute('stroke-dasharray') ?? undefined, line.key).toBe(line.dash)
+      expect(Number(swatch?.getAttribute('x2')) - Number(swatch?.getAttribute('x1'))).toBe(LABEL_SWATCH_LENGTH)
+      expect(Number(swatch?.getAttribute('x2'))).toBeLessThan(Number(text?.getAttribute('x')))
+      expect(Number(swatch?.getAttribute('x1'))).toBe(edge + LABEL_ROW.swatchStart)
+      expect(swatch?.getAttribute('y1')).toBe(text?.getAttribute('y'))
+    }
+  })
+})
+
+describe('fix round B: past a release\'s range is its own note, not a gap', () => {
+  it('says how many days the short release has, and counts no gap for the rest', () => {
+    const r1 = { key: 'r1', label: 'R1', points: [0, 1, 2, 3].map((i) => ({ x: addUtcDays('2026-02-02', i), y: 80 + i, n: 9 })) }
+    const r2 = { key: 'r2', label: 'R2', points: [0, 1].map((i) => ({ x: addUtcDays('2026-02-20', i), y: 70 + i, n: 9 })) }
+    const { container } = mount(buildMultiSeriesModel({ series: [r1, r2], metric: RATE, alignment: 'release-start' }))
+    expect(container.querySelector('[data-chart-gap-note]')).toBeNull()
+    expect(container.querySelector('[data-chart-range-note]')?.textContent).toBe('R2 has 2 days; days 2–3 are past its range.')
+  })
+
+  it('a chart with real gaps and no short release says only "not measured"', () => {
+    const { container } = mount(model3)
+    expect(container.querySelector('[data-chart-gap-note]')?.textContent).toBe('1 value is not measured and drawn as a gap, never as 0.')
+    expect(container.querySelector('[data-chart-range-note]')).toBeNull()
   })
 })
 

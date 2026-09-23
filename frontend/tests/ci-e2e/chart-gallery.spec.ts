@@ -38,7 +38,9 @@ import {
   galleryChartHeight,
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_GAPPY_SUITES,
-  GALLERY_NOT_COMPARABLE_REASON,
+  GALLERY_NOT_COMPARABLE,
+  GALLERY_BRANCHES,
+  GALLERY_RELEASES,
   GALLERY_THREE_SUITES,
 } from '../../src/pages/dev/chartGalleryFixtures'
 // VIZ-404: the model only `import type`s from `@/…`, so it resolves in plain Node too.
@@ -1510,9 +1512,18 @@ test.describe('chart gallery (/__charts)', () => {
     await expect(folded.locator('[data-chart-fold-notice]')).toHaveText(
       '12 suites: the 7 with the most executions are drawn, and the other 5 are folded into "Other".',
     )
-    // comparable:false → a banner with the reason, and the comparison still drawn.
+    // comparable:false → a banner with the API's reason, and the comparison still drawn.
+    // The reason is the API's whole sentence; the banner keeps ONE full stop.
     const branches = multiItem(page, 'multi-series-not-comparable')
-    await expect(branches.locator('[data-chart-comparable-banner]')).toContainText(GALLERY_NOT_COMPARABLE_REASON)
+    const reason = GALLERY_NOT_COMPARABLE.reason ?? ''
+    expect(reason.endsWith('.'), reason).toBe(true)
+    await expect(branches.locator('[data-chart-comparable-banner]')).toHaveText(
+      `Not directly comparable: ${reason.slice(0, -1)}. The comparison is still shown.`,
+    )
+    // Counts only, as the API sends it: no branch is named in the caveat.
+    for (const series of GALLERY_BRANCHES) {
+      await expect(branches.locator('[data-chart-comparable-banner]')).not.toContainText(series.key)
+    }
     await expect(linePaths(page, 'multi-series-not-comparable')).toHaveCount(2)
     // Gaps, not zeros: counted in words, and the isolated measured days are dots.
     const gaps = multiItem(page, 'multi-series-gaps')
@@ -1647,9 +1658,155 @@ test.describe('chart gallery (/__charts)', () => {
     )
     expect(starts).toHaveLength(2)
     expect(Math.abs(starts[0] - starts[1])).toBeLessThan(0.5)
+    // Fix round B: R2's missing tail is past its range, not "not measured".
+    const [long, short] = GALLERY_RELEASES.map((release) => release.points.length)
+    expect(short, 'the fixture needs a shorter second release').toBeLessThan(long)
+    await expect(section.locator('[data-chart-gap-note]')).toHaveCount(0)
+    await expect(section.locator('[data-chart-range-note]')).toHaveText(
+      `R2 has ${short} days; ${long - short === 1 ? `day ${short} is` : `days ${short}–${long - 1} are`} past its range.`,
+    )
     // The table names the relative day AND each release's absolute date.
     await section.getByRole('button', { name: 'View as table' }).click()
     await expect(section.getByRole('rowheader').first()).toHaveText('Day 0 (R1 2026-02-02; R2 2026-02-20)')
+  })
+
+  // ── VIZ-404 fix round B: a leader can never be mistaken for data ─────────────
+
+  /**
+   * The steepest a leader's angled step may be on the twelve-suite chart, as
+   * |dy| / dx. The old leader, straight from the line's end to a label pushed
+   * down seven rows, fell ~44 px over 9 px (~4.9) and read as a crash; the
+   * labels now settle in centred clusters and the step has 20 px to turn in.
+   */
+  const MAX_FOLDED_LEADER_SLOPE = 1.5
+
+  /**
+   * Every direct label of one item, with its series' drawn style: the line
+   * paths are drawn in legend order, less the hidden ones. All in screen px.
+   */
+  async function directLabelGeometry(section: Locator) {
+    return section.evaluate((root) => {
+      const screen = (el: SVGGraphicsElement, x: number, y: number) => {
+        const m = el.getScreenCTM()
+        if (!m) throw new Error('no CTM')
+        return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f }
+      }
+      const keys = Array.from(root.querySelectorAll('[data-legend-series][data-legend-hidden="false"]')).map(
+        (node) => node.getAttribute('data-legend-series') ?? '',
+      )
+      const paths = Array.from(root.querySelectorAll<SVGPathElement>('path.recharts-line-curve'))
+      if (paths.length !== keys.length) throw new Error(`${paths.length} paths for ${keys.length} shown series`)
+      const series: Record<string, { stroke: string; dash: string; lastX: number }> = {}
+      keys.forEach((key, i) => {
+        const path = paths[i]
+        const box = path.getBBox()
+        series[key] = {
+          stroke: getComputedStyle(path).stroke,
+          dash: path.getAttribute('stroke-dasharray') ?? 'none',
+          lastX: screen(path, box.x + box.width, box.y).x,
+        }
+      })
+      const grid = Array.from(root.querySelectorAll('.recharts-cartesian-grid-horizontal line')).map((n) => n.getBoundingClientRect())
+      const plotRight = Math.max(...grid.map((b) => b.right))
+      const labels = Array.from(root.querySelectorAll('[data-direct-label]')).map((group) => {
+        const key = group.getAttribute('data-direct-label') ?? ''
+        const leader = group.querySelector<SVGPolylineElement>('[data-direct-label-leader]')
+        const swatch = group.querySelector<SVGLineElement>('[data-direct-label-swatch]')
+        const text = group.querySelector('text')?.getBoundingClientRect()
+        const swatchBox = swatch?.getBoundingClientRect()
+        return {
+          key,
+          leader: leader
+            ? {
+                stroke: getComputedStyle(leader).stroke,
+                dash: leader.getAttribute('stroke-dasharray') ?? 'none',
+                points: Array.from(leader.points).map((p) => screen(leader, p.x, p.y)),
+              }
+            : null,
+          swatch:
+            swatch && swatchBox
+              ? {
+                  stroke: getComputedStyle(swatch).stroke,
+                  dash: swatch.getAttribute('stroke-dasharray') ?? 'none',
+                  left: swatchBox.left,
+                  right: swatchBox.right,
+                  y: swatchBox.top + swatchBox.height / 2,
+                }
+              : null,
+          text: text ? { left: text.left, y: text.top + text.height / 2 } : null,
+        }
+      })
+      return { series, plotRight, labels }
+    })
+  }
+
+  for (const theme of ['signal', 'lab'] as const) {
+    test(`VIZ-404 fix B: every leader is a connector, never data; the swatch before each name matches its line (${theme})`, async ({
+      page,
+    }) => {
+      await openGallery(page, `?theme=${theme}`)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      let checked = 0
+      for (const item of MULTI_SERIES_ITEMS) {
+        const section = multiItem(page, item.id)
+        await expect.poll(() => linePaths(page, item.id).count(), { message: item.id }).toBe(item.minMarks)
+        await expect(section.locator('[data-direct-label]'), item.id).toHaveCount(item.minMarks)
+        const { series, plotRight, labels } = await directLabelGeometry(section)
+        for (const label of labels) {
+          const where = `${item.id} / ${label.key}`
+          const line = series[label.key]
+          expect(line, `${where}: no drawn line`).toBeDefined()
+          expect(label.leader, `${where}: no leader`).not.toBeNull()
+          expect(label.swatch, `${where}: no swatch`).not.toBeNull()
+          expect(label.text, `${where}: no name`).not.toBeNull()
+          if (!line || !label.leader || !label.swatch || !label.text) continue
+          // Not the line's colour, not the line's dash.
+          expect(label.leader.stroke, `${where}: leader colour`).not.toBe(line.stroke)
+          expect(label.leader.dash, `${where}: leader dash`).not.toBe(line.dash)
+          // Clear of the line's end, and only in the gutter.
+          expect(label.leader.points.length, where).toBeGreaterThanOrEqual(2)
+          expect(label.leader.points[0].x - line.lastX, `${where}: leader starts on the line`).toBeGreaterThanOrEqual(3)
+          for (const point of label.leader.points) {
+            expect(point.x, `${where}: leader enters the plot`).toBeGreaterThanOrEqual(plotRight - 0.5)
+          }
+          // The match: the line's own colour AND dash, right before the name, on its row.
+          expect(label.swatch.stroke, `${where}: swatch colour`).toBe(line.stroke)
+          expect(label.swatch.dash, `${where}: swatch dash`).toBe(line.dash)
+          expect(label.swatch.right, `${where}: swatch after the name`).toBeLessThanOrEqual(label.text.left)
+          expect(label.text.left - label.swatch.right, `${where}: swatch far from the name`).toBeLessThanOrEqual(8)
+          expect(label.swatch.left, `${where}: swatch over the leader`).toBeGreaterThanOrEqual(
+            Math.max(...label.leader.points.map((p) => p.x)),
+          )
+          expect(Math.abs(label.swatch.y - label.text.y), `${where}: swatch off the name's row`).toBeLessThan(2)
+          checked += 1
+        }
+      }
+      expect(checked, 'no direct label was checked').toBeGreaterThan(0)
+    })
+  }
+
+  test(`VIZ-404 fix B: on the twelve-suite chart no leader is steeper than ${MAX_FOLDED_LEADER_SLOPE}`, async ({ page }) => {
+    await openGallery(page)
+    const section = multiItem(page, 'multi-series-folded')
+    await expect.poll(() => linePaths(page, 'multi-series-folded').count()).toBe(8)
+    const { labels } = await directLabelGeometry(section)
+    expect(labels).toHaveLength(8)
+    const slopes = labels.map((label) => {
+      const points = label.leader?.points ?? []
+      let steepest = 0
+      for (let i = 1; i < points.length; i++) {
+        const dx = points[i].x - points[i - 1].x
+        const dy = Math.abs(points[i].y - points[i - 1].y)
+        // A vertical step is infinitely steep: it has to move across as it moves down.
+        steepest = Math.max(steepest, dx > 0 ? dy / dx : dy > 0 ? Number.POSITIVE_INFINITY : 0)
+      }
+      return { key: label.key, steepest }
+    })
+    for (const { key, steepest } of slopes) {
+      expect(steepest, `${key}: leader slope ${steepest.toFixed(2)}`).toBeLessThanOrEqual(MAX_FOLDED_LEADER_SLOPE)
+    }
+    // …and the check is not vacuous: some labels DID have to be nudged off their line's end.
+    expect(Math.max(...slopes.map((s) => s.steepest))).toBeGreaterThan(0)
   })
 
   test('VIZ-404: no text escapes its frame, and every gallery box contains its frame', async ({ page }) => {

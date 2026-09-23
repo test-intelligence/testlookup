@@ -29,7 +29,7 @@ import BarChart, { BreakdownChart } from '@/components/charts/BarChart'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
 import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
-import { buildMultiSeriesModel, type MultiSeriesModel } from '@/components/charts/multiSeriesModel'
+import { buildMultiSeriesModel, readComparability, type MultiSeriesModel } from '@/components/charts/multiSeriesModel'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { ChartResponse, ChartState } from '@/components/charts/chartState'
 import type { TimeSeriesModel } from '@/components/charts/timeSeriesModel'
@@ -159,7 +159,8 @@ function comparisonModel(comparison: GalleryComparison): MultiSeriesModel {
       series: comparison.series,
       metric: comparison.metric,
       alignment: comparison.alignment,
-      comparability: comparison.comparability ?? null,
+      // The API's wire shape, read by the SAME reader as a real envelope's.
+      comparability: comparison.comparability ? readComparability(comparison.comparability) : null,
       seriesNoun: comparison.seriesNoun,
     })
     comparisonModels.set(comparison, model)

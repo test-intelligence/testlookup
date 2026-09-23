@@ -76,6 +76,12 @@ export interface AlignedSeries {
   points: SeriesPoint[]
   /** The absolute UTC day each relative day stands for, index-aligned with `points`. */
   dates: string[]
+  /**
+   * How many relative days this release's returned range covers: day 0 to its
+   * last returned day. Every day from here on is PAST ITS RANGE: the release
+   * has no such day in the window yet, which is not a missed measurement.
+   */
+  rangeDays: number
 }
 
 export type AlignmentStartSource = 'named' | 'first-active' | 'none'
@@ -95,14 +101,19 @@ export interface AlignmentOptions {
   maxDays?: number
 }
 
-/** Why a relative day of one release has no value. */
+/** Why a relative day PAST a release's returned range has no value: it has no such day yet. */
 export function missingDayReason(label: string, day: number, date: string): string {
-  return `${label} has no data for day ${day} (${date}): that day is outside the returned window`
+  return `${label} has no day ${day} (${date}) in the returned window: it is past this release's range`
 }
 
 /** Why a relative day INSIDE a release's returned window has no value. */
 export function unreportedDayReason(label: string, day: number, date: string): string {
   return `${label} reported nothing for day ${day} (${date})`
+}
+
+/** Why a day the API DID return for a release, with no reason of its own, has no value. */
+export function unmeasuredDayReason(label: string, day: number, date: string): string {
+  return `${label} has no measured value for day ${day} (${date})`
 }
 
 /** The reason carried by a series with nothing evaluated anywhere. */
@@ -158,7 +169,7 @@ export function alignByReleaseStart(
   const days = Math.min(longest + 1, Math.max(0, Math.floor(maxDays)))
   const xs = Array.from({ length: Math.max(0, days) }, (_, day) => String(day))
 
-  const series = prepared.map(({ series: source, byDay, start, startSource, last, active }) => {
+  const series = prepared.map(({ series: source, byDay, start, startSource, last, span, active }) => {
     const origin = start ?? ''
     const dates = xs.map((_, day) => (start === null ? '' : addUtcDays(origin, day)))
     const points = xs.map((x, day): SeriesPoint => {
@@ -181,10 +192,10 @@ export function alignByReleaseStart(
       }
       // The point as the API sent it, re-keyed: a gap stays a gap with its own reason.
       return found.y === null || found.measured === false
-        ? { x, y: null, n: found.n, measured: false, reason: found.reason ?? missingDayReason(source.label, day, date) }
+        ? { x, y: null, n: found.n, measured: false, reason: found.reason ?? unmeasuredDayReason(source.label, day, date) }
         : { x, y: found.y, n: found.n }
     })
-    return { key: source.key, label: source.label, start: origin, startSource, points, dates }
+    return { key: source.key, label: source.label, start: origin, startSource, points, dates, rangeDays: Math.max(0, Math.min(span + 1, xs.length)) }
   })
 
   return { xs, series, unplaced }

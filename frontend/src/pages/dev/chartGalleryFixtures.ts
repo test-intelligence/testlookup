@@ -344,7 +344,11 @@ export interface GalleryComparison {
   series: GalleryComparisonSeries[]
   metric: { kind: 'rate' | 'count'; title: string }
   alignment?: 'absolute' | 'release-start'
-  comparability?: { comparable: boolean; reason: string | null }
+  /**
+   * The envelope's `meta.comparability`, in the API's own wire shape — the
+   * gallery hands it to the model exactly as `chart-data` would.
+   */
+  comparability?: GalleryComparability
   seriesNoun: string
   /** Series hidden when the item first draws (the legend-toggle edge case). */
   initialHidden?: string[]
@@ -431,12 +435,31 @@ export const GALLERY_GAPPY_SUITES: GalleryComparisonSeries[] = [
   { ...GAPPY_SEARCH, points: GAPPY_SEARCH.points.filter((point) => point.x !== galleryDay(COMPARISON_START, 8)) },
 ]
 
+/** C2 `meta.comparability`, spelt out (the `Comparability` contract, without an app import). */
+export interface GalleryComparability {
+  comparable: boolean
+  reason: string | null
+  reason_code: 'different_suites' | 'partial_coverage' | null
+}
+
 /** Two branches whose suites differ: the envelope says `comparable: false`. */
 export const GALLERY_BRANCHES: GalleryComparisonSeries[] = [
   rateSeries('main', [95.1, 95.4, 94.8, 95.9, 96.2, 95.7, 96.4, 96.0, 96.8, 97.1, 96.6, 97.0, 97.4, 97.2], 520),
   rateSeries('release/2.4', [91.2, 90.4, 92.1, 91.7, 90.9, 92.8, 93.0, 92.2, 93.5, 94.1, 93.6, 94.4, 94.0, 94.9], 380),
 ]
-export const GALLERY_NOT_COMPARABLE_REASON = 'release/2.4 ran 2 suites that main did not (ledger, audit)'
+/**
+ * What `chart-data` says about them, word for word as `judge_comparability`
+ * (backend/app/services/chart_data_service.py) builds it for two branches
+ * whose suites differ: COUNTS only, never a suite or branch name — a name in
+ * the banner would be text the caller's scope did not produce. 14 suites ran
+ * on one branch or the other, 12 on both: release/2.4 ran 2 that main did not.
+ */
+export const GALLERY_NOT_COMPARABLE: GalleryComparability = {
+  comparable: false,
+  reason:
+    'The 2 series compared by branch did not run the same suites in this scope: 14 suites ran in at least one of them, 12 in all of them.',
+  reason_code: 'different_suites',
+}
 
 /**
  * Two releases on the CALENDAR: R1 from 2 Feb, R2 from 20 Feb. Aligned on
@@ -996,7 +1019,7 @@ export const GALLERY_ITEMS: GalleryItem[] = [
       series: GALLERY_BRANCHES,
       metric: GALLERY_RATE_METRIC,
       seriesNoun: 'branches',
-      comparability: { comparable: false, reason: GALLERY_NOT_COMPARABLE_REASON },
+      comparability: GALLERY_NOT_COMPARABLE,
     },
     canvasHeight: 530,
     empty: false,

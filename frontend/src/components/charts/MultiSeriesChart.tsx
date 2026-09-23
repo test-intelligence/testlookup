@@ -6,11 +6,14 @@
  * this file is the drawing and the interaction. What it is careful about:
  *
  *   - One line per series, told apart by DASH as well as colour, and named
- *     twice: by a direct label at the line's end (its leader drawn in the
- *     line's dash) and by the legend. Direct labels never overlap — they are
- *     nudged apart (`placeDirectLabels`) — and when they cannot fit, in height
- *     or because their fixed gutter would leave the plot too narrow, they are
- *     dropped and a note says the legend names every series.
+ *     twice: by a direct label at the line's end and by the legend. A direct
+ *     label is a swatch of the line's own colour AND dash, then its name; a
+ *     thin axis-coloured connector — never the line's colour or dash, and
+ *     clear of the line's end — leads to it from the height the line ends at
+ *     (`LABEL_ROW`). Direct labels never overlap — they are nudged apart, in
+ *     centred clusters (`placeDirectLabels`) — and when they cannot fit, in
+ *     height or because their fixed gutter would leave the plot too narrow,
+ *     they are dropped and a note says the legend names every series.
  *   - ONE shared tooltip per day, every shown series in it, SORTED DESCENDING;
  *     an unmeasured value is "—" with its reason, last. It is PINNED per day —
  *     a fixed offset from the day's x, at the top of the plot, never following
@@ -65,6 +68,10 @@ import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
 import { useChartAnimation } from './motion'
 import {
+  DIRECT_LABEL_GUTTER,
+  LABEL_ROW,
+  LABEL_SWATCH_LENGTH,
+  LEADER_DASH,
   PARTIAL_MARK,
   directLabelText,
   placeDirectLabels,
@@ -96,8 +103,8 @@ export interface MultiSeriesChartProps {
 }
 
 const NOTE = 'text-xs text-[var(--color-text-secondary)]'
-/** Room to the right of the plot for the direct labels. */
-export const DIRECT_LABEL_GUTTER = 104
+/** Room to the right of the plot for the direct labels (laid out by `LABEL_ROW`). */
+export { DIRECT_LABEL_GUTTER }
 /** The right margin when there are no direct labels. */
 export const NO_GUTTER = 16
 /** A legend swatch's length: longer than every dash period (at most 32 px), so each pattern shows whole. */
@@ -316,18 +323,37 @@ function DirectLabels({
       {placement.labels.map((placed) => {
         const line = byKey.get(placed.key)
         if (!line) return null
+        // Flat from the height the line ends at, then one angled step to the
+        // label's row: only in the gutter, and clear of the line's end.
+        const leader = [
+          [edge + LABEL_ROW.leaderStart, placed.target],
+          [edge + LABEL_ROW.leaderTurn, placed.target],
+          [edge + LABEL_ROW.leaderEnd, placed.y],
+        ]
+          .map(([x, y]) => `${x},${y}`)
+          .join(' ')
         return (
           <g key={placed.key} data-direct-label={placed.key}>
+            <polyline
+              data-direct-label-leader=""
+              points={leader}
+              fill="none"
+              stroke={CHART_VARS.axis}
+              strokeWidth={1}
+              strokeDasharray={LEADER_DASH}
+              strokeLinejoin="round"
+            />
             <line
-              x1={edge + 3}
-              y1={placed.target}
-              x2={edge + 12}
+              data-direct-label-swatch=""
+              x1={edge + LABEL_ROW.swatchStart}
+              y1={placed.y}
+              x2={edge + LABEL_ROW.swatchStart + LABEL_SWATCH_LENGTH}
               y2={placed.y}
               stroke={colourOf(line)}
-              strokeWidth={1.5}
+              strokeWidth={2}
               strokeDasharray={line.dash}
             />
-            <text x={edge + 15} y={placed.y} dominantBaseline="central" fontSize={11} fill={CHART_VARS.text}>
+            <text x={edge + LABEL_ROW.textStart} y={placed.y} dominantBaseline="central" fontSize={11} fill={CHART_VARS.text}>
               {directLabelText(line.label)}
             </text>
           </g>
@@ -610,6 +636,12 @@ export default function MultiSeriesChart({
         <p data-chart-gap-note="" className={NOTE}>
           {formatNumber(model.gaps)} {model.gaps === 1 ? 'value is' : 'values are'} not measured and drawn as{' '}
           {model.gaps === 1 ? 'a gap' : 'gaps'}, never as 0.
+        </p>
+      )}
+      {/* A release with fewer days than the axis: not a missed measurement, and said apart. */}
+      {model.rangeNote && (
+        <p data-chart-range-note="" className={NOTE}>
+          {model.rangeNote}
         </p>
       )}
       {!labelsFit && shown.length > 0 && (

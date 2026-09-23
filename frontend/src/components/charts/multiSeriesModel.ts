@@ -22,6 +22,10 @@
  *     and drawn hollow, and a direct label never anchors on it.
  *   - A day a series did not measure is a GAP (`y: null`) carrying its reason,
  *     never a zero, and a day nobody reported is still a day on the axis.
+ *     Aligned, a day PAST a release's returned range is not a gap: that
+ *     release simply has no such day yet ("R2 has 10 days; days 10–11 are past
+ *     its range"). It is drawn the same (nothing), but counted and worded
+ *     apart, so a short release is never reported as a missed measurement.
  *   - The shared tooltip lists every shown series for one day, SORTED
  *     DESCENDING; an unmeasured value is "—" with its reason and sorts last.
  *   - Line style varies by DASH as well as colour, so a reader who cannot tell
@@ -110,9 +114,52 @@ export const DIRECT_LABEL_HEIGHT = 16
 /** Characters a direct label keeps before it is shortened (the legend has the full name). */
 export const DIRECT_LABEL_MAX_CHARS = 12
 /**
+ * A direct label's row in the gutter, left to right (px from the plot's right
+ * edge, where every line's last point is at most):
+ *
+ *   gap · connector (flat run-in, then one angled step) · gap · swatch · gap · name
+ *
+ * The CONNECTOR is a 1 px dotted line in the axis colour (`LEADER_DASH`) —
+ * never a series' colour or dash — and it starts `LEADER_GAP` px clear of the plot, so it can
+ * never be read as the line continuing (drawn in the line's own style, a
+ * nudged label's leader read as every suite crashing on the last day). The
+ * match between line and name is the SWATCH: a short run of the line's own
+ * colour AND dash, right before the name — the same cue the legend uses, so
+ * it never rests on colour alone.
+ */
+export const LEADER_GAP = 4
+/**
+ * The connector's own pattern: a fine even dot that is none of the series'
+ * dashes (not even the solid line of slot 0), so it differs from every line
+ * in pattern as well as in colour and weight.
+ */
+export const LEADER_DASH = '2 2'
+/** The connector's flat run-in at the height of the line's end, before it turns. */
+export const LEADER_RUN_IN = 4
+/** The connector's angled step: the horizontal room it has to reach the label's row. */
+export const LEADER_STEP = 20
+/** Between the connector's end and the swatch, and between the swatch and the name. */
+export const LABEL_SWATCH_GAP = 3
+/** Long enough that every series dash period (at most 24 px) shows whole. */
+export const LABEL_SWATCH_LENGTH = 24
+/** Room for a name of `DIRECT_LABEL_MAX_CHARS` at 11 px. */
+export const LABEL_TEXT_ROOM = 76
+/** Where, from the plot's right edge, each part of the row starts. */
+export const LABEL_ROW = {
+  leaderStart: LEADER_GAP,
+  leaderTurn: LEADER_GAP + LEADER_RUN_IN,
+  leaderEnd: LEADER_GAP + LEADER_RUN_IN + LEADER_STEP,
+  swatchStart: LEADER_GAP + LEADER_RUN_IN + LEADER_STEP + LABEL_SWATCH_GAP,
+  textStart: LEADER_GAP + LEADER_RUN_IN + LEADER_STEP + 2 * LABEL_SWATCH_GAP + LABEL_SWATCH_LENGTH,
+} as const
+/** The gutter the direct labels take to the right of the plot. */
+export const DIRECT_LABEL_GUTTER = LABEL_ROW.textStart + LABEL_TEXT_ROOM
+
+/**
  * The narrowest plot the line-end labels may leave. Their gutter is a fixed
- * width, so at 320 px it took 104 of the 160 px the plot had and left it 56 px
- * wide; below this the labels give way to the legend.
+ * width (`DIRECT_LABEL_GUTTER`), so at 320 px it once took 104 of the 160 px
+ * the plot had and left it 56 px wide; below this the labels give way to the
+ * legend.
  */
 export const MIN_PLOT_WIDTH_WITH_LABELS = 200
 
@@ -146,6 +193,11 @@ export interface MultiSeriesPoint {
   date: string | null
   /** The day `meta.partial_day` names: still filling. */
   partial?: boolean
+  /**
+   * Aligned only: a relative day past this release's returned range — the
+   * release has no such day yet. Unmeasured, but NOT a gap.
+   */
+  pastRange?: boolean
 }
 
 export interface MultiSeriesLine {
@@ -159,7 +211,10 @@ export interface MultiSeriesLine {
   points: MultiSeriesPoint[]
   /** Σ n: what the fold ranks by. */
   volume: number
+  /** Returned days with no measured value — never counting the days past its range. */
   gaps: number
+  /** Trailing days past this series' range (aligned only; 0 on a calendar axis). */
+  pastRange: number
   /** A measured point with no measured neighbour: draw dots, or it is invisible. */
   isolated: boolean
   /**
@@ -205,8 +260,10 @@ export interface MultiSeriesModel {
   partialDay: string | null
   /** `meta.includes_in_progress`: runs still in progress on the partial day. */
   inProgressCount: number
-  /** Unmeasured points across every line. */
+  /** Unmeasured points across every line, on days each line's range covers. */
   gaps: number
+  /** "R2 has 10 days; days 10–11 are past its range.", one sentence per short line; `null` when none is. */
+  rangeNote: string | null
   /** Points no alignment could place (their `x` is not a day). */
   unplaced: number
   caption: string
@@ -237,7 +294,11 @@ export interface BuildMultiSeriesInput {
  * defensively: the object is optional, and a blank reason is no reason.
  */
 export function comparabilityFromMeta(meta: EnvelopeMeta | null | undefined): Comparability {
-  const raw = (meta as { comparability?: unknown } | null | undefined)?.comparability
+  return readComparability((meta as { comparability?: unknown } | null | undefined)?.comparability)
+}
+
+/** `meta.comparability` itself, in its wire shape, read the same defensive way. */
+export function readComparability(raw: unknown): Comparability {
   if (!raw || typeof raw !== 'object') return { comparable: true, reason: null }
   const { comparable, reason, reason_code: code } = raw as { comparable?: unknown; reason?: unknown; reason_code?: unknown }
   if (comparable !== false) return { comparable: true, reason: null }
@@ -248,9 +309,18 @@ export function comparabilityFromMeta(meta: EnvelopeMeta | null | undefined): Co
   }
 }
 
+/**
+ * The reason as a clause. The API's reasons are whole sentences ending in a
+ * full stop ("… 3 in all of them."); the banner and the caveat add their own
+ * punctuation after it, so the stop is dropped rather than doubled.
+ */
+function reasonClause(comparability: Comparability): string {
+  return (comparability.reason ?? NOT_COMPARABLE_FALLBACK).trim().replace(/\.+$/, '')
+}
+
 export function comparabilityBanner(comparability: Comparability): string | null {
   if (comparability.comparable) return null
-  return `Not directly comparable: ${comparability.reason ?? NOT_COMPARABLE_FALLBACK}. The comparison is still shown.`
+  return `Not directly comparable: ${reasonClause(comparability)}. The comparison is still shown.`
 }
 
 /**
@@ -260,7 +330,7 @@ export function comparabilityBanner(comparability: Comparability): string | null
  */
 export function comparabilityCaveat(comparability: Comparability): string | null {
   if (comparability.comparable) return null
-  return `not directly comparable: ${comparability.reason ?? NOT_COMPARABLE_FALLBACK}; the comparison is still shown`
+  return `not directly comparable: ${reasonClause(comparability)}; the comparison is still shown`
 }
 
 // ── Building the axis and the lines ──────────────────────────────────────────
@@ -356,11 +426,14 @@ export function foldSeries(
     const dates = new Set(at.map((p) => p.date))
     const date = dates.size === 1 ? (at[0]?.date ?? null) : null
     const partial = at.some((p) => p.partial === true)
-    if (kind === 'rate') return { x, n, date, partial, ...pooledRate(at) }
+    // Past the range of EVERY release it folds: "Other" has no such day either.
+    const pastRange = at.length > 0 && at.every((p) => p.pastRange === true)
+    const range = pastRange ? { pastRange } : {}
+    if (kind === 'rate') return { x, n, date, partial, ...range, ...pooledRate(at) }
     const measured = at.filter((p) => p.y !== null)
     return measured.length === 0
-      ? { x, y: null, n, reason: OTHER_EMPTY_REASON, date, partial }
-      : { x, y: measured.reduce((sum, p) => sum + (p.y as number), 0), n, reason: null, date, partial }
+      ? { x, y: null, n, reason: OTHER_EMPTY_REASON, date, partial, ...range }
+      : { x, y: measured.reduce((sum, p) => sum + (p.y as number), 0), n, reason: null, date, partial, ...range }
   })
   const foldedCount = rest.filter((line) => !line.other).length
   return { lines: [...kept, { key: OTHER_KEY, label: OTHER_LABEL, other: true, points }], folded: foldedCount, tie }
@@ -368,6 +441,7 @@ export function foldSeries(
 
 function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
   let gaps = 0
+  let pastRange = 0
   let isolated = false
   let last: MultiSeriesLine['last'] = null
   let lastPartial: MultiSeriesLine['last'] = null
@@ -375,7 +449,8 @@ function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
   for (let i = 0; i < points.length; i++) {
     const y = points[i].y
     if (y === null) {
-      gaps += 1
+      if (points[i].pastRange) pastRange += 1
+      else gaps += 1
       continue
     }
     // A still-filling day is no place to name a line: its value is still moving.
@@ -394,6 +469,7 @@ function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
     points,
     volume: volumeOf(points),
     gaps,
+    pastRange,
     isolated,
     last: last ?? lastPartial,
   }
@@ -453,6 +529,24 @@ function alignedCaptionOf(sources: readonly AlignmentStartSource[]): string {
 
 const plain = (n: number) => n.toLocaleString('en-US')
 
+/**
+ * One sentence per line that runs out before the axis does: "R2 has 10 days;
+ * days 10–11 are past its range." The days are the axis' own relative days.
+ */
+export function rangeNoteOf(lines: readonly Pick<MultiSeriesLine, 'label' | 'points' | 'pastRange'>[], xs: readonly string[]): string | null {
+  const sentences = lines
+    .filter((line) => line.pastRange > 0)
+    .map((line) => {
+      const covered = line.points.length - line.pastRange
+      const first = xs[covered] ?? String(covered)
+      const last = xs[line.points.length - 1] ?? String(line.points.length - 1)
+      const days = `${plain(covered)} ${covered === 1 ? 'day' : 'days'}`
+      const past = line.pastRange === 1 ? `day ${first} is` : `days ${first}–${last} are`
+      return `${line.label} has ${days}; ${past} past its range.`
+    })
+  return sentences.length > 0 ? sentences.join(' ') : null
+}
+
 export function buildMultiSeriesModel({
   series,
   metric,
@@ -482,7 +576,10 @@ export function buildMultiSeriesModel({
       key: s.key,
       label: s.key === OTHER_KEY ? OTHER_LABEL : s.label,
       other: s.key === OTHER_KEY,
-      points: s.points.map((p, i) => pointOf(p.x, p, s.dates[i] || null, partialOn !== null && s.dates[i] === partialOn)),
+      points: s.points.map((p, i) => {
+        const point = pointOf(p.x, p, s.dates[i] || null, partialOn !== null && s.dates[i] === partialOn)
+        return i >= s.rangeDays ? { ...point, pastRange: true } : point
+      }),
     }))
     rowHeaders = Object.fromEntries(xs.map((x, day) => [x, alignedRowLabel(day, aligned.series)]))
     caption = alignedCaptionOf(aligned.series.map((s) => s.startSource))
@@ -549,6 +646,7 @@ export function buildMultiSeriesModel({
     partialDay,
     inProgressCount: partialDay ? Math.max(0, meta?.includes_in_progress ?? 0) : 0,
     gaps: lines.reduce((sum, line) => sum + line.gaps, 0),
+    rangeNote: rangeNoteOf(lines, xs),
     unplaced,
     caption,
   }
@@ -666,11 +764,15 @@ export interface LabelPlacement {
 }
 
 /**
- * Place direct labels so no two overlap: sorted by where their lines end, each
- * pushed down just enough to clear the one above, then — if the last one ran
- * past the bottom — pushed back up from the bottom. If the column cannot hold
- * them at all, `fits` is false and none is placed: a stack of overlapping
- * names is worse than the legend alone.
+ * Place direct labels so no two overlap, each as close as it can be to where
+ * its line ends. Sorted by that height, labels that would overlap are merged
+ * into a CLUSTER stacked `height` apart and centred on its members' mean end —
+ * so a crowd of lines spreads its names both up and down, and no one label
+ * travels far (a label pushed only downwards travelled up to seven rows on the
+ * twelve-suite chart, and its leader read as a crash). A cluster that would
+ * leave the plot is slid back inside; merging repeats until nothing overlaps.
+ * If the column cannot hold them at all, `fits` is false and none is placed: a
+ * stack of overlapping names is worse than the legend alone.
  *
  * `plotWidth` is the width the plot has WITH the labels' gutter. The gutter
  * is fixed, so on a narrow chart it would eat the plot: below `minPlotWidth`
@@ -694,13 +796,25 @@ export function placeDirectLabels(
   const sorted = [...requests]
     .filter((request) => Number.isFinite(request.y))
     .sort((a, b) => a.y - b.y || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-  const ys = sorted.map((request) => Math.min(Math.max(request.y, top + half), bottom - half))
-  for (let i = 1; i < ys.length; i++) ys[i] = Math.max(ys[i], ys[i - 1] + height)
-  if (ys.length > 0 && ys[ys.length - 1] > bottom - half) {
-    ys[ys.length - 1] = bottom - half
-    for (let i = ys.length - 2; i >= 0; i--) ys[i] = Math.min(ys[i], ys[i + 1] - height)
+  const wanted = sorted.map((request) => Math.min(Math.max(request.y, top + half), bottom - half))
+  // A cluster: `count` labels stacked `height` apart, the top one's centre at `start`.
+  const clusters: { count: number; sum: number; start: number }[] = []
+  const settle = (count: number, sum: number) =>
+    Math.min(Math.max(sum / count - ((count - 1) * height) / 2, top + half), bottom - half - (count - 1) * height)
+  for (const y of wanted) {
+    clusters.push({ count: 1, sum: y, start: y })
+    // Merge upwards while the newest cluster overlaps the one above it.
+    while (clusters.length > 1) {
+      const below = clusters[clusters.length - 1]
+      const above = clusters[clusters.length - 2]
+      if (above.start + above.count * height <= below.start + 1e-9) break
+      const count = above.count + below.count
+      const sum = above.sum + below.sum
+      clusters.splice(clusters.length - 2, 2, { count, sum, start: settle(count, sum) })
+    }
   }
-  if (ys.length > 0 && ys[0] < top + half - 1e-6) return { fits: false, labels: [] }
+  const ys = clusters.flatMap((cluster) => Array.from({ length: cluster.count }, (_, i) => cluster.start + i * height))
+  if (ys.length > 0 && (ys[0] < top + half - 1e-6 || ys[ys.length - 1] > bottom - half + 1e-6)) return { fits: false, labels: [] }
   return { fits: true, labels: sorted.map((request, i) => ({ key: request.key, y: ys[i], target: request.y })) }
 }
 
