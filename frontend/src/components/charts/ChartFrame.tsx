@@ -40,7 +40,7 @@ import Skeleton from '@/components/ui/Skeleton'
 import ChartErrorBoundary from './ChartErrorBoundary'
 import ChartTable from './ChartTable'
 import { hasChartData, type ChartState } from './chartState'
-import { NO_VALUE, summarizeChart, type ChartAxes, type ValueFormatter } from './chartText'
+import { NO_VALUE, summarizeChart, type ChartAxes, type SeriesFormat } from './chartText'
 import { STALE_BUILD_ACTION, STALE_BUILD_MESSAGE } from './engines/lazyChartEngine'
 import { CHART_MESSAGES } from './chartMessages'
 import { useChartAnnouncer } from './ChartAnnouncer'
@@ -69,10 +69,33 @@ export interface ChartFrameProps {
   series?: ChartSeries | null
   /** For the summary, e.g. "Heatmap", "Line chart". */
   chartType?: string
+  /**
+   * Extra content for the TABLE VIEW, rendered under the data table when it is
+   * open (VIZ-403). Annotations a chart draws over the plot but that are not
+   * values in the series — release markers are the case this exists for — have
+   * to reach the table reader too, or the table is a lesser view of the chart
+   * rather than an equal one.
+   */
+  tableExtras?: ReactNode
   axes?: ChartAxes
   /** The scope in words, for the summary. */
   scopeLabel?: string
-  format?: ValueFormatter
+  /**
+   * How the values are formatted in the summary and the table view: ONE
+   * formatter, or one PER SERIES keyed on `series.key`. A chart whose series
+   * are a duration and a run count needs the keyed form — a single formatter
+   * prints "10 runs" as "10ms" in both places.
+   */
+  format?: SeriesFormat
+  /**
+   * What a CHANGE to this frame is called in the page-level announcement, when
+   * the frame is DRAWN. The default is "updated", which is right for new data
+   * and wrong for a control the reader just used: turning to the next page of
+   * bars is a page change, not an update. Pass the words the reader would use
+   * ("page 2 of 2") and the announcement says exactly that, ONCE — the frame
+   * still makes only its own single report, so nothing is announced twice.
+   */
+  changeLabel?: string
   /** Body height in px: the skeleton and state messages hold this space. */
   height?: number
   /** Offered in `filtered-empty`. Without it, no button is shown. */
@@ -240,9 +263,11 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
     'data-testid': testId,
     series = null,
     chartType = 'Chart',
+    tableExtras,
     axes,
     scopeLabel,
     format,
+    changeLabel: changeLabelProp,
     height = 240,
     onClearFilters,
     ingestHref = '/getting-started',
@@ -275,7 +300,12 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
           ? `error:${state.error.kind}`
           : state.status
   const busy = state.status === 'loading' || ('revalidating' in state && state.revalidating === true)
-  const changeLabel = state.status === 'loading' ? '' : CHANGE_LABEL[state.status]
+  const changeLabel =
+    state.status === 'loading'
+      ? ''
+      : drawn && changeLabelProp
+        ? changeLabelProp
+        : CHANGE_LABEL[state.status]
   const lastKey = useRef<string | null>(null)
   // Set by the reader's Retry; the result of THAT request is announced assertively.
   const pendingRetry = useRef<{ inflight: boolean } | null>(null)
@@ -411,6 +441,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
       {showTable && series && (
         <div id={tableId}>
           <ChartTable caption={`${title} — data table`} series={series} axes={axes} format={format} />
+          {tableExtras}
         </div>
       )}
 

@@ -19,14 +19,27 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import {
   GALLERY_CANVAS,
+  GALLERY_CHANGE_BARS,
   GALLERY_DRAWN_CANVAS_ITEMS,
+  GALLERY_DRAWN_DOM_ITEMS,
+  GALLERY_DRAWN_ITEMS,
   GALLERY_DRAWN_SVG_ITEMS,
   GALLERY_HEATMAP_DATA,
   GALLERY_ITEM_IDS,
+  GALLERY_ITEMS,
+  GALLERY_LONG_NAMES,
   GALLERY_STATUS_MATRIX_DATA,
+  GALLERY_SUITE_STATUS,
+  GALLERY_TOP_FAILING,
   HOSTILE_LABEL,
+  galleryCanvasSize,
   galleryChartHeight,
+  GALLERY_FLUID_CANVAS_PARAM,
 } from '../../src/pages/dev/chartGalleryFixtures'
+// Imported rather than retyped, so a reworded indicator fails here instead of
+// quietly passing. `timeSeriesModel` only `import type`s from `@/…`, so it
+// resolves in Playwright's plain-Node transform with no alias.
+import { AXIS_NOT_ZERO_LABEL, UTC_AXIS_CAPTION } from '../../src/components/charts/timeSeriesModel'
 import {
   NOT_MEASURED_REASON,
   REQUEST_IDS,
@@ -36,6 +49,10 @@ import {
 
 const GALLERY = '/__charts'
 const CHART_SVG = '.recharts-wrapper > svg.recharts-surface'
+/** Recharts 3 draws the category (y) axis tick labels in a layer of their own. */
+const CATEGORY_TICKS = '.recharts-yAxis-tick-labels'
+/** …and the value (x) axis ones in theirs. `.recharts-xAxis` holds none of them. */
+const VALUE_TICKS = '.recharts-xAxis-tick-labels'
 const ECHARTS_CANVAS = '[data-chart-engine="echarts"] canvas'
 /** Any request for ECharts or zrender code — a dev-server dep or a built chunk. */
 const ENGINE_REQUEST = /echarts|zrender/i
@@ -143,9 +160,11 @@ test.describe('chart gallery (/__charts)', () => {
       expect(box, `${item.id}: svg has no box`).not.toBeNull()
       expect(box?.width ?? 0, `${item.id}: svg too narrow`).toBeGreaterThanOrEqual(300)
       expect(box?.height ?? 0, `${item.id}: svg too short`).toBeGreaterThanOrEqual(150)
-      // Inside its canvas, never spilling out of it.
-      expect(box?.width ?? Infinity).toBeLessThanOrEqual(GALLERY_CANVAS.width + 1)
-      expect(box?.height ?? Infinity).toBeLessThanOrEqual(GALLERY_CANVAS.height + 1)
+      // Inside its canvas, never spilling out of it. A Wave-2 item is a whole
+      // ChartFrame, so its box is taller than the plain-plot one.
+      const canvas = galleryCanvasSize(item)
+      expect(box?.width ?? Infinity).toBeLessThanOrEqual(canvas.width + 1)
+      expect(box?.height ?? Infinity).toBeLessThanOrEqual(canvas.height + 1)
 
       // Recharts draws asynchronously after ResponsiveContainer measures; poll
       // for the marks rather than asserting a single early snapshot of the DOM.
@@ -172,6 +191,30 @@ test.describe('chart gallery (/__charts)', () => {
         .poll(() => paintedColours(page, item.id), { message: `${item.id}: canvas is blank` })
         .toBeGreaterThanOrEqual(4)
     }
+
+    // `dom` items (VIZ-406's slowest-tests) draw no engine at all: a ranked
+    // list whose bars are elements with a percentage width. There is no svg to
+    // measure and no canvas to sample, so the geometry IS those widths —
+    // `textContent` cannot see whether a bar was actually drawn.
+    expect(GALLERY_DRAWN_DOM_ITEMS.length).toBeGreaterThanOrEqual(1)
+    for (const item of GALLERY_DRAWN_DOM_ITEMS) {
+      const section = page.locator(`[data-gallery-item="${item.id}"]`)
+      await expect(section.getByRole('heading', { level: 2, name: item.title })).toBeVisible()
+      await expect(section.locator(CHART_SVG), `${item.id}: expected no svg engine`).toHaveCount(0)
+      const widths = await section
+        .locator('[data-testid="ranked-bar"]')
+        .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width))
+      expect(widths.length, `${item.id}: no ranked bars`).toBeGreaterThan(0)
+      expect(Math.max(...widths), `${item.id}: every bar has zero width`).toBeGreaterThan(0)
+    }
+
+    // The three loops above must PARTITION the drawn items. Without this, a new
+    // `galleryEngine` value would put an item in none of them and it would be
+    // asserted on by nothing at all, while this test stayed green.
+    expect(
+      GALLERY_DRAWN_SVG_ITEMS.length + GALLERY_DRAWN_CANVAS_ITEMS.length + GALLERY_DRAWN_DOM_ITEMS.length,
+      'a drawn gallery item belongs to no engine loop',
+    ).toBe(GALLERY_DRAWN_ITEMS.length)
 
     expect(errors).toEqual([])
   })
@@ -270,7 +313,22 @@ test.describe('chart gallery (/__charts)', () => {
   ]
 
   /**
-   * No serious / critical axe violation except an allowlisted one — and every
+   * The rules the gate runs. Every WCAG level this product claims, plus axe's
+   * own best practices.
+   *
+   * It used to run axe's DEFAULT rule set and then keep only `serious` and
+   * `critical` findings. That is two filters at once, and both of them hide
+   * exactly the kind of defect a chart has: `heading-order`, a duplicated
+   * accessible name, a `tabindex` on something with no role and an unnamed
+   * `role="application"` are all `moderate` or `minor`, and several of them
+   * are best-practice rules the default tag set never even ran. This gate
+   * reports EVERY impact under the full tag set; the allowlist below is the
+   * only escape, it is per rule AND per node, and it is ratcheted.
+   */
+  const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'] as const
+
+  /**
+   * No axe violation, at any impact, except an allowlisted one — and every
    * allowlisted one must still fire (the ratchet), so a fix shrinks the list.
    */
   async function expectNoBlockingViolations(
@@ -278,14 +336,13 @@ test.describe('chart gallery (/__charts)', () => {
     theme: string,
     known: { theme: string; rule: string; nodeHtmlIncludes: string }[],
   ) {
-    const result = await new AxeBuilder({ page }).analyze()
+    const result = await new AxeBuilder({ page }).withTags([...AXE_TAGS]).analyze()
     const isKnown = (rule: string, html: string) =>
       known.some((entry) => entry.rule === rule && html.includes(entry.nodeHtmlIncludes))
 
     const blocking = result.violations
-      .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
       .map((violation) => ({
-        id: violation.id,
+        id: `${violation.id} [${violation.impact}]`,
         nodes: violation.nodes.filter((node) => !isKnown(violation.id, node.html)).map((node) => node.html),
       }))
       .filter((violation) => violation.nodes.length > 0)
@@ -310,7 +367,7 @@ test.describe('chart gallery (/__charts)', () => {
   const ALL_THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
 
   for (const theme of ALL_THEMES) {
-    test(`has no serious or critical automated accessibility violations (${theme})`, async ({
+    test(`has no automated accessibility violations at any impact (${theme})`, async ({
       page,
     }) => {
       await openGallery(page, `?theme=${theme}`)
@@ -322,6 +379,13 @@ test.describe('chart gallery (/__charts)', () => {
           'data-chart-status',
           'ready',
         )
+      }
+      // …and the VIZ-406 list, which has no engine to report ready. Auditing
+      // before it paints would audit an empty box and pass for the wrong reason.
+      for (const item of GALLERY_DRAWN_DOM_ITEMS) {
+        await expect(
+          page.locator(`[data-gallery-item="${item.id}"] [data-testid="ranked-bar"]`).first(),
+        ).toBeVisible()
       }
       await expectNoBlockingViolations(
         page,
@@ -383,9 +447,747 @@ test.describe('chart gallery (/__charts)', () => {
     expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth)
     expect(overflow.bodyScrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
     // …because each fixed-size canvas scrolls inside its own keyboard-reachable box.
-    const scroller = page.locator('[data-gallery-item="trend-line"] [role="group"]')
+    const scroller = page.locator('[data-gallery-scroller="trend-line"]')
     await expect(scroller).toHaveAttribute('tabindex', '0')
     expect(await scroller.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
+    // It carries NO role and no name of its own: a framed chart is already a
+    // named `role="group"` (the frame body), and a second group around it
+    // made every chart "group, group, <title>, <title>".
+    await expect(scroller).not.toHaveAttribute('role', /.+/)
+    for (const framed of ['donut-status', 'bar-stacked']) {
+      const section = page.locator(`[data-gallery-item="${framed}"]`)
+      // One heading per item, not the gallery's h2 AND the frame's h3.
+      await expect(section.getByRole('heading', { name: await section.getAttribute('aria-label') ?? '' })).toHaveCount(1)
+      await expect(section.locator(`[data-gallery-scroller="${framed}"][role]`)).toHaveCount(0)
+    }
+  })
+
+  // ── Wave 2 · the donut (VIZ-401) and the bars (VIZ-402) ──────────────────────
+
+  /** Bounding boxes of the drawn bar rectangles of one gallery item, top to bottom. */
+  async function barBoxes(page: Page, itemId: string) {
+    const boxes = await page
+      .locator(`[data-gallery-item="${itemId}"] .recharts-bar-rectangle path`)
+      .evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const box = node.getBoundingClientRect()
+          return { x: box.x, right: box.right, width: box.width, y: box.y }
+        }),
+      )
+    return boxes.sort((a, b) => a.y - b.y || a.x - b.x)
+  }
+
+  test('the status donut: fixed order, a centre total, count-and-percent labels summing to 100.0', async ({
+    page,
+  }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+
+    const donut = page.locator('[data-gallery-item="donut-status"]')
+    await expect(donut.locator('[data-donut]')).toHaveAttribute('data-donut-total', '1000')
+    await expect(donut.locator('[data-donut-centre]')).toContainText('1,000')
+    await expect(donut.locator('[data-donut-centre]')).toContainText('executions')
+
+    // Count AND percent, in the FIXED status order (passed, failed, broken, skipped).
+    await expect.poll(() => donut.locator('[data-donut-slice-label]').count()).toBe(4)
+    const labels = await donut.locator('[data-donut-slice-label]').allTextContents()
+    expect(labels).toEqual(['880 (88.0%)', '60 (6.0%)', '20 (2.0%)', '40 (4.0%)'])
+    const percents = labels.map((label) => Number(/\(([\d.]+)%\)/.exec(label)?.[1]))
+    expect(percents.reduce((sum, value) => sum + value, 0)).toBeCloseTo(100, 6)
+
+    // `unknown` is the fifth slice; flaky is never one.
+    const withUnknown = page.locator('[data-gallery-item="donut-status-unknown"] [data-donut]')
+    await expect(withUnknown).toHaveAttribute('data-donut-slices', '5')
+    await expect(page.locator('[data-gallery-item="donut-status-unknown"] [data-chart-legend]')).not.toContainText(
+      'Flaky',
+    )
+
+    // One status only: a full ring, still labelled.
+    const single = page.locator('[data-gallery-item="donut-single-status"]')
+    await expect(single.locator('[data-donut]')).toHaveAttribute('data-donut-full-ring', 'true')
+    await expect(single.locator('[data-donut-slice-label]')).toHaveText('412 (100.0%)')
+
+    // Under 2%: no label on the arc, the label (with the TRUE value) in the
+    // legend, and the arc still drawn.
+    const tiny = page.locator('[data-gallery-item="donut-tiny-slice"]')
+    await expect(tiny.locator('[data-donut-slice-label]')).toHaveCount(1)
+    await expect(tiny.locator('[data-donut]')).toHaveAttribute('data-donut-legend-only', '1')
+    await expect(tiny.locator('[data-chart-legend]')).toContainText('Failed 50 (0.5%)')
+    await expect.poll(() => drawnMarks(page, 'donut-tiny-slice')).toBeGreaterThanOrEqual(2)
+
+    // All zero is not a ring of nothing: the frame says the filters match nothing.
+    const zero = page.locator('[data-gallery-item="donut-all-zero"] [data-chart-frame]')
+    await expect(zero).toHaveAttribute('data-chart-state', 'filtered-empty')
+    await expect(zero).toContainText('No data matches the current filters')
+    await expect(zero.locator('[data-donut]')).toHaveCount(0)
+
+    expect(errors).toEqual([])
+  })
+
+  test('ranked bars are really sorted, really start at zero, and really are proportional', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="bar-ranked"]')
+    const biggest = Math.max(...GALLERY_TOP_FAILING.map(([, value]) => value))
+    await expect(item.locator('[data-bar-chart="ranked"]')).toHaveAttribute('data-bar-domain', `0,${biggest}`)
+
+    await expect.poll(() => barBoxes(page, 'bar-ranked').then((boxes) => boxes.length)).toBe(
+      GALLERY_TOP_FAILING.length,
+    )
+    const boxes = await barBoxes(page, 'bar-ranked')
+
+    // Sorted: each bar is no longer than the one above it.
+    const widths = boxes.map((box) => box.width)
+    expect(widths).toEqual([...widths].sort((a, b) => b - a))
+
+    // Zero baseline, twice over: every bar starts at the same x…
+    const lefts = new Set(boxes.map((box) => Math.round(box.x)))
+    expect(lefts.size, `bars start at ${[...lefts].join(', ')}`).toBe(1)
+    // …and length is proportional to value, which is only true from zero. (A
+    // baseline at, say, 4 would draw the 41 as ~9× the 9, not 4.6×.)
+    const values = [...GALLERY_TOP_FAILING].map(([, value]) => value).sort((a, b) => b - a)
+    const ratios = boxes.map((box, index) => box.width / values[index])
+    expect(Math.max(...ratios) / Math.min(...ratios)).toBeLessThan(1.1)
+  })
+
+  test('a change chart diverges around a zero baseline', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="bar-diverging"]')
+    const extreme = Math.max(...GALLERY_CHANGE_BARS.map(([, value]) => Math.abs(value)))
+    const plot = item.locator('[data-bar-chart="ranked"]')
+    await expect(plot).toHaveAttribute('data-bar-diverging', 'true')
+    await expect(plot).toHaveAttribute('data-bar-domain', `-${extreme},${extreme}`)
+    await expect(item).toContainText('diverge from a zero baseline')
+
+    await expect.poll(() => barBoxes(page, 'bar-diverging').then((b) => b.length)).toBe(GALLERY_CHANGE_BARS.length)
+    const boxes = await barBoxes(page, 'bar-diverging')
+    const positives = GALLERY_CHANGE_BARS.filter(([, value]) => value > 0).length
+    // The rises start where the falls end: one shared zero, in the middle.
+    const rises = boxes.slice(0, positives)
+    const falls = boxes.slice(positives)
+    const zero = Math.round(rises[0].x)
+    for (const rise of rises) expect(Math.round(rise.x)).toBe(zero)
+    for (const fall of falls) expect(Math.round(fall.right)).toBe(zero)
+  })
+
+  test('the bars state their ties and their page, and the page turns', async ({ page }) => {
+    await openGallery(page)
+
+    const ties = page.locator('[data-gallery-item="bar-ranked-ties"]')
+    await expect(ties.locator('[data-chart-footer]')).toContainText('tied with the 10th')
+    await expect(ties.locator('[data-bar-chart]')).toHaveAttribute('data-bar-total', '13')
+
+    const paged = page.locator('[data-gallery-item="bar-paginated"]')
+    await expect(paged.locator('[data-chart-footer]')).toContainText('Page 1 of 2')
+    await expect(paged.locator('[data-chart-footer]')).toContainText('60 bars in all')
+    await expect.poll(() => barBoxes(page, 'bar-paginated').then((b) => b.length)).toBe(50)
+
+    await paged.getByRole('button', { name: 'Next bars' }).click()
+    await expect(paged.locator('[data-chart-footer]')).toContainText('Page 2 of 2')
+    await expect(paged.locator('[data-bar-chart]')).toHaveAttribute('data-bar-page', '1')
+    await expect.poll(() => barBoxes(page, 'bar-paginated').then((b) => b.length)).toBe(10)
+  })
+
+  test('a long test name is middle-truncated on the axis and whole in the table', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="bar-long-names"]')
+    // Recharts 3 hoists the tick LABELS out of the axis layer into their own.
+    const tickLabels = item.locator(`${CATEGORY_TICKS} .recharts-cartesian-axis-tick-value`)
+    await expect.poll(() => tickLabels.count()).toBe(GALLERY_LONG_NAMES.length)
+    const ticks = await tickLabels.allTextContents()
+    const longest = GALLERY_LONG_NAMES[0][0]
+    expect(ticks.some((tick) => tick.includes('…'))).toBe(true)
+    expect(ticks).not.toContain(longest)
+    // Middle, not end: the tick keeps the head AND the tail.
+    const truncated = ticks.find((tick) => tick.includes('…')) as string
+    expect(longest.startsWith(truncated.split('…')[0])).toBe(true)
+    expect(longest.endsWith(truncated.split('…')[1])).toBe(true)
+
+    await item.getByRole('button', { name: 'View as table' }).click()
+    await expect(item.getByRole('table')).toContainText(longest)
+  })
+
+  test('a hostile test name is drawn as literal text and never executes', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="bar-hostile-label"]')
+    await expect(item.locator('[data-bar-chart]')).toBeVisible()
+    // Rendered as text: no element was created from the label.
+    await expect(item.locator('img')).toHaveCount(0)
+    await expect(item.locator(CATEGORY_TICKS)).toContainText('<img src=x')
+    await item.getByRole('button', { name: 'View as table' }).click()
+    await expect(item.getByRole('table')).toContainText(HOSTILE_LABEL)
+    await expect(item.getByRole('table').locator('img')).toHaveCount(0)
+    expect(await page.evaluate(() => (window as unknown as { __xss?: unknown }).__xss)).toBeUndefined()
+    expect(errors).toEqual([])
+  })
+
+  test('stacked bars keep the fixed status order, and 100% mode really fills the axis', async ({ page }) => {
+    await openGallery(page)
+    const stacked = page.locator('[data-gallery-item="bar-stacked"]')
+    await expect(stacked.locator('[data-bar-chart]')).toHaveAttribute('data-bar-statuses', 'passed,failed,broken,skipped')
+    await expect(stacked.locator('[data-bar-chart]')).toHaveAttribute('data-bar-mode', 'absolute')
+    await expect(stacked.locator('[data-chart-legend] [data-legend-status]')).toHaveCount(4)
+    const legend = await stacked.locator('[data-legend-status]').evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('data-legend-status')),
+    )
+    expect(legend).toEqual(['passed', 'failed', 'broken', 'skipped'])
+
+    // Absolute: the bars differ in length, because the suites differ in size.
+    const spans = async (id: string) =>
+      page.locator(`[data-gallery-item="${id}"] .recharts-bar-rectangle path`).evaluateAll((nodes) => {
+        const byRow = new Map<number, { left: number; right: number }>()
+        for (const node of nodes) {
+          const box = node.getBoundingClientRect()
+          const row = Math.round(box.y)
+          const current = byRow.get(row)
+          byRow.set(row, {
+            left: Math.min(current?.left ?? box.left, box.left),
+            right: Math.max(current?.right ?? box.right, box.right),
+          })
+        }
+        return [...byRow.values()].map((span) => Math.round(span.right - span.left))
+      })
+
+    await expect.poll(() => spans('bar-stacked').then((rows) => rows.length)).toBe(GALLERY_SUITE_STATUS.length)
+    const absolute = await spans('bar-stacked')
+    expect(new Set(absolute).size).toBeGreaterThan(1)
+
+    // 100%: every bar is the same length, because every bar is 100%.
+    const full = await spans('bar-stacked-100')
+    expect(full.length).toBe(GALLERY_SUITE_STATUS.length)
+    expect(Math.max(...full) - Math.min(...full)).toBeLessThanOrEqual(2)
+    await expect(page.locator('[data-gallery-item="bar-stacked-100"] [data-bar-chart]')).toHaveAttribute(
+      'data-bar-domain',
+      '0,100',
+    )
+
+    // …and the toggle switches the absolute one into that same shape.
+    await stacked.getByRole('button', { name: 'Show 100%' }).click()
+    await expect(stacked.locator('[data-bar-chart]')).toHaveAttribute('data-bar-mode', 'percent')
+    await expect.poll(async () => {
+      const toggled = await spans('bar-stacked')
+      return Math.max(...toggled) - Math.min(...toggled)
+    }).toBeLessThanOrEqual(2)
+
+    // Grouped is the same data, unstacked.
+    await expect(page.locator('[data-gallery-item="bar-grouped"] [data-bar-chart]')).toHaveAttribute(
+      'data-bar-chart',
+      'grouped',
+    )
+  })
+
+  // -- Wave 2 - fix round A: what a keyboard and a narrow window can read ------
+
+  /**
+   * Every Wave-2 Recharts chart used to take BOTH of Recharts' accessibility
+   * affordances away: a custom tooltip `content` deletes its `role="status"`
+   * live region, and `accessibilityLayer` puts an UNNAMED `role="application"`
+   * on the surface, which suppresses the virtual cursor. A keyboard reader
+   * could then reach no point value on any of them.
+   */
+  test('a keyboard reader can read every point, through the ONE page announcer', async ({ page }) => {
+    await openGallery(page)
+    const announcer = page.locator('[data-chart-announcer="assertive"]')
+
+    for (const [item, plot, expected] of [
+      ['donut-status', '[data-donut]', /Passed 880/],
+      ['bar-ranked', '[data-bar-chart="ranked"]', /:\s/],
+      ['bar-stacked', '[data-bar-chart="stacked"]', /Passed/],
+      // …and fix round B's charts: the time series and the two SVG duration ones.
+      ['timeseries-trend-releases', '[data-time-series-plot]', /\(UTC\)/],
+      ['timeseries-zoomed-axis', '[data-time-series-plot]', /Pass rate/],
+      ['duration-histogram', '[data-duration-histogram-plot]', /executions?/],
+      ['duration-band', '[data-duration-trend-plot]', /p95/],
+    ] as const) {
+      const surface = page.locator(`[data-gallery-item="${item}"] ${plot}`)
+      // Named after the chart, focusable, and NOT an application.
+      await expect(surface).toHaveAttribute('tabindex', '0')
+      await expect(surface).toHaveAttribute('role', 'group')
+      await expect(surface).toHaveAttribute('aria-label', /Use the arrow keys/)
+      await surface.focus()
+      await expect(surface).toBeFocused()
+      await page.keyboard.press('ArrowRight')
+      await expect(surface).toHaveAttribute('data-chart-cursor', 'active')
+      await expect(announcer).toContainText(expected)
+      // A sighted keyboard user sees the same words.
+      await expect(page.locator(`[data-gallery-item="${item}"] [data-chart-readout]`)).toBeVisible()
+
+      // SC 1.4.13: dismissible, and focus stays where the reader put it.
+      await page.keyboard.press('Escape')
+      await expect(surface).toHaveAttribute('data-chart-cursor', 'idle')
+      await expect(page.locator(`[data-gallery-item="${item}"] [data-chart-readout]`)).toHaveCount(0)
+      await expect(surface).toBeFocused()
+    }
+
+    // …and still exactly one announcer for the whole page — one polite, one
+    // assertive — with no frame declaring a live region of its own.
+    expect(await page.locator('[data-chart-announcer]').count()).toBe(2)
+    expect(await page.locator('[data-chart-frame] [data-chart-announcer]').count()).toBe(0)
+
+    /**
+     * NO chart in the Wave-2 catalogue is an unnamed `role="application"`.
+     *
+     * Round A could only claim this for four items; round B finished the rest,
+     * so the assertion now walks EVERY gallery item. The only charts excused
+     * are the two Wave-1 components that still pass Recharts'
+     * `accessibilityLayer` and belong to neither round's scope — `TrendChart`
+     * (`chart: 'trend'`) and `PassRateGauge` (`chart: 'gauge'`). They are named
+     * by COMPONENT rather than by item id, so adding another fixture of the
+     * same chart does not need a new exception; a new chart of any other kind
+     * that arrives with the default layer fails here.
+     */
+    const LEGACY_APPLICATION_LAYER = ['trend', 'gauge']
+    const backlog = new Set(
+      GALLERY_ITEMS.filter((item) => LEGACY_APPLICATION_LAYER.includes(item.chart)).map((item) => item.id),
+    )
+    let backlogStillUnfixed = 0
+    for (const item of GALLERY_ITEM_IDS) {
+      const found = await page.locator(`[data-gallery-item="${item}"] [role="application"]`).count()
+      if (backlog.has(item)) backlogStillUnfixed += found
+      else expect(found, `${item} has an unnamed role="application"`).toBe(0)
+    }
+    // The ratchet: once TrendChart and PassRateGauge are fixed too, this test
+    // fails until the exception above is deleted.
+    expect(
+      backlogStillUnfixed,
+      'no excused chart has role="application" any more — delete LEGACY_APPLICATION_LAYER',
+    ).toBeGreaterThan(0)
+  })
+
+  /**
+   * `slowest-tests` is the one Wave-2 chart with no drawing surface: it is 20
+   * real `<li>` rows, which a screen reader walks with its own virtual cursor.
+   * What it owes a keyboard and a 320 px window is the full test NAME, not a
+   * nine-character truncation with the rest in a mouse-only `title`.
+   */
+  test('the slowest-tests list reads as rows, and shows the whole name when narrow', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="slowest-tests"]')
+    await expect(item.locator('[data-testid="ranked-bar"]').first()).toBeVisible()
+    expect(await item.locator('[role="application"]').count()).toBe(0)
+    // Wide: one line per row, the name truncated with the full text in `title`.
+    await expect(item.locator('[data-slowest-list]')).toHaveAttribute('data-slowest-stacked', 'false')
+
+    // Narrow, for real: the fluid canvas at a 320 px viewport.
+    await page.setViewportSize({ width: 320, height: 800 })
+    await openGallery(page, `?canvas=${GALLERY_FLUID_CANVAS_PARAM}`)
+    const narrow = page.locator('[data-gallery-item="slowest-tests"]')
+    await expect(narrow.locator('[data-slowest-list]')).toHaveAttribute('data-slowest-stacked', 'true')
+    const names = await narrow.locator('[data-slowest-name]').allTextContents()
+    expect(names.length).toBeGreaterThan(1)
+    // Every row says something DIFFERENT: the whole point of the stack.
+    expect(new Set(names).size).toBe(names.length)
+    // …and the name is not clipped to a sliver of its box.
+    const widths = await narrow.locator('[data-slowest-name]').evaluateAll((nodes) =>
+      nodes.map((node) => ({ scroll: node.scrollWidth, client: node.clientWidth })),
+    )
+    for (const box of widths) expect(box.scroll, JSON.stringify(box)).toBeLessThanOrEqual(box.client + 1)
+  })
+
+  test('a hover tooltip is hoverable and dismissible (SC 1.4.13)', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="bar-stacked"]')
+    await expect(item.locator('.recharts-bar-rectangle path').first()).toBeVisible()
+    // The gallery is far taller than the viewport, and `mouse.move` takes
+    // VIEWPORT coordinates: without this the pointer goes nowhere near the bar.
+    await item.scrollIntoViewIfNeeded()
+    // The WIDEST drawn segment: a status with a zero count is a path of no
+    // width at all, and its "centre" is a point beside the bar, not on it.
+    const centre = await item.locator('.recharts-bar-rectangle path').evaluateAll((nodes) => {
+      const boxes = nodes.map((node) => node.getBoundingClientRect()).filter((box) => box.width > 2)
+      const widest = boxes.sort((a, b) => b.width - a.width)[0]
+      return { x: widest.x + widest.width / 2, y: widest.y + widest.height / 2 }
+    })
+    const overTheBar = () => page.mouse.move(centre.x, centre.y)
+    await page.mouse.move(centre.x - 30, centre.y - 30)
+    await overTheBar()
+    const tooltip = item.locator('[data-chart-tooltip]')
+    await expect(tooltip).toBeVisible()
+
+    // Hoverable (SC 1.4.13), the part a chart can guarantee: the tooltip TAKES
+    // pointer events. Recharts' wrapper is `pointer-events: none`, which makes
+    // hovering the content impossible by construction — the pointer passes
+    // straight through it, so the criterion fails before the pointer has
+    // moved. (Reaching it is a second question: this tooltip is still placed
+    // relative to the cursor, so it moves as the pointer approaches. Pinning
+    // it is the remaining half, and it is NOT done here.)
+    const wrapper = item.locator('.recharts-tooltip-wrapper').first()
+    expect(await wrapper.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('auto')
+    // …and the tooltip itself is a real hit target, not a 0x0 box.
+    const tip = (await tooltip.boundingBox()) as { width: number; height: number }
+    expect(tip.width).toBeGreaterThan(20)
+    expect(tip.height).toBeGreaterThan(10)
+
+    // Dismissible: Escape, with the pointer still over the chart and no
+    // keyboard focus anywhere near it.
+    await page.keyboard.press('Escape')
+    await expect(tooltip).toHaveCount(0)
+    // …and pointing at the chart again asks for it back: a dismissal is for
+    // THIS tooltip, not a setting the reader has to undo.
+    await page.mouse.move(10, 10)
+    await page.mouse.move(centre.x - 30, centre.y - 30)
+    await overTheBar()
+    await expect(item.locator('[data-chart-tooltip]')).toBeVisible()
+  })
+
+  test('both bar axes are titled, and the value axis follows the 100% toggle', async ({ page }) => {
+    await openGallery(page)
+    const axisText = (id: string) =>
+      page
+        .locator(`[data-gallery-item="${id}"] ${CHART_SVG} text`)
+        .allTextContents()
+        .then((texts) => texts.map((text) => text.trim()))
+
+    // A bar chart that names neither axis says only "big" and "small".
+    const ranked = await axisText('bar-ranked')
+    expect(ranked, 'ranked: no value-axis title').toContain('Count')
+    expect(ranked, 'ranked: no category-axis title').toContain('Test')
+
+    const stacked = page.locator('[data-gallery-item="bar-stacked"]')
+    const stackedAxes = await axisText('bar-stacked')
+    expect(stackedAxes).toContain('Count')
+    expect(stackedAxes).toContain('Suite')
+    const absoluteTicks = await stacked.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`).allTextContents()
+    expect(absoluteTicks.some((tick) => tick.includes('%'))).toBe(false)
+
+    await stacked.getByRole('button', { name: 'Show 100%' }).click()
+    await expect(stacked.locator('[data-bar-chart]')).toHaveAttribute('data-bar-mode', 'percent')
+    // The axis now carries the unit…
+    await expect
+      .poll(async () => {
+        const ticks = await stacked.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`).allTextContents()
+        return ticks.length > 0 && ticks.every((tick) => tick.endsWith('%'))
+      })
+      .toBe(true)
+    // …its title says what the length means…
+    expect(await axisText('bar-stacked')).toContain('Share of bar (%)')
+    // …and the chart says, in words, which side of the toggle is live.
+    await expect(stacked.locator('[data-chart-footer]')).toContainText('Each bar is drawn as 100%')
+
+    // The table follows too: shares, not counts.
+    await stacked.getByRole('button', { name: 'View as table' }).click()
+    await expect(stacked.getByRole('table')).toContainText('%')
+  })
+
+  test('"Next bars" onto the last page keeps the reader where they were', async ({ page }) => {
+    await openGallery(page)
+    const paged = page.locator('[data-gallery-item="bar-paginated"]')
+    const next = paged.getByRole('button', { name: 'Next bars' })
+    const status = paged.locator('[data-bar-page-status]')
+    await expect(status).toHaveText('Page 1 of 2')
+    // The page state describes the buttons it belongs to.
+    const statusId = await status.getAttribute('id')
+    await expect(next).toHaveAttribute('aria-describedby', statusId as string)
+    await expect(paged.getByRole('button', { name: 'Previous bars' })).toHaveAttribute(
+      'aria-describedby',
+      statusId as string,
+    )
+
+    await next.focus()
+    await page.keyboard.press('Enter')
+    await expect(status).toHaveText('Page 2 of 2')
+    // `disabled` used to destroy the focused control and drop focus to <body>.
+    await expect(next).toBeFocused()
+    await expect(next).toHaveAttribute('aria-disabled', 'true')
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false)
+    // …and pressing it again does nothing rather than paging past the end.
+    await page.keyboard.press('Enter')
+    await expect(status).toHaveText('Page 2 of 2')
+  })
+
+  test('the page controls are the same size as the frame\'s own buttons', async ({ page }) => {
+    await openGallery(page)
+    const heightOf = (locator: Locator) => locator.evaluate((el) => Math.round(el.getBoundingClientRect().height))
+    const paged = page.locator('[data-gallery-item="bar-paginated"]')
+    const frameButton = await heightOf(paged.getByRole('button', { name: 'View as table' }))
+    for (const name of ['Previous bars', 'Next bars']) {
+      expect(await heightOf(paged.getByRole('button', { name })), `${name} height`).toBe(frameButton)
+    }
+    expect(frameButton).toBeGreaterThanOrEqual(26)
+  })
+
+  /**
+   * The gallery pins every canvas to 640 px, which is exactly what hides SC
+   * 1.4.10: at a 320 px viewport the canvas stays 640 px and scrolls inside
+   * its box, so nothing reflows and a chart that loses its whole value axis
+   * looks perfect. `?canvas=fluid` releases the pin so the SAME charts are
+   * narrow for real.
+   */
+  test('the numbers survive a real 320px frame', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 })
+    await openGallery(page, `?canvas=${GALLERY_FLUID_CANVAS_PARAM}`)
+    await expect(page.getByTestId('chart-gallery')).toHaveAttribute('data-gallery-canvas-mode', 'fluid')
+
+    // Still no two-dimensional scrolling.
+    const overflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }))
+    expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth)
+
+    for (const id of ['bar-ranked', 'bar-stacked']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      // The chart KNOWS it is narrow…
+      await expect(item.locator('[data-bar-chart]')).toHaveAttribute('data-bar-compact', 'true')
+      // …the value axis is still drawn…
+      await expect
+        .poll(() => item.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`).count(), {
+          message: `${id}: the value axis vanished at 320px`,
+        })
+        .toBeGreaterThanOrEqual(2)
+      // …and every category still has its label.
+      await expect
+        .poll(() => item.locator(`${CATEGORY_TICKS} .recharts-cartesian-axis-tick-value`).count())
+        .toBeGreaterThanOrEqual(2)
+    }
+
+    // The ranked chart keeps a value label on every bar it draws.
+    const ranked = page.locator('[data-gallery-item="bar-ranked"]')
+    const bars = await ranked.locator('.recharts-bar-rectangle path').count()
+    expect(bars).toBeGreaterThan(0)
+    await expect.poll(() => ranked.locator('.recharts-label-list text').count()).toBe(bars)
+  })
+
+  test('a tiny donut slice leaves no empty text node behind', async ({ page }) => {
+    await openGallery(page)
+    const empties = await page
+      .locator('[data-gallery-item="donut-tiny-slice"] svg text')
+      .evaluateAll((nodes) => nodes.filter((node) => (node.textContent ?? '').trim() === '').length)
+    expect(empties, 'an empty <text> is a node a reader can land on that says nothing').toBe(0)
+  })
+
+  test('the REGISTRY, not the caller, decides between a donut and a ranked bar', async ({ page }) => {
+    await openGallery(page)
+
+    const four = page.locator('[data-gallery-item="breakdown-four-categories"]')
+    await expect(four.locator('[data-chart-choice]')).toHaveAttribute('data-chart-choice', 'donut')
+    await expect(four.locator('[data-chart-choice]')).toHaveAttribute('data-chart-offers-pie', 'true')
+    await expect(four.locator('[data-donut]')).toHaveCount(1)
+
+    // Six categories, and the caller asked for a donut: it gets bars, and no pie.
+    const six = page.locator('[data-gallery-item="breakdown-six-categories"]')
+    await expect(six.locator('[data-chart-choice]')).toHaveAttribute('data-chart-choice', 'ranked-bar')
+    await expect(six.locator('[data-chart-choice]')).toHaveAttribute('data-chart-offers-pie', 'false')
+    await expect(six.locator('[data-donut]')).toHaveCount(0)
+    await expect(six.locator('[data-bar-chart="ranked"]')).toHaveCount(1)
+  })
+
+  test('the table view of a Wave-2 chart opens from the keyboard and lands on the caption', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="donut-status"]')
+    const button = item.getByRole('button', { name: 'View as table' })
+    await button.focus()
+    await expect(button).toBeFocused()
+    await page.keyboard.press('Enter')
+
+    const table = item.getByRole('table')
+    await expect(table).toBeVisible()
+    await expect(table.locator('caption')).toBeFocused()
+    const rows = await table
+      .locator('tbody tr')
+      .evaluateAll((trs) => trs.map((tr) => Array.from(tr.children, (cell) => cell.textContent ?? '')))
+    // Exactly the plotted values, in the drawn order — count AND share, the
+    // two things every arc is labelled with.
+    expect(rows).toEqual([
+      ['Passed', '880', '88.0%'],
+      ['Failed', '60', '6.0%'],
+      ['Broken', '20', '2.0%'],
+      ['Skipped', '40', '4.0%'],
+    ])
+    // …and the number in the centre of the ring, which no row could carry.
+    await expect(item.locator('[data-donut-table-total]')).toHaveText('Total 1,000 executions')
+    // Hiding it again is a keyboard round trip too.
+    await item.getByRole('button', { name: 'Hide table' }).focus()
+    await page.keyboard.press('Enter')
+    await expect(item.getByRole('table')).toHaveCount(0)
+  })
+
+  // ── Wave 2 · the time series (VIZ-403) and the duration charts (VIZ-406) ─────
+
+  const TIME_SERIES = '[data-gallery-item="timeseries-trend-releases"]'
+
+  /** The fills and dash patterns of one item's drawn bar segments. */
+  async function barEncoding(page: Page, itemId: string) {
+    return page.locator(`[data-gallery-item="${itemId}"] .recharts-bar-rectangle path`).evaluateAll((nodes) =>
+      nodes
+        .filter((node) => {
+          const box = node.getBoundingClientRect()
+          return box.width > 0 && box.height > 0
+        })
+        .map((node) => ({
+          fill: node.getAttribute('fill') ?? '',
+          dash: node.getAttribute('stroke-dasharray'),
+        })),
+    )
+  }
+
+  test('the time series marks its partial UTC day with a pattern, not just a colour', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    const item = page.locator(TIME_SERIES)
+    const figure = item.locator('[data-chart="time-series"]')
+
+    // `meta.partial_day` names 2026-03-10, and 2 runs are still executing.
+    await expect(figure).toHaveAttribute('data-partial-day', '2026-03-10')
+    await expect(item.locator('[data-chart-partial-note]')).toContainText('2026-03-10 is still filling')
+    await expect(item.locator('[data-chart-partial-note]')).toContainText('2 in progress')
+
+    // Exactly one of the drawn execution bars carries a pattern fill, and that
+    // one is ALSO dashed. A colour-only difference would vanish in a monochrome
+    // print and for a colour-blind reader, so both encodings are asserted.
+    const bars = await barEncoding(page, 'timeseries-trend-releases')
+    // 10 UTC days, 2 of which had no runs at all: 8 bars.
+    expect(bars.length, JSON.stringify(bars)).toBe(8)
+    const patterned = bars.filter((bar) => /^url\(#/.test(bar.fill))
+    expect(patterned).toHaveLength(1)
+    expect(patterned[0].dash, 'the partial day is hatched but not dashed').toBeTruthy()
+
+    // The two days nobody ran anything are a GAP, stated as such — never a 0%.
+    await expect(item.locator('[data-chart-gap-note]')).toContainText('2 days have no pass rate')
+    await expect(item.locator('[data-chart-axis-caption]')).toHaveText(UTC_AXIS_CAPTION)
+    expect(errors).toEqual([])
+  })
+
+  test('the release markers a time series draws are in its table view too', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator(TIME_SERIES)
+
+    // Drawn on the plot first: one reference line per marked bucket.
+    await expect(item.locator('.recharts-reference-line')).toHaveCount(2)
+
+    await item.getByRole('button', { name: 'View as table' }).click()
+    const releases = item.locator('[data-chart-release-table]')
+    await expect(releases).toBeVisible()
+    const rows = await releases
+      .locator('tbody tr')
+      .evaluateAll((trs) => trs.map((tr) => Array.from(tr.children, (cell) => cell.textContent ?? '')))
+    // 1.4.0 is stamped 2026-03-03T00:00:00Z: midnight OPENS that bucket rather
+    // than closing the 2nd's. 1.4.1 is 2026-03-08T16:30:00Z, inside the 8th.
+    expect(rows).toEqual([
+      ['2026-03-03', '1.4.0'],
+      ['2026-03-08', '1.4.1'],
+    ])
+    // 1.3.0 is dated 2026-02-24, before the window: dropped from the plot, but
+    // COUNTED — in the chart's own note and again for the table reader. The
+    // sentence also covers a release whose date could not be parsed at all,
+    // which used to be dropped without being counted anywhere.
+    const notShown = '1 release is not shown: dated outside this window, or carrying a date that could not be read.'
+    await expect(releases).toContainText(notShown)
+    await expect(item.locator('[data-chart-markers-outside]')).toContainText(notShown)
+    // A table reader also gets the plotted values themselves.
+    await expect(item.getByRole('table').first()).toContainText('2026-03-10')
+  })
+
+  test('a zoomed rate axis says so, and an axis that starts at 0 does not', async ({ page }) => {
+    await openGallery(page)
+    const zoomed = page.locator('[data-gallery-item="timeseries-zoomed-axis"]')
+    await expect(zoomed.locator('[data-chart-axis-zero-indicator]')).toHaveText(AXIS_NOT_ZERO_LABEL)
+    // The negative control, and the reason the indicator means anything: the
+    // other two time series are on a 0–100 axis and must NOT carry it.
+    for (const id of ['timeseries-trend-releases', 'timeseries-single-point']) {
+      await expect(
+        page.locator(`[data-gallery-item="${id}"] [data-chart-axis-zero-indicator]`),
+        `${id} claims a zoomed axis`,
+      ).toHaveCount(0)
+    }
+  })
+
+  test('a one-day series is drawn as a dot, because a line renderer would draw nothing', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="timeseries-single-point"]')
+    await expect(item.locator('[data-chart="time-series"]')).toHaveAttribute('data-single-point', 'true')
+    // The dot is the whole point: with `dot={false}` this chart would hold data
+    // and render an empty plot.
+    await expect(item.locator('.recharts-line-dot')).toHaveCount(1)
+  })
+
+  test('the duration histogram counts what it could not place, and hatches its overflow bucket', async ({
+    page,
+  }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="duration-histogram"]')
+
+    // The fixture holds 214 executions with NO duration and 2 recorded as
+    // exactly 0 ms — 216 excluded of 687 — and the zeroes are broken out
+    // because they are excluded for a different reason (a log axis has no
+    // place for 0), so a reporting bug that writes every duration as 0 cannot
+    // read as a missing-data bug.
+    await expect(item.locator('[data-chart-excluded]')).toHaveText(
+      '216 executions without duration, including 2 recorded as 0ms',
+    )
+    await expect(item.locator('[data-chart-counted]')).toHaveText('471 of 687 executions placed.')
+
+    // The 1-2-5 ladder over 0.4 ms … 42 min gives 12 finite buckets plus the
+    // overflow bucket, and this fixture puts at least one execution in every
+    // one of them.
+    const bars = await barEncoding(page, 'duration-histogram')
+    expect(bars.length).toBe(13)
+    // The overflow bucket counts a DIFFERENT thing (everything above the axis),
+    // so it is hatched rather than merely another colour — exactly one bar.
+    expect(bars.filter((bar) => /^url\(#/.test(bar.fill))).toHaveLength(1)
+    // …and it is the LAST bar, not one in the middle.
+    expect(/^url\(#/.test(bars[bars.length - 1].fill)).toBe(true)
+  })
+
+  test('a histogram with nothing timed says so instead of drawing an empty axis', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="duration-histogram-empty"]')
+    await expect(item.locator('[data-chart-empty]')).toBeVisible()
+    await expect(item.locator(CHART_SVG)).toHaveCount(0)
+    // Three executions, none of them placeable: 2 missing and 1 recorded as 0.
+    await expect(item.locator('[data-chart-excluded]')).toHaveText(
+      '3 executions without duration, including 1 recorded as 0ms',
+    )
+    // Nothing was placed, so the "N of M placed" line is absent rather than 0.
+    await expect(item.locator('[data-chart-counted]')).toHaveCount(0)
+  })
+
+  test('the p50/p95 band reports a disagreement instead of silently reordering it', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="duration-band"]')
+    // 2026-03-08 reports p95 180 ms under p50 410 ms — one inverted day.
+    await expect(item.locator('[data-chart="duration-trend"]')).toHaveAttribute('data-inverted', '1')
+    await expect(item.locator('[data-chart-band-notice]')).toContainText(
+      'p95 was below p50 on 1 day; both are drawn as reported.',
+    )
+    // The unmeasured day is a gap in the TABLE too, never a 0 ms median.
+    await item.getByRole('button', { name: 'View as table' }).click()
+    const table = item.getByRole('table')
+    await expect(table).toContainText('2026-03-06')
+    await expect(table.locator('td', { hasText: /^—$/ }).first()).toBeVisible()
+  })
+
+  test('the slowest tests are ranked, capped, and keep their run counts', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="slowest-tests"]')
+    const rows = item.locator('[data-chart="slowest-tests"] li')
+    // 24 tests in the fixture; the frame shows the top 20 (SLOWEST_TESTS_LIMIT)
+    // and states that there were more.
+    await expect(rows).toHaveCount(20)
+    await expect(item.locator('[data-chart-truncation]')).toContainText('Showing the slowest 20 of 24 tests')
+
+    // The run count is beside every bar: a p95 over 12 runs is not the same
+    // claim as a p95 over 200, and ranking without it invites acting on noise.
+    const runs = await rows.evaluateAll((nodes) =>
+      nodes.map((node) => /(\d[\d,]*) runs?/.exec(node.textContent ?? '')?.[1] ?? null),
+    )
+    expect(runs.filter((value) => value === null), JSON.stringify(runs)).toEqual([])
+
+    // Ranked: each bar is no longer than the one above it, and the longest
+    // measured p95 sets the scale.
+    const widths = await item
+      .locator('[data-testid="ranked-bar"]')
+      .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width))
+    expect(widths).toHaveLength(20)
+    expect(widths).toEqual([...widths].sort((a, b) => b - a))
+    expect(widths[0]).toBeGreaterThan(0)
+    // The 42-minute outlier dwarfs the rest, so the second bar is a sliver —
+    // but a drawn one: a measured value never renders as nothing.
+    expect(widths[19]).toBeGreaterThan(0)
+
+    // The test whose p95 was never measured sorts LAST, so it is off the top 20
+    // rather than ranking as the fastest test in the project.
+    await expect(item).not.toContainText('search returns nothing for an unknown sku')
   })
 
   // ── Chart frame states (VIZ-107) and the accessible-chart baseline (VIZ-105) ──
@@ -569,7 +1371,7 @@ test.describe('chart gallery (/__charts)', () => {
   })
 
   for (const theme of ALL_THEMES) {
-    test(`the states page has no serious or critical accessibility violations (${theme})`, async ({ page }) => {
+    test(`the states page has no accessibility violations at any impact (${theme})`, async ({ page }) => {
       await openStates(page, theme)
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
       // The states page carries no allowlisted violation in any theme.
@@ -590,3 +1392,4 @@ test.describe('chart gallery (/__charts)', () => {
     expect(counts).toEqual({ alerts: 0, statuses: 1, assertive: 1, inFrames: 0, politeText: '' })
   })
 })
+

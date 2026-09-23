@@ -9,7 +9,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ChartSeries } from '@/lib/viz/contracts'
-import { chartTableModel, type ChartAxes, type ValueFormatter } from './chartText'
+import { chartTableModel, type ChartAxes, type SeriesFormat } from './chartText'
 
 export const PAGINATE_ABOVE = 500
 export const PAGE_SIZE = 100
@@ -18,7 +18,8 @@ interface Props {
   caption: string
   series: ChartSeries
   axes?: ChartAxes
-  format?: ValueFormatter
+  /** One formatter, or one per series keyed on `series.key` (see `SeriesFormat`). */
+  format?: SeriesFormat
   /** Move focus to the caption on mount (true when the reader opened it). */
   autoFocus?: boolean
 }

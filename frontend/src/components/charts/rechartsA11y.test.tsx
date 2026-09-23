@@ -10,6 +10,7 @@ import TrendChart from './TrendChart'
 import DefectDonut from './DefectDonut'
 import PassRateGauge from './PassRateGauge'
 import { prefersReducedMotion, REDUCED_MOTION_QUERY, useChartAnimation, usePrefersReducedMotion } from './motion'
+import { CURSOR_HINT } from './ChartCursor'
 
 vi.mock('recharts', () => {
   const chart =
@@ -72,19 +73,41 @@ describe('Recharts components — accessibility layer and reduced motion', () =>
     window.matchMedia = realMatchMedia
   })
 
-  it('turns accessibilityLayer on for every Recharts chart', () => {
+  it('turns accessibilityLayer on for every chart that has no cursor of its own', () => {
     const { container } = render(
       <>
         <TrendChart data={[POINT]} type="line" />
         <TrendChart data={[POINT]} type="area" />
         <TrendChart data={[POINT]} type="bar" />
-        <DefectDonut data={[1, 2, 3, 4]} />
         <PassRateGauge value={90} />
       </>,
     )
     const charts = [...container.querySelectorAll('[data-chart]')]
-    expect(charts.map((c) => c.getAttribute('data-chart'))).toEqual(['line', 'area', 'bar', 'pie', 'radial'])
+    expect(charts.map((c) => c.getAttribute('data-chart'))).toEqual(['line', 'area', 'bar', 'radial'])
     for (const chart of charts) expect(chart).toHaveAttribute('data-a11y', 'true')
+  })
+
+  /**
+   * The donut is the exception, and deliberately so. `accessibilityLayer` puts
+   * `role="application"` on the surface — which takes the screen reader's
+   * virtual cursor away — and Recharts gives that surface no accessible name,
+   * so the reader lands on an unnamed application. A custom tooltip `content`
+   * has already deleted Recharts' own `role="status"` live region, so nothing
+   * is announced there either. `useChartCursor` replaces both with a NAMED,
+   * focusable group and the page's one announcer.
+   */
+  it('gives the donut a named focusable surface instead of an unnamed application', () => {
+    const { container } = render(<DefectDonut data={[1, 2, 3, 4]} />)
+    // EXPLICITLY false: Recharts 3 defaults it to true, so omitting the prop
+    // would leave `role="application"` on the surface.
+    expect(container.querySelector('[data-chart="pie"]')).toHaveAttribute('data-a11y', 'false')
+    expect(container.querySelector('[role="application"]')).toBeNull()
+
+    const surface = container.querySelector('[data-donut]') as HTMLElement
+    expect(surface).toHaveAttribute('tabindex', '0')
+    expect(surface).toHaveAttribute('role', 'group')
+    expect(surface.getAttribute('aria-label')).toContain('Defects by priority')
+    expect(surface.getAttribute('aria-label')).toContain(CURSOR_HINT)
   })
 
   it('disables every animation under prefers-reduced-motion, even with animate={true}', () => {

@@ -1,5 +1,80 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 2: the everyday charts (VIZ-401, 402, 403, 406)
+
+Four chart types, each mounted in Epic 1's ``ChartFrame`` so every empty and
+error state, the table view, the page announcer and the export ref come with
+them. They read the existing endpoints and Wave 2's ``chart-data`` through thin
+adapters. **No production page draws one yet**: they live on the dev gallery
+``/__charts`` (35 items) and the production bundle is unchanged, byte for byte.
+
+**Donut and bars (VIZ-401, 402).** ``DonutChart`` generalises the orphaned
+``DefectDonut``: slices in fixed status order (never by size, so two reports are
+comparable), the total in the centre, and percentages that really sum to 100.0
+-- largest remainder, not rounding, pinned by a table test that includes the
+33.3/33.3/33.4 case. ``unknown`` is the fifth slice, flaky is never a slice, a
+slice under 2 % moves its label to the legend and keeps a visible arc with the
+true value, one status is a full labelled ring, all zero hands over to the
+filtered-empty state. ``BarChart`` draws ranked, grouped, stacked and 100 %
+stacked bars: descending, zero-based axis, full-precision labels, long names
+middle-truncated by CODE POINT with the full name in tooltip and table, ties at
+the cut-off kept up to N+5 and said so, negative changes diverging around zero,
+and pagination past 50 bars that states the page and the total. A registry picks
+the chart: more than five categories renders a ranked bar and offers no pie,
+overruling a caller that asked for one.
+
+**Trends and duration (VIZ-403, 406).** ``TimeSeriesChart`` draws pass rate on a
+0-100 % axis against executions on a second axis with its own title. A day with
+no runs is a GAP, not a zero -- the rate is gated on evaluated executions rather
+than trusting a server 0 -- and the table says so ("2 days have no pass rate").
+Release markers stand in the plot and, because a marker is not a value in any
+series, in the table too through a new ``tableExtras`` hook. Buckets are UTC
+days: the axis says so, the tooltip adds the local range, and a viewer whose
+local date differs is told which way. The current UTC day is hatched and dashed
+when the server flags it partial, and only when that day is actually drawn.
+Above 366 points the ECharts renderer takes over with sampling, carrying the
+same legend and the same hatch. Duration analysis: a log-spaced histogram with
+labelled edges, an underflow bucket and an overflow bucket, so one 42-minute
+outlier cannot flatten it; executions with no duration are excluded AND counted,
+with zeros counted separately; p50 and p95 as two lines with a hatched band
+between them; and the 20 slowest tests by p95 with their run counts, where an
+unmeasured p95 sorts last instead of ranking as zero. A p95 below p50 is drawn
+as reported and stated, never silently swapped.
+
+**What two independent reviews changed.** A blocker both found: the frame held
+ONE value formatter and applied it to every column, so the slowest-tests table
+and its screen-reader summary printed "10 runs" as "10ms". The formatter is now
+per series. Every new chart had replaced Recharts' default tooltip with its own,
+which deleted the live region Recharts provides, while ``accessibilityLayer``
+left an unnamed ``role="application"`` surface that takes a screen reader's
+virtual cursor away -- so a keyboard reader could not read a single value, and
+that was a regression on ``DefectDonut``. One shared ``useChartCursor`` replaces
+both: a named focusable chart, arrow keys through the points, each announced
+through the page's ONE live region, Escape to dismiss. The 100 % toggle existed
+only in the drawing (the table, the summary and the axis kept absolute counts);
+the bar charts had no axis titles at all; at 320 px they dropped the whole value
+axis and every bar label; paging to the last page dropped focus to the page
+body. The p50-p95 band was colour alone at 1.19:1 against the card and the
+execution bars at 2.5:1 (1.6:1 in ``lab``) -- both now carry a pattern and
+measure 3.4-7.9:1, and the partial day is no longer the brightest bar on the
+chart. The legacy adapters had hardcoded the envelope to ``null``, so
+"not measured" and "truncated" could never appear for two of three sources, and
+the shipped top-failing adapter keyed bars by DISPLAY NAME and summed them: two
+tests sharing a name became one bar whose value no test had. Bars are keyed by
+fingerprint now, and the duplicate adapter that did it correctly is gone rather
+than left to drift. A duration below the ladder's first edge was counted in a
+bucket whose label excluded it. The axe gate filtered to serious-and-above with
+no tag set; it now runs the full WCAG 2.2 AA plus best-practice set with no
+impact filter, and stays green in all six themes.
+
+**Still open, named rather than hidden.** SC 1.4.13 "hoverable" is half done:
+the tooltip takes pointer events and Escape dismisses it, but it still follows
+the cursor. ``TrendChart`` and ``PassRateGauge`` (Epic 1) still carry the
+unnamed application surface -- the e2e names those four gallery items and
+ratchets them, so the test fails when they are fixed and the exception is not
+deleted. The ECharts canvas path above 366 points has no keyboard cursor and no
+gallery item exercises it.
+
 ## Unreleased - Visualization Upgrade, Wave 2 backend: one endpoint for every chart, and a bounded way to read it (VIZ-203, VIZ-209)
 
 **One guarded endpoint instead of a route per chart.**

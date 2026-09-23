@@ -1,60 +1,61 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { CHART_VARS, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING, type DecalKind } from './tokens'
-import { useChartAnimation } from './motion'
-import {
-  ChartLegend,
-  patternFill,
-  renderPatterns,
-  statusPatternId,
-  useChartPatternPrefix,
-  type PatternSpec,
-} from './patterns'
+import { DonutPlot, type SliceStyle } from './DonutChart'
+import { donutModel, type DonutSlice } from './DonutChart.model'
+import { CHART_VARS, type DecalKind } from './tokens'
 
 /**
- * One slice per priority. P1 / P2 borrow the failed / broken STATUS encoding
- * (colour AND pattern); P3 / P4 get their own colour and a pattern no other
- * slice uses, so the four slices never differ by colour alone (VIZ-102).
- * P4 was a literal grey; it is the theme's muted neutral now.
+ * Defects by priority — now one configuration of the generic `DonutPlot`
+ * (VIZ-401), which owns the ring, the patterns, the legend and the empty text.
+ *
+ * P1 / P2 borrow the failed / broken STATUS encoding (colour AND pattern), so
+ * they are drawn by `DonutPlot`'s status path; P3 / P4 get their own colour and
+ * a pattern no other slice uses, so the four slices never differ by colour
+ * alone (VIZ-102). P4 was a literal grey; it is the theme's muted neutral now.
+ *
+ * No centre total and no slice labels: this donut counts defects, not a
+ * breakdown of one declared whole, and its callers give it 200 px of height.
  */
-const PRIORITIES: { label: string; color: string; decal: DecalKind; status?: 'failed' | 'broken' }[] = [
-  { label: 'P1 Critical', color: CHART_VARS.status.failed, decal: STATUS_ENCODING.failed.decal, status: 'failed' },
-  { label: 'P2 High', color: CHART_VARS.status.broken, decal: STATUS_ENCODING.broken.decal, status: 'broken' },
-  { label: 'P3 Medium', color: CHART_VARS.accent, decal: 'dots' },
-  { label: 'P4 Low', color: CHART_VARS.neutral, decal: 'solid' },
+const PRIORITIES: { key: string; label: string; status?: 'failed' | 'broken'; color: string; decal: DecalKind }[] = [
+  { key: 'p1', label: 'P1 Critical', status: 'failed', color: CHART_VARS.status.failed, decal: 'diagonal' },
+  { key: 'p2', label: 'P2 High', status: 'broken', color: CHART_VARS.status.broken, decal: 'crosshatch' },
+  { key: 'p3', label: 'P3 Medium', color: CHART_VARS.accent, decal: 'dots' },
+  { key: 'p4', label: 'P4 Low', color: CHART_VARS.neutral, decal: 'solid' },
 ]
 
+/** Keyed, not indexed: a zero P1 must not hand P3's colour to P2. */
+function priorityStyle(slice: DonutSlice): SliceStyle {
+  const priority = PRIORITIES.find((entry) => entry.key === slice.key) ?? PRIORITIES[PRIORITIES.length - 1]
+  return { color: priority.color, decal: priority.decal }
+}
+
 interface Props {
-  data: number[]   // [p1, p2, p3, p4]
+  data: number[] // [p1, p2, p3, p4]
   /** Forwarded to Recharts' `isAnimationActive`; `undefined` keeps Recharts' default. */
   animate?: boolean
 }
 
-export default function DefectDonut({ data, animate: requestedAnimate }: Props) {
-  const animate = useChartAnimation(requestedAnimate)
-  const prefix = useChartPatternPrefix()
-  const specs: PatternSpec[] = PRIORITIES.map((p, i) => ({
-    id: p.status ? statusPatternId(prefix, p.status) : `${prefix}-chart-pattern-p${i + 1}`,
-    color: p.color,
-    decal: p.decal,
-  }))
-  const chartData = PRIORITIES.map((p, i) => ({ name: p.label, value: data[i] ?? 0, fill: patternFill(specs[i].id) })).filter(
-    (d) => d.value > 0,
+export default function DefectDonut({ data, animate }: Props) {
+  const model = donutModel(
+    PRIORITIES.map((priority, index) => ({
+      key: priority.key,
+      label: priority.label,
+      value: data[index] ?? 0,
+      ...(priority.status ? { status: priority.status } : {}),
+    })),
   )
-  if (!chartData.length) return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">No defect data</p>
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <PieChart accessibilityLayer>
-        <defs>{renderPatterns(specs)}</defs>
-        <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value" isAnimationActive={animate}>
-          {chartData.map((d) => <Cell key={d.name} fill={d.fill} />)}
-        </Pie>
-        <Tooltip
-          contentStyle={RECHARTS_TOOLTIP_STYLE}
-          formatter={(val, name) => [val, name]}
-        />
-        <Legend content={() => <ChartLegend entries={chartData.map((d) => ({ key: d.name, label: d.name, fill: d.fill }))} />} />
-      </PieChart>
-    </ResponsiveContainer>
+    <DonutPlot
+      model={model}
+      title="Defects by priority"
+      height={200}
+      animate={animate}
+      innerRadius={50}
+      outerRadius={80}
+      paddingAngle={3}
+      showCentreTotal={false}
+      showSliceLabels={false}
+      emptyText="No defect data"
+      styleOf={priorityStyle}
+    />
   )
 }
