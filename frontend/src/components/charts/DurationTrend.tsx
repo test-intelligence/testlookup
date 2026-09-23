@@ -58,6 +58,22 @@ export const DURATION_TREND_CAPTION =
   'p50 and p95 per UTC day; the hatched band between them is the spread. A day with no timed execution is a gap, never 0 ms.'
 
 /**
+ * ONE interpolation for the band's edges and both lines: straight segments.
+ *
+ * The band is `[min, max]` of the two percentiles per day. Between two days a
+ * straight line is at every point the same mix of its two ends as the band's
+ * straight edges are of theirs, so it can never leave the band — not even
+ * across an inverted day, where p95 dips under p50 and the lines cross. A
+ * curve cannot promise that: `monotone` lines over straight band edges bulged
+ * out of the band on both sides of the inverted day, and `monotone` edges
+ * would not help, because the edges follow min / max, which switch from one
+ * line to the other at an inversion and so curve differently from either.
+ * Straight also draws exactly what was measured: one value per day, nothing
+ * implied in between.
+ */
+export const DURATION_TREND_CURVE = 'linear' as const
+
+/**
  * A tick rendered as a React element rather than through `tickFormatter`.
  * `chart-guard` rejects every `*formatter` key that is not a
  * `domTooltipFormatter` — a blanket rule worth keeping — and a tick element
@@ -168,6 +184,7 @@ export default function DurationTrend({
           <Area
             dataKey="band"
             name={BAND_LEGEND_LABEL}
+            type={DURATION_TREND_CURVE}
             stroke={CHART_VARS.series[4]}
             strokeWidth={1}
             fill={`url(#${bandPattern})`}
@@ -178,7 +195,7 @@ export default function DurationTrend({
           <Line
             dataKey="p50"
             name="p50"
-            type="monotone"
+            type={DURATION_TREND_CURVE}
             stroke={CHART_VARS.series[3]}
             strokeWidth={2}
             dot={false}
@@ -188,7 +205,7 @@ export default function DurationTrend({
           <Line
             dataKey="p95"
             name="p95"
-            type="monotone"
+            type={DURATION_TREND_CURVE}
             stroke={CHART_VARS.series[4]}
             strokeDasharray="7 3"
             strokeWidth={2}

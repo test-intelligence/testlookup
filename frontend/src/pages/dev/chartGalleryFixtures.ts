@@ -337,6 +337,12 @@ export type GalleryItem =
       dimension: string
       topN?: number
       initialMode?: 'absolute' | 'percent'
+      /**
+       * A taller box than `GALLERY_FRAME_CANVAS`, for a bar chart whose plot
+       * GROWS with its rows (a 50-bar page, grouped bars). MEASURED, like the
+       * other canvases: too short and the frame spills over the next item.
+       */
+      canvasHeight?: number
     })
   | (GalleryItemBase & {
       chart: 'breakdown'
@@ -434,6 +440,8 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
     case 'duration-histogram':
     case 'duration-band':
       return GALLERY_TALL_FRAME_CANVAS
+    case 'bars':
+      return item.canvasHeight ? { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_FRAME_CANVAS
     default:
       return galleryFramed(item) ? GALLERY_FRAME_CANVAS : GALLERY_CANVAS
   }
@@ -639,6 +647,9 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     variant: 'ranked',
     dimension: 'Suite',
     data: gallerySeries(GALLERY_MANY_BARS, 'suite', 'failures', 'Failures'),
+    // 50 rows at `MIN_BAR_ROW_HEIGHT` (20 px) make a 1 068 px plot; the frame
+    // around it measures 1 170 px at 640 px wide.
+    canvasHeight: 1220,
     empty: false,
     minMarks: 50, // the page cap
   },
@@ -680,6 +691,9 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     variant: 'grouped',
     dimension: 'Suite',
     data: galleryStatusRowsSeries(GALLERY_SUITE_STATUS),
+    // Five rows of four status bars, each thick enough for its pattern: a
+    // 400 px plot in a frame measured at 476 px.
+    canvasHeight: 520,
     empty: false,
     minMarks: GALLERY_SUITE_STATUS.length * 4,
   },

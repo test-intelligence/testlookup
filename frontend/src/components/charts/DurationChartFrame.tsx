@@ -102,7 +102,10 @@ const DurationChartFrame = forwardRef<HTMLDivElement, DurationChartFrameProps>(f
         chartType="Line chart with a shaded band"
         axes={{ x: 'Day (UTC)', y: 'Duration' }}
         format={formatDuration}
-        footer={band?.notice ?? undefined}
+        // NOT `footer={band.notice}`, for the same reason as the histogram's
+        // exclusions: `DurationTrend` states the p95-below-p50 notice inside
+        // its own figure, next to the lines it qualifies. Both did, and the
+        // first Linux baselines showed the sentence printed twice.
       >
         {band ? <DurationTrend model={band} title={frameProps.title} height={height} animate={animate} /> : null}
       </ChartFrame>

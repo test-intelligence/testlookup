@@ -201,18 +201,56 @@ export function echartsDecal(status: VizStatus, tokens: Pick<ChartTokens, 'card'
   return decalOf(STATUS_ENCODING[status].decal, tokens.card)
 }
 
-/** The ECharts decal for a decal kind, drawn in `color`. `null` for solid. */
+/** The SVG patterns' tile (`patterns.tsx`); every decal repeats on the same 8 px. */
+export const DECAL_TILE = 8
+
+/**
+ * The ECharts decal for a decal kind, drawn in `color`. `null` for solid.
+ *
+ * Each one must DRAW the shape its SVG pattern draws (`patterns.tsx`), which
+ * is not the same as having the same name. An ECharts decal is a grid of dash
+ * ROWS: `dashArrayY` alternates a drawn row's height with a gap, and each
+ * drawn row takes the next entry of `dashArrayX` as its own on/off dashes
+ * (values are rounded UP to whole px). So:
+ *
+ *   - a line is a row whose dash has no gap (`[8, 0]`);
+ *   - a crosshatch is two drawn rows per tile — a full line, then 1-in-8
+ *     ticks that stack into the crossing line — rotated. Two rows of dashes
+ *     (the old `[[1, 5], [5, 1]]`) are just dashes: on the heatmap Broken was
+ *     drawn exactly like Skipped, and the hues alone are 1.07-1.38:1 apart;
+ *   - `rotation` turns the tile clockwise on screen (as SVG `rotate()` does),
+ *     so the SVG's vertical strip at +45 deg ('/') is a horizontal row at
+ *     -45 deg here. The old +45 deg drew the mirror image (a backslash) under a '/' legend swatch.
+ *
+ * `statusDecalAgreement.test.tsx` tiles each of these with ECharts' own decal
+ * code and compares the drawn shape with the legend's `<pattern>`.
+ */
 export function decalOf(kind: DecalKind, color: string): ChartDecal | null {
+  const t = DECAL_TILE
   switch (kind) {
     case 'solid':
       return null
     case 'diagonal':
-      return { symbol: 'rect', symbolSize: 1, color, rotation: Math.PI / 4, dashArrayX: [1, 0], dashArrayY: [2, 5] }
+      // '/' stripes, 2 px of every 8.
+      return { symbol: 'rect', symbolSize: 1, color, rotation: -Math.PI / 4, dashArrayX: [t, 0], dashArrayY: [2, t - 2] }
     case 'crosshatch':
-      return { symbol: 'rect', symbolSize: 1, color, rotation: 0, dashArrayX: [[1, 5], [5, 1]], dashArrayY: [2, 4] }
+      // 'X': a 2 px grid of 8 px squares, turned 45 deg.
+      return {
+        symbol: 'rect',
+        symbolSize: 1,
+        color,
+        rotation: Math.PI / 4,
+        dashArrayX: [
+          [t, 0],
+          [2, t - 2],
+        ],
+        dashArrayY: [2, 0, t - 2, 0],
+      }
     case 'dashes':
-      return { symbol: 'rect', symbolSize: 1, color, rotation: 0, dashArrayX: [4, 3], dashArrayY: [2, 6] }
+      // Horizontal 4 x 2 dashes, one per 8 px tile.
+      return { symbol: 'rect', symbolSize: 1, color, rotation: 0, dashArrayX: [4, t - 4], dashArrayY: [2, t - 2] }
     case 'dots':
-      return { symbol: 'circle', symbolSize: 0.8, color, rotation: 0, dashArrayX: [1, 4], dashArrayY: [1, 4] }
+      // 3 px dots, one per 8 px tile (the SVG's r = 1.5).
+      return { symbol: 'circle', symbolSize: 1, color, rotation: 0, dashArrayX: [3, t - 3], dashArrayY: [3, t - 3] }
   }
 }

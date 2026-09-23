@@ -26,6 +26,7 @@ import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './char
 import ChartFrame, { type ChartHeadingLevel } from './ChartFrame'
 import { hasChartData, type ChartResponse, type ChartState } from './chartState'
 import {
+  donutCentreOf,
   donutSeries,
   sliceLabel,
   statusCountsFromSeries,
@@ -190,13 +191,13 @@ export function DonutPlot({
     )
   }
 
-  // `unknown`, narrowed here: Recharts' own `Label` content type covers every
-  // view box it has, and this one only ever draws inside a polar one.
+  // `unknown`, narrowed by `donutCentreOf`: Recharts' `Label` content type
+  // covers every view box it has, and which one arrives is Recharts' choice.
   const renderCentre = (props: unknown): ReactElement => {
-    const { cx = 0, cy = 0 } = ((props as { viewBox?: { cx?: number; cy?: number } })?.viewBox ?? {}) as {
-      cx?: number
-      cy?: number
-    }
+    const centre = donutCentreOf(props)
+    // Nowhere to put it is no total, not a total at the origin.
+    if (!centre) return <g data-donut-centre-omitted="" />
+    const { x: cx, y: cy } = centre
     return (
       <text data-donut-centre="" x={cx} y={cy} textAnchor="middle" fill={CHART_VARS.text}>
         <tspan x={cx} dy="-0.1em" fontSize={20} fontWeight={600}>
@@ -238,6 +239,13 @@ export function DonutPlot({
             innerRadius={innerRadius}
             outerRadius={outerRadius}
             paddingAngle={paddingAngle}
+            // Recharts outlines every sector in white by default. On a full
+            // ring the sector's two radial edges meet at 3 o'clock, and that
+            // outline drew them as a seam across a ring with no neighbour: no
+            // stroke at all there. Between slices, the CARD colour separates
+            // them the same way in every theme (white was a bright ring round
+            // each slice on a dark card, and a colour from outside the tokens).
+            stroke={model.fullRing ? 'none' : CHART_VARS.card}
             // The PADDED arc is drawn so a tiny slice stays visible; every
             // number the reader sees comes from `slice.value`.
             dataKey="arc"
@@ -340,7 +348,8 @@ export default function DonutChart({
           // lesser view of the chart: the reader can add the counts up, but
           // the chart states the total and the table did not.
           <p data-donut-table-total="" className="mt-2 text-xs text-[var(--color-text-secondary)]">
-            Total {formatNumber(model.total)} {centreCaption}
+            Total {formatNumber(model.total)}
+            {centreCaption ? ` ${centreCaption}` : ''}
           </p>
         ) : undefined
       }

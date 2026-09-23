@@ -178,3 +178,32 @@ export function donutSeries(model: DonutModel, dimension = 'status'): ChartSerie
   }
   return chart
 }
+
+const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+
+/**
+ * Where the ring's centre is, from the props Recharts hands a `<Label>`'s
+ * `content`.
+ *
+ * NOT `viewBox.cx` alone. Recharts 3 resolves a `position="center"` label
+ * against the CARTESIAN view box (`Label.js`: "a quick fix for recharts#6030")
+ * even inside a `<Pie>`, so `viewBox` arrives as `{ x, y, width, height }`
+ * with no `cx` at all. Reading `cx ?? 0` put the total at the svg's origin:
+ * the number was drawn above the top edge and cut off, and all that showed of
+ * the caption was "…tions" in the top-left corner — on every donut, while
+ * every text assertion still found "1,000" and "executions" in the DOM.
+ *
+ * Either shape is read: a polar box's centre is its `cx`/`cy`; a cartesian
+ * box is the pie's plot area, whose middle IS the centre (`cx="50%"`,
+ * `cy="50%"`); failing both, the `x`/`y` Recharts computes for the position.
+ */
+export function donutCentreOf(props: unknown): { x: number; y: number } | null {
+  const given = (props ?? {}) as { viewBox?: Record<string, unknown>; x?: unknown; y?: unknown }
+  const box = given.viewBox ?? {}
+  if (isNumber(box.cx) && isNumber(box.cy)) return { x: box.cx, y: box.cy }
+  if (isNumber(box.x) && isNumber(box.y) && isNumber(box.width) && isNumber(box.height)) {
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }
+  if (isNumber(given.x) && isNumber(given.y)) return { x: given.x, y: given.y }
+  return null
+}

@@ -8,7 +8,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
-import DurationHistogram from './DurationHistogram'
+import DurationHistogram, { HISTOGRAM_BUCKETS_CAPTION } from './DurationHistogram'
 import DurationTrend from './DurationTrend'
 import SlowestTests from './SlowestTests'
 import DurationChartFrame from './DurationChartFrame'
@@ -386,6 +386,21 @@ describe('fix round B · 3 the p50-p95 band is not colour-only', () => {
     expect(area?.fillOpacity ?? 1).toBe(1)
   })
 
+  it('draws the band edges and both lines with ONE interpolation, straight, so a line never leaves the band', () => {
+    // The band is [min, max] per day. Straight segments keep each line inside
+    // it between any two days — even across an inverted day, where the lines
+    // cross — because every point of a segment is the same mix of its ends.
+    // A curve (monotone) on the lines and straight edges on the band let the
+    // lines bulge out of it around the inverted day (the first baselines).
+    reset()
+    render(<DurationTrend model={band} title="Duration trend" />)
+    const curves = captured.marks
+      .filter((mark) => mark.__type === 'line' || (mark.__type === 'area' && mark.dataKey === 'band'))
+      .map((mark) => ({ key: mark.dataKey, type: mark.type ?? 'linear (Recharts default)' }))
+    expect(curves.map((curve) => curve.key).sort()).toEqual(['band', 'p50', 'p95'])
+    expect(curves).toEqual(curves.map((curve) => ({ key: curve.key, type: 'linear' })))
+  })
+
   it('names the band in the legend, drawn with the same pattern', () => {
     reset()
     render(<DurationTrend model={band} title="Duration trend" />)
@@ -460,5 +475,48 @@ describe('fix round B · 8 the minor a11y gaps', () => {
     const titles = captured.axes.map((axis) => JSON.stringify(axis.label ?? ''))
     expect(titles.join(' ')).toMatch(/Day \(UTC\)/)
     expect(titles.join(' ')).toMatch(/Duration/)
+  })
+})
+
+// ── What the first Linux baselines showed ────────────────────────────────────
+
+describe('the duration charts say each thing once, and only when it applies', () => {
+  const inverted = durationBandPoints({
+    p50: series([
+      { x: '2026-03-01', y: 400, n: 10 },
+      { x: '2026-03-02', y: 120, n: 10 },
+    ]),
+    p95: series([
+      { x: '2026-03-01', y: 100, n: 10 },
+      { x: '2026-03-02', y: 500, n: 10 },
+    ]),
+  })
+
+  it('states the p95-below-p50 notice ONCE, not in the chart and the frame footer both', () => {
+    reset()
+    render(
+      <DurationChartFrame
+        kind="trend"
+        title="Duration trend"
+        headingLevel={3}
+        band={inverted}
+        state={{ status: 'ready', data: {}, meta, revalidating: false }}
+      />,
+    )
+    expect(inverted.notice).toBe('p95 was below p50 on 1 day; both are drawn as reported.')
+    expect(screen.getAllByText(inverted.notice as string)).toHaveLength(1)
+  })
+
+  it('explains the buckets only when it draws them', () => {
+    reset()
+    const { unmount } = render(<DurationHistogram model={buildDurationHistogram([1, 2, 5, 40])} />)
+    expect(screen.getAllByText(HISTOGRAM_BUCKETS_CAPTION)).toHaveLength(1)
+    unmount()
+
+    reset()
+    render(<DurationHistogram model={buildDurationHistogram([null, null, 0])} />)
+    expect(screen.getByText(/no execution.*carries a duration/i)).toBeInTheDocument()
+    expect(screen.queryByText(HISTOGRAM_BUCKETS_CAPTION)).toBeNull()
+    expect(screen.queryByText(/log-spaced/)).toBeNull()
   })
 })

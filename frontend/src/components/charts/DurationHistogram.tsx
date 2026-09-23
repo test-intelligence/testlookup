@@ -28,6 +28,9 @@ import type { DurationHistogramModel } from './durationBuckets'
 import { useChartPatternPrefix } from './patterns'
 
 export const HISTOGRAM_EMPTY = 'No execution in this window carries a duration'
+/** What the buckets are. Only ever shown under drawn buckets. */
+export const HISTOGRAM_BUCKETS_CAPTION =
+  'Buckets are log-spaced (1-2-5 per decade); the last bucket counts everything above the axis.'
 
 export interface DurationHistogramProps {
   model: DurationHistogramModel
@@ -124,9 +127,11 @@ export default function DurationHistogram({
         </div>
       )}
 
-      <figcaption className={NOTE}>
-        Buckets are log-spaced (1-2-5 per decade); the last bucket counts everything above the axis.
-      </figcaption>
+      {/*
+        Explains the BUCKETS, so it is shown only when buckets are drawn: under
+        the "nothing timed" message it described an axis that is not there.
+      */}
+      {rows.length > 0 && <figcaption className={NOTE}>{HISTOGRAM_BUCKETS_CAPTION}</figcaption>}
       {model.excludedStatement && (
         <p data-chart-excluded="" className={NOTE}>
           {model.excludedStatement}
