@@ -38,8 +38,14 @@ import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './char
 import { hasChartData, type ChartResponse, type ChartState } from './chartState'
 import { chooseChart, offersPie, type ChartRequest } from './chartCatalog'
 import {
+  BAR_CATEGORY_GAP,
+  GROUPED_BAR_GAP,
+  barPlotHeight,
+  breakdownCaption,
   barSeries,
   barsFromSeries,
+  defaultValueAxisTitle,
+  minRowHeight,
   rankedModel,
   statusBarModel,
   statusBarSeries,
@@ -73,6 +79,18 @@ const COMPACT_CATEGORY_AXIS_WIDTH = 92
 const COMPACT_BAR_LABEL = 13
 /** The axis titles, exported so the specs assert the words rather than retype them. */
 export const CATEGORY_AXIS_TITLE_OFFSET = 8
+
+/** The plot's margins, and the value axis's own height. */
+const PLOT_MARGIN_TOP = 20
+const PLOT_MARGIN_BOTTOM = 16
+const VALUE_AXIS_HEIGHT = 32
+/** What a ranked plot spends on anything that is not a row. */
+const RANKED_CHROME = PLOT_MARGIN_TOP + PLOT_MARGIN_BOTTOM + VALUE_AXIS_HEIGHT
+/** …and a status plot, which also draws its legend inside the chart: one line, measured at 28 px, plus 4 px to spare. */
+const STATUS_LEGEND_HEIGHT = 32
+const STATUS_CHROME = RANKED_CHROME + STATUS_LEGEND_HEIGHT
+/** Recharts takes the band gap as a percentage string. */
+const CATEGORY_GAP = `${BAR_CATEGORY_GAP * 100}%`
 
 /**
  * Same height as `ChartFrame`'s own buttons (`px-3 py-1 text-xs` → 26 px). The
@@ -141,7 +159,7 @@ export interface RankedBarPlotProps {
   title: string
   /** The category axis's title -- what the bars ARE. */
   dimension?: string
-  /** The value axis's title -- what their length MEANS. */
+  /** The value axis's title -- what their length MEANS. Default: `defaultValueAxisTitle(model)`. */
   valueAxisLabel?: string
   height?: number
   animate?: boolean
@@ -153,11 +171,12 @@ export function RankedBarPlot({
   model,
   title,
   dimension = 'Category',
-  valueAxisLabel = 'Count',
+  valueAxisLabel,
   height = 280,
   animate: requested,
   emptyText = 'No data',
 }: RankedBarPlotProps) {
+  const valueTitle = valueAxisLabel ?? defaultValueAxisTitle(model)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
   const risePattern = `${prefix}-chart-pattern-rise`
@@ -174,6 +193,8 @@ export function RankedBarPlot({
   if (model.bars.length === 0) {
     return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">{emptyText}</p>
   }
+  // Tall enough for every bar's label: a 50-bar page is not drawn in a 5-bar plot.
+  const plotHeight = barPlotHeight(model.bars.length, minRowHeight('ranked'), height, RANKED_CHROME)
 
   return (
     <div
@@ -186,16 +207,18 @@ export function RankedBarPlot({
       data-bar-pages={model.pages}
       data-bar-total={model.total}
       data-bar-values={model.bars.map((drawn) => drawn.value).join(',')}
+      data-bar-plot-height={plotHeight}
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={plotHeight}>
         {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
         <RechartsBarChart
           layout="vertical"
           data={model.bars}
           accessibilityLayer={false}
-          margin={{ top: 20, right: compact ? 40 : 64, left: 4, bottom: 16 }}
+          barCategoryGap={CATEGORY_GAP}
+          margin={{ top: PLOT_MARGIN_TOP, right: compact ? 40 : 64, left: 4, bottom: PLOT_MARGIN_BOTTOM }}
         >
           <defs>
             {renderPatterns([
@@ -205,17 +228,23 @@ export function RankedBarPlot({
             ])}
           </defs>
           <CartesianGrid stroke={CHART_VARS.grid} strokeDasharray="3 3" horizontal={false} />
-          {/* The value axis. `domain` comes from the model, and it starts at zero. */}
+          {/*
+            The value axis. `domain` AND `ticks` come from the model: it starts
+            at zero and ends on a nice number, so the last interval is as wide
+            as the others (Recharts, given only a domain, ends on the data max).
+          */}
           <XAxis
             type="number"
             domain={model.domain}
+            ticks={model.ticks}
+            interval={0}
             tick={RECHARTS_AXIS_TICK}
             axisLine={false}
             tickLine={false}
             allowDataOverflow={false}
-            height={32}
+            height={VALUE_AXIS_HEIGHT}
             label={{
-              value: valueAxisLabel,
+              value: valueTitle,
               position: 'insideBottom',
               offset: -4,
               fill: CHART_VARS.axis,
@@ -284,7 +313,7 @@ export function StatusBarPlot({
   model,
   title,
   dimension = 'Category',
-  valueAxisLabel = 'Count',
+  valueAxisLabel = defaultValueAxisTitle(null),
   height = 280,
   animate: requested,
   emptyText = 'No data',
@@ -338,6 +367,13 @@ export function StatusBarPlot({
   if (model.bars.length === 0 || model.empty) {
     return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">{emptyText}</p>
   }
+  // A grouped row holds one bar per status, each thick enough for its pattern.
+  const plotHeight = barPlotHeight(
+    model.bars.length,
+    minRowHeight(model.layout, model.statuses.length),
+    height,
+    STATUS_CHROME,
+  )
 
   return (
     <div
@@ -350,27 +386,32 @@ export function StatusBarPlot({
       data-bar-page={model.page}
       data-bar-pages={model.pages}
       data-bar-total={model.total}
+      data-bar-plot-height={plotHeight}
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={plotHeight}>
         {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
         <RechartsBarChart
           layout="vertical"
           data={rows}
           accessibilityLayer={false}
-          margin={{ top: 20, right: compact ? 12 : 16, left: 4, bottom: 16 }}
+          barCategoryGap={CATEGORY_GAP}
+          barGap={GROUPED_BAR_GAP}
+          margin={{ top: PLOT_MARGIN_TOP, right: compact ? 12 : 16, left: 4, bottom: PLOT_MARGIN_BOTTOM }}
         >
           <defs>{renderPatterns(statusPatternSpecs(prefix, model.statuses))}</defs>
           <CartesianGrid stroke={CHART_VARS.grid} strokeDasharray="3 3" horizontal={false} />
           <XAxis
             type="number"
             domain={model.domain}
+            ticks={model.ticks}
+            interval={0}
             tick={RECHARTS_AXIS_TICK}
             axisLine={false}
             tickLine={false}
             allowDataOverflow={false}
-            height={32}
+            height={VALUE_AXIS_HEIGHT}
             // The axis carries the UNIT in 100% mode. Without it the toggle
             // exists only in the drawing: "80" on the axis is 80 runs or 80%
             // of a bar, and nothing on the chart says which.
@@ -528,7 +569,7 @@ export default function BarChart({
   animate,
   scopeLabel,
   dimension = 'category',
-  valueAxisLabel = 'Count',
+  valueAxisLabel,
   onClearFilters,
   'data-testid': testId,
 }: BarChartProps) {
@@ -561,8 +602,11 @@ export default function BarChart({
       ? stacked.total === 0 || stacked.empty
       : false
   const frameState = handOverWhenEmpty(state, empty)
+  // What the bars' length means: the caller's words, else the chart's own
+  // kind (a diverging ranking is a change). The axis, table and summary share it.
+  const valueTitle = valueAxisLabel ?? defaultValueAxisTitle(ranked)
   const tableSeries = ranked
-    ? barSeries(ranked, dimension)
+    ? barSeries(ranked, dimension, valueTitle)
     : stacked
       ? statusBarSeries(stacked, dimension)
       : null
@@ -597,7 +641,7 @@ export default function BarChart({
       headingLevel={headingLevel}
       chartType={variant === 'ranked' ? 'Ranked bar chart' : `${variant === 'stacked' ? 'Stacked' : 'Grouped'} bar chart`}
       series={empty ? null : tableSeries}
-      axes={{ x: dimension, y: percentMode ? PERCENT_AXIS_TITLE : valueAxisLabel }}
+      axes={{ x: dimension, y: percentMode ? PERCENT_AXIS_TITLE : valueTitle }}
       format={format}
       scopeLabel={scopeLabel}
       height={height}
@@ -618,7 +662,7 @@ export default function BarChart({
           model={ranked}
           title={title}
           dimension={dimension}
-          valueAxisLabel={valueAxisLabel}
+          valueAxisLabel={valueTitle}
           height={height}
           animate={animate}
         />
@@ -628,7 +672,7 @@ export default function BarChart({
           model={stacked}
           title={title}
           dimension={dimension}
-          valueAxisLabel={valueAxisLabel}
+          valueAxisLabel={valueTitle}
           height={height}
           animate={animate}
         />
@@ -682,7 +726,7 @@ export function BreakdownChart({
           scopeLabel={props.scopeLabel}
           onClearFilters={props.onClearFilters}
           data-testid={props['data-testid']}
-          centreCaption={centreCaption}
+          centreCaption={centreCaption ?? breakdownCaption(series)}
           modelOf={categoryModelOf}
           dimension={props.dimension}
           axisLabel={props.valueAxisLabel}

@@ -135,6 +135,10 @@ function indexOf(params: unknown): number | null {
   return typeof index === 'number' ? index : null
 }
 
+/** The distance between two ticks of a model axis; `undefined` leaves it to ECharts. */
+const tickStep = (ticks: readonly number[]): number | undefined =>
+  ticks.length > 1 ? ticks[1] - ticks[0] : undefined
+
 export function buildTimeSeriesOption({
   model,
   tokens,
@@ -192,6 +196,8 @@ export function buildTimeSeriesOption({
         nameTextStyle: { color: tokens.axis },
         min: model.rateAxis.domain[0],
         max: model.rateAxis.domain[1],
+        // The model's tick step, as in SVG: the same axis on either renderer.
+        interval: tickStep(model.rateAxis.ticks),
         axisLabel,
         axisLine,
         splitLine,
@@ -202,7 +208,9 @@ export function buildTimeSeriesOption({
         type: 'value',
         name: EXECUTIONS_AXIS_TITLE,
         nameTextStyle: { color: tokens.axis },
-        min: 0,
+        min: model.executionsAxis.domain[0],
+        max: model.executionsAxis.domain[1],
+        interval: tickStep(model.executionsAxis.ticks),
         axisLabel,
         axisLine,
         splitLine: { show: false },

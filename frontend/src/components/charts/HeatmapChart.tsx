@@ -57,9 +57,11 @@ export default function HeatmapChart({ data, description, width = '100%', height
   const effectiveAnimate = animate && !reducedMotion
   const hintId = useId()
   const prefix = useChartPatternPrefix()
+  // A px width sizes each x label's column; '100%' falls back to a safe narrow one.
+  const chartWidth = typeof width === 'number' ? width : undefined
   const option = useMemo(
-    () => buildHeatmapOption({ data, tokens, description, animate: effectiveAnimate, salient }),
-    [data, tokens, description, effectiveAnimate, salient],
+    () => buildHeatmapOption({ data, tokens, description, animate: effectiveAnimate, salient, chartWidth }),
+    [data, tokens, description, effectiveAnimate, salient, chartWidth],
   )
   const { containerRef, instanceRef, status, retry } = useEChart('heatmap', option)
 

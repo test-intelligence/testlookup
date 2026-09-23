@@ -28,6 +28,7 @@
  */
 import type { EnvelopeMeta, SeriesChart, SeriesPoint } from '@/lib/viz/contracts'
 import type { TrendPoint } from '@/types/metrics'
+import { alignedZeroBasedScale, niceScale } from './niceScale'
 
 /** Points per series Recharts (SVG) draws before the ECharts renderer takes over. */
 export const SVG_POINT_LIMIT = 366
@@ -199,6 +200,15 @@ export function timeSeriesFromChartData({ rate, executions }: ChartDataAdapterIn
 
 export interface RateAxis {
   domain: [number, number]
+  /**
+   * The ticks, handed to the renderer rather than left to it. Given only a
+   * zoomed domain of 90-100, Recharts drew ticks at 90, 93, 96 and 100 — a
+   * last interval of 4 after two of 3 — so the grid read as unevenly spaced
+   * and no label sat on a round value. These are a nice step apart
+   * (`niceScale`: 2.5 for a 10-point span), each printed at the precision
+   * its step needs (92.5, not 93).
+   */
+  ticks: number[]
   startsAtZero: boolean
   /** `AXIS_NOT_ZERO_LABEL` when the axis is zoomed off zero, else `null`. */
   label: string | null
@@ -206,6 +216,14 @@ export interface RateAxis {
 
 /** Headroom around a zoomed rate domain, in percentage points, snapped to this step. */
 const ZOOM_STEP = 5
+/** The rate axis aims for this many intervals; the executions axis then uses the same count. */
+const RATE_AXIS_INTERVALS = 4
+
+/** The rate axis over `[low, high]`, snapped OUTWARD to a nice step. Every ladder step divides 100. */
+function rateScale(low: number, high: number): Pick<RateAxis, 'domain' | 'ticks'> {
+  const { domain, ticks } = niceScale(low, high, { intervals: RATE_AXIS_INTERVALS })
+  return { domain: [Math.max(0, domain[0]), Math.min(100, domain[1])], ticks: ticks.filter((t) => t >= 0 && t <= 100) }
+}
 
 /**
  * The rate axis domain. Zooming is allowed — a 92–98 % band is unreadable on a
@@ -216,7 +234,7 @@ export function rateAxisDomain(
   points: readonly { rate: number | null }[],
   { zoom }: { zoom: boolean },
 ): RateAxis {
-  const full: RateAxis = { domain: [0, 100], startsAtZero: true, label: null }
+  const full: RateAxis = { ...rateScale(0, 100), startsAtZero: true, label: null }
   if (!zoom) return full
   let min = Number.POSITIVE_INFINITY
   let max = Number.NEGATIVE_INFINITY
@@ -228,8 +246,41 @@ export function rateAxisDomain(
   if (!Number.isFinite(min) || !Number.isFinite(max)) return full
   const low = Math.max(0, Math.floor((min - ZOOM_STEP) / ZOOM_STEP) * ZOOM_STEP)
   const high = Math.min(100, Math.ceil((max + ZOOM_STEP) / ZOOM_STEP) * ZOOM_STEP)
-  const startsAtZero = low === 0
-  return { domain: [low, high], startsAtZero, label: startsAtZero ? null : AXIS_NOT_ZERO_LABEL }
+  const scale = rateScale(low, high)
+  const startsAtZero = scale.domain[0] === 0
+  return { ...scale, startsAtZero, label: startsAtZero ? null : AXIS_NOT_ZERO_LABEL }
+}
+
+// ── Executions axis ──────────────────────────────────────────────────────────
+
+export interface ExecutionsAxis {
+  /** `[0, max]`, `max` >= every drawn execution count: no bar is clipped. */
+  domain: [number, number]
+  /** As many intervals as the rate axis, so both axes' ticks sit on one grid. */
+  ticks: number[]
+  /** The largest execution count drawn (0 when none is). */
+  largest: number
+}
+
+/**
+ * The right-hand axis. Zero-based (a bar is a length), whole-number ticks,
+ * and the SAME interval count as the rate axis: the grid is drawn from the
+ * rate axis, and a second scale whose ticks fall between its lines reads as a
+ * second, misaligned grid.
+ */
+export function executionsAxisDomain(
+  points: readonly { executions: number | null }[],
+  rateAxis: Pick<RateAxis, 'ticks'>,
+): ExecutionsAxis {
+  let largest = 0
+  for (const point of points) {
+    if (point.executions !== null && Number.isFinite(point.executions) && point.executions > largest) {
+      largest = point.executions
+    }
+  }
+  const intervals = Math.max(1, rateAxis.ticks.length - 1)
+  const { domain, ticks } = alignedZeroBasedScale(largest, intervals, { integer: true })
+  return { domain, ticks, largest }
 }
 
 // ── Release markers ──────────────────────────────────────────────────────────
@@ -420,6 +471,7 @@ export function pickRenderer(pointsPerSeries: number): TimeSeriesRenderer {
 export interface TimeSeriesModel {
   points: TimeSeriesPoint[]
   rateAxis: RateAxis
+  executionsAxis: ExecutionsAxis
   markers: ReleaseMarker[]
   markersOutsideWindow: number
   partialDay: string | null
@@ -467,9 +519,11 @@ export function buildTimeSeriesModel({
     if (before === null && after === null) isolated.push(marked[i].x)
   }
 
+  const rateAxis = rateAxisDomain(marked, { zoom: zoomRateAxis })
   return {
     points: marked,
-    rateAxis: rateAxisDomain(marked, { zoom: zoomRateAxis }),
+    rateAxis,
+    executionsAxis: executionsAxisDomain(marked, rateAxis),
     markers: placed.markers,
     markersOutsideWindow: placed.outsideWindow,
     partialDay,

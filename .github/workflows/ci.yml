@@ -266,6 +266,16 @@ jobs:
       - name: Hermetic critical-journey smoke tests
         run: npm run test:e2e:ci
 
+      # Chart pixels against the committed Linux baselines
+      # (tests/visual/__screenshots__/linux/). Baselines are only ever produced
+      # by visual-baselines.yml on this same image and committed after a person
+      # has LOOKED at them: the first set found eighteen chart defects that
+      # every other test had missed, and a baseline committed unread makes the
+      # bug the expected output. A deliberate visual change regenerates them;
+      # an accidental one fails here with a diff in the artefact below.
+      - name: Chart visual regression (Linux baselines)
+        run: npm run test:visual
+
       - name: Upload trace on failure
         if: failure()
         uses: actions/upload-artifact@v7

@@ -10,6 +10,9 @@ import { validateChartResponse } from './chartState'
 import { validateChartSeries, type SeriesChart } from '@/lib/viz/contracts'
 import {
   ELLIPSIS,
+  MIN_BAR_ROW_HEIGHT,
+  barPlotHeight,
+  minRowHeight,
   MAX_BARS_PER_PAGE,
   MAX_BAR_LABEL,
   PERCENT_MODE_NOTE,
@@ -105,7 +108,8 @@ describe('rankedModel', () => {
     it('diverges around zero on a symmetric axis', () => {
       const model = rankedModel(change)
       expect(model.diverging).toBe(true)
-      expect(model.domain).toEqual([-8, 8])
+      // Symmetric, and NICE on both sides: -10..10, not -8..8.
+      expect(model.domain).toEqual([-10, 10])
       expect(model.domain[0]).toBeLessThan(0)
       expect(model.domain[0] + model.domain[1]).toBe(0)
       expect(model.bars.map((b) => b.value)).toEqual([5, 2, 0, -8])
@@ -116,7 +120,7 @@ describe('rankedModel', () => {
     it('keeps zero on the axis even when every change is negative', () => {
       const model = rankedModel([bar('a', -3), bar('b', -9)])
       expect(model.diverging).toBe(true)
-      expect(model.domain).toEqual([-9, 9])
+      expect(model.domain).toEqual([-10, 10])
     })
   })
 
@@ -369,5 +373,87 @@ describe('adapters', () => {
     ])
     // The series arrived failed-first; the model still stacks passed first.
     expect(statusBarModel(rows).statuses).toEqual(['passed', 'failed'])
+  })
+})
+
+// ── What the first Linux baselines showed ────────────────────────────────────
+
+describe('the value axis ends on a nice number, with evenly spaced ticks', () => {
+  // Rounded: 0.2 - 0.1 is not 0.1 in binary floating point.
+  const evenlySpaced = (ticks: number[]) =>
+    new Set(ticks.slice(1).map((tick, i) => (tick - ticks[i]).toFixed(9))).size === 1
+
+  it('ranked: 41 is drawn on 0-50 by 10, not on "0 15 30 41"', () => {
+    const model = rankedModel([bar('a', 41), bar('b', 33), bar('c', 4)])
+    expect(model.domain).toEqual([0, 50])
+    expect(model.ticks).toEqual([0, 10, 20, 30, 40, 50])
+  })
+
+  it.each([
+    [31, [0, 10, 20, 30, 40]],
+    [46, [0, 10, 20, 30, 40, 50]],
+    [9, [0, 2, 4, 6, 8, 10]],
+    [300, [0, 100, 200, 300]],
+  ])('ranked: a maximum of %s gets ticks %j', (max, ticks) => {
+    const model = rankedModel([bar('top', max), bar('low', 1)])
+    expect(model.ticks).toEqual(ticks)
+    expect(model.domain).toEqual([ticks[0], ticks[ticks.length - 1]])
+  })
+
+  it('never ends below the data, and starts at zero', () => {
+    for (const values of [[1], [3, 2], [999, 1], [12_345, 7], [0.4, 0.2]]) {
+      const model = rankedModel(values.map((value, i) => bar(`b${i}`, value)))
+      expect(model.domain[0]).toBe(0)
+      expect(model.domain[1]).toBeGreaterThanOrEqual(Math.max(...values))
+      expect(model.ticks[model.ticks.length - 1]).toBe(model.domain[1])
+      expect(evenlySpaced(model.ticks), JSON.stringify(model.ticks)).toBe(true)
+    }
+  })
+
+  it('stacked: sized by the largest TOTAL, grouped by the largest segment, both nice', () => {
+    const rows = [
+      { key: 'checkout', label: 'checkout', counts: { passed: 180, failed: 22, broken: 8, skipped: 10 } },
+      { key: 'auth', label: 'auth', counts: { passed: 140, failed: 6 } },
+    ]
+    const stacked = statusBarModel(rows, { layout: 'stacked' })
+    expect(stacked.domain).toEqual([0, 250])
+    expect(evenlySpaced(stacked.ticks)).toBe(true)
+    const grouped = statusBarModel(rows, { layout: 'grouped' })
+    expect(grouped.domain).toEqual([0, 200])
+    expect(grouped.ticks).toEqual([0, 50, 100, 150, 200])
+  })
+
+  it('100% mode stays 0-100, ticked at 25', () => {
+    const model = statusBarModel([{ key: 'a', label: 'a', counts: { passed: 3, failed: 1 } }], { mode: 'percent' })
+    expect(model.domain).toEqual([0, 100])
+    expect(model.ticks).toEqual([0, 25, 50, 75, 100])
+  })
+})
+
+describe('the plot grows with the rows it draws', () => {
+  it('gives a ranked or stacked row the measured 20 px a label needs', () => {
+    expect(MIN_BAR_ROW_HEIGHT).toBe(20)
+    expect(minRowHeight('ranked')).toBe(20)
+    expect(minRowHeight('stacked', 4)).toBe(20)
+  })
+
+  it('gives a grouped row room for every status bar at 9 px or more', () => {
+    // (4 x 9 + 3 x 4 gap) over the 80% of the band Recharts draws bars in.
+    expect(minRowHeight('grouped', 4)).toBe(60)
+    for (const statuses of [2, 3, 4, 5]) {
+      const row = minRowHeight('grouped', statuses)
+      const thickness = (row * 0.8 - (statuses - 1) * 4) / statuses
+      expect(thickness, `${statuses} statuses`).toBeGreaterThanOrEqual(9)
+    }
+  })
+
+  it("keeps the caller's height for a few bars, and grows past it for a 50-bar page", () => {
+    expect(barPlotHeight(5, MIN_BAR_ROW_HEIGHT, 260, 68)).toBe(260)
+    expect(barPlotHeight(50, MIN_BAR_ROW_HEIGHT, 260, 68)).toBe(1068)
+    // Every row gets at least its minimum, whatever the page size.
+    for (const rows of [1, 9, 13, 27, 50]) {
+      const height = barPlotHeight(rows, MIN_BAR_ROW_HEIGHT, 260, 68)
+      expect((height - 68) / rows).toBeGreaterThanOrEqual(MIN_BAR_ROW_HEIGHT)
+    }
   })
 })

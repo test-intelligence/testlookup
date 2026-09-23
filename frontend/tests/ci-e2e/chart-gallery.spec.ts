@@ -528,7 +528,12 @@ test.describe('chart gallery (/__charts)', () => {
     await openGallery(page)
     const item = page.locator('[data-gallery-item="bar-ranked"]')
     const biggest = Math.max(...GALLERY_TOP_FAILING.map(([, value]) => value))
-    await expect(item.locator('[data-bar-chart="ranked"]')).toHaveAttribute('data-bar-domain', `0,${biggest}`)
+    // From zero, and past the biggest bar — to a NICE end, not to the data max.
+    const [start, end] = ((await item.locator('[data-bar-chart="ranked"]').getAttribute('data-bar-domain')) ?? '')
+      .split(',')
+      .map(Number)
+    expect(start).toBe(0)
+    expect(end).toBeGreaterThanOrEqual(biggest)
 
     await expect.poll(() => barBoxes(page, 'bar-ranked').then((boxes) => boxes.length)).toBe(
       GALLERY_TOP_FAILING.length,
@@ -555,7 +560,10 @@ test.describe('chart gallery (/__charts)', () => {
     const extreme = Math.max(...GALLERY_CHANGE_BARS.map(([, value]) => Math.abs(value)))
     const plot = item.locator('[data-bar-chart="ranked"]')
     await expect(plot).toHaveAttribute('data-bar-diverging', 'true')
-    await expect(plot).toHaveAttribute('data-bar-domain', `-${extreme},${extreme}`)
+    // Symmetric about zero, and wide enough for the most extreme change.
+    const [low, high] = ((await plot.getAttribute('data-bar-domain')) ?? '').split(',').map(Number)
+    expect(low).toBe(-high)
+    expect(high).toBeGreaterThanOrEqual(extreme)
     await expect(item).toContainText('diverge from a zero baseline')
 
     await expect.poll(() => barBoxes(page, 'bar-diverging').then((b) => b.length)).toBe(GALLERY_CHANGE_BARS.length)
@@ -1188,6 +1196,360 @@ test.describe('chart gallery (/__charts)', () => {
     // The test whose p95 was never measured sorts LAST, so it is off the top 20
     // rather than ranking as the fastest test in the project.
     await expect(item).not.toContainText('search returns nothing for an unknown sku')
+  })
+
+  // ── What the first Linux baselines showed and no test had caught ────────────
+  //
+  // Every defect below was found by LOOKING at the CI screenshots. Each one
+  // passed the text assertions above, because it is a question of where
+  // things are drawn, not of what they say: so each is asserted here on
+  // GEOMETRY — boxes, positions, clipping.
+
+  /** The drawn box of each element's TEXT (a range, not the element's layout box). */
+  async function textBoxes(locator: Locator) {
+    return locator.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const box = range.getBoundingClientRect()
+        return { text: (node.textContent ?? '').trim(), top: box.top, bottom: box.bottom, left: box.left, right: box.right }
+      }),
+    )
+  }
+
+  type TextBox = Awaited<ReturnType<typeof textBoxes>>[number]
+
+  /** Every pair of boxes that overlap by more than a hair (0.5 px, for anti-aliased edges). */
+  function overlaps(boxes: TextBox[]): string[] {
+    const hits: string[] = []
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]
+        const b = boxes[j]
+        const x = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+        const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+        if (x > 0.5 && y > 0.5) hits.push(`"${a.text}" overlaps "${b.text}"`)
+      }
+    }
+    return hits
+  }
+
+  /** A ladder step: 1, 2, 2.5 or 5 times a power of ten. */
+  const isNiceStep = (step: number) => {
+    if (!(step > 0)) return false
+    const mantissa = step / 10 ** Math.floor(Math.log10(step))
+    return [1, 2, 2.5, 5, 10].some((nice) => Math.abs(mantissa - nice) < 1e-9)
+  }
+
+  const tickNumber = (text: string) => Number(text.replace(/[,%\s]/g, ''))
+
+  test('a 50-bar page gives every category label and every value label a row of its own', async ({ page }) => {
+    await openGallery(page)
+    for (const [id, bars] of [
+      ['bar-paginated', 50],
+      ['bar-ranked-ties', 13],
+      ['bar-ranked', GALLERY_TOP_FAILING.length],
+    ] as const) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const categories = item.locator(`${CATEGORY_TICKS} .recharts-cartesian-axis-tick-value`)
+      const values = item.locator('.recharts-label-list text')
+      await expect.poll(() => categories.count(), { message: `${id}: category labels` }).toBe(bars)
+      await expect.poll(() => values.count(), { message: `${id}: value labels` }).toBe(bars)
+      expect(overlaps(await textBoxes(categories)), `${id}: category labels overlap`).toEqual([])
+      expect(overlaps(await textBoxes(values)), `${id}: value labels overlap`).toEqual([])
+    }
+    // …and a chart that grew to fit its rows still fits in its gallery box: a
+    // frame that spills over the next item corrupts that item's screenshot.
+    for (const id of ['bar-paginated', 'bar-ranked-ties', 'bar-grouped']) {
+      const canvas = await page.locator(`[data-gallery-canvas="${id}"]`).boundingBox()
+      const frame = await page.locator(`[data-gallery-item="${id}"] [data-chart-frame]`).boundingBox()
+      expect(frame && canvas, id).toBeTruthy()
+      expect((frame?.y ?? 0) + (frame?.height ?? 0), `${id}: the frame spills out of its canvas`).toBeLessThanOrEqual(
+        (canvas?.y ?? 0) + (canvas?.height ?? 0) + 1,
+      )
+    }
+  })
+
+  test('grouped bars are thick enough to carry their status pattern', async ({ page }) => {
+    await openGallery(page)
+    const heights = await page
+      .locator('[data-gallery-item="bar-grouped"] .recharts-bar-rectangle path')
+      .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height).filter((h) => h > 0))
+    expect(heights.length).toBe(GALLERY_SUITE_STATUS.length * 4)
+    // The status patterns tile at 6-8 px: a thinner bar shows a colour and a
+    // stray pixel of pattern, so status falls back to colour alone.
+    expect(Math.min(...heights), JSON.stringify(heights)).toBeGreaterThanOrEqual(8)
+  })
+
+  test('no text in a donut is clipped: every label is whole and inside its frame', async ({ page }) => {
+    await openGallery(page)
+    for (const id of ['donut-status', 'donut-status-unknown', 'donut-tiny-slice', 'donut-single-status', 'breakdown-four-categories']) {
+      const frame = page.locator(`[data-gallery-item="${id}"] [data-chart-frame]`)
+      await expect(frame.locator('[data-donut]'), id).toBeVisible()
+      await expect.poll(() => drawnMarks(page, id)).toBeGreaterThanOrEqual(1)
+      const clipped = await frame.evaluate((root) => {
+        const frameBox = root.getBoundingClientRect()
+        const problems: string[] = []
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = (node.textContent ?? '').trim()
+          const element = node.parentElement
+          if (!text || !element) continue
+          // Visible text only: `sr-only` is a 1 px clipped box on purpose.
+          const layout = element.getBoundingClientRect()
+          if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
+          if (!(element instanceof SVGElement) && (layout.width <= 1 || layout.height <= 1)) continue
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          const box = range.getBoundingClientRect()
+          if (box.width === 0 && box.height === 0) continue
+          const inside = (outer: DOMRect) =>
+            box.left >= outer.left - 0.5 &&
+            box.right <= outer.right + 0.5 &&
+            box.top >= outer.top - 0.5 &&
+            box.bottom <= outer.bottom + 0.5
+          if (!inside(frameBox)) problems.push(`"${text}" is outside the frame`)
+          // An svg clips its own overflow: text past its edge is cut off.
+          const svg = element instanceof SVGElement ? element.ownerSVGElement : null
+          if (svg && !inside(svg.getBoundingClientRect())) problems.push(`"${text}" is cut off by its svg`)
+          if (!(element instanceof SVGElement) && element.clientWidth > 0 && element.scrollWidth > element.clientWidth) {
+            problems.push(`"${text}" overflows its box (${element.scrollWidth} > ${element.clientWidth})`)
+          }
+        }
+        return problems
+      })
+      expect(clipped, id).toEqual([])
+    }
+
+    // …and the centre total is IN the centre: inside the ring's hole, not at
+    // the svg's origin where the first baselines found it.
+    const donut = page.locator('[data-gallery-item="donut-status"]')
+    const ring = await donut.locator('.recharts-pie-sector').evaluateAll((nodes) => {
+      const boxes = nodes.map((node) => node.getBoundingClientRect())
+      const left = Math.min(...boxes.map((b) => b.left))
+      const right = Math.max(...boxes.map((b) => b.right))
+      const top = Math.min(...boxes.map((b) => b.top))
+      const bottom = Math.max(...boxes.map((b) => b.bottom))
+      return { x: (left + right) / 2, y: (top + bottom) / 2, radius: (right - left) / 2 }
+    })
+    const centre = await textBoxes(donut.locator('[data-donut-centre]'))
+    expect(centre).toHaveLength(1)
+    const middle = { x: (centre[0].left + centre[0].right) / 2, y: (centre[0].top + centre[0].bottom) / 2 }
+    expect(Math.abs(middle.x - ring.x), 'the centre total is off-centre horizontally').toBeLessThan(3)
+    expect(Math.abs(middle.y - ring.y), 'the centre total is off-centre vertically').toBeLessThan(6)
+    expect(centre[0].right - centre[0].left).toBeLessThan(ring.radius)
+  })
+
+  test('a full-ring donut draws no seam: closed all the way round, with no edge stroked across it', async ({
+    page,
+  }) => {
+    await openGallery(page)
+    const single = page.locator('[data-gallery-item="donut-single-status"]')
+    await expect(single.locator('[data-donut]')).toHaveAttribute('data-donut-full-ring', 'true')
+    await expect.poll(() => drawnMarks(page, 'donut-single-status')).toBeGreaterThanOrEqual(1)
+    const ring = await single.evaluate((section) => {
+      const paths = Array.from(section.querySelectorAll<SVGPathElement>('.recharts-pie-sector path'))
+      if (paths.length !== 1) return { sectors: paths.length, gaps: [] as number[], stroke: '', strokeWidth: '' }
+      const path = paths[0]
+      const box = path.getBBox()
+      const cx = box.x + box.width / 2
+      const cy = box.y + box.height / 2
+      const outer = box.width / 2
+      const filled = (x: number, y: number) => path.isPointInFill(new DOMPoint(x, y))
+      // The hole's radius: walk out from the centre (straight up) to the first filled point.
+      let inner = 0
+      while (inner < outer && !filled(cx, cy - inner)) inner += 0.5
+      const mid = (inner + outer) / 2
+      // Every quarter degree round the ring's middle (off the exact 0 deg
+      // where the sector's two edges meet): a padding gap is a run of
+      // unfilled angles.
+      const gaps: number[] = []
+      for (let degrees = 0.125; degrees < 360; degrees += 0.25) {
+        const radians = (degrees * Math.PI) / 180
+        if (!filled(cx + mid * Math.cos(radians), cy - mid * Math.sin(radians))) gaps.push(degrees)
+      }
+      const style = getComputedStyle(path)
+      return { sectors: 1, gaps, stroke: style.stroke, strokeWidth: style.strokeWidth }
+    })
+    expect(ring.sectors, 'one status is one sector').toBe(1)
+    expect(ring.gaps, 'the ring has a gap at these angles').toEqual([])
+    // A stroke outlines the sector's two radial edges, which meet at 3 o'clock:
+    // on a ring with no neighbour to separate, that is the seam.
+    expect(ring.stroke === 'none' || parseFloat(ring.strokeWidth) === 0, `stroke ${ring.stroke} ${ring.strokeWidth}`).toBe(
+      true,
+    )
+  })
+
+  test('the p50 and p95 lines are drawn like the band\'s edges, and never leave the band', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="duration-band"]')
+    await expect(item.locator('[data-chart="duration-trend"]')).toHaveAttribute('data-inverted', '1')
+    await expect(item.locator('.recharts-line-curve')).toHaveCount(2)
+    // ONE interpolation, as drawn: the band's outline and both lines are
+    // straight segments between the days (a path of M/L only). Curved lines
+    // over a straight-edged band came apart from its edges around the
+    // inverted day — and a curve is not bounded by the band at all.
+    const curveCommands = await item.evaluate((section) =>
+      Array.from(section.querySelectorAll<SVGPathElement>('.recharts-area-area, .recharts-area-curve, .recharts-line-curve'), (path) => ({
+        mark: path.getAttribute('class') ?? '',
+        curves: (path.getAttribute('d') ?? '').match(/[CcSsQqTtAa]/g)?.length ?? 0,
+      })),
+    )
+    expect(curveCommands.length).toBeGreaterThanOrEqual(3)
+    for (const { mark, curves } of curveCommands) expect(curves, `${mark} is curved`).toBe(0)
+    const found = await item.evaluate((section) => {
+      const band = section.querySelector<SVGPathElement>('.recharts-area-area')
+      const lines = Array.from(section.querySelectorAll<SVGPathElement>('.recharts-line-curve'))
+      if (!band) return { band: false, samples: 0, escapes: [] as string[] }
+      // Within a stroke's width of the band counts as on it: at each day the
+      // line IS the band's edge.
+      const near = (x: number, y: number) =>
+        [0, -1.5, 1.5].some((dy) => band.isPointInFill(new DOMPoint(x, y + dy)))
+      const escapes: string[] = []
+      let samples = 0
+      lines.forEach((line, index) => {
+        const total = line.getTotalLength()
+        for (let at = 0; at <= total; at += 2) {
+          const point = line.getPointAtLength(at)
+          samples += 1
+          if (!near(point.x, point.y)) escapes.push(`line ${index} at (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`)
+        }
+      })
+      return { band: true, samples, escapes }
+    })
+    expect(found.band, 'no band drawn').toBe(true)
+    expect(found.samples).toBeGreaterThan(100)
+    expect(found.escapes.slice(0, 10), `${found.escapes.length} points outside the band`).toEqual([])
+  })
+
+  test('the p95-below-p50 notice is said once', async ({ page }) => {
+    await openGallery(page)
+    const item = page.locator('[data-gallery-item="duration-band"]')
+    await expect(item.getByText('p95 was below p50 on 1 day; both are drawn as reported.', { exact: true })).toHaveCount(1)
+  })
+
+  test('a histogram explains its buckets only when it draws them', async ({ page }) => {
+    await openGallery(page)
+    const caption = /Buckets are log-spaced/
+    await expect(page.locator('[data-gallery-item="duration-histogram"]').getByText(caption)).toHaveCount(1)
+    await expect(page.locator('[data-gallery-item="duration-histogram-empty"]').getByText(caption)).toHaveCount(0)
+  })
+
+  test('every zoomed rate-axis label names the value its tick is drawn at', async ({ page }) => {
+    await openGallery(page)
+    for (const id of ['timeseries-zoomed-axis', 'timeseries-trend-releases']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const svg = await item.locator(CHART_SVG).first().boundingBox()
+      const all = await textBoxes(item.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value'))
+      // Two y axes share the class: the rate axis is the LEFT one.
+      const rate = all
+        .filter((tick) => tick.right < (svg?.x ?? 0) + (svg?.width ?? 0) / 2)
+        .map((tick) => ({ label: tick.text, value: tickNumber(tick.text), y: (tick.top + tick.bottom) / 2 }))
+        .sort((a, b) => b.y - a.y)
+      expect(rate.length, `${id}: rate ticks`).toBeGreaterThanOrEqual(3)
+      const first = rate[0]
+      const last = rate[rate.length - 1]
+      for (const tick of rate) {
+        // Where the tick IS, in axis units, from the two end ticks…
+        const drawnAt = first.value + ((first.y - tick.y) / (first.y - last.y)) * (last.value - first.value)
+        // …must be what the label SAYS, to the precision the label is printed at.
+        const places = tick.label.split('.')[1]?.length ?? 0
+        expect(Math.abs(drawnAt - tick.value), `${id}: "${tick.label}" is drawn at ${drawnAt.toFixed(3)}`).toBeLessThanOrEqual(
+          0.5 * 10 ** -places + 0.05,
+        )
+      }
+      const steps = rate.slice(1).map((tick, i) => tick.value - rate[i].value)
+      expect(new Set(steps.map((step) => step.toFixed(6))).size, `${id}: uneven rate ticks ${JSON.stringify(steps)}`).toBe(1)
+    }
+  })
+
+  test('the executions axis reaches the tallest execution bar', async ({ page }) => {
+    await openGallery(page)
+    for (const id of ['timeseries-zoomed-axis', 'timeseries-trend-releases', 'timeseries-single-point']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const plot = item.locator('[data-time-series-plot]')
+      const largest = Number(await plot.getAttribute('data-executions-max'))
+      expect(largest, `${id}: data-executions-max`).toBeGreaterThan(0)
+      const [, axisMax] = ((await plot.getAttribute('data-executions-domain')) ?? '').split(',').map(Number)
+      expect(axisMax, `${id}: the executions axis ends below the largest value`).toBeGreaterThanOrEqual(largest)
+      // The drawn axis agrees: its top tick label is that max…
+      const svg = await item.locator(CHART_SVG).first().boundingBox()
+      const right = (await textBoxes(item.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value')))
+        .filter((tick) => tick.left > (svg?.x ?? 0) + (svg?.width ?? 0) / 2)
+        .map((tick) => tickNumber(tick.text))
+      expect(Math.max(...right), `${id}: right-axis ticks ${JSON.stringify(right)}`).toBe(axisMax)
+      // …and no bar is cut off at the top of the plot.
+      const gridTop = await item
+        .locator('.recharts-cartesian-grid-horizontal line')
+        .evaluateAll((lines) => Math.min(...lines.map((line) => line.getBoundingClientRect().top)))
+      const barTops = await item
+        .locator('.recharts-bar-rectangle path')
+        .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))
+      expect(Math.min(...barTops), `${id}: a bar is clipped at the top`).toBeGreaterThanOrEqual(gridTop - 1)
+    }
+  })
+
+  test('a time series draws a grid line at every tick, and both axes tick on it', async ({ page }) => {
+    await openGallery(page)
+    for (const id of ['timeseries-zoomed-axis', 'timeseries-trend-releases', 'timeseries-single-point']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const lines = await item
+        .locator('.recharts-cartesian-grid-horizontal line')
+        .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))
+      const ticks = await textBoxes(item.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value'))
+      // Five rate ticks and five executions ticks, one grid line under each pair.
+      expect(lines.length, `${id}: grid lines ${JSON.stringify(lines)}`).toBe(ticks.length / 2)
+      for (const tick of ticks) {
+        const centre = (tick.top + tick.bottom) / 2
+        const nearest = Math.min(...lines.map((line) => Math.abs(line - centre)))
+        expect(nearest, `${id}: tick "${tick.text}" sits off the grid`).toBeLessThan(1.5)
+      }
+    }
+  })
+
+  test('bar value axes end on a nice number past the data, with evenly spaced ticks', async ({ page }) => {
+    await openGallery(page)
+    const totals = GALLERY_SUITE_STATUS.map(([, counts]) => Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0))
+    const segments = GALLERY_SUITE_STATUS.flatMap(([, counts]) => Object.values(counts).map((n) => n ?? 0))
+    const cases: [string, number][] = [
+      ['bar-ranked', Math.max(...GALLERY_TOP_FAILING.map(([, v]) => v))],
+      ['bar-ranked-ties', Math.max(...GALLERY_TOP_FAILING.map(([, v]) => v))],
+      ['bar-long-names', Math.max(...GALLERY_LONG_NAMES.map(([, v]) => v))],
+      ['bar-hostile-label', 9],
+      ['bar-paginated', 300],
+      ['breakdown-six-categories', 46],
+      ['bar-stacked', Math.max(...totals)],
+      ['bar-grouped', Math.max(...segments)],
+      ['bar-stacked-100', 100],
+    ]
+    for (const [id, dataMax] of cases) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const ticks = item.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`)
+      await expect.poll(() => ticks.count(), { message: id }).toBeGreaterThanOrEqual(3)
+      const boxes = (await textBoxes(ticks)).sort((a, b) => a.left - b.left)
+      const values = boxes.map((box) => tickNumber(box.text))
+      const steps = values.slice(1).map((value, i) => value - values[i])
+      expect(values[0], `${id}: ${JSON.stringify(values)}`).toBe(0)
+      expect(values[values.length - 1], `${id}: the axis ends below the data`).toBeGreaterThanOrEqual(dataMax)
+      expect(new Set(steps).size, `${id}: uneven ticks ${JSON.stringify(values)}`).toBe(1)
+      expect(isNiceStep(steps[0]), `${id}: step ${steps[0]}`).toBe(true)
+      // Evenly spaced on screen too, not only in value.
+      const centres = boxes.map((box) => (box.left + box.right) / 2)
+      const gaps = centres.slice(1).map((centre, i) => centre - centres[i])
+      expect(Math.max(...gaps) - Math.min(...gaps), `${id}: tick gaps ${JSON.stringify(gaps)}`).toBeLessThan(1.5)
+    }
+
+    // The change chart stays symmetric about zero, and nice on both sides.
+    const diverging = page.locator('[data-gallery-item="bar-diverging"]')
+    const values = (await textBoxes(diverging.locator(`${VALUE_TICKS} .recharts-cartesian-axis-tick-value`)))
+      .sort((a, b) => a.left - b.left)
+      .map((box) => tickNumber(box.text))
+    expect(values[0]).toBe(-values[values.length - 1])
+    expect(values).toContain(0)
+    expect(values[values.length - 1]).toBeGreaterThanOrEqual(Math.max(...GALLERY_CHANGE_BARS.map(([, v]) => Math.abs(v))))
+    const steps = values.slice(1).map((value, i) => value - values[i])
+    expect(new Set(steps).size, JSON.stringify(values)).toBe(1)
+    expect(isNiceStep(steps[0])).toBe(true)
   })
 
   // ── Chart frame states (VIZ-107) and the accessible-chart baseline (VIZ-105) ──

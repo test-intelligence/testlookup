@@ -13,9 +13,9 @@
  */
 import { useId, type ReactNode } from 'react'
 import type { VizStatus } from '@/lib/viz/contracts'
-import { CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
+import { CHART_VARS, DECAL_TILE, STATUS_ENCODING, type DecalKind } from './tokens'
 
-const TILE = 8
+const TILE = DECAL_TILE
 
 export interface PatternSpec {
   /** The full element id (already prefixed). */

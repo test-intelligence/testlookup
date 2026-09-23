@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: what the first screenshots showed, and a visual gate in CI
+
+Reading the first Linux screenshot baselines of the 35 chart-gallery items (in
+the ``signal`` and ``lab`` themes) found eighteen defects that 3 251 unit tests
+and 49 browser tests -- axe, contrast and geometry checks included -- had all
+missed. None had reached a production page (the charts are dev-gallery only).
+They are fixed here, each with a test that fails without its fix; the
+geometric ones are asserted on what is drawn, not on the text in the DOM.
+
+**Unreadable or wrong.** A 50-bar page drew in the same 260 px plot as a
+5-bar chart, so its labels overlapped into one blob; the plot now grows with
+its rows (at least 20 px each, measured against an 11 px label). Every donut
+drew its centre total at the corner of the SVG -- above the top edge, with its
+caption clipped to "…tions" -- because Recharts 3 hands a centre label a
+rectangle with no ``cx``/``cy`` and the code defaulted to 0; the unit test's
+mock passed the old shape, so it agreed with the bug. The failure-category
+donut's centre said "executions" for a count of failures. A zoomed pass-rate
+axis drew ticks at 90, 93, 96, 100 (uneven, and labelled as if even); ticks
+now come from the model (90 / 92.5 / 95 / 97.5 / 100), and the executions axis
+shares its intervals. The time-series grid pointed at an axis id the chart did
+not have, so it drew no inner lines. Value axes ended at the data maximum (31,
+41, 46); a nice-number scale now ends on a 1-2-2.5-5 step. Grouped bars were
+4 px thick, too thin to carry their status pattern.
+
+**Colour-only, where the pattern was meant to carry it.** In the status
+heatmap, Broken cells were drawn with Skipped's dashes while the legend showed
+a cross-hatch -- so the two statuses differed only by hues measured at
+1.07-1.38:1. An ECharts decal is rows of dashes, so the old "crosshatch"
+settings drew dashes; the uniqueness test passed because the two settings were
+different objects. Failed cells and the no-data hatch also leaned ``\`` while
+their legend swatch leaned ``/``. A new test lays each cell's pattern out with
+ECharts' own decal code and compares its drawn SHAPE with the rendered legend
+swatch and ``STATUS_ENCODING``.
+
+**Small but false.** The p95-below-p50 notice printed twice; an empty
+histogram explained the buckets it did not draw; the empty heatmap showed its
+colour scale; ECharts' label thinning hid one of two heatmap categories
+(axes of 12 or fewer categories now show every label, truncated with the full
+text in the tooltip); the duration band had straight edges under curved lines,
+which pulled away from it (all three are straight now: a straight segment
+between two days can never leave a min-max band); a change chart titled its
+axis "Count", and the ranked table headed its column "Value"; a single-status
+donut showed a seam at 3 o'clock, from Recharts' default white outline --
+multi-slice separators are now the card colour instead of white.
+
+**The visual gate.** The baselines are committed under
+``frontend/tests/visual/__screenshots__/linux/`` and CI compares against them
+in the job that already runs the hermetic Playwright suite. Baselines are
+generated on the CI image only (labelling a PR ``update-visual-baselines``
+runs the generator) and are committed after a person has looked at them.
+
+**Still open:** 14 px legend swatches show only about 1.5 repeats of their
+pattern; one 42-minute outlier squashes the other slowest-test bars to 2 px;
+the legacy ``TrendChart`` (no production caller, to be replaced by
+``TimeSeriesChart``) keeps its data-max axes, blank empty state, crowded last
+date and unnamed ``role="application"``.
+
 ## Unreleased - Visualization Upgrade, Wave 2: the everyday charts (VIZ-401, 402, 403, 406)
 
 Four chart types, each mounted in Epic 1's ``ChartFrame`` so every empty and

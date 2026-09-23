@@ -27,6 +27,7 @@ import { formatNumber } from '@/utils/formatters'
 import type { ChartResponse } from './chartState'
 import { largestRemainderPercents } from './chartCatalog'
 import { STATUS_ENCODING } from './tokens'
+import { symmetricScale, zeroBasedScale } from './niceScale'
 
 /** At most this many bars are drawn at once; past it the chart paginates. */
 export const MAX_BARS_PER_PAGE = 50
@@ -36,6 +37,48 @@ export const TIE_CAP_EXTRA = 5
 export const MAX_BAR_LABEL = 34
 /** The one character that marks a middle truncation. */
 export const ELLIPSIS = '…'
+
+/**
+ * The fewest CSS px a ranked or stacked bar's ROW may have.
+ *
+ * MEASURED on the gallery, not guessed: an axis tick and a value label are
+ * drawn at 11 px, and each one's text box is 15 px tall. 20 px leaves 5 px
+ * between neighbouring labels, and it is exactly the 16 px bar (`maxBarSize`)
+ * plus Recharts' default 10% gap at each side of the band. Under it the labels
+ * of adjacent rows overlap — the first Linux baselines drew a 50-bar page in
+ * the plot height of a 5-bar chart, and 50 names and 50 values ran together
+ * into one illegible block.
+ */
+export const MIN_BAR_ROW_HEIGHT = 20
+/** A grouped bar's fewest px: under 8 its status pattern (6-8 px tiles) is a stray pixel, not a pattern. */
+export const GROUPED_BAR_THICKNESS = 9
+/** Recharts' gap between the bars of one group, passed explicitly so this arithmetic holds. */
+export const GROUPED_BAR_GAP = 4
+/** Recharts' `barCategoryGap`, per side of a band, as a fraction — passed explicitly too. */
+export const BAR_CATEGORY_GAP = 0.1
+
+/**
+ * The fewest px one category's row may have: a label's worth for one bar, or
+ * room for every status bar side by side, each thick enough to show its
+ * pattern, for a grouped chart.
+ */
+export function minRowHeight(layout: 'ranked' | 'stacked' | 'grouped', statuses = 1): number {
+  if (layout !== 'grouped' || statuses <= 1) return MIN_BAR_ROW_HEIGHT
+  const bars = statuses * GROUPED_BAR_THICKNESS + (statuses - 1) * GROUPED_BAR_GAP
+  return Math.max(MIN_BAR_ROW_HEIGHT, Math.ceil(bars / (1 - 2 * BAR_CATEGORY_GAP)))
+}
+
+/**
+ * The plot height for `rows` rows: the caller's height, or MORE when the rows
+ * need it. `chrome` is everything in the plot that is not a row (margins, the
+ * value axis, a legend). The plot grows rather than the page shrinking: the
+ * page size is a contract the notes, the table and the announcement all state
+ * ("60 bars in all", "Page 1 of 2"), and a ranking split into seven 9-bar
+ * pages is harder to compare than one tall chart the page scrolls past.
+ */
+export function barPlotHeight(rows: number, rowHeight: number, requested: number, chrome: number): number {
+  return Math.max(requested, Math.ceil(Math.max(0, rows) * rowHeight + chrome))
+}
 
 export interface BarInput {
   key: string
@@ -57,9 +100,12 @@ export interface RankedModel {
   bars: RankedBar[]
   /**
    * The value axis. `domain[0]` is ZERO for counts, and for a diverging chart
-   * the axis is symmetric about zero — either way zero is on it.
+   * the axis is symmetric about zero — either way zero is on it. It ends on a
+   * NICE number past the data (`niceScale`), never at the data maximum.
    */
   domain: [number, number]
+  /** The value axis's ticks: evenly spaced, from the domain's start to its end. */
+  ticks: number[]
   diverging: boolean
   /**
    * Every kept value is zero. Not a chart of zero-length bars on a [0, 1]
@@ -120,6 +166,18 @@ function pageNote(page: number, pages: number, total: number, noun: string): str
   return [`${formatNumber(total)} ${noun} in all`]
 }
 
+/** Value-axis titles, per what the bars' length means. */
+export const VALUE_AXIS_TITLE = { count: 'Count', change: 'Change' } as const
+
+/**
+ * The value axis's title when the caller names none. A diverging chart is a
+ * CHANGE chart — its bars run left for a fall and right for a rise — and
+ * "Count" under a -15 .. 15 axis names a quantity that cannot be negative.
+ */
+export function defaultValueAxisTitle(model: Pick<RankedModel, 'diverging'> | null | undefined): string {
+  return model?.diverging ? VALUE_AXIS_TITLE.change : VALUE_AXIS_TITLE.count
+}
+
 /** The ranked (and possibly diverging) horizontal bar model. */
 export function rankedModel(items: readonly BarInput[], options: RankedOptions = {}): RankedModel {
   const sorted = [...items].filter((item) => Number.isFinite(item.value)).sort(byValueThenLabel)
@@ -151,9 +209,10 @@ export function rankedModel(items: readonly BarInput[], options: RankedOptions =
 
   const diverging = kept.some((item) => item.value < 0)
   const extreme = kept.reduce((most, item) => Math.max(most, Math.abs(item.value)), 0)
-  const domain: [number, number] = diverging
-    ? [-extreme, extreme]
-    : [0, extreme > 0 ? extreme : 1]
+  // Whole-number steps for whole-number data: a count axis has no "2.5 runs".
+  const integer = kept.every((item) => Number.isInteger(item.value))
+  const scale = diverging ? symmetricScale(extreme, { integer }) : zeroBasedScale(extreme, { integer })
+  const { domain, ticks } = scale
   if (diverging) notes.push('Bars diverge from a zero baseline: left is a fall, right is a rise.')
 
   const { page, pages } = paginate(kept.length, options.page ?? 0)
@@ -171,6 +230,7 @@ export function rankedModel(items: readonly BarInput[], options: RankedOptions =
   return {
     bars,
     domain,
+    ticks,
     diverging,
     allZero: kept.length > 0 && kept.every((item) => item.value === 0),
     ties,
@@ -220,6 +280,8 @@ export interface StatusBarModel {
   layout: BarLayout
   mode: StackMode
   domain: [number, number]
+  /** The value axis's ticks: 0-25-50-75-100 in 100% mode, a nice scale otherwise. */
+  ticks: number[]
   /** Nothing measured in any bar. */
   empty: boolean
   page: number
@@ -271,7 +333,11 @@ export function statusBarModel(
     0,
   )
   const ceiling = layout === 'grouped' ? biggestSegment : biggestTotal
-  const domain: [number, number] = mode === 'percent' ? [0, 100] : [0, ceiling > 0 ? ceiling : 1]
+  const integer = rows.every((row) => statuses.every((status) => Number.isInteger(row.counts[status] ?? 0)))
+  const { domain, ticks } =
+    mode === 'percent'
+      ? { domain: [0, 100] as [number, number], ticks: [0, 25, 50, 75, 100] }
+      : zeroBasedScale(ceiling, { integer })
 
   const { page, pages } = paginate(all.length, options.page ?? 0)
   const notes = pageNote(page, pages, all.length, 'bars')
@@ -285,6 +351,7 @@ export function statusBarModel(
     layout,
     mode,
     domain,
+    ticks,
     empty: all.every((drawn) => drawn.total === 0),
     page,
     pages,
@@ -298,7 +365,7 @@ export function statusBarModel(
 /** A count for contract C3's `n`: a non-negative integer. */
 const sampleSize = (value: number) => Math.max(0, Math.round(Math.abs(value)))
 
-export function barSeries(model: RankedModel, dimension = 'category'): ChartSeries {
+export function barSeries(model: RankedModel, dimension = 'category', valueLabel = defaultValueAxisTitle(model)): ChartSeries {
   const chart: SeriesChart = {
     kind: 'series',
     dimensions: [dimension],
@@ -306,7 +373,9 @@ export function barSeries(model: RankedModel, dimension = 'category'): ChartSeri
     series: [
       {
         key: 'value',
-        label: 'Value',
+        // The value column is headed as the value AXIS is titled: a table
+        // saying "Value" beside a "Change" axis names neither.
+        label: valueLabel,
         // The FULL label, never the truncated one.
         points: model.bars.map((drawn) => ({ x: drawn.label, y: drawn.value, n: sampleSize(drawn.value) })),
       },
@@ -340,6 +409,19 @@ export function statusBarSeries(model: StatusBarModel, dimension = 'category'): 
     })),
   }
   return chart
+}
+
+/**
+ * What a breakdown's slices COUNT, for the words under the centre total: the
+ * one series' own label ("Failures" -> "failures"), or nothing.
+ *
+ * Never the status donut's default, "executions". A breakdown of failure
+ * categories counts failures, and once the centre total was drawn where it can
+ * be seen, "113 executions" over four failure categories stated a wrong fact.
+ */
+export function breakdownCaption(series: ChartSeries | null): string {
+  if (!series || series.kind !== 'series' || series.series.length !== 1) return ''
+  return series.series[0].label.trim().toLowerCase()
 }
 
 // ── Adapters: both existing endpoints and the VIZ-203 chart-data shape ───────

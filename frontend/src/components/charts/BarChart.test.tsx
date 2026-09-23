@@ -13,7 +13,9 @@ import { rankedModel } from './BarChart.model'
 import type { ChartResponse, ChartState } from './chartState'
 
 vi.mock('recharts', () => ({
-  ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  ResponsiveContainer: ({ children, height }: { children?: ReactNode; height?: number }) => (
+    <div data-container-height={height}>{children}</div>
+  ),
   BarChart: ({ children, data, layout }: { children?: ReactNode; data?: { short?: string }[]; layout?: string }) => (
     <svg data-chart="bar" data-layout={layout} data-rows={(data ?? []).map((row) => row.short ?? '').join('|')}>
       <g>{children}</g>
@@ -26,8 +28,13 @@ vi.mock('recharts', () => ({
   ),
   Cell: ({ fill }: { fill?: string }) => <path data-cell="" fill={fill} />,
   LabelList: ({ dataKey }: { dataKey?: string }) => <text data-labellist={dataKey} />,
-  XAxis: ({ type, domain }: { type?: string; domain?: unknown }) => (
-    <g data-xaxis={type} data-domain={Array.isArray(domain) ? domain.join(',') : ''} />
+  XAxis: ({ type, domain, ticks, label }: { type?: string; domain?: unknown; ticks?: unknown; label?: { value?: string } }) => (
+    <g
+      data-xaxis={type}
+      data-domain={Array.isArray(domain) ? domain.join(',') : ''}
+      data-ticks={Array.isArray(ticks) ? ticks.join(',') : ''}
+      data-axis-title={label?.value ?? ''}
+    />
   ),
   YAxis: ({ type, dataKey }: { type?: string; dataKey?: string }) => <g data-yaxis={type} data-datakey={dataKey} />,
   CartesianGrid: () => null,
@@ -94,13 +101,17 @@ describe('BarChart — ranked', () => {
     const { container } = render(<BarChart title="Top failing tests" state={ready(RANKED)} variant="ranked" animate={false} />)
     const plot = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
     expect(plot.getAttribute('data-bar-values')).toBe('41,23,12,7')
-    expect(plot.getAttribute('data-bar-domain')).toBe('0,41')
+    // From zero to a NICE end past the data: 0-50, not 0-41.
+    expect(plot.getAttribute('data-bar-domain')).toBe('0,50')
     expect(plot.getAttribute('data-bar-diverging')).toBe('false')
     // Horizontal: the category axis is the y one.
     expect(container.querySelector('[data-chart="bar"]')?.getAttribute('data-layout')).toBe('vertical')
     expect(container.querySelector('[data-yaxis]')?.getAttribute('data-yaxis')).toBe('category')
-    // …and the value axis really carries the zero-based domain.
-    expect(container.querySelector('[data-xaxis="number"]')?.getAttribute('data-domain')).toBe('0,41')
+    // …and the value axis really carries the zero-based domain AND its ticks:
+    // given a domain alone, Recharts ended the axis on the data max.
+    const axis = container.querySelector('[data-xaxis="number"]')
+    expect(axis?.getAttribute('data-domain')).toBe('0,50')
+    expect(axis?.getAttribute('data-ticks')).toBe('0,10,20,30,40,50')
     // Every bar is labelled with its full-precision value.
     expect(container.querySelector('[data-labellist]')?.getAttribute('data-labellist')).toBe('valueLabel')
   })
@@ -114,9 +125,34 @@ describe('BarChart — ranked', () => {
     const { container } = render(<BarChart title="Change" state={ready(change)} variant="ranked" animate={false} />)
     const plot = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
     expect(plot.getAttribute('data-bar-diverging')).toBe('true')
-    expect(plot.getAttribute('data-bar-domain')).toBe('-8,8')
+    expect(plot.getAttribute('data-bar-domain')).toBe('-10,10')
     expect(container.querySelector('[data-reference-x="0"]')).not.toBeNull()
     expect(screen.getByText(/diverge from a zero baseline/i)).toBeInTheDocument()
+  })
+
+  it('titles the value axis for what it measures: a change chart is "Change", a ranking "Count"', () => {
+    const change = categorySeries([
+      ['up', 5],
+      ['down', -8],
+    ])
+    const axisTitle = (container: HTMLElement) => container.querySelector('[data-xaxis="number"]')?.getAttribute('data-axis-title')
+    const diverging = render(<BarChart title="Change" state={ready(change)} variant="ranked" animate={false} />)
+    expect(axisTitle(diverging.container)).toBe('Change')
+    // The table view heads its value column with the same words as the axis
+    // (it said "Value" under a "Count" or "Change" axis).
+    fireEvent.click(within(diverging.container).getByRole('button', { name: 'View as table' }))
+    expect(within(diverging.container).getByRole('columnheader', { name: 'Change' })).toBeInTheDocument()
+    diverging.unmount()
+
+    const ranking = render(<BarChart title="Top failing tests" state={ready(RANKED)} variant="ranked" animate={false} />)
+    expect(axisTitle(ranking.container)).toBe('Count')
+    ranking.unmount()
+
+    // A caller that knows better still names it.
+    const named = render(
+      <BarChart title="Change" state={ready(change)} variant="ranked" valueAxisLabel="Failures, week on week" animate={false} />,
+    )
+    expect(axisTitle(named.container)).toBe('Failures, week on week')
   })
 
   it('states the ties it admitted past the top-N cut', () => {
@@ -157,6 +193,21 @@ describe('BarChart — ranked', () => {
     expect(container.querySelector('img')).toBeNull()
   })
 
+  it('grows the plot for a 50-bar page instead of squeezing it into a 5-bar height', () => {
+    const many: [string, number][] = Array.from({ length: 60 }, (_, i) => [`suite-${i}`, 300 - i * 2])
+    const { container } = render(
+      <BarChart title="Many" state={ready(categorySeries(many))} variant="ranked" height={260} animate={false} />,
+    )
+    // 50 rows x 20 px + 68 px of margins and value axis.
+    expect(container.querySelector('[data-bar-chart]')?.getAttribute('data-bar-plot-height')).toBe('1068')
+    expect(container.querySelector('[data-container-height]')?.getAttribute('data-container-height')).toBe('1068')
+  })
+
+  it('keeps the requested height when the rows fit in it', () => {
+    const { container } = render(<BarChart title="Few" state={ready(RANKED)} variant="ranked" height={260} animate={false} />)
+    expect(container.querySelector('[data-container-height]')?.getAttribute('data-container-height')).toBe('260')
+  })
+
   it('hands an empty ranking over to the filtered-empty state', () => {
     const { container } = render(<BarChart title="Top failing tests" state={ready(categorySeries([]))} variant="ranked" />)
     expect(container.querySelector('[data-chart-frame]')?.getAttribute('data-chart-state')).toBe('filtered-empty')
@@ -182,6 +233,14 @@ describe('BarChart — stacked and grouped by status', () => {
     const { container } = render(<BarChart title="Results by suite" state={ready(SUITES)} variant="grouped" animate={false} />)
     for (const bar of container.querySelectorAll('[data-bar]')) expect(bar.getAttribute('data-stack')).toBe('')
     expect(container.querySelector('[data-bar-chart="grouped"]')?.getAttribute('data-bar-domain')).toBe('0,80')
+  })
+
+  it('gives a grouped row room for each status bar, growing the plot', () => {
+    const { container } = render(
+      <BarChart title="Results by suite" state={ready(SUITES)} variant="grouped" height={100} animate={false} />,
+    )
+    // 2 rows x 60 px (four statuses at 9 px + gaps) + 68 px + a 32 px legend.
+    expect(container.querySelector('[data-bar-chart]')?.getAttribute('data-bar-plot-height')).toBe('220')
   })
 
   it('toggles between absolute counts and 100%', () => {
@@ -240,6 +299,13 @@ describe('BreakdownChart — the registry picks the chart type', () => {
     expect(container.querySelector('[data-chart-choice]')?.getAttribute('data-chart-choice')).toBe('donut')
     expect(container.querySelector('[data-chart-offers-pie]')?.getAttribute('data-chart-offers-pie')).toBe('true')
     expect(container.querySelector('[data-donut]')).not.toBeNull()
+  })
+
+  it('names the centre total by what the slices count, not "executions"', () => {
+    render(<BreakdownChart title="Failures by category" state={ready(categories(4))} animate={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'View as table' }))
+    // 10 + 11 + 12 + 13 failures, in four failure categories.
+    expect(document.querySelector('[data-donut-table-total]')?.textContent).toBe('Total 46 failures')
   })
 
   it('draws a ranked bar past five categories, and offers no pie — the caller does not decide', () => {

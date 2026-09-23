@@ -219,17 +219,33 @@ function SvgTimeSeries({
   return (
     <div
       data-time-series-plot=""
+      data-executions-max={model.executionsAxis.largest}
+      data-executions-domain={model.executionsAxis.domain.join(',')}
+      data-rate-domain={model.rateAxis.domain.join(',')}
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
     <ResponsiveContainer width="100%" height={height}>
       {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
       <ComposedChart data={rows} margin={{ top: 16, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+        {/*
+          `yAxisId="rate"`: the grid's default axis id is 0, which this chart
+          does not have, so it drew no line between the plot's top and bottom
+          edges and no tick could be followed across the plot. The executions
+          axis shares the rate axis's interval count, so its ticks sit on these
+          same lines.
+        */}
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} yAxisId="rate" />
         <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} dy={8} />
+        {/*
+          Both y axes take their TICKS from the model, not only a domain:
+          left to itself Recharts ticked a 90-100 axis at 90, 93, 96, 100.
+        */}
         <YAxis
           yAxisId="rate"
           domain={model.rateAxis.domain}
+          ticks={model.rateAxis.ticks}
+          interval={0}
           allowDataOverflow
           axisLine={false}
           tickLine={false}
@@ -239,6 +255,12 @@ function SvgTimeSeries({
         <YAxis
           yAxisId="executions"
           orientation="right"
+          // Reaches the tallest bar (never clipped) and shares the rate axis's
+          // interval count, so its ticks sit on the same grid lines.
+          domain={model.executionsAxis.domain}
+          ticks={model.executionsAxis.ticks}
+          interval={0}
+          allowDecimals={false}
           axisLine={false}
           tickLine={false}
           tick={RECHARTS_AXIS_TICK}

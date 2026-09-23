@@ -7,6 +7,7 @@ import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import {
   AXIS_NOT_ZERO_LABEL,
   SVG_POINT_LIMIT,
+  executionsAxisDomain,
   UTC_AXIS_CAPTION,
   buildTimeSeriesModel,
   localDayRange,
@@ -122,6 +123,7 @@ describe('rateAxisDomain', () => {
   it('starts at zero when it is not zoomed', () => {
     expect(rateAxisDomain(rates([92, 96, 98]), { zoom: false })).toEqual({
       domain: [0, 100],
+      ticks: [0, 25, 50, 75, 100],
       startsAtZero: true,
       label: null,
     })
@@ -144,6 +146,67 @@ describe('rateAxisDomain', () => {
 
   it('falls back to the full axis when nothing is measured', () => {
     expect(rateAxisDomain(rates([null, null]), { zoom: true }).domain).toEqual([0, 100])
+  })
+
+  // The first Linux baselines: Recharts, handed only [90, 100], ticked it at
+  // 90, 93, 96, 100 — a last interval of 4 after two of 3.
+  it('ticks a zoomed 90-100 axis at 2.5, every label exact at its precision', () => {
+    const axis = rateAxisDomain(rates([96.9, 95.5, 98, 95]), { zoom: true })
+    expect(axis.domain).toEqual([90, 100])
+    expect(axis.ticks).toEqual([90, 92.5, 95, 97.5, 100])
+    for (const tick of axis.ticks) expect(Number(String(tick))).toBe(tick)
+  })
+
+  it('always ticks evenly, from the domain start to its end, inside 0-100', () => {
+    for (const values of [[92, 96, 98], [40, 60], [99.5], [0.5, 3], [70, 71, 99]]) {
+      const axis = rateAxisDomain(rates(values), { zoom: true })
+      const steps = axis.ticks.slice(1).map((tick, i) => tick - axis.ticks[i])
+      expect(new Set(steps).size, JSON.stringify(axis)).toBe(1)
+      expect(axis.ticks[0]).toBe(axis.domain[0])
+      expect(axis.ticks[axis.ticks.length - 1]).toBe(axis.domain[1])
+      expect(axis.domain[0]).toBeGreaterThanOrEqual(0)
+      expect(axis.domain[1]).toBeLessThanOrEqual(100)
+      expect(axis.domain[0]).toBeLessThanOrEqual(Math.min(...values))
+      expect(axis.domain[1]).toBeGreaterThanOrEqual(Math.max(...values))
+    }
+  })
+})
+
+describe('executionsAxisDomain', () => {
+  const rateAxis = rateAxisDomain([], { zoom: false })
+
+  it('reaches the largest execution count, so no bar is clipped', () => {
+    for (const counts of [[200, 200, 200, 200], [45], [194, 191, 199], [3, 0, null], [1_234]]) {
+      const axis = executionsAxisDomain(
+        counts.map((executions) => ({ executions })),
+        rateAxis,
+      )
+      const largest = Math.max(0, ...counts.filter((c): c is number => c !== null))
+      expect(axis.largest).toBe(largest)
+      expect(axis.domain[0]).toBe(0)
+      expect(axis.domain[1], JSON.stringify(counts)).toBeGreaterThanOrEqual(largest)
+    }
+  })
+
+  it('shares the rate axis interval count, so both tick on one grid', () => {
+    const axis = executionsAxisDomain([{ executions: 200 }], rateAxis)
+    expect(axis.ticks).toEqual([0, 50, 100, 150, 200])
+    expect(axis.ticks.length).toBe(rateAxis.ticks.length)
+    const zoomed = rateAxisDomain([{ rate: 92 }, { rate: 98 }], { zoom: true })
+    expect(executionsAxisDomain([{ executions: 45 }], zoomed).ticks.length).toBe(zoomed.ticks.length)
+  })
+
+  it('is carried on the model the chart draws', () => {
+    const model = buildTimeSeriesModel({
+      points: timeSeriesFromTrends([
+        { date: '2026-03-01', passed: 194, failed: 6, skipped: 0, broken: 0, total: 200, pass_rate: 97 },
+        { date: '2026-03-02', passed: 191, failed: 9, skipped: 0, broken: 0, total: 200, pass_rate: 95.5 },
+      ]),
+      zoomRateAxis: true,
+    })
+    expect(model.executionsAxis.largest).toBe(200)
+    expect(model.executionsAxis.domain[1]).toBeGreaterThanOrEqual(200)
+    expect(model.executionsAxis.ticks.length).toBe(model.rateAxis.ticks.length)
   })
 })
 

@@ -72,6 +72,14 @@ describe('buildHeatmapOption', () => {
     expect(ramp(build({ data: counts })).max).toBe(42)
   })
 
+  it('labels both ends of the colour ramp, so a colour can be read as a value', () => {
+    // [max, min], ECharts' order. Without these the first Linux baselines drew
+    // a bare colour bar — and the salient end flips with the metric.
+    expect(ramp(build()).text).toEqual(['100.0%', '0.0%'])
+    const counts: NumericMatrix = { ...matrix, value_type: 'count', cells: [{ x: 0, y: 0, value: 42, n: 42 }] }
+    expect(ramp(build({ data: counts })).text).toEqual(['42', '0'])
+  })
+
   it('keeps animation off by default', () => {
     const option = build()
     expect(option.animation).toBe(false)

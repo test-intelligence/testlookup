@@ -60,6 +60,26 @@ export function defaultSalient(valueType: NumericMatrix['value_type']): HeatmapS
 
 export const NO_DATA_SERIES_ID = 'no-data'
 
+/** The plot's insets inside the chart box, px. The y labels live in `left`, the x labels and colour bar in `bottom`. */
+export const HEATMAP_GRID = { top: 8, right: 16, bottom: 56, left: 120 } as const
+
+/**
+ * Up to this many categories on an axis, EVERY one is labelled (`interval: 0`)
+ * and a long label is cut to its own column instead. ECharts' default
+ * (`'auto'`) thins labels by the WIDEST one: on a two-column heatmap one long
+ * CI label dropped its neighbour "benign" entirely, and a reader could not
+ * tell which column was which. Past the limit the columns are too narrow for
+ * any text to fit, and thinning is the lesser evil; the tooltip and the table
+ * still name every cell.
+ */
+export const HEATMAP_ALL_LABELS_MAX = 12
+
+/** The chart width assumed when the caller's is not a number of px (`'100%'`): narrow enough to be safe. */
+export const HEATMAP_ASSUMED_WIDTH = 480
+
+/** Space kept between two neighbouring labels, px. */
+const LABEL_GAP = 8
+
 export interface HeatmapOptionInput {
   data: HeatmapMatrix
   tokens: ChartTokens
@@ -68,6 +88,25 @@ export interface HeatmapOptionInput {
   animate?: boolean
   /** Defaults per metric (`defaultSalient`). Ignored for a status matrix. */
   salient?: HeatmapSalience
+  /** The chart box's width in px, when known; sizes each x label's column. Default `HEATMAP_ASSUMED_WIDTH`. */
+  chartWidth?: number
+}
+
+/**
+ * A category axis's labels: every one shown, each cut (ECharts measures the
+ * text) to `width` px when there are few enough to fit; ECharts' own thinning
+ * past `HEATMAP_ALL_LABELS_MAX`. The FULL label is always in the tooltip, the
+ * announcement and the table (`heatmapTooltipContent`) — the cut is display only.
+ */
+function categoryLabels(count: number, width: number, color: string) {
+  const every = count <= HEATMAP_ALL_LABELS_MAX
+  return {
+    color,
+    interval: every ? 0 : ('auto' as const),
+    width: Math.max(1, Math.floor(width)),
+    overflow: 'truncate' as const,
+    ellipsis: '…',
+  }
 }
 
 export function formatHeatmapValue(valueType: HeatmapMatrix['value_type'], value: number | VizStatus): string {
@@ -112,11 +151,25 @@ function cellOf(params: unknown): { x: number; y: number } | null {
   return typeof x === 'number' && typeof y === 'number' ? { x, y } : null
 }
 
-export function buildHeatmapOption({ data, tokens, animate = false, salient }: HeatmapOptionInput): HeatmapOption {
+/** A colour-ramp end as the tooltip would print that value: "100.0%" for a rate, "42" for a count. */
+export function rampEndLabel(valueType: NumericMatrix['value_type'], value: number): string {
+  return valueType === 'rate' ? formatRateValue(value) : formatPlainValue(value)
+}
+
+export function buildHeatmapOption({
+  data,
+  tokens,
+  animate = false,
+  salient,
+  chartWidth = HEATMAP_ASSUMED_WIDTH,
+}: HeatmapOptionInput): HeatmapOption {
   const byCell = new Map<string, Cell>(data.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
   const empty = data.cells.filter((cell) => cell.value === null)
 
-  const axisLabel = { color: tokens.axis }
+  const plotWidth = chartWidth - HEATMAP_GRID.left - HEATMAP_GRID.right
+  const xLabel = categoryLabels(data.x_labels.length, plotWidth / Math.max(1, data.x_labels.length) - LABEL_GAP, tokens.axis)
+  // The y labels share the left inset, whatever the row count.
+  const yLabel = categoryLabels(data.y_labels.length, HEATMAP_GRID.left - LABEL_GAP, tokens.axis)
   const axisLine = { lineStyle: { color: tokens.grid } }
   // Active cell: 2px outline in the text colour + a halo in the card colour.
   const emphasis = {
@@ -182,6 +235,11 @@ export function buildHeatmapOption({ data, tokens, animate = false, salient }: H
     visualMap.push({
       type: 'continuous',
       id: 'ramp',
+      // Nothing measured, nothing to read against a scale: a "0.0% - 100.0%"
+      // bar under a grid of hatched cells reads as if some of them were data.
+      // The ramp stays (ECharts needs every heatmap series under a visualMap),
+      // only its bar is hidden.
+      show: empty.length < data.cells.length,
       seriesIndex: 0,
       min: 0,
       max,
@@ -192,6 +250,12 @@ export function buildHeatmapOption({ data, tokens, animate = false, salient }: H
       itemHeight: 120,
       // Step 7 is the salient end: put it where the problem is.
       inRange: { color: direction === 'high' ? [...tokens.seq] : [...tokens.seq].reverse() },
+      // The ramp's two ENDS, in words: `[max, min]` (ECharts' order). A colour
+      // bar with no values on it cannot be read at all, and because the
+      // salient end flips with the metric (a rate is reversed, a count is
+      // not), the same yellow meant "lowest" on one heatmap and "highest" on
+      // the next — the first Linux baselines showed both, unlabelled.
+      text: [rampEndLabel(data.value_type, max), rampEndLabel(data.value_type, 0)],
       textStyle: { color: tokens.axis },
     })
   }
@@ -213,7 +277,7 @@ export function buildHeatmapOption({ data, tokens, animate = false, salient }: H
     animation: animate,
     // Off: the wrapper names the chart (once) and the frame's summary describes it.
     aria: { enabled: false },
-    grid: { top: 8, right: 16, bottom: 56, left: 120 },
+    grid: { ...HEATMAP_GRID },
     tooltip: {
       trigger: 'item',
       backgroundColor: tokens.card,
@@ -225,8 +289,8 @@ export function buildHeatmapOption({ data, tokens, animate = false, salient }: H
         return cell ? heatmapTooltipContent(data, cell) : { rows: [] }
       }),
     },
-    xAxis: { type: 'category', data: data.x_labels, axisLabel, axisLine, splitArea: { show: false } },
-    yAxis: { type: 'category', data: data.y_labels, axisLabel, axisLine, splitArea: { show: false } },
+    xAxis: { type: 'category', data: data.x_labels, axisLabel: xLabel, axisLine, splitArea: { show: false } },
+    yAxis: { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false } },
     visualMap,
     series,
   }
