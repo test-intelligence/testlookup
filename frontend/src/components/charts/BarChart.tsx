@@ -15,7 +15,7 @@
  * Everything the reader is told about the data comes from the model, so the
  * plot, the notes, the tooltip and the table view cannot disagree.
  */
-import { useId, useMemo, useState, type ReactNode } from 'react'
+import { useId, useMemo, useState } from 'react'
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -24,15 +24,21 @@ import {
   LabelList,
   Legend,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
+  useXAxisScale,
 } from 'recharts'
 import type { ChartSeries } from '@/lib/viz/contracts'
 import { formatNumber, formatPercent } from '@/utils/formatters'
 import ChartFrame, { type ChartHeadingLevel } from './ChartFrame'
-import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { PinnedTip, sweepOf } from './ChartTooltip'
+import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { OTHER_KEY } from './multiSeriesModel'
+import type { TipRect } from './tipPlacement'
+import ChartResponsive from './ChartResponsive'
+import { sampleRow, shareRow, tipContent, type TooltipContent } from './tooltip'
 import { COMPACT_CHART_WIDTH, useContainerWidth } from './chartLayout'
 import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './chartText'
 import { hasChartData, type ChartResponse, type ChartState } from './chartState'
@@ -40,6 +46,7 @@ import { chooseChart, offersPie, type ChartRequest } from './chartCatalog'
 import {
   BAR_CATEGORY_GAP,
   GROUPED_BAR_GAP,
+  GROUPED_BAR_THICKNESS,
   barPlotHeight,
   breakdownCaption,
   barSeries,
@@ -52,12 +59,15 @@ import {
   statusRowsFromSeries,
   middleTruncate,
   PERCENT_MODE_NOTE,
+  type RankedBar,
   type RankedModel,
   type StackMode,
+  type StatusBar,
   type StatusBarModel,
 } from './BarChart.model'
 import DonutChart, { handOverWhenEmpty } from './DonutChart'
 import { categoryDonutModel } from './DonutChart.model'
+import SwapLabel from './SwapLabel'
 import { useChartAnimation } from './motion'
 import {
   ChartLegend,
@@ -68,7 +78,7 @@ import {
   useChartPatternPrefix,
   type LegendEntry,
 } from './patterns'
-import { CHART_VARS, DIV_COUNT, RECHARTS_AXIS_TICK, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING } from './tokens'
+import { CHART_VARS, DIV_COUNT, RECHARTS_AXIS_TICK, STATUS_ENCODING } from './tokens'
 
 const BAR_SIZE = 16
 /** Room for the middle-truncated category labels on the y axis. */
@@ -97,33 +107,128 @@ const CATEGORY_GAP = `${BAR_CATEGORY_GAP * 100}%`
  * frame's toolbar puts these side by side with them, and a 22 px control next
  * to a 26 px one is both a smaller target and a visibly ragged row.
  */
+/** The stacked bars' mode toggle names the mode it switches TO. */
+export const SHOW_PERCENT_LABEL = 'Show 100%'
+export const SHOW_COUNTS_LABEL = 'Show counts'
+const MODE_TOGGLE_LABELS = [SHOW_PERCENT_LABEL, SHOW_COUNTS_LABEL] as const
+
 const TOOLBAR_BUTTON =
   'rounded border border-[var(--color-border-light)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50 aria-disabled:opacity-50'
 
-function TooltipShell({ children }: { children: ReactNode }) {
-  return (
-    <div data-chart-tooltip="" style={RECHARTS_TOOLTIP_STYLE} className="px-2 py-1">
-      {children}
-    </div>
-  )
+// ── The tooltip (VIZ-601) ────────────────────────────────────────────────────
+
+/**
+ * A ranked bar's tooltip content: the FULL name (however hard the axis had to
+ * truncate it), the exact value under the value axis's own title, and — for a
+ * count, not a change — its share of everything ranked, across every page.
+ * No separate sample size: a ranked count's n IS its value (`barSeries` says
+ * so in the table), and "Samples: 41" under "Failures: 41" would be the same
+ * number twice.
+ */
+export function rankedTipContent(drawn: RankedBar, valueTitle: string, whole: number | null): TooltipContent {
+  return tipContent(drawn.label, [
+    { kind: 'value', key: 'value', label: valueTitle, value: drawn.valueLabel },
+    whole !== null && shareRow(drawn.value, whole),
+  ])
 }
 
-interface RankedTooltipProps {
+/**
+ * A status bar's tooltip content: every segment in the fixed status order,
+ * with its TRUE count and its share of the bar — in either mode, so flipping
+ * the toggle never changes what a bar is said to hold — then the bar's total,
+ * the sample every share is of.
+ */
+export function statusTipContent(bar: StatusBar): TooltipContent {
+  return tipContent(bar.label, [
+    ...bar.segments.map((segment) => ({
+      kind: 'value' as const,
+      key: segment.status,
+      label: STATUS_ENCODING[segment.status].label,
+      value: formatNumber(segment.value),
+      detail: `${formatPercent(segment.percent)} of bar`,
+      color: CHART_VARS.status[segment.status],
+    })),
+    sampleRow(bar.total),
+  ])
+}
+
+/** The sum a ranked bar's share is of: every bar on every page — none on a chart that holds a negative (a change). */
+export function rankedWhole(items: readonly { value: number }[]): number | null {
+  if (items.some((item) => item.value < 0)) return null
+  const sum = items.reduce((total, item) => total + item.value, 0)
+  return sum > 0 ? sum : null
+}
+
+/**
+ * The whole behind "Share of total", or `null` when the bars the server
+ * returned do not add up to it (Wave 2.4 review F1).
+ *
+ * A `truncated` response is the top N of M categories with the rest DROPPED:
+ * the point cap bit and nobody asked for a `top_n`, so the service rolled
+ * nothing into "Other" (`chart_data_service.py`, `truncated_x`). The returned
+ * bars then sum to less than the total, and every share would be inflated —
+ * the top 20 of 400 would share out 100 % between them, beside a frame that
+ * says "Showing top 20 of 400". Nothing in `meta` carries the missing part:
+ * `truncated_total` counts categories, and `meta.totals` counts runs and
+ * executions, not whatever the bars measure. So no share is stated at all —
+ * the bar's own value still is. Where the response DOES carry an "Other"
+ * bar (a `top_n` roll-up), the bars are the whole again, and it is used.
+ */
+export function rankedShareWhole(items: readonly { key: string; value: number }[], truncated: boolean): number | null {
+  if (truncated && !items.some((item) => item.key === OTHER_KEY)) return null
+  return rankedWhole(items)
+}
+
+interface BarTipGeometry {
+  /**
+   * Recharts' active coordinate: in a horizontal-bar chart, `y` is the row's
+   * centre and `x` the pointer's — the line a pointer moving down the rows
+   * sweeps along, which a tooltip below or above the row keeps off.
+   */
+  coordinate?: { x?: number; y?: number }
+}
+
+/**
+ * The drawn extent of one row's bars, in chart coordinates: from the value
+ * axis's zero to the furthest end, over the row's bar thickness. The tooltip
+ * is placed beside THIS, so it never covers the bar it describes.
+ */
+export function barMark(
+  ends: readonly number[] | null,
+  thickness: number,
+  centre: number | undefined,
+  xScale: ((value: number) => number | undefined) | undefined,
+): TipRect | null {
+  if (!ends || centre === undefined || !xScale) return null
+  const xs = [0, ...ends].map((value) => xScale(value)).filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
+  if (xs.length === 0) return null
+  const left = Math.min(...xs)
+  return { left, top: centre - thickness / 2, width: Math.max(...xs) - left, height: thickness }
+}
+
+function useBarMark(ends: readonly number[] | null, thickness: number, { coordinate }: BarTipGeometry): TipRect | null {
+  const xScale = useXAxisScale()
+  return barMark(ends, thickness, coordinate?.y, xScale ? (value: number) => xScale(value) : undefined)
+}
+
+interface RankedTooltipProps extends BarTipGeometry {
   active?: boolean
   payload?: { payload?: RankedModel['bars'][number] }[]
+  valueTitle?: string
+  whole?: number | null
 }
 
-/** Text, as React nodes: a test name from an ingested CI file is never markup. */
-export function RankedTooltip({ active, payload }: RankedTooltipProps) {
+/** Recharts' ranked-bar tooltip: the shared content model, pinned beside its bar. */
+export function RankedTooltip({
+  active,
+  payload,
+  coordinate,
+  valueTitle = defaultValueAxisTitle(null),
+  whole = null,
+}: RankedTooltipProps) {
   const drawn = active ? payload?.[0]?.payload : undefined
-  if (!drawn) return null
-  return (
-    <TooltipShell>
-      {/* The FULL name, however hard the axis had to truncate it. */}
-      <div className="font-semibold">{drawn.label}</div>
-      <div>{drawn.valueLabel}</div>
-    </TooltipShell>
-  )
+  const mark = useBarMark(drawn ? [drawn.value] : null, BAR_SIZE, { coordinate })
+  return <PinnedTip content={drawn ? rankedTipContent(drawn, valueTitle, whole) : null} mark={mark} sweep={sweepOf(coordinate, 'y')} />
 }
 
 interface StatusRow {
@@ -135,22 +240,26 @@ interface StatusRow {
   [status: string]: unknown
 }
 
-export function StatusTooltip({ active, payload }: { active?: boolean; payload?: { payload?: StatusRow }[] }) {
+interface StatusTooltipProps extends BarTipGeometry {
+  active?: boolean
+  payload?: { payload?: StatusRow }[]
+  layout?: StatusBarModel['layout']
+}
+
+/** How thick one row's bars are drawn: one bar, or a group of them side by side. */
+function rowThickness(layout: StatusBarModel['layout'], statuses: number): number {
+  return layout === 'grouped' && statuses > 1
+    ? statuses * GROUPED_BAR_THICKNESS + (statuses - 1) * GROUPED_BAR_GAP
+    : BAR_SIZE
+}
+
+/** Recharts' status-bar tooltip: the shared content model, pinned beside the row's bars. */
+export function StatusTooltip({ active, payload, coordinate, layout = 'stacked' }: StatusTooltipProps) {
   const row = active ? payload?.[0]?.payload : undefined
-  if (!row) return null
-  return (
-    <TooltipShell>
-      <div className="font-semibold">{row.label}</div>
-      {row.bar.segments.map((segment) => (
-        <div key={segment.status} className="flex gap-3">
-          <span>{STATUS_ENCODING[segment.status].label}</span>
-          <span className="ml-auto font-semibold">
-            {formatNumber(segment.value)} ({formatPercent(segment.percent)})
-          </span>
-        </div>
-      ))}
-    </TooltipShell>
-  )
+  const plotted = row ? row.bar.segments.map((segment) => segment.plotted) : null
+  const ends = plotted ? (layout === 'stacked' ? [plotted.reduce((a, b) => a + b, 0)] : plotted) : null
+  const mark = useBarMark(ends, rowThickness(layout, row?.bar.segments.length ?? 1), { coordinate })
+  return <PinnedTip content={row ? statusTipContent(row.bar) : null} mark={mark} sweep={sweepOf(coordinate, 'y')} />
 }
 
 export interface RankedBarPlotProps {
@@ -164,6 +273,11 @@ export interface RankedBarPlotProps {
   height?: number
   animate?: boolean
   emptyText?: string
+  /**
+   * What each bar's "share of total" is a share of: the sum over EVERY bar,
+   * every page (`rankedWhole`). `null` (a change chart, or unknown) states no share.
+   */
+  whole?: number | null
 }
 
 /** Ranked (and, with negatives, diverging) horizontal bars. */
@@ -172,21 +286,29 @@ export function RankedBarPlot({
   title,
   dimension = 'Category',
   valueAxisLabel,
-  height = 280,
+  height: requestedHeight = 280,
   animate: requested,
   emptyText = 'No data',
+  whole = null,
 }: RankedBarPlotProps) {
+  // Full screen (VIZ-608): the plot takes the frame's body; the footer is the frame's, not ours.
+  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const scale = usePresentationScale()
+  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
   const valueTitle = valueAxisLabel ?? defaultValueAxisTitle(model)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
   const risePattern = `${prefix}-chart-pattern-rise`
   const fallPattern = `${prefix}-chart-pattern-fall`
   const [wrapRef, width] = useContainerWidth<HTMLDivElement>()
-  const compact = width > 0 && width < COMPACT_CHART_WIDTH
+  const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
+  // A diverging axis is a CHANGE: a share of a sum of rises and falls is meaningless.
+  const shareOf = model.diverging ? null : whole
 
+  // Built from the SAME content the pointer's tooltip shows (VIZ-601).
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () => model.bars.map((drawn) => ({ key: drawn.key, text: `${drawn.label}: ${drawn.valueLabel}` })),
-    [model],
+    () => model.bars.map((drawn) => cursorPoint(drawn.key, rankedTipContent(drawn, valueTitle, shareOf))),
+    [model, valueTitle, shareOf],
   )
   const cursor = useChartCursor({ title, chartType: 'ranked bar chart', points: cursorPoints, noun: 'bar' })
 
@@ -211,7 +333,7 @@ export function RankedBarPlot({
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-      <ResponsiveContainer width="100%" height={plotHeight}>
+      <ChartResponsive height={plotHeight}>
         {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
         <RechartsBarChart
           layout="vertical"
@@ -272,7 +394,15 @@ export function RankedBarPlot({
               fontSize: 11,
             }}
           />
-          <Tooltip key={cursor.tipKey} content={<RankedTooltip />} cursor={false} {...cursor.tipProps} />
+          {/* Pinned beside its bar (`PinnedTip`): a fixed origin, no slide. */}
+          <Tooltip
+            key={cursor.tipKey}
+            content={<RankedTooltip valueTitle={valueTitle} whole={shareOf} />}
+            cursor={false}
+            position={{ x: 0, y: 0 }}
+            isAnimationActive={false}
+            {...cursor.tipProps}
+          />
           {model.diverging && <ReferenceLine x={0} stroke={CHART_VARS.axis} strokeWidth={1.5} />}
           <Bar dataKey="value" isAnimationActive={animate} maxBarSize={BAR_SIZE} fill={patternFill(risePattern)}>
             <LabelList
@@ -286,7 +416,7 @@ export function RankedBarPlot({
             ))}
           </Bar>
         </RechartsBarChart>
-      </ResponsiveContainer>
+      </ChartResponsive>
       {cursor.readout}
     </div>
   )
@@ -314,14 +444,18 @@ export function StatusBarPlot({
   title,
   dimension = 'Category',
   valueAxisLabel = defaultValueAxisTitle(null),
-  height = 280,
+  height: requestedHeight = 280,
   animate: requested,
   emptyText = 'No data',
 }: StatusBarPlotProps) {
+  // Full screen (VIZ-608): the plot takes the frame's body; its legend is inside the chart.
+  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const scale = usePresentationScale()
+  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
   const [wrapRef, width] = useContainerWidth<HTMLDivElement>()
-  const compact = width > 0 && width < COMPACT_CHART_WIDTH
+  const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
   const percent = model.mode === 'percent'
 
   const rows: StatusRow[] = useMemo(
@@ -342,19 +476,10 @@ export function StatusBarPlot({
   }))
 
   // One stop per BAR, reading every segment: a reader stepping through a
-  // stacked chart wants the composition, not one rectangle at a time.
+  // stacked chart wants the composition, not one rectangle at a time — in
+  // the same words the pointer's tooltip uses (VIZ-601).
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () =>
-      model.bars.map((drawn) => ({
-        key: drawn.key,
-        text: `${drawn.label}: ${drawn.segments
-          .map((segment) =>
-            model.mode === 'percent'
-              ? `${STATUS_ENCODING[segment.status].label} ${formatPercent(segment.percent)}`
-              : `${STATUS_ENCODING[segment.status].label} ${formatNumber(segment.value)} (${formatPercent(segment.percent)})`,
-          )
-          .join(', ')}`,
-      })),
+    () => model.bars.map((drawn) => cursorPoint(drawn.key, statusTipContent(drawn))),
     [model],
   )
   const cursor = useChartCursor({
@@ -390,7 +515,7 @@ export function StatusBarPlot({
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-      <ResponsiveContainer width="100%" height={plotHeight}>
+      <ChartResponsive height={plotHeight}>
         {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
         <RechartsBarChart
           layout="vertical"
@@ -443,7 +568,14 @@ export function StatusBarPlot({
               fontSize: 11,
             }}
           />
-          <Tooltip key={cursor.tipKey} content={<StatusTooltip />} cursor={false} {...cursor.tipProps} />
+          <Tooltip
+            key={cursor.tipKey}
+            content={<StatusTooltip layout={model.layout} />}
+            cursor={false}
+            position={{ x: 0, y: 0 }}
+            isAnimationActive={false}
+            {...cursor.tipProps}
+          />
           <Legend content={() => <ChartLegend entries={legendEntries} />} />
           {model.statuses.map((status) => (
             <Bar
@@ -457,7 +589,7 @@ export function StatusBarPlot({
             />
           ))}
         </RechartsBarChart>
-      </ResponsiveContainer>
+      </ChartResponsive>
       {cursor.readout}
     </div>
   )
@@ -581,6 +713,13 @@ export default function BarChart({
     () => (series && variant === 'ranked' ? rankedModel(barsFromSeries(series), { topN, page }) : null),
     [series, variant, topN, page],
   )
+  // Every bar the server returned, not just this page's: a bar's share is of
+  // the whole ranking — and none when the server returned only part of it.
+  const truncated = state.status === 'truncated'
+  const whole = useMemo(
+    () => (series && variant === 'ranked' ? rankedShareWhole(barsFromSeries(series), truncated) : null),
+    [series, variant, truncated],
+  )
   const stacked = useMemo(
     () =>
       series && variant !== 'ranked'
@@ -629,7 +768,9 @@ export default function BarChart({
         data-bar-mode-toggle={mode}
         onClick={() => setMode(mode === 'percent' ? 'absolute' : 'percent')}
       >
-        {mode === 'percent' ? 'Show counts' : 'Show 100%'}
+        {/* One width for both labels ("Show counts" is the wider): pressing it
+            must not re-wrap the frame's title beside it. */}
+        <SwapLabel labels={MODE_TOGGLE_LABELS} current={mode === 'percent' ? SHOW_COUNTS_LABEL : SHOW_PERCENT_LABEL} />
       </button>
     ) : undefined
 
@@ -665,6 +806,7 @@ export default function BarChart({
           valueAxisLabel={valueTitle}
           height={height}
           animate={animate}
+          whole={whole}
         />
       ) : null}
       {stacked && !empty ? (

@@ -19,4 +19,12 @@ export const CHART_MESSAGES = {
   signIn: 'Sign in',
   viewTable: 'View as table',
   hideTable: 'Hide table',
+  /**
+   * The full-screen button's NAME, which changes with the state (VIZ-608).
+   * Not `aria-pressed`: the button does a different thing in each state, and
+   * the spec names both actions; "Full screen, pressed" would leave a reader
+   * to work out that pressing it again means leaving.
+   */
+  fullScreen: 'Full screen',
+  exitFullScreen: 'Exit full screen',
 } as const

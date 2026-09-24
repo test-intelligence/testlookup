@@ -18,9 +18,12 @@ import { CHART_MESSAGES } from './chartMessages'
 import { CHART_VARS } from './tokens'
 import { TREND_OVERLAY_STYLE } from './TimeSeriesChartOverlayStyle'
 import { trendAnalysisFixture, trendAnalysisSparseFixture } from './__fixtures__/wave2Fixtures'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
 import {
   ANOMALY_RULE,
   INSUFFICIENT_DATA_REASON,
+  NBSP,
   MOVING_AVERAGE_LABEL,
   TREND_LINE_LABEL,
   analyzeTrend,
@@ -37,6 +40,8 @@ interface Captured {
 const captured: Captured = { chartData: [], lines: [], dots: [], tooltips: [] }
 
 vi.mock('recharts', () => ({
+  // The plot area the pinned tooltip reads its day's column from (VIZ-601).
+  usePlotArea: () => ({ x: 40, y: 16, width: 400, height: 200 }),
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children, data }: { children: ReactNode; data: Record<string, unknown>[] }) => {
     captured.chartData = data
@@ -208,7 +213,7 @@ describe('VIZ-405 · too little data', () => {
     reset()
     render(<TimeSeriesChart model={trendAnalysisSparseFixture} trendOverlays={{}} />)
     expect(document.querySelector('[data-trend-stats]')?.textContent).toMatch(
-      /Last 7 days 73\.0% vs 94\.8% the previous 7 \(down 21\.8 pts; 600 vs 600 executions\)/,
+      /Last 7 days 73\.0% vs 94\.8% the previous 7 \(down 21\.8\u00a0pts; 600 vs 600 executions\)/,
     )
   })
 })
@@ -232,7 +237,7 @@ describe('VIZ-405 · anomaly markers', () => {
     render(cloneElement(tip as ReactElement<{ active?: boolean; label?: string }>, { active: true, label: ANOMALY_DAY }))
     const tooltip = document.querySelector('[data-chart-tooltip]') as HTMLElement
     expect(tooltip.textContent).toMatch(/Flagged as unusual/)
-    expect(tooltip.textContent).toMatch(/79\.0% is 15\.1 MADs below 94\.1%, the median of the 3 previous Mondays/)
+    expect(tooltip.textContent).toMatch(/79\.0% is 15\.1\u00a0MADs below 94\.1%, the median of the 3 previous Mondays/)
     expect(tooltip.textContent).toContain(ANOMALY_RULE)
   })
 
@@ -323,10 +328,18 @@ describe('VIZ-405 · the keyboard cursor reads the overlays', () => {
     for (let i = 0; i < 22; i++) fireEvent.keyDown(surface, { key: 'ArrowRight' })
     const said = document.querySelector('[data-chart-announcer="assertive"]')?.textContent ?? ''
     expect(said).toMatch(/2026-03-23/)
-    expect(said).toMatch(/7-day moving average \d+\.\d%/)
-    expect(said).toMatch(/Trend line \d+\.\d%/)
+    // VIZ-601: "Label: value", the one shape every chart's cursor speaks.
+    expect(said).toMatch(/7-day moving average: \d+\.\d%/)
+    expect(said).toMatch(/Trend line: \d+\.\d%/)
     expect(said).toContain(ANOMALY_RULE)
     expect(document.querySelector('[data-chart-readout]')?.textContent).toContain(ANOMALY_RULE)
+
+    // …and it is exactly what the pointer's tooltip shows for that day.
+    const tip = captured.tooltips[captured.tooltips.length - 1].content as ReactElement<Record<string, unknown>>
+    const hover = render(cloneElement(tip, { active: true, label: '2026-03-23', coordinate: { x: 200, y: 50 } }))
+    const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+    expect(said).toBe(`Pass rate: ${tooltipText(pointed)}`)
+    expect(readTooltip(document.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
   })
 })
 
@@ -345,12 +358,12 @@ describe('VIZ-405 · inside the frame', () => {
       />,
     )
     expect(document.querySelector('[data-chart-takeaway]')?.textContent).toBe(
-      'Pass rate is falling 0.8 pts per week (30 days, 27 days with runs) · Last 7 days 93.2% vs 91.4% the previous 7 (up 1.8 pts; 1,485 vs 1,276 executions)',
+      `Pass rate is falling 0.8${NBSP}pts${NBSP}per${NBSP}week (30 days, 27 days with runs) · Last 7 days 93.2% vs 91.4% the previous 7 (up 1.8${NBSP}pts; 1,485 vs 1,276 executions)`,
     )
     // Turning the overlay off gives the caller's sentence back — the period line stays.
     fireEvent.click(screen.getByRole('button', { name: /trend line/i }))
     expect(document.querySelector('[data-chart-takeaway]')?.textContent).toBe(
-      'Caller takeaway · Last 7 days 93.2% vs 91.4% the previous 7 (up 1.8 pts; 1,485 vs 1,276 executions)',
+      `Caller takeaway · Last 7 days 93.2% vs 91.4% the previous 7 (up 1.8${NBSP}pts; 1,485 vs 1,276 executions)`,
     )
   })
 
@@ -384,7 +397,7 @@ describe('VIZ-405 · inside the frame', () => {
     expect(firstRow.textContent).toContain('—')
     // The statistics themselves, with their explanations, beside the table.
     const summary = document.querySelector('[data-trend-table-summary]') as HTMLElement
-    expect(summary.textContent).toMatch(/Pass rate is falling 0\.8 pts per week/)
+    expect(summary.textContent).toMatch(/Pass rate is falling 0\.8\u00a0pts\u00a0per\u00a0week/)
     expect(summary.textContent).toMatch(/Last 7 days 93\.2% vs 91\.4%/)
     expect(summary.textContent).toMatch(/Method: least-squares/)
   })

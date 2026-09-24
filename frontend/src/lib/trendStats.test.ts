@@ -13,6 +13,7 @@ import {
   ANOMALY_RULE,
   FLAT_SLOPE_PTS_PER_WEEK,
   INSUFFICIENT_DATA_REASON,
+  NBSP,
   NOT_DAILY_REASON,
   PERIOD_MIN_DAYS_WITH_RUNS,
   PERIOD_MIN_EXECUTIONS,
@@ -260,7 +261,7 @@ describe('periodOverPeriod — golden', () => {
   })
 
   it('reads as one plain sentence', () => {
-    expect(periodTakeaway(periodOverPeriod(P))).toBe('Last 7 days 81.5% vs 90.0% the previous 7 (down 8.5 pts; 650 vs 600 executions)')
+    expect(periodTakeaway(periodOverPeriod(P))).toBe(`Last 7 days 81.5% vs 90.0% the previous 7 (down 8.5${NBSP}pts; 650 vs 600 executions)`)
   })
 
   it('is not measurable on fewer than 14 days, and says why', () => {
@@ -291,7 +292,7 @@ describe('periodOverPeriod — golden', () => {
     const analysis = analyzeTrend(thin)
     expect(analysis.available).toBe(false)
     expect(analysis.period.measurable).toBe(true)
-    expect(periodTakeaway(analysis.period)).toBe('Last 7 days 70.0% vs 95.0% the previous 7 (down 25.0 pts; 300 vs 300 executions)')
+    expect(periodTakeaway(analysis.period)).toBe(`Last 7 days 70.0% vs 95.0% the previous 7 (down 25.0${NBSP}pts; 300 vs 300 executions)`)
   })
 
   it('says "no change" rather than "up 0.0"', () => {
@@ -314,22 +315,22 @@ describe('trendTakeaway — golden', () => {
   it('reads the story’s sentence for a series falling 0.8 pts a week', () => {
     const analysis = analyzeTrend(linear(-0.8))
     expect(analysis.available).toBe(true)
-    expect(trendTakeaway(analysis)).toBe('Pass rate is falling 0.8 pts per week (30 days, 27 days with runs)')
+    expect(trendTakeaway(analysis)).toBe(`Pass rate is falling 0.8${NBSP}pts${NBSP}per${NBSP}week (30 days, 27 days with runs)`)
   })
 
   it('reads "rising" for a rising series', () => {
     expect(trendTakeaway(analyzeTrend(linear(1.5, 80)))).toBe(
-      'Pass rate is rising 1.5 pts per week (30 days, 27 days with runs)',
+      `Pass rate is rising 1.5${NBSP}pts${NBSP}per${NBSP}week (30 days, 27 days with runs)`,
     )
   })
 
   it('makes no direction claim inside the flat band, and states the band', () => {
     const text = trendTakeaway(analyzeTrend(linear(0.2)))
-    expect(text).toBe('Pass rate is flat: under 0.25 pts per week either way (30 days, 27 days with runs)')
+    expect(text).toBe(`Pass rate is flat: under 0.25${NBSP}pts${NBSP}per${NBSP}week either way (30 days, 27 days with runs)`)
     expect(text).not.toMatch(/rising|falling|improving|declining/)
     expect(FLAT_SLOPE_PTS_PER_WEEK).toBe(0.25)
     // Just outside the band, a direction IS stated.
-    expect(trendTakeaway(analyzeTrend(linear(0.3)))).toMatch(/^Pass rate is rising 0\.3 pts per week/)
+    expect(trendTakeaway(analyzeTrend(linear(0.3)))).toMatch(/^Pass rate is rising 0\.3\u00a0pts\u00a0per\u00a0week/)
   })
 
   it('never uses causal wording', () => {
@@ -477,7 +478,7 @@ describe('explanations and per-day rows', () => {
     expect(trendLine).toMatch(/least-squares/i)
     expect(trendLine).toMatch(/Window: 2026-03-01 to 2026-03-10 \(10 days, 8 with runs, 610 executions\)/)
     expect(trendLine).toMatch(/flat if under 0\.25 or within its standard error/)
-    expect(anomalies).toMatch(/more than 3 MADs \(floored at 1 pt\) below the median of the same weekday in the previous 4 weeks/)
+    expect(anomalies).toMatch(/more than 3\u00a0MADs \(floored at 1\u00a0pt\) below the median of the same weekday in the previous 4 weeks/)
     // Ten days: no day has 2 same-weekday days behind it, so none is judged — and that is said.
     expect(anomalies).toMatch(/Sample: 0 days judged, 0 flagged/)
     expect(period).toMatch(/14 days/)
@@ -493,7 +494,7 @@ describe('explanations and per-day rows', () => {
     const analysis = analyzeTrend(A)
     const rows = trendRowsForDay(analysis, D(28), { movingAverage: true, trendLine: true })
     const flagged = rows.find((row) => row.key === 'anomaly')
-    expect(flagged?.value).toMatch(/80\.0% is 13\.5 MADs below 93\.5%, the median of the 4 previous Sundays/)
+    expect(flagged?.value).toMatch(/80\.0% is 13\.5\u00a0MADs below 93\.5%, the median of the 4 previous Sundays/)
     expect(flagged?.value).toContain(ANOMALY_RULE)
     expect(rows.find((row) => row.key === 'movingAverage')?.label).toBe('7-day moving average')
     expect(rows.find((row) => row.key === 'trendLine')?.label).toBe('Trend line')
@@ -589,7 +590,7 @@ describe('detectAnomalies — a weekly pattern is not an anomaly (M1)', () => {
 
   it('states the rule — same weekday, lower than each, the execution minimum — in its text', () => {
     expect(ANOMALY_RULE).toBe(
-      'Rule: more than 3 MADs below the median of the same weekday in the previous 4 weeks, and below each of them; days under 50 executions are not judged.',
+      `Rule: more than 3${NBSP}MADs below the median of the same weekday in the previous 4 weeks, and below each of them; days under 50 executions are not judged.`,
     )
     const analysis = analyzeTrend(from('2026-03-02', [...Array(28).fill(95), 70], 200))
     if (!analysis.available) throw new Error('expected an analysis')
@@ -597,7 +598,7 @@ describe('detectAnomalies — a weekly pattern is not an anomaly (M1)', () => {
     expect(analysis.explain.anomalies).toMatch(/under 50 executions/)
     const rows = trendRowsForDay(analysis, '2026-03-30', { movingAverage: false, trendLine: false })
     expect(rows[0].value).toBe(
-      `70.0% is 25.0 MADs below 95.0%, the median of the 4 previous Mondays (MAD 0.0 pts, floored at 1 pt; 200 executions). ${ANOMALY_RULE}`,
+      `70.0% is 25.0${NBSP}MADs below 95.0%, the median of the 4 previous Mondays (MAD 0.0${NBSP}pts, floored at 1${NBSP}pt; 200 executions). ${ANOMALY_RULE}`,
     )
   })
 })
@@ -624,7 +625,7 @@ describe('periodOverPeriod — a minimum sample per week (M2)', () => {
 
   it('states the sample in the sentence', () => {
     expect(periodTakeaway(periodOverPeriod(P))).toBe(
-      'Last 7 days 81.5% vs 90.0% the previous 7 (down 8.5 pts; 650 vs 600 executions)',
+      `Last 7 days 81.5% vs 90.0% the previous 7 (down 8.5${NBSP}pts; 650 vs 600 executions)`,
     )
   })
 })
@@ -646,7 +647,7 @@ describe('the smaller correctness fixes (3)', () => {
     const points = from('2026-03-01', Array.from({ length: 30 }, (_, i) => 95 - i * 0.2), 100)
     points[29] = { ...points[29], partial: true }
     const analysis = analyzeTrend(points)
-    expect(trendTakeaway(analysis)).toBe('Pass rate is falling 1.4 pts per week (29 days, 29 days with runs)')
+    expect(trendTakeaway(analysis)).toBe(`Pass rate is falling 1.4${NBSP}pts${NBSP}per${NBSP}week (29 days, 29 days with runs)`)
     expect(analysis.available && analysis.explain.trendLine).toMatch(/2026-03-01 to 2026-03-29 \(29 days, 29 with runs/)
   })
 
@@ -671,7 +672,7 @@ describe('the smaller correctness fixes (3)', () => {
     expect(fit.direction).toBe('flat')
     expect(fit.flatBecause).toBe('within-standard-error')
     expect(trendTakeaway(analyzeTrend(alternating))).toBe(
-      'Pass rate is flat: its slope, 0.3 pts per week, is within its standard error of 0.8 (28 days, 28 days with runs)',
+      `Pass rate is flat: its slope, 0.3${NBSP}pts${NBSP}per${NBSP}week, is within its standard error of 0.8 (28 days, 28 days with runs)`,
     )
     // The gallery-shaped case is NOT flattened: -0.83 pts/week at a standard error of 0.44 is a direction.
     const falling = fitted(linear(-0.8))
@@ -694,7 +695,7 @@ describe('trendFrameTakeaway — what the ChartFrame says', () => {
 
   it('uses the module sentence while an overlay is on, with the period line beside it', () => {
     const text = trendFrameTakeaway(analysis, on, 'Caller takeaway')
-    expect(text).toMatch(/^Pass rate is falling 0\.8 pts per week \(30 days, 27 days with runs\) · Last 7 days /)
+    expect(text).toMatch(/^Pass rate is falling 0\.8\u00a0pts\u00a0per\u00a0week \(30 days, 27 days with runs\) · Last 7 days /)
   })
 
   it('keeps the caller’s takeaway while every overlay is off — the period line still shows', () => {
@@ -709,7 +710,7 @@ describe('trendFrameTakeaway — what the ChartFrame says', () => {
       [70, 100], [null, 0], [70, 100], [null, 0], [70, 100], [null, 0], [null, 0],
     ])
     expect(trendFrameTakeaway(analyzeTrend(thin), on, undefined)).toBe(
-      'Last 7 days 70.0% vs 95.0% the previous 7 (down 25.0 pts; 300 vs 300 executions)',
+      `Last 7 days 70.0% vs 95.0% the previous 7 (down 25.0${NBSP}pts; 300 vs 300 executions)`,
     )
   })
 

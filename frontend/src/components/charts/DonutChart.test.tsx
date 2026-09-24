@@ -9,12 +9,18 @@
  * component asked Recharts to draw.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChartSeries, SeriesChart } from '@/lib/viz/contracts'
 import DonutChart, { DonutPlot, DonutTooltip, handOverWhenEmpty } from './DonutChart'
-import { donutCentreOf, statusDonutModel } from './DonutChart.model'
+import { categoryDonutModel, donutCentreOf, statusDonutModel } from './DonutChart.model'
+import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import type { ChartResponse, ChartState } from './chartState'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
+
+/** Every `<Tooltip>` the plot asked Recharts for, so its `content` can be rendered as Recharts would. */
+const tips = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }))
 
 /**
  * What the `<Label position="center">` stand-in hands its `content`. It used
@@ -29,6 +35,9 @@ const labelProps = vi.hoisted(() => ({
 }))
 
 vi.mock('recharts', () => ({
+  // The recharts hooks Wave 2.4's tooltip content reads (`ChartTooltip`'s `usePlotArea`, the bars' `useXAxisScale`): listed so a mock that ever renders that content does not throw.
+  usePlotArea: () => undefined,
+  useXAxisScale: () => undefined,
   ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   PieChart: ({ children }: { children?: ReactNode }) => (
     <svg data-chart="pie">
@@ -63,7 +72,10 @@ vi.mock('recharts', () => ({
   Label: ({ content }: { content?: (props: object) => ReactNode }) => (
     <g data-pie-label="">{typeof content === 'function' ? content(labelProps.current) : null}</g>
   ),
-  Tooltip: () => null,
+  Tooltip: (props: Record<string, unknown>) => {
+    tips.props.push(props)
+    return null
+  },
   Legend: ({ content }: { content?: () => ReactNode }) => (
     <div data-legend-host="">{typeof content === 'function' ? content() : null}</div>
   ),
@@ -190,17 +202,71 @@ describe('DonutPlot', () => {
 })
 
 describe('DonutTooltip', () => {
-  it('shows the true value of a padded slice, as text', () => {
+  it('shows the true value of a padded slice, its share and the ring total it is a share of (VIZ-601)', () => {
     const model = statusDonutModel({ passed: 9_950, failed: 50 })
-    const { container } = render(<DonutTooltip active payload={[{ payload: { slice: model.slices[1] } }]} />)
-    expect(container.textContent).toBe('Failed 50 (0.5%)')
+    const { container } = render(
+      <DonutTooltip active payload={[{ payload: { slice: model.slices[1] } }]} total={model.total} valueLabel="Executions" />,
+    )
+    const tip = container.querySelector('[data-chart-tooltip]') as HTMLElement
+    // The TRUE value (the arc is padded to stay visible), n — the whole the
+    // share is of — and the same 0.5% the legend prints, in the story's order.
+    expect(readTooltip(tip)).toEqual({
+      title: 'Failed',
+      rows: [
+        { kind: 'value', label: 'Executions', value: '50' },
+        { kind: 'sample', label: 'Samples', value: '10,000' },
+        { kind: 'share', label: 'Share of total', value: '0.5%' },
+      ],
+    })
     // A label is text: nothing in it is parsed as markup.
     expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('renders a hostile slice name as literal text: no element is created and nothing runs', () => {
+    const hostile = '<img src=x onerror="window.__xss=1">'
+    const model = categoryDonutModel([
+      { key: 'a', label: hostile, value: 3 },
+      { key: 'b', label: 'benign', value: 1 },
+    ])
+    const { container } = render(
+      <>
+        <DonutTooltip active payload={[{ payload: { slice: model.slices[0] } }]} total={model.total} />
+        <DonutPlot title="Hostile" model={model} animate={false} />
+      </>,
+    )
+    expect(container.querySelector('[data-chart-tooltip] .chart-tooltip-title')?.textContent).toBe(hostile)
+    expect(container.querySelector('[data-chart-legend]')?.textContent).toContain(hostile)
+    expect(container.querySelector('img')).toBeNull()
+    expect((window as { __xss?: unknown }).__xss).toBeUndefined()
   })
 
   it('renders nothing when nothing is hovered', () => {
     const { container } = render(<DonutTooltip />)
     expect(container.innerHTML).toBe('')
+  })
+
+  it('pointer and keyboard read the SAME content for every slice (VIZ-601)', () => {
+    tips.props = []
+    const model = statusDonutModel(STORY)
+    const { container } = render(
+      <ChartAnnouncerProvider>
+        <DonutPlot title="Results" model={model} animate={false} valueLabel="Executions" />
+      </ChartAnnouncerProvider>,
+    )
+    const content = tips.props[tips.props.length - 1].content as ReactElement<Record<string, unknown>>
+    const surface = container.querySelector('[data-donut]') as HTMLElement
+    model.slices.forEach((slice, index) => {
+      fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+      const heard = document.querySelector('[data-chart-announcer="assertive"]')?.textContent ?? ''
+      const readout = readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement)
+      // The pointer's tooltip for the same slice, rendered as Recharts renders it.
+      const hover = render(cloneElement(content, { active: true, payload: [{ payload: { slice } }] }))
+      const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+      hover.unmount()
+      expect(heard).toBe(`Results: ${tooltipText(pointed)}`)
+      expect(readout).toEqual(pointed)
+      expect(pointed.title).toBe(slice.label)
+    })
   })
 })
 

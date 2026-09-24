@@ -16,9 +16,10 @@
  *     they are dropped and a note says the legend names every series.
  *   - ONE shared tooltip per day, every shown series in it, SORTED DESCENDING;
  *     an unmeasured value is "—" with its reason, last. It is PINNED per day —
- *     a fixed offset from the day's x, at the top of the plot, never following
- *     the pointer — and while the pointer is on it the day it names holds, so
- *     it can be hovered (SC 1.4.13). The keyboard reaches exactly the same
+ *     a fixed offset from the day's x, above or below the pointer's line so a
+ *     sweep across the days never runs into it, never following the pointer —
+ *     and while a pointer that came to it from its day is on it, the day it
+ *     names holds, so it can be hovered (SC 1.4.13). The keyboard reaches exactly the same
  *     content through `useChartCursor` (a named, focusable group; never
  *     Recharts' unnamed `role="application"`), drawn in a readout BELOW the
  *     plot, where it hides none of the lines it describes.
@@ -41,11 +42,8 @@
 import {
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
-  useState,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -54,7 +52,6 @@ import {
   Line,
   LineChart,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -64,7 +61,12 @@ import {
   useYAxisScale,
 } from 'recharts'
 import { formatNumber } from '@/utils/formatters'
-import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { PinnedTip, sweepOf } from './ChartTooltip'
+import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { COLUMN_SIDES, TIP_GAP, bandGap, columnMark } from './tipPlacement'
+import ChartResponsive from './ChartResponsive'
+import { formatChange, formatRatePoints, tipContent, type TooltipContent } from './tooltip'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
 import { useChartAnimation } from './motion'
 import {
@@ -77,10 +79,10 @@ import {
   placeDirectLabels,
   tipContentAt,
   tipRowName,
-  tipText,
   type MultiSeriesLine,
   type MultiSeriesModel,
   type TipContent,
+  type TipRow,
   type ValueFormat,
 } from './multiSeriesModel'
 
@@ -103,6 +105,8 @@ export interface MultiSeriesChartProps {
 }
 
 const NOTE = 'text-xs text-[var(--color-text-secondary)]'
+/** What the legend of toggles, the caption and the notes under the plot keep back in full screen, px. */
+const MULTI_SERIES_NOTES_RESERVE = 140
 /** Room to the right of the plot for the direct labels (laid out by `LABEL_ROW`). */
 export { DIRECT_LABEL_GUTTER }
 /** The right margin when there are no direct labels. */
@@ -110,7 +114,7 @@ export const NO_GUTTER = 16
 /** A legend swatch's length: longer than every dash period (at most 32 px), so each pattern shows whole. */
 export const SWATCH_LENGTH = 36
 /** How far the pinned tooltip sits from its day's x — at most half a day's step, so it starts inside that day. */
-export const TIP_GAP = 12
+export { TIP_GAP }
 
 /** The legend's standing instruction, visible and referenced by every toggle. */
 export const LEGEND_HINT = 'Select a series to hide or show it; Shift+select shows it alone.'
@@ -150,59 +154,77 @@ function Swatch({ stroke, dash }: { stroke: string; dash: string | undefined }) 
   )
 }
 
-/** The body the pointer tooltip AND the keyboard readout both draw. */
-export function MultiSeriesTipBody({ model, content }: { model: MultiSeriesModel; content: TipContent }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="font-semibold">{content.title}</div>
-      <ol data-multi-series-tip-rows="" className="flex flex-col gap-0.5">
-        {content.rows.map((row) => (
-          <li key={row.key} data-tip-series={row.key} data-tip-measured={row.y === null ? 'false' : 'true'} className="flex items-baseline gap-2">
-            <Swatch stroke={CHART_VARS.series[row.styleIndex]} dash={row.dash} />
-            <span className="min-w-0 break-words text-[var(--color-text-secondary)]">{tipRowName(model, row)}</span>
-            <span className="ml-auto whitespace-nowrap pl-3 font-medium tabular-nums" data-tip-value="">
-              {row.value}
-            </span>
-            {row.partial && row.y !== null && (
-              <span data-tip-partial="" className="whitespace-nowrap text-[var(--color-text-secondary)]">
-                ({PARTIAL_MARK})
-              </span>
-            )}
-          </li>
-        ))}
-      </ol>
-      {/* The reasons, visible, after the values: a "—" nobody explains reads as broken. */}
-      {content.rows.some((row) => row.reason) && (
-        <ul data-tip-reasons="" className="mt-0.5 flex max-w-xs flex-col gap-0.5 text-[var(--color-text-secondary)]">
-          {content.rows
-            .filter((row) => row.reason)
-            .map((row) => (
-              <li key={row.key} data-tip-reason-visible={row.key} className="whitespace-normal break-words">
-                {row.label}: {row.reason}
-              </li>
-            ))}
-        </ul>
-      )}
-      {content.hiddenCount > 0 && (
-        <div data-tip-hidden="" className="text-[var(--color-text-secondary)]">
-          {formatNumber(content.hiddenCount)} hidden {content.hiddenCount === 1 ? 'series is' : 'series are'} not listed.
-        </div>
-      )}
-    </div>
-  )
+/**
+ * One day's tooltip content (VIZ-601), in the shared model: the day, then
+ * every shown series SORTED DESCENDING as `tipContentAt` orders them — each
+ * with its own dashed swatch, its value, and in parentheses its sample size,
+ * its change against the previous day and "still filling" — then, as notes
+ * after the values, why each "—" is a "—" (one nobody explains reads as
+ * broken) and how many hidden series are not listed.
+ */
+export function multiSeriesTipContent(model: MultiSeriesModel, index: number, tip: TipContent, format: ValueFormat): TooltipContent {
+  const byKey = new Map(model.lines.map((line) => [line.key, line]))
+  // A rate's change is in percentage POINTS, as the single-series chart says
+  // it: "+1.2%" would read as a relative change (Wave 2.4 review F5).
+  const changeOf = model.metric.kind === 'rate' ? formatRatePoints : format
+  const facts = (row: TipRow): string | undefined => {
+    const line = byKey.get(row.key)
+    const points = line?.points
+    const point = points?.[index]
+    if (!point || row.y === null) return undefined
+    // The first day of a ZOOMED model still has a previous day: the line's
+    // point just before the view (`precedingPoint`, Wave 2.4 review F4).
+    const before = index > 0 ? points?.[index - 1] : (line?.precedingPoint ?? undefined)
+    const change =
+      before === undefined
+        ? null
+        : before.y === null
+          ? `previous day not measured`
+          : `${formatChange(row.y - before.y, changeOf)} vs previous day`
+    return [`${formatNumber(point.n)} ${point.n === 1 ? 'sample' : 'samples'}`, change, row.partial ? PARTIAL_MARK : null]
+      .filter(Boolean)
+      .join(', ')
+  }
+  return tipContent(tip.title, [
+    ...tip.rows.map((row) => ({
+      kind: 'value' as const,
+      key: row.key,
+      label: tipRowName(model, row),
+      value: row.value,
+      color: CHART_VARS.series[row.styleIndex],
+      mark: 'line' as const,
+      dash: row.dash,
+      detail: facts(row),
+      data: { 'data-tip-series': row.key, 'data-tip-measured': row.y === null ? 'false' : 'true' },
+    })),
+    ...tip.rows
+      .filter((row) => row.reason)
+      .map((row) => ({
+        kind: 'note' as const,
+        key: `reason:${row.key}`,
+        label: row.label,
+        value: row.reason ?? '',
+        data: { 'data-tip-reason-visible': row.key },
+      })),
+    tip.hiddenCount > 0 && {
+      kind: 'note' as const,
+      key: 'hidden',
+      label: '',
+      value: `${formatNumber(tip.hiddenCount)} hidden ${tip.hiddenCount === 1 ? 'series is' : 'series are'} not listed.`,
+      data: { 'data-tip-hidden': '' },
+    },
+  ])
 }
-
-const TIP_BOX =
-  'rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)]'
 
 interface MultiSeriesTipProps {
   /** Recharts passes these; nothing is drawn unless `active`. */
   active?: boolean
   label?: string | number
   /**
-   * The pointer's position, which Recharts also passes. Deliberately NOT what
-   * places the tooltip — the day's own x is — and used only if the chart has
-   * no x scale to ask.
+   * The pointer's position, which Recharts also passes. Its x deliberately
+   * does NOT place the tooltip — the day's own x does — and is used only if
+   * the chart has no x scale to ask. Its y is the line the pointer sweeps the
+   * days along, which the tooltip keeps off (`TipSweep`).
    */
   coordinate?: { x?: number; y?: number }
   model: MultiSeriesModel
@@ -229,56 +251,31 @@ export function MultiSeriesTip({ active, label, coordinate, model, hidden, forma
   const plot = usePlotArea()
   const chartWidth = useChartWidth()
   const xScale = useXAxisScale()
-  const box = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(0)
   const index = model.xs.indexOf(String(label))
   const open = Boolean(active) && index >= 0
 
-  // Its own width decides which side of the day it goes: measured before
-  // paint, so it never draws on the wrong side first.
-  useLayoutEffect(() => {
-    if (!open) return
-    const measured = box.current?.offsetWidth ?? 0
-    if (measured !== width) setWidth(measured)
-    // Re-measured whenever what it shows can change: the day, the hidden set, the model.
-  }, [open, index, hidden, model, width])
-
-  if (!open) return null
-
   const plotX = plot?.x ?? 0
+  const plotY = plot?.y ?? 0
   const plotWidth = plot?.width ?? 0
-  const dayX = xScale?.(model.xs[index]) ?? coordinate?.x ?? plotX
+  const plotHeight = plot?.height ?? 0
   const days = model.xs.length
   const step = days > 1 ? plotWidth / (days - 1) : plotWidth
-  const gap = Math.min(TIP_GAP, step / 2)
+  const dayX = open ? (xScale?.(model.xs[index]) ?? coordinate?.x ?? plotX) : plotX
   const edge = chartWidth ?? plotX + plotWidth
-  let left = dayX + gap
-  if (left + width > edge) left = dayX - gap - width
-  left = Math.max(0, Math.min(left, Math.max(0, edge - width)))
 
-  const style: CSSProperties = {
-    position: 'absolute',
-    left,
-    top: plot?.y ?? 0,
-    width: 'max-content',
-    maxWidth: edge,
-    // Recharts' wrapper is `pointer-events: none` by default; the box itself
-    // must be something the pointer can be over.
-    pointerEvents: 'auto',
-  }
-
+  // The day is a LINE (a point scale): its column has no width of its own,
+  // and the gap is at most half a day's step, so the box starts inside the day.
   return (
-    <div
-      ref={box}
-      data-chart-tooltip=""
-      className={TIP_BOX}
-      style={style}
-      // On the tooltip, the pointer is reading it: do not let Recharts pick a
-      // new day from where it is.
-      onMouseMove={(event) => event.stopPropagation()}
-    >
-      <MultiSeriesTipBody model={model} content={tipContentAt(model, index, { hidden, format })} />
-    </div>
+    <PinnedTip
+      content={open ? multiSeriesTipContent(model, index, tipContentAt(model, index, { hidden, format }), format) : null}
+      mark={columnMark(dayX, 0, { top: plotY, height: plotHeight })}
+      sides={COLUMN_SIDES}
+      align="start"
+      gap={bandGap(step, 0)}
+      chartBox={{ left: 0, top: 0, width: edge, height: plotY + plotHeight }}
+      // Kept off the line the pointer sweeps the days along (A2/F3).
+      sweep={sweepOf(coordinate, 'x')}
+    />
   )
 }
 
@@ -489,9 +486,13 @@ export default function MultiSeriesChart({
   format,
   labelsFit,
   onLabelsFit,
-  height = 280,
+  height: requestedHeight = 280,
   animate: requestedAnimate,
 }: MultiSeriesChartProps) {
+  // Full screen (VIZ-608): the plot takes the frame's body, less room for the legend and notes under it.
+  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const scale = usePresentationScale()
+  const height = Math.round(useFramePlotHeight(requestedHeight, MULTI_SERIES_NOTES_RESERVE) / scale)
   const animate = useChartAnimation(requestedAnimate)
   const bannerId = useId()
   const shown = useMemo(() => model.lines.filter((line) => !hidden.has(line.key)), [model, hidden])
@@ -509,14 +510,13 @@ export default function MultiSeriesChart({
     [model],
   )
 
-  /** One cursor stop per day, worded by the SAME builder as the pointer's tooltip. */
-  const contents = useMemo(
-    () => model.xs.map((_, index) => tipContentAt(model, index, { hidden, format })),
-    [model, hidden, format],
-  )
+  /** One cursor stop per day, from the SAME content the pointer's tooltip shows (VIZ-601). */
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () => model.xs.map((x, index) => ({ key: x, text: tipText(model, contents[index]) })),
-    [model, contents],
+    () =>
+      model.xs.map((x, index) =>
+        cursorPoint(x, multiSeriesTipContent(model, index, tipContentAt(model, index, { hidden, format }), format)),
+      ),
+    [model, hidden, format],
   )
   const cursor = useChartCursor({ title, chartType: 'multi-series line chart', points: cursorPoints, noun: 'day' })
   const focused = cursor.index >= 0 ? model.xs[cursor.index] : null
@@ -546,7 +546,7 @@ export default function MultiSeriesChart({
         // Tabbing straight to the plot, a reader hears the caveat with its name.
         aria-describedby={model.banner ? bannerId : undefined}
       >
-        <ResponsiveContainer width="100%" height={height}>
+        <ChartResponsive height={height}>
           {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
           <LineChart
             data={rows}
@@ -605,16 +605,13 @@ export default function MultiSeriesChart({
             )}
             {shown.length > 0 && <DirectLabels lines={shown} onFit={onLabelsFit} gutterOn={labelsFit} />}
           </LineChart>
-        </ResponsiveContainer>
-        {cursor.point && (
-          // What the reader just heard, for a sighted keyboard user: the same
-          // sorted rows the pointer tooltip shows, BELOW the plot — laid over
-          // it, it hid a third of the lines it was describing. Not a live
-          // region: the page's one announcer has already said it.
-          <div data-chart-readout="" aria-hidden="true" className={`mt-1 ${TIP_BOX}`}>
-            <MultiSeriesTipBody model={model} content={contents[cursor.index]} />
-          </div>
-        )}
+        </ChartResponsive>
+        {/*
+          What the reader just heard, for a sighted keyboard user: the same
+          sorted rows the pointer tooltip shows, in the same markup, BELOW the
+          plot — laid over it, it hid a third of the lines it was describing.
+        */}
+        {cursor.readout}
       </div>
 
       <SeriesLegend title={title} lines={model.lines} hidden={hidden} onToggle={onToggle} onIsolate={onIsolate} onShowAll={onShowAll} />

@@ -100,6 +100,25 @@ export function hasChartData<T>(state: ChartState<T>): state is Extract<ChartSta
   return state.status === 'ready' || state.status === 'truncated'
 }
 
+/**
+ * Whether a series has anything to plot, tabulate or export: at least one
+ * point, cell or node. A point whose value is `null` COUNTS — it is a gap the
+ * table states as "—" — so only a series with no positions at all is empty.
+ * A drawn state can still carry such a series: the duration histogram with
+ * nothing timed is `ready` and says so inside its own body.
+ */
+export function seriesHasPoints(series: ChartSeries): boolean {
+  switch (series.kind) {
+    case 'series':
+      return series.series.some((line) => line.points.length > 0)
+    case 'matrix':
+      return series.cells.length > 0
+    case 'tree':
+    case 'graph':
+      return series.nodes.length > 0
+  }
+}
+
 // ── Errors the hook throws itself ─────────────────────────────────────────────
 
 /** A request aborted because the key changed. Ignored: never shown as an error. */

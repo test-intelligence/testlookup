@@ -38,6 +38,8 @@ import {
   type SeriesFormat,
 } from './chartText'
 import type { ChartResponse, ChartState } from './chartState'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
 
 const ready = (series: SeriesChart): ChartState<ChartResponse> => ({
   status: 'ready',
@@ -140,12 +142,17 @@ describe('2 · the keyboard cursor', () => {
     const { container } = withAnnouncer(<BarChart title="Top failing tests" state={state} variant="ranked" />)
     const surface = container.querySelector('[data-bar-chart="ranked"]') as HTMLElement
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
-    expect(announced()).toBe('Top failing tests: checkout: 41')
+    // VIZ-601: the shared tooltip content — the bar, its exact value under the
+    // value axis's title, and its share of every bar ranked (41 of 50).
+    expect(announced()).toBe('Top failing tests: checkout. Count: 41. Share of total: 82.0%')
     expect(surface).toHaveAttribute('data-chart-cursor-index', '0')
-    expect(container.querySelector('[data-chart-readout]')?.textContent).toBe('checkout: 41')
+    // The readout draws the SAME content with the tooltip's own markup.
+    expect(tooltipText(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement))).toBe(
+      'checkout. Count: 41. Share of total: 82.0%',
+    )
 
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
-    expect(announced()).toBe('Top failing tests: auth: 9')
+    expect(announced()).toBe('Top failing tests: auth. Count: 9. Share of total: 18.0%')
     // Past the end it stays on the last point rather than wrapping silently.
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
     expect(surface).toHaveAttribute('data-chart-cursor-index', '1')
@@ -198,7 +205,8 @@ describe('2 · the keyboard cursor', () => {
     const surface = container.querySelector('[data-donut]') as HTMLElement
     expect(surface.getAttribute('aria-label')).toContain('Execution results')
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
-    expect(announced()).toBe('Execution results: Passed 880 (88.0%)')
+    // VIZ-601: the slice, its exact value, n (the ring's total) and its share.
+    expect(announced()).toBe('Execution results: Passed. Executions: 880. Samples: 1,000. Share of total: 88.0%')
   })
 })
 

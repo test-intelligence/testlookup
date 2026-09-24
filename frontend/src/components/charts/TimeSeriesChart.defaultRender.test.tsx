@@ -20,6 +20,21 @@
  * time-series item). The snapshot diff is that and only that — the label's
  * `offset` 5 → 14, its `x` 5 → 14 and its rotation centre (5, 123) → (14, 123)
  * — and the `timeseries-*` visual baselines change with it, on purpose.
+ *
+ * Wave 2.4 (VIZ-606 / VIZ-608) gave EVERY drawn frame two toolbar buttons —
+ * Export and Full screen. They belong to `ChartFrame`, not to the time-series
+ * chart, and are pinned by `ChartFrame.fullscreen.test.tsx`'s own regression
+ * snapshot. So this test removes exactly those two controls
+ * (`WAVE_24_TOOLBAR`) before comparing, and the snapshot below stays the
+ * pre-VIZ-405 bytes: everything else the chart draws must still be unchanged.
+ *
+ * The export menu is replaced by a bare placeholder carrying its hook. Not to
+ * hide its DOM — that is stripped anyway, and `ChartExportMenu.test.tsx` owns
+ * it — but because the real menu calls `useId` twice, and React's client id
+ * counter is global: removing the menu's nodes afterwards cannot give those
+ * numbers back, so every id the chart renders after it (the pattern prefix,
+ * the summary id, Recharts' clip ids) would be renumbered and the comparison
+ * would fail on numbering alone. The full-screen button takes no id.
  */
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -44,9 +59,29 @@ vi.mock('recharts', async (importOriginal) => {
   }
 })
 
+vi.mock('./ChartExportMenu', () => ({
+  default: () => <div data-chart-export="" />,
+}))
+
 vi.mock('./engines/useEChart', () => ({
   useEChart: () => ({ containerRef: { current: null }, instanceRef: { current: null }, status: 'ready', retry: () => {} }),
 }))
+
+/**
+ * The frame-level controls Wave 2.4 added to every drawn frame (see the header).
+ * Only these two, by their own hooks — anything else new in the DOM still fails.
+ */
+const WAVE_24_TOOLBAR = '[data-chart-export], [data-chart-fullscreen-toggle]'
+
+/** The rendered DOM without the Wave 2.4 frame controls. */
+function withoutFrameControls(container: HTMLElement): string {
+  const copy = container.cloneNode(true) as HTMLElement
+  const controls = copy.querySelectorAll(WAVE_24_TOOLBAR)
+  // Both must be there: a test that strips nothing proves nothing about them.
+  expect(controls).toHaveLength(2)
+  controls.forEach((node) => node.remove())
+  return copy.innerHTML
+}
 
 // The gallery's fixed clock, zone and locale (chartGalleryFixtures.ts).
 const NOW = new Date('2026-03-10T09:00:00Z')
@@ -76,7 +111,7 @@ describe('TimeSeriesChartFrame — the default render is unchanged by VIZ-405', 
       )
       // A real SVG was drawn — the snapshot is of the chart, not of an empty box.
       expect(container.querySelector('svg.recharts-surface')).not.toBeNull()
-      expect(container.innerHTML).toMatchSnapshot()
+      expect(withoutFrameControls(container)).toMatchSnapshot()
     })
   }
 })

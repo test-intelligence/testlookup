@@ -32,7 +32,7 @@ import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
 import { buildMultiSeriesModel, readComparability, type MultiSeriesModel } from '@/components/charts/multiSeriesModel'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { ChartResponse, ChartState } from '@/components/charts/chartState'
-import type { TimeSeriesModel } from '@/components/charts/timeSeriesModel'
+import { buildTimeSeriesModel, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
 import type { DurationHistogramModel } from '@/components/charts/durationBuckets'
 import {
   durationBandFixture,
@@ -44,7 +44,11 @@ import {
   trendAnalysisSparseFixture,
   trendSinglePointFixture,
   trendWithReleasesFixture,
+  trendWithReleasesMeta,
+  trendWithReleasesReleases,
   trendZoomedAxisFixture,
+  trendZoomReleasesFixture,
+  trendZoomReleasesMeta,
 } from '@/components/charts/__fixtures__/wave2Fixtures'
 import type { ChartSeries } from '@/lib/viz/contracts'
 import { THEMES, type ThemeId } from '@/store/themeStore'
@@ -62,6 +66,7 @@ import {
   galleryStatusSeries,
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_FRAME_HEADING_LEVEL,
+  HOSTILE_LABEL,
   type GalleryCategorySeries,
   type GalleryComparison,
   type GalleryHistogramFixture,
@@ -110,6 +115,38 @@ function readyState(series: GalleryCategorySeries): ChartState<ChartResponse> {
 const DRAWN_STATE: ChartState<unknown> = { status: 'ready', data: null, meta: null, revalidating: false }
 
 /**
+ * The one scoped time-series item's state: its fixture's envelope `meta`, so
+ * the frame footer and the exports carry a project, a window and totals.
+ * Keyed by fixture — only a fixture with a meta of its own can be scoped.
+ */
+function timeSeriesState(key: GalleryTimeSeriesFixture, scoped: boolean | undefined): ChartState<unknown> {
+  if (!scoped) return DRAWN_STATE
+  if (key !== 'trend-zoom-releases') throw new Error(`gallery fixture ${key} has no envelope meta to scope it with`)
+  return SCOPED_ZOOM_STATE
+}
+const SCOPED_ZOOM_STATE: ChartState<unknown> = { status: 'ready', data: null, meta: trendZoomReleasesMeta, revalidating: false }
+
+/**
+ * VIZ-601 scenario 3 on a time series: the headline trend — its days, its
+ * envelope meta and its releases — with the 03-03 release renamed to markup.
+ * Built here rather than in `wave2Fixtures` because `HOSTILE_LABEL` lives in
+ * the gallery's fixtures — the one string every spec compares against.
+ * Module-level: built once.
+ *
+ * The META is passed too: the model marks the still-filling day from it, and
+ * without it 03-10 was drawn as a finished bar of 96 executions — a drop the
+ * product would never draw for these data (baseline review B).
+ */
+const HOSTILE_RELEASE_ID = 'r1' // 1.4.0, dated 03-03: inside the window, so it is drawn
+const trendHostileReleaseFixture: TimeSeriesModel = buildTimeSeriesModel({
+  points: trendWithReleasesFixture.points,
+  meta: trendWithReleasesMeta,
+  releases: trendWithReleasesReleases.map((release) =>
+    release.id === HOSTILE_RELEASE_ID ? { ...release, name: HOSTILE_LABEL } : release,
+  ),
+})
+
+/**
  * The fixture behind each time-series item. An exhaustive switch on purpose:
  * `chartGalleryFixtures` names fixtures by key (it has to stay importable from
  * plain Node), so THIS is where a renamed or deleted fixture has to become a
@@ -127,6 +164,10 @@ function timeSeriesFixture(key: GalleryTimeSeriesFixture): TimeSeriesModel {
       return trendAnalysisFixture
     case 'trend-analysis-sparse':
       return trendAnalysisSparseFixture
+    case 'trend-zoom-releases':
+      return trendZoomReleasesFixture
+    case 'trend-hostile-release':
+      return trendHostileReleaseFixture
   }
 }
 
@@ -236,7 +277,7 @@ function renderChart(item: GalleryItem) {
       return (
         <TimeSeriesChartFrame
           title={item.title}
-          state={DRAWN_STATE}
+          state={timeSeriesState(item.fixture, item.scoped)}
           model={timeSeriesFixture(item.fixture)}
           inProgressRuns={item.inProgress ? inProgressRunsFixture : undefined}
           headingLevel={GALLERY_FRAME_HEADING_LEVEL}
@@ -253,6 +294,8 @@ function renderChart(item: GalleryItem) {
           locale={GALLERY_LOCALE}
           // Undefined for every VIZ-403 item, which then renders exactly as before.
           trendAnalysis={item.trendOverlays ? GALLERY_TREND_ANALYSIS : undefined}
+          // VIZ-407: undefined for every earlier item, which then draws no brush.
+          zoom={item.zoom}
         />
       )
     case 'duration-histogram':
@@ -277,6 +320,7 @@ function renderChart(item: GalleryItem) {
           headingLevel={GALLERY_FRAME_HEADING_LEVEL}
           height={GALLERY_FRAME_PLOT_HEIGHT}
           animate={false}
+          zoom={item.zoom}
         />
       )
     case 'slowest-tests':
@@ -302,6 +346,7 @@ function renderChart(item: GalleryItem) {
           headingLevel={GALLERY_FRAME_HEADING_LEVEL}
           height={GALLERY_FRAME_PLOT_HEIGHT}
           animate={false}
+          zoom={item.zoom}
         />
       )
   }

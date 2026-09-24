@@ -36,8 +36,16 @@ const FLAGGED_DETAIL = '79.0% is 15.1 MADs below 94.1%, the median of the 3 prev
 const MOVING_AVERAGE = /7-day moving average/
 const TREND_LINE = /Trend line/
 
-/** The gallery items that turn the overlays on — asserted to be exactly the two above. */
-const TREND_ITEMS = GALLERY_ITEMS.filter((item) => item.chart === 'time-series' && item.trendOverlays)
+/**
+ * The UNZOOMED gallery items that turn the overlays on — asserted to be exactly
+ * the two above. The VIZ-407 item that opens zoomed with the overlays on
+ * (`timeseries-zoom-trend`) is a different subject — a slice of a longer window
+ * — and `chart-zoom.spec.ts` owns it; its marks and its box are checked with
+ * every other item by `chart-gallery.spec.ts`.
+ */
+const TREND_ITEMS = GALLERY_ITEMS.filter(
+  (item) => item.chart === 'time-series' && item.trendOverlays && item.zoom === undefined,
+)
 
 /** Console errors and uncaught exceptions, collected from before navigation. */
 function watchErrors(page: Page): string[] {
@@ -166,10 +174,15 @@ test.describe('trend overlays (VIZ-405)', () => {
         return { id: item.getAttribute('data-gallery-item'), overhang: Math.round((svg.left - range.getBoundingClientRect().left) * 10) / 10 }
       }),
     )
-    expect(overhangs.length, 'time-series items in the gallery').toBe(5)
+    // Every time-series item, counted from the fixtures (five before Wave 2.4
+    // added the zoomed and hostile-release ones), and every one of them found by
+    // its id prefix — so a new item cannot slip past this check.
+    const timeSeries = GALLERY_ITEMS.filter((item) => item.chart === 'time-series')
+    expect(timeSeries.every((item) => item.id.startsWith('timeseries'))).toBe(true)
+    expect(overhangs.map((entry) => entry.id), 'time-series items in the gallery').toEqual(timeSeries.map((item) => item.id))
     for (const { id, overhang } of overhangs) {
       expect(overhang, `${id}: no "Pass rate %" title found`).not.toBeNull()
-      // Was 3.1 px on all five.
+      // Was 3.1 px on all five VIZ-403/405 items.
       expect(overhang as number, `${id}: the title overhangs the svg's left edge`).toBeLessThanOrEqual(0)
     }
   })
@@ -249,7 +262,7 @@ test.describe('trend overlays (VIZ-405)', () => {
     for (let i = 0; i < 22; i++) await page.keyboard.press('ArrowRight')
     const announcer = page.locator('[data-chart-announcer="assertive"]')
     await expect(announcer).toContainText(FLAGGED_DAY)
-    await expect(announcer).toContainText(`Flagged as unusual ${FLAGGED_DETAIL}`)
+    await expect(announcer).toContainText(`Flagged as unusual: ${FLAGGED_DETAIL}`)
     await expect(announcer).toContainText(RULE)
     const readout = item.locator('[data-chart-readout]')
     await expect(readout).toBeVisible()

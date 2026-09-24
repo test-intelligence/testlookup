@@ -19,7 +19,7 @@
  * their filters match nothing rather than shown an empty ring.
  */
 import { useMemo, type ReactElement, type ReactNode } from 'react'
-import { Cell, Label, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { Cell, Label, Legend, Pie, PieChart, Tooltip } from 'recharts'
 import type { ChartSeries } from '@/lib/viz/contracts'
 import { formatNumber, formatPercent } from '@/utils/formatters'
 import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './chartText'
@@ -34,7 +34,12 @@ import {
   type DonutModel,
   type DonutSlice,
 } from './DonutChart.model'
-import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { PinnedTip } from './ChartTooltip'
+import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { chartScaleOf, unscaled, type TipRect } from './tipPlacement'
+import ChartResponsive from './ChartResponsive'
+import { SHARE_LABEL, sampleRow, tipContent, type TooltipContent } from './tooltip'
 import { useChartAnimation } from './motion'
 import {
   ChartLegend,
@@ -45,7 +50,7 @@ import {
   type LegendEntry,
   type PatternSpec,
 } from './patterns'
-import { CHART_VARS, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING, type DecalKind } from './tokens'
+import { CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
 
 /** How a non-status slice is drawn. Status slices always use their own encoding. */
 export interface SliceStyle {
@@ -87,29 +92,66 @@ export interface DonutPlotProps {
   emptyText?: string
   /** Colour and decal for a slice with no status. */
   styleOf?: (slice: DonutSlice, index: number) => SliceStyle
+  /** What a slice's value is called in its tooltip ("Executions", "Failures"). */
+  valueLabel?: string
 }
 
 interface TooltipEntry {
   payload?: { slice?: DonutSlice }
 }
 
-/** Recharts' tooltip, as React nodes: a label is TEXT, never markup. */
-export function DonutTooltip({ active, payload }: { active?: boolean; payload?: TooltipEntry[] }) {
+/** What a donut's values are called in its tooltip when the caller does not say. */
+export const DONUT_VALUE_LABEL = 'Count'
+
+/**
+ * A slice's tooltip content (VIZ-601): its name, its TRUE value (never the
+ * arc padded to keep a tiny slice visible), its share of the ring — the same
+ * largest-remainder percent the arc label and the legend print, so the three
+ * always sum to 100.0 — and the ring's total, the sample the share is of.
+ */
+export function donutTipContent(slice: DonutSlice, total: number | null, valueLabel = DONUT_VALUE_LABEL): TooltipContent {
+  return tipContent(slice.label, [
+    { kind: 'value', key: 'value', label: valueLabel, value: formatNumber(slice.value) },
+    { kind: 'share', key: 'share', label: SHARE_LABEL, value: formatPercent(slice.percent) },
+    total !== null && total > 0 && sampleRow(total),
+  ])
+}
+
+/**
+ * The ring, as the mark every slice's tooltip keeps clear of: read from the
+ * drawn pie, so the tooltip goes BESIDE the ring rather than over any slice.
+ */
+function ringOf(chart: HTMLElement): TipRect | null {
+  const pie = chart.querySelector('.recharts-pie')
+  if (!pie) return null
+  const box = chart.getBoundingClientRect()
+  const ring = pie.getBoundingClientRect()
+  // On screen; the tooltip is placed in chart coordinates (a full-screen drawing is scaled up).
+  return unscaled({ left: ring.left - box.left, top: ring.top - box.top, width: ring.width, height: ring.height }, chartScaleOf(chart))
+}
+
+/** Recharts' donut tooltip: the shared content model, pinned beside the ring. */
+export function DonutTooltip({
+  active,
+  payload,
+  total,
+  valueLabel,
+}: {
+  active?: boolean
+  payload?: TooltipEntry[]
+  /** The ring's total: the sample every slice's share is of. */
+  total?: number | null
+  valueLabel?: string
+}) {
   const slice = active ? payload?.[0]?.payload?.slice : undefined
-  if (!slice) return null
-  return (
-    <div data-chart-tooltip="" style={RECHARTS_TOOLTIP_STYLE} className="px-2 py-1">
-      {/* The TRUE value, even for a slice whose arc was padded to stay visible. */}
-      {sliceLabel(slice)}
-    </div>
-  )
+  return <PinnedTip content={slice ? donutTipContent(slice, total ?? null, valueLabel) : null} mark={ringOf} />
 }
 
 /** The donut itself. Pure: it draws the model it is given and fetches nothing. */
 export function DonutPlot({
   model,
   title,
-  height = 240,
+  height: requestedHeight = 240,
   animate: requestedAnimate,
   showCentreTotal = true,
   centreCaption,
@@ -119,15 +161,22 @@ export function DonutPlot({
   paddingAngle = 2,
   emptyText = 'No data',
   styleOf = defaultStyleOf,
+  valueLabel = DONUT_VALUE_LABEL,
 }: DonutPlotProps) {
+  // Full screen (VIZ-608): the ring's box takes the frame's body; its legend is inside the chart.
+  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const scale = usePresentationScale()
+  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
   const animate = useChartAnimation(requestedAnimate)
   const prefix = useChartPatternPrefix()
+  // A ring that is not one whole (no centre total) states no sample for its slices.
+  const total = showCentreTotal ? model.total : null
 
-  // Every slice, in drawn order, as the keyboard cursor walks them. The text
-  // is `sliceLabel` — the same words the legend and the tooltip use.
+  // Every slice, in drawn order, as the keyboard cursor walks them — in the
+  // SAME content the pointer's tooltip shows (VIZ-601).
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () => model.slices.map((slice) => ({ key: slice.key, text: sliceLabel(slice) })),
-    [model],
+    () => model.slices.map((slice) => cursorPoint(slice.key, donutTipContent(slice, total, valueLabel))),
+    [model, total, valueLabel],
   )
   const cursor = useChartCursor({ title, chartType: 'donut chart', points: cursorPoints, noun: 'slice' })
 
@@ -222,7 +271,7 @@ export function DonutPlot({
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-      <ResponsiveContainer width="100%" height={height}>
+      <ChartResponsive height={height}>
         {/*
           `accessibilityLayer={false}`, EXPLICITLY: Recharts 3 defaults it to
           true, so leaving the prop off still puts `role="application"` (and a
@@ -259,10 +308,17 @@ export function DonutPlot({
             ))}
             {showCentreTotal && <Label position="center" content={renderCentre} />}
           </Pie>
-          <Tooltip key={cursor.tipKey} content={<DonutTooltip />} {...cursor.tipProps} />
+          {/* Pinned beside the ring (`PinnedTip`): a fixed origin, no slide. */}
+          <Tooltip
+            key={cursor.tipKey}
+            content={<DonutTooltip total={total} valueLabel={valueLabel} />}
+            position={{ x: 0, y: 0 }}
+            isAnimationActive={false}
+            {...cursor.tipProps}
+          />
           <Legend content={() => <ChartLegend entries={legendEntries} />} />
         </PieChart>
-      </ResponsiveContainer>
+      </ChartResponsive>
       {cursor.readout}
     </div>
   )
@@ -361,6 +417,7 @@ export default function DonutChart({
           height={height}
           animate={animate}
           centreCaption={centreCaption}
+          valueLabel={axisLabel}
         />
       ) : null}
     </ChartFrame>

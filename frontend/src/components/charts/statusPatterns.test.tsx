@@ -25,6 +25,9 @@ vi.mock('recharts', () => {
       </svg>
     )
   return {
+    // The recharts hooks Wave 2.4's tooltip content reads (`ChartTooltip`'s `usePlotArea`, the bars' `useXAxisScale`): listed so a mock that ever renders that content does not throw.
+    usePlotArea: () => undefined,
+    useXAxisScale: () => undefined,
     ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     LineChart: chart('line'),
     AreaChart: chart('area'),

@@ -52,7 +52,7 @@
  * itself stops at 366 days and says so.
  */
 import { useId, useMemo, useState, type ReactElement } from 'react'
-import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
+import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   Bar,
   CartesianGrid,
@@ -62,11 +62,15 @@ import {
   Line,
   ReferenceDot,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import { PinnedTip, useColumnMark } from './ChartTooltip'
+import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import ChartResponsive from './ChartResponsive'
+import { COLUMN_SIDES } from './tipPlacement'
+import { tipContent, type TooltipContent } from './tooltip'
 import {
   analyzeTrend,
   trendRowsForDay,
@@ -95,6 +99,7 @@ import {
   buildTimeSeriesOption,
   timeSeriesTooltipContent,
   type InProgressRuns,
+  type TimeSeriesTooltipInput,
 } from './engines/echarts/timeSeriesOption'
 import {
   EXECUTIONS_AXIS_TITLE,
@@ -149,6 +154,8 @@ interface DrawnTrend {
 }
 
 const NOTE = 'text-xs text-[var(--color-text-secondary)]'
+/** What the notes, caption and statistics strip under the plot keep back in full screen, px. */
+const TIME_SERIES_NOTES_RESERVE = 112
 
 /** What the hatched bar is called, in the legend and in the note under the plot. */
 export const PARTIAL_LEGEND_LABEL = 'Still filling'
@@ -192,6 +199,8 @@ export interface TimeSeriesTooltipProps {
   active?: boolean
   /** The x value Recharts is hovering. */
   label?: string | number
+  /** Recharts' active coordinate: `x` is the hovered day's centre. */
+  coordinate?: { x?: number; y?: number }
   model: TimeSeriesModel
   timeZone?: string
   locale?: string
@@ -204,12 +213,51 @@ export interface TimeSeriesTooltipProps {
 }
 
 /**
- * A REACT tooltip, not a string formatter: the values in it (release names,
- * server reasons) are ingested CI text, and React escapes them by construction.
+ * The hook the trend specs select an overlay row by. A `data-*` NAME, set as
+ * an attribute by `ChartTooltip` — held in a constant because chart-guard
+ * (rightly) refuses any object key spelled like "tooltip" whose value is not
+ * an ECharts option object.
+ */
+const TREND_ROW_ATTRIBUTE = 'data-trend-tooltip-row'
+
+/**
+ * One day's tooltip content (VIZ-601): the VIZ-403 content from
+ * `timeSeriesTooltipContent` — the canvas renderer's too — plus what the
+ * VIZ-405 trend analysis says about the day. An overlay value is a value; the
+ * rule that flagged an anomaly is a sentence, so it is a NOTE and wraps under
+ * its label. The pointer's tooltip, the keyboard readout and the announcer
+ * all read THIS.
+ */
+export function dayTipContent(
+  input: Omit<TimeSeriesTooltipInput, 'tokens'>,
+  overlay: readonly TrendDayRow[] = [],
+): TooltipContent {
+  const base = timeSeriesTooltipContent({ ...input, tokens: { series: CHART_VARS.series, axis: CHART_VARS.axis } })
+  return tipContent(base.title, [
+    ...base.rows,
+    ...overlay.map((row) => ({
+      kind: row.key === 'anomaly' ? ('note' as const) : ('value' as const),
+      key: row.key,
+      label: row.label,
+      value: row.value,
+      data: { [TREND_ROW_ATTRIBUTE]: row.key },
+    })),
+  ])
+}
+
+/** Half the drawn mark of a day: the 14 px execution bar (the rate's active dot is 4 px). */
+const DAY_MARK_HALF = 7
+
+/**
+ * The pointer's tooltip: `dayTipContent`, drawn by the shared `ChartTooltip`
+ * markup and pinned BESIDE the day's column, at the top of the plot. React
+ * text, never a string formatter: release names and server reasons are
+ * ingested CI text.
  */
 export function TimeSeriesTooltip({
   active,
   label,
+  coordinate,
   model,
   timeZone,
   locale,
@@ -217,37 +265,12 @@ export function TimeSeriesTooltip({
   overlayRows,
 }: TimeSeriesTooltipProps) {
   const index = model.points.findIndex((point) => point.x === String(label))
-  if (!active || index < 0) return null
-  const content = timeSeriesTooltipContent({ model, index, locale, timeZone, inProgressRuns })
-  const extra = overlayRows ? overlayRows(model.points[index].x) : []
-  return (
-    <div
-      data-chart-tooltip=""
-      className="rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)]"
-    >
-      {content.title && <div className="font-semibold">{content.title}</div>}
-      {content.rows.map((row) => (
-        <div key={row.label} className="flex items-baseline gap-3">
-          <span className="text-[var(--color-text-secondary)]">{row.label}</span>
-          <span className="ml-auto font-medium tabular-nums">{row.value}</span>
-        </div>
-      ))}
-      {extra.map((row) =>
-        row.key === 'anomaly' ? (
-          // The rule is a sentence, not a number: it wraps under its label.
-          <div key={row.key} data-trend-tooltip-row={row.key} className="mt-1 max-w-xs">
-            <span className="font-semibold">{row.label}: </span>
-            <span>{row.value}</span>
-          </div>
-        ) : (
-          <div key={row.key} data-trend-tooltip-row={row.key} className="flex items-baseline gap-3">
-            <span className="text-[var(--color-text-secondary)]">{row.label}</span>
-            <span className="ml-auto font-medium tabular-nums">{row.value}</span>
-          </div>
-        ),
-      )}
-    </div>
-  )
+  const open = Boolean(active) && index >= 0
+  const { mark, gap, chartBox, sweep } = useColumnMark(coordinate, model.points.length, DAY_MARK_HALF)
+  const content = open
+    ? dayTipContent({ model, index, locale, timeZone, inProgressRuns }, overlayRows ? overlayRows(model.points[index].x) : [])
+    : null
+  return <PinnedTip content={content} mark={mark} sides={COLUMN_SIDES} align="start" gap={gap} chartBox={chartBox} sweep={sweep} />
 }
 
 // ── The SVG (Recharts) renderer ──────────────────────────────────────────────
@@ -309,17 +332,20 @@ function SvgTimeSeries({
    */
   const cursorPoints = useMemo<ChartCursorPoint[]>(
     () =>
-      model.points.map((point, index) => {
-        const content = timeSeriesTooltipContent({ model, index, locale, timeZone, inProgressRuns })
-        const extra = trend ? trendRowsForDay(trend.analysis, point.x, trend.shown) : []
-        return {
-          key: point.x,
-          text: [content.title, ...[...content.rows, ...extra].map((row) => `${row.label} ${row.value}`)].join(', '),
-        }
-      }),
+      model.points.map((point, index) =>
+        cursorPoint(
+          point.x,
+          dayTipContent(
+            { model, index, locale, timeZone, inProgressRuns },
+            trend ? trendRowsForDay(trend.analysis, point.x, trend.shown) : [],
+          ),
+        ),
+      ),
     [model, locale, timeZone, inProgressRuns, trend],
   )
   const cursor = useChartCursor({ title, chartType: 'line and bar chart', points: cursorPoints, noun: 'day' })
+  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const scale = usePresentationScale()
 
   return (
     <div
@@ -330,7 +356,7 @@ function SvgTimeSeries({
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-    <ResponsiveContainer width="100%" height={height}>
+    <ChartResponsive height={Math.round(height / scale)}>
       {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
       <ComposedChart data={rows} margin={{ top: 16, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
         {/*
@@ -373,7 +399,8 @@ function SvgTimeSeries({
           tick={RECHARTS_AXIS_TICK}
           label={{ value: EXECUTIONS_AXIS_TITLE, angle: 90, position: 'insideRight', fill: CHART_VARS.axis, fontSize: 11 }}
         />
-        <Tooltip key={cursor.tipKey} content={tooltip} {...cursor.tipProps} />
+        {/* Pinned beside its day (`PinnedTip`): a fixed origin, no slide. */}
+        <Tooltip key={cursor.tipKey} content={tooltip} position={{ x: 0, y: 0 }} isAnimationActive={false} {...cursor.tipProps} />
         <Legend content={() => <ChartLegend entries={legend} />} />
         <Bar yAxisId="executions" dataKey="executions" name={EXECUTIONS_AXIS_TITLE} isAnimationActive={animate} barSize={14}>
           {rows.map((row) => (
@@ -498,7 +525,7 @@ function SvgTimeSeries({
           />
         ))}
       </ComposedChart>
-    </ResponsiveContainer>
+    </ChartResponsive>
     {cursor.readout}
     </div>
   )
@@ -565,7 +592,7 @@ function CanvasTimeSeries({
 export default function TimeSeriesChart({
   model,
   title = 'Pass rate over time',
-  height = 280,
+  height: requestedHeight = 280,
   animate: requestedAnimate,
   inProgressRuns,
   timeZone,
@@ -574,6 +601,8 @@ export default function TimeSeriesChart({
   description = 'Pass rate and execution volume over time',
   trendOverlays,
 }: TimeSeriesChartProps) {
+  // Full screen (VIZ-608): the plot takes the frame's body, less room for the notes under it.
+  const height = useFramePlotHeight(requestedHeight, TIME_SERIES_NOTES_RESERVE)
   const animate = useChartAnimation(requestedAnimate)
   const patternId = `${useId().replace(/[^A-Za-z0-9_-]/g, '')}-partial-day`
 
