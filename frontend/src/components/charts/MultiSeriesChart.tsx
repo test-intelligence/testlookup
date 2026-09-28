@@ -63,19 +63,21 @@ import {
 import { formatNumber } from '@/utils/formatters'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, sweepOf } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotLayoutHeight } from './framePlotHeight'
 import { COLUMN_SIDES, TIP_GAP, bandGap, columnMark } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { formatChange, formatRatePoints, tipContent, type TooltipContent } from './tooltip'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
 import { useChartAnimation } from './motion'
+import { useTextMeasure } from './textMeasure'
 import {
   DIRECT_LABEL_GUTTER,
   LABEL_ROW,
   LABEL_SWATCH_LENGTH,
   LEADER_DASH,
   PARTIAL_MARK,
-  directLabelText,
+  DIRECT_LABEL_FONT_SIZE,
+  fitDirectLabel,
   placeDirectLabels,
   tipContentAt,
   tipRowName,
@@ -311,12 +313,14 @@ function DirectLabels({
   useEffect(() => {
     if (fits !== undefined) onFit(fits)
   }, [fits, onFit])
+  // Each name is cut to the gutter's text room in the font it is drawn in (`fitDirectLabel`).
+  const [group, measure] = useTextMeasure<SVGGElement>()
   if (edge === undefined || !placement || !placement.fits) return null
   const byKey = new Map(lines.map((line) => [line.key, line]))
   return (
     // The legend and the table name every series for assistive tech; these
     // are the same names again, drawn where the eye already is.
-    <g data-multi-series-direct-labels="" aria-hidden="true">
+    <g ref={group} data-multi-series-direct-labels="" aria-hidden="true">
       {placement.labels.map((placed) => {
         const line = byKey.get(placed.key)
         if (!line) return null
@@ -350,8 +354,8 @@ function DirectLabels({
               strokeWidth={2}
               strokeDasharray={line.dash}
             />
-            <text x={edge + LABEL_ROW.textStart} y={placed.y} dominantBaseline="central" fontSize={11} fill={CHART_VARS.text}>
-              {directLabelText(line.label)}
+            <text x={edge + LABEL_ROW.textStart} y={placed.y} dominantBaseline="central" fontSize={DIRECT_LABEL_FONT_SIZE} fill={CHART_VARS.text}>
+              {fitDirectLabel(line.label, measure)}
             </text>
           </g>
         )
@@ -491,8 +495,7 @@ export default function MultiSeriesChart({
 }: MultiSeriesChartProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the legend and notes under it.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
-  const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight, MULTI_SERIES_NOTES_RESERVE) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight, MULTI_SERIES_NOTES_RESERVE)
   const animate = useChartAnimation(requestedAnimate)
   const bannerId = useId()
   const shown = useMemo(() => model.lines.filter((line) => !hidden.has(line.key)), [model, hidden])

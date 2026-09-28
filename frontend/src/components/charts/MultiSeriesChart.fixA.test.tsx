@@ -15,8 +15,10 @@ import { addUtcDays } from './seriesAlignment'
 import {
   LABEL_ROW,
   LABEL_SWATCH_LENGTH,
+  LABEL_TEXT_ROOM,
   LEADER_DASH,
   buildMultiSeriesModel,
+  directLabelText,
   type MultiSeriesInputSeries,
   type MultiSeriesModel,
 } from './multiSeriesModel'
@@ -194,6 +196,46 @@ describe('M8: the pointer tooltip is pinned per DAY', () => {
     const tip = captured.tips[captured.tips.length - 1]
     expect(tip.position).toEqual({ x: 0, y: 0 })
     expect(tip.isAnimationActive).toBe(false)
+  })
+})
+
+/**
+ * A laid-out page (jsdom lays nothing out) and a canvas whose stand-in font
+ * draws 6 px a character — `<`, `=` and `W` twice that — so `useTextMeasure`
+ * measures, as it does in a browser.
+ */
+function withLayout(width = (text: string) => [...text].reduce((sum, ch) => sum + ('<=W'.includes(ch) ? 12 : 6), 0)) {
+  const rect = { x: 0, y: 0, left: 0, top: 0, right: 600, bottom: 300, width: 600, height: 300, toJSON: () => ({}) }
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    font: '',
+    measureText: (text: string) => ({ width: width(text) }),
+  } as unknown as ReturnType<HTMLCanvasElement['getContext']>)
+  return width
+}
+
+describe('PR 165 (Linux): a line-end name is cut to the gutter by its measured WIDTH, not its length', () => {
+  const HOSTILE = '<img src=x onerror=1>'
+  const withHostile = buildMultiSeriesModel({
+    series: [{ ...suite('payments', [97, 96, 94.4]), label: HOSTILE }, suite('search', [84, 98, 87.3])],
+    metric: RATE,
+    seriesNoun: 'suites',
+  })
+  const drawn = (container: HTMLElement, key: string) => container.querySelector(`[data-direct-label="${key}"] text`)?.textContent
+
+  it('with nothing laid out, twelve characters, as before', () => {
+    const { container } = mount(withHostile)
+    expect(drawn(container, 'payments')).toBe(directLabelText(HOSTILE))
+  })
+
+  it('in a font where twelve characters are wider than the room, fewer — and every name fits the room', () => {
+    const width = withLayout()
+    const { container } = mount(withHostile)
+    expect(width(directLabelText(HOSTILE))).toBeGreaterThan(LABEL_TEXT_ROOM)
+    expect(drawn(container, 'payments')).toBe('<img src=…')
+    for (const key of ['payments', 'search']) expect(width(drawn(container, key) ?? ''), key).toBeLessThanOrEqual(LABEL_TEXT_ROOM)
+    // A name that fits is untouched.
+    expect(drawn(container, 'search')).toBe('search')
   })
 })
 

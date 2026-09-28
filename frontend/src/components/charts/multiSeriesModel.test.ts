@@ -21,7 +21,9 @@ import {
   buildMultiSeriesModel,
   comparabilityFromMeta,
   directLabelText,
+  fitDirectLabel,
   isolateHidden,
+  LABEL_TEXT_ROOM,
   multiSeriesInputFromChartData,
   multiSeriesToChartSeries,
   placeDirectLabels,
@@ -279,6 +281,44 @@ describe('placeDirectLabels', () => {
   it('shortens a long name for the gutter', () => {
     expect(directLabelText('payments')).toBe('payments')
     expect(directLabelText('checkout-service-long')).toBe('checkout-se…')
+  })
+
+  // PR 165 on Linux: "<img src=x …" is 12 characters and 80 px in DejaVu Sans — 4 px past the 76 px room.
+  describe('fitDirectLabel — cut to the gutter by WIDTH, in the font it is drawn in', () => {
+    /** A stand-in font: 6 px a character, and `<`, `=` and `W` twice that. */
+    const measure = (text: string) => [...text].reduce((sum, ch) => sum + ('<=W'.includes(ch) ? 12 : 6), 0)
+
+    it('without a measure (no layout) it is directLabelText', () => {
+      expect(fitDirectLabel('checkout-service-long', null)).toBe('checkout-se…')
+      expect(fitDirectLabel('<img src=x onerror=1>', null)).toBe('<img src=x …')
+    })
+
+    it('a name that fits is left alone, shortened or not', () => {
+      expect(fitDirectLabel('payments', measure)).toBe('payments')
+      expect(fitDirectLabel('checkout-service-long', measure)).toBe('checkout-se…')
+      expect(measure('checkout-se…')).toBeLessThanOrEqual(LABEL_TEXT_ROOM)
+    })
+
+    it('a name wider than the room is shortened until it fits — the widest prefix that does', () => {
+      const fitted = fitDirectLabel('<img src=x onerror=1>', measure)
+      expect(measure('<img src=x …')).toBeGreaterThan(LABEL_TEXT_ROOM)
+      expect(fitted).toBe('<img src=…')
+      expect(measure(fitted)).toBeLessThanOrEqual(LABEL_TEXT_ROOM)
+      // One character more would not have fitted.
+      expect(measure('<img src=x…')).toBeGreaterThan(LABEL_TEXT_ROOM)
+    })
+
+    it('a short name of wide characters is shortened too: the room is pixels, not characters', () => {
+      const fitted = fitDirectLabel('WWWWWWW', measure)
+      expect(fitted).toBe('WWWWW…')
+      expect(measure(fitted)).toBeLessThanOrEqual(LABEL_TEXT_ROOM)
+    })
+
+    it('every name it returns fits the room', () => {
+      for (const name of ['a', 'payments', '<<<<<<<<<<<<<<', 'W W W W W W W W', 'checkout-service-long', '=== ===']) {
+        expect(measure(fitDirectLabel(name, measure)), name).toBeLessThanOrEqual(LABEL_TEXT_ROOM)
+      }
+    })
   })
 })
 

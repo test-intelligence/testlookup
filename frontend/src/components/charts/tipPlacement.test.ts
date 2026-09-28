@@ -17,6 +17,7 @@ import {
   intersect,
   onSweepLine,
   placeTip,
+  slideAlongSide,
   TIP_MIN_WIDTH,
   tipCorridor,
   tipMaxWidth,
@@ -274,6 +275,49 @@ describe("placeTip with a sweep — off the pointer's line", () => {
     const wide = { width: 420, height: 60 }
     // Neither side has 420 px: wrapped to the 281 px left of the day.
     expect(tipMaxWidth({ ...column, tip: wide, sweep: { axis: 'x', at: 150 } })).toBe(281)
+  })
+})
+
+describe("slideAlongSide — a new pointer line on the same day moves the box along its side, never off it", () => {
+  // The multi-series chart on the Linux runner: a 260 px chart, a day's column
+  // over its 200 px plot, and a box 375 × 129 (wrapped rows in DejaVu Sans).
+  const chart = { left: 0, top: 0, width: 606, height: 260 }
+  const day = columnMark(218, 0, { top: 16, height: 200 })
+  const tall = { width: 375, height: 129 }
+  const input = { mark: day, tip: tall, bounds: chart, gap: 12, align: 'start' as const }
+  const offLine = (top: number, line: number) => line < top || line > top + tall.height
+
+  it('keeps SWEEP_MARGIN off the line where the side has room for it', () => {
+    // Line near the bottom of the plot: at the plot's top, as `placeTip` would put it.
+    expect(slideAlongSide({ ...input, sweep: { axis: 'x', at: 206 } }, 'right')).toEqual({ left: 230, top: 16 })
+    // Line near the top: below it by the margin.
+    const moved = slideAlongSide({ ...input, sweep: { axis: 'x', at: 60 } }, 'right')
+    expect(moved.left).toBe(230)
+    expect(moved.top).toBeGreaterThanOrEqual(60 + SWEEP_MARGIN)
+  })
+
+  it('where no height keeps the margin, the box stays on its side, as far off the line as the chart allows', () => {
+    const line = 126
+    // `placeTip` finds no side that keeps the margin …
+    expect(placeTip({ ...input, sides: COLUMN_SIDES, sweep: { axis: 'x', at: line } }).fits).toBe(false)
+    // … the box keeps its day's side and x, and is still off the line (5 px below it).
+    const moved = slideAlongSide({ ...input, sweep: { axis: 'x', at: line } }, 'right')
+    expect(moved).toEqual({ left: 230, top: 131 })
+    expect(offLine(moved.top, line)).toBe(true)
+  })
+
+  it('never changes side: the left side stays left, however much more room the right has', () => {
+    const moved = slideAlongSide({ ...input, tip: TIP, sweep: { axis: 'x', at: 100 } }, 'left')
+    expect(moved.left).toBe(218 - 12 - TIP.width)
+  })
+
+  it('every line through the plot leaves the tall box off it, on the same side', () => {
+    for (let line = 16; line <= 216; line += 2) {
+      const moved = slideAlongSide({ ...input, sweep: { axis: 'x', at: line } }, 'right')
+      expect(moved.left, `line ${line}`).toBe(230)
+      expect(offLine(moved.top, line), `line ${line}`).toBe(true)
+      expect(moved.top >= 0 && moved.top + tall.height <= chart.height, `line ${line}: inside the chart`).toBe(true)
+    }
   })
 })
 

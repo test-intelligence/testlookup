@@ -132,7 +132,9 @@ type CandidateInput = Required<Omit<PlaceTipInput, 'sides' | 'sweep'>> & Pick<Pl
  * The cross-axis position on one side: aligned as asked, clamped into the
  * bounds — or, on a side along the sweep, the first of (aligned, the mark's
  * start, the mark's end, just before the pointer's line, just after it) that
- * keeps the whole tooltip off the line. `null`: nothing does.
+ * keeps the whole tooltip off the line. `null`: nothing does — unless
+ * `nearest`, which then returns whichever of the last two keeps the tooltip
+ * furthest from the line (see `slideAlongSide`).
  */
 function crossPosition(
   markStart: number,
@@ -142,13 +144,19 @@ function crossPosition(
   boundsSize: number,
   align: 'start' | 'center',
   line: number | null,
+  nearest = false,
 ): number | null {
   const fit = (value: number) => clamp(value, boundsStart, boundsStart + boundsSize - size)
   const aligned = fit(cross(markStart, markSize, size, align))
   if (line === null) return aligned
   const clear = (value: number) => value + size <= line - SWEEP_MARGIN || value >= line + SWEEP_MARGIN
-  const options = [aligned, fit(markStart), fit(markStart + markSize - size), fit(line - SWEEP_MARGIN - size), fit(line + SWEEP_MARGIN)]
-  return options.find(clear) ?? null
+  const before = fit(line - SWEEP_MARGIN - size)
+  const after = fit(line + SWEEP_MARGIN)
+  const found = [aligned, fit(markStart), fit(markStart + markSize - size), before, after].find(clear)
+  if (found !== undefined || !nearest) return found ?? null
+  // How far the tooltip's near edge is from the line (negative: the line crosses it).
+  const clearance = (value: number) => Math.max(line - (value + size), value - line)
+  return clearance(before) >= clearance(after) ? before : after
 }
 
 /** The tooltip's position on `side`, with its main axis unclamped and its cross axis clamped. */
@@ -167,6 +175,36 @@ function candidate(side: TipSide, { mark, tip, bounds, gap, align, sweep }: Cand
   const room = side === 'below' ? bottom(bounds) - (bottom(mark) + gap) : mark.top - gap - bounds.top
   if (left === null) return { left: clamp(mark.left, bounds.left, right(bounds) - tip.width), top, room: -Infinity, need: tip.height }
   return { left, top, room, need: tip.height }
+}
+
+/**
+ * The tooltip moved to a new pointer line on the side its mark ALREADY has:
+ * along that side's cross axis only, never to another side.
+ *
+ * `placeTip` decides a mark's side, and `PinnedTip` decides once per mark
+ * whether the box is beside it at all or in the readout slot below the plot.
+ * When the pointer then moves along the same day onto the box's line, the
+ * box has to get off that line — but re-deciding everything there sent it
+ * away mid-day: a box made taller by a wider font (DejaVu Sans wraps the
+ * multi-series rows to two lines each) found no side that kept 12 px off a
+ * line through the plot's middle, and jumped 230 px to the slot, then back.
+ * The box keeps its day's side and x; only its height on that side changes,
+ * off the line by `SWEEP_MARGIN` where it can be, else as far from the line
+ * as the visible chart allows.
+ */
+export function slideAlongSide(
+  { mark, tip, bounds, gap = TIP_GAP, align = 'center', sweep }: PlaceTipInput,
+  side: TipSide,
+): { left: number; top: number } {
+  const line = sweep && alongSweep(side, sweep) ? sweep.at : null
+  if (side === 'right' || side === 'left') {
+    const left = side === 'right' ? right(mark) + gap : mark.left - gap - tip.width
+    const top = crossPosition(mark.top, mark.height, tip.height, bounds.top, bounds.height, align, line, true) as number
+    return { left: clamp(left, bounds.left, right(bounds) - tip.width), top }
+  }
+  const top = side === 'below' ? bottom(mark) + gap : mark.top - gap - tip.height
+  const left = crossPosition(mark.left, mark.width, tip.width, bounds.left, bounds.width, align, line, true) as number
+  return { left, top: clamp(top, bounds.top, bottom(bounds) - tip.height) }
 }
 
 /**

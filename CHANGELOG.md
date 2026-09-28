@@ -95,6 +95,25 @@ fixed with tests that fail on the old code:
 - text clipped in full screen;
 - the ``;``-locale CSV bypass.
 
+**What CI's Linux runner found.** Eight browser tests that passed on Windows
+failed on Linux. There ``system-ui`` is DejaVu Sans, which is wider, and label
+space tuned to the narrower font ran out:
+- the histogram's slanted bucket labels ran below the chart;
+- a long series name overflowed its line-end label;
+- a wrapped tooltip jumped away from its day.
+
+The fixes measure text instead of assuming a width:
+- the histogram's axis height comes from its longest label, measured;
+- line-end labels are shortened until they fit;
+- a full-screen chart is never laid out smaller than on the page;
+- a tooltip decides its side once per day and then only slides along it.
+
+**Suites catalogue order (production).** ``GET /test-management/suites`` sorted
+suites by size alone. Suites of equal size came back in whatever order Postgres
+returned them, so they could swap places between two loads of the Test
+Management page, and the analytics parity test failed at random. Equal sizes
+are now ordered by name.
+
 **Known limits.** Past 366 days the time series draws on a canvas, and its
 tooltip still moves as the pointer approaches it. Zooming to 366 days or fewer
 switches to the SVG chart. In a small plot a tall tooltip can move to the

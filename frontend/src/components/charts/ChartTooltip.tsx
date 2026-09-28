@@ -69,6 +69,7 @@ import {
   columnMark,
   onSweepLine,
   placeTip,
+  slideAlongSide,
   tipMaxWidth,
   unscaled,
   visibleBoundsOf,
@@ -294,6 +295,8 @@ export function PinnedTip({ content, mark, sides = ANY_SIDE, align = 'center', g
   const shownText = useRef<string | null>(null)
   // What the box was last measured and placed for (see the layout effect).
   const measuredFor = useRef<string | null>(null)
+  // What its side, width and slot were DECIDED for: the same inputs, less the pointer's line.
+  const decidedFor = useRef<string | null>(null)
 
   // The readout slot's surface the pointer has LEFT, if it has. A box in the
   // slot is not beside its mark: the pointer reaches it by leaving the plot
@@ -350,9 +353,26 @@ export function PinnedTip({ content, mark, sides = ANY_SIDE, align = 'center', g
     // options and the pointer's line. Recharts re-renders this content on
     // every pointer move over a day (its `coordinate.y` is the pointer's), and
     // each measurement forces two synchronous layouts (review N1).
-    const inputs = [shownText.current, at.left, at.top, at.width, at.height, bounds.left, bounds.top, bounds.width, bounds.height, gap, sides.join(), align, keptSweep?.axis, keptSweep?.at].join('|')
+    const decision = [shownText.current, at.left, at.top, at.width, at.height, bounds.left, bounds.top, bounds.width, bounds.height, gap, sides.join(), align].join('|')
+    const inputs = [decision, keptSweep?.axis, keptSweep?.at].join('|')
     if (position && measuredFor.current === inputs) return
     measuredFor.current = inputs
+    const key = `${shownText.current ?? ''}|${keptSweep?.at ?? ''}`
+    if (position && slot === null && decidedFor.current === decision) {
+      // The same mark, only the pointer's line moved (the approach listener
+      // saw the pointer come onto the box's line along its day): the side,
+      // the width and "beside, not in the slot" were decided for this mark
+      // and stay. The box moves off the line on its side — never across to
+      // the other side or down into the slot while the reader is on its day.
+      const drawn = { width: el.offsetWidth, height: el.offsetHeight }
+      const moved = slideAlongSide({ mark: at, tip: drawn, bounds, gap, align, sweep: keptSweep }, position.side)
+      armed.current = null
+      holding.current = false
+      geometry.current = { key, mark: at, tip: { ...moved, ...drawn }, side: position.side, sweep: keptSweep }
+      if (moved.left !== position.left || moved.top !== position.top) setPosition({ ...position, ...moved })
+      return
+    }
+    decidedFor.current = decision
     const owned = el.style.maxWidth
     el.style.maxWidth = 'none'
     const natural = { width: el.offsetWidth, height: el.offsetHeight }
@@ -366,7 +386,6 @@ export function PinnedTip({ content, mark, sides = ANY_SIDE, align = 'center', g
     // the readout slot below it (when the chart has one).
     const target = placed.fits ? null : slotOf(chart)
     if (target !== slot) setSlot(target)
-    const key = `${shownText.current ?? ''}|${keptSweep?.at ?? ''}`
     if (geometry.current?.key !== key) {
       // A new mark, or the box re-placed off a new line: any approach was to the old box.
       armed.current = null

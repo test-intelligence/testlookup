@@ -40,3 +40,23 @@ export const PRESENTATION_SCALE = 15 / 11
 export function usePresentationScale(): number {
   return useChartFullscreen() ? PRESENTATION_SCALE : 1
 }
+
+/**
+ * The LAYOUT height of a Recharts drawing (`ChartResponsive`'s `height`): the
+ * plot's share of the full-screen body, divided back down by the presentation
+ * scale — and never less than the `height` the page lays it out at.
+ *
+ * `useFramePlotHeight` keeps the SCREEN height at the page's height at least.
+ * Divided by the scale, that left a short window's full-screen drawing laid
+ * out SMALLER than the page's: at 640×480 the time series was laid out 205 px
+ * tall instead of 280, its legend wrapped to three lines in the narrower
+ * layout, the plot kept 65 px, and the rate axis title — which runs up from
+ * the plot's middle — stood 16 px above the svg. "Nothing that fits at 11 px
+ * can be cut at 15" holds only for a drawing laid out at least as large as
+ * the page's, so that is the floor. Outside full screen this is `height`.
+ */
+export function useFramePlotLayoutHeight(height: number, reserve = 0): number {
+  const scale = usePresentationScale()
+  const screen = useFramePlotHeight(height, reserve)
+  return Math.max(height, Math.round(screen / scale))
+}

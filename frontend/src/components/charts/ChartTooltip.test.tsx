@@ -189,6 +189,33 @@ describe('PinnedTip', () => {
     expect(tip().style.top).toBe('16px')
   })
 
+  it('keeps the side, the x and "beside" it was given for its day when the pointer moves along the day onto it (PR 165, Linux)', () => {
+    // A 260 px chart and a box 130 px tall (the multi-series tooltip, its rows
+    // wrapped in DejaVu Sans): through the chart's middle no height keeps the
+    // box 12 px off the pointer's line, on either side.
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(150)
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(130)
+    const chart = { left: 0, top: 0, width: 600, height: 260 }
+    const tree = (at: number) => (
+      <div data-chart-cursor="idle">
+        <div className="recharts-wrapper">
+          <PinnedTip content={CONTENT} mark={mark} sides={COLUMN_SIDES} align="start" chartBox={chart} sweep={{ axis: 'x', at }} />
+        </div>
+      </div>
+    )
+    const view = render(tree(200))
+    const wrapper = view.container.querySelector('.recharts-wrapper') as HTMLElement
+    const tip = () => view.container.querySelector('[data-chart-tooltip]') as HTMLElement
+    expect(tip().getAttribute('data-tip-placement')).toBe('beside')
+    expect({ left: tip().style.left, top: tip().style.top, side: tip().getAttribute('data-tip-side') }).toEqual({ left: '326px', top: '16px', side: 'right' })
+    // Up the same day, onto the box's line: it moves DOWN, off the line, on the same side at the same x —
+    // not across to the left, and not into the readout slot below the plot.
+    fireEvent.mouseMove(wrapper, { clientX: 300, clientY: 125 })
+    expect(view.container.querySelectorAll('[data-chart-tooltip]')).toHaveLength(1)
+    expect(tip().getAttribute('data-tip-placement')).toBe('beside')
+    expect({ left: tip().style.left, top: tip().style.top, side: tip().getAttribute('data-tip-side') }).toEqual({ left: '326px', top: '130px', side: 'right' })
+  })
+
   it('fits nowhere beside its mark: drawn in the readout slot below the plot, in the flow, never over the plot', () => {
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(560)
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(60)

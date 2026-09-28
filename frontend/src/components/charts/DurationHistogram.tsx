@@ -25,12 +25,13 @@ import { useChartAnimation } from './motion'
 import { formatNumber } from '@/utils/formatters'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotLayoutHeight } from './framePlotHeight'
 import { COLUMN_SIDES } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { sampleRow, shareRow, tipContent, type TooltipContent } from './tooltip'
 import type { DurationBucket, DurationHistogramModel } from './durationBuckets'
 import { useChartPatternPrefix } from './patterns'
+import { useTextMeasure } from './textMeasure'
 
 export const HISTOGRAM_EMPTY = 'No execution in this window carries a duration'
 /** What the buckets are. Only ever shown under drawn buckets. */
@@ -49,6 +50,40 @@ const NOTE = 'text-xs text-[var(--color-text-secondary)]'
 /** What the caption, the excluded count and the placed count under the plot keep back in full screen, px. */
 const HISTOGRAM_NOTES_RESERVE = 64
 
+/** The bucket labels' slant, degrees: every edge stays readable without a label per two buckets. */
+const BUCKET_LABEL_ANGLE = 30
+/** The bucket labels' size, px (`RECHARTS_AXIS_TICK`). */
+const BUCKET_LABEL_SIZE = RECHARTS_AXIS_TICK.fontSize
+/**
+ * The room under the plot for the slanted bucket labels where they cannot be
+ * measured (no layout: jsdom), and the least it ever is.
+ */
+export const BUCKET_AXIS_MIN_HEIGHT = 56
+/** Where Recharts anchors a bottom tick label: `tickSize` (6) + `tickMargin` (2) below the axis. */
+const TICK_ANCHOR = 8
+/**
+ * From a bottom tick's anchor to the bottom of its first line, in em: Recharts
+ * drops the baseline its `capHeight` (0.71em) below the anchor, and a glyph's
+ * descent reaches at most ~0.3em below the baseline in any common UI font.
+ */
+const TICK_LINE_DEPTH_EM = 0.71 + 0.3
+
+/**
+ * The height the x axis needs for bucket labels slanted by
+ * `BUCKET_LABEL_ANGLE` whose longest is `longest` px wide.
+ *
+ * A label is anchored at its END, under its bucket, and slants down-left from
+ * there: its start reaches `longest · sin(angle)` further down, plus its
+ * line's depth turned by the angle. The axis was a fixed 56 px, which held the
+ * longest label in Segoe UI and cut it by 5 px in DejaVu Sans (the Linux CI
+ * runner's `system-ui`): sized from the label, it holds in every font.
+ */
+export function bucketAxisHeight(longest: number, fontSize: number = BUCKET_LABEL_SIZE): number {
+  const angle = (BUCKET_LABEL_ANGLE * Math.PI) / 180
+  const needed = TICK_ANCHOR + longest * Math.sin(angle) + TICK_LINE_DEPTH_EM * fontSize * Math.cos(angle)
+  return Math.max(BUCKET_AXIS_MIN_HEIGHT, Math.ceil(needed) + 1)
+}
+
 export default function DurationHistogram({
   model,
   title = 'Duration distribution',
@@ -57,8 +92,7 @@ export default function DurationHistogram({
 }: DurationHistogramProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the three notes under it.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
-  const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight, HISTOGRAM_NOTES_RESERVE) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight, HISTOGRAM_NOTES_RESERVE)
   const animate = useChartAnimation(requested)
   const patternId = `${useChartPatternPrefix()}-overflow`
   // `isOverflow`, not `overflow`: Recharts spreads each data row's own fields
@@ -78,6 +112,14 @@ export default function DurationHistogram({
     [model],
   )
   const cursor = useChartCursor({ title, chartType: 'histogram', points: cursorPoints, noun: 'bucket' })
+  // The x axis is as tall as its longest slanted label needs, in the font it is drawn in.
+  const [plotRef, measure] = useTextMeasure<HTMLDivElement>()
+  const axisHeight = useMemo(() => {
+    if (!measure) return BUCKET_AXIS_MIN_HEIGHT
+    let longest = 0
+    for (const bucket of model.buckets) longest = Math.max(longest, measure(bucket.label, BUCKET_LABEL_SIZE))
+    return bucketAxisHeight(longest)
+  }, [measure, model.buckets])
 
   return (
     <figure data-chart="duration-histogram" className="m-0 flex flex-col gap-1">
@@ -96,6 +138,7 @@ export default function DurationHistogram({
         </p>
       ) : (
         <div
+          ref={plotRef}
           data-duration-histogram-plot=""
           className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
           {...cursor.surfaceProps}
@@ -105,7 +148,7 @@ export default function DurationHistogram({
           <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
             <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
             {/* The edges ARE the axis: every bucket shows the range it counts. */}
-            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} interval={0} angle={-30} textAnchor="end" height={56} />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} interval={0} angle={-BUCKET_LABEL_ANGLE} textAnchor="end" height={axisHeight} />
             <YAxis
               axisLine={false}
               tickLine={false}

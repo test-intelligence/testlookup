@@ -36,7 +36,7 @@ import {
 } from './DonutChart.model'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotLayoutHeight } from './framePlotHeight'
 import { chartScaleOf, unscaled, type TipRect } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { SHARE_LABEL, sampleRow, tipContent, type TooltipContent } from './tooltip'
@@ -165,8 +165,7 @@ export function DonutPlot({
 }: DonutPlotProps) {
   // Full screen (VIZ-608): the ring's box takes the frame's body; its legend is inside the chart.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
-  const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight)
   const animate = useChartAnimation(requestedAnimate)
   const prefix = useChartPatternPrefix()
   // A ring that is not one whole (no centre total) states no sample for its slices.

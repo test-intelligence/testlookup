@@ -67,7 +67,7 @@ import {
   YAxis,
 } from 'recharts'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotHeight, useFramePlotLayoutHeight } from './framePlotHeight'
 import ChartResponsive from './ChartResponsive'
 import { COLUMN_SIDES } from './tipPlacement'
 import { tipContent, type TooltipContent } from './tooltip'
@@ -291,6 +291,7 @@ function SvgTimeSeries({
 }: {
   model: TimeSeriesModel
   rows: Row[]
+  /** The LAYOUT height (`useFramePlotLayoutHeight`): what Recharts draws in before full screen scales it up. */
   height: number
   animate: boolean | undefined
   patternId: string
@@ -344,8 +345,6 @@ function SvgTimeSeries({
     [model, locale, timeZone, inProgressRuns, trend],
   )
   const cursor = useChartCursor({ title, chartType: 'line and bar chart', points: cursorPoints, noun: 'day' })
-  // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
-  const scale = usePresentationScale()
 
   return (
     <div
@@ -356,7 +355,7 @@ function SvgTimeSeries({
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       {...cursor.surfaceProps}
     >
-    <ChartResponsive height={Math.round(height / scale)}>
+    <ChartResponsive height={height}>
       {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
       <ComposedChart data={rows} margin={{ top: 16, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
         {/*
@@ -603,6 +602,8 @@ export default function TimeSeriesChart({
 }: TimeSeriesChartProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the notes under it.
   const height = useFramePlotHeight(requestedHeight, TIME_SERIES_NOTES_RESERVE)
+  // Full screen shows the SVG drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
+  const layoutHeight = useFramePlotLayoutHeight(requestedHeight, TIME_SERIES_NOTES_RESERVE)
   const animate = useChartAnimation(requestedAnimate)
   const patternId = `${useId().replace(/[^A-Za-z0-9_-]/g, '')}-partial-day`
 
@@ -689,7 +690,7 @@ export default function TimeSeriesChart({
         <SvgTimeSeries
           model={model}
           rows={rows}
-          height={height}
+          height={layoutHeight}
           animate={animate}
           patternId={patternId}
           title={title}

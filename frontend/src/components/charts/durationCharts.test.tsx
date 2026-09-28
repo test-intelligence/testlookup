@@ -6,9 +6,9 @@
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { cloneElement, type ReactElement, type ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
-import DurationHistogram, { HISTOGRAM_BUCKETS_CAPTION, OVERFLOW_NOTE } from './DurationHistogram'
+import DurationHistogram, { BUCKET_AXIS_MIN_HEIGHT, HISTOGRAM_BUCKETS_CAPTION, OVERFLOW_NOTE, bucketAxisHeight } from './DurationHistogram'
 import DurationTrend, { INVERTED_NOTE, durationAxis, durationTrendTipContent } from './DurationTrend'
 import { sliceDurationBand } from './zoom/zoomModel'
 import { tooltipText } from './tooltip'
@@ -87,6 +87,61 @@ const series = (points: SeriesChart['series'][number]['points']): SeriesChart =>
 const meta = { measured: true, reason: null } as unknown as EnvelopeMeta
 
 // ── Histogram ────────────────────────────────────────────────────────────────
+
+/**
+ * A laid-out page (jsdom lays nothing out) and a canvas whose stand-in font
+ * draws 6 px a character — `<`, `=` and `W` twice that — so `useTextMeasure`
+ * measures, as it does in a browser.
+ */
+function withLayout(width = (text: string) => [...text].reduce((sum, ch) => sum + ('<=W'.includes(ch) ? 12 : 6), 0)) {
+  const rect = { x: 0, y: 0, left: 0, top: 0, right: 600, bottom: 300, width: 600, height: 300, toJSON: () => ({}) }
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    font: '',
+    measureText: (text: string) => ({ width: width(text) }),
+  } as unknown as ReturnType<HTMLCanvasElement['getContext']>)
+  return width
+}
+
+/**
+ * PR 165 on Linux: the slanted bucket labels had a fixed 56 px axis. In
+ * DejaVu Sans "200ms – 500ms" is 87.6 px long; slanted 30° from its anchor 8
+ * px under the plot it reached 61 px down, and its bottom 5 px were cut.
+ */
+describe('DurationHistogram · the bucket axis is as tall as its longest slanted label', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** The x axis as last rendered. */
+  const lastXAxis = () => captured.axes.filter((a) => a.__axis === 'x').slice(-1)[0]
+
+  it('bucketAxisHeight: the anchor, the slant of the longest label, and its line turned by 30°', () => {
+    // 8 + 87.6 · sin 30° + 1.01 · 11 · cos 30° = 61.4 → 62, and a pixel of air.
+    expect(bucketAxisHeight(87.6)).toBe(63)
+    // Every label length gets at least its own drop below the anchor.
+    for (let longest = 0; longest <= 300; longest += 7) {
+      expect(bucketAxisHeight(longest), `${longest} px`).toBeGreaterThanOrEqual(8 + longest / 2 + 0.71 * 11 * Math.cos(Math.PI / 6))
+    }
+    // Short labels keep the height the axis always had.
+    expect(bucketAxisHeight(40)).toBe(BUCKET_AXIS_MIN_HEIGHT)
+  })
+
+  it('with nothing laid out, the axis keeps its fixed height', () => {
+    reset()
+    render(<DurationHistogram model={buildDurationHistogram([0.4, 3, 12, 99, 900])} />)
+    expect(lastXAxis()?.height).toBe(BUCKET_AXIS_MIN_HEIGHT)
+  })
+
+  it('laid out, it is sized from the longest bucket label as measured in the chart\'s font', () => {
+    reset()
+    const width = withLayout()
+    const model = buildDurationHistogram([0.4, 3, 12, 99, 900, 3_600_000])
+    render(<DurationHistogram model={model} />)
+    const longest = Math.max(...model.buckets.map((bucket) => width(bucket.label)))
+    const height = lastXAxis()?.height
+    expect(height).toBe(bucketAxisHeight(longest))
+    expect(height).toBeGreaterThan(BUCKET_AXIS_MIN_HEIGHT)
+  })
+})
 
 describe('DurationHistogram', () => {
   const durations = [0.4, 3, 12, 12, 40, 99, 900, 3_600_000, null, 0, 0]

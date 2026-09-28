@@ -837,6 +837,38 @@ export function directLabelText(label: string, max = DIRECT_LABEL_MAX_CHARS): st
   return chars.length <= max ? label : `${chars.slice(0, max - 1).join('')}…`
 }
 
+/** A direct label's size, px. */
+export const DIRECT_LABEL_FONT_SIZE = 11
+
+/**
+ * A direct label's text as DRAWN: `directLabelText`, then shortened further
+ * until it is no wider than `room` in the font it is drawn in (`measure`).
+ *
+ * `LABEL_TEXT_ROOM` holds `DIRECT_LABEL_MAX_CHARS` characters of an ordinary
+ * name in Segoe UI. It does not hold every twelve characters in every font:
+ * in DejaVu Sans (the Linux CI runner's `system-ui`) "<img src=x …" is 80 px,
+ * and ran 4 px off the svg's right edge. The gutter is not widened to suit a
+ * name — it is the plot's room — so the name is cut to the gutter. Without a
+ * measure (no layout: jsdom) it is `directLabelText`'s.
+ */
+export function fitDirectLabel(
+  label: string,
+  measure: ((text: string, fontSize: number) => number) | null,
+  room: number = LABEL_TEXT_ROOM,
+  fontSize: number = DIRECT_LABEL_FONT_SIZE,
+): string {
+  const text = directLabelText(label)
+  if (!measure || measure(text, fontSize) <= room) return text
+  const chars = [...label]
+  // One character fewer than `text` kept before the ellipsis.
+  const kept = chars.length <= DIRECT_LABEL_MAX_CHARS ? chars.length : DIRECT_LABEL_MAX_CHARS - 1
+  for (let keep = kept - 1; keep > 0; keep--) {
+    const shorter = `${chars.slice(0, keep).join('').trimEnd()}…`
+    if (measure(shorter, fontSize) <= room) return shorter
+  }
+  return '…'
+}
+
 // ── Showing and hiding series ────────────────────────────────────────────────
 
 /** Hide `key` if shown, show it if hidden. */

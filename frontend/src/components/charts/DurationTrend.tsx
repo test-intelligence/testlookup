@@ -34,7 +34,7 @@ import { NO_VALUE } from './chartText'
 import { useChartAnimation } from './motion'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotLayoutHeight } from './framePlotHeight'
 import { COLUMN_SIDES } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import {
@@ -160,8 +160,7 @@ export default function DurationTrend({
 }: DurationTrendProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the caption and notice under it.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
-  const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight, DURATION_NOTES_RESERVE) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight, DURATION_NOTES_RESERVE)
   const animate = useChartAnimation(requested)
   const bandPattern = `${useChartPatternPrefix()}-band`
   // The larger of `yMax` (a zoomed slice's WHOLE window) and what is drawn:

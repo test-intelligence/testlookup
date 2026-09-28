@@ -36,7 +36,21 @@ export function watchErrors(page: Page): string[] {
   return errors
 }
 
+/**
+ * The app's telemetry endpoint (`utils/errorReporting.ts`), answered here.
+ * The hermetic dev server has no backend behind its `/api` proxy, and the
+ * app beacons its web vitals 5 s after the first one: a spec still on the
+ * page by then logged "Failed to load resource: … 502 (Bad Gateway)", which
+ * `watchErrors` counts. Whether a spec lasted 5 s is the machine's speed,
+ * not the charts' behaviour (the hostile-names time series took 7 s on the
+ * Linux CI runner, and failed there alone). Only this one endpoint is
+ * answered: any other request that fails still fails the spec that watches
+ * for it.
+ */
+export const TELEMETRY_ENDPOINT = '**/api/v1/observability/frontend'
+
 export async function openGallery(page: Page, search = '') {
+  await page.route(TELEMETRY_ENDPOINT, (route) => route.fulfill({ status: 202, body: '' }))
   await page.goto(`${GALLERY}${search}`)
   // Fail, never skip: a 404 or an auth bounce lands on /overview → /login.
   expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe(GALLERY)

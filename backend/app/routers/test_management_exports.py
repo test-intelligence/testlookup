@@ -729,6 +729,18 @@ _SUITES_SCOPE = ScopePolicy(default_days=None)
 _SUITE_TREND_SCOPE = ScopePolicy(default_days=30, max_days=365, suites=False)
 
 
+def order_suites(suites):
+    """Largest suite first; suites of the SAME size by name.
+
+    The rows arrive in whatever order Postgres returned them, which is not
+    guaranteed without an ORDER BY. Sorting on the size alone left tied
+    suites in that order, so they could swap places between two loads of the
+    same page, and CI's parity golden failed at random (PR #165,
+    2026-09-24). The name makes the order total.
+    """
+    return sorted(suites, key=lambda s: (-s["test_count"], s["suite_name"] or ""))
+
+
 @router.get("/suites")
 @analytics_error_contract
 async def list_test_suites_in_scope(
@@ -1082,7 +1094,7 @@ async def list_test_suites(
         **history_kwargs,
     )
 
-    result = sorted(merged.values(), key=lambda x: x["test_count"], reverse=True)
+    result = order_suites(merged.values())
     logger.info("listing_test_suites", count=len(result), project_id=str(project_id) if project_id else None)
 
     return [

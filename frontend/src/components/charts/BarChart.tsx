@@ -34,7 +34,7 @@ import { formatNumber, formatPercent } from '@/utils/formatters'
 import ChartFrame, { type ChartHeadingLevel } from './ChartFrame'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, sweepOf } from './ChartTooltip'
-import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
+import { useFramePlotLayoutHeight, usePresentationScale } from './framePlotHeight'
 import { OTHER_KEY } from './multiSeriesModel'
 import type { TipRect } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
@@ -294,7 +294,7 @@ export function RankedBarPlot({
   // Full screen (VIZ-608): the plot takes the frame's body; the footer is the frame's, not ours.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
   const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight)
   const valueTitle = valueAxisLabel ?? defaultValueAxisTitle(model)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
@@ -451,7 +451,7 @@ export function StatusBarPlot({
   // Full screen (VIZ-608): the plot takes the frame's body; its legend is inside the chart.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
   const scale = usePresentationScale()
-  const height = Math.round(useFramePlotHeight(requestedHeight) / scale)
+  const height = useFramePlotLayoutHeight(requestedHeight)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
   const [wrapRef, width] = useContainerWidth<HTMLDivElement>()
