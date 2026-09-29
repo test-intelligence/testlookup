@@ -21,6 +21,20 @@
  * `offset` 5 → 14, its `x` 5 → 14 and its rotation centre (5, 123) → (14, 123)
  * — and the `timeseries-*` visual baselines change with it, on purpose.
  *
+ * A second deliberate change (Wave 2.5 FX-kit, R2 F6): the rate line's dots
+ * opt out of the plot clip (`clipDot: false`), so a 100 % dot on the top edge
+ * is drawn whole. The snapshot diff is that and only that — one extra
+ * `clipPath-dots-…` rect (the plot grown by one dot) and the dots layer's
+ * `clip-path` pointing at it. The single-point item's dot sits at 93 %, well
+ * inside the plot, so its pixels do not move.
+ *
+ * A third (Wave 2.5 FX-kit, R2 F5 and F7): the day axis prints the kit's one
+ * short day label (`utcDayLabel`, "Mar 5") instead of the ISO key, as the
+ * stacked columns beside it do; and where the rate line has lone dots (the
+ * single-point item) its legend swatch is a line WITH a dot. The snapshot
+ * diff is the x tick texts and, on the single-point item, one legend
+ * `<circle data-legend-dot>`; the `timeseries-*` baselines change with it.
+ *
  * Wave 2.4 (VIZ-606 / VIZ-608) gave EVERY drawn frame two toolbar buttons —
  * Export and Full screen. They belong to `ChartFrame`, not to the time-series
  * chart, and are pinned by `ChartFrame.fullscreen.test.tsx`'s own regression

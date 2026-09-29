@@ -5,20 +5,23 @@
  * the non-status series only.
  */
 import { describe, expect, it } from 'vitest'
-import type { SeriesPoint } from '@/lib/viz/contracts'
+import { VIZ_STATUSES, type SeriesPoint } from '@/lib/viz/contracts'
 import { NO_VALUE } from './chartText'
-import { CHART_VARS, STATUS_ENCODING } from './tokens'
+import { CHART_VARS, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
 import { tooltipText } from './tooltip'
 import {
   NOT_MEASURED_REASON,
   SERIES_DECALS,
+  STATUS_STACK_SERIES,
   TOTAL_LABEL,
   TOTAL_SERIES_KEY,
   buildStackedColumnModel,
   gapNote,
   invalidNote,
+  orderStatusSeries,
   stackedColumnTipContent,
   stackedColumnToChartSeries,
+  utcDayLabel,
   type StackedColumnBucket,
   type StackedColumnInput,
 } from './stackedColumnModel'
@@ -37,6 +40,51 @@ const input = (overrides: Partial<StackedColumnInput> = {}): StackedColumnInput 
   valueTitle: 'Executions',
   bucketTitle: 'Day (UTC)',
   ...overrides,
+})
+
+describe('the kit’s one status order (R2 F3/F4, R1 F9)', () => {
+  // Trends passed its statuses in this order; Overview and SuiteDetail in the kit's.
+  const TRENDS_ORDER = [
+    { key: 'passed', label: 'Passed', status: 'passed' },
+    { key: 'failed', label: 'Failed', status: 'failed' },
+    { key: 'skipped', label: 'Skipped', status: 'skipped' },
+    { key: 'broken', label: 'Broken', status: 'broken' },
+  ] as const
+  const KIT_KEYS = ['passed', 'failed', 'broken', 'skipped']
+
+  it('is Passed, Failed, Broken, Skipped, Unknown: the contract’s own status vocabulary order', () => {
+    expect(STATUS_STACK_ORDER).toEqual(['passed', 'failed', 'broken', 'skipped', 'unknown'])
+    expect(STATUS_STACK_ORDER).toEqual(VIZ_STATUSES)
+    expect(STATUS_STACK_SERIES.map((entry) => entry.key)).toEqual(KIT_KEYS)
+    expect(STATUS_STACK_SERIES.map((entry) => entry.label)).toEqual(['Passed', 'Failed', 'Broken', 'Skipped'])
+  })
+
+  it('stacks statuses in that order whatever order a page passes them in', () => {
+    for (const series of [TRENDS_ORDER, [...TRENDS_ORDER].reverse(), STATUS_SERIES]) {
+      const model = buildStackedColumnModel(input({ series }))
+      expect(model.series.map((entry) => entry.key)).toEqual(KIT_KEYS)
+      // The field follows the stack position, and each value follows its series.
+      expect(model.series.map((entry) => entry.field)).toEqual(['s0', 's1', 's2', 's3'])
+      const feb25 = model.buckets.find((bucket) => bucket.key === '2026-02-25')
+      expect(feb25?.values).toEqual([180, 12, 3, 5])
+    }
+  })
+
+  it('reads the tooltip top of the stack first, in the same order on every page', () => {
+    const model = buildStackedColumnModel(input({ series: TRENDS_ORDER }))
+    const rows = stackedColumnTipContent(model, 0).rows.filter((row) => row.kind === 'value').map((row) => row.key)
+    expect(rows).toEqual(['skipped', 'broken', 'failed', 'passed'])
+  })
+
+  it('leaves non-status series where the caller put them, and orders only the status slots', () => {
+    expect(orderStatusSeries(HOURS_SERIES)).toEqual(HOURS_SERIES)
+    const mixed = orderStatusSeries([
+      { key: 'skipped', label: 'Skipped', status: 'skipped' },
+      { key: 'leg', label: 'A leg' },
+      { key: 'passed', label: 'Passed', status: 'passed' },
+    ])
+    expect(mixed.map((entry) => entry.key)).toEqual(['passed', 'leg', 'skipped'])
+  })
 })
 
 describe('buildStackedColumnModel · null is not measured', () => {
@@ -224,5 +272,27 @@ describe('stackedColumnToChartSeries', () => {
     expect(zero.measured).toBeUndefined()
     const total = chart.series[4].points.find((point) => point.x === '2026-03-04') as SeriesPoint
     expect(total.y).toBeNull()
+  })
+})
+
+describe('utcDayLabel', () => {
+  it('names the UTC day of the key, whatever the viewer’s zone', () => {
+    expect(utcDayLabel('2026-03-04')).toBe('Mar 4')
+    expect(utcDayLabel('2026-12-31T23:30:00Z')).toBe('Dec 31')
+  })
+
+  it('keeps a key just after and just before UTC midnight on its own UTC day (the suite runs west of UTC)', () => {
+    // vitest.config.ts pins America/Chicago, where 00:30Z is still the previous
+    // local day and 23:59Z is the same local day: a local-zone label gets the
+    // first wrong and the second right, so both directions are pinned.
+    expect(utcDayLabel('2026-01-01T00:30:00Z')).toBe('Jan 1')
+    expect(utcDayLabel('2026-01-01')).toBe('Jan 1')
+    expect(utcDayLabel('2026-03-04T23:59:59Z')).toBe('Mar 4')
+  })
+
+  it('leaves anything that is not a date alone', () => {
+    expect(utcDayLabel('May 16')).toBe('May 16')
+    expect(utcDayLabel('not-a-date')).toBe('not-a-date')
+    expect(utcDayLabel('')).toBe('')
   })
 })

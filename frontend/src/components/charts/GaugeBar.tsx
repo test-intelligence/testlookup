@@ -55,7 +55,7 @@ import {
   type TickLabel,
 } from './gaugeBar.model'
 import { useTextMeasure } from './textMeasure'
-import { CHART_VARS } from './tokens'
+import { CHART_VARS, NON_TEXT_EDGE } from './tokens'
 
 export type {
   GaugeBands,
@@ -115,7 +115,23 @@ export interface GaugeBarProps {
 }
 
 const TRACK_BG = 'var(--color-bg-secondary)'
+/**
+ * The track's extent, drawn INSIDE it (an inset ring, so no size changes and
+ * the fill, painted over it, keeps its full thickness): the quiet track fill
+ * alone is 1.0-1.1:1 against the card, so the scale's far end and a notch in
+ * the empty part could not be seen (R2 F9, SC 1.4.11).
+ */
+const TRACK_EDGE = `inset 0 0 0 1px ${NON_TEXT_EDGE}`
+/**
+ * A value that was not measured: no fill and a DASHED edge — a shape, not a
+ * shade, so it never reads as a reading of 0 (R2 G3), plus a visible "—" as
+ * `RingGauge` shows.
+ */
+type TrackEdge = 'inset' | 'outlined' | 'dashed'
+const TRACK_EDGE_CLASS: Record<TrackEdge, string> = { inset: '', outlined: 'border', dashed: 'border border-dashed' }
 const gradientVar = (g: GaugeGradient) => `var(--gradient-${g})`
+/** How far a notch's mark reaches under the track, px: inside the gap above the scale row (`mt-1.5`). */
+const NOTCH_MARK_PX = 3
 const mix = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`
 
 /** Reads the scale row's width and letter spacing once it has a layout (and again when it resizes). */
@@ -178,9 +194,12 @@ function TickRow({
     <div
       ref={ref}
       data-gauge-ticks={layout.level}
-      className="relative mt-1.5 uppercase text-[var(--color-text-faint)] whitespace-nowrap"
+      // `--color-text-secondary`, the kit's token for small text. The pages' old
+      // scale rows used `--color-text-faint`, which is 2.5-3.3:1 on every theme
+      // (AA asks 4.5:1); `--color-text-muted` is 4.15:1 on the light theme.
+      className="relative mt-1.5 uppercase text-[var(--color-text-secondary)] whitespace-nowrap"
       // An explicit line height: the row's height must not depend on which font the reader has.
-      style={{ fontSize: GAUGE_TICK_FONT_PX, lineHeight: '14px', height: 14, letterSpacing: 'var(--tracking-wide)' }}
+      style={{ fontSize: GAUGE_TICK_FONT_PX, lineHeight: '15px', height: 15, letterSpacing: 'var(--tracking-wide)' }}
     >
       {layout.labels.map((l) => (
         <span key={l.value} data-gauge-tick={l.value} className="absolute top-0" style={place(l)}>
@@ -229,12 +248,17 @@ export default function GaugeBar({
   const dims = GAUGE_BAR_SIZES[size]
   const height = thickness ?? dims.thickness
 
-  const trackBg =
-    variant === 'marker' && gradient
+  const trackBg = !model.measured
+    ? 'transparent'
+    : variant === 'marker' && gradient
       ? gradientVar(gradient)
-      : track === 'tint' && model.measured
+      : track === 'tint'
         ? mix(toneColor, 18)
         : TRACK_BG
+  // One edge per track: dashed when nothing was measured; else the outlined
+  // variant's border, or the inset ring. All three in `NON_TEXT_EDGE`.
+  const edge: TrackEdge = !model.measured ? 'dashed' : outlined ? 'outlined' : 'inset'
+  const edgeStyle: CSSProperties = edge === 'inset' ? { boxShadow: TRACK_EDGE } : { borderColor: NON_TEXT_EDGE }
 
   // The fill shows the part of the gradient UNDER it: sized to the whole
   // track, not squeezed into the fill. A risk of 20 ends in the "safe" colour;
@@ -272,7 +296,7 @@ export default function GaugeBar({
         .join(' ')}
     >
       {showLabel && (
-        <div id={labelId} className="text-[11px] text-[var(--color-text-muted)] mb-1">
+        <div id={labelId} className="text-[11px] text-[var(--color-text-secondary)] mb-1">
           {label}
           {/* `aria-labelledby` replaces `aria-label`, so the unmeasured state is said here. */}
           {!model.measured && <span className="sr-only">: {NOT_MEASURED}</span>}
@@ -280,10 +304,9 @@ export default function GaugeBar({
       )}
       <div
         data-gauge-track
-        className={['relative rounded-full', inline ? 'inline-block shrink-0' : '', outlined ? 'border border-[var(--color-border)]' : '']
-          .filter(Boolean)
-          .join(' ')}
-        style={{ width: width ?? (inline ? INLINE_TRACK_WIDTH : '100%'), height, background: trackBg }}
+        data-gauge-track-edge={edge}
+        className={['relative rounded-full', inline ? 'inline-block shrink-0' : '', TRACK_EDGE_CLASS[edge]].filter(Boolean).join(' ')}
+        style={{ width: width ?? (inline ? INLINE_TRACK_WIDTH : '100%'), height, background: trackBg, ...edgeStyle }}
       >
         {/* The clip keeps the fill and segments inside the rounded track; the
             marker and the target sit outside it, so they may overhang. */}
@@ -322,6 +345,35 @@ export default function GaugeBar({
               />
             ))}
         </div>
+        {/* Each notch also marks the edge under the track, in the edge colour:
+            over the empty part of the track a card-coloured cut alone has
+            nothing to contrast with (the lab theme's 70 "Block" notch). */}
+        {model.ticks
+          .filter((t) => t.notch)
+          .map((t) => (
+            <i
+              key={`edge-${t.value}`}
+              aria-hidden="true"
+              data-gauge-notch-mark={t.value}
+              className="absolute block w-px"
+              style={{ left: `${t.pct}%`, top: '100%', height: NOTCH_MARK_PX, background: NON_TEXT_EDGE }}
+            />
+          ))}
+        {!model.measured && !inline && size === 'md' && (
+          // Where the fill would start: the "—" RingGauge prints, drawn over the
+          // dashed edge on a card-coloured chip. The name already says "not
+          // measured", so this is for sight only. `md` only: an `sm` bar sits
+          // in a KPI cell directly under that cell's own printed "—", and an
+          // inline one prints it in its value column (`notMeasuredText`).
+          <span
+            aria-hidden="true"
+            data-gauge-not-measured=""
+            className="absolute left-2 top-1/2 -translate-y-1/2 px-1 text-[11px] leading-none text-[var(--color-text-secondary)]"
+            style={{ background: CHART_VARS.card }}
+          >
+            {notMeasuredText}
+          </span>
+        )}
         {model.target && (
           <i
             data-gauge-target={model.target.value}
@@ -354,7 +406,7 @@ export default function GaugeBar({
         )}
       </div>
       {showValue && (
-        <span data-gauge-value className="text-[11.5px] tabular-nums text-[var(--color-text-muted)]">
+        <span data-gauge-value className="text-[11.5px] tabular-nums text-[var(--color-text-secondary)]">
           {model.value === null ? notMeasuredText : format(model.value)}
         </span>
       )}

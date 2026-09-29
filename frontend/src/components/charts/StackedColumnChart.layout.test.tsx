@@ -9,7 +9,13 @@
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import StackedColumnChart, { FLAT_AXIS_HEIGHT, SLANT_ANGLE, StackedColumnTooltip, estimateTextWidth } from './StackedColumnChart'
+import StackedColumnChart, {
+  FLAT_AXIS_HEIGHT,
+  SLANT_ANGLE,
+  StackedBarTooltip,
+  StackedColumnTooltip,
+  estimateTextWidth,
+} from './StackedColumnChart'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import { buildStackedColumnModel } from './stackedColumnModel'
 import { STATUS_SERIES, longWindowFixture, statusDailyFixture } from './__fixtures__/stackedColumn'
@@ -62,9 +68,55 @@ describe('StackedColumnChart · a laid-out axis', () => {
     expect(tick?.getAttribute('text-anchor')).toBe('end')
   })
 
+  it('labels the NEWEST day of a thinned time axis, whatever the stride (R2 G2, R1 F16)', () => {
+    font.factor = 1
+    const { container } = draw(<StackedColumnChart model={longWindowFixture} animate={false} />)
+    const drawn = [...container.querySelectorAll('.recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value')]
+      .map((tick) => tick.textContent ?? '')
+      .filter((text) => text !== '')
+    const buckets = longWindowFixture.buckets
+    expect(drawn.length).toBeGreaterThan(1)
+    expect(drawn.length).toBeLessThan(buckets.length)
+    expect(drawn[drawn.length - 1]).toBe(buckets[buckets.length - 1].label)
+  })
+
+  it('names every category column: slanted, never thinned', () => {
+    font.factor = 1.12
+    const suites = buildStackedColumnModel({
+      buckets: Array.from({ length: 10 }, (_, i) => ({
+        key: `suite-${i}`,
+        label: `integration-tests/payments/suite-${i}`,
+        values: { passed: 10 + i, failed: i % 3 },
+      })),
+      series: STATUS_SERIES.slice(0, 2),
+      valueTitle: 'Executions',
+      bucketTitle: 'Suite',
+    })
+    const { container } = draw(<StackedColumnChart model={suites} animate={false} />)
+    const plot = plotOf(container)
+    expect(plot.getAttribute('data-stacked-orientation')).toBe('columns')
+    expect(plot.getAttribute('data-stacked-axis-interval')).toBe('0')
+    const drawn = [...container.querySelectorAll('.recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value')].map((tick) => tick.textContent)
+    expect(drawn.filter((text) => text)).toHaveLength(10)
+  })
+
+  it('turns more than a dozen categories into horizontal bars, every name beside its bar', () => {
+    font.factor = 1
+    const suites = buildStackedColumnModel({
+      buckets: Array.from({ length: 16 }, (_, i) => ({ key: `suite-${i}`, label: `suite ${i}`, values: { passed: 10 + i, failed: i % 3 } })),
+      series: STATUS_SERIES.slice(0, 2),
+      valueTitle: 'Executions',
+      bucketTitle: 'Suite',
+    })
+    const { container } = draw(<StackedColumnChart model={suites} animate={false} />)
+    expect(plotOf(container).getAttribute('data-stacked-orientation')).toBe('bars')
+    const names = [...container.querySelectorAll('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value')].map((tick) => tick.textContent)
+    expect(names).toEqual(suites.buckets.map((bucket) => bucket.label))
+  })
+
   it('gives a wider font a taller axis — sized from the label, not tuned to one font', () => {
     const long = buildStackedColumnModel({
-      buckets: Array.from({ length: 30 }, (_, i) => ({
+      buckets: Array.from({ length: 10 }, (_, i) => ({
         key: `suite-${i}`,
         label: `integration-tests/payments/suite-${i}`,
         values: { passed: 10 + i, failed: i % 3 },
@@ -120,5 +172,13 @@ describe('StackedColumnChart · notes and the pointer tooltip', () => {
     expect(idle.container.textContent).toBe('')
     const unknown = render(<StackedColumnTooltip active label="nope" model={statusDailyFixture} />)
     expect(unknown.container.textContent).toBe('')
+  })
+
+  it('shows the same content for a hovered row of the bar form', () => {
+    const open = render(<StackedBarTooltip active label="2026-03-09" coordinate={{ x: 100, y: 50 }} model={statusDailyFixture} />)
+    expect(open.container.textContent).toContain('Mar 9')
+    expect(open.container.textContent).toContain('208')
+    const idle = render(<StackedBarTooltip active={false} label="2026-03-09" model={statusDailyFixture} />)
+    expect(idle.container.textContent).toBe('')
   })
 })

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import DayStrip from './DayStrip'
 import { DAY_STRIP_FIXTURES } from './__fixtures__/dayStrip'
-import { dayWindow, intensityLevel, type DayStripCell } from './dayStrip.model'
+import { dayWindow, defaultStartLabel, intensityLevel, type DayStripCell } from './dayStrip.model'
 
 const TODAY = '2026-09-28'
 
@@ -43,7 +43,8 @@ describe('DayStrip', () => {
     const { container } = render(<DayStrip mode="presence" cells={cells} label="Run cadence" />)
     const table = tableOf(container)
     expect(table).not.toBeNull()
-    expect(table).toHaveClass('sr-only')
+    // Hidden by an sr-only box AROUND it: an sr-only table still scrolls its container.
+    expect(table?.parentElement).toHaveClass('sr-only')
     expect(table).not.toHaveAttribute('aria-hidden')
     expect(within(table as HTMLElement).getByText('Run cadence', { selector: 'caption' })).toBeInTheDocument()
     const bodyRows = (table as HTMLTableElement).tBodies[0].rows
@@ -190,10 +191,21 @@ describe('DayStrip', () => {
     const { container } = render(
       <DayStrip mode="status" cells={cells} label="Build velocity" unit="build" cellHeight={14} endLabel="Now" />,
     )
-    expect(container.querySelector('[data-day-strip-legend]')).toHaveTextContent(/^14 builds ago.*Now$/)
+    // 14 cells, the newest being "now": the oldest is 13 builds back (R1 F7).
+    expect(container.querySelector('[data-day-strip-legend]')).toHaveTextContent(/^13 builds ago.*Now$/)
     expect(screen.getByRole('columnheader', { name: 'Build' })).toBeInTheDocument()
     expect(cellsOf(container)[0]).toHaveStyle({ height: '14px' })
     expect(screen.getByRole('group', { name: /14 builds\./ })).toBeInTheDocument()
+  })
+
+  it('names the OLDEST cell’s distance by default: 14 days start 13 days ago, one day is only today (R1 F7)', () => {
+    expect(defaultStartLabel(14, 'day', 'Today')).toBe('13 days ago')
+    expect(defaultStartLabel(2, 'day', 'Today')).toBe('1 day ago')
+    expect(defaultStartLabel(90, 'build', 'Now')).toBe('89 builds ago')
+    expect(defaultStartLabel(1, 'day', 'Today')).toBe('Today')
+    const cells = Array.from({ length: 14 }, (_, i): DayStripCell => ({ key: `d${i}`, label: `d${i}`, tone: 'pass' }))
+    const { container } = render(<DayStrip mode="presence" cells={cells} label="Run cadence" />)
+    expect(container.querySelector('[data-day-strip-legend]')).toHaveTextContent(/^13 days ago.*Today$/)
   })
 
   it('can drop the legend (the inline run strip has its own counts)', () => {
@@ -209,6 +221,20 @@ describe('DayStrip', () => {
     expect((tableOf(container) as HTMLTableElement).tBodies[0].rows).toHaveLength(p.cells.length)
     expect(screen.getByRole('img')).toHaveAccessibleName(p.label)
     expect(container.querySelector('img, script, b')).toBeNull()
+  })
+
+  it('gallery builds fixture: padded at the OLDEST end, so the newest real build sits under "Now" (R2 F2)', () => {
+    const builds = DAY_STRIP_FIXTURES.find((f) => f.id === 'day-strip-builds')?.props()
+    expect(builds?.endLabel).toBe('Now')
+    const tones = builds?.cells.map((cell) => cell.tone) ?? []
+    expect(tones).toHaveLength(14)
+    const last = builds?.cells[13]
+    expect(last?.tone).not.toBe('none')
+    expect(last?.marker).toBe('today')
+    // Every "no build" cell is older than every real build.
+    const firstReal = tones.findIndex((tone) => tone !== 'none')
+    expect(tones.slice(0, firstReal).every((tone) => tone === 'none')).toBe(true)
+    expect(tones.slice(firstReal).includes('none')).toBe(false)
   })
 
   it('renders nothing for an empty window', () => {

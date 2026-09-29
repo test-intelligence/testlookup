@@ -62,6 +62,38 @@ describe('GaugeBar — not measured', () => {
     expect(screen.queryByText(/\b0\b/)).toBeNull()
   })
 
+  it('LOOKS different from a reading of 0: a dashed, unfilled track and a visible "—" (R2 G3)', () => {
+    const none = render(<GaugeBar value={null} label="Coverage" ticks={HEALTH_TICKS} />).container
+    const zero = render(<GaugeBar value={0} label="Coverage" ticks={HEALTH_TICKS} />).container
+    const noneTrack = q(none, '[data-gauge-track]')
+    const zeroTrack = q(zero, '[data-gauge-track]')
+    // A shape, not a shade: the unmeasured edge is dashed, the measured one solid.
+    expect(noneTrack?.getAttribute('data-gauge-track-edge')).toBe('dashed')
+    expect(noneTrack?.className).toContain('border-dashed')
+    expect(noneTrack?.style.background).toBe('transparent')
+    expect(zeroTrack?.getAttribute('data-gauge-track-edge')).toBe('inset')
+    expect(zeroTrack?.className).not.toContain('border-dashed')
+    expect(zeroTrack?.style.background).toBe('var(--color-bg-secondary)')
+    // The "—" RingGauge prints, for sight; the name already says "not measured".
+    const dash = q(none, '[data-gauge-not-measured]')
+    expect(dash).toHaveTextContent('—')
+    expect(dash).toHaveAttribute('aria-hidden', 'true')
+    expect(q(zero, '[data-gauge-not-measured]')).toBeNull()
+  })
+
+  it('shows the caller’s own not-measured text, and leaves the inline cell to its value column', () => {
+    const { container } = render(<GaugeBar value={null} label="Budget" notMeasuredText="n/a" />)
+    expect(q(container, '[data-gauge-not-measured]')).toHaveTextContent('n/a')
+    const inline = render(<GaugeBar value={null} label="Pass rate" size="sm" showValue outlined />).container
+    expect(q(inline, '[data-gauge-not-measured]')).toBeNull()
+    expect(q(inline, '[data-gauge-value]')).toHaveTextContent('—')
+    expect(q(inline, '[data-gauge-track]')?.getAttribute('data-gauge-track-edge')).toBe('dashed')
+    // An `sm` bar in a KPI cell: the dashed track, and the cell's own "—" above it — not a second one.
+    const kpi = render(<GaugeBar value={null} label="Average cluster confidence" size="sm" />).container
+    expect(q(kpi, '[data-gauge-not-measured]')).toBeNull()
+    expect(q(kpi, '[data-gauge-track]')?.getAttribute('data-gauge-track-edge')).toBe('dashed')
+  })
+
   it('a named label keeps "not measured" in the accessible name', () => {
     render(<GaugeBar value={null} label="Spend" showLabel />)
     expect(screen.getByRole('img', { name: 'Spend: not measured' })).toBeInTheDocument()
@@ -203,6 +235,11 @@ describe('GaugeBar — scale', () => {
     for (const text of ['Blocked · 0', 'At risk · 33', 'Healthy · 70', '100']) expect(screen.getByText(text)).toBeInTheDocument()
     const notches = [...container.querySelectorAll<HTMLElement>('[data-gauge-notch]')]
     expect(notches.map((n) => n.style.left)).toEqual(['33%', '70%'])
+    // …and each notch is marked under the track in the edge colour too: over
+    // the EMPTY part of the track a card-coloured cut alone cannot be seen (R2 F9).
+    const marks = [...container.querySelectorAll<HTMLElement>('[data-gauge-notch-mark]')]
+    expect(marks.map((m) => m.style.left)).toEqual(['33%', '70%'])
+    for (const mark of marks) expect(mark.style.top).toBe('100%')
     expect(q(container, '[data-gauge-ticks]')).toHaveAttribute('data-gauge-ticks', 'full')
   })
 

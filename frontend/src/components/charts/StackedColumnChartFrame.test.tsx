@@ -135,6 +135,59 @@ describe('stackedFrameState · a model with nothing to draw is a state, not an e
     expect(stackedFrameState(readyState(null), build([{ key: 'a', label: 'A', values: { passed: 0 } }])).status).toBe('filtered-empty')
   })
 
+  // R1 F3: Trends' Daily breakdown for a new project whose only run is still
+  // streaming — one measured all-zero day, 13 unmeasured, and no filter set.
+  const streamingDay = () =>
+    build([
+      { key: '2026-03-09', label: 'Mar 9', values: {} },
+      { key: '2026-03-10', label: 'Mar 10', values: { passed: 0, failed: 0, broken: 0, skipped: 0 } },
+    ])
+
+  it('says a window of zeros is empty in neutral words when no filter is set — never blames filters', () => {
+    const { container } = render(
+      <StackedColumnChartFrame title="Daily breakdown" headingLevel={3} state={readyState(null)} model={streamingDay()} animate={false} />,
+    )
+    expect(screen.getByText('No executions in this window')).toBeInTheDocument()
+    expect(screen.queryByText(CHART_MESSAGES.filteredEmpty)).toBeNull()
+    expect(container.querySelector('[data-chart-empty-reason]')?.getAttribute('data-chart-empty-reason')).toBe('window')
+    expect(container.querySelector(PLOT)).toBeNull()
+  })
+
+  it('blames the filters, and offers to clear them, only when the page says filters are set', () => {
+    const clear = vi.fn()
+    render(
+      <StackedColumnChartFrame
+        title="Daily breakdown"
+        headingLevel={3}
+        state={readyState(null)}
+        model={streamingDay()}
+        filtersApplied
+        onClearFilters={clear}
+        animate={false}
+      />,
+    )
+    expect(screen.getByText(CHART_MESSAGES.filteredEmpty)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: CHART_MESSAGES.clearFilters }))
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the window in the chart’s own measure, and never offers "Clear filters" with the neutral words', () => {
+    const hours = buildStackedColumnModel({
+      buckets: [{ key: '2026-03', label: 'Mar 2026', values: { triage: 0 } }],
+      series: [{ key: 'triage', label: 'Triage' }],
+      valueTitle: 'Hours saved',
+      bucketTitle: 'Month',
+    })
+    render(<StackedColumnChartFrame title="Hours" headingLevel={3} state={readyState(null)} model={hours} onClearFilters={() => {}} animate={false} />)
+    expect(screen.getByText('No hours saved in this window')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: CHART_MESSAGES.clearFilters })).toBeNull()
+  })
+
+  it('keeps the page’s own filtered-empty state in the filter words', () => {
+    render(<StackedColumnChartFrame title="Daily breakdown" headingLevel={3} state={{ status: 'filtered-empty', meta: null }} model={streamingDay()} animate={false} />)
+    expect(screen.getByText(CHART_MESSAGES.filteredEmpty)).toBeInTheDocument()
+  })
+
   it('leaves a drawable model, and every state the page already owns, alone', () => {
     const ready = readyState(null)
     expect(stackedFrameState(ready, statusDailyFixture)).toBe(ready)

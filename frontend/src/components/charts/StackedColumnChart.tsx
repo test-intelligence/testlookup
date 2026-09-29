@@ -17,10 +17,13 @@
  *     column encodes value as height.
  *   - The bucket labels are MEASURED (`textMeasure.ts`) in the font the
  *     reader's browser draws them in. They lie flat when they fit their
- *     column, every Nth label flat when they nearly do, and slanted with an
- *     axis as tall as the longest slanted label needs when they do not. A
- *     reserve sized for Segoe UI cut labels on the Linux CI runner's DejaVu
- *     Sans in Wave 2.4; this one is sized from the label.
+ *     column, and slanted with an axis as tall as the longest slanted label
+ *     needs when they do not. A reserve sized for Segoe UI cut labels on the
+ *     Linux CI runner's DejaVu Sans in Wave 2.4; this one is sized from the
+ *     label. A TIME axis may show every Nth day, counted back from the newest
+ *     so today is always named; a CATEGORY axis never drops a name — it
+ *     slants, then cuts names in the middle, then turns into horizontal bars
+ *     (`columnAxisLayout`).
  *   - Labels are ingested text (suite names, run names): they reach the DOM
  *     only as React text, middle-truncated on the axis and whole in the
  *     tooltip and the table.
@@ -29,9 +32,9 @@
  *     the pointer's tooltip; Recharts' own `accessibilityLayer` is off.
  */
 import { useCallback, useMemo } from 'react'
-import { Bar, BarChart, CartesianGrid, Legend, ReferenceDot, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Legend, ReferenceDot, Tooltip, XAxis, YAxis, useXAxisScale } from 'recharts'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
-import { PinnedTip, useColumnMark } from './ChartTooltip'
+import { PinnedTip, sweepOf, useColumnMark } from './ChartTooltip'
 import ChartResponsive from './ChartResponsive'
 import { middleTruncate } from './BarChart.model'
 import { useContainerWidth } from './chartLayout'
@@ -54,7 +57,7 @@ import {
   type StackedColumnSeries,
 } from './stackedColumnModel'
 import { useTextMeasure, type TextMeasure } from './textMeasure'
-import { COLUMN_SIDES } from './tipPlacement'
+import { COLUMN_SIDES, type TipRect } from './tipPlacement'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
 
 export interface StackedColumnChartProps {
@@ -96,6 +99,10 @@ export const VALUE_AXIS_MIN_WIDTH = 60
 /** The value axis keeps this beside its longest tick label: the 8 px tick anchor and the rotated title's line (offset 14). */
 const VALUE_AXIS_TITLE_ROOM = 32
 const PLOT_MARGIN = { top: 16, right: 8, left: 0, bottom: 0 } as const
+/** The bar form's margins: room on the right for the last value tick's label, and under the value axis's title. */
+const BARS_MARGIN = { top: 8, right: 16, left: 4, bottom: 8 } as const
+/** The bar form's value axis, px: its ticks and its title under them (`BarChart.tsx`'s). */
+const BARS_VALUE_AXIS_HEIGHT = 32
 /**
  * Where nothing is laid out (jsdom, a tab never shown) text cannot be
  * measured: 0.62 em a character is wider than the average glyph of Segoe UI,
@@ -105,37 +112,155 @@ const ESTIMATE_EM_PER_CHAR = 0.62
 
 export const estimateTextWidth: TextMeasure = (text, fontSize) => [...text].length * fontSize * ESTIMATE_EM_PER_CHAR
 
+/** The steeper slant a category axis tries when its columns are too narrow for `SLANT_ANGLE`, degrees. */
+export const STEEP_SLANT_ANGLE = 45
+/**
+ * More categories than this and the chart draws horizontal bars instead of
+ * columns (R2's accepted design call): past about a dozen, even slanted names
+ * crowd, and a category axis never drops a name to make room.
+ */
+export const MAX_CATEGORY_COLUMNS = 12
+/** The shortest a category name is cut to on a slanted axis, in characters, before the chart turns to bars. */
+export const MIN_CATEGORY_LABEL_CHARS = 10
+/** The tallest a slanted category axis may grow, as a share of the chart's height, before names are cut. */
+export const SLANT_AXIS_MAX_SHARE = 0.4
+/** Horizontal bars: the height one category's row takes, px (a label's line plus the gap between bars). */
+export const BAR_ROW_HEIGHT = 24
+/** Horizontal bars: the thickest a bar is drawn, px. */
+const BAR_MAX_THICKNESS = 16
+/** Horizontal bars: what the value axis, its title and the legend take under the rows, px. */
+const BARS_CHROME = 72
+/** Horizontal bars: the widest the category axis may be, as a share of the chart's width. */
+const BAR_LABEL_MAX_SHARE = 0.4
+/** Horizontal bars: kept between a category name and its bar, px. */
+const BAR_LABEL_GAP = 8
+
 export interface ColumnAxisLayout {
-  /** 0 (flat) or `-SLANT_ANGLE`. */
+  /**
+   * `columns` (the bucket axis under the plot) or `bars`: a category chart of
+   * more than `MAX_CATEGORY_COLUMNS` buckets, or of names too long for any
+   * slant, drawn as horizontal bars with the names beside them.
+   */
+  orientation: 'columns' | 'bars'
+  /** 0 (flat), `-SLANT_ANGLE` or `-STEEP_SLANT_ANGLE`. */
   angle: number
   /** The x axis's height, px. */
   height: number
-  /** Recharts' `interval`: labels shown are every `interval + 1`th, from the first. */
+  /**
+   * Labels drawn are every `interval + 1`th, counted BACK from the last (the
+   * newest) bucket, so the right end — where a reader looks for "now" — is
+   * always labelled (R2 G2, R1 F16). Always 0 on a category axis: an
+   * unlabelled column there has no identity, so a category axis never thins.
+   */
   interval: number
   /** The longest drawn label, px. */
   longest: number
+  /** The longest a label is drawn, in characters: cut in the middle past it (`middleTruncate`). */
+  maxChars: number
+}
+
+export interface ColumnAxisOptions {
+  /** `time` buckets may thin their labels; `category` buckets never do. Default `category`, as the model's. */
+  xType?: 'time' | 'category'
+  /** The tallest a slanted category axis may grow, px. Default `SLANT_AXIS_MAX_SHARE` of a 280 px chart. */
+  maxHeight?: number
+}
+
+/** Whether the label of bucket `index` of `count` is drawn under a layout thinned to `interval`. */
+export function drawsLabel(index: number, count: number, interval: number): boolean {
+  return (count - 1 - index) % (interval + 1) === 0
+}
+
+const radians = (degrees: number) => (degrees * Math.PI) / 180
+/** How tall an axis a label `length` px long needs, slanted by `angle` radians. */
+const slantedHeight = (length: number, angle: number) =>
+  TICK_ANCHOR + length * Math.sin(angle) + TICK_LINE_DEPTH_EM * LABEL_SIZE * Math.cos(angle)
+const longestOf = (labels: readonly string[], chars: number, measure: TextMeasure) => {
+  let longest = 0
+  for (const label of labels) longest = Math.max(longest, measure(middleTruncate(label, chars), LABEL_SIZE))
+  return longest
 }
 
 /**
  * How the bucket labels are laid out under columns `band` px apart.
  *
- * Flat when the longest label fits its column; flat and thinned to every Nth
- * label while N stays small (a month of days reads "Sep 1, Sep 4, …"); else
- * slanted by `SLANT_ANGLE`, thinned only so far that two slanted labels do not
- * touch, with an axis as tall as the longest slanted label reaches. `band` 0
- * means no width is known yet: flat, all labels, Recharts' own height.
+ * A TIME axis: flat when the longest label fits its column; flat and thinned
+ * to every Nth label while N stays small (a month of days reads "Sep 1, Sep 4,
+ * …"); else slanted by `SLANT_ANGLE`, thinned only so far that two slanted
+ * labels do not touch, with an axis as tall as the longest slanted label
+ * reaches. Thinning counts back from the newest bucket, so it is always named.
+ *
+ * A CATEGORY axis never thins (R2's accepted design call): an unlabelled
+ * column there has no identity, and hovering every column is not a glance.
+ * Flat when every name fits; else slanted (`SLANT_ANGLE`, then the steeper
+ * `STEEP_SLANT_ANGLE` when the columns are too narrow for two slanted names
+ * not to touch), cut in the middle to what an axis of at most `maxHeight`
+ * holds, down to `MIN_CATEGORY_LABEL_CHARS`; the full name stays in the
+ * tooltip, the table and the keyboard cursor. When even that fails, or there
+ * are more than `MAX_CATEGORY_COLUMNS` buckets, the chart draws horizontal
+ * bars. `band` 0 means no width is known yet: flat, all labels.
  */
-export function columnAxisLayout(labels: readonly string[], band: number, measure: TextMeasure): ColumnAxisLayout {
-  let longest = 0
-  for (const label of labels) longest = Math.max(longest, measure(label, LABEL_SIZE))
-  if (!(band > 0) || labels.length === 0) return { angle: 0, height: FLAT_AXIS_HEIGHT, interval: 0, longest }
-  const stride = Math.max(1, Math.ceil((longest + FLAT_LABEL_GAP) / band))
-  if (stride <= MAX_FLAT_STRIDE) return { angle: 0, height: FLAT_AXIS_HEIGHT, interval: stride - 1, longest }
-  const angle = (SLANT_ANGLE * Math.PI) / 180
-  // Slanted labels are parallel lines `band · sin(angle)` apart: they need a line's height between them.
-  const slantStride = Math.max(1, Math.ceil((LINE_EM * LABEL_SIZE) / (band * Math.sin(angle))))
-  const needed = TICK_ANCHOR + longest * Math.sin(angle) + TICK_LINE_DEPTH_EM * LABEL_SIZE * Math.cos(angle)
-  return { angle: -SLANT_ANGLE, height: Math.max(FLAT_AXIS_HEIGHT, Math.ceil(needed) + 1), interval: slantStride - 1, longest }
+export function columnAxisLayout(
+  labels: readonly string[],
+  band: number,
+  measure: TextMeasure,
+  { xType = 'category', maxHeight = SLANT_AXIS_MAX_SHARE * 280 }: ColumnAxisOptions = {},
+): ColumnAxisLayout {
+  const longest = longestOf(labels, AXIS_LABEL_MAX_CHARS, measure)
+  const flat = { orientation: 'columns', angle: 0, height: FLAT_AXIS_HEIGHT, interval: 0, longest, maxChars: AXIS_LABEL_MAX_CHARS } as const
+  const bars = { ...flat, orientation: 'bars' } as const
+  if (xType !== 'time' && labels.length > MAX_CATEGORY_COLUMNS) return bars
+  if (!(band > 0) || labels.length === 0) return flat
+  const line = LINE_EM * LABEL_SIZE
+
+  if (xType === 'time') {
+    const stride = Math.max(1, Math.ceil((longest + FLAT_LABEL_GAP) / band))
+    if (stride <= MAX_FLAT_STRIDE) return { ...flat, interval: stride - 1 }
+    const angle = radians(SLANT_ANGLE)
+    // Slanted labels are parallel lines `band · sin(angle)` apart: they need a line's height between them.
+    const slantStride = Math.max(1, Math.ceil(line / (band * Math.sin(angle))))
+    const height = Math.max(FLAT_AXIS_HEIGHT, Math.ceil(slantedHeight(longest, angle)) + 1)
+    return { ...flat, angle: -SLANT_ANGLE, height, interval: slantStride - 1 }
+  }
+
+  if (longest + FLAT_LABEL_GAP <= band) return flat
+  for (const degrees of [SLANT_ANGLE, STEEP_SLANT_ANGLE]) {
+    const angle = radians(degrees)
+    // Two slanted names closer than a line apart overlap: try the steeper slant.
+    if (band * Math.sin(angle) < line) continue
+    for (let chars = AXIS_LABEL_MAX_CHARS; chars >= MIN_CATEGORY_LABEL_CHARS; chars--) {
+      const length = chars === AXIS_LABEL_MAX_CHARS ? longest : longestOf(labels, chars, measure)
+      const needed = slantedHeight(length, angle)
+      if (needed <= maxHeight) {
+        return { orientation: 'columns', angle: -degrees, height: Math.max(FLAT_AXIS_HEIGHT, Math.ceil(needed) + 1), interval: 0, longest: length, maxChars: chars }
+      }
+    }
+    // Too long even cut short: a steeper slant only needs a taller axis, so it cannot help.
+    break
+  }
+  return bars
+}
+
+export interface BarAxisLayout {
+  /** The category axis's width, px. */
+  width: number
+  /** The longest a category name is drawn beside its bar, in characters. */
+  maxChars: number
+}
+
+/**
+ * The category axis of the horizontal-bar form: as wide as the longest name
+ * needs, at most `BAR_LABEL_MAX_SHARE` of the chart; names past it are cut in
+ * the middle (never under `MIN_CATEGORY_LABEL_CHARS` characters), whole in the
+ * tooltip, the table and the cursor. `width` 0 (no layout): the widest cut.
+ */
+export function barAxisLayout(labels: readonly string[], width: number, measure: TextMeasure): BarAxisLayout {
+  const room = width > 0 ? width * BAR_LABEL_MAX_SHARE - BAR_LABEL_GAP : Infinity
+  for (let chars = AXIS_LABEL_MAX_CHARS; chars > MIN_CATEGORY_LABEL_CHARS; chars--) {
+    const longest = longestOf(labels, chars, measure)
+    if (longest <= room) return { width: Math.ceil(longest + BAR_LABEL_GAP), maxChars: chars }
+  }
+  return { width: Math.ceil(longestOf(labels, MIN_CATEGORY_LABEL_CHARS, measure) + BAR_LABEL_GAP), maxChars: MIN_CATEGORY_LABEL_CHARS }
 }
 
 /** The value axis's width: its longest tick label plus the room for the rotated title. */
@@ -151,21 +276,40 @@ function seriesPatternId(prefix: string, entry: StackedColumnSeries, index: numb
   return entry.status ? statusPatternId(prefix, entry.status) : `${prefix}-chart-pattern-series-${index}`
 }
 
-/** The short tick a MEASURED zero column gets on the baseline: present, and empty. */
-function ZeroTick({ cx, cy, bucket }: { cx?: number; cy?: number; bucket: string }) {
+/** The short tick a MEASURED zero column gets on the baseline: present, and empty. Across the bar's row in the bar form. */
+function ZeroTick({ cx, cy, bucket, across = false }: { cx?: number; cy?: number; bucket: string; across?: boolean }) {
   if (typeof cx !== 'number' || typeof cy !== 'number') return null
   return (
     <line
       data-stacked-zero={bucket}
-      x1={cx - 6}
-      x2={cx + 6}
-      y1={cy}
-      y2={cy}
+      x1={across ? cx : cx - 6}
+      x2={across ? cx : cx + 6}
+      y1={across ? cy - 6 : cy}
+      y2={across ? cy + 6 : cy}
       stroke={CHART_VARS.axis}
       strokeWidth={2}
       strokeLinecap="round"
     />
   )
+}
+
+/**
+ * The drawn extent of one horizontal bar, in chart coordinates: from the value
+ * axis's zero to the end of the stack, over the bar's thickness. The tooltip is
+ * placed beside THIS, so it never covers the bar it describes (`barMark` in
+ * `BarChart.tsx`, which this chart does not import: it would pull that chart in).
+ */
+export function stackRowMark(
+  total: number,
+  thickness: number,
+  centre: number | undefined,
+  xScale: ((value: number) => number | undefined) | undefined,
+): TipRect | null {
+  if (centre === undefined || !xScale) return null
+  const xs = [0, total].map((value) => xScale(value)).filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
+  if (xs.length === 0) return null
+  const left = Math.min(...xs)
+  return { left, top: centre - thickness / 2, width: Math.max(...xs) - left, height: thickness }
 }
 
 interface StackedColumnTooltipProps {
@@ -181,6 +325,17 @@ export function StackedColumnTooltip({ active, label, coordinate, model }: Stack
   const { mark, gap, chartBox, sweep } = useColumnMark(coordinate, model.buckets.length, COLUMN_MAX_WIDTH / 2)
   const content = active && index >= 0 ? stackedColumnTipContent(model, index) : null
   return <PinnedTip content={content} mark={mark} sides={COLUMN_SIDES} align="start" gap={gap} chartBox={chartBox} sweep={sweep} />
+}
+
+/** The same tooltip for the bar form: pinned beside the hovered row's bar. */
+export function StackedBarTooltip({ active, label, coordinate, model }: StackedColumnTooltipProps) {
+  const index = model.buckets.findIndex((bucket) => bucket.key === String(label))
+  const xScale = useXAxisScale()
+  const bucket = active && index >= 0 ? model.buckets[index] : undefined
+  const mark = bucket
+    ? stackRowMark(bucket.total ?? 0, BAR_MAX_THICKNESS, coordinate?.y, xScale ? (value: number) => xScale(value) : undefined)
+    : null
+  return <PinnedTip content={bucket ? stackedColumnTipContent(model, index) : null} mark={mark} sweep={sweepOf(coordinate, 'y')} />
 }
 
 type Row = Record<string, string | number | null>
@@ -219,10 +374,8 @@ export default function StackedColumnChart({
       }),
     [model],
   )
-  const shortLabels = useMemo(
-    () => new Map(model.buckets.map((bucket) => [bucket.key, middleTruncate(bucket.label, AXIS_LABEL_MAX_CHARS)])),
-    [model],
-  )
+  const labels = useMemo(() => model.buckets.map((bucket) => bucket.label), [model])
+  const textMeasure = measure ?? estimateTextWidth
 
   const tickLabels = useMemo(() => model.axis.ticks.map((tick) => model.format(tick)), [model])
   const yWidth = valueAxisWidth(tickLabels, measure)
@@ -230,9 +383,27 @@ export default function StackedColumnChart({
   const plotWidth = width / scale - yWidth - PLOT_MARGIN.left - PLOT_MARGIN.right
   const band = width > 0 && model.buckets.length > 0 ? plotWidth / model.buckets.length : 0
   const axis = useMemo(
-    () => columnAxisLayout([...shortLabels.values()], band, measure ?? estimateTextWidth),
-    [shortLabels, band, measure],
+    () => columnAxisLayout(labels, band, textMeasure, { xType: model.xType, maxHeight: SLANT_AXIS_MAX_SHARE * height }),
+    [labels, band, textMeasure, model.xType, height],
   )
+  const asBars = axis.orientation === 'bars'
+  const barAxis = useMemo(
+    () => (asBars ? barAxisLayout(labels, width / scale, textMeasure) : null),
+    [asBars, labels, width, scale, textMeasure],
+  )
+  const maxChars = barAxis?.maxChars ?? axis.maxChars
+  const shortLabels = useMemo(
+    () => new Map(model.buckets.map((bucket) => [bucket.key, middleTruncate(bucket.label, maxChars)])),
+    [model, maxChars],
+  )
+  // The labels drawn under a thinned time axis: counted back from the newest, so it is always one of them.
+  const labelled = useMemo(
+    () => new Set(model.buckets.filter((_, i) => drawsLabel(i, model.buckets.length, axis.interval)).map((bucket) => bucket.key)),
+    [model, axis.interval],
+  )
+  const axisLabel = (key: string) => (labelled.has(String(key)) ? (shortLabels.get(String(key)) ?? String(key)) : '')
+  // The bar form grows with its rows instead of squeezing them into the card's height.
+  const plotHeight = asBars ? Math.max(height, model.buckets.length * BAR_ROW_HEIGHT + BARS_CHROME) : height
 
   const patterns = useMemo<PatternSpec[]>(
     () => model.series.map((entry, s) => ({ id: seriesPatternId(prefix, entry, s), color: entry.color, decal: entry.decal })),
@@ -256,6 +427,40 @@ export default function StackedColumnChart({
   const invalid = invalidNote(model)
   const zeros = model.buckets.filter((bucket) => bucket.zero)
 
+  const bars = model.series.map((entry, s) => (
+    <Bar
+      key={entry.key}
+      dataKey={entry.field}
+      name={entry.label}
+      stackId="stack"
+      fill={patternFill(seriesPatternId(prefix, entry, s))}
+      maxBarSize={asBars ? BAR_MAX_THICKNESS : COLUMN_MAX_WIDTH}
+      isAnimationActive={animate}
+    />
+  ))
+  const zeroTicks = zeros.map((bucket) => (
+    <ReferenceDot
+      key={`zero-${bucket.key}`}
+      x={asBars ? 0 : bucket.key}
+      y={asBars ? bucket.key : 0}
+      r={0}
+      ifOverflow="visible"
+      shape={(props: { cx?: number; cy?: number }) => <ZeroTick cx={props.cx} cy={props.cy} bucket={bucket.key} across={asBars} />}
+    />
+  ))
+  const tooltip = (
+    // Pinned beside its column or bar (`PinnedTip`): a fixed origin, no slide.
+    <Tooltip
+      key={cursor.tipKey}
+      cursor={false}
+      content={asBars ? <StackedBarTooltip model={model} /> : <StackedColumnTooltip model={model} />}
+      position={{ x: 0, y: 0 }}
+      isAnimationActive={false}
+      {...cursor.tipProps}
+    />
+  )
+  const legendNode = <Legend content={() => <ChartLegend entries={legend} />} />
+
   return (
     <figure
       data-chart="stacked-column"
@@ -267,79 +472,93 @@ export default function StackedColumnChart({
       <div
         ref={plotRef}
         data-stacked-column-plot=""
+        data-stacked-orientation={axis.orientation}
         data-stacked-axis-angle={axis.angle}
         data-stacked-axis-height={axis.height}
         data-stacked-axis-interval={axis.interval}
+        data-stacked-axis-max-chars={maxChars}
         className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         {...cursor.surfaceProps}
       >
-        <ChartResponsive height={height}>
-          {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
-          <BarChart data={rows} margin={PLOT_MARGIN} accessibilityLayer={false}>
-            <defs>{renderPatterns(patterns)}</defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
-            <XAxis
-              dataKey="key"
-              axisLine={false}
-              tickLine={false}
-              tick={RECHARTS_AXIS_TICK}
-              interval={axis.interval}
-              angle={axis.angle}
-              textAnchor={axis.angle === 0 ? 'middle' : 'end'}
-              height={axis.height}
-              // The key is unique; the label need not be. The axis draws the label, cut in the middle.
-              tickFormatter={(key: string) => shortLabels.get(String(key)) ?? String(key)}
-            />
-            {/*
-              Domain AND ticks from the model: zero-based, ending on a tick, so
-              the last interval is as wide as the others.
-            */}
-            <YAxis
-              domain={model.axis.domain}
-              ticks={model.axis.ticks}
-              interval={0}
-              allowDataOverflow={false}
-              axisLine={false}
-              tickLine={false}
-              tick={RECHARTS_AXIS_TICK}
-              width={yWidth}
-              tickFormatter={(value: number) => model.format(value)}
-              // `offset: 14`, as the time series' rate title: at the default 5
-              // the rotated title's line box overhung the svg's left edge.
-              label={{ value: model.valueTitle, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
-            />
-            {/* Pinned beside its column (`PinnedTip`): a fixed origin, no slide. */}
-            <Tooltip
-              key={cursor.tipKey}
-              cursor={false}
-              content={<StackedColumnTooltip model={model} />}
-              position={{ x: 0, y: 0 }}
-              isAnimationActive={false}
-              {...cursor.tipProps}
-            />
-            <Legend content={() => <ChartLegend entries={legend} />} />
-            {model.series.map((entry, s) => (
-              <Bar
-                key={entry.key}
-                dataKey={entry.field}
-                name={entry.label}
-                stackId="stack"
-                fill={patternFill(seriesPatternId(prefix, entry, s))}
-                maxBarSize={COLUMN_MAX_WIDTH}
-                isAnimationActive={animate}
+        <ChartResponsive height={plotHeight}>
+          {asBars ? (
+            // `accessibilityLayer={false}` — explicitly; see `ChartCursor`.
+            <BarChart data={rows} layout="vertical" margin={BARS_MARGIN} accessibilityLayer={false}>
+              <defs>{renderPatterns(patterns)}</defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} horizontal={false} />
+              <XAxis
+                type="number"
+                domain={model.axis.domain}
+                ticks={model.axis.ticks}
+                interval={0}
+                allowDataOverflow={false}
+                axisLine={false}
+                tickLine={false}
+                tick={RECHARTS_AXIS_TICK}
+                height={BARS_VALUE_AXIS_HEIGHT}
+                tickFormatter={(value: number) => model.format(value)}
+                label={{ value: model.valueTitle, position: 'insideBottom', offset: -4, fill: CHART_VARS.axis, fontSize: 11 }}
               />
-            ))}
-            {zeros.map((bucket) => (
-              <ReferenceDot
-                key={`zero-${bucket.key}`}
-                x={bucket.key}
-                y={0}
-                r={0}
-                ifOverflow="visible"
-                shape={(props: { cx?: number; cy?: number }) => <ZeroTick cx={props.cx} cy={props.cy} bucket={bucket.key} />}
+              {/* Every name, beside its bar: a category is never left unlabelled. */}
+              <YAxis
+                type="category"
+                dataKey="key"
+                width={barAxis?.width}
+                interval={0}
+                axisLine={false}
+                tickLine={false}
+                tick={RECHARTS_AXIS_TICK}
+                tickFormatter={axisLabel}
               />
-            ))}
-          </BarChart>
+              {tooltip}
+              {legendNode}
+              {bars}
+              {zeroTicks}
+            </BarChart>
+          ) : (
+            // `accessibilityLayer={false}` — explicitly; see `ChartCursor`.
+            <BarChart data={rows} margin={PLOT_MARGIN} accessibilityLayer={false}>
+              <defs>{renderPatterns(patterns)}</defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+              <XAxis
+                dataKey="key"
+                axisLine={false}
+                tickLine={false}
+                tick={RECHARTS_AXIS_TICK}
+                // Every tick is placed; a thinned time axis blanks the labels it
+                // skips (`axisLabel`), counted from the newest, because Recharts'
+                // own `interval` always counts from the oldest and so dropped today.
+                interval={0}
+                angle={axis.angle}
+                textAnchor={axis.angle === 0 ? 'middle' : 'end'}
+                height={axis.height}
+                // The key is unique; the label need not be. The axis draws the label, cut in the middle.
+                tickFormatter={axisLabel}
+              />
+              {/*
+                Domain AND ticks from the model: zero-based, ending on a tick, so
+                the last interval is as wide as the others.
+              */}
+              <YAxis
+                domain={model.axis.domain}
+                ticks={model.axis.ticks}
+                interval={0}
+                allowDataOverflow={false}
+                axisLine={false}
+                tickLine={false}
+                tick={RECHARTS_AXIS_TICK}
+                width={yWidth}
+                tickFormatter={(value: number) => model.format(value)}
+                // `offset: 14`, as the time series' rate title: at the default 5
+                // the rotated title's line box overhung the svg's left edge.
+                label={{ value: model.valueTitle, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
+              />
+              {tooltip}
+              {legendNode}
+              {bars}
+              {zeroTicks}
+            </BarChart>
+          )}
         </ChartResponsive>
         {cursor.readout}
       </div>

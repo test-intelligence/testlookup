@@ -12,6 +12,7 @@ import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import { tooltipText } from './tooltip'
 import { NBSP } from '@/lib/trendStats'
 import { readTooltip } from './tooltipTestUtils'
+import { utcDayLabel } from './chartText'
 import {
   AXIS_NOT_ZERO_LABEL,
   EXECUTIONS_AXIS_TITLE,
@@ -26,6 +27,7 @@ import {
 interface Captured {
   chartData: unknown[]
   chart: Record<string, unknown> | null
+  xAxis: Record<string, unknown> | null
   line: Record<string, unknown> | null
   bars: Record<string, unknown>[]
   cells: Record<string, unknown>[]
@@ -37,6 +39,7 @@ interface Captured {
 const captured: Captured = {
   chartData: [],
   chart: null,
+  xAxis: null,
   line: null,
   bars: [],
   cells: [],
@@ -58,7 +61,10 @@ vi.mock('recharts', () => ({
   // The legend is RENDERED, not stubbed away: its entries are part of what a
   // reader who cannot tell the hues apart has to match the marks with.
   Legend: ({ content }: { content?: () => ReactNode }) => <div>{content ? content() : null}</div>,
-  XAxis: () => <div />,
+  XAxis: (props: Record<string, unknown>) => {
+    captured.xAxis = props
+    return <div />
+  },
   YAxis: (props: Record<string, unknown>) => {
     captured.axes.push(props)
     return <div data-testid="y-axis" data-axis-id={String(props.yAxisId)} data-label={String(props.label)} />
@@ -92,6 +98,7 @@ vi.mock('./engines/useEChart', () => ({
 function reset() {
   captured.chartData = []
   captured.chart = null
+  captured.xAxis = null
   captured.line = null
   captured.bars = []
   captured.cells = []
@@ -146,6 +153,71 @@ describe('TimeSeriesChart — a single data point', () => {
       />,
     )
     expect(screen.getByTestId('rate-line')).toHaveAttribute('data-dot', 'true')
+  })
+
+  it('draws a dot on the plot’s top edge whole: a 100 % day is not cut in half (R2 F6)', () => {
+    reset()
+    render(
+      <TimeSeriesChart
+        model={buildTimeSeriesModel({
+          points: timeSeriesFromTrends([
+            { date: '2026-03-01', passed: 0, failed: 0, skipped: 4, broken: 0, total: 4, pass_rate: 0 },
+            { date: '2026-03-02', passed: 40, failed: 0, skipped: 0, broken: 0, total: 40, pass_rate: 100 },
+            { date: '2026-03-03', passed: 0, failed: 0, skipped: 4, broken: 0, total: 4, pass_rate: 0 },
+          ]),
+        })}
+      />,
+    )
+    // The rate axis clips its data to the plot (`allowDataOverflow`); the dots opt out of that clip.
+    const rateAxis = captured.axes.find((axis) => axis.yAxisId === 'rate')
+    expect(rateAxis?.allowDataOverflow).toBe(true)
+    expect(captured.line?.dot).toMatchObject({ clipDot: false })
+  })
+})
+
+describe('TimeSeriesChart — one date format with the kit (R2 F5) and a legend that matches its marks (R2 F7)', () => {
+  const isolatedDays = () =>
+    buildTimeSeriesModel({
+      points: timeSeriesFromTrends([
+        { date: '2026-03-01', passed: 30, failed: 2, skipped: 0, broken: 0, total: 32, pass_rate: 93.8 },
+        { date: '2026-03-02', passed: 0, failed: 0, skipped: 4, broken: 0, total: 4, pass_rate: 0 },
+        { date: '2026-03-03', passed: 28, failed: 1, skipped: 0, broken: 0, total: 29, pass_rate: 96.6 },
+      ]),
+    })
+
+  it('labels the day axis as the stacked chart does ("Mar 5"), never the ISO key', () => {
+    reset()
+    render(<TimeSeriesChart model={model()} />)
+    const format = captured.xAxis?.tickFormatter as ((value: string) => string) | undefined
+    expect(format).toBeTypeOf('function')
+    expect(format?.('2026-03-05')).toBe('Mar 5')
+    expect(format?.('2026-03-05')).toBe(utcDayLabel('2026-03-05'))
+    // The chart's data keeps the ISO day: only the label is short.
+    expect((captured.chartData[0] as { x: string }).x).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('draws the rate legend swatch as a line WITH a dot when the plot has isolated dots', () => {
+    reset()
+    render(<TimeSeriesChart model={isolatedDays()} />)
+    const rate = screen.getByText(RATE_AXIS_TITLE).closest('li') as HTMLElement
+    expect(rate.querySelector('line[data-legend-swatch]')).not.toBeNull()
+    expect(rate.querySelector('circle[data-legend-dot]')).not.toBeNull()
+  })
+
+  it('keeps the plain line swatch when every measured day has a neighbour (nothing is drawn as a lone dot)', () => {
+    reset()
+    const continuous = buildTimeSeriesModel({
+      points: timeSeriesFromTrends([
+        { date: '2026-03-01', passed: 30, failed: 2, skipped: 0, broken: 0, total: 32, pass_rate: 93.8 },
+        { date: '2026-03-02', passed: 31, failed: 1, skipped: 0, broken: 0, total: 32, pass_rate: 96.9 },
+        { date: '2026-03-03', passed: 28, failed: 1, skipped: 0, broken: 0, total: 29, pass_rate: 96.6 },
+      ]),
+    })
+    expect(continuous.isolated).toEqual([])
+    render(<TimeSeriesChart model={continuous} />)
+    const rate = screen.getByText(RATE_AXIS_TITLE).closest('li') as HTMLElement
+    expect(rate.querySelector('line[data-legend-swatch]')).not.toBeNull()
+    expect(rate.querySelector('circle[data-legend-dot]')).toBeNull()
   })
 })
 

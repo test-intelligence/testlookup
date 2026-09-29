@@ -100,7 +100,7 @@ import {
 } from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
 import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens } from './tokens'
-import { NO_VALUE } from './chartText'
+import { NO_VALUE, utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { ChartLegend, type LegendEntry } from './patterns'
 import { CHART_DRAW_ERROR } from './ChartErrorBoundary'
@@ -357,7 +357,9 @@ function SvgTimeSeries({
   // renderer draws nothing for a point with no measured neighbour.
   const showDots = model.singlePoint || model.isolated.length > 0
   const legend: LegendEntry[] = [
-    { key: 'rate', label: RATE_AXIS_TITLE, stroke: CHART_VARS.series[0] },
+    // A line with a dot when some days are drawn as lone dots: the legend
+    // shows the marks the plot has, and a plain line matches none of them (R2 F7).
+    { key: 'rate', label: RATE_AXIS_TITLE, stroke: CHART_VARS.series[0], dot: showDots },
     { key: 'executions', label: EXECUTIONS_AXIS_TITLE, fill: CHART_VARS.series[1] },
   ]
   // The hatch is a mark like any other, so it gets a legend entry like any
@@ -415,7 +417,13 @@ function SvgTimeSeries({
           same lines.
         */}
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} yAxisId="rate" />
-        <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} dy={8} />
+        {/*
+          The kit's one short day label ("Mar 5", `utcDayLabel`), as the stacked
+          columns draw it: SuiteDetail and Trends put the two charts over the
+          same days, one labelled "Aug 20" and the other "2026-08-22" (R2 F5).
+          The tooltip, the table and the export keep the full UTC day.
+        */}
+        <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} dy={8} tickFormatter={utcDayLabel} />
         {/*
           Both y axes take their TICKS from the model, not only a domain:
           left to itself Recharts ticked a 90-100 axis at 90, 93, 96, 100.
@@ -512,7 +520,12 @@ function SvgTimeSeries({
           strokeWidth={2}
           // A gap is a gap: bridging it would invent a day that never ran.
           connectNulls={false}
-          dot={showDots ? { r: 3, fill: CHART_VARS.series[0] } : false}
+          // `clipDot: false`: the rate axis sets `allowDataOverflow`, so Recharts
+          // clips this line to the plot rect, and a dot ON its edge — a 100 %
+          // day, the best reading there is — was cut to its lower half (R2 F6).
+          // Recharts then clips the dots to the plot grown by one dot, so a dot
+          // on an edge is whole while the line stays inside the plot.
+          dot={showDots ? { r: 3, fill: CHART_VARS.series[0], clipDot: false } : false}
           activeDot={{ r: 4 }}
           isAnimationActive={animate}
         />

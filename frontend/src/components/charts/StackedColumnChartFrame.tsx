@@ -11,10 +11,15 @@
  *     cell, and the last column is each bucket's total;
  *   - a drawn state whose model holds nothing is NOT drawn as an empty plot.
  *     No bucket at all is `filtered-empty`, and so are buckets whose every
- *     measured value is 0 (the kit's rule: all-zero is a filter that matched
- *     nothing, not a chart of zeros — `handOverWhenEmpty`). Buckets of which
- *     nothing was measured are `not-measured`: "—" with a reason, never an
- *     empty chart that reads as zero.
+ *     measured value is 0 (the kit's rule: all-zero is not a chart of zeros —
+ *     `handOverWhenEmpty`). Buckets of which nothing was measured are
+ *     `not-measured`: "—" with a reason, never an empty chart that reads as zero.
+ *   - that empty state blames the filters ONLY when the page says filters are
+ *     set (`filtersApplied`). Otherwise it states the window, neutrally: "No
+ *     executions in this window" (R1 F3). A new project whose only run is
+ *     still streaming has an all-zero window and no filter at all; "No data
+ *     matches the current filters" told that reader to clear filters they
+ *     never set.
  *
  * Its props mirror `TimeSeriesChartFrameProps`: a page passes `title`,
  * `takeaway`, `state` (`readyState(...)` from `chartState.ts` when the page
@@ -36,12 +41,25 @@ export interface StackedColumnChartFrameProps
    */
   model: StackedColumnModel | null
   state: ChartState<unknown>
+  /**
+   * Whether the page has a filter set that could have emptied this window (a
+   * suite, a release, a branch). Only then does an all-zero or bucketless
+   * window read "No data matches the current filters" (with "Clear filters"
+   * when `onClearFilters` is given); otherwise it reads `emptyWindowMessage`.
+   * Default `false`: the neutral words are true either way.
+   */
+  filtersApplied?: boolean
 }
 
 /** The chart type the summary and the export name it by. */
 export const STACKED_COLUMN_CHART_TYPE = 'Stacked column chart'
 /** The reason a drawn state of which nothing was measured shows. */
 export const NOTHING_MEASURED_REASON = 'no value in this window was measured'
+
+/** What an empty window says when no filter emptied it: "No executions in this window". */
+export function emptyWindowMessage(model: Pick<StackedColumnModel, 'valueTitle'>): string {
+  return `No ${model.valueTitle.toLowerCase()} in this window`
+}
 
 /** The state the frame is given: the page's, unless the model says there is nothing to draw. */
 export function stackedFrameState(state: ChartState<unknown>, model: StackedColumnModel | null): ChartState<unknown> {
@@ -55,10 +73,13 @@ export function stackedFrameState(state: ChartState<unknown>, model: StackedColu
 }
 
 const StackedColumnChartFrame = forwardRef<HTMLDivElement, StackedColumnChartFrameProps>(function StackedColumnChartFrame(
-  { model, state, animate, bucketNoun, height = 280, ...frameProps },
+  { model, state, animate, bucketNoun, height = 280, filtersApplied = false, emptyMessage, ...frameProps },
   ref,
 ) {
   const frameState = stackedFrameState(state, model)
+  // The frame decided "empty" from the model (not the page): say why in the words that are true.
+  const derivedEmpty = frameState.status === 'filtered-empty' && state.status !== 'filtered-empty'
+  const emptyWords = emptyMessage ?? (derivedEmpty && model && !filtersApplied ? emptyWindowMessage(model) : undefined)
   const drawn = model !== null && (frameState.status === 'ready' || frameState.status === 'truncated')
   const series = useMemo(() => (model && drawn ? stackedColumnToChartSeries(model) : null), [model, drawn])
 
@@ -67,6 +88,7 @@ const StackedColumnChartFrame = forwardRef<HTMLDivElement, StackedColumnChartFra
       {...frameProps}
       ref={ref}
       state={frameState}
+      emptyMessage={emptyWords}
       height={height}
       series={series}
       format={model?.format}

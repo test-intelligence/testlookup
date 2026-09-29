@@ -42,11 +42,13 @@ export default defineConfig({
           // chart renders. Measured: 891,879 raw / 251,676 gzip eager before,
           // 502,199 / 142,305 after (-44% / -43%).
           //
-          // Left to natural chunking, recharts follows the three lazy pages
-          // that import it (Overview / SuiteDetail / ValueMetrics) and splits
-          // into AreaChart / BarChart / CartesianChart chunks that load only
-          // on those routes — and total *less* than the forced chunk did
-          // (391,686 vs 529,975 raw), because only what is used gets included.
+          // Left to natural chunking, recharts follows the lazy chart-kit
+          // modules that import it (no page imports recharts directly since
+          // VIZ-104; `check:theme` enforces that) and splits into per-chart
+          // chunks that load only on the routes that draw that chart — and
+          // total *less* than the forced chunk did (391,686 vs 529,975 raw,
+          // measured when three pages still imported it), because only what
+          // is used gets included.
           //
           // The same rule holds for the VIZ-103 chart engines: echarts, zrender
           // and three are NEVER named here. Each ECharts chart type is its own

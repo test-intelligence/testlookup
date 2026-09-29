@@ -28,7 +28,9 @@ import { useMemo, type CSSProperties } from 'react'
 import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   FAILURE_CUE_FILL,
+  MIXED_BAND_HEIGHT,
   buildDayStripModel,
+  defaultStartLabel,
   type CellFace,
   type DayStripCell,
   type DayStripMode,
@@ -77,7 +79,7 @@ function FailureCue({ cue }: { cue: CellFace['cue'] }) {
           left: 0,
           right: 0,
           bottom: 0,
-          height: '20%',
+          height: MIXED_BAND_HEIGHT,
           background: FAILURE_CUE_FILL,
           // A card-coloured edge on the band: the 80/20 split is a shape, not
           // only a change of hue.
@@ -124,10 +126,13 @@ export default function DayStrip({
   if (model.cells.length === 0) return null
 
   const count = model.cells.length
-  const units = count === 1 ? unit : `${unit}s`
 
   return (
-    <div data-day-strip={mode} className={className}>
+    // `relative`: the sr-only table below is `position: absolute`, and without a
+    // positioned ancestor its containing block was the page, so a strip inside a
+    // sideways-scrolling box (a narrow window) widened the whole page instead
+    // (the gallery's phone-width check caught 661 px in a 375 px window).
+    <div data-day-strip={mode} className={['relative', className].filter(Boolean).join(' ')}>
       <div className="rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]" {...cursor.surfaceProps}>
         <div
           role="img"
@@ -166,11 +171,13 @@ export default function DayStrip({
       </div>
       {cursor.readout}
       {legend && (
+        // `--color-text-secondary`, the kit's token for small text: `--color-text-muted`
+        // is under 4.5:1 on the light theme (4.15), which the gallery's axe gate caught.
         <div
           data-day-strip-legend=""
-          className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-muted)]"
+          className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-secondary)]"
         >
-          <span>{startLabel ?? `${count} ${units} ago`}</span>
+          <span>{startLabel ?? defaultStartLabel(count, unit, model.text.today)}</span>
           {mode === 'intensity' ? (
             <span className="inline-flex flex-wrap items-center gap-1">
               {model.text.less}
@@ -202,7 +209,12 @@ export default function DayStrip({
           <span>{endLabel ?? model.text.today}</span>
         </div>
       )}
-      <table className="sr-only" data-day-strip-table="">
+      {/* The sr-only box is a DIV around the table, not the table itself: a table
+          ignores `width: 1px` and sizes to its content, so an sr-only TABLE still
+          added its full width and height to the scrollable overflow of whatever
+          box held the strip (708 px of scroll under a 160 px strip). */}
+      <div className="sr-only" data-day-strip-sr="">
+      <table data-day-strip-table="">
         <caption>{label}</caption>
         <thead>
           <tr>
@@ -221,6 +233,7 @@ export default function DayStrip({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

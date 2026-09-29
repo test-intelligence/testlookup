@@ -127,6 +127,41 @@ export const singleBucketFixture: StackedColumnModel = buildStackedColumnModel({
 
 const MONTHS = ['Jan', 'Feb', 'Mar'] as const
 
+/** Sixteen suites: more categories than columns can name, so the chart draws them as horizontal bars. */
+export const MANY_SUITE_NAMES = [
+  'auth',
+  'billing-api',
+  'cart',
+  'checkout',
+  LONG_BUCKET_LABEL,
+  'inventory',
+  'login-sso',
+  'notifications',
+  'orders',
+  'profile',
+  'recommendations',
+  'search',
+  'shipping',
+  'smoke',
+  'ui-e2e',
+  'webhooks',
+] as const
+
+/**
+ * Executions by status per suite, over more than `MAX_CATEGORY_COLUMNS`
+ * suites: the kit never drops a category name, so this is drawn as bars with
+ * every name beside its bar. The statuses are passed in Trends' old order
+ * (skipped before broken) on purpose: the kit stacks them in its one order.
+ */
+export const manyCategoriesFixture: StackedColumnModel = buildStackedColumnModel({
+  buckets: MANY_SUITE_NAMES.map((label, i) =>
+    statusDay(`suite-${i}`, label, 40 + ((i * 13) % 50), i % 4 === 0 ? 0 : (i * 3) % 7, i % 5 === 2 ? 1 : 0, (i * 2) % 3),
+  ),
+  series: [STATUS_SERIES[0], STATUS_SERIES[1], STATUS_SERIES[3], STATUS_SERIES[2]],
+  valueTitle: 'Executions',
+  bucketTitle: 'Suite',
+})
+
 /** Sixty days: too many labels to lie flat in a card, so the axis thins or slants them. */
 export const longWindowFixture: StackedColumnModel = buildStackedColumnModel({
   buckets: Array.from({ length: 60 }, (_, i) => {

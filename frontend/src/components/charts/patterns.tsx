@@ -92,6 +92,8 @@ export interface LegendEntry {
   /** …or a line swatch: its stroke and dash. */
   stroke?: string
   dash?: string
+  /** A line swatch with a dot on it, for a series drawn as dots where it has no neighbour. */
+  dot?: boolean
 }
 
 /**
@@ -119,6 +121,7 @@ export function ChartLegend({ entries }: { entries: readonly LegendEntry[] }) {
                 strokeWidth={2}
                 strokeDasharray={entry.dash}
               />
+              {entry.dot && <circle data-legend-dot="" cx={12} cy={5} r={3} fill={entry.stroke} />}
             </svg>
           ) : (
             <svg width={14} height={14} aria-hidden="true" focusable="false">

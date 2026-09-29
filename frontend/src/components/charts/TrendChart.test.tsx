@@ -20,8 +20,8 @@ vi.mock('recharts', () => ({
   Area: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
     <div data-testid="series-mark" data-animate={String(isAnimationActive)} />
   ),
-  Bar: ({ isAnimationActive }: { isAnimationActive?: boolean }) => (
-    <div data-testid="series-mark" data-animate={String(isAnimationActive)} />
+  Bar: ({ isAnimationActive, dataKey }: { isAnimationActive?: boolean; dataKey?: string }) => (
+    <div data-testid="series-mark" data-animate={String(isAnimationActive)} data-key={dataKey} />
   ),
 }))
 
@@ -53,8 +53,14 @@ describe('TrendChart', () => {
     expect(screen.getByTestId('bar-chart')).toBeInTheDocument()
   })
 
+  it('stacks the bar chart in the kit’s one status order, bottom first (STATUS_STACK_ORDER)', () => {
+    render(<TrendChart data={data} type="bar" />)
+    const keys = screen.getAllByTestId('series-mark').map((mark) => mark.getAttribute('data-key'))
+    expect(keys).toEqual(['passed', 'failed', 'broken', 'skipped'])
+  })
+
   // line: passed / failed / skipped / pass_rate · area: total / passed ·
-  // bar: passed / failed / skipped / broken
+  // bar: passed / failed / broken / skipped
   const SERIES_PER_TYPE = [['line', 4], ['area', 2], ['bar', 4]] as const
 
   it.each(SERIES_PER_TYPE)('leaves the %s chart on the Recharts animation default', (type, series) => {

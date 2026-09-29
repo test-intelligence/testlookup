@@ -98,7 +98,12 @@ export function compactStrip(): DayStripProps {
   }
 }
 
-/** Runs build velocity (S5): cells are builds, 9 real ones padded to 14, the latest marked. */
+/**
+ * Runs build velocity (S5): cells are builds, 9 real ones padded to 14, the
+ * latest marked. The padding goes at the OLDEST end (R2 F2 / G5): the right
+ * end is "Now", so the newest real build sits under it, and "no build" cells
+ * only ever stand for builds older than the first one there is.
+ */
 export function buildStrip(): DayStripProps {
   const kinds = ['pass', 'pass', 'fail', 'pass', 'fail', 'fail', 'pass', 'pass', 'fail'] as const
   const cells: DayStripCell[] = kinds.map((tone, i) => ({
@@ -107,7 +112,7 @@ export function buildStrip(): DayStripProps {
     tone,
     marker: i === kinds.length - 1 ? 'today' : undefined,
   }))
-  while (cells.length < 14) cells.push({ key: `empty ${cells.length}`, label: 'no build', tone: 'none' })
+  while (cells.length < 14) cells.unshift({ key: `empty ${14 - cells.length}`, label: 'no build', tone: 'none' })
   const n = countTones(cells)
   return {
     mode: 'status',
@@ -142,6 +147,9 @@ export function hostileStrip(): DayStripProps {
   return {
     mode: 'status',
     unit: 'build',
+    // Builds, so the legend speaks of builds too (R2 G5): not "No runs" and "Today".
+    endLabel: 'Now',
+    text: { none: 'No build', today: 'Latest build' },
     title: 'Hostile labels',
     label: 'Hostile labels <b>not bold</b>',
     cells: names.map((name, i) => ({ key: `hostile ${i}`, label: name, tone: i % 2 === 0 ? 'fail' : 'pass' })),

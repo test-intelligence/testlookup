@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TEXT,
   INTENSITY_THRESHOLDS,
+  MIXED_BAND_HEIGHT,
+  MIXED_DAY_FILL,
   buildDayStripModel,
   cellFace,
   countTones,
@@ -14,6 +16,7 @@ import {
   type DayStripMode,
   type DayStripTone,
 } from './dayStrip.model'
+import { NON_TEXT_EDGE } from './tokens'
 
 describe('intensityLevel — Coverage buckets 0 / 1-5 / 6-20 / 21-50 / more than 50', () => {
   it.each([
@@ -69,9 +72,28 @@ describe('dayWindow', () => {
 
 describe('cellFace', () => {
   it('presence: a mixed day keeps the 80/20 mixed-day fill and carries the band cue', () => {
-    expect(cellFace('presence', 'mixed')).toMatchObject({ background: 'var(--pattern-mixed-day)', cue: 'mixed' })
+    expect(cellFace('presence', 'mixed')).toMatchObject({ background: MIXED_DAY_FILL, cue: 'mixed' })
     expect(cellFace('presence', 'pass')).toMatchObject({ background: 'var(--status-passed)', cue: null })
     expect(cellFace('presence', 'none')).toMatchObject({ background: 'var(--color-bg-secondary)', cue: null })
+  })
+
+  it('never lets a mixed day’s failed band shrink under 3 px, and the fill splits where the band starts (R2 G4)', () => {
+    expect(MIXED_BAND_HEIGHT).toBe('max(20%, 3px)')
+    // Passed down to the band, failed from it: one boundary, the band's.
+    expect(MIXED_DAY_FILL).toBe(
+      'linear-gradient(180deg, var(--status-passed) 0 calc(100% - max(20%, 3px)), var(--status-failed) calc(100% - max(20%, 3px)) 100%)',
+    )
+  })
+
+  it('outlines an empty day and edges a failed day so each is at least 3:1 on the card (R2 F9)', () => {
+    for (const mode of ['presence', 'status'] as const) {
+      expect(cellFace(mode, 'none').border).toBe(`1px solid ${NON_TEXT_EDGE}`)
+    }
+    expect(cellFace('intensity', 'none', 0).border).toBe(`1px solid ${NON_TEXT_EDGE}`)
+    // The faintest failure still has a full-strength edge; the shade keeps the severity.
+    for (const severity of [0, 0.3, 1, undefined]) {
+      expect(cellFace('status', 'fail', 0, severity).border).toBe('1px solid var(--status-failed)')
+    }
   })
 
   it('intensity: the fill is the level, never the tone', () => {

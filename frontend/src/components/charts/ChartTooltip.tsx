@@ -49,17 +49,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { usePlotArea } from 'recharts'
-import {
-  TIP_CLASS,
-  TIP_LINE_SWATCH,
-  TIP_STYLE,
-  TOOLTIP_NODE_ATTRIBUTE,
-  rowLabelText,
-  safeDataAttributes,
-  tooltipText,
-  type TooltipContent,
-  type TooltipRow,
-} from './tooltip'
+import { TIP_BOX_STYLE, ChartTooltipBody, TipRows } from './ChartTooltipBody'
+import { TIP_CLASS, TIP_STYLE, TOOLTIP_NODE_ATTRIBUTE, tooltipText, type TooltipContent } from './tooltip'
 import {
   ANY_SIDE,
   TIP_GAP,
@@ -79,87 +70,12 @@ import {
   type TipSide,
   type TipSweep,
 } from './tipPlacement'
-import { RECHARTS_TOOLTIP_STYLE } from './tokens'
-
-/** The box around the content: the card, its border and its padding (Overview's tooltip, BarChart's shell). */
-export const TIP_BOX_STYLE: CSSProperties = {
-  ...RECHARTS_TOOLTIP_STYLE,
-  padding: '4px 8px',
-  boxSizing: 'border-box',
-}
+// The body is its own module so the keyboard cursor (`ChartCursor`, and the
+// DayStrip that uses it) draws it without pulling Recharts into its chunk.
+export { TIP_BOX_STYLE, ChartTooltipBody, type ChartTooltipBodyProps } from './ChartTooltipBody'
 
 /** How long a tooltip stays after the chart lets go of it, so the pointer can cross onto it. */
 export const TIP_LINGER_MS = 300
-
-function Swatch({ row }: { row: TooltipRow }) {
-  if (!row.color) return null
-  if (row.mark === 'line') {
-    return (
-      <svg
-        aria-hidden="true"
-        focusable="false"
-        width={TIP_LINE_SWATCH}
-        height={10}
-        className={TIP_CLASS.swatch}
-        style={TIP_STYLE.line}
-      >
-        <line
-          x1={1}
-          y1={5}
-          x2={TIP_LINE_SWATCH - 1}
-          y2={5}
-          stroke={row.color}
-          strokeWidth={2}
-          strokeDasharray={row.dash}
-        />
-      </svg>
-    )
-  }
-  return <span aria-hidden="true" className={TIP_CLASS.swatch} style={{ ...TIP_STYLE.swatch, backgroundColor: row.color }} />
-}
-
-function Row({ row }: { row: TooltipRow }) {
-  const note = row.kind === 'note'
-  const data = Object.fromEntries(safeDataAttributes(row.data))
-  const label = rowLabelText(row)
-  return (
-    <div className={note ? TIP_CLASS.note : TIP_CLASS.row} data-tip-kind={row.kind ?? 'value'} style={note ? TIP_STYLE.note : TIP_STYLE.row} {...data}>
-      {!note && <Swatch row={row} />}
-      {label && (
-        <span className={TIP_CLASS.label} style={TIP_STYLE.label}>
-          {label}
-        </span>
-      )}
-      <span className={TIP_CLASS.value} style={note ? TIP_STYLE.noteValue : TIP_STYLE.value} data-tip-value="">
-        {row.value}
-      </span>
-      {row.detail && (
-        <span className={TIP_CLASS.detail} style={TIP_STYLE.detail}>
-          ({row.detail})
-        </span>
-      )}
-    </div>
-  )
-}
-
-const rowKey = (row: TooltipRow, index: number) => `${row.key ?? `${row.kind ?? 'value'}:${row.label}`}#${index}`
-
-export interface ChartTooltipBodyProps {
-  content: TooltipContent
-  /** Mark it as THE tooltip (`data-chart-tooltip`). The keyboard readout draws the same body unmarked. */
-  marked?: boolean
-  style?: CSSProperties
-}
-
-/** The content, drawn: the React twin of `buildTooltipNode`. */
-export function ChartTooltipBody({ content, marked = false, style }: ChartTooltipBodyProps) {
-  const mark = marked ? { [TOOLTIP_NODE_ATTRIBUTE]: '' } : {}
-  return (
-    <div className={TIP_CLASS.body} style={{ ...TIP_STYLE.body, ...style }} {...mark}>
-      <TipRows content={content} />
-    </div>
-  )
-}
 
 /** The content in its box, in the flow: for a tooltip that is not placed by `PinnedTip`. */
 export default function ChartTooltip({ content }: { content: TooltipContent | null }) {
@@ -542,22 +458,6 @@ export function PinnedTip({ content, mark, sides = ANY_SIDE, align = 'center', g
         </div>,
         slot,
       )}
-    </>
-  )
-}
-
-/** The title and rows, for a box that is itself the `[data-chart-tooltip]` element. */
-function TipRows({ content }: { content: TooltipContent }) {
-  return (
-    <>
-      {content.title !== undefined && (
-        <div className={TIP_CLASS.title} style={TIP_STYLE.title}>
-          {content.title}
-        </div>
-      )}
-      {content.rows.map((row, index) => (
-        <Row key={rowKey(row, index)} row={row} />
-      ))}
     </>
   )
 }

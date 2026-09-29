@@ -26,13 +26,15 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type RefObject }
 import { PolarAngleAxis, RadialBarChart, RadialBar, ResponsiveContainer } from 'recharts'
 import { bandsTone, NOT_MEASURED, PASS_RATE_BANDS, ringTextWidth, type RingTone } from './gaugeBar.model'
 import { measureTextWidth } from './textMeasure'
-import { CHART_VARS } from './tokens'
+import { CHART_VARS, NON_TEXT_EDGE } from './tokens'
 import { useChartAnimation } from './motion'
 
 export type { RingTone } from './gaugeBar.model'
 
 const passRateTone = bandsTone(PASS_RATE_BANDS)
 const formatPercent = (v: number) => `${v.toFixed(1)}%`
+/** The kit ring's track: the grid fill, outlined so the scale's extent is at least 3:1 on the card (R2 F9). */
+export const RING_TRACK = { fill: CHART_VARS.grid, stroke: NON_TEXT_EDGE, strokeWidth: 1 } as const
 
 const RING_COLOR: Record<RingTone, string> = {
   good: CHART_VARS.status.passed,
@@ -147,7 +149,11 @@ export function RingGaugeView({
           <RadialBar
             dataKey="value"
             cornerRadius={5}
-            background={{ fill: CHART_VARS.grid }}
+            // The track is the quiet grid colour (1.1-1.8:1 on the card), so its
+            // extent — where the scale ends — is outlined in `NON_TEXT_EDGE`
+            // (3.7:1 or more, R2 F9); the value arc is drawn over it. The legacy
+            // `PassRateGauge` keeps its exact track: its render is pinned.
+            background={legacyApplicationLayer ? { fill: CHART_VARS.grid } : RING_TRACK}
             isAnimationActive={animate}
           />
         </RadialBarChart>

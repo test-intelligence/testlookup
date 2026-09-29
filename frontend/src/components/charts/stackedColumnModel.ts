@@ -28,7 +28,7 @@ import type { SeriesChart, SeriesPoint, VizStatus } from '@/lib/viz/contracts'
 import { formatPercent } from '@/utils/formatters'
 import { formatPlainValue, NO_VALUE, type ValueFormatter } from './chartText'
 import { zeroBasedScale, type NiceScale } from './niceScale'
-import { CHART_VARS, STATUS_ENCODING, seriesColor, type DecalKind } from './tokens'
+import { CHART_VARS, STATUS_ENCODING, STATUS_STACK_ORDER, seriesColor, statusStackRank, type DecalKind } from './tokens'
 import { tipContent, type TooltipContent, type TooltipRow } from './tooltip'
 
 export interface StackedColumnBucketInput {
@@ -49,7 +49,10 @@ export interface StackedColumnSeriesInput {
 
 export interface StackedColumnInput {
   buckets: readonly StackedColumnBucketInput[]
-  /** Bottom of the stack first. */
+  /**
+   * Bottom of the stack first. Status series are put in the kit's one order
+   * (`STATUS_STACK_ORDER`) whatever order they come in; others keep theirs.
+   */
   series: readonly StackedColumnSeriesInput[]
   /** What a column's height MEANS: the value axis's title ("Executions", "Hours saved"). */
   valueTitle: string
@@ -124,14 +127,36 @@ function measurement(value: number | null | undefined): { value: number | null; 
   return { value, invalid: false }
 }
 
+/** The four statuses a test-run chart stacks, in the kit's one order (`STATUS_STACK_ORDER`), labelled as the legend says them. */
+export const STATUS_STACK_SERIES: readonly StackedColumnSeriesInput[] = STATUS_STACK_ORDER.filter(
+  (status) => status !== 'unknown',
+).map((status) => ({ key: status, label: STATUS_ENCODING[status].label, status }))
+
+/**
+ * The caller's series with its STATUS series put in the kit's one order
+ * (`STATUS_STACK_ORDER`, R2 F4): the slots status series hold keep being
+ * status slots, filled bottom-up in that order, and every other series keeps
+ * its place. So "Passed, Failed, Skipped, Broken" from one page and "Passed,
+ * Failed, Broken, Skipped" from another stack, list and read out the same way;
+ * a chart of non-status series (hours per model leg) is untouched.
+ */
+export function orderStatusSeries(series: readonly StackedColumnSeriesInput[]): StackedColumnSeriesInput[] {
+  const statuses = series
+    .filter((entry) => entry.status)
+    .sort((a, b) => statusStackRank(a.status as VizStatus) - statusStackRank(b.status as VizStatus))
+  let next = 0
+  return series.map((entry) => (entry.status ? statuses[next++] : entry))
+}
+
 export function buildStackedColumnModel({
   buckets,
-  series,
+  series: callerSeries,
   valueTitle,
   bucketTitle,
   format = formatPlainValue,
   xType = 'category',
 }: StackedColumnInput): StackedColumnModel {
+  const series = orderStatusSeries(callerSeries)
   let categoryIndex = 0
   const drawnSeries: StackedColumnSeries[] = series.map((entry, index) => {
     if (entry.status) {
@@ -280,3 +305,6 @@ export function invalidNote(model: StackedColumnModel): string | null {
   if (model.invalid === 0) return null
   return `${model.invalid} ${model.invalid === 1 ? 'value was' : 'values were'} not a count or amount and ${model.invalid === 1 ? 'is' : 'are'} shown as not measured (${NO_VALUE}).`
 }
+
+/** The kit's one short day label ("Mar 4"); it lives in `chartText.ts`, which the time series shares (R2 F5). */
+export { utcDayLabel } from './chartText'

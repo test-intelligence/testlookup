@@ -8,8 +8,8 @@
  * modes and the cell `tone`; the ones that were accidents are not:
  *
  *   presence   a day had runs or it did not (Trends). A day whose runs include
- *              failures is `mixed`: it keeps the `--pattern-mixed-day` 80/20
- *              pass/fail fill it had, and gains the failure cue below, because
+ *              failures is `mixed`: it keeps the 80/20 pass/fail fill it had
+ *              (`MIXED_DAY_FILL`, with a band never under 3 px), and gains the failure cue below, because
  *              the two hues are 1.07-1.38:1 apart and the fill alone was the
  *              only thing saying "this day failed".
  *   intensity  how MUCH ran, in five levels (Coverage). It says nothing about
@@ -23,13 +23,13 @@
  * The failure cue is ONE shape everywhere: the kit's `failed` decal (diagonal,
  * `STATUS_ENCODING.failed`), cut out of the fill in the card colour — over the
  * whole cell for `fail`, over the bottom fifth (the failed band of the 80/20
- * fill) for `mixed`. Status is never colour-only (VIZ-105).
+ * fill, `MIXED_BAND_HEIGHT`) for `mixed`. Status is never colour-only (VIZ-105).
  *
  * Every string a cell carries came from ingested CI data, so it is only ever
  * rendered as React text or an attribute value; nothing here builds markup.
  */
 import { shiftDayIso } from '@/utils/calendarDay'
-import { CHART_VARS } from './tokens'
+import { CHART_VARS, NON_TEXT_EDGE } from './tokens'
 
 export type DayStripMode = 'presence' | 'intensity' | 'status'
 export type DayStripTone = 'none' | 'pass' | 'fail' | 'mixed'
@@ -120,12 +120,35 @@ const LEVEL_SHARE: Record<DayStripLevel, number | null> = { 0: null, 1: 18, 2: 4
 // ── Fills ───────────────────────────────────────────────────────────────────
 
 const EMPTY_FILL = 'var(--color-bg-secondary)'
-const EMPTY_BORDER = '1px solid var(--color-border)'
+/**
+ * A day with no runs is a quiet fill in a `NON_TEXT_EDGE` outline. Its old
+ * `--color-border` edge was 1.2-1.8:1 on the card, so on the dark themes an
+ * empty day could not be told from no cell at all (R2 F9, SC 1.4.11).
+ */
+const EMPTY_BORDER = `1px solid ${NON_TEXT_EDGE}`
 const NO_BORDER = '1px solid transparent'
 const PASSED = CHART_VARS.status.passed
 const FAILED = CHART_VARS.status.failed
 const mix = (color: string, percent: number) =>
   percent >= 100 ? color : `color-mix(in srgb, ${color} ${percent}%, transparent)`
+/**
+ * A failed day in the status strips is edged in FULL-strength `--status-failed`
+ * (3.9:1 or more on the card in every theme), whatever its severity shade: a
+ * low-severity day's 45 % fill is under 3:1 (1.9:1 on signal), and the
+ * failure hatch then cuts it with card-coloured stripes (R2 F9). The edge
+ * keeps the cell's extent visible; the shade still says how much failed.
+ */
+const FAILED_EDGE = `1px solid ${FAILED}`
+
+/**
+ * The failed band of a mixed day: a fifth of the cell, never under 3 px. At
+ * 90 days a cell is about 4 px tall, and a fifth of it (under a pixel) was the
+ * band disappearing (R2 G4); 3 px leaves the band's card-coloured top edge
+ * and two pixels of hatched red.
+ */
+export const MIXED_BAND_HEIGHT = 'max(20%, 3px)'
+/** A mixed day's fill, passed over failed, split where `MIXED_BAND_HEIGHT` says (the kit's own `--pattern-mixed-day`). */
+export const MIXED_DAY_FILL = `linear-gradient(180deg, ${PASSED} 0 calc(100% - ${MIXED_BAND_HEIGHT}), ${FAILED} calc(100% - ${MIXED_BAND_HEIGHT}) 100%)`
 
 /**
  * The failure cue: the kit's `failed` decal (diagonal stripes cut in the card
@@ -159,7 +182,7 @@ export function cellFace(mode: DayStripMode, tone: DayStripTone, level: DayStrip
   if (tone === 'none') return { background: EMPTY_FILL, border: EMPTY_BORDER, cue: null }
   if (tone === 'mixed') {
     return {
-      background: 'var(--pattern-mixed-day)',
+      background: MIXED_DAY_FILL,
       border: mode === 'presence' ? `1px solid ${mix(PASSED, 50)}` : NO_BORDER,
       cue,
     }
@@ -175,7 +198,18 @@ export function cellFace(mode: DayStripMode, tone: DayStripTone, level: DayStrip
   // is full strength unless a severity says how much of the day failed.
   return tone === 'pass'
     ? { background: mix(PASSED, 70), border: NO_BORDER, cue }
-    : { background: mix(FAILED, severityShare(severity)), border: NO_BORDER, cue }
+    : { background: mix(FAILED, severityShare(severity)), border: FAILED_EDGE, cue }
+}
+
+/**
+ * The left end of the legend: how far back the OLDEST cell is. The newest cell
+ * is "today" (0 ago), so of `count` cells the oldest is `count - 1` ago — a
+ * 14-day window starts 13 days ago, not 14 (R1 F7). One cell is only today.
+ */
+export function defaultStartLabel(count: number, unit: string, today: string): string {
+  const back = count - 1
+  if (back <= 0) return today
+  return `${back} ${back === 1 ? unit : `${unit}s`} ago`
 }
 
 // ── The model ───────────────────────────────────────────────────────────────

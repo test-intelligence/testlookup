@@ -14,12 +14,15 @@
  * `PassRateGauge` must keep rendering those bytes exactly (it keeps Recharts'
  * `accessibilityLayer` on: `rechartsA11y.test.tsx` and the gallery's
  * LEGACY_APPLICATION_LAYER ratchet both count it, and neither is this wave's).
- * `RingGauge`'s default differs from it in exactly two NON-visual ways, which
+ * `RingGauge`'s default differs from it in exactly two NON-visual ways and one
+ * deliberate visual one (its track outline, R2 F9), which
  * this file removes before comparing, so every drawn byte is still pinned:
  *   - `accessibilityLayer={false}` (RULES.md): Recharts' unnamed
  *     `role="application"` tab stop, which does nothing on a gauge, is gone.
  *   - the wrapper is a named `role="meter"` with `aria-value*`, so the value
  *     reaches a screen reader as a value.
+ *   - the track's background sector carries a 1 px `NON_TEXT_EDGE` stroke
+ *     (`TRACK_OUTLINE` below): the only drawn change, asserted to be there once.
  * (`RingGauge` also shrinks its number when the MEASURED text overruns the
  * ring — a real browser at a small size only; at the gallery's 320 px nothing
  * overruns, and jsdom measures nothing. The last block below covers it.)
@@ -100,6 +103,13 @@ describe('PassRateGauge — the pinned pre-RingGauge render', () => {
 
 /** Recharts' accessibility layer: two attributes on the surface, nothing drawn. */
 const APPLICATION_LAYER = ' role="application" tabindex="0"'
+/**
+ * The ONE drawn difference, deliberate (Wave 2.5 FX-kit, R2 F9): `RingGauge`
+ * outlines its track in `NON_TEXT_EDGE`, because the grid-coloured track alone
+ * is 1.1-1.8:1 on the card and the scale's end could not be seen. Two
+ * attributes on the background sector; `PassRateGauge` keeps its pinned bytes.
+ */
+const TRACK_OUTLINE = ' stroke="color-mix(in srgb, var(--chart-axis) 80%, var(--color-bg-card))" stroke-width="1"'
 /** The meter semantics on the wrapper, nothing drawn. */
 const METER_ATTRS = /^<div role="meter" aria-label="[^"]*" aria-valuenow="[^"]*" aria-valuemin="0" aria-valuemax="100" aria-valuetext="[^"]*" /
 
@@ -116,8 +126,11 @@ describe('RingGauge — its default IS PassRateGauge, minus two non-visual defec
       expect(html).toMatch(METER_ATTRS)
       expect(html).not.toContain('role="application"')
       expect(legacy.split(APPLICATION_LAYER)).toHaveLength(2)
-      // … and with those two removed, every other byte is the same.
-      expect(html.replace(METER_ATTRS, '<div ')).toBe(legacy.replace(APPLICATION_LAYER, ''))
+      // … the track is outlined, once, and the legacy track is not …
+      expect(html.split(TRACK_OUTLINE)).toHaveLength(2)
+      expect(legacy).not.toContain('stroke-width="1" class="recharts-sector recharts-radial-bar-background-sector')
+      // … and with those three removed, every other byte is the same.
+      expect(html.replace(METER_ATTRS, '<div ').replace(TRACK_OUTLINE, '')).toBe(legacy.replace(APPLICATION_LAYER, ''))
     })
   }
 

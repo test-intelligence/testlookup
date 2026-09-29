@@ -175,6 +175,40 @@ export const STATUS_ENCODING: Record<VizStatus, StatusEncoding> = {
   unknown: { label: 'Unknown', icon: 'CircleHelp', patternId: 'chart-pattern-unknown', decal: 'dots', dash: '1 4' },
 }
 
+/**
+ * The edge a NON-TEXT mark is drawn with where it must be told from the card
+ * (WCAG 2.2 SC 1.4.11, at least 3:1): a gauge track's outline and scale
+ * notches, a ring's track outline, an empty day's outline (R2 F9). The theme's
+ * own quiet fills — `--color-bg-secondary`, `--chart-grid`, `--color-border` —
+ * are 1.0-1.8:1 against the card in every theme, so a track or an empty cell
+ * drawn only in them has no visible extent. `--chart-axis` taken 80 % toward
+ * the card is 3.7-4.2:1 against the card and at least 3:1 against
+ * `--color-bg-secondary` in all six themes: an edge that reads as a boundary,
+ * not as a fill. `tokens.contrast.test.ts` recomputes both from `index.css`.
+ */
+export const NON_TEXT_EDGE = 'color-mix(in srgb, var(--chart-axis) 80%, var(--color-bg-card))'
+
+/**
+ * The ONE order statuses stack in (bottom of a stack first) and list in a legend
+ * (first entry first), in every chart of the kit: Passed, Failed, Broken,
+ * Skipped, then Unknown.
+ *
+ * It is the contract's own vocabulary order (`VIZ_STATUSES`, `status_vocab`),
+ * which the status bars (`BarChart.model`), the donut and the heatmap legend
+ * already followed; only the stacked charts had their own lists, and three
+ * pages drew the same four statuses in two orders (R2 F3/F4, R1 F9). Passed
+ * sits on the baseline, where the largest share is read against zero; the two
+ * failure kinds sit together directly on it, where the eye compares them; the
+ * statuses that did not run come last. A page passes statuses in any order and
+ * the kit applies this one (`buildStackedColumnModel`, `TrendChart`).
+ */
+export const STATUS_STACK_ORDER: readonly VizStatus[] = VIZ_STATUSES
+
+/** A status's place in `STATUS_STACK_ORDER`: the sort key every stacked chart uses. */
+export function statusStackRank(status: VizStatus): number {
+  return STATUS_STACK_ORDER.indexOf(status)
+}
+
 /** Flaky is an attribute marker over a status, not a status. */
 export const FLAKY_MARKER = {
   label: 'Flaky',

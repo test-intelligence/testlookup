@@ -10,10 +10,16 @@ import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 
 import { describe, expect, it, vi } from 'vitest'
 import StackedColumnChart, {
   FLAT_AXIS_HEIGHT,
+  MAX_CATEGORY_COLUMNS,
+  MIN_CATEGORY_LABEL_CHARS,
   SLANT_ANGLE,
+  STEEP_SLANT_ANGLE,
   VALUE_AXIS_MIN_WIDTH,
+  barAxisLayout,
   columnAxisLayout,
+  drawsLabel,
   estimateTextWidth,
+  stackRowMark,
   valueAxisWidth,
 } from './StackedColumnChart'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
@@ -165,10 +171,21 @@ describe('columnAxisLayout · the bucket axis is sized from the labels', () => {
     expect(columnAxisLayout(labels, 120, estimateTextWidth)).toMatchObject({ angle: 0, height: FLAT_AXIS_HEIGHT, interval: 0 })
   })
 
-  it('thins flat labels to every Nth when they nearly fit', () => {
-    const layout = columnAxisLayout(labels, 25, estimateTextWidth)
+  it('thins flat TIME labels to every Nth when they nearly fit', () => {
+    const layout = columnAxisLayout(labels, 25, estimateTextWidth, { xType: 'time' })
     expect(layout.angle).toBe(0)
     expect(layout.interval).toBeGreaterThan(0)
+  })
+
+  it('counts a thinned time axis back from the NEWEST bucket, so today is always labelled (R2 G2, R1 F16)', () => {
+    for (let count = 1; count <= 90; count++) {
+      for (let interval = 0; interval <= 6; interval++) {
+        expect(drawsLabel(count - 1, count, interval)).toBe(true)
+      }
+    }
+    // Fourteen days at every 3rd: today, and every third day back from it; not the oldest.
+    const drawn = Array.from({ length: 14 }, (_, i) => i).filter((i) => drawsLabel(i, 14, 2))
+    expect(drawn).toEqual([1, 4, 7, 10, 13])
   })
 
   it('slants long labels, and the axis grows with the WIDTH the font gives them — not a fixed reserve', () => {
@@ -180,6 +197,66 @@ describe('columnAxisLayout · the bucket axis is sized from the labels', () => {
     // The slanted label's lowest point fits: anchor + its drop + its line's depth.
     const drop = wide.longest * Math.sin((SLANT_ANGLE * Math.PI) / 180)
     expect(wide.height).toBeGreaterThanOrEqual(8 + drop)
+  })
+
+  it('never thins a CATEGORY axis, at any column width (R2’s accepted design call)', () => {
+    const suites = ['checkout', 'payments-api', 'search', 'integration-tests/payments/checkout-flow', 'cart', 'login-sso']
+    for (let band = 4; band <= 240; band += 2) {
+      for (const measure of [estimateTextWidth, wider]) {
+        const layout = columnAxisLayout(suites, band, measure)
+        expect(layout.interval, `band ${band}`).toBe(0)
+      }
+    }
+  })
+
+  it('slants a category axis at 30°, then 45° when the columns are too narrow for 30°', () => {
+    const suites = ['checkout-service', 'payments-api', 'search-indexer', 'cart-and-basket']
+    // 11 px text: a line is 13.75 px, so 30° needs bands of 27.5 px and 45° of 19.4 px.
+    expect(columnAxisLayout(suites, 40, estimateTextWidth).angle).toBe(-SLANT_ANGLE)
+    expect(columnAxisLayout(suites, 22, estimateTextWidth).angle).toBe(-STEEP_SLANT_ANGLE)
+    expect(columnAxisLayout(suites, 22, estimateTextWidth).orientation).toBe('columns')
+    // Narrower than a line even at 45°: bars, never overlapping names.
+    expect(columnAxisLayout(suites, 16, estimateTextWidth).orientation).toBe('bars')
+  })
+
+  it('cuts long category names in the middle to fit a capped axis, down to 10 characters, then turns to bars', () => {
+    const long = ['integration-tests/payments/checkout-flow-with-saved-card', 'integration-tests/cart/merge-anonymous']
+    const roomy = columnAxisLayout(long, 40, estimateTextWidth, { maxHeight: 200 })
+    expect(roomy).toMatchObject({ orientation: 'columns', angle: -SLANT_ANGLE, maxChars: 24 })
+    const capped = columnAxisLayout(long, 40, estimateTextWidth, { maxHeight: 60 })
+    expect(capped.orientation).toBe('columns')
+    expect(capped.maxChars).toBeLessThan(24)
+    expect(capped.maxChars).toBeGreaterThanOrEqual(MIN_CATEGORY_LABEL_CHARS)
+    expect(capped.height).toBeLessThanOrEqual(61)
+    // No room even for 10 characters: the bar form, not a name cut to nothing.
+    expect(columnAxisLayout(long, 40, estimateTextWidth, { maxHeight: 30 }).orientation).toBe('bars')
+  })
+
+  it('draws more than a dozen categories as horizontal bars, whatever the width', () => {
+    const many = Array.from({ length: MAX_CATEGORY_COLUMNS + 1 }, (_, i) => `suite-${i}`)
+    expect(columnAxisLayout(many, 400, estimateTextWidth).orientation).toBe('bars')
+    expect(columnAxisLayout(many, 0, estimateTextWidth).orientation).toBe('bars')
+    expect(columnAxisLayout(many.slice(0, MAX_CATEGORY_COLUMNS), 400, estimateTextWidth).orientation).toBe('columns')
+    // A time axis of the same count stays columns: days thin, they do not turn into rows.
+    expect(columnAxisLayout(many, 400, estimateTextWidth, { xType: 'time' }).orientation).toBe('columns')
+  })
+
+  it('sizes the bar form’s name axis from the names, cut in the middle at 40% of the chart', () => {
+    const names = ['checkout', 'integration-tests/payments/checkout-flow-with-saved-card']
+    const wide = barAxisLayout(names, 1000, estimateTextWidth)
+    expect(wide.maxChars).toBe(24)
+    const narrow = barAxisLayout(names, 300, estimateTextWidth)
+    expect(narrow.maxChars).toBeLessThan(24)
+    expect(narrow.width).toBeLessThanOrEqual(300 * 0.4)
+  })
+
+  it('pins the bar form’s tooltip beside the whole stack of the hovered row', () => {
+    const scale = (value: number) => 100 + value * 2
+    expect(stackRowMark(30, 16, 50, scale)).toEqual({ left: 100, top: 42, width: 60, height: 16 })
+    // A measured-zero row is a point at the axis, still a place to pin beside.
+    expect(stackRowMark(0, 16, 50, scale)).toEqual({ left: 100, top: 42, width: 0, height: 16 })
+    expect(stackRowMark(30, 16, undefined, scale)).toBeNull()
+    expect(stackRowMark(30, 16, 50, undefined)).toBeNull()
   })
 
   it('lies flat with every label where no width is known yet (no layout)', () => {
