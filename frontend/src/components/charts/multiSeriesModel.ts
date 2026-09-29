@@ -209,6 +209,13 @@ export interface MultiSeriesLine {
   styleIndex: number
   dash: string | undefined
   points: MultiSeriesPoint[]
+  /**
+   * When the model is a zoomed slice (VIZ-407), this line's point on the day
+   * just before the visible range, so the first visible day can still state
+   * its change vs the previous day (as `TimeSeriesModel.precedingPoint` does).
+   * `null` when the slice starts on the first day; absent unzoomed.
+   */
+  precedingPoint?: MultiSeriesPoint | null
   /** Σ n: what the fold ranks by. */
   volume: number
   /** Returned days with no measured value — never counting the days past its range. */
@@ -439,7 +446,13 @@ export function foldSeries(
   return { lines: [...kept, { key: OTHER_KEY, label: OTHER_LABEL, other: true, points }], folded: foldedCount, tie }
 }
 
-function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
+/**
+ * A line's derived facts (gaps, past-range days, isolated points, where the
+ * direct label points) from its points. Exported for the VIZ-407 zoom, which
+ * re-derives them over a SLICE of an already-built line rather than restating
+ * the rules — the fold and the colours are never recomputed from a slice.
+ */
+export function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
   let gaps = 0
   let pastRange = 0
   let isolated = false
@@ -822,6 +835,38 @@ export function placeDirectLabels(
 export function directLabelText(label: string, max = DIRECT_LABEL_MAX_CHARS): string {
   const chars = [...label]
   return chars.length <= max ? label : `${chars.slice(0, max - 1).join('')}…`
+}
+
+/** A direct label's size, px. */
+export const DIRECT_LABEL_FONT_SIZE = 11
+
+/**
+ * A direct label's text as DRAWN: `directLabelText`, then shortened further
+ * until it is no wider than `room` in the font it is drawn in (`measure`).
+ *
+ * `LABEL_TEXT_ROOM` holds `DIRECT_LABEL_MAX_CHARS` characters of an ordinary
+ * name in Segoe UI. It does not hold every twelve characters in every font:
+ * in DejaVu Sans (the Linux CI runner's `system-ui`) "<img src=x …" is 80 px,
+ * and ran 4 px off the svg's right edge. The gutter is not widened to suit a
+ * name — it is the plot's room — so the name is cut to the gutter. Without a
+ * measure (no layout: jsdom) it is `directLabelText`'s.
+ */
+export function fitDirectLabel(
+  label: string,
+  measure: ((text: string, fontSize: number) => number) | null,
+  room: number = LABEL_TEXT_ROOM,
+  fontSize: number = DIRECT_LABEL_FONT_SIZE,
+): string {
+  const text = directLabelText(label)
+  if (!measure || measure(text, fontSize) <= room) return text
+  const chars = [...label]
+  // One character fewer than `text` kept before the ellipsis.
+  const kept = chars.length <= DIRECT_LABEL_MAX_CHARS ? chars.length : DIRECT_LABEL_MAX_CHARS - 1
+  for (let keep = kept - 1; keep > 0; keep--) {
+    const shorter = `${chars.slice(0, keep).join('').trimEnd()}…`
+    if (measure(shorter, fontSize) <= room) return shorter
+  }
+  return '…'
 }
 
 // ── Showing and hiding series ────────────────────────────────────────────────

@@ -4,18 +4,23 @@
  * view shows — not on a screenshot.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactElement, type ReactNode } from 'react'
+import { tooltipText } from './tooltip'
+import { NBSP } from '@/lib/trendStats'
+import { readTooltip } from './tooltipTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ANNOUNCE_DEBOUNCE_MS, ChartAnnouncerProvider } from './ChartAnnouncer'
 import type { ChartState } from './chartState'
 import { CURSOR_HINT } from './ChartCursor'
-import { LABELS_DROPPED_NOTE, LEGEND_HINT, MultiSeriesTip, SHOW_ALL_LABEL } from './MultiSeriesChart'
+import { LABELS_DROPPED_NOTE, LEGEND_HINT, MultiSeriesTip, SHOW_ALL_LABEL, multiSeriesTipContent } from './MultiSeriesChart'
 import MultiSeriesChartFrame from './MultiSeriesChartFrame'
 import { addUtcDays } from './seriesAlignment'
+import { sliceMultiSeriesModel } from './zoom/zoomModel'
 import {
   ALIGNED_X_TITLE,
   HIDDEN_SUFFIX,
   buildMultiSeriesModel,
+  tipContentAt,
   type MultiSeriesInputSeries,
   type MultiSeriesModel,
 } from './multiSeriesModel'
@@ -162,6 +167,30 @@ describe('direct labels', () => {
 })
 
 describe('the shared tooltip', () => {
+  const detailOf = (content: ReturnType<typeof multiSeriesTipContent>, key: string) =>
+    content.rows.find((row) => row.data?.['data-tip-series'] === key)?.detail
+
+  it('a ZOOMED model’s first day states its change vs the day before the view (Wave 2.4 F4)', () => {
+    const format = (v: number) => `${v.toFixed(1)}%`
+    const zoomed = sliceMultiSeriesModel(model3, { start: 1, end: 2 })
+    const content = multiSeriesTipContent(zoomed, 0, tipContentAt(zoomed, 0, { hidden: new Set(), format }), format)
+    expect(content.title).toBe(day(1))
+    // The same words the unzoomed chart says for that day.
+    expect(detailOf(content, 'search')).toBe(`100 samples, +14${NBSP}pts vs previous day`)
+    expect(detailOf(content, 'payments')).toBe(`100 samples, −1${NBSP}pts vs previous day`)
+    // A zoom starting on the first day of the data has no previous day to state.
+    const atStart = sliceMultiSeriesModel(model3, { start: 0, end: 1 })
+    expect(detailOf(multiSeriesTipContent(atStart, 0, tipContentAt(atStart, 0, { hidden: new Set(), format }), format), 'search')).toBe('100 samples')
+  })
+
+  it('states a RATE’s change in percentage points and a COUNT’s as the count (Wave 2.4 F5)', () => {
+    const rate = multiSeriesTipContent(model3, 1, tipContentAt(model3, 1, { hidden: new Set(), format: (v) => `${v}%` }), (v) => `${v}%`)
+    expect(detailOf(rate, 'search')).toBe(`100 samples, +14${NBSP}pts vs previous day`)
+    const counts = buildMultiSeriesModel({ series: THREE, metric: { kind: 'count', title: 'Failures' }, seriesNoun: 'suites' })
+    const count = multiSeriesTipContent(counts, 1, tipContentAt(counts, 1, { hidden: new Set(), format: (v) => `${v}` }), (v) => `${v}`)
+    expect(detailOf(count, 'search')).toBe('100 samples, +14 vs previous day')
+  })
+
   it('lists every shown series for the day, sorted descending, the unmeasured one last as "—" with its reason', () => {
     render(<MultiSeriesTip active label={day(1)} model={model3} hidden={new Set()} format={(v) => `${v.toFixed(1)}%`} />)
     const rows = [...document.querySelectorAll('[data-tip-series]')]
@@ -184,8 +213,12 @@ describe('the shared tooltip', () => {
     fireEvent.keyDown(surface, { key: 'ArrowRight' }) // day 0
     fireEvent.keyDown(surface, { key: 'ArrowRight' }) // day 1
     const assertive = container.querySelector('[data-chart-announcer="assertive"]')
+    // VIZ-601: each series with its own n and its change vs the previous day —
+    // a rate's change in percentage POINTS, as the single-series chart says it
+    // (Wave 2.4 F5) — then, as in the tooltip, after the values, why "—" is "—".
     expect(assertive?.textContent).toBe(
-      `Pass rate by suite: ${day(1)}: search 98.0%, payments 96.0%, cart — (cart ran nothing that day)`,
+      `Pass rate by suite: ${day(1)}. search: 98.0% (100 samples, +14${NBSP}pts vs previous day). ` +
+        `payments: 96.0% (100 samples, −1${NBSP}pts vs previous day). cart: —. cart: cart ran nothing that day`,
     )
     const readout = container.querySelector('[data-chart-readout]') as HTMLElement
     expect([...readout.querySelectorAll('[data-tip-series]')].map((row) => row.getAttribute('data-tip-series'))).toEqual([
@@ -195,6 +228,41 @@ describe('the shared tooltip', () => {
     ])
     fireEvent.keyDown(surface, { key: 'Escape' })
     expect(container.querySelector('[data-chart-readout]')).toBeNull()
+  })
+
+  it('pointer and keyboard read the SAME content for every day (VIZ-601)', () => {
+    const { container } = mount(model3)
+    const surface = container.querySelector('[data-multi-series-plot]') as HTMLElement
+    const content = captured.tips[captured.tips.length - 1].content as ReactElement<Record<string, unknown>>
+    model3.xs.forEach((x, index) => {
+      fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+      const hover = render(cloneElement(content, { active: true, label: x }))
+      const pointed = readTooltip(hover.container.querySelector('[data-chart-tooltip]') as HTMLElement)
+      hover.unmount()
+      const heard = container.querySelector('[data-chart-announcer="assertive"]')?.textContent
+      expect(heard).toBe(`Pass rate by suite: ${tooltipText(pointed)}`)
+      expect(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
+    })
+  })
+
+  it('says a change is unknown, never "no change", when the series did not measure the previous day', () => {
+    render(<MultiSeriesTip active label={day(2)} model={model3} hidden={new Set()} format={(v) => `${v.toFixed(1)}%`} />)
+    const cart = document.querySelector('[data-tip-series="cart"] .chart-tooltip-detail')
+    expect(cart?.textContent).toBe('(100 samples, previous day not measured)')
+  })
+
+  it('keeps a hostile series name literal in the tooltip, the readout and the legend', () => {
+    const hostile = '<img src=x onerror="window.__xss=1">'
+    const model = buildMultiSeriesModel({ series: [suite(hostile, [90, 91]), suite('b', [80, 81])], metric: RATE, seriesNoun: 'suites' })
+    const { container } = mount(model)
+    const surface = container.querySelector('[data-multi-series-plot]') as HTMLElement
+    fireEvent.keyDown(surface, { key: 'Home' })
+    expect(container.querySelector('[data-chart-readout]')?.textContent).toContain(hostile)
+    expect(container.querySelector('[data-multi-series-legend]')?.textContent).toContain(hostile)
+    render(<MultiSeriesTip active label={day(0)} model={model} hidden={new Set()} format={(v) => `${v}`} />)
+    expect(document.querySelector(`[data-chart-tooltip] [data-tip-series] .chart-tooltip-label`)?.textContent).toBe(hostile)
+    expect(document.querySelector('img')).toBeNull()
+    expect((window as { __xss?: unknown }).__xss).toBeUndefined()
   })
 })
 

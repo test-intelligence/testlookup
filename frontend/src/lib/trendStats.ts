@@ -96,8 +96,15 @@ export const NOT_DAILY_REASON = 'Trend overlays need one bucket per UTC day, wit
 export const MOVING_AVERAGE_LABEL = '7-day moving average'
 export const TREND_LINE_LABEL = 'Trend line'
 export const ANOMALY_LABEL = 'Flagged as unusual'
+/**
+ * A number and its unit never part at a line break: the takeaway wrapped as
+ * "(up 1.8" / "pts; 1,485 vs …" once the toolbar narrowed its column
+ * (baseline review B). A no-break space binds them — and binds a rate of
+ * change to its whole unit, "0.6 pts per week", which reads as one quantity.
+ */
+export const NBSP = String.fromCharCode(0xa0)
 export const ANOMALY_RULE =
-  `Rule: more than ${ANOMALY_MAD_THRESHOLD} MADs below the median of the same weekday in the previous ` +
+  `Rule: more than ${ANOMALY_MAD_THRESHOLD}${NBSP}MADs below the median of the same weekday in the previous ` +
   `${ANOMALY_BASELINE_WEEKS} weeks, and below each of them; days under ${ANOMALY_MIN_EXECUTIONS} executions are not judged.`
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -521,6 +528,10 @@ function fixed1(value: number): string {
   return (rounded === 0 ? 0 : rounded).toFixed(1)
 }
 const pct = (value: number) => `${fixed1(value)}%`
+/** The number–unit helpers below bind with `NBSP` (see there). */
+const points = (value: string | number) => `${value}${NBSP}pts`
+const pointsPerWeek = (value: string | number) => `${points(value)}${NBSP}per${NBSP}week`
+const mads = (value: string) => `${value}${NBSP}MADs`
 const count = (value: number) => formatNumber(value)
 const plural = (value: number, noun: string) => `${count(value)} ${value === 1 ? noun : `${noun}s`}`
 const partialNote = (day: string) => `${day} is still filling and is left out.`
@@ -534,15 +545,15 @@ export function trendTakeaway(analysis: TrendAnalysis): string | null {
   const sample = `(${plural(analysis.windowDays, 'day')}, ${plural(analysis.daysWithRuns, 'day')} with runs)`
   const { fit: line } = analysis
   if (line.flatBecause === 'under-threshold') {
-    return `Pass rate is flat: under ${FLAT_SLOPE_PTS_PER_WEEK} pts per week either way ${sample}`
+    return `Pass rate is flat: under ${pointsPerWeek(FLAT_SLOPE_PTS_PER_WEEK)} either way ${sample}`
   }
   if (line.flatBecause === 'within-standard-error') {
     return (
-      `Pass rate is flat: its slope, ${fixed1(Math.abs(line.slopePerWeek))} pts per week, is within its standard error ` +
+      `Pass rate is flat: its slope, ${pointsPerWeek(fixed1(Math.abs(line.slopePerWeek)))}, is within its standard error ` +
       `of ${fixed1(line.slopeStandardErrorPerWeek ?? 0)} ${sample}`
     )
   }
-  return `Pass rate is ${line.direction} ${fixed1(Math.abs(line.slopePerWeek))} pts per week ${sample}`
+  return `Pass rate is ${line.direction} ${pointsPerWeek(fixed1(Math.abs(line.slopePerWeek)))} ${sample}`
 }
 
 /**
@@ -554,7 +565,7 @@ export function periodTakeaway(period: PeriodComparison): string | null {
   if (!period.measurable) return null
   // The change is taken between the ROUNDED rates shown, so the sentence adds up.
   const delta = Math.round((Number(fixed1(period.last.rate)) - Number(fixed1(period.previous.rate))) * 10) / 10
-  const change = delta === 0 ? 'no change' : `${delta > 0 ? 'up' : 'down'} ${fixed1(Math.abs(delta))} pts`
+  const change = delta === 0 ? 'no change' : `${delta > 0 ? 'up' : 'down'} ${points(fixed1(Math.abs(delta)))}`
   const sample = `${count(period.last.executions)} vs ${plural(period.previous.executions, 'execution')}`
   return `Last ${PERIOD_DAYS} days ${pct(period.last.rate)} vs ${pct(period.previous.rate)} the previous ${PERIOD_DAYS} (${change}; ${sample})`
 }
@@ -579,10 +590,10 @@ export function trendFrameTakeaway(
 
 /** What an anomaly's tooltip says: the numbers, then the rule that flagged it. */
 export function anomalyRuleText(anomaly: Anomaly): string {
-  const floored = anomaly.mad < ANOMALY_MAD_FLOOR_PTS ? `, floored at ${ANOMALY_MAD_FLOOR_PTS} pt` : ''
+  const floored = anomaly.mad < ANOMALY_MAD_FLOOR_PTS ? `, floored at ${ANOMALY_MAD_FLOOR_PTS}${NBSP}pt` : ''
   return (
-    `${pct(anomaly.rate)} is ${fixed1(anomaly.deviations)} MADs below ${pct(anomaly.median)}, the median of the ` +
-    `${count(anomaly.baselineDays)} previous ${anomaly.weekday}s (MAD ${fixed1(anomaly.mad)} pts${floored}; ` +
+    `${pct(anomaly.rate)} is ${mads(fixed1(anomaly.deviations))} below ${pct(anomaly.median)}, the median of the ` +
+    `${count(anomaly.baselineDays)} previous ${anomaly.weekday}s (MAD ${points(fixed1(anomaly.mad))}${floored}; ` +
     `${plural(anomaly.n, 'execution')}). ${ANOMALY_RULE}`
   )
 }
@@ -616,10 +627,10 @@ function explanations(
     trendLine:
       `Method: least-squares line, each day weighted by its executions. Window: ${from} to ${to} ` +
       `(${plural(windowDays, 'day')}, ${count(days)} with runs, ${plural(line.executions, 'execution')}). ` +
-      `Slope: ${signed(line.slopePerWeek)}${error} pts per week; flat if under ${FLAT_SLOPE_PTS_PER_WEEK} or within its ` +
+      `Slope: ${pointsPerWeek(`${signed(line.slopePerWeek)}${error}`)}; flat if under ${FLAT_SLOPE_PTS_PER_WEEK} or within its ` +
       `standard error.${partial}`,
     anomalies:
-      `Rule: more than ${ANOMALY_MAD_THRESHOLD} MADs (floored at ${ANOMALY_MAD_FLOOR_PTS} pt) below the median of the same ` +
+      `Rule: more than ${mads(String(ANOMALY_MAD_THRESHOLD))} (floored at ${ANOMALY_MAD_FLOOR_PTS}${NBSP}pt) below the median of the same ` +
       `weekday in the previous ${ANOMALY_BASELINE_WEEKS} weeks, and below each of them. Needs ${ANOMALY_MIN_BASELINE_DAYS} ` +
       `such days; days under ${ANOMALY_MIN_EXECUTIONS} executions are not judged. Sample: ${plural(judgedDays, 'day')} ` +
       `judged, ${count(flagged)} flagged.${partial}`,
@@ -722,4 +733,4 @@ export const formatTrendPercent = pct
 /** A fitted (trend-line) value: clamped to 0..100 and marked "(fit)". */
 export const formatTrendFit = fit
 export const formatTrendSlope = (analysis: TrendAnalysis): string | null =>
-  analysis.available ? `${fixed1(Math.abs(analysis.fit.slopePerWeek))} pts per week` : null
+  analysis.available ? pointsPerWeek(fixed1(Math.abs(analysis.fit.slopePerWeek))) : null

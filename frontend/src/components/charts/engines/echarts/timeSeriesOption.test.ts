@@ -132,6 +132,53 @@ describe('timeSeriesTooltipContent', () => {
 
 // ── fix round B ──────────────────────────────────────────────────────────────
 
+describe('VIZ-601 · the canvas tooltip reads and sits like the SVG one', () => {
+  type Position = (point: number[], params: unknown, dom: unknown, rect: unknown, size: unknown) => [number, number]
+
+  it('states n and the change vs the previous day, in the shared order', () => {
+    const content = timeSeriesTooltipContent({ model, index: 2, timeZone: 'UTC', locale: 'en-US' })
+    expect(content.rows.map((row) => row.kind)).toEqual(['dimension', 'value', 'value', 'sample', 'change'])
+    expect(content.rows.find((row) => row.kind === 'sample')?.value).toBe('10')
+    // The previous day (03-02) ran nothing: unknown, never "no change".
+    expect(content.rows.find((row) => row.kind === 'change')).toMatchObject({ value: '—', detail: '2026-03-02 not measured' })
+    // The release is a DIMENSION of its day, listed with the day, before the values.
+    expect(timeSeriesTooltipContent({ model, index: 1, timeZone: 'UTC', locale: 'en-US' }).rows[1]).toMatchObject({
+      kind: 'dimension',
+      label: 'Release',
+      value: '1.4.0',
+    })
+  })
+
+  it('reads a zoomed first day against the day before the visible range, and says "no change" only when it is none', () => {
+    const flat = buildTimeSeriesModel({
+      points: timeSeriesFromTrends([
+        { date: '2026-03-01', passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 },
+        { date: '2026-03-02', passed: 18, failed: 2, skipped: 0, broken: 0, total: 20, pass_rate: 90 },
+      ]),
+    })
+    const zoomed = { ...flat, points: flat.points.slice(1), precedingPoint: flat.points[0] }
+    expect(timeSeriesTooltipContent({ model: zoomed, index: 0 }).rows.find((row) => row.kind === 'change')?.value).toBe(
+      'no change',
+    )
+    expect(timeSeriesTooltipContent({ model: flat, index: 0 }).rows.some((row) => row.kind === 'change')).toBe(false)
+  })
+
+  it('is confined, enterable and placed beside the pointer’s column, at the top of the plot', () => {
+    const tip = (buildTimeSeriesOption({ model, tokens, description: 'd' }) as unknown as { tooltip: Record<string, unknown> }).tooltip
+    expect(tip.confine).toBe(true)
+    expect(tip.enterable).toBe(true)
+    const position = tip.position as Position
+    // 3 days over a 400 px plot (512 − 56 − 56): a 133 px band; right of it by 12, at the grid top (36).
+    const size = { contentSize: [120, 60], viewSize: [512, 300] }
+    const [left, top] = position([200, 150], [], null, undefined, size)
+    expect(top).toBe(36)
+    expect(left).toBeCloseTo(200 + 400 / 3 / 2 + 12, 5)
+    // Near the right edge it flips to the left of the column.
+    const [flipped] = position([480, 150], [], null, undefined, size)
+    expect(flipped).toBeCloseTo(480 - 400 / 3 / 2 - 12 - 120, 5)
+  })
+})
+
 describe('fix round B · 7 the SVG → ECharts switch keeps the legend and the hatch', () => {
   const partial = buildTimeSeriesModel({
     points: timeSeriesFromTrends([

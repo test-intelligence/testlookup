@@ -26,7 +26,8 @@ import type {
   TooltipComponentOption,
 } from 'echarts/components'
 import { decalOf, type ChartTokens } from '../../tokens'
-import { domTooltipFormatter, type TooltipContent } from '../../tooltip'
+import { changeRow, domTooltipFormatter, formatRatePoints, sampleRow, tipContent, type TooltipContent } from '../../tooltip'
+import { COLUMN_SIDES, columnMark, echartsTipPosition } from '../../tipPlacement'
 import { NO_VALUE } from '../../chartText'
 import { formatNumber } from '@/utils/formatters'
 import {
@@ -34,6 +35,7 @@ import {
   RATE_AXIS_TITLE,
   localDayRange,
   type TimeSeriesModel,
+  type TimeSeriesPoint,
 } from '../../timeSeriesModel'
 
 export type TimeSeriesOption = ComposeOption<
@@ -66,10 +68,27 @@ export interface TimeSeriesTooltipInput {
   tokens?: Pick<ChartTokens, 'series' | 'axis'>
 }
 
+/** A pass-rate change is in percentage POINTS (`tooltip.ts`, shared with the comparison chart). */
+export { formatRatePoints }
+
 /**
- * One bucket's tooltip content, as DATA. The mouse tooltip (through
- * `domTooltipFormatter`) and any keyboard announcement both come from here, so
- * they cannot say different things.
+ * The bucket before `index`: the previous drawn point, or — for the first
+ * drawn point of a ZOOMED model — the day just before the visible range
+ * (`model.precedingPoint`, VIZ-407). `undefined` when there is none: the
+ * first day of the whole series has no change to state.
+ */
+export function previousPoint(model: TimeSeriesModel, index: number): TimeSeriesPoint | undefined {
+  if (index > 0) return model.points[index - 1]
+  return model.precedingPoint ?? undefined
+}
+
+/**
+ * One bucket's tooltip content, as DATA. The mouse tooltip — through
+ * `domTooltipFormatter` on canvas and `ChartTooltip` on SVG — and the keyboard
+ * announcement all come from here, so they cannot say different things. In the
+ * one order every tooltip uses (`tipContent`): the day's dimensions (its local
+ * equivalent, its release), the values, the sample size n behind the rate, the
+ * change against the previous day, then the notes.
  */
 export function timeSeriesTooltipContent({
   model,
@@ -82,39 +101,50 @@ export function timeSeriesTooltipContent({
   const point = model.points[index]
   if (!point) return { rows: [] }
   const local = localDayRange(point.x, { timeZone, locale })
-  const rows: TooltipContent['rows'] = [
+  const marker = model.markers.find((entry) => entry.x === point.x)
+  const before = previousPoint(model, index)
+  const names = point.partial ? (inProgressRuns?.find((entry) => entry.x === point.x)?.names ?? []) : []
+  return tipContent(`${point.x} (UTC)`, [
     {
+      kind: 'dimension',
+      key: 'local',
       label: 'Local',
-      value: local.offsetChanged
-        ? `${local.start} – ${local.end} (clocks change)`
-        : `${local.start} – ${local.end}`,
+      value: local.offsetChanged ? `${local.start} – ${local.end} (clocks change)` : `${local.start} – ${local.end}`,
     },
+    marker && { kind: 'dimension', key: 'release', label: 'Release', value: marker.names.join(', ') },
     {
+      kind: 'value',
+      key: 'rate',
       label: RATE_AXIS_TITLE,
       value: point.rate === null ? NO_VALUE : `${formatNumber(point.rate, { maximumFractionDigits: 1 })}%`,
       color: tokens?.series[0],
     },
     {
+      kind: 'value',
+      key: 'executions',
       label: EXECUTIONS_AXIS_TITLE,
       value: point.executions === null ? NO_VALUE : formatNumber(point.executions),
       color: tokens?.series[1],
     },
-  ]
-  if (point.rate === null && point.rateReason) rows.push({ label: 'Why', value: point.rateReason })
-  if (point.partial) {
-    const names = inProgressRuns?.find((entry) => entry.x === point.x)?.names ?? []
-    rows.push({
+    sampleRow(point.n),
+    changeRow({
+      current: point.rate,
+      previous: before ? before.rate : undefined,
+      previousLabel: before?.x,
+      formatMagnitude: formatRatePoints,
+    }),
+    point.rate === null && point.rateReason ? { kind: 'note', key: 'why', label: 'Why', value: point.rateReason } : null,
+    point.partial && {
+      kind: 'note',
+      key: 'partial',
       label: 'Still filling',
       value: names.length
         ? `in progress: ${names.join(', ')}`
         : model.inProgressCount > 0
           ? `${formatNumber(model.inProgressCount)} run(s) in progress`
           : 'this UTC day has not closed yet',
-    })
-  }
-  const marker = model.markers.find((entry) => entry.x === point.x)
-  if (marker) rows.push({ label: 'Release', value: marker.names.join(', ') })
-  return { title: `${point.x} (UTC)`, rows }
+    },
+  ])
 }
 
 export interface TimeSeriesOptionInput {
@@ -133,6 +163,24 @@ function indexOf(params: unknown): number | null {
   const first = Array.isArray(params) ? params[0] : params
   const index = (first as { dataIndex?: unknown } | undefined)?.dataIndex
   return typeof index === 'number' ? index : null
+}
+
+/** The plot's insets inside the canvas, px (ECharts may grow them to fit the axis labels: `containLabel`). */
+export const TIME_SERIES_GRID = { left: 56, right: 56, top: 36, bottom: 32 } as const
+
+/**
+ * The column the pointer is over, as the mark the canvas tooltip keeps clear
+ * of: half a day's band either side of the pointer's x, over the plot's
+ * height. The canvas renderer only draws series past `SVG_POINT_LIMIT` days,
+ * so a band is a pixel or two and the tooltip's `TIP_GAP` clears it easily.
+ */
+export function canvasColumnMark(point: readonly number[], view: { width: number; height: number }, days: number) {
+  const plotWidth = Math.max(0, view.width - TIME_SERIES_GRID.left - TIME_SERIES_GRID.right)
+  const band = days > 0 ? plotWidth / days : plotWidth
+  return columnMark(point[0] ?? 0, band / 2, {
+    top: TIME_SERIES_GRID.top,
+    height: Math.max(0, view.height - TIME_SERIES_GRID.top - TIME_SERIES_GRID.bottom),
+  })
 }
 
 /** The distance between two ticks of a model axis; `undefined` leaves it to ECharts. */
@@ -168,12 +216,25 @@ export function buildTimeSeriesOption({
       textStyle: { color: tokens.text },
       inactiveColor: tokens.textMuted,
     },
-    grid: { left: 56, right: 56, top: 36, bottom: 32, containLabel: true },
+    grid: { ...TIME_SERIES_GRID, containLabel: true },
     tooltip: {
       trigger: 'axis',
+      // The same box the SVG path draws (`TIP_BOX_STYLE`): card, hairline, 8 px corners, 4/8 padding.
       backgroundColor: tokens.card,
       borderColor: tokens.border,
+      borderWidth: 1,
+      borderRadius: 8,
+      padding: [4, 8],
       textStyle: { color: tokens.text },
+      // VIZ-601: beside the day's column, never over it; flipped at an edge;
+      // inside the chart (`confine`); and something the pointer can move onto
+      // (`enterable`, SC 1.4.13 Hoverable).
+      confine: true,
+      enterable: true,
+      position: echartsTipPosition((point, _rect, view) => canvasColumnMark(point, view, model.points.length), {
+        sides: COLUMN_SIDES,
+        align: 'start',
+      }),
       formatter: domTooltipFormatter((params: unknown) => {
         const index = indexOf(params)
         return index === null

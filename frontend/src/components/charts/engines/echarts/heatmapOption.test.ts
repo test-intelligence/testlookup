@@ -221,6 +221,45 @@ describe('buildHeatmapOption — no data, salience, emphasis, status (fix round)
   })
 })
 
+describe('the heatmap tooltip (VIZ-601)', () => {
+  type Position = (point: number[], params: unknown, dom: unknown, rect: unknown, size: unknown) => [number, number]
+  const tooltip = () => build().tooltip as Loose
+
+  it('is the shared tooltip box, confined to the chart, and something the pointer can move onto', () => {
+    const tip = tooltip()
+    expect(tip.confine).toBe(true)
+    expect(tip.enterable).toBe(true)
+    expect(tip).toMatchObject({ borderWidth: 1, borderRadius: 8, padding: [4, 8], backgroundColor: 'card', borderColor: 'border' })
+  })
+
+  it('draws the same markup as the React tooltip: title, then label/value rows marked by kind', () => {
+    const formatter = tooltip().formatter as (params: unknown) => HTMLElement
+    const node = formatter({ value: [0, 0, 0.5] })
+    expect(node.querySelector('.chart-tooltip-title')?.textContent).toBe('<b>suite</b>')
+    const rows = [...node.querySelectorAll('.chart-tooltip-row')].map((row) => [
+      row.getAttribute('data-tip-kind'),
+      row.querySelector('.chart-tooltip-label')?.textContent,
+      row.querySelector('[data-tip-value]')?.textContent,
+    ])
+    expect(rows).toEqual([
+      ['value', HOSTILE, '50.0%'],
+      ['sample', 'Samples', '10'],
+    ])
+    expect(node.querySelector('img, b')).toBeNull()
+  })
+
+  it('places the tooltip BESIDE the cell ECharts hands it, never over it, flipping at the edge', () => {
+    const position = tooltip().position as Position
+    const size = { contentSize: [100, 40], viewSize: [480, 320] }
+    // A cell in the middle: right of it by the gap, centred on it.
+    expect(position([150, 60], {}, null, { x: 120, y: 40, width: 60, height: 40 }, size)).toEqual([192, 40])
+    // A cell at the right edge: 420 + 60 + 12 + 100 > 480, so it goes left.
+    expect(position([450, 60], {}, null, { x: 420, y: 40, width: 60, height: 40 }, size)).toEqual([308, 40])
+    // Cross axis clamped inside the chart: a cell at the very bottom.
+    expect(position([150, 310], {}, null, { x: 120, y: 300, width: 60, height: 20 }, size)).toEqual([192, 280])
+  })
+})
+
 describe('formatHeatmapValue', () => {
   it('formats a rate as a percentage and a count with the shared number formatter', () => {
     expect(formatHeatmapValue('rate', 0.9234)).toBe('92.3%')

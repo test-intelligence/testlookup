@@ -153,7 +153,17 @@ describe('ChartGalleryPage', () => {
     // card-coloured halo Line (4), while the sparse one (6 days with runs,
     // under the 7 the overlays need) draws none of them = 8. The anomaly
     // marker is a ReferenceDot, not a series.
-    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8)
+    // Wave 2.4 (VIZ-601 hostile names, VIZ-407 zoom): the hostile donut (1 Pie),
+    // the hostile stacked bar (a Bar per status it has — passed, failed = 2),
+    // the hostile-release time series (Bar + rate Line = 2) and the hostile
+    // comparison (2 Lines) = 7, and the ranked bars of formula-like test names
+    // and of names a first-character check misses (1 Bar each) = 9; the zoomed trend (Bar + rate Line, and 13 days
+    // with runs in view is past the 7 the overlays need, so the moving average
+    // and the trend line over their halos = 4, total 6), the Apply-unavailable
+    // time series (Bar + Line = 2), the zoomed comparison with cart hidden
+    // (2 Lines) and the zoomed p50/p95 band (Area + 2 Lines = 3) = 13. A zoom
+    // SLICES a model and draws the same series, so it adds no series of its own.
+    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 
@@ -225,5 +235,26 @@ describe('ChartGalleryPage', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  // Baseline review B: the hostile-release item rebuilt the headline trend
+  // from its points alone, so the still-filling 03-10 lost its partial mark
+  // and was drawn as a finished low bar, and two of its releases went missing.
+  it('draws the hostile-release trend with the headline trend\'s partial day and every release', () => {
+    const { container } = renderAt()
+    const item = container.querySelector('[data-gallery-item="timeseries-hostile-release"]')
+    expect(item?.querySelector('[data-chart-partial-note]')).toHaveTextContent('2026-03-10 is still filling')
+    const headline = container.querySelector('[data-gallery-item="timeseries-trend-releases"]')
+    // The same notes as the item it is built from: the one release before the
+    // window is stated there too, so no release was dropped on the way.
+    const notes = (root: Element | null) =>
+      [...(root?.querySelectorAll('[data-chart="time-series"] p') ?? [])].map((p) => p.textContent)
+    expect(notes(item)).toEqual(notes(headline))
+  })
+
+  // Baseline review A (D3): a frame title is plain text, so Markdown code-span
+  // backticks were drawn as literal characters.
+  it('names no gallery item with Markdown backticks', () => {
+    for (const item of GALLERY_ITEMS) expect(item.title, item.id).not.toMatch(/`/)
   })
 })

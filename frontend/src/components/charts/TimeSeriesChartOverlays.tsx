@@ -33,7 +33,6 @@ import {
   type TrendAnalysis,
   type TrendOverlayState,
 } from '@/lib/trendStats'
-import { formatNumber } from '@/utils/formatters'
 import { CHART_VARS } from './tokens'
 import {
   ANOMALY_FILL,
@@ -42,6 +41,7 @@ import {
   anomalyTrianglePath,
   type TrendOverlayKey,
 } from './TimeSeriesChartOverlayStyle'
+import { flaggedDaysText, type ZoomedTrendAnalysis } from './zoom/zoomModel'
 
 /** The marker Recharts draws for a flagged day (`<ReferenceDot shape>`). */
 export function AnomalyMarker({ cx, cy, day }: { cx?: number; cy?: number; day: string }) {
@@ -326,8 +326,16 @@ export function TrendOverlayControls({
 
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 
-/** The statistics, each a toggletip: the long-window trend, the last week vs the one before, the flagged days. */
-export function TrendStatsStrip({ analysis }: { analysis: TrendAnalysis }) {
+/**
+ * The statistics, each a toggletip: the long-window trend, the last week vs
+ * the one before, the flagged days.
+ *
+ * VIZ-407: on a zoomed chart the analysis carries `zoomed` — its anomalies are
+ * the days in view, while every explanation is the whole window's. The flagged
+ * count then states both ("2 days flagged as unusual in view (5 in the
+ * window)"), so the number and the explanation under it agree.
+ */
+export function TrendStatsStrip({ analysis }: { analysis: ZoomedTrendAnalysis }) {
   const period = periodTakeaway(analysis.period)
   return (
     <ul data-trend-stats="" className="m-0 flex list-none flex-wrap items-center gap-2 p-0">
@@ -347,9 +355,7 @@ export function TrendStatsStrip({ analysis }: { analysis: TrendAnalysis }) {
         <li data-trend-stat="anomalies">
           <Explained toggletip explanation={analysis.explain.anomalies}>
             <AnomalySwatch />
-            {analysis.anomalies.length === 0
-              ? `No day ${ANOMALY_LABEL.toLowerCase()}`
-              : `${formatNumber(analysis.anomalies.length)} ${analysis.anomalies.length === 1 ? 'day' : 'days'} ${ANOMALY_LABEL.toLowerCase()}`}
+            {flaggedDaysText(ANOMALY_LABEL, analysis.anomalies.length, analysis.zoomed?.anomaliesInWindow)}
           </Explained>
         </li>
       )}

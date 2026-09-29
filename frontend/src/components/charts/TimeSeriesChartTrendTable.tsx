@@ -31,15 +31,23 @@ const HEAD = `border-b border-[var(--color-border)] ${CELL} font-semibold`
 export default function TimeSeriesChartTrendTable({
   analysis,
   days,
+  zoomNote,
 }: {
   analysis: TrendAnalysis
   /** Every day the chart draws, in order — the rows. */
   days: readonly string[]
+  /**
+   * VIZ-407: set while the chart is zoomed. The rows are then the zoomed days,
+   * but every statistic above them still describes the WHOLE window (they are
+   * computed on it, never on the slice) — and the table must say which is which.
+   */
+  zoomNote?: string
 }) {
   const period = periodTakeaway(analysis.period)
   const summary = (
     <div data-trend-table-summary="" className="space-y-1 px-2 py-1 text-xs text-[var(--color-text)]">
       <p className="font-medium">Trend analysis</p>
+      {zoomNote && <p data-trend-table-zoom="">{zoomNote}</p>}
       {analysis.available ? (
         <>
           <p>{trendTakeaway(analysis)}.</p>

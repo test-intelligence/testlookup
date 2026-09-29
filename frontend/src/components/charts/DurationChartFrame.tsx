@@ -13,8 +13,14 @@
  * chart carries two units and therefore a formatter PER SERIES
  * (`SLOWEST_FORMAT`); one formatter for the whole chart printed its run counts
  * as durations.
+ *
+ * VIZ-407: the p50/p95 TREND takes the same opt-in `zoom` as the other time
+ * charts. The drawn band is the built band SLICED to the zoomed days
+ * (`sliceDurationBand`) — never rebuilt from the slice — and the summary, the
+ * table and the export follow it and say so. It lives in its own component so
+ * its hooks run on every render of it, whatever the other kinds do.
  */
-import { forwardRef } from 'react'
+import { forwardRef, useMemo } from 'react'
 import { formatDuration } from '@/utils/formatters'
 import type { ChartState } from './chartState'
 import ChartFrame, { type ChartFrameProps } from './ChartFrame'
@@ -30,6 +36,15 @@ import {
   type DurationHistogramModel,
   type SlowestTestsModel,
 } from './durationBuckets'
+import ChartRangeBrush from './zoom/ChartRangeBrush'
+import { useFrameZoom } from './zoom/useFrameZoom'
+import {
+  CALENDAR_WORDS,
+  durationBandMax,
+  sliceDurationBand,
+  zoomOptionsOf,
+  type ChartZoomOptions,
+} from './zoom/zoomModel'
 
 /**
  * The slowest-tests chart draws TWO series in two different units — a p95
@@ -56,9 +71,90 @@ type FrameShell = Omit<ChartFrameProps, 'children' | 'series' | 'chartType' | 'a
 export type DurationChartFrameProps = FrameShell &
   (
     | { kind: 'histogram'; histogram: DurationHistogramModel | null }
-    | { kind: 'trend'; band: DurationBandModel | null }
+    | {
+        kind: 'trend'
+        band: DurationBandModel | null
+        /** VIZ-407 local zoom, as on `TimeSeriesChartFrame`. Off unless given. */
+        zoom?: boolean | ChartZoomOptions
+      }
     | { kind: 'slowest'; slowest: SlowestTestsModel | null }
   )
+
+const NO_DAYS: readonly string[] = []
+
+type TrendFrameProps = Omit<FrameShell, 'animate' | 'height'> & {
+  band: DurationBandModel | null
+  zoom?: boolean | ChartZoomOptions
+  animate?: boolean
+  height: number
+}
+
+const DurationTrendFrame = forwardRef<HTMLDivElement, TrendFrameProps>(function DurationTrendFrame(
+  { band, zoom, animate, height, ...frameProps },
+  ref,
+) {
+  const xs = useMemo(() => (band ? band.points.map((point) => point.x) : NO_DAYS), [band])
+  const zoomState = useFrameZoom({ options: zoomOptionsOf(zoom), xs, model: band, title: frameProps.title, words: CALENDAR_WORDS })
+  // What is DRAWN: the built band, or its zoomed slice.
+  const view = useMemo(() => (band ? sliceDurationBand(band, zoomState.range) : null), [band, zoomState.range])
+  // While zoomed, the WHOLE band's top: the slice keeps the window's duration
+  // axis — `DurationTrend` scales both from the same maximum (`durationAxis`),
+  // so zoomed and unzoomed show the same ticks — as the time-series charts
+  // keep theirs. Unzoomed it is left out: the band's own maximum is the same number.
+  const windowMax = useMemo(() => (band ? durationBandMax(band) : undefined), [band])
+  const yMax = view !== null && view !== band ? windowMax : undefined
+  const series = useMemo(() => (view ? bandToChartSeries(view) : null), [view])
+  // The strip's context: the p50 over the WHOLE window, gaps kept.
+  const spark = useMemo(() => (band ? [band.points.map((point) => point.p50)] : undefined), [band])
+  return (
+    <ChartFrame
+      {...frameProps}
+      ref={ref}
+      height={height}
+      series={series}
+      scopeLabel={zoomState.scopeLabel(frameProps.scopeLabel)}
+      changeLabel={zoomState.changeLabel ?? frameProps.changeLabel}
+      zoomNote={zoomState.note ?? frameProps.zoomNote}
+      tableExtras={
+        zoomState.note ? (
+          <>
+            <p data-chart-zoom-table-note="" className="mt-2 px-2 text-xs text-[var(--color-text-secondary)]">
+              {zoomState.note}
+            </p>
+            {frameProps.tableExtras}
+          </>
+        ) : (
+          frameProps.tableExtras
+        )
+      }
+      chartType="Line chart with a shaded band"
+      axes={{ x: 'Day (UTC)', y: 'Duration' }}
+      format={formatDuration}
+      // NOT `footer={band.notice}`, for the same reason as the histogram's
+      // exclusions: `DurationTrend` states the p95-below-p50 notice inside
+      // its own figure, next to the lines it qualifies. Both did, and the
+      // first Linux baselines showed the sentence printed twice.
+    >
+      {view ? (
+        <>
+          <DurationTrend
+            model={view}
+            title={frameProps.title}
+            height={height}
+            animate={animate}
+            yMax={yMax}
+            brushRoom={zoomState.brush !== null}
+          />
+          {zoomState.brush ? (
+            // A POINT scale: an area and lines, no bar, so the first and last
+            // days sit on the plot's edges, and so do the strip's.
+            <ChartRangeBrush {...zoomState.brush} scale="point" spark={spark} />
+          ) : null}
+        </>
+      ) : null}
+    </ChartFrame>
+  )
+})
 
 const DurationChartFrame = forwardRef<HTMLDivElement, DurationChartFrameProps>(function DurationChartFrame(
   props,
@@ -91,25 +187,9 @@ const DurationChartFrame = forwardRef<HTMLDivElement, DurationChartFrameProps>(f
   }
 
   if (rest.kind === 'trend') {
-    const { band, kind: _kind, ...frameProps } = rest
+    const { kind: _kind, ...trendProps } = rest
     void _kind
-    return (
-      <ChartFrame
-        {...frameProps}
-        ref={ref}
-        height={height}
-        series={band ? bandToChartSeries(band) : null}
-        chartType="Line chart with a shaded band"
-        axes={{ x: 'Day (UTC)', y: 'Duration' }}
-        format={formatDuration}
-        // NOT `footer={band.notice}`, for the same reason as the histogram's
-        // exclusions: `DurationTrend` states the p95-below-p50 notice inside
-        // its own figure, next to the lines it qualifies. Both did, and the
-        // first Linux baselines showed the sentence printed twice.
-      >
-        {band ? <DurationTrend model={band} title={frameProps.title} height={height} animate={animate} /> : null}
-      </ChartFrame>
-    )
+    return <DurationTrendFrame {...trendProps} ref={ref} height={height} animate={animate} />
   }
 
   const { slowest, kind: _kind, ...frameProps } = rest

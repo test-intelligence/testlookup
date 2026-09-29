@@ -64,6 +64,8 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
+import { csvBlob, csvCell } from '@/lib/viz/csv'
+import { downloadBlob } from '@/utils/download'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -173,16 +175,12 @@ function isUntaggedRow(s: CoverageSuite): boolean {
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────
-/** Wrap a CSV cell. Fields containing comma / quote / newline must be
- *  quoted, and inner double-quotes must be escaped by doubling. Same
- *  helper shape as ``FailureAnalysisPage.csvCell`` so the two exports
- *  stay consistent. */
-function csvCell(value: unknown): string {
-  if (value == null) return ''
-  const s = String(value)
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
-  return s
-}
+// Cells go through the shared ``csvCell`` (lib/viz/csv.ts, VIZ-606) — the
+// same RFC 4180 quoting this page always used, shared with the Failure
+// analysis export — which ALSO neutralises formula injection: a suite named
+// ``=HYPERLINK(…)`` arrives in an ingested CI report, and the spreadsheet
+// that opens this file must not evaluate it, including after a ``;`` in the
+// locales that split on one (csv.ts says how). Plain numbers are untouched.
 
 interface CoverageExportSources {
   summary: Partial<CoverageSummary>
@@ -313,18 +311,13 @@ function handleCoverageExportCsv({
       verdict,
     },
   })
-  // BOM so Excel opens the file in UTF-8.
-  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
+  // ``csvBlob`` prepends the BOM so Excel opens the file in UTF-8.
+  const blob = csvBlob(csv)
   const projectSlug = project ? slugifyProjectName(project.name) : 'all-projects'
   const suiteSlug = suiteFilter ? `-${slugifyProjectName(suiteFilter)}` : ''
-  a.download = `coverage-${projectSlug}${suiteSlug}-${windowLabel}.csv`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  // ``downloadBlob`` revokes the object URL only AFTER the browser has read
+  // the blob; the synchronous revoke this used to do can cancel the download.
+  downloadBlob(blob, `coverage-${projectSlug}${suiteSlug}-${windowLabel}.csv`)
   toast.success(
     `Exported ${suites.length} suite${suites.length === 1 ? '' : 's'} + ${trend.length} day${trend.length === 1 ? '' : 's'} of cadence`,
   )

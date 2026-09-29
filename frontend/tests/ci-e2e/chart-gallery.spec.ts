@@ -656,7 +656,8 @@ test.describe('chart gallery (/__charts)', () => {
     const announcer = page.locator('[data-chart-announcer="assertive"]')
 
     for (const [item, plot, expected] of [
-      ['donut-status', '[data-donut]', /Passed 880/],
+      // VIZ-601: the donut speaks its tooltip — value, n and share, in that order.
+      ['donut-status', '[data-donut]', /Passed\. Executions: 880\. Samples: 1,000\. Share of total: 88\.0%/],
       ['bar-ranked', '[data-bar-chart="ranked"]', /:\s/],
       ['bar-stacked', '[data-bar-chart="stacked"]', /Passed/],
       // …and fix round B's charts: the time series and the two SVG duration ones.
@@ -774,9 +775,9 @@ test.describe('chart gallery (/__charts)', () => {
     // pointer events. Recharts' wrapper is `pointer-events: none`, which makes
     // hovering the content impossible by construction — the pointer passes
     // straight through it, so the criterion fails before the pointer has
-    // moved. (Reaching it is a second question: this tooltip is still placed
-    // relative to the cursor, so it moves as the pointer approaches. Pinning
-    // it is the remaining half, and it is NOT done here.)
+    // moved. (Reaching it is the other half: since VIZ-601 every Recharts
+    // tooltip is pinned beside its mark by `PinnedTip`, and walking onto it is
+    // asserted in `chart-tooltip.spec.ts`, "hoverable (SC 1.4.13)".)
     const wrapper = item.locator('.recharts-tooltip-wrapper').first()
     expect(await wrapper.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('auto')
     // …and the tooltip itself is a real hit target, not a 0x0 box.
@@ -1106,6 +1107,86 @@ test.describe('chart gallery (/__charts)', () => {
     )
     // Nothing was placed, so the "N of M placed" line is absent rather than 0.
     await expect(item.locator('[data-chart-counted]')).toHaveCount(0)
+    // Nothing drawn, so nothing to act on (baseline review B): no table, no
+    // Export, no Full screen — hidden, not disabled (VIZ-101).
+    await expect(item.getByRole('button', { name: 'View as table' })).toHaveCount(0)
+    await expect(item.getByRole('button', { name: 'Export' })).toHaveCount(0)
+    await expect(item.getByRole('button', { name: 'Full screen' })).toHaveCount(0)
+    await expect(item.locator('[data-chart-toolbar]')).toHaveCount(0)
+  })
+
+  /**
+   * Baseline review B: `timeseries-zoom-trend` grew past its 760 px canvas on
+   * Linux CI and its footer was scrolled out of the screenshot — which the
+   * baseline would then have made the expected output. Only three bar items
+   * and the comparisons were ever checked against their canvas. EVERY item is
+   * now: its content, bottom border and padding included, must end inside the
+   * canvas it is screenshotted in.
+   */
+  test('every gallery item fits its canvas, bottom border and padding included', async ({ page }) => {
+    await openGallery(page)
+    await expect(page.locator('[data-gallery-canvas]')).toHaveCount(GALLERY_ITEM_IDS.length)
+    // Let every chart draw: an svg item's marks, a canvas item's engine.
+    for (const item of GALLERY_DRAWN_SVG_ITEMS) {
+      await expect(page.locator(`[data-gallery-item="${item.id}"] ${CHART_SVG}`).first()).toBeVisible()
+    }
+    const spills = await page.locator('[data-gallery-canvas]').evaluateAll((canvases) =>
+      canvases.flatMap((canvas) => {
+        const box = canvas.getBoundingClientRect()
+        // The frame for a framed item; for the others, whatever the canvas holds.
+        const content = [...canvas.children].map((child) => child.getBoundingClientRect())
+        const bottom = Math.max(...content.map((b) => b.bottom), box.top)
+        const right = Math.max(...content.map((b) => b.right), box.left)
+        const id = canvas.getAttribute('data-gallery-canvas')
+        const out: string[] = []
+        if (bottom > box.bottom + 0.5) out.push(`${id}: ${Math.round(bottom - box.top)} px tall in a ${Math.round(box.height)} px canvas`)
+        if (right > box.right + 0.5) out.push(`${id}: ${Math.round(right - box.left)} px wide in a ${Math.round(box.width)} px canvas`)
+        // Nothing scrolls inside the canvas either: that is content cut off too.
+        if (canvas.scrollHeight > canvas.clientHeight + 1) out.push(`${id}: scrolls ${canvas.scrollHeight - canvas.clientHeight} px`)
+        return out
+      }),
+    )
+    expect(spills).toEqual([])
+  })
+
+  /**
+   * Baseline review A (D1): the frame's toolbar never yields width to the
+   * title, so a button whose label changes width re-wrapped the title — and
+   * moved the plot — every time it was pressed. Each label-swapping button
+   * keeps ONE width, the widest label's.
+   */
+  test('a toolbar button that swaps its label keeps its width', async ({ page }) => {
+    await openGallery(page)
+    const width = async (button: Locator) => ((await button.boundingBox()) as { width: number }).width
+    const titleHeight = async (item: Locator) => ((await item.getByRole('heading', { level: 2 }).boundingBox()) as { height: number }).height
+
+    // The stacked bars' mode toggle, in both of its gallery items.
+    for (const id of ['bar-stacked', 'bar-stacked-100']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const toggle = item.locator('[data-bar-mode-toggle]')
+      const [w0, h0] = [await width(toggle), await titleHeight(item)]
+      const name0 = await toggle.textContent()
+      await toggle.click()
+      await expect(toggle, `${id}: the toggle did not toggle`).not.toHaveAttribute('data-bar-mode-toggle', id === 'bar-stacked' ? 'absolute' : 'percent')
+      expect(await toggle.getAttribute('aria-pressed')).not.toBeNull()
+      expect(Math.abs((await width(toggle)) - w0), `${id}: the toggle changed width`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs((await titleHeight(item)) - h0), `${id}: the title re-wrapped`).toBeLessThanOrEqual(0.5)
+      expect(name0).toBe(await toggle.textContent()) // both labels laid out; only the name changed
+    }
+    await expect(page.locator('[data-gallery-item="bar-stacked"]').getByRole('button', { name: 'Show counts' })).toBeVisible()
+
+    // "View as table" / "Hide table", on a frame of every kind that has it.
+    for (const id of ['bar-stacked-100', 'timeseries-trend-releases', 'multi-series-three-suites', 'duration-band']) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      const open = item.getByRole('button', { name: 'View as table' })
+      const w0 = await width(open)
+      await open.click()
+      const hide = item.getByRole('button', { name: 'Hide table' })
+      await expect(hide).toBeVisible()
+      expect(Math.abs((await width(hide)) - w0), `${id}: the table toggle changed width`).toBeLessThanOrEqual(0.5)
+      await hide.click()
+      await expect(item.getByRole('button', { name: 'View as table' })).toBeVisible()
+    }
   })
 
   test('the p50/p95 band reports a disagreement instead of silently reordering it', async ({ page }) => {
@@ -1495,6 +1576,10 @@ test.describe('chart gallery (/__charts)', () => {
       'multi-series-not-comparable',
       'multi-series-release-aligned',
       'multi-series-hidden',
+      // Wave 2.4: a series named with markup (VIZ-601) and a zoomed frame with
+      // one series hidden (VIZ-407) — lines drawn and dashed like the rest.
+      'multi-series-hostile-label',
+      'multi-series-zoom-hidden',
     ])
     await openGallery(page)
     for (const item of MULTI_SERIES_ITEMS) {
@@ -1603,7 +1688,7 @@ test.describe('chart gallery (/__charts)', () => {
     const lastDay = GALLERY_THREE_SUITES[0].points[GALLERY_THREE_SUITES[0].points.length - 1].x
     await expect(announcer).toContainText(lastDay)
     const text = (await announcer.textContent()) ?? ''
-    const positions = last.map((s) => text.indexOf(`${s.key} `))
+    const positions = last.map((s) => text.indexOf(`${s.key}: `))
     expect(positions.every((p) => p >= 0), text).toBe(true)
     expect([...positions].sort((a, b) => a - b), `announced out of order: ${text}`).toEqual(positions)
     await expect(multiItem(page, 'multi-series-three-suites').locator('[data-chart-readout]')).toBeVisible()
@@ -1926,7 +2011,16 @@ test.describe('chart gallery (/__charts)', () => {
     })
   }
 
-  test('VIZ-404 fix A (M8): the pointer tooltip is pinned to its DAY — moving onto it, it stays put and open', async ({ page }) => {
+  // Wave 2.4 (review A2/F3) changed what "pinned" means, deliberately. The
+  // tooltip is still pinned to its DAY — a fixed offset from the day's x, never
+  // over it, never following the pointer across — but it no longer holds its
+  // height against a pointer moving up and down the day: it keeps OFF the
+  // pointer's line, so a sweep along the days never runs into it (the old,
+  // fixed box sat on that line and held the sweep on one day for its whole
+  // width). It holds its day for a pointer that comes to it FROM the day.
+  test('VIZ-404 fix A (M8): the pointer tooltip is pinned to its DAY — beside it, off the pointer’s line, held once reached from the day', async ({
+    page,
+  }) => {
     await openGallery(page)
     const id = 'multi-series-three-suites'
     const section = multiItem(page, id)
@@ -1937,39 +2031,45 @@ test.describe('chart gallery (/__charts)', () => {
     const dayX = plot.left + step * 5
     const tip = section.locator('[data-chart-tooltip]')
 
-    // Onto day 5 from below: the tooltip sits at the TOP of the plot, and a
-    // pointer that arrives on it holds whatever day it names.
+    // Onto day 5 from below.
     await page.mouse.move(dayX - 4, plot.bottom - 10)
     await page.mouse.move(dayX, plot.bottom - 10)
     await expect(tip).toBeVisible()
     const pinned = await tip.boundingBox()
     if (!pinned) throw new Error('no tooltip box')
-    const same = (box: { x: number; y: number } | null) =>
-      box !== null && Math.abs(box.x - pinned.x) < 0.5 && Math.abs(box.y - pinned.y) < 0.5
     // A fixed offset from the day's x, beside it — not over it.
     expect(pinned.x > dayX || pinned.x + pinned.width < dayX, 'the tooltip covers its own day').toBe(true)
+    const title = await tip.locator('.font-semibold').first().textContent()
 
-    // Anywhere on the same day, the pointer's own position never moves it.
+    // Anywhere up and down the same day it stays at the day's x, names the
+    // day, and is never on the pointer's line.
     for (const up of [40, 90, 140, 180]) {
-      await page.mouse.move(dayX + 2, plot.bottom - up)
-      expect(same(await tip.boundingBox()), `the tooltip moved with the pointer, ${up}px up`).toBe(true)
+      const y = plot.bottom - up
+      await page.mouse.move(dayX + 2, y)
+      const box = await tip.boundingBox()
+      if (!box) throw new Error(`the tooltip closed ${up}px up`)
+      expect(Math.abs(box.x - pinned.x), `the tooltip moved across with the pointer, ${up}px up`).toBeLessThan(0.5)
+      expect(y < box.y || y > box.y + box.height, `the tooltip is on the pointer's line, ${up}px up`).toBe(true)
+      await expect(tip.locator('.font-semibold').first()).toHaveText(title ?? '')
     }
 
-    // Now walk straight onto it, a pixel at a time, at its own height.
-    const y = pinned.y + Math.min(pinned.height / 2, 20)
-    await page.mouse.move(dayX, y)
-    const right = pinned.x > dayX
-    const target = right ? pinned.x + 16 : pinned.x + pinned.width - 16
-    for (let x = dayX; right ? x <= target : x >= target; x += right ? 1 : -1) {
-      await page.mouse.move(x, y)
-      expect(await tip.isVisible(), `the tooltip closed at x=${x}`).toBe(true)
-      expect(same(await tip.boundingBox()), `the tooltip moved at x=${x}`).toBe(true)
+    // Now walk from the day onto it, a pixel at a time, heading for its middle.
+    const at = (await tip.boundingBox()) as { x: number; y: number; width: number; height: number }
+    const same = (box: { x: number; y: number } | null) => box !== null && Math.abs(box.x - at.x) < 0.5 && Math.abs(box.y - at.y) < 0.5
+    const right = at.x > dayX
+    const target = { x: right ? at.x + 16 : at.x + at.width - 16, y: at.y + at.height / 2 }
+    const from = { x: dayX, y: plot.bottom - 180 }
+    await page.mouse.move(from.x, from.y)
+    const steps = Math.ceil(Math.abs(target.x - from.x))
+    for (let i = 1; i <= steps; i++) {
+      await page.mouse.move(from.x + ((target.x - from.x) * i) / steps, from.y + ((target.y - from.y) * i) / steps)
+      expect(await tip.isVisible(), `the tooltip closed at step ${i}`).toBe(true)
+      expect(same(await tip.boundingBox()), `the tooltip moved at step ${i}`).toBe(true)
     }
-    const onTip = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-chart-tooltip]'), { x: target, y })
+    const onTip = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-chart-tooltip]'), target)
     expect(onTip, 'the pointer is on the tooltip').toBe(true)
     // …and moving about ON it keeps it — the day it names does not change under the pointer.
-    const title = await tip.locator('.font-semibold').first().textContent()
-    await page.mouse.move(target + (right ? 30 : -30), y + 4)
+    await page.mouse.move(target.x + (right ? 30 : -30), target.y + 4)
     expect(same(await tip.boundingBox())).toBe(true)
     await expect(tip.locator('.font-semibold').first()).toHaveText(title ?? '')
   })

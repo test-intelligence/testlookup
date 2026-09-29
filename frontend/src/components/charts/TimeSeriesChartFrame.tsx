@@ -21,6 +21,20 @@
  * which overlays are shown (its takeaway follows them), computes ONE analysis
  * that the chart, the takeaway and the table all read, and adds the analysis
  * to the table view. Without the prop, the frame is exactly the VIZ-403 frame.
+ *
+ * VIZ-407: `zoom` adds the range brush under the plot. The DRAWN model is then
+ * the full model sliced to the zoomed days (`sliceTimeSeriesModel`), and the
+ * summary, the table and the export follow it and say so (`zoomNote`). Two
+ * things deliberately do NOT follow the slice:
+ *
+ *   - the trend analysis is computed on the FULL model and only its per-day
+ *     values are cut to the range — its anomaly rule looks back four weeks and
+ *     a moving average needs the six days before a day, so a value recomputed
+ *     on a ten-day slice would be a different (and wrong) number;
+ *   - the release table keeps every marker, marking the ones the zoom took off
+ *     the plot rather than dropping them.
+ *
+ * Without the prop, nothing about the frame changes.
  */
 import { forwardRef, useMemo, useState } from 'react'
 import { analyzeTrend, trendFrameTakeaway, type TrendOverlayState } from '@/lib/trendStats'
@@ -36,9 +50,19 @@ import {
   timeSeriesToChartSeries,
   type TimeSeriesModel,
 } from './timeSeriesModel'
+import ChartRangeBrush from './zoom/ChartRangeBrush'
+import { useFrameZoom } from './zoom/useFrameZoom'
+import {
+  CALENDAR_WORDS,
+  markersOutsideRange,
+  sliceTimeSeriesModel,
+  sliceTrendAnalysis,
+  zoomOptionsOf,
+  type ChartZoomOptions,
+} from './zoom/zoomModel'
 
 export interface TimeSeriesChartFrameProps
-  extends Omit<ChartFrameProps, 'children' | 'series' | 'chartType' | 'axes' | 'tableExtras'>,
+  extends Omit<ChartFrameProps, 'children' | 'series' | 'chartType' | 'axes' | 'tableExtras' | 'zoomNote'>,
     Pick<TimeSeriesChartProps, 'inProgressRuns' | 'timeZone' | 'locale' | 'now' | 'animate'> {
   /**
    * The model to draw. Required for `ready` / `truncated`; ignored (and
@@ -51,15 +75,21 @@ export interface TimeSeriesChartFrameProps
    * start some on. Leave it out and nothing about the frame changes.
    */
   trendAnalysis?: boolean | { initialShown?: Partial<TrendOverlayState> }
+  /**
+   * VIZ-407 local zoom: `true` draws the range brush; the object form can open
+   * zoomed and can offer "Apply as time filter" (see `ChartZoomOptions`).
+   */
+  zoom?: boolean | ChartZoomOptions
 }
 
+const NO_DAYS: readonly string[] = []
+
 const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProps>(function TimeSeriesChartFrame(
-  { model, inProgressRuns, timeZone, locale, now, animate, height = 280, trendAnalysis, ...frameProps },
+  { model, inProgressRuns, timeZone, locale, now, animate, height = 280, trendAnalysis, zoom, ...frameProps },
   ref,
 ) {
-  const series = useMemo(() => (model ? timeSeriesToChartSeries(model) : null), [model])
-
   const trendRequested = trendAnalysis !== undefined && trendAnalysis !== false
+  // ONE analysis, always on the FULL model — never recomputed on a zoomed slice.
   const analysis = useMemo(
     () => (trendRequested && model ? analyzeTrend(model.points) : null),
     [trendRequested, model],
@@ -70,8 +100,41 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
   }))
   const takeaway = analysis ? trendFrameTakeaway(analysis, shown, frameProps.takeaway) : frameProps.takeaway
 
+  const xs = useMemo(() => (model ? model.points.map((point) => point.x) : NO_DAYS), [model])
+  const zoomState = useFrameZoom({
+    options: zoomOptionsOf(zoom),
+    xs,
+    model,
+    title: frameProps.title,
+    words: CALENDAR_WORDS,
+    trendAnalysis: analysis !== null,
+    markersOutside: (range) => (model ? markersOutsideRange(model.markers, xs, range).length : 0),
+  })
+  const { range } = zoomState
+  // The strip's context: the pass rate over the WHOLE window, gaps kept.
+  const spark = useMemo(() => (model ? [model.points.map((point) => point.rate)] : undefined), [model])
+
+  // What is DRAWN: the full model, or its zoomed slice.
+  const view = useMemo(() => (model ? sliceTimeSeriesModel(model, range) : null), [model, range])
+  const viewDays = useMemo(() => (view ? view.points.map((point) => point.x) : NO_DAYS), [view])
+  const viewAnalysis = useMemo(
+    () => (analysis && range ? sliceTrendAnalysis(analysis, viewDays) : analysis),
+    [analysis, range, viewDays],
+  )
+  const series = useMemo(() => (view ? timeSeriesToChartSeries(view) : null), [view])
+
+  const outsideView = useMemo(
+    () => (model && range ? markersOutsideRange(model.markers, xs, range).map((marker) => marker.x) : undefined),
+    [model, xs, range],
+  )
   const releaseTable = model ? (
-    <ReleaseMarkerTable markers={model.markers} outsideWindow={model.markersOutsideWindow} />
+    // The FULL model's markers: a zoom marks the ones it hides, it never drops them.
+    <ReleaseMarkerTable markers={model.markers} outsideWindow={model.markersOutsideWindow} outsideView={outsideView} />
+  ) : null
+  const zoomTableNote = zoomState.note ? (
+    <p data-chart-zoom-table-note="" className="mt-2 px-2 text-xs text-[var(--color-text-secondary)]">
+      {zoomState.note}
+    </p>
   ) : null
 
   return (
@@ -81,33 +144,42 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
       height={height}
       takeaway={takeaway}
       series={series}
+      scopeLabel={zoomState.scopeLabel(frameProps.scopeLabel)}
+      changeLabel={zoomState.changeLabel ?? frameProps.changeLabel}
+      zoomNote={zoomState.note}
       chartType="Line and bar chart"
       axes={{ x: 'Day (UTC)', y: `${RATE_AXIS_TITLE} / ${EXECUTIONS_AXIS_TITLE}` }}
       tableExtras={
-        analysis && model ? (
-          <>
-            {releaseTable}
-            <TimeSeriesChartTrendTable analysis={analysis} days={model.points.map((point) => point.x)} />
-          </>
-        ) : (
-          releaseTable
-        )
+        <>
+          {zoomTableNote}
+          {releaseTable}
+          {viewAnalysis && view ? (
+            <TimeSeriesChartTrendTable analysis={viewAnalysis} days={viewDays} zoomNote={range ? zoomState.note : undefined} />
+          ) : null}
+        </>
       }
     >
-      {model ? (
-        <TimeSeriesChart
-          model={model}
-          // The frame's own title names the keyboard cursor's surface, so the
-          // reader hears the chart they can see rather than a generic default.
-          title={frameProps.title}
-          height={height}
-          animate={animate}
-          inProgressRuns={inProgressRuns}
-          timeZone={timeZone}
-          locale={locale}
-          now={now}
-          trendOverlays={analysis ? { analysis, shown, onShownChange: setShown } : undefined}
-        />
+      {view ? (
+        <>
+          <TimeSeriesChart
+            model={view}
+            // The frame's own title names the keyboard cursor's surface, so the
+            // reader hears the chart they can see rather than a generic default.
+            title={frameProps.title}
+            height={height}
+            animate={animate}
+            inProgressRuns={inProgressRuns}
+            timeZone={timeZone}
+            locale={locale}
+            now={now}
+            trendOverlays={viewAnalysis ? { analysis: viewAnalysis, shown, onShownChange: setShown } : undefined}
+          />
+          {zoomState.brush ? (
+            // A BAND scale: the execution bars give every day a slot, so the
+            // strip's days are slots too, centred as the bars are.
+            <ChartRangeBrush {...zoomState.brush} scale="band" spark={spark} />
+          ) : null}
+        </>
       ) : null}
     </ChartFrame>
   )

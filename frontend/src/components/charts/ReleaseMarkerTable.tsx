@@ -12,11 +12,14 @@ import type { ReleaseMarker } from './timeSeriesModel'
 import { releaseMarkerRows } from './timeSeriesModel'
 
 export const RELEASE_TABLE_EMPTY = 'No releases fall inside this window'
+/** Beside a release the chart's zoom (VIZ-407) has taken off the plot. */
+export const OUTSIDE_ZOOM_MARK = 'outside the zoomed view'
 
 export default function ReleaseMarkerTable({
   markers,
   caption = 'Release markers',
   outsideWindow = 0,
+  outsideView,
 }: {
   markers: readonly ReleaseMarker[]
   caption?: string
@@ -26,8 +29,16 @@ export default function ReleaseMarkerTable({
    * dropped.
    */
   outsideWindow?: number
+  /**
+   * VIZ-407: the days of markers the chart's zoom has taken OFF the plot. They
+   * stay in this table — a zoom narrows the picture, it does not un-release
+   * anything — and each is marked as outside the view, so the table does not
+   * claim the plot shows them.
+   */
+  outsideView?: readonly string[]
 }) {
   const rows = releaseMarkerRows(markers)
+  const offPlot = new Set(outsideView ?? [])
   return (
     <div data-chart-release-table="" className="mt-3 rounded border border-[var(--color-border)]">
       <table className="w-full border-collapse text-left text-xs text-[var(--color-text)]">
@@ -55,7 +66,15 @@ export default function ReleaseMarkerTable({
                 <th scope="row" className="px-2 py-1 font-medium tabular-nums">
                   {row.day}
                 </th>
-                <td className="px-2 py-1">{row.names}</td>
+                <td className="px-2 py-1">
+                  {row.names}
+                  {offPlot.has(row.day) && (
+                    <span data-chart-release-outside-zoom="" className="text-[var(--color-text-secondary)]">
+                      {' '}
+                      ({OUTSIDE_ZOOM_MARK})
+                    </span>
+                  )}
+                </td>
               </tr>
             ))
           )}

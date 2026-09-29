@@ -362,6 +362,72 @@ describe('buildCoverageCsv', () => {
     expect(csv).toContain('# Per-suite breakdown')
     expect(csv).toContain('# Daily cadence')
   })
+
+  // VIZ-606: the page's private csvCell was replaced by the shared one
+  // (lib/viz/csv.ts). The output for ordinary data must not move by a byte;
+  // only a formula-shaped name changes, and only by becoming inert.
+  it('VIZ-606 regression: a normal export is byte-for-byte what the page always wrote', () => {
+    const csv = buildCoverageCsv({
+      summary: { unique_tests: 18, suite_count: 2, total_executions: 120, avg_pass_rate: 92.5, days_with_runs: 7 },
+      suites: [
+        { suite_name: 'Payments', unique_tests: 6, passed: 48, failed: 2, skipped: 1, pass_rate: 96 },
+        { suite_name: 'Pay, "ments"', unique_tests: 1, passed: 1, failed: 0, skipped: 0, pass_rate: 100 },
+      ],
+      trend: [{ date: '2026-05-16', passed: 12, failed: 0, skipped: 0, broken: 0, total: 12, pass_rate: 100 }],
+      meta: _meta,
+    })
+    expect(csv).toBe(
+      [
+        '# TestLookup — Coverage export',
+        '# Project,My Project',
+        '# Window,7d',
+        '# Suite filter,All suites',
+        '# Generated,2026-05-16T11:00:00.000Z',
+        '# Health score,87',
+        '# Verdict,HEALTHY',
+        '',
+        '# Summary',
+        'unique_tests,suite_count,total_executions,avg_pass_rate,days_with_runs',
+        '18,2,120,92.5,7',
+        '',
+        '# Per-suite breakdown',
+        'suite_name,unique_tests,passed,failed,skipped,pass_rate',
+        'Payments,6,48,2,1,96',
+        '"Pay, ""ments""",1,1,0,0,100',
+        '',
+        '# Daily cadence',
+        'date,passed,failed,skipped,broken,total,pass_rate',
+        '2026-05-16,12,0,0,0,12,100',
+        '',
+      ].join('\r\n'),
+    )
+  })
+
+  it('VIZ-606 regression: a formula-shaped suite, project or filter is neutralised; numbers are not', () => {
+    const csv = buildCoverageCsv({
+      summary: {},
+      suites: [{ suite_name: '=HYPERLINK("http://x","y")', unique_tests: 1, passed: 1, failed: 0, skipped: 0, pass_rate: -0 }],
+      trend: [],
+      meta: { ..._meta, projectName: '@evil', suiteFilter: '+1+1' },
+    })
+    expect(csv).toContain(`\r\n"'=HYPERLINK(""http://x"",""y"")",1,1,0,0,0\r\n`)
+    expect(csv).toContain(`# Project,'@evil\r\n`)
+    expect(csv).toContain(`# Suite filter,'+1+1\r\n`)
+  })
+
+  // Review A6 / F9: in a `;` list-separator locale Excel splits the line on
+  // `;` and honours our quotes only at a line start, so a suite named
+  // `x;=…` would yield a cell `=…`. Quoted, and neutralised after the `;`.
+  it('a suite hiding a formula after a `;` (the list separator of much of Europe) is neutralised there', () => {
+    const csv = buildCoverageCsv({
+      summary: {},
+      suites: [{ suite_name: `x;=1+cmd|' /C calc'!A0`, unique_tests: 1, passed: 1, failed: 0, skipped: 0, pass_rate: 100 }],
+      trend: [],
+      meta: { ..._meta, suiteFilter: 'a\t=1+1' },
+    })
+    expect(csv).toContain(`\r\n"x;'=1+cmd|' /C calc'!A0",1,1,0,0,100\r\n`)
+    expect(csv).toContain(`# Suite filter,"a\t'=1+1"\r\n`)
+  })
 })
 
 describe('CoverageComparisonStrip', () => {

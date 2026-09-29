@@ -493,3 +493,80 @@
   .small    { font-size: var(--text-sm); color: var(--color-text-secondary); }
   .code     { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-text-secondary); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Full-screen chart (VIZ-608) — BEGIN. Owned by ChartFrame.tsx.
+
+   ChartFrame puts data-chart-fullscreen="api" | "overlay" on its root ONLY
+   while it is full screen, so nothing here can touch a frame on the page.
+   Unlayered on purpose: it must beat the frame's Tailwind utilities (which
+   live in @layer utilities) without !important.
+
+   Presentation sizes are for a room, not a desk: the title, takeaway,
+   toolbar, legend and footer grow here; the chart's own drawing is scaled
+   up by the chart (see the note at the end); colours stay the theme's
+   tokens. Canvas-drawn (ECharts) text cannot be reached from CSS — a chart
+   that draws on canvas reads useChartFullscreen() to size it.
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-chart-fullscreen] {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: clamp(1rem, 2.5vw, 2.5rem);
+  gap: 1rem;
+  /* The table view can be taller than the screen: the frame scrolls, the
+     chart keeps its size. */
+  overflow-y: auto;
+  background: var(--color-bg-card);
+}
+/* The fallback: fixed over the page, above page panels (z-50) and header
+   popovers (z-[60]), under the blocking session dialog (z-[70]). */
+[data-chart-fullscreen="overlay"] {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+}
+/* The body takes the height the header and footer leave, and never less than
+   most of the screen; its size comes from here, never from the chart inside,
+   so the height ChartFrame measures and hands the chart is stable. */
+[data-chart-fullscreen] > [data-chart-body] {
+  flex: 1 1 0%;
+  min-height: 60vh;
+}
+[data-chart-fullscreen] > :first-child :is(h2, h3, h4, h5, h6) {
+  font-size: clamp(1.5rem, 2.4vw, 2.5rem);
+  line-height: 1.2;
+}
+[data-chart-fullscreen] [data-chart-takeaway] {
+  font-size: clamp(1.125rem, 1.6vw, 1.625rem);
+  line-height: 1.35;
+}
+[data-chart-fullscreen] [data-chart-toolbar] :is(button, a),
+[data-chart-fullscreen] > [data-chart-footer],
+[data-chart-fullscreen] > [data-chart-footer] :is(button, a),
+[data-chart-fullscreen] [data-chart-legend],
+[data-chart-fullscreen] [data-chart-body] :is(ul, p) {
+  font-size: 1rem;
+}
+[data-chart-fullscreen] [data-chart-toolbar] svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+/* Worded in full screen ("Exit full screen"): an icon's padding would crowd the words. */
+[data-chart-fullscreen] [data-chart-fullscreen-toggle] {
+  padding: 0.375rem 0.75rem;
+}
+/* No font-size for the chart's SVG text here. A Recharts drawing is LAID OUT
+   for its 11 px text — the category axis width, the release labels over the
+   plot, the value labels past the bars — so text enlarged from CSS overflowed
+   the svg and was cut (ranked-bar names lost 17-30 px; Wave 2.4 review A5).
+   The chart scales the whole drawing instead, reserves and all
+   (ChartResponsive.tsx, PRESENTATION_SCALE = 15/11), so its text reads at
+   15 px and nothing that fits on the page is cut in full screen. */
+/* ── Full-screen chart (VIZ-608) — END ── */

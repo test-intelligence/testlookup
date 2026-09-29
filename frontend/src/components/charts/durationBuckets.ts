@@ -240,6 +240,13 @@ export interface DurationBandModel {
   inverted: number
   /** The sentence to show when any bucket is inverted, else `null`. */
   notice: string | null
+  /**
+   * When the band is a zoomed slice (VIZ-407), the day just before the
+   * visible range, so the first visible day can still state its change vs the
+   * previous day (as `TimeSeriesModel.precedingPoint` does). `null` when the
+   * slice starts on the first day; absent on an unzoomed band.
+   */
+  precedingPoint?: DurationBandPoint | null
 }
 
 const measuredY = (point: SeriesPoint | undefined): number | null =>
@@ -295,14 +302,18 @@ export function durationBandPoints({
     }
   })
 
-  return {
-    points,
-    inverted,
-    notice:
-      inverted > 0
-        ? `p95 was below p50 on ${formatNumber(inverted)} ${inverted === 1 ? 'day' : 'days'}; both are drawn as reported.`
-        : null,
-  }
+  return { points, inverted, notice: bandNotice(inverted) }
+}
+
+/**
+ * The sentence for `inverted` buckets whose p95 is below their p50, or `null`
+ * when there are none. Exported so a band SLICED to a zoomed range (VIZ-407)
+ * states its own count in the same words, rather than a copy of them.
+ */
+export function bandNotice(inverted: number): string | null {
+  return inverted > 0
+    ? `p95 was below p50 on ${formatNumber(inverted)} ${inverted === 1 ? 'day' : 'days'}; both are drawn as reported.`
+    : null
 }
 
 // ── Slowest tests ────────────────────────────────────────────────────────────

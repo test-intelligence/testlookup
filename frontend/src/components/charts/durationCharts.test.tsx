@@ -5,11 +5,14 @@
  * chart's own text, and the p50/p95 band never silently reorders itself.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { cloneElement, type ReactElement, type ReactNode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
-import DurationHistogram, { HISTOGRAM_BUCKETS_CAPTION } from './DurationHistogram'
-import DurationTrend from './DurationTrend'
+import DurationHistogram, { BUCKET_AXIS_MIN_HEIGHT, HISTOGRAM_BUCKETS_CAPTION, OVERFLOW_NOTE, bucketAxisHeight } from './DurationHistogram'
+import DurationTrend, { INVERTED_NOTE, durationAxis, durationTrendTipContent } from './DurationTrend'
+import { sliceDurationBand } from './zoom/zoomModel'
+import { tooltipText } from './tooltip'
+import { readTooltip } from './tooltipTestUtils'
 import SlowestTests from './SlowestTests'
 import DurationChartFrame from './DurationChartFrame'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
@@ -41,6 +44,8 @@ vi.mock('recharts', () => {
     return <div data-testid={`axis-${which}`} />
   }
   return {
+    // The plot area the pinned tooltips read their column from (VIZ-601).
+    usePlotArea: () => ({ x: 40, y: 8, width: 400, height: 200 }),
     ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
     BarChart: chart,
     ComposedChart: chart,
@@ -82,6 +87,61 @@ const series = (points: SeriesChart['series'][number]['points']): SeriesChart =>
 const meta = { measured: true, reason: null } as unknown as EnvelopeMeta
 
 // ── Histogram ────────────────────────────────────────────────────────────────
+
+/**
+ * A laid-out page (jsdom lays nothing out) and a canvas whose stand-in font
+ * draws 6 px a character — `<`, `=` and `W` twice that — so `useTextMeasure`
+ * measures, as it does in a browser.
+ */
+function withLayout(width = (text: string) => [...text].reduce((sum, ch) => sum + ('<=W'.includes(ch) ? 12 : 6), 0)) {
+  const rect = { x: 0, y: 0, left: 0, top: 0, right: 600, bottom: 300, width: 600, height: 300, toJSON: () => ({}) }
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    font: '',
+    measureText: (text: string) => ({ width: width(text) }),
+  } as unknown as ReturnType<HTMLCanvasElement['getContext']>)
+  return width
+}
+
+/**
+ * PR 165 on Linux: the slanted bucket labels had a fixed 56 px axis. In
+ * DejaVu Sans "200ms – 500ms" is 87.6 px long; slanted 30° from its anchor 8
+ * px under the plot it reached 61 px down, and its bottom 5 px were cut.
+ */
+describe('DurationHistogram · the bucket axis is as tall as its longest slanted label', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** The x axis as last rendered. */
+  const lastXAxis = () => captured.axes.filter((a) => a.__axis === 'x').slice(-1)[0]
+
+  it('bucketAxisHeight: the anchor, the slant of the longest label, and its line turned by 30°', () => {
+    // 8 + 87.6 · sin 30° + 1.01 · 11 · cos 30° = 61.4 → 62, and a pixel of air.
+    expect(bucketAxisHeight(87.6)).toBe(63)
+    // Every label length gets at least its own drop below the anchor.
+    for (let longest = 0; longest <= 300; longest += 7) {
+      expect(bucketAxisHeight(longest), `${longest} px`).toBeGreaterThanOrEqual(8 + longest / 2 + 0.71 * 11 * Math.cos(Math.PI / 6))
+    }
+    // Short labels keep the height the axis always had.
+    expect(bucketAxisHeight(40)).toBe(BUCKET_AXIS_MIN_HEIGHT)
+  })
+
+  it('with nothing laid out, the axis keeps its fixed height', () => {
+    reset()
+    render(<DurationHistogram model={buildDurationHistogram([0.4, 3, 12, 99, 900])} />)
+    expect(lastXAxis()?.height).toBe(BUCKET_AXIS_MIN_HEIGHT)
+  })
+
+  it('laid out, it is sized from the longest bucket label as measured in the chart\'s font', () => {
+    reset()
+    const width = withLayout()
+    const model = buildDurationHistogram([0.4, 3, 12, 99, 900, 3_600_000])
+    render(<DurationHistogram model={model} />)
+    const longest = Math.max(...model.buckets.map((bucket) => width(bucket.label)))
+    const height = lastXAxis()?.height
+    expect(height).toBe(bucketAxisHeight(longest))
+    expect(height).toBeGreaterThan(BUCKET_AXIS_MIN_HEIGHT)
+  })
+})
 
 describe('DurationHistogram', () => {
   const durations = [0.4, 3, 12, 12, 40, 99, 900, 3_600_000, null, 0, 0]
@@ -363,9 +423,147 @@ describe('fix round B · 2 the duration charts carry a keyboard cursor', () => {
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
     const spoken = announced()
     expect(spoken).toMatch(/2026-03-01/)
-    expect(spoken).toMatch(/p50 100ms/)
-    expect(spoken).toMatch(/p95 400ms/)
+    // VIZ-601: "Label: value", and n — the sample behind both percentiles.
+    expect(spoken).toMatch(/p50: 100ms/)
+    expect(spoken).toMatch(/p95: 400ms/)
+    expect(spoken).toMatch(/Samples: 10/)
     expect(document.querySelectorAll('[role="application"]')).toHaveLength(0)
+  })
+})
+
+describe('DurationTrend · yMax keeps a zoomed slice on the whole window’s scale', () => {
+  const band = durationBandPoints({
+    p50: series([{ x: '2026-03-01', y: 100, n: 10 }]),
+    p95: series([{ x: '2026-03-01', y: 400, n: 10 }]),
+  })
+  const yAxis = () => {
+    const axis = captured.axes.filter((a) => a.__axis === 'y').pop()
+    return { domain: axis?.domain, ticks: axis?.ticks }
+  }
+
+  it('draws the axis from zero to a NICE top over yMax when given, and over the drawn data when not', () => {
+    reset()
+    render(<DurationTrend model={band} title="Duration trend" yMax={2500} />)
+    expect(yAxis()).toEqual({ domain: [0, 3000], ticks: [0, 1000, 2000, 3000] })
+    reset()
+    render(<DurationTrend model={band} title="Duration trend" />)
+    expect(yAxis()).toEqual({ domain: [0, 400], ticks: [0, 100, 200, 300, 400] })
+    // yMax of 0 is no maximum: the data's own.
+    reset()
+    render(<DurationTrend model={band} title="Duration trend" yMax={0} />)
+    expect(yAxis()).toEqual({ domain: [0, 400], ticks: [0, 100, 200, 300, 400] })
+  })
+
+  it('a zoomed slice given the window’s NON-ROUND maximum has exactly the unzoomed axis (Wave 2.4 F6)', () => {
+    // The whole band tops out at 1,873 ms on day 2; the slice (days 3-4) at 600.
+    const whole = durationBandPoints({
+      p50: series(['2026-03-01', '2026-03-02', '2026-03-03', '2026-03-04'].map((x) => ({ x, y: 300, n: 10 }))),
+      p95: series(['2026-03-01', '2026-03-02', '2026-03-03', '2026-03-04'].map((x, i) => ({ x, y: i === 1 ? 1873 : 600, n: 10 }))),
+    })
+    reset()
+    render(<DurationTrend model={whole} title="Duration trend" />)
+    const unzoomed = yAxis()
+    // A nice top ABOVE the maximum, never the maximum itself.
+    expect(unzoomed).toEqual({ domain: [0, 2000], ticks: [0, 500, 1000, 1500, 2000] })
+    reset()
+    render(<DurationTrend model={{ ...whole, points: whole.points.slice(2) }} title="Duration trend" yMax={1873} />)
+    expect(yAxis()).toEqual(unzoomed)
+    expect(durationAxis(undefined)).toBeNull()
+    expect(durationAxis(0)).toBeNull()
+  })
+})
+
+describe('VIZ-601 · the duration tooltips', () => {
+  const tipAt = (index: number) => captured.tooltips[index].content as ReactElement<Record<string, unknown>>
+  const read = (node: ReactElement) => {
+    const { container, unmount } = render(node)
+    const content = readTooltip(container.querySelector('[data-chart-tooltip]') as HTMLElement)
+    unmount()
+    return content
+  }
+
+  const band = durationBandPoints({
+    p50: series([
+      { x: '2026-03-01', y: 100, n: 10 },
+      { x: '2026-03-02', y: 340, n: 12 },
+      { x: '2026-03-03', y: 300, n: 12 },
+    ]),
+    p95: series([
+      { x: '2026-03-01', y: 400, n: 10 },
+      { x: '2026-03-02', y: 900, n: 11 },
+      { x: '2026-03-03', y: 250, n: 12 },
+    ]),
+  })
+
+  it('p50/p95: both values, n (both when the two samples differ), each change vs the previous day', () => {
+    reset()
+    render(<DurationTrend model={band} title="Duration trend" />)
+    const content = read(cloneElement(tipAt(captured.tooltips.length - 1), { active: true, label: '2026-03-02' }))
+    expect(content.rows).toEqual([
+      { kind: 'value', label: 'p50', value: '340ms' },
+      { kind: 'value', label: 'p95', value: '900ms' },
+      { kind: 'sample', label: 'Samples', value: '12 (p50), 11 (p95)' },
+      { kind: 'change', label: 'p50 change vs previous day', value: '+240ms' },
+      { kind: 'change', label: 'p95 change vs previous day', value: '+500ms' },
+    ])
+    // An inverted day says so, as a note after the numbers.
+    const inverted = read(cloneElement(tipAt(captured.tooltips.length - 1), { active: true, label: '2026-03-03' }))
+    expect(inverted.rows[inverted.rows.length - 1]).toEqual({ kind: 'note', label: '', value: INVERTED_NOTE })
+    expect(inverted.rows).toContainEqual({ kind: 'change', label: 'p95 change vs previous day', value: '−650ms' })
+  })
+
+  it('a ZOOMED band’s first day states its change vs the day before the view (Wave 2.4 F4)', () => {
+    const zoomed = sliceDurationBand(band, { start: 1, end: 2 })
+    // 2026-03-02 is the first day in view: the same change rows as unzoomed.
+    const first = durationTrendTipContent(zoomed, 0)
+    expect(first.title).toBe('2026-03-02')
+    expect(first.rows).toContainEqual({ kind: 'change', key: 'change:p50 change vs previous day', label: 'p50 change vs previous day', value: '+240ms' })
+    expect(first.rows).toContainEqual({ kind: 'change', key: 'change:p95 change vs previous day', label: 'p95 change vs previous day', value: '+500ms' })
+    // From the first day of the data there is no previous day, zoomed or not.
+    expect(durationTrendTipContent(sliceDurationBand(band, { start: 0, end: 1 }), 0).rows.some((row) => row.kind === 'change')).toBe(false)
+  })
+
+  it('histogram: the count, n (the executions placed) and its share of them; an open-ended bucket says so', () => {
+    reset()
+    const model = buildDurationHistogram([1, 2, 5, 40, 50_000_000])
+    render(<DurationHistogram model={model} title="Duration distribution" />)
+    const last = model.buckets[model.buckets.length - 1]
+    const content = read(cloneElement(tipAt(captured.tooltips.length - 1), { active: true, label: last.label }))
+    expect(content.title).toBe(last.label)
+    expect(content.rows[0]).toEqual({ kind: 'value', label: 'Executions', value: String(last.count) })
+    expect(content.rows).toContainEqual({ kind: 'sample', label: 'Samples', value: '5', detail: 'executions placed' })
+    // Its share of the executions PLACED (1 of 5), not of everything the window held.
+    expect(content.rows).toContainEqual({ kind: 'share', label: 'Share of total', value: `${((last.count / model.counted) * 100).toFixed(1)}%` })
+    expect(last.count / model.counted).toBe(0.2)
+    expect(last.overflow).toBe(true)
+    expect(content.rows).toContainEqual({ kind: 'note', label: '', value: OVERFLOW_NOTE })
+    // …and an ordinary bucket does not.
+    const first = read(cloneElement(tipAt(captured.tooltips.length - 1), { active: true, label: model.buckets[0].label }))
+    expect(first.rows.some((row) => row.kind === 'note')).toBe(false)
+  })
+
+  it('pointer and keyboard read the SAME content, bucket by bucket and day by day', () => {
+    for (const which of ['histogram', 'trend'] as const) {
+      reset()
+      const model = buildDurationHistogram([1, 2, 5, 40])
+      const { container, unmount } = withAnnouncer(
+        which === 'histogram' ? (
+          <DurationHistogram model={model} title="Chart" />
+        ) : (
+          <DurationTrend model={band} title="Chart" />
+        ),
+      )
+      const surface = container.querySelector('[data-chart-cursor]') as HTMLElement
+      const labels = which === 'histogram' ? model.buckets.map((bucket) => bucket.label) : band.points.map((point) => point.x)
+      const content = tipAt(captured.tooltips.length - 1)
+      labels.forEach((label, index) => {
+        fireEvent.keyDown(surface, { key: index === 0 ? 'Home' : 'ArrowRight' })
+        const pointed = read(cloneElement(content, { active: true, label }))
+        expect(announced()).toBe(`Chart: ${tooltipText(pointed)}`)
+        expect(readTooltip(container.querySelector('[data-chart-readout]') as HTMLElement)).toEqual(pointed)
+      })
+      unmount()
+    }
   })
 })
 

@@ -144,6 +144,66 @@ describe('ChartFrame — shell', () => {
     expect(noMeta.container.querySelector('[data-chart-totals]')).toBeNull()
   })
 
+  // Baseline review B: zoomed, the footer printed the WHOLE window's totals
+  // right above "Zoomed to …: the summary, table and export show these days
+  // only", so 8,064 read as the zoomed days' executions.
+  it('labels the totals as the window\'s while zoomed, and leaves them byte-identical otherwise', () => {
+    const plain = frame({ state: ready() })
+    expect(plain.container.querySelector('[data-chart-totals]')?.textContent).toBe(
+      '42 of 50 runs · 1,260 of 1,500 executions',
+    )
+    plain.unmount()
+    const zoomed = frame({ state: ready(), zoomNote: 'Zoomed to Sep 3–5, 2026: 3 of 7 days, not the page window.' })
+    expect(zoomed.container.querySelector('[data-chart-totals]')?.textContent).toBe(
+      'Window totals: 42 of 50 runs · 1,260 of 1,500 executions',
+    )
+    // The same words the export stamps on a zoomed image or CSV.
+    expect(zoomed.container.querySelector('[data-chart-zoom-note]')).toHaveTextContent('Zoomed to Sep 3–5, 2026')
+  })
+
+  // Baseline review B: the empty duration histogram is a READY frame whose
+  // series has no bucket, and it still offered Export and Full screen.
+  it('a drawn frame whose series has no points offers no table, no export and no full screen', () => {
+    const empty: SeriesChart = { kind: 'series', dimensions: ['bucket'], x_type: 'category', series: [{ key: 'n', label: 'Executions', points: [] }] }
+    const { container, unmount } = frame({ state: ready(), series: empty, children: <div data-testid="renderer">empty</div> })
+    expect(screen.getByTestId('renderer')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: CHART_MESSAGES.viewTable })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Export' })).toBeNull()
+    expect(screen.queryByRole('button', { name: CHART_MESSAGES.fullScreen })).toBeNull()
+    expect(container.querySelector('[data-chart-toolbar]')).toBeNull()
+    unmount()
+    // One point — even a gap — is something to tabulate: all three come back.
+    const gap: SeriesChart = { ...empty, series: [{ key: 'n', label: 'Executions', points: [{ x: '1s', y: null, n: 0 }] }] }
+    frame({ state: ready(), series: gap, children: <div>one gap</div> })
+    expect(screen.getByRole('button', { name: CHART_MESSAGES.viewTable })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: CHART_MESSAGES.fullScreen })).toBeInTheDocument()
+  })
+
+  // Baseline review A (D1): a toggle whose label changes width re-wrapped a
+  // title near the limit. Both labels share one grid cell; only the current
+  // one is painted or named. (The width itself is measured in Playwright.)
+  it('"View as table" keeps both labels laid out, and names only the current one', () => {
+    frame({ state: ready() })
+    const toggle = screen.getByRole('button', { name: CHART_MESSAGES.viewTable })
+    const labels = () =>
+      [...toggle.querySelectorAll('[data-swap-label] > span')].map((span) => [
+        span.textContent,
+        span.getAttribute('aria-hidden'),
+        span.classList.contains('invisible'),
+      ])
+    expect(labels()).toEqual([
+      [CHART_MESSAGES.viewTable, null, false],
+      [CHART_MESSAGES.hideTable, 'true', true],
+    ])
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: CHART_MESSAGES.hideTable })).toBe(toggle)
+    expect(labels()).toEqual([
+      [CHART_MESSAGES.viewTable, 'true', true],
+      [CHART_MESSAGES.hideTable, null, false],
+    ])
+  })
+
   it('dims the previous chart while revalidating', () => {
     frame({ state: { status: 'ready', data: MATRIX, meta: META, revalidating: true } })
     const group = screen.getByRole('group', { name: 'Pass rate by suite' })

@@ -21,6 +21,7 @@ import { useCallback, useId, useMemo } from 'react'
 import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
 import { STATUS_ENCODING, useChartTokens } from './tokens'
 import { tooltipText } from './tooltip'
+import { useFramePlotHeight } from './framePlotHeight'
 import { usePrefersReducedMotion } from './motion'
 import { moveInMatrix, useChartKeyboard, type NavRequest } from './useChartKeyboard'
 import {
@@ -51,7 +52,14 @@ export const HEATMAP_KEYBOARD_HINT = 'Arrow keys move, Escape clears, Tab leaves
 
 const BUTTON = 'rounded border border-[var(--color-border-light)] px-3 py-1 text-[var(--color-text)]'
 
-export default function HeatmapChart({ data, description, width = '100%', height = 320, animate = false, salient }: Props) {
+/** What the keyboard hint and a status legend under the plot keep back in full screen, px. */
+const HEATMAP_NOTES_RESERVE = 56
+
+export default function HeatmapChart({ data, description, width = '100%', height: requestedHeight = 320, animate = false, salient }: Props) {
+  // Full screen (VIZ-608): a numeric height grows to the frame's body; a CSS
+  // height (a caller's '100%') already follows its container.
+  const fitted = useFramePlotHeight(typeof requestedHeight === 'number' ? requestedHeight : 0, HEATMAP_NOTES_RESERVE)
+  const height = typeof requestedHeight === 'number' ? fitted : requestedHeight
   const tokens = useChartTokens()
   const reducedMotion = usePrefersReducedMotion()
   const effectiveAnimate = animate && !reducedMotion

@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest'
 import DefectDonut from './DefectDonut'
 
 vi.mock('recharts', () => ({
+  // The recharts hooks Wave 2.4's tooltip content reads (`ChartTooltip`'s `usePlotArea`, the bars' `useXAxisScale`): listed so a mock that ever renders that content does not throw.
+  usePlotArea: () => undefined,
+  useXAxisScale: () => undefined,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PieChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   // Echoes `isAnimationActive` so the `animate` prop is observable.
