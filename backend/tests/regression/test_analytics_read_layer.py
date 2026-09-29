@@ -216,17 +216,34 @@ class _FakeSession:
     def __init__(self, dialect: str = "postgresql", raises: Optional[Exception] = None) -> None:
         self.bind = SimpleNamespace(dialect=SimpleNamespace(name=dialect))
         self.statements: list[str] = []
+        #: Every statement AND every transaction boundary, in order, so a test
+        #: can prove the settings were not split across two transactions.
+        self.events: list[str] = []
         self.rolled_back = False
         self._raises = raises
 
     async def execute(self, statement, params=None):
         self.statements.append(str(statement))
+        self.events.append(str(statement))
         if self._raises is not None:
             raise self._raises
         return None
 
+    async def commit(self):
+        self.events.append("COMMIT")
+
     async def rollback(self):
         self.rolled_back = True
+        self.events.append("ROLLBACK")
+
+
+#: What every analytics read's transaction is opened with, in order: the guard
+#: first, then the two planner settings measured in Wave 2.6.
+_READ_SETTINGS = [
+    "SET LOCAL statement_timeout = 5000",
+    "SET LOCAL jit = off",
+    "SET LOCAL plan_cache_mode = force_custom_plan",
+]
 
 
 class TestStatementTimeout:
@@ -237,10 +254,38 @@ class TestStatementTimeout:
         would inherit a 5 s ceiling nobody asked for."""
         db = _FakeSession()
         assert await layer.apply_statement_timeout(db, 5000) is True
-        assert db.statements == ["SET LOCAL statement_timeout = 5000"]
+        assert db.statements == _READ_SETTINGS
         assert not any(
             s.startswith("SET statement_timeout") for s in db.statements
         ), "a session-level SET leaks to the next user of this connection"
+
+    @pytest.mark.asyncio
+    async def test_exactly_three_set_locals_in_one_transaction(self):
+        """Wave 2.6: ``jit = off`` and ``plan_cache_mode = force_custom_plan``
+        ride the timeout's transaction. Session-level, either would follow the
+        pooled connection into ingestion; committed between, the read after
+        the commit would run with none of them. ``jit`` on cost 758 ms of
+        compilation on one chart; a generic plan cost another 330 ms."""
+        db = _FakeSession()
+        assert await layer.apply_statement_timeout(db, 5000) is True
+        assert db.events == _READ_SETTINGS, (
+            "the three settings must be exactly these, LOCAL, with no "
+            f"transaction boundary among them: {db.events!r}"
+        )
+        assert all(s.startswith("SET LOCAL ") for s in db.statements)
+        assert not any(
+            s.startswith(("SET jit", "SET plan_cache_mode", "SET SESSION"))
+            for s in db.statements
+        ), "a session-level planner setting leaks to ingestion on the same connection"
+
+    @pytest.mark.asyncio
+    async def test_the_planner_settings_are_not_applied_without_the_timeout(self):
+        """They belong to a bounded analytics read. A caller that turned the
+        timeout off (``timeout_ms=0``) or a non-PostgreSQL session gets none of
+        them -- the settings never travel alone."""
+        for db, ms in ((_FakeSession(), 0), (_FakeSession(dialect="sqlite"), 5000)):
+            assert await layer.apply_statement_timeout(db, ms) is False
+            assert db.events == []
 
     @pytest.mark.asyncio
     async def test_a_non_postgres_session_is_left_alone(self):
@@ -1041,7 +1086,7 @@ class TestTheGateRunsFirst:
             _request(), SimpleNamespace(id=uuid.uuid4()), db,
             rate_limit=None, timeout_ms=5000,
         )
-        assert db.statements == ["SET LOCAL statement_timeout = 5000"]
+        assert db.statements == _READ_SETTINGS
 
     @pytest.mark.asyncio
     async def test_the_layer_does_not_charge_the_same_request_twice(self, monkeypatch):

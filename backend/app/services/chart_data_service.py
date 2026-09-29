@@ -518,7 +518,6 @@ class Cell(NamedTuple):
     skipped: int
     unknown: int
     executions: int
-    runs: int
     #: The metric's own aggregate; ``None`` for a rate (computed in Python).
     value: Optional[float]
     #: The sample behind ``value``.
@@ -544,8 +543,19 @@ class AxisCounts:
 
 #: The component counts every cell carries, in the order the statement selects
 #: them and :class:`Cell` reads them back.
+#:
+#: There is deliberately no run count here. There used to be one --
+#: ``COUNT(DISTINCT tr.id) AS runs`` on the row grain -- that was summed and
+#: carried to the accumulator and never read by anything. It was not free:
+#: PostgreSQL 16 cannot hash-aggregate a DISTINCT, so that one column forced
+#: every row-grain chart into a sort-based grouping, and on the large seed
+#: ``pass_rate`` by suite over 365 days spent ~1,300 ms in a 76 MB external
+#: sort to find 200 groups; without it the same chart took ~197 ms
+#: (``docs/viz-work/w26/perf/REPORT.md``). The ``run_count`` METRIC keeps its
+#: own ``COUNT(DISTINCT tr.id)`` as ``metric_value``, so the only price is
+#: paid by the one chart that asks for it.
 _COUNT_COLUMNS = (
-    "passed", "failed", "broken", "skipped", "unknown", "executions", "runs",
+    "passed", "failed", "broken", "skipped", "unknown", "executions",
 )
 
 #: A placeholder column carries its TYPE. A bare ``NULL`` in a CTE is ``text``,
@@ -634,7 +644,6 @@ def build_statement(
             "skipped": _status_count(TestStatus.SKIPPED),
             "unknown": _status_count(TestStatus.UNKNOWN),
             "executions": _EXECUTIONS_ROW,
-            "runs": "COUNT(DISTINCT tr.id)",
         }
         value_sql = metric.row_sql
         sample_sql = metric.row_sample
@@ -649,7 +658,6 @@ def build_statement(
             "skipped": "COALESCE(SUM(tr.skipped_tests), 0)",
             "unknown": "COALESCE(SUM(tr.unknown_tests), 0)",
             "executions": _EXECUTIONS_RUN,
-            "runs": "COUNT(*)",
         }
         value_sql = metric.run_sql
         sample_sql = metric.run_sample
@@ -808,7 +816,6 @@ async def _fetch_cells(
             skipped=int(row.skipped or 0),
             unknown=int(row.unknown or 0),
             executions=int(row.executions or 0),
-            runs=int(row.runs or 0),
             value=None if row.metric_value is None else float(row.metric_value),
             sample=int(row.metric_sample or 0),
             merged=int(row.merged or 1),
@@ -910,11 +917,11 @@ class _Accumulator:
     """The component counts of one ``(series, bucket)`` cell, mergeable."""
 
     __slots__ = ("passed", "failed", "broken", "skipped", "unknown",
-                 "executions", "runs", "value", "sample", "merged")
+                 "executions", "value", "sample", "merged")
 
     def __init__(self) -> None:
         self.passed = self.failed = self.broken = self.skipped = self.unknown = 0
-        self.executions = self.runs = self.sample = 0
+        self.executions = self.sample = 0
         self.value: Optional[float] = None
         self.merged = 0
 
@@ -925,7 +932,6 @@ class _Accumulator:
         self.skipped += cell.skipped
         self.unknown += cell.unknown
         self.executions += cell.executions
-        self.runs += cell.runs
         self.sample += cell.sample
         if cell.value is not None:
             self.value = cell.value if self.value is None else self.value + cell.value
@@ -1199,7 +1205,6 @@ def _merge(accumulators: Iterable[Optional[_Accumulator]]) -> Optional[_Accumula
         out.skipped += acc.skipped
         out.unknown += acc.unknown
         out.executions += acc.executions
-        out.runs += acc.runs
         out.sample += acc.sample
         if acc.value is not None:
             out.value = acc.value if out.value is None else out.value + acc.value

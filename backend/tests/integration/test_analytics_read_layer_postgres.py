@@ -341,6 +341,49 @@ async def test_an_ingestion_session_on_the_same_pool_has_no_ceiling(
         await session.commit()
 
 
+async def test_the_planner_settings_are_visible_inside_the_request_and_gone_after_it(
+    world, solo, monkeypatch
+) -> None:
+    """Wave 2.6: ``jit = off`` and ``plan_cache_mode = force_custom_plan``
+    ride the timeout's transaction. Inside the request the handler's session
+    must really carry both (the positive control); afterwards the SAME pooled
+    connection must be back to what it was before, so an ingestion batch on it
+    plans exactly as it did before this wave."""
+    from app.services import analytics_service
+
+    probe = ("statement_timeout", "jit", "plan_cache_mode")
+
+    async with solo.sessions() as session:
+        before = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+    if before["jit"] == "off" and before["plan_cache_mode"] == "force_custom_plan":
+        pytest.skip("the server already defaults to both settings; locality is unobservable")
+
+    async def _probe(db, *args, **kwargs):
+        seen = {name: (await db.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+        return {"summary": {"suite_count": 0, "seen": seen}, "suites": []}
+
+    monkeypatch.setattr(analytics_service, "coverage_stats", _probe)
+
+    response = await world.client.get(
+        COVERAGE, params={"project_id": str(world.p1), "days": 48}, headers=world.admin
+    )
+
+    assert response.status_code == 200, response.text
+    seen = response.json()["summary"]["seen"]
+    assert (seen["jit"], seen["plan_cache_mode"]) == ("off", "force_custom_plan"), (
+        f"the analytics planner settings never reached the request's session: {seen!r}"
+    )
+    assert seen["statement_timeout"] != "0", "the settings must share the timeout's transaction"
+
+    async with solo.sessions() as session:
+        after = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+    assert after == before, (
+        f"a planner setting leaked to the pooled connection: {before!r} -> {after!r}. "
+        "SET LOCAL was replaced by a session-level SET, and the next user of this "
+        "connection -- an ingestion batch, a Celery task -- inherits it"
+    )
+
+
 # ── rate limit ──────────────────────────────────────────────────────────────
 
 
