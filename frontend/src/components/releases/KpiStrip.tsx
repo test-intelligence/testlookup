@@ -1,10 +1,16 @@
 /**
  * KpiStrip — the 4-pill row above the filter bar. In progress · Ready to
- * ship · Blocked · Released (30d). Each card lays out as a flex row with
- * label+value on the left and a mini sparkline as a flex-sibling on the
- * right — never absolutely positioned over the value (that was the bug
- * the previous version had).
+ * ship · Blocked · Released (30d).
+ *
+ * A card's sub-line is JSX, never an HTML string: it used to be built as
+ * `<strong>N</strong> …` and rendered with `dangerouslySetInnerHTML`. The
+ * strings held only counts, but an HTML sink one edit away from a release
+ * name is how an injection ships (docs/viz-work/RULES.md, owner decision
+ * OD-11). The card's `sparkline` prop and its `MiniSparkline` went with it:
+ * no caller ever passed one (a release list has no history), so the only
+ * trend line this strip could draw was an invented one.
  */
+import type { ReactNode } from 'react'
 import { clsx } from 'clsx'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import type { DerivedRelease } from './types'
@@ -18,46 +24,16 @@ const TONE_COLOR: Record<Tone, string> = {
   neutral: 'var(--color-text)',
 }
 
-interface MiniSparklineProps {
-  values: number[]
-  tone: Tone
-  width?: number
-  height?: number
-}
-function MiniSparkline({ values, tone, width = 80, height = 28 }: MiniSparklineProps) {
-  if (values.length < 2) return null
-  const max = Math.max(...values)
-  const min = Math.min(...values)
-  const span = Math.max(1, max - min)
-  const stepX = width / Math.max(1, values.length - 1)
-  const points = values.map((v, i) => {
-    const x = i * stepX
-    const y = height - 4 - ((v - min) / span) * (height - 8)
-    return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
-  }).join(' ')
-  return (
-    <svg
-      width={width}
-      height={height}
-      className="shrink-0"
-      style={{ alignSelf: 'flex-end' }}
-      aria-label={`trend ending at ${values[values.length - 1]}`}
-    >
-      <path d={points} fill="none" stroke={TONE_COLOR[tone]} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 interface KpiCardProps {
   label: string
   value: number | string
   tone?: Tone
   delta?: { dir: 'up' | 'down'; value: number; period: string }
-  sub?: string
-  sparkline?: number[]
+  /** The sub-line. Rendered as React children: text in it stays text. */
+  sub?: ReactNode
 }
 
-function KpiCard({ label, value, tone = 'neutral', delta, sub, sparkline }: KpiCardProps) {
+function KpiCard({ label, value, tone = 'neutral', delta, sub }: KpiCardProps) {
   return (
     <div
       className="rounded-xl border p-3 flex flex-col gap-1"
@@ -66,21 +42,16 @@ function KpiCard({ label, value, tone = 'neutral', delta, sub, sparkline }: KpiC
         background: 'var(--color-bg-card)',
       }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-            {label}
-          </div>
-          <div
-            className="mt-1 font-bold tabular-nums leading-none"
-            style={{ fontSize: 26, letterSpacing: '-0.02em', color: TONE_COLOR[tone] }}
-          >
-            {value}
-          </div>
+      <div className="min-w-0">
+        <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+          {label}
         </div>
-        {sparkline && sparkline.length > 1 && (
-          <MiniSparkline values={sparkline} tone={tone} />
-        )}
+        <div
+          className="mt-1 font-bold tabular-nums leading-none"
+          style={{ fontSize: 26, letterSpacing: '-0.02em', color: TONE_COLOR[tone] }}
+        >
+          {value}
+        </div>
       </div>
       {(sub || delta) && (
         <div className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1.5 flex-wrap">
@@ -96,7 +67,7 @@ function KpiCard({ label, value, tone = 'neutral', delta, sub, sparkline }: KpiC
             </span>
           )}
           {delta && delta.period && <span>· {delta.period}</span>}
-          {sub && <span dangerouslySetInnerHTML={{ __html: sub }} />}
+          {sub && <span>{sub}</span>}
         </div>
       )}
     </div>
@@ -125,8 +96,7 @@ interface KpiStripProps {
  * `OverviewPage` was fixed for this exact rule in 2026-08 — a KPI must not
  * claim a trend it has no history for, and a caption must explain a missing
  * trend rather than deny the metric. There is no time series behind a release
- * list, so these cards carry no sparkline at all. `override` remains for a
- * caller that genuinely has one.
+ * list, so these cards carry no sparkline at all.
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   const planning = releases.filter(r => r.stage === 'planning')
@@ -148,7 +118,7 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   // Only stated when it is true and counted. The previous fallback here read
   // "from last week", which described a comparison the card does not make.
   const inProgressSub = inProgress.length === 0 && planning.length > 0
-    ? `<strong>${planning.length}</strong> at Planning · promote one to start tracking`
+    ? <><strong>{planning.length}</strong> at Planning · promote one to start tracking</>
     : undefined
   return [
     {
@@ -162,7 +132,7 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
       value: readyToShip.length,
       tone: 'good',
       sub: readyToShip.length > 0
-        ? `<strong>${readyToShip.length}</strong> of ${inProgress.length} in progress`
+        ? <><strong>{readyToShip.length}</strong> of {inProgress.length} in progress</>
         : undefined,
     },
     {
