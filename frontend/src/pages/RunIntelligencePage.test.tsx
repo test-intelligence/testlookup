@@ -441,8 +441,12 @@ describe('RunIntelligencePage', () => {
         <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
       </MemoryRouter>,
     )
+    // The header is page markup: its number is the dash.
     const meter = screen.getByText('Composite risk score').parentElement
     expect(within(meter as HTMLElement).getByText('—')).toBeInTheDocument()
+    // …and the bar under it agrees: not measured (no fill, no reading), never a meter at 0.
+    expect(screen.getByRole('img', { name: 'Composite risk score: not measured' })).toBeInTheDocument()
+    expect(screen.queryByRole('meter', { name: 'Composite risk score' })).toBeNull()
   })
 
   it('does not expose local decision actions for a stale retained report', () => {
@@ -524,6 +528,30 @@ describe('RunIntelligencePage', () => {
     // "/ 100" with a space — so test each separately.
     expect(screen.getByText('68')).toBeInTheDocument()
     expect(screen.getByText(/\/ 100/)).toBeInTheDocument()
+    // The bar under it is a meter reading the same score, on the risk scale
+    // (lower is better), with its band in words.
+    const bar = screen.getByRole('meter', { name: 'Composite risk score' })
+    expect(bar).toHaveAttribute('aria-valuenow', '68')
+    expect(bar.getAttribute('aria-valuetext')).toMatch(/^68 of 100, No-Go$/i)
+    expect(bar).toHaveAttribute('data-gauge-bar', 'fill')
+    expect((bar.querySelector('[data-gauge-fill]') as HTMLElement).style.backgroundImage).toBe('var(--gradient-risk)')
+    for (const tick of ['Safe · 0', 'Conditional · 30', 'Block · 70', '100']) expect(within(bar).getByText(tick)).toBeInTheDocument()
+  })
+
+  it('a PENDING gate draws no reading even when a score exists: the header says "—" and the bar agrees', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE)
+    // A score with no recommendation: the gate is PENDING.
+    ;(intelligence.release_decision as { recommendation?: string }).recommendation = undefined
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    const header = screen.getByText('Composite risk score').parentElement as HTMLElement
+    expect(within(header).getByText('—')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Composite risk score: not measured' })).toBeInTheDocument()
+    expect(screen.queryByRole('meter', { name: 'Composite risk score' })).toBeNull()
   })
 
   it('renders executive summary from layer1', async () => {

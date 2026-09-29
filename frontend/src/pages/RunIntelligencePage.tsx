@@ -70,6 +70,7 @@ import type {
 } from '@/services/runIntelligenceService'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { computeRunOutcome } from '@/utils/runOutcome'
+import GaugeBar from '@/components/charts/GaugeBar'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Persona = 'executive' | 'developer' | 'manager'
@@ -414,25 +415,28 @@ function RiskMeter({
           {pillLabel}
         </span>
       </div>
-      <div className="relative mt-3 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--color-bg-secondary)' }}>
-        <i
-          className="block h-full rounded-full"
-          style={{ width: `${score === null ? 0 : clamped}%`, background: 'var(--gradient-risk)' }}
-        />
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-        </div>
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Safe · 0</span>
-        <span>Conditional · 30</span>
-        <span>Block · 70</span>
-        <span>100</span>
-      </div>
+      {/* The header above stays page markup (tests read its "—"); only the
+          bar and its scale are the kit's. No score, or a PENDING gate, is
+          not measured: an empty track, never a bar at 0. Risk runs
+          green-to-red, so the fill ends in the colour of its own band. */}
+      <GaugeBar
+        className="mt-3"
+        value={gate === 'PENDING' || score === null ? null : score}
+        label="Composite risk score"
+        valueText={`${clamped} of 100, ${pillLabel}`}
+        gradient="risk"
+        ticks={RISK_TICKS}
+      />
     </div>
   )
 }
+
+const RISK_TICKS = [
+  { value: 0, label: 'Safe' },
+  { value: 30, label: 'Conditional' },
+  { value: 70, label: 'Block' },
+  { value: 100 },
+]
 
 function DimensionGrid({ scores, fallback }: { scores: DimensionScore[]; fallback: null }) {
   // Use up to 4 dimensions; pad with neutral placeholders so the grid stays
