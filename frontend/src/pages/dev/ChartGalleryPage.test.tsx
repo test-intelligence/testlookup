@@ -91,13 +91,22 @@ describe('ChartGalleryPage', () => {
     expect(new Set(rendered).size).toBe(GALLERY_ITEM_IDS.length)
     expect(GALLERY_ITEM_IDS.length).toBeGreaterThanOrEqual(8)
 
+    // Every level-2 heading on the page, collected ONCE. Asking the role query
+    // per item walked the whole accessibility tree 84 times, and at 84 items
+    // that alone ran past the 15 s timeout on the CI runner (PR #166). The
+    // name of these headings is their text (no aria-label on any of them), so
+    // matching the text is the same check, made once.
+    const levelTwo = screen.getAllByRole('heading', { level: 2 })
+    const named = (title: string) =>
+      levelTwo.filter((heading) => heading.textContent?.replace(/\s+/g, ' ').trim() === title)
+
     for (const item of GALLERY_ITEMS) {
       const section = container.querySelector(`[data-gallery-item="${item.id}"]`)
       expect(section).not.toBeNull()
       // Exactly ONE level-2 heading per item, and it names the section: a
       // framed item is named by the FRAME's own heading (the gallery adds
       // none above it), an unframed one by the gallery's.
-      const headings = screen.getAllByRole('heading', { level: 2, name: item.title })
+      const headings = named(item.title)
       expect(headings, `${item.id}: heading drawn ${headings.length} times`).toHaveLength(1)
       if (galleryFramed(item)) {
         expect(section?.getAttribute('aria-label')).toBe(item.title)
