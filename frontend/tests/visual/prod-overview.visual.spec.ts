@@ -10,7 +10,7 @@ import {
   ancestorWithClass,
   assertHermetic,
   cardAround,
-  cardByHeading,
+  frameByHeading,
   openProductionPage,
   PINNED,
   THEMES,
@@ -41,7 +41,7 @@ for (const theme of THEMES) {
     const verdict = cardAround(page.getByText('RELEASE READINESS', { exact: true }))
     await expect(verdict.getByText('Conditional', { exact: false }).first()).toBeVisible()
 
-    const trend = cardByHeading(page, 'Execution trend')
+    const trend = frameByHeading(page, 'Execution trend')
     await waitForCharts(trend)
 
     await visualRegion(page, 'overview-kpis', theme, kpis)

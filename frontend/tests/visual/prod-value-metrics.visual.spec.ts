@@ -7,7 +7,7 @@
 import { test } from '@playwright/test'
 import {
   assertHermetic,
-  cardByHeading,
+  frameByHeading,
   openProductionPage,
   PINNED,
   THEMES,
@@ -30,7 +30,7 @@ for (const theme of THEMES) {
       ready: (p) => p.getByRole('heading', { name: 'Hours saved per month' }),
     })
 
-    const monthly = cardByHeading(page, 'Hours saved per month')
+    const monthly = frameByHeading(page, 'Hours saved per month')
     await waitForCharts(monthly)
 
     await visualRegion(page, 'value-monthly-hours', theme, monthly)

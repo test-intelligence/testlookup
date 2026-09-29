@@ -11,11 +11,13 @@ import { expect, test } from '@playwright/test'
 import {
   assertHermetic,
   cardByHeading,
+  frameByHeading,
   landmark,
   openProductionPage,
   PINNED,
   THEMES,
   visualRegion,
+  waitForCharts,
 } from '../lib/production-pages'
 import { NOW, PROJECT_ID, TRENDS, USER } from './production/fixtures'
 
@@ -36,9 +38,11 @@ for (const theme of THEMES) {
     // The page resets the shared window to 14 days on mount.
     const cadence = cardByHeading(page, 'Run cadence — last 14 days')
     await expect(cadence).toContainText('7 days with runs · 7 empty')
-    const daily = cardByHeading(page, 'Daily breakdown')
-    const passRate = cardByHeading(page, 'Pass rate trend')
-    await expect(passRate.locator('svg polyline').first()).toBeVisible()
+    // Both plots are kit chart frames since Wave 2.5 (the frame is the card).
+    const daily = frameByHeading(page, 'Daily breakdown')
+    await waitForCharts(daily)
+    const passRate = frameByHeading(page, 'Pass rate trend')
+    await waitForCharts(passRate)
     const suites = cardByHeading(page, 'Suite pass rates · today')
     await expect(suites.getByText('Payments', { exact: true })).toBeVisible()
 

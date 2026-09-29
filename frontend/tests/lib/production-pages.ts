@@ -24,8 +24,9 @@
  *    both were measured to make a Linux render differ from the next one.
  *
  * The locators here are the single place to adapt after the migration
- * (`cardByHeading`, `waitForCharts`); a region's NAME never changes, so the
- * AFTER PNG replaces the BEFORE one under the same path.
+ * (`cardByHeading`, `frameByHeading`, `waitForCharts`); a region's NAME
+ * never changes, so the AFTER PNG replaces the BEFORE one under the same
+ * path.
  */
 import { expect, type Locator, type Page, type Route } from '@playwright/test'
 
@@ -273,11 +274,25 @@ export const landmark = (page: Page | Locator, name: string): Locator =>
 
 /**
  * The card around a heading: the nearest ancestor that is a card
- * (`.card`, a `CardShell`'s `rounded-xl` box, or a `<section>`). After the
- * migration a chart's heading may move into its frame: adapt here.
+ * (`.card`, a `CardShell`'s `rounded-xl` box, or a `<section>`). A chart
+ * whose heading moved into a kit frame is found with `frameByHeading`.
  */
 export function cardByHeading(scope: Page | Locator, name: string | RegExp, level?: number): Locator {
   return cardAround(scope.getByRole('heading', { name, exact: typeof name === 'string' ? true : undefined, level }))
+}
+
+/**
+ * A kit chart frame by its title. Since Wave 2.5 a migrated chart is no
+ * longer drawn inside a page card: the `ChartFrame` root
+ * (`[data-chart-frame]`, `rounded-lg`) IS the card, and its title is the
+ * heading, so `cardByHeading` would climb past it to the page's column.
+ * The region is the whole frame (title, toolbar, plot, legend, notes), the
+ * same extent the page card had before.
+ */
+export function frameByHeading(scope: Page, name: string | RegExp): Locator {
+  return scope
+    .locator('[data-chart-frame]')
+    .filter({ has: scope.getByRole('heading', { name, exact: typeof name === 'string' ? true : undefined }) })
 }
 
 const hasClass = (name: string) => `contains(concat(" ", normalize-space(@class), " "), " ${name} ")`

@@ -1,13 +1,14 @@
 /**
  * BEFORE/AFTER baselines of /coverage/suite (Wave 2.5, VIZ-104): the
- * "Run history" stacked daily bars (A2: Skipped and Broken share one colour
- * today) and the per-run "Pass Rate Trend" area (A3).
+ * "Run history" stacked daily bars (A2: Skipped and Broken shared one colour
+ * before the migration) and the pass-rate trend (A3: a per-run area before,
+ * a per-day kit time series after, "Pass rate trend — last N days", OD-4).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { test } from '@playwright/test'
 import {
   assertHermetic,
-  cardByHeading,
+  frameByHeading,
   openProductionPage,
   PINNED,
   THEMES,
@@ -30,9 +31,9 @@ for (const theme of THEMES) {
       ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     })
 
-    const history = cardByHeading(page, /^Run history/)
+    const history = frameByHeading(page, /^Run history/)
     await waitForCharts(history)
-    const passRate = cardByHeading(page, /^Pass Rate Trend/)
+    const passRate = frameByHeading(page, /^Pass rate trend/)
     await waitForCharts(passRate)
 
     await visualRegion(page, 'suite-run-history', theme, history)

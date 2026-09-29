@@ -25,7 +25,8 @@ for (const theme of THEMES) {
 
     const card = cardAround(page.getByText('Risk Score', { exact: true }))
     await expect(card).toContainText('Recommendation')
-    await expect(card.locator('svg text')).toHaveText('60')
+    // The kit ring draws its number as HTML; the meter carries the reading.
+    await expect(card.getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuenow', '60')
 
     await visualRegion(page, 'gate-risk-gauge', theme, card)
     assertHermetic(api, errors)
