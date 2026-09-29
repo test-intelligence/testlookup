@@ -57,6 +57,9 @@ import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { fromNow } from '@/utils/formatters'
 import type { TestRun } from '@/types/runs'
+import GaugeBar from '@/components/charts/GaugeBar'
+import type { GaugeBands } from '@/components/charts/gaugeBar.model'
+import { measuredRunPassRate } from '@/utils/runPassRate'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -820,7 +823,12 @@ function RunRow({
   // rendered verbatim, and blank when the run doesn't carry one. No proxy, no
   // fabricated floor. If an AI confidence is ever wired here it must arrive
   // from the pipeline with its calibration basis, via AISuggestion.
-  const passRatePct = run.pass_rate != null ? Math.round(run.pass_rate) : null
+  //
+  // A run still in flight, or one that ran no tests, has no pass rate yet
+  // (OD-18): the API's `pass_rate: 0` for it is not a measurement, so the
+  // meter is not measured, as /runs says of the same run, never a red 0 %.
+  const measuredRate = measuredRunPassRate(run)
+  const passRatePct = measuredRate !== null ? Math.round(measuredRate) : null
   return (
     <tr
       onClick={() => onOpen(run.id)}
@@ -869,9 +877,9 @@ function RunRow({
       </td>
       <td className="px-3.5 py-2.5 w-[11%] max-w-0 min-w-[88px] overflow-hidden"><RunStatusPill run={run} /></td>
       <td className="px-3.5 py-2.5 w-[15%] min-w-[120px] max-w-[170px]">
-        {passRatePct != null
-          ? <PassRateMeter pct={passRatePct} />
-          : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
+        {/* Always the meter (OD-13): a run with no pass rate is an empty
+            track and a dash, the kit's one "not measured" look, never a 0. */}
+        <PassRateMeter pct={passRatePct} />
       </td>
       <TimingCell
         started={run.start_time ?? run.created_at}
@@ -909,23 +917,32 @@ function RunStatusPill({ run }: { run: TestRun }) {
 
 /** Pass-rate meter. Renamed from ConfidenceMeter in US-15.1 — it never
  *  showed a confidence; naming it one was the whole bug. */
-function PassRateMeter({ pct }: { pct: number }) {
-  const grad =
-    pct >= 80 ? 'linear-gradient(90deg,var(--status-passed),var(--status-passed))'
-    : pct >= 60 ? 'linear-gradient(90deg,var(--status-skipped),var(--status-broken))'
-                : 'linear-gradient(90deg,var(--status-failed),var(--status-failed))'
+function PassRateMeter({ pct }: { pct: number | null }) {
+  // The GaugeBar's root IS the cell's first child: the 56 x 5 px track then
+  // the percentage, inline, on one line — what
+  // intelligence-table-geometry.spec.ts measures (`firstElementChild`).
   return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap">
-      <span
-        className="inline-block h-[5px] w-[56px] rounded-full overflow-hidden bg-[var(--color-bg-secondary)] border border-[var(--color-border)]"
-        aria-hidden
-      >
-        <span className="block h-full" style={{ width: `${pct}%`, background: grad }} />
-      </span>
-      <span className="text-[11.5px] tabular-nums text-[var(--color-text-muted)]">{pct}%</span>
-    </span>
+    <GaugeBar
+      value={pct}
+      label="Pass rate"
+      valueText={pct === null ? undefined : `${pct}%`}
+      format={formatPercent}
+      tone={PASS_RATE_BANDS}
+      size="sm"
+      thickness={5}
+      outlined
+      showValue
+    />
   )
 }
+
+const formatPercent = (v: number) => `${v}%`
+
+/** 80 and up is good, 60 and up a warning, below is bad. */
+const PASS_RATE_BANDS: GaugeBands = { direction: 'higher-is-better', thresholds: [60, 80] }
+
+/** Budget used: 80 % and up is the warning, the cap (100 %) is bad (OD-14). */
+const UTILISATION_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [80, 100] }
 
 // ── Right-rail panels ──────────────────────────────────────────────────────
 
@@ -1018,12 +1035,18 @@ function SpendPanel({ projectId }: { projectId: string | null }) {
               : 'configure in settings'}
           </span>
         </div>
-        <div className="h-1.5 rounded-full bg-[var(--color-bg-secondary)] overflow-hidden">
-          <div
-            className="h-full"
-            style={{ width: `${utilization}%`, background: 'linear-gradient(90deg,#14b8a6,#5eead4)' }}
-          />
-        </div>
+        {/* Lower is better (OD-14): near the cap is the warning, at the cap
+            is bad. It was a decorative teal gradient in two hex literals that
+            looked the same at 5 % and at 100 %. No budget (or still loading)
+            is not measured: an empty track, as it always looked. */}
+        <GaugeBar
+          value={hasBudget && !loading ? utilization : null}
+          label="Monthly budget"
+          valueText={`${Math.round(utilization)}% used`}
+          size="sm"
+          thickness={6}
+          tone={UTILISATION_BANDS}
+        />
       </div>
     </RailPanel>
   )
