@@ -16,8 +16,10 @@
  * sibling TestManagementPage.palette regression — no Node built-ins so the
  * production ``tsc`` build doesn't trip on this test). Reintroducing a raw
  * palette class re-trips the now-tokenized page and fails here before the
- * lint ratchet does. Recharts fill/stroke hex values and the cyan avg-duration
- * KPI stay untouched — they are not Tailwind classes the rule flags.
+ * lint ratchet does. The cyan avg-duration KPI stays untouched — it is not a
+ * Tailwind class the rule flags. (The page's own Recharts charts, with their
+ * hex fills and slate tooltip, are gone since Wave 2.5: both charts are the
+ * chart kit's, coloured from `tokens.ts`.)
  */
 import { describe, expect, it } from 'vitest'
 
