@@ -17,7 +17,17 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ENGINE_DIRS, importBoundaryViolations, inEngineDir, optionViolations, runSelfTest } from './chart-guard.mjs'
+import {
+  ENGINE_DIRS,
+  RECHARTS_BOUNDARY_ENFORCED,
+  RECHARTS_DIRS,
+  importBoundaryViolations,
+  inEngineDir,
+  inRechartsDir,
+  optionViolations,
+  rechartsBoundaryViolations,
+  runSelfTest,
+} from './chart-guard.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CSS = readFileSync(join(ROOT, 'src', 'index.css'), 'utf8')
@@ -257,6 +267,10 @@ let chartFiles = 0
 let engineFiles = 0
 let boundaryFiles = 0
 let optionFiles = 0
+// VIZ-104: files outside the kit the recharts boundary covers, and (while it is
+// off) the ones that would still fail it — the ratchet's progress, printed.
+let rechartsFiles = 0
+const rechartsPending = []
 const ENGINE_IMPORT = /\bfrom\s+['"][^'"]*\/engines\/|\bimport\(\s*['"][^'"]*\/engines\//
 for (const file of walkAll(SRC_DIR)) {
   const rel = file.slice(ROOT.length + 1).split('\\').join('/')
@@ -265,6 +279,10 @@ for (const file of walkAll(SRC_DIR)) {
   const inCharts = file.startsWith(CHART_DIR)
   boundaryFiles += 1
   fail.push(...importBoundaryViolations(rel, text))
+  if (!inRechartsDir(rel)) {
+    rechartsFiles += 1
+    if (!RECHARTS_BOUNDARY_ENFORCED && rechartsBoundaryViolations(rel, text).length) rechartsPending.push(rel)
+  }
   if (inCharts) {
     chartFiles += 1
     fail.push(...chartColourViolations(rel, text))
@@ -276,6 +294,7 @@ for (const file of walkAll(SRC_DIR)) {
   }
 }
 if (chartFiles === 0) fail.push('scanned 0 files under src/components/charts — the chart-kit guard is measuring nothing')
+if (rechartsFiles === 0) fail.push(`scanned 0 files outside ${RECHARTS_DIRS.join(', ')} — the recharts boundary is measuring nothing`)
 if (engineFiles === 0) fail.push(`scanned 0 files under ${ENGINE_DIRS.join(', ')} — ENGINE_DIRS no longer matches the tree, so the import boundary allows nothing and guards nothing`)
 
 if (HTML.includes('fonts.googleapis.com/css2')) {
@@ -318,5 +337,9 @@ console.log(`OK — ${ALL.length} themes: status hues unified across ${DARK.leng
   `light palette distinct, system fonts only, no remote font origins, picker swatches match their tokens; ` +
   `chart kit (${chartFiles} files): no colour literals; engine packages value-imported only under ` +
   `${ENGINE_DIRS.join(', ')} (${boundaryFiles} files checked, ${engineFiles} inside); ` +
+  (RECHARTS_BOUNDARY_ENFORCED
+    ? `recharts value-imported only under ${RECHARTS_DIRS.join(', ')} (${rechartsFiles} files outside checked); `
+    : `recharts boundary OFF until Wave 2.5 migrates the pages (${rechartsPending.length} of ${rechartsFiles} files ` +
+      `outside ${RECHARTS_DIRS.join(', ')} still import it${rechartsPending.length ? `: ${rechartsPending.join(', ')}` : ''}); `) +
   `ECharts options (${optionFiles} files): formatters only via domTooltipFormatter, no rich: ` +
   `(self-test: ${selfTestCount} cases passed).`)

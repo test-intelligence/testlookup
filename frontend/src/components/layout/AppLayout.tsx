@@ -8,6 +8,7 @@ import SettingsBackBar from './SettingsBackBar'
 import ScopeUrlSyncGate from './ScopeUrlSyncGate'
 import { useMultiFiltersRuntimeStore } from './multiFiltersRuntimeLoader'
 import { scopeSupersededMiddleware } from '@/services/scopeAbortCore'
+import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 
 /** VIZ-303: a request aborted because the report scope moved on is never
  *  shown as an error. Nested config: SWR concatenates `use` with the root's
@@ -53,13 +54,23 @@ export default function AppLayout() {
                 py-6 preserves the old p-6 vertical padding. */}
             <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
               <SettingsBackBar />
-              {/* VIZ-301: the ONE mount of the report chrome (header, filter bar,
-                  chips, summary, metrics strip). It renders nothing unless the
-                  route is a registered report route and `viz_report_context` is
-                  on. The page-level ChartAnnouncerProvider joins it here when the
-                  first ChartFrame reaches a production page (Wave 2). */}
-              <ReportChromeHost />
-              <Outlet />
+              {/* VIZ-104 (Wave 2.5): the ONE page-level chart announcer, for
+                  every routed page. Each ChartFrame reports its changes to it,
+                  and the report chrome's filtered-dataset line (FilteredSummary)
+                  coalesces with them into one polite message — so it wraps the
+                  chrome AND the page. Without it a frame renders but never
+                  announces. No routed page mounts a provider of its own (a
+                  second one would be a second pair of live regions): the dev
+                  gallery and report-context pages that do sit outside this
+                  layout. `AppLayout.announcer.test.tsx` holds both facts. */}
+              <ChartAnnouncerProvider>
+                {/* VIZ-301: the ONE mount of the report chrome (header, filter bar,
+                    chips, summary, metrics strip). It renders nothing unless the
+                    route is a registered report route and `viz_report_context` is
+                    on. */}
+                <ReportChromeHost />
+                <Outlet />
+              </ChartAnnouncerProvider>
             </div>
           </main>
         </div>

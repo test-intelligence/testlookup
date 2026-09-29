@@ -35,13 +35,19 @@
  *     the plot rather than dropping them.
  *
  * Without the prop, nothing about the frame changes.
+ *
+ * VIZ-104 K2: `rateTarget` draws a dashed target line on the rate axis
+ * (`TimeSeriesChart`) and says so in ONE sentence, in the summary (after the
+ * y axis's name) and under the table view — where the line is, or why it is
+ * not drawn. Without the prop, the summary, the table and the DOM are exactly
+ * what they were.
  */
 import { forwardRef, useMemo, useState } from 'react'
 import { analyzeTrend, trendFrameTakeaway, type TrendOverlayState } from '@/lib/trendStats'
 import type { ChartState } from './chartState'
 import ChartFrame, { type ChartFrameProps } from './ChartFrame'
 import ReleaseMarkerTable from './ReleaseMarkerTable'
-import TimeSeriesChart, { type TimeSeriesChartProps } from './TimeSeriesChart'
+import TimeSeriesChart, { rateTargetSentence, type TimeSeriesChartProps } from './TimeSeriesChart'
 import { TREND_OVERLAYS_OFF } from './TimeSeriesChartOverlayStyle'
 import TimeSeriesChartTrendTable from './TimeSeriesChartTrendTable'
 import {
@@ -63,7 +69,7 @@ import {
 
 export interface TimeSeriesChartFrameProps
   extends Omit<ChartFrameProps, 'children' | 'series' | 'chartType' | 'axes' | 'tableExtras' | 'zoomNote'>,
-    Pick<TimeSeriesChartProps, 'inProgressRuns' | 'timeZone' | 'locale' | 'now' | 'animate'> {
+    Pick<TimeSeriesChartProps, 'inProgressRuns' | 'timeZone' | 'locale' | 'now' | 'animate' | 'rateTarget'> {
   /**
    * The model to draw. Required for `ready` / `truncated`; ignored (and
    * allowed to be null) for every other state, which the frame owns.
@@ -84,8 +90,11 @@ export interface TimeSeriesChartFrameProps
 
 const NO_DAYS: readonly string[] = []
 
+/** The summary adds its own full stop after the y axis's name. */
+const withoutFullStop = (text: string) => (text.endsWith('.') ? text.slice(0, -1) : text)
+
 const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProps>(function TimeSeriesChartFrame(
-  { model, inProgressRuns, timeZone, locale, now, animate, height = 280, trendAnalysis, zoom, ...frameProps },
+  { model, inProgressRuns, timeZone, locale, now, animate, height = 280, trendAnalysis, zoom, rateTarget, ...frameProps },
   ref,
 ) {
   const trendRequested = trendAnalysis !== undefined && trendAnalysis !== false
@@ -131,6 +140,20 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
     // The FULL model's markers: a zoom marks the ones it hides, it never drops them.
     <ReleaseMarkerTable markers={model.markers} outsideWindow={model.markersOutsideWindow} outsideView={outsideView} />
   ) : null
+  // VIZ-104 K2: one sentence about the target, for the summary and the table view (about the DRAWN view).
+  const targetSentence = rateTarget && view ? rateTargetSentence(view, rateTarget) : null
+  const axes = useMemo(
+    () => ({
+      x: 'Day (UTC)',
+      y: `${RATE_AXIS_TITLE} / ${EXECUTIONS_AXIS_TITLE}${targetSentence ? `. ${withoutFullStop(targetSentence)}` : ''}`,
+    }),
+    [targetSentence],
+  )
+  const targetTableNote = targetSentence ? (
+    <p data-chart-target-table-note="" className="mt-2 px-2 text-xs text-[var(--color-text-secondary)]">
+      {targetSentence}
+    </p>
+  ) : null
   const zoomTableNote = zoomState.note ? (
     <p data-chart-zoom-table-note="" className="mt-2 px-2 text-xs text-[var(--color-text-secondary)]">
       {zoomState.note}
@@ -148,10 +171,11 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
       changeLabel={zoomState.changeLabel ?? frameProps.changeLabel}
       zoomNote={zoomState.note}
       chartType="Line and bar chart"
-      axes={{ x: 'Day (UTC)', y: `${RATE_AXIS_TITLE} / ${EXECUTIONS_AXIS_TITLE}` }}
+      axes={axes}
       tableExtras={
         <>
           {zoomTableNote}
+          {targetTableNote}
           {releaseTable}
           {viewAnalysis && view ? (
             <TimeSeriesChartTrendTable analysis={viewAnalysis} days={viewDays} zoomNote={range ? zoomState.note : undefined} />
@@ -173,6 +197,7 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
             locale={locale}
             now={now}
             trendOverlays={viewAnalysis ? { analysis: viewAnalysis, shown, onShownChange: setShown } : undefined}
+            rateTarget={rateTarget}
           />
           {zoomState.brush ? (
             // A BAND scale: the execution bars give every day a slot, so the

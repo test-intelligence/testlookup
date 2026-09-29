@@ -16,6 +16,13 @@
  *     bundle gap where `zrender/lib/core/util` imported eagerly carried none of
  *     the markers check-bundle-budget.mjs looks for.
  *
+ *     RECHARTS (VIZ-104, Wave 2.5) has the same rule with its own boundary: a
+ *     value import of `recharts` (or a deep path) is allowed only under
+ *     RECHARTS_DIRS, the chart kit, so a page draws through a kit frame and
+ *     never builds a raw Recharts chart again. It is written, self-tested and
+ *     OFF (`RECHARTS_BOUNDARY_ENFORCED`) until the last three pages that still
+ *     import recharts are migrated; the ratchet commit flips the one constant.
+ *
  *  2. OPTION RULES, over ENGINE_DIRS, src/components/charts/** and every file
  *     that imports from an engines/ module (it may hand the engine an option).
  *     An ECharts tooltip formatter that returns a string is an HTML sink; a
@@ -71,6 +78,37 @@ const ALLOW = (rule) => new RegExp(`chart-guard-allow\\s+${rule}\\s*:\\s*\\S.{2,
 
 export const inEngineDir = (rel) => ENGINE_DIRS.some((dir) => rel === dir || rel.startsWith(`${dir}/`))
 
+/** The ONLY directories allowed to value-import recharts: the chart kit (VIZ-104). */
+export const RECHARTS_DIRS = ['src/components/charts']
+/** recharts, including deep paths such as `recharts/es6/chart/AreaChart`. */
+export const RECHARTS_MODULE = /^recharts(?:\/.*)?$/
+/**
+ * Whether the real tree is held to the recharts boundary. OFF while
+ * OverviewPage, SuiteDetailPage and ValueMetricsPage still import recharts
+ * (Wave 2.5 migrates them); flipped to `true` in the ratchet commit that
+ * follows them. The self-test proves the matcher either way, and
+ * check-theme-tokens.mjs prints how many files would still fail it.
+ */
+export const RECHARTS_BOUNDARY_ENFORCED = false
+
+export const inRechartsDir = (rel) => RECHARTS_DIRS.some((dir) => rel === dir || rel.startsWith(`${dir}/`))
+
+/** A boundary: which module specifiers it restricts, where they are allowed, and what to do instead. */
+const ENGINE_BOUNDARY = {
+  module: RESTRICTED_MODULE,
+  allowedIn: inEngineDir,
+  advice:
+    `engine packages may be value-imported only under ${ENGINE_DIRS.join(', ')} (ADR decision 4); use \`import type\` ` +
+    'for types, or reach the engine through loadChartEngine() / useEChart()',
+}
+const RECHARTS_BOUNDARY = {
+  module: RECHARTS_MODULE,
+  allowedIn: inRechartsDir,
+  advice:
+    `recharts may be value-imported only under ${RECHARTS_DIRS.join(', ')} (VIZ-104); draw through a kit frame ` +
+    '(StackedColumnChartFrame, TimeSeriesChartFrame, BarChart, ...), or use `import type` for types',
+}
+
 function parse(rel, source) {
   const kind = rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   return ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true, kind)
@@ -112,21 +150,19 @@ export function keyOf(name) {
   return null
 }
 
-// ── Rule 1: import boundary ─────────────────────────────────────────────────
-export function importBoundaryViolations(rel, source) {
-  if (inEngineDir(rel)) return []
+// ── Rule 1: import boundaries ───────────────────────────────────────────────
+function boundaryViolations(rel, source, boundaries) {
+  const active = boundaries.filter((boundary) => !boundary.allowedIn(rel))
+  if (active.length === 0) return []
   const sf = parse(rel, source)
   const out = []
-  const flag = (node, spec, how) =>
-    out.push(
-      `${rel}:${lineOf(sf, node)} ${how} '${spec}' — engine packages may be value-imported only under ` +
-        `${ENGINE_DIRS.join(', ')} (ADR decision 4); use \`import type\` for types, or reach the engine through ` +
-        `loadChartEngine() / useEChart()`,
-    )
+  const restrictedBy = (spec) => active.find((boundary) => boundary.module.test(spec))
+  const flag = (node, spec, how, boundary) => out.push(`${rel}:${lineOf(sf, node)} ${how} '${spec}' — ${boundary.advice}`)
   const visit = (node) => {
     if (ts.isImportDeclaration(node) && isStringish(node.moduleSpecifier)) {
       const spec = node.moduleSpecifier.text
-      if (RESTRICTED_MODULE.test(spec)) {
+      const boundary = restrictedBy(spec)
+      if (boundary) {
         const clause = node.importClause
         // Only a whole-clause `import type` is allowed. `import { type A } from 'x'` is
         // flagged too: under verbatimModuleSyntax it is emitted as `import {} from 'x'`,
@@ -139,27 +175,44 @@ export function importBoundaryViolations(rel, source) {
             node,
             spec,
             allInline ? 'imports only inline `type` names from (write `import type`, which is always erased)' : clause ? 'value-imports' : 'side-effect-imports',
+            boundary,
           )
         }
       }
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && isStringish(node.moduleSpecifier)) {
       const spec = node.moduleSpecifier.text
-      if (RESTRICTED_MODULE.test(spec) && !node.isTypeOnly) flag(node, spec, 're-exports')
+      const boundary = restrictedBy(spec)
+      if (boundary && !node.isTypeOnly) flag(node, spec, 're-exports', boundary)
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       const e = node.moduleReference.expression
-      if (isStringish(e) && RESTRICTED_MODULE.test(e.text) && !node.isTypeOnly) flag(node, e.text, 'import-requires')
+      const boundary = isStringish(e) ? restrictedBy(e.text) : undefined
+      if (boundary && !node.isTypeOnly) flag(node, e.text, 'import-requires', boundary)
     } else if (ts.isCallExpression(node)) {
       const arg = node.arguments[0]
       const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
       const req = ts.isIdentifier(node.expression) && node.expression.text === 'require'
-      if ((dynamicImport || req) && isStringish(arg) && RESTRICTED_MODULE.test(arg.text)) {
-        flag(node, arg.text, dynamicImport ? 'dynamically imports' : 'requires')
+      const boundary = isStringish(arg) ? restrictedBy(arg.text) : undefined
+      if ((dynamicImport || req) && boundary) {
+        flag(node, arg.text, dynamicImport ? 'dynamically imports' : 'requires', boundary)
       }
     }
     ts.forEachChild(node, visit)
   }
   visit(sf)
   return out
+}
+
+/**
+ * Every import-boundary violation in one file: the engine packages always,
+ * recharts when `recharts` is on (default: `RECHARTS_BOUNDARY_ENFORCED`).
+ */
+export function importBoundaryViolations(rel, source, { recharts = RECHARTS_BOUNDARY_ENFORCED } = {}) {
+  return boundaryViolations(rel, source, recharts ? [ENGINE_BOUNDARY, RECHARTS_BOUNDARY] : [ENGINE_BOUNDARY])
+}
+
+/** The recharts boundary alone: what the ratchet will fail on once it is enforced. */
+export function rechartsBoundaryViolations(rel, source) {
+  return boundaryViolations(rel, source, [RECHARTS_BOUNDARY])
 }
 
 // ── Rule 2: option rules ────────────────────────────────────────────────────
@@ -321,6 +374,7 @@ export function optionViolations(rel, source) {
 const HELPER_IMPORT = `import { ${HELPER_NAME} } from '../../tooltip'\n`
 const E = 'src/components/charts/engines/echarts/planted.ts' // inside the boundary
 const OUT = 'src/pages/Planted.tsx' // outside it
+const KIT = 'src/components/charts/Planted.tsx' // inside the recharts boundary, outside the engine one
 
 /** Planted option code: every one must be caught. */
 export const PLANTED_OPTION_BYPASSES = {
@@ -380,6 +434,21 @@ export const IMPORT_CASES = [
   ['typeof import() outside', OUT, "type E = typeof import('echarts/core')", 'clean'],
   ['unrelated package with the prefix', OUT, "import x from 'echartsy'\nimport y from 'three-ish'", 'clean'],
   ['value import inside the boundary', E, "import * as echarts from 'echarts/core'\nimport { HeatmapChart } from 'echarts/charts'", 'clean'],
+  ['echarts in the kit but outside engines/', KIT, "import { init } from 'echarts'", 'hit'],
+  // recharts (VIZ-104): proven here even while RECHARTS_BOUNDARY_ENFORCED is off.
+  ['recharts value import in a page', OUT, "import { AreaChart } from 'recharts'", 'hit'],
+  ['recharts deep path in a page', OUT, "import { AreaChart } from 'recharts/es6/chart/AreaChart'", 'hit'],
+  ['recharts dynamic import outside pages', 'src/components/ui/Planted.tsx', "const m = () => import('recharts')", 'hit'],
+  ['recharts require', OUT, "const r = require('recharts')", 'hit'],
+  ['recharts import-require', OUT, "import rc = require('recharts')", 'hit'],
+  ['recharts re-export', OUT, "export { Area } from 'recharts'", 'hit'],
+  ['recharts side-effect import', OUT, "import 'recharts'", 'hit'],
+  ['recharts inline-type-only import', OUT, "import { type TooltipProps } from 'recharts'", 'hit'],
+  ['recharts import type in a page', OUT, "import type { TooltipProps } from 'recharts'", 'clean'],
+  ['recharts value import in the kit', KIT, "import { Bar, BarChart } from 'recharts'", 'clean'],
+  ['recharts value import under engines/', E, "import { Bar } from 'recharts'", 'clean'],
+  ['a vi.mock of recharts in a page test', 'src/pages/Planted.test.tsx', "vi.mock('recharts', () => ({}))\ntype R = typeof import('recharts')", 'clean'],
+  ['unrelated package with the recharts prefix', OUT, "import x from 'rechartsy'", 'clean'],
 ]
 
 export function runSelfTest() {
@@ -397,7 +466,8 @@ export function runSelfTest() {
   }
   for (const [label, rel, src, expect] of IMPORT_CASES) {
     count += 1
-    const found = importBoundaryViolations(rel, src)
+    // Every boundary on, whatever the tree is held to: the matcher is proven before the ratchet is.
+    const found = importBoundaryViolations(rel, src, { recharts: true })
     if (expect === 'hit' && found.length === 0) problems.push(`self-test: the planted "${label}" was NOT caught`)
     if (expect === 'clean' && found.length) problems.push(`self-test: the clean "${label}" was flagged: ${found.join('; ')}`)
   }

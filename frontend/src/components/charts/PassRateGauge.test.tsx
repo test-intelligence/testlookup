@@ -62,6 +62,19 @@ describe('PassRateGauge', () => {
     expect(screen.getByTestId('angle-axis')).toHaveAttribute('data-domain', '[0,100]')
   })
 
+  // The bands are RingGauge's default now; the gallery's colours depend on them.
+  it.each([
+    [100, 'var(--status-passed)'],
+    [95, 'var(--status-passed)'],
+    [94.9, 'var(--status-broken)'],
+    [80, 'var(--status-broken)'],
+    [79.9, 'var(--status-failed)'],
+    [0, 'var(--status-failed)'],
+  ])('colours a pass rate of %s with %s (95 / 80, higher is better)', (value, fill) => {
+    render(<PassRateGauge value={value} />)
+    expect(rows()[0].fill).toBe(fill)
+  })
+
   it('clamps the arc to 0-100 but keeps the true value in the label', () => {
     render(<PassRateGauge value={104} />)
     expect(rows()[0].value).toBe(100)
