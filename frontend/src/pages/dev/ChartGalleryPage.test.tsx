@@ -121,7 +121,12 @@ describe('ChartGalleryPage', () => {
       // VIZ-406: nothing timed at all — no value can go on a log axis.
       'duration-histogram',
       'gauge',
+      // Wave 2.5 (VIZ-104): an unmeasured bar and ring (an empty track, never
+      // 0), and a sparkline with one point, which draws nothing.
+      'gauge-bar',
       'heatmap',
+      'ring-gauge',
+      'sparkline',
       'status-donut',
       'trend',
     ])
@@ -163,7 +168,16 @@ describe('ChartGalleryPage', () => {
     // time series (Bar + Line = 2), the zoomed comparison with cart hidden
     // (2 Lines) and the zoomed p50/p95 band (Area + 2 Lines = 3) = 13. A zoom
     // SLICES a model and draws the same series, so it adds no series of its own.
-    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13)
+    // Wave 2.5 (VIZ-104): one Bar per series of each stacked-column item —
+    // four statuses per day (4), three model legs per month (3), the hostile
+    // item's two series (2), one day of four statuses (4), 60 days of four
+    // (4) and 16 suites of four, drawn as bars (4) = 21 (a series is one Bar
+    // however many columns or rows it has); the two
+    // rate-target time series (Bar + rate Line each = 4; the target is a
+    // ReferenceLine, not a series); and the three rings (1 RadialBar each,
+    // the unmeasured one included: it draws its 0-length arc over the track)
+    // = 3. Sparkline, GaugeBar and DayStrip draw no Recharts at all.
+    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13 + 21 + 4 + 3)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 

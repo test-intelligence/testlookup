@@ -36,12 +36,14 @@ import {
   HOSTILE_LABEL,
   galleryCanvasSize,
   galleryChartHeight,
+  galleryDomMarks,
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_GAPPY_SUITES,
   GALLERY_NOT_COMPARABLE,
   GALLERY_BRANCHES,
   GALLERY_RELEASES,
   GALLERY_THREE_SUITES,
+  type GalleryItem,
 } from '../../src/pages/dev/chartGalleryFixtures'
 // VIZ-404: the model only `import type`s from `@/…`, so it resolves in plain Node too.
 import { ALIGNED_X_TITLE, HIDDEN_SUFFIX } from '../../src/components/charts/multiSeriesModel'
@@ -131,6 +133,37 @@ async function openGallery(page: Page, search = '') {
   await expect(page.locator('form')).toHaveCount(0)
 }
 
+/**
+ * Drawn marks of a `dom` item (`galleryDomMarks`), measured PER KIND (R1 F14).
+ * "Has a width or a height" is not "drawn": a ranked bar is an 8 px-tall
+ * `inline-block` and a gauge fill or segment is `h-full`, so each still has a
+ * height at 0 % width — exactly the "every bar has zero width" defect VIZ-406's
+ * check existed for. So:
+ *  - a ranked bar, a gauge fill and a gauge segment are drawn when they have WIDTH;
+ *  - a sparkline LINE is drawn when its `d` has a segment after the first point
+ *    and its box has a width (a flat line has no height and is still a line);
+ *    the end dot is a fixed 6x6 span that would be there for an empty line;
+ *  - anything else (sparkline area and end dot, gauge marker and target, a day
+ *    cell) needs both sides.
+ * `only` narrows the count to one kind of mark, e.g. just the sparkline lines.
+ */
+async function drawnDomMarks(page: Page, item: GalleryItem, only?: string): Promise<number> {
+  return page
+    .locator(`[data-gallery-item="${item.id}"]`)
+    .locator(galleryDomMarks(item))
+    .evaluateAll((nodes, onlySelector) => {
+      const drawn = (node: Element) => {
+        const box = node.getBoundingClientRect()
+        if (node.matches('[data-testid="ranked-bar"], [data-gauge-fill], [data-gauge-segment]')) return box.width > 0
+        if (node.matches('[data-part="line"]')) {
+          return /^\s*M[^A-Za-z]*[LHVCSQTAlhvcsqta]/.test(node.getAttribute('d') ?? '') && box.width > 0
+        }
+        return box.width > 0 && box.height > 0
+      }
+      return nodes.filter((node) => (!onlySelector || node.matches(onlySelector)) && drawn(node)).length
+    }, only ?? null)
+}
+
 /** Drawn marks inside an svg: path/rect/circle with a real box, outside <defs>. */
 async function drawnMarks(page: Page, itemId: string): Promise<number> {
   return page.locator(`[data-gallery-item="${itemId}"] ${CHART_SVG}`).first().evaluate((svg) => {
@@ -201,20 +234,36 @@ test.describe('chart gallery (/__charts)', () => {
         .toBeGreaterThanOrEqual(4)
     }
 
-    // `dom` items (VIZ-406's slowest-tests) draw no engine at all: a ranked
-    // list whose bars are elements with a percentage width. There is no svg to
-    // measure and no canvas to sample, so the geometry IS those widths —
-    // `textContent` cannot see whether a bar was actually drawn.
+    // `dom` items draw no engine at all: VIZ-406's slowest-tests (a ranked list
+    // whose bars are elements with a percentage width) and, since Wave 2.5, the
+    // sparkline (a hand-drawn svg), the gauge bar and the day strip. There is
+    // no Recharts surface to measure and no canvas to sample, so the geometry
+    // IS the boxes of their marks (`galleryDomMarks`) — `textContent` cannot
+    // see whether a bar or a cell was actually drawn.
     expect(GALLERY_DRAWN_DOM_ITEMS.length).toBeGreaterThanOrEqual(1)
     for (const item of GALLERY_DRAWN_DOM_ITEMS) {
       const section = page.locator(`[data-gallery-item="${item.id}"]`)
       await expect(section.getByRole('heading', { level: 2, name: item.title })).toBeVisible()
       await expect(section.locator(CHART_SVG), `${item.id}: expected no svg engine`).toHaveCount(0)
-      const widths = await section
-        .locator('[data-testid="ranked-bar"]')
-        .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width))
-      expect(widths.length, `${item.id}: no ranked bars`).toBeGreaterThan(0)
-      expect(Math.max(...widths), `${item.id}: every bar has zero width`).toBeGreaterThan(0)
+      await expect
+        .poll(() => drawnDomMarks(page, item), { message: `${item.id}: expected at least ${item.minMarks} drawn marks` })
+        .toBeGreaterThanOrEqual(Math.max(1, item.minMarks))
+      if (item.chart === 'slowest-tests') {
+        // VIZ-406's own check, restored: a list whose every bar has zero width
+        // is the defect, and a mark count alone once let it through.
+        const widths = await section
+          .locator('[data-testid="ranked-bar"]')
+          .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width))
+        expect(widths.length, `${item.id}: no ranked bars`).toBeGreaterThan(0)
+        expect(Math.max(...widths), `${item.id}: every bar has zero width`).toBeGreaterThan(0)
+      }
+      if (item.chart === 'sparkline' && item.minMarks > 0) {
+        // Every sparkline cell draws its LINE; an end dot without one is not a sparkline.
+        expect(
+          await drawnDomMarks(page, item, '[data-part="line"]'),
+          `${item.id}: a sparkline cell has an end dot but no drawn line`,
+        ).toBe(item.sparkline.widths.length)
+      }
     }
 
     // The three loops above must PARTITION the drawn items. Without this, a new
@@ -338,12 +387,11 @@ test.describe('chart gallery (/__charts)', () => {
           'ready',
         )
       }
-      // …and the VIZ-406 list, which has no engine to report ready. Auditing
-      // before it paints would audit an empty box and pass for the wrong reason.
+      // …and the `dom` items (the VIZ-406 list, the Wave 2.5 kit pieces), which
+      // have no engine to report ready. Auditing before they paint would audit
+      // an empty box and pass for the wrong reason.
       for (const item of GALLERY_DRAWN_DOM_ITEMS) {
-        await expect(
-          page.locator(`[data-gallery-item="${item.id}"] [data-testid="ranked-bar"]`).first(),
-        ).toBeVisible()
+        await expect.poll(() => drawnDomMarks(page, item), { message: item.id }).toBeGreaterThanOrEqual(Math.max(1, item.minMarks))
       }
       await expectNoBlockingViolations(
         page,
@@ -378,7 +426,8 @@ test.describe('chart gallery (/__charts)', () => {
     })
     expect(found.marks).toHaveLength(4)
     for (const mark of found.marks) expect(mark.pattern, mark.fill).not.toBeNull()
-    expect(found.legend.map((entry) => entry.status)).toEqual(['passed', 'failed', 'skipped', 'broken'])
+    // The kit's one status order (STATUS_STACK_ORDER), the same as every stacked chart's.
+    expect(found.legend.map((entry) => entry.status)).toEqual(['passed', 'failed', 'broken', 'skipped'])
     for (const entry of found.legend) {
       expect(entry.pattern, `${entry.status} legend swatch`).toMatch(new RegExp(`chart-pattern-${entry.status}$`))
       expect(found.marks.map((mark) => mark.fill)).toContain(entry.fill)
@@ -2387,6 +2436,85 @@ test.describe('chart gallery (/__charts)', () => {
     }))
     // Nothing is announced on load.
     expect(counts).toEqual({ alerts: 0, statuses: 1, assertive: 1, inFrames: 0, politeText: '' })
+  })
+})
+
+// ── Wave 2.5 (VIZ-104): the kit pieces the production pages moved onto ────────
+//
+// Their geometry (marks drawn, boxes inside their canvases), the one-announcer
+// rule and the axe gate are asserted with every other item above. What is left
+// is what each piece promises that a mark count cannot see.
+test.describe('Wave 2.5 kit pieces in the gallery', () => {
+  const itemById = (id: string) => GALLERY_ITEMS.find((item) => item.id === id) as GalleryItem
+
+  test('a hostile name is literal text in every piece that prints one', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    // The bar's visible label, the ring's caption, the strip's cells and the
+    // stacked columns' legend: text, never an element.
+    const gauge = page.locator('[data-gallery-item="gauge-bar-hostile-label"]')
+    await expect(gauge.locator('[data-gauge-bar]')).toContainText(HOSTILE_LABEL)
+    const ring = page.locator('[data-gallery-item="ring-gauge-hostile-label"]')
+    await expect(ring).toContainText(HOSTILE_LABEL)
+    await expect(ring.getByRole('meter', { name: HOSTILE_LABEL })).toHaveAttribute('aria-valuenow', '62')
+    const strip = page.locator('[data-gallery-item="day-strip-hostile-label"]')
+    await expect(strip.locator('[data-day-strip-table]')).toContainText('<img src=x onerror=alert(1)>')
+    await expect(strip.getByRole('img', { name: 'Hostile labels <b>not bold</b>' })).toHaveCount(1)
+    const stacked = page.locator('[data-gallery-item="stacked-hostile-labels"]')
+    await expect(stacked.locator('[data-chart-legend]')).toContainText('<script>alert("series")</script>')
+    for (const item of [gauge, ring, strip, stacked]) {
+      await expect(item.locator('img, script, b')).toHaveCount(0)
+    }
+    expect(await page.evaluate(() => (window as unknown as { __xss?: unknown }).__xss)).toBeUndefined()
+    expect(errors).toEqual([])
+  })
+
+  test('an unmeasured bar or ring is a named empty track, never a reading of 0', async ({ page }) => {
+    await openGallery(page)
+    const bar = page.locator('[data-gallery-item="gauge-bar-not-measured"]')
+    await expect(bar.getByRole('img', { name: 'Coverage health score: not measured' })).toHaveCount(1)
+    await expect(bar.getByRole('meter')).toHaveCount(0)
+    await expect(bar.locator(galleryDomMarks(itemById('gauge-bar-not-measured')))).toHaveCount(0)
+    const ring = page.locator('[data-gallery-item="ring-gauge-not-measured"]')
+    await expect(ring.getByRole('img', { name: 'Risk Score: not measured' })).toHaveCount(1)
+    await expect(ring).toContainText('—')
+    await expect(ring.getByRole('meter')).toHaveCount(0)
+    // A measured value past the domain IS a meter, clamped, with its true value in words.
+    const clamped = page.locator('[data-gallery-item="gauge-bar-clamped"]').getByRole('meter')
+    await expect(clamped).toHaveAttribute('aria-valuenow', '100')
+    await expect(clamped).toHaveAttribute('aria-valuetext', /130/)
+  })
+
+  test('a rate target is drawn on the axis it fits, and stated where it does not', async ({ page }) => {
+    await openGallery(page)
+    const drawn = page.locator('[data-gallery-item="timeseries-rate-target"]')
+    await expect(drawn.locator(CHART_SVG).first()).toBeVisible()
+    await expect(drawn.locator('.recharts-reference-line line[stroke-dasharray="6 4"]')).toHaveCount(1)
+    await expect(drawn.locator('[data-chart-legend]')).toContainText('Target 90%')
+    await expect(drawn.locator('[data-chart-target-note]')).toHaveCount(0)
+    const off = page.locator('[data-gallery-item="timeseries-rate-target-off-axis"]')
+    await expect(off.locator(CHART_SVG).first()).toBeVisible()
+    await expect(off.locator('.recharts-reference-line line[stroke-dasharray="6 4"]')).toHaveCount(0)
+    await expect(off.locator('[data-chart-target-note]')).toContainText('Target 80%')
+    await expect(off.locator('[data-chart-legend]')).not.toContainText('Target 80%')
+  })
+
+  test('the day strip keeps inside its box, at a card width and at a phone width', async ({ page }) => {
+    await openGallery(page)
+    for (const id of ['day-strip-presence', 'day-strip-presence-narrow']) {
+      const canvas = page.locator(`[data-gallery-canvas="${id}"]`)
+      await expect(canvas.locator('[data-day-cell]')).toHaveCount(itemById(id).minMarks)
+      const fit = await canvas.evaluate((el) => {
+        const box = el.getBoundingClientRect()
+        const drawn = [...el.querySelectorAll('[data-day-strip] *')]
+          .filter((node) => !node.closest('[data-day-strip-table]'))
+          .map((node) => node.getBoundingClientRect())
+          .filter((b) => b.width > 0)
+        return { overhang: Math.max(...drawn.map((b) => b.right)) - box.right, scroll: el.scrollWidth - el.clientWidth }
+      })
+      expect(fit.overhang, `${id}: the strip runs past its box`).toBeLessThanOrEqual(0.5)
+      expect(fit.scroll, `${id}: the strip scrolls sideways`).toBeLessThanOrEqual(0)
+    }
   })
 })
 

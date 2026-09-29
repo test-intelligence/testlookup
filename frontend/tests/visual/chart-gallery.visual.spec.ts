@@ -19,6 +19,7 @@ import {
   GALLERY_DRAWN_SVG_ITEMS,
   GALLERY_ITEM_IDS,
   GALLERY_ITEMS,
+  galleryDomMarks,
   galleryEngine,
 } from '../../src/pages/dev/chartGalleryFixtures'
 
@@ -74,6 +75,44 @@ const WAVE_2_ITEM_IDS = [
   // unavailable with the reason. Pinned to `GALLERY_NOW` like the time series.
   'timeseries-trend-analysis',
   'timeseries-trend-insufficient',
+  // Wave 2.5 (VIZ-104) — the kit pieces every production chart now draws
+  // with: the stacked columns, the rate target, the sparkline, the gauge
+  // bar, the ring gauge and the day strip, one item per edge case their
+  // builders named, a hostile name in each piece that prints one, and a
+  // strip at phone width.
+  'stacked-status-daily',
+  'stacked-series-monthly',
+  'stacked-hostile-labels',
+  'stacked-single-bucket',
+  'stacked-long-window',
+  // FX-kit (R2's accepted design call): more categories than columns can name, drawn as bars.
+  'stacked-many-categories',
+  'timeseries-rate-target',
+  'timeseries-rate-target-off-axis',
+  'sparkline-pass-rate',
+  'sparkline-gaps',
+  'sparkline-flat',
+  'sparkline-executions',
+  'sparkline-too-few',
+  'gauge-bar-marker',
+  'gauge-bar-fill-risk',
+  'gauge-bar-not-measured',
+  'gauge-bar-segments',
+  'gauge-bar-target',
+  'gauge-bar-clamped',
+  'gauge-bar-inline',
+  'gauge-bar-hostile-label',
+  'ring-gauge-risk',
+  'ring-gauge-not-measured',
+  'ring-gauge-hostile-label',
+  'day-strip-presence',
+  'day-strip-presence-narrow',
+  'day-strip-intensity',
+  'day-strip-severity',
+  'day-strip-compact',
+  'day-strip-builds',
+  'day-strip-dense',
+  'day-strip-hostile-label',
 ] as const
 
 test('every Wave-2 edge case still has a gallery item, and so a baseline', () => {
@@ -103,13 +142,24 @@ for (const theme of THEMES) {
           page.locator(`[data-gallery-item="${id}"] [data-chart-engine="echarts"]`),
         ).toHaveAttribute('data-chart-status', 'ready')
       }
-      // A `dom` item (the ranked slowest-tests list) has no engine to report
-      // ready, so wait on its own first bar: a screenshot must not race React's
-      // first paint any more than it may race ResponsiveContainer's.
+      // A `dom` item (the ranked slowest-tests list; since Wave 2.5 the
+      // sparkline, the gauge bar and the day strip) has no engine to report
+      // ready, so wait until its own marks are drawn: a screenshot must not
+      // race React's first paint any more than it may race
+      // ResponsiveContainer's. A mark with a width OR a height counts (a flat
+      // sparkline's line has no height).
       for (const item of GALLERY_DRAWN_DOM_ITEMS) {
-        await expect(
-          page.locator(`[data-gallery-item="${item.id}"] [data-testid="ranked-bar"]`).first(),
-        ).toBeVisible()
+        const marks = page.locator(`[data-gallery-item="${item.id}"]`).locator(galleryDomMarks(item))
+        await expect
+          .poll(() =>
+            marks.evaluateAll((nodes) =>
+              nodes.filter((node) => {
+                const box = node.getBoundingClientRect()
+                return box.width > 0 || box.height > 0
+              }).length,
+            ),
+          )
+          .toBeGreaterThanOrEqual(Math.max(1, item.minMarks))
       }
     })
 
