@@ -126,6 +126,14 @@ export interface ChartFrameProps {
   height?: number
   /** Offered in `filtered-empty`. Without it, no button is shown. */
   onClearFilters?: () => void
+  /**
+   * What `filtered-empty` says when the caller knows NO filter produced the
+   * empty result (R1 F3): a neutral statement of the window ("No executions in
+   * this window") in place of "No data matches the current filters", which
+   * blames filters the reader never set. With it, no "Clear filters" button is
+   * offered, and the change announcement says the same words.
+   */
+  emptyMessage?: string
   /** Where "Ingest test results" goes in `never-had-data`. */
   ingestHref?: string
   /** Where "Sign in" goes when the session expired (a 401 after the refresh retry). */
@@ -237,12 +245,14 @@ function Message({ children, state }: { children: ReactNode; state: string }) {
 function StateBody({
   state,
   onClearFilters,
+  emptyMessage,
   ingestHref,
   signInHref,
   onRetry,
 }: {
   state: ChartState<unknown>
   onClearFilters?: () => void
+  emptyMessage?: string
   ingestHref: string
   signInHref: string
   onRetry?: () => void
@@ -260,8 +270,10 @@ function StateBody({
     case 'filtered-empty':
       return (
         <Message state={state.status}>
-          <p className="font-medium text-[var(--color-text)]">{CHART_MESSAGES.filteredEmpty}</p>
-          {onClearFilters && (
+          <p className="font-medium text-[var(--color-text)]" data-chart-empty-reason={emptyMessage ? 'window' : undefined}>
+            {emptyMessage ?? CHART_MESSAGES.filteredEmpty}
+          </p>
+          {onClearFilters && !emptyMessage && (
             <button type="button" onClick={onClearFilters} className={BUTTON}>
               {CHART_MESSAGES.clearFilters}
             </button>
@@ -355,6 +367,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
     changeLabel: changeLabelProp,
     height = 240,
     onClearFilters,
+    emptyMessage,
     ingestHref = '/getting-started',
     signInHref = '/login',
     zoomNote,
@@ -393,7 +406,9 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
       ? ''
       : drawn && changeLabelProp
         ? changeLabelProp
-        : CHANGE_LABEL[state.status]
+        : state.status === 'filtered-empty' && emptyMessage
+          ? emptyMessage.toLowerCase()
+          : CHANGE_LABEL[state.status]
   const lastKey = useRef<string | null>(null)
   // Set by the reader's Retry; the result of THAT request is announced assertively.
   const pendingRetry = useRef<{ inflight: boolean } | null>(null)
@@ -534,6 +549,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
     <StateBody
       state={state}
       onClearFilters={onClearFilters}
+      emptyMessage={emptyMessage}
       ingestHref={ingestHref}
       signInHref={signInHref}
       onRetry={onRetry}

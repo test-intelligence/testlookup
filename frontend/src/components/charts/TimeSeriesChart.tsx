@@ -50,6 +50,17 @@
  * rule in the tooltip and the keyboard cursor's text. The numbers all come
  * from `lib/trendStats`. The canvas renderer takes no overlays: the analysis
  * itself stops at 366 days and says so.
+ *
+ * A RATE TARGET (VIZ-104, Wave 2.5 K2) is OFF unless `rateTarget` is passed,
+ * and with it absent the render is byte-for-byte what it was (the same
+ * `TimeSeriesChart.defaultRender.test.tsx` pin). With it: a dashed neutral
+ * line across the plot at the target on the rate axis, a legend entry drawn
+ * with the same dash, and — when the line cannot be drawn — one sentence under
+ * the plot saying so, rather than a legend entry for a line that is not there.
+ * The line is drawn only where the target lies on the rate axis: a zoomed
+ * 92-100 axis has no room for a 90 % target, and stretching the axis to fit it
+ * would undo the zoom the reader is looking at. The canvas renderer draws no
+ * target, as it draws no overlays: past 366 days the sentence says so.
  */
 import { useId, useMemo, useState, type ReactElement } from 'react'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
@@ -89,7 +100,7 @@ import {
 } from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
 import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens } from './tokens'
-import { NO_VALUE } from './chartText'
+import { NO_VALUE, utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { ChartLegend, type LegendEntry } from './patterns'
 import { CHART_DRAW_ERROR } from './ChartErrorBoundary'
@@ -135,6 +146,40 @@ export interface TimeSeriesChartProps {
    * does, because its takeaway follows them).
    */
   trendOverlays?: TimeSeriesTrendOverlays
+  /**
+   * VIZ-104 K2: a target on the RATE axis (percent), drawn as a dashed line
+   * with a legend entry. Leave it out and nothing about the chart changes.
+   */
+  rateTarget?: TimeSeriesRateTarget
+}
+
+export interface TimeSeriesRateTarget {
+  /** Percent, on the rate axis (0-100). */
+  value: number
+  /** Its legend entry and its name in the summary, e.g. "Target 90%". */
+  label: string
+}
+
+/** The target line's dash: longer than the partial day's `4 2`, and neutral, never a series colour. */
+export const RATE_TARGET_DASH = '6 4'
+
+/** Whether the target can be drawn: the SVG renderer, and a value on the rate axis. */
+export function rateTargetDrawn(model: TimeSeriesModel, target: TimeSeriesRateTarget): boolean {
+  const [low, high] = model.rateAxis.domain
+  return model.renderer === 'svg' && Number.isFinite(target.value) && target.value >= low && target.value <= high
+}
+
+/**
+ * The one sentence about the target: where it is drawn, or why it is not.
+ * The frame's summary and table view say it; the chart's own note says it
+ * only when the line is NOT drawn (the legend already names a drawn one).
+ */
+export function rateTargetSentence(model: TimeSeriesModel, target: TimeSeriesRateTarget): string {
+  const at = `${formatNumber(target.value, { maximumFractionDigits: 1 })}%`
+  if (rateTargetDrawn(model, target)) return `${target.label}: a dashed line at ${at} on the rate axis.`
+  if (model.renderer !== 'svg') return `${target.label} (${at}) is not drawn on a window this long.`
+  const [low, high] = model.rateAxis.domain
+  return `${target.label} (${at}) is outside the rate axis (${formatNumber(low)}-${formatNumber(high)}%) and is not drawn.`
 }
 
 export interface TimeSeriesTrendOverlays {
@@ -288,6 +333,7 @@ function SvgTimeSeries({
   inProgressRuns,
   partialDrawn,
   trend,
+  rateTarget,
 }: {
   model: TimeSeriesModel
   rows: Row[]
@@ -304,12 +350,16 @@ function SvgTimeSeries({
   partialDrawn: boolean
   /** VIZ-405: `null` unless trend overlays were requested AND the analysis is available. */
   trend: DrawnTrend | null
+  /** VIZ-104 K2: only when the target is drawn (`rateTargetDrawn`). */
+  rateTarget?: TimeSeriesRateTarget
 }) {
   // Isolated points (a single-point series included) MUST be dots: a line
   // renderer draws nothing for a point with no measured neighbour.
   const showDots = model.singlePoint || model.isolated.length > 0
   const legend: LegendEntry[] = [
-    { key: 'rate', label: RATE_AXIS_TITLE, stroke: CHART_VARS.series[0] },
+    // A line with a dot when some days are drawn as lone dots: the legend
+    // shows the marks the plot has, and a plain line matches none of them (R2 F7).
+    { key: 'rate', label: RATE_AXIS_TITLE, stroke: CHART_VARS.series[0], dot: showDots },
     { key: 'executions', label: EXECUTIONS_AXIS_TITLE, fill: CHART_VARS.series[1] },
   ]
   // The hatch is a mark like any other, so it gets a legend entry like any
@@ -323,6 +373,7 @@ function SvgTimeSeries({
     const style = TREND_OVERLAY_STYLE[key]
     legend.push({ key, label: style.label, stroke: style.stroke, dash: style.dash })
   }
+  if (rateTarget) legend.push({ key: 'rateTarget', label: rateTarget.label, stroke: CHART_VARS.axis, dash: RATE_TARGET_DASH })
 
   /**
    * One cursor stop per bucket, worded by the SAME builder the mouse tooltip
@@ -366,7 +417,13 @@ function SvgTimeSeries({
           same lines.
         */}
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} yAxisId="rate" />
-        <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} dy={8} />
+        {/*
+          The kit's one short day label ("Mar 5", `utcDayLabel`), as the stacked
+          columns draw it: SuiteDetail and Trends put the two charts over the
+          same days, one labelled "Aug 20" and the other "2026-08-22" (R2 F5).
+          The tooltip, the table and the export keep the full UTC day.
+        */}
+        <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} dy={8} tickFormatter={utcDayLabel} />
         {/*
           Both y axes take their TICKS from the model, not only a domain:
           left to itself Recharts ticked a 90-100 axis at 90, 93, 96, 100.
@@ -463,7 +520,12 @@ function SvgTimeSeries({
           strokeWidth={2}
           // A gap is a gap: bridging it would invent a day that never ran.
           connectNulls={false}
-          dot={showDots ? { r: 3, fill: CHART_VARS.series[0] } : false}
+          // `clipDot: false`: the rate axis sets `allowDataOverflow`, so Recharts
+          // clips this line to the plot rect, and a dot ON its edge — a 100 %
+          // day, the best reading there is — was cut to its lower half (R2 F6).
+          // Recharts then clips the dots to the plot grown by one dot, so a dot
+          // on an edge is whole while the line stays inside the plot.
+          dot={showDots ? { r: 3, fill: CHART_VARS.series[0], clipDot: false } : false}
           activeDot={{ r: 4 }}
           isAnimationActive={animate}
         />
@@ -513,6 +575,21 @@ function SvgTimeSeries({
             shape={(props: { cx?: number; cy?: number }) => <AnomalyMarker cx={props.cx} cy={props.cy} day={anomaly.x} />}
           />
         ))}
+        {/*
+          VIZ-104 K2: the target, dashed and neutral, under the release
+          markers. Only ever handed a target that lies on the rate axis.
+        */}
+        {rateTarget && (
+          <ReferenceLine
+            key="rate-target"
+            className="rate-target-line"
+            yAxisId="rate"
+            y={rateTarget.value}
+            stroke={CHART_VARS.axis}
+            strokeDasharray={RATE_TARGET_DASH}
+            strokeWidth={1.5}
+          />
+        )}
         {model.markers.map((marker) => (
           <ReferenceLine
             key={marker.x}
@@ -534,6 +611,11 @@ function SvgTimeSeries({
 
 const BUTTON = 'rounded border border-[var(--color-border-light)] px-3 py-1 text-[var(--color-text)]'
 
+/**
+ * No trend overlays and no rate target here (VIZ-104 K2): the canvas renderer
+ * serves windows past `SVG_POINT_LIMIT`, and the chart says under the plot
+ * that a requested target is not drawn (`rateTargetSentence`).
+ */
 function CanvasTimeSeries({
   model,
   height,
@@ -599,6 +681,7 @@ export default function TimeSeriesChart({
   now,
   description = 'Pass rate and execution volume over time',
   trendOverlays,
+  rateTarget,
 }: TimeSeriesChartProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the notes under it.
   const height = useFramePlotHeight(requestedHeight, TIME_SERIES_NOTES_RESERVE)
@@ -657,6 +740,8 @@ export default function TimeSeriesChart({
    * gated on one existing.
    */
   const partialDrawn = model.points.some((point) => point.partial)
+  // VIZ-104 K2: drawn only on the rate axis of the SVG renderer; otherwise a sentence says why not.
+  const targetDrawn = rateTarget !== undefined && rateTargetDrawn(model, rateTarget)
 
   return (
     <figure data-chart="time-series" data-renderer={model.renderer} data-single-point={model.singlePoint ? 'true' : undefined} data-partial-day={(partialDrawn && model.partialDay) || undefined} className="m-0 flex flex-col gap-1">
@@ -699,6 +784,7 @@ export default function TimeSeriesChart({
           inProgressRuns={inProgressRuns}
           partialDrawn={partialDrawn}
           trend={trend}
+          rateTarget={targetDrawn ? rateTarget : undefined}
           tooltip={
             <TimeSeriesTooltip
               model={model}
@@ -742,6 +828,11 @@ export default function TimeSeriesChart({
         <p data-chart-gap-note="" className={NOTE}>
           {formatNumber(model.gaps)} {model.gaps === 1 ? 'day has' : 'days have'} no pass rate ({NO_VALUE}), drawn as a
           gap rather than 0%.
+        </p>
+      )}
+      {rateTarget && !targetDrawn && (
+        <p data-chart-target-note="" className={NOTE}>
+          {rateTargetSentence(model, rateTarget)}
         </p>
       )}
       {analysis && <TrendStatsStrip analysis={analysis} />}

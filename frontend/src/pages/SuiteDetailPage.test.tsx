@@ -13,7 +13,8 @@
  *    bar chart of passed/failed/skipped/broken per day, gated on
  *    "at least one day with run_count > 0".
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cloneElement, isValidElement, type ReactElement } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -65,18 +66,17 @@ vi.mock('@/store/projectStore', () => ({
   }) => unknown) => selector({ activeProjectId: 'proj-1', activeProject: { name: 'P' } })),
 }))
 
-// recharts pulls in a heavy DOM measurement layer that JSDOM doesn't
-// implement. Replace ResponsiveContainer with a fixed-size stand-in
-// so the chart's <BarChart> render path executes.
+// The charts are the kit's (VIZ-104), drawn by real Recharts. jsdom lays
+// nothing out, so the ResponsiveContainer hands its chart a fixed size and
+// the stacked columns and the time series really draw.
 vi.mock('recharts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('recharts')>()
   return {
     ...actual,
-    ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
-      <div data-testid="chart-host" style={{ width: 400, height: 200 }}>
-        {children}
-      </div>
-    ),
+    ResponsiveContainer: ({ children }: { children: React.ReactNode }) =>
+      isValidElement(children)
+        ? cloneElement(children as ReactElement<{ width?: number; height?: number }>, { width: 640, height: 220 })
+        : null,
   }
 })
 
@@ -90,6 +90,29 @@ function renderPage(url = '/coverage/suite?name=Auth&days=30') {
       </MemoryRouter>
     </SWRConfig>,
   )
+}
+
+/** Three zero-filled days: one with no run, one ordinary, one with only skipped executions. */
+const WEEK = [
+  { date: '2026-05-12', run_count: 0, total_tests: 0,
+    passed_count: 0, failed_count: 0, skipped_count: 0, broken_count: 0 },
+  { date: '2026-05-13', run_count: 1, total_tests: 10,
+    passed_count: 7, failed_count: 1, skipped_count: 1, broken_count: 1 },
+  { date: '2026-05-14', run_count: 1, total_tests: 4,
+    passed_count: 0, failed_count: 0, skipped_count: 4, broken_count: 0 },
+]
+
+/** The kit frame around a chart heading. */
+const frameOf = (heading: HTMLElement) => heading.closest('[data-chart-frame]') as HTMLElement
+
+/** The frame's table view, opened. */
+function tableOf(frame: HTMLElement) {
+  fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
+  const table = within(frame).getByRole('table', { name: /data table/i })
+  const headers = within(table).getAllByRole('columnheader').map((th) => th.textContent ?? '')
+  const row = (label: string) =>
+    Array.from((within(table).getByRole('rowheader', { name: label }).parentElement as HTMLElement).querySelectorAll('td'), (td) => td.textContent)
+  return { headers, row }
 }
 
 describe('SuiteDetailPage — regression', () => {
@@ -130,6 +153,68 @@ describe('SuiteDetailPage — regression', () => {
 
     await waitFor(() => expect(mockGetSuiteTrend).toHaveBeenCalled())
     expect(screen.queryByText(/Run history/)).not.toBeInTheDocument()
+  })
+
+  it('draws the run history as four statuses — Skipped and Broken no longer share a colour', async () => {
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
+    renderPage()
+    const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' }))
+    const legend = Array.from(frame.querySelectorAll('[data-chart-legend] li'), (li) => li.textContent)
+    expect(legend).toEqual(['Passed', 'Failed', 'Broken', 'Skipped'])
+    const fillOf = (status: string) =>
+      frame.querySelector(`[data-legend-status="${status}"] [data-legend-swatch]`)?.getAttribute('fill')
+    const patternColour = (status: string) =>
+      frame.querySelector(`pattern[id="${(fillOf(status) ?? '').slice(5, -1)}"] rect`)?.getAttribute('fill')
+    expect(patternColour('skipped')).toBe('var(--status-skipped)')
+    expect(patternColour('broken')).toBe('var(--status-broken)')
+    // A day without a run is a MEASURED zero: in the table, 0 — not a gap.
+    const { row } = tableOf(frame)
+    expect(row('May 12')).toEqual(['0', '0', '0', '0', '0'])
+    expect(row('May 13')).toEqual(['7', '1', '1', '1', '10'])
+  })
+
+  it('draws the pass rate PER DAY over the same window, a day with nothing evaluated as a gap', async () => {
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
+    renderPage()
+    const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' }))
+    // Per day, not per run: the old heading counted runs.
+    expect(screen.queryByText(/Last \d+ Runs/i)).toBeNull()
+    const { headers, row } = tableOf(frame)
+    expect(headers[0]).toBe('Day (UTC)')
+    // 7 passed of 9 evaluated (skipped is outside the rate).
+    expect(row('2026-05-13')[0]).toBe('77.78')
+    // No run that day: no pass rate — "—", never 0 %.
+    expect(row('2026-05-12')[0]).toBe('—')
+    // Only skipped that day: nothing evaluated, so no pass rate either.
+    expect(row('2026-05-14')[0]).toBe('—')
+    expect(frame.querySelector('[data-chart-gap-note]')?.textContent).toMatch(/^2 days have no pass rate/)
+  })
+
+  // R2 F7: a suite that runs every other day has no two adjacent days with a
+  // rate, so the chart is a row of dots under a legend that shows a line. The
+  // dots are not joined across a day without runs (that would draw a trend
+  // through days nobody measured, as Trends does not either), so the card says
+  // what each dot is, in words a sighted reader sees.
+  it('says each point is a day with runs, and a day without runs a gap', async () => {
+    const alternate = Array.from({ length: 6 }, (_, i) => ({
+      date: `2026-05-1${i}`,
+      run_count: i % 2 === 0 ? 1 : 0,
+      total_tests: i % 2 === 0 ? 10 : 0,
+      passed_count: i % 2 === 0 ? 9 : 0,
+      failed_count: i % 2 === 0 ? 1 : 0,
+      skipped_count: 0,
+      broken_count: 0,
+    }))
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: alternate })
+    renderPage()
+    const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' }))
+    expect(within(frame).getByText('One point per day with runs · a day without runs is a gap, never 0%')).toBeVisible()
+  })
+
+  it('draws no chart tooltip in a fixed dark slate: the page carries no colour literal', async () => {
+    const { default: source } = await import('./SuiteDetailPage.tsx?raw')
+    expect(source).not.toMatch(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/i)
+    expect(source).not.toMatch(/from 'recharts'/)
   })
 
   it('passes the URL days param to the trend service', async () => {

@@ -19,6 +19,20 @@ export { NO_VALUE }
 /** A matrix cell the server sent with no value: drawn hatched, read as this. */
 export const NO_DATA = 'No data'
 
+/**
+ * A UTC day key ("2026-03-04", or a full ISO timestamp) as the kit's one short
+ * day label ("Mar 4"), read in UTC so the label names the same day as the key
+ * in every viewer's zone. Every day axis draws it — the stacked columns and
+ * the time series alike, so two charts of the same days on one page label
+ * them the same way (R2 F5); tooltips and tables keep the full day. Anything
+ * that is not a date is returned unchanged.
+ */
+export function utcDayLabel(day: string): string {
+  const parsed = new Date(`${day.slice(0, 10)}T00:00:00Z`)
+  if (day.length < 10 || Number.isNaN(parsed.getTime())) return day
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
 export type ValueFormatter = (value: number) => string
 
 /**

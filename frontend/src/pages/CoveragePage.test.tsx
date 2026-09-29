@@ -1,8 +1,10 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import CoveragePage, { buildCoverageCsv, CoverageComparisonStrip } from './CoveragePage'
+import CoveragePage, { buildCoverageCsv, CADENCE_MAX_CELLS, CoverageComparisonStrip, coverageCadence } from './CoveragePage'
+import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
+import type { TrendPoint } from '@/types/metrics'
 
 // Mock every export from useMetrics — the page (and any child it renders)
 // may pull in more hooks than the test exercises, and vitest errors out if
@@ -493,5 +495,109 @@ describe('CoverageComparisonStrip', () => {
     const strip = screen.getByLabelText(/Coverage comparison/i)
     // Pass-rate cell shows the em-dash because delta < 0.01.
     expect(strip.textContent).toContain('—')
+  })
+})
+
+const day = (date: string, executions: number): TrendPoint => ({
+  date, passed: executions, failed: 0, skipped: 0, broken: 0, pass_rate: executions ? 100 : 0,
+})
+
+describe('coverageCadence (the run cadence strip)', () => {
+  const today = '2026-09-28'
+
+  it('has one cell per day, quiet days included, oldest first, today marked', () => {
+    const { cells } = coverageCadence([day('2026-09-27', 3)], 5, today)
+    expect(cells.map((c) => c.key)).toEqual(['2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28'])
+    expect(cells.map((c) => c.tone)).toEqual(['none', 'none', 'none', 'pass', 'none'])
+    expect(cells.map((c) => c.marker ?? null)).toEqual([null, null, null, null, 'today'])
+    expect(cells[3].label).toBe('2026-09-27 · 3 executions')
+    expect(cells[0].label).toBe('2026-09-24 · 0 executions')
+  })
+
+  it("keeps Coverage's five volume levels (0 / 1-5 / 6-20 / 21-50 / more than 50)", () => {
+    const counts = [0, 1, 5, 6, 20, 21, 50, 51]
+    const trend = counts.map((n, i) => day(shiftDayIso(today, -(counts.length - 1 - i)), n))
+    const { cells } = coverageCadence(trend, counts.length, today)
+    expect(cells.map((c) => c.level)).toEqual([0, 1, 1, 2, 2, 3, 3, 4])
+  })
+
+  it("counts every status in a day's volume, broken included", () => {
+    const { cells } = coverageCadence(
+      [{ date: `${today}T00:00:00Z`, passed: 2, failed: 2, skipped: 1, broken: 1, pass_rate: 33 }],
+      1,
+      today,
+    )
+    expect(cells[0].level).toBe(2) // 6 executions
+  })
+
+  it('is volume, not outcome: no cell is marked mixed or failed, so no failure cue', () => {
+    const trend = [{ date: today, passed: 0, failed: 9, skipped: 0, broken: 0, pass_rate: 0 }]
+    const { cells } = coverageCadence(trend, 3, today)
+    expect(cells.map((c) => c.tone)).toEqual(['none', 'none', 'pass'])
+  })
+
+  // The bug B3 found: the label counted the whole window but said "last 30".
+  it('labels only the cells it draws when the window is longer than 30 days', () => {
+    // 90 days: runs on 20 days that are NOT drawn (61-80 days ago) and on 4 that are.
+    const trend = [
+      ...Array.from({ length: 20 }, (_, i) => day(shiftDayIso(today, -(61 + i)), 2)),
+      ...[0, 3, 7, 12].map((ago) => day(shiftDayIso(today, -ago), 2)),
+    ]
+    const { cells, label } = coverageCadence(trend, 90, today)
+    expect(cells).toHaveLength(CADENCE_MAX_CELLS)
+    expect(cells[0].key).toBe(shiftDayIso(today, -29))
+    expect(label).toBe('Run cadence over the last 30 days. 4 active days, 26 empty days.')
+  })
+})
+
+describe('CoveragePage — verdict meter and cadence strip', () => {
+  const renderPage = () =>
+    render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+  it('draws the health score as a named meter and the cadence as a labelled strip', async () => {
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 18, suite_count: 4, total_executions: 120, avg_pass_rate: 92.5, days_with_runs: 7 },
+        suites: [{ suite_name: 'Payments', unique_tests: 6, passed: 48, failed: 2, skipped: 1, pass_rate: 96 }],
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [day(utcDayIso(), 30)], period_days: 30 },
+      isLoading: false,
+    })
+    renderPage()
+
+    const meter = await screen.findByRole('meter', { name: 'Coverage health score' })
+    const score = Number(meter.getAttribute('aria-valuenow'))
+    expect(score).toBeGreaterThan(0)
+    expect(meter.getAttribute('aria-valuetext')).toMatch(new RegExp(`^${score} of 100, (Healthy|At risk|Blocked)$`))
+    expect(meter).toHaveAttribute('data-gauge-bar', 'fill')
+    for (const tick of ['Block · 0', 'At risk · 33', 'Healthy · 66', '100']) expect(within(meter).getByText(tick)).toBeInTheDocument()
+
+    const strip = screen.getByRole('img', { name: /^Run cadence over the last \d+ days\. 1 active days, \d+ empty days\.$/ })
+    expect(strip.querySelectorAll('[data-day-cell]').length).toBeGreaterThan(1)
+    expect(strip.querySelector('[data-day-cue]')).toBeNull()
+    expect(strip.closest('[data-day-strip]')).toHaveAttribute('data-day-strip', 'intensity')
+  })
+
+  it('a PENDING verdict (composite 0) draws no reading: the bar is not measured', async () => {
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 0, suite_count: 0, total_executions: 0, avg_pass_rate: 0, days_with_runs: 0 },
+        suites: [{ suite_name: 'Payments', unique_tests: 0, passed: 0, failed: 0, skipped: 0, pass_rate: 0 }],
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    renderPage()
+    expect(await screen.findByRole('img', { name: 'Coverage health score: not measured' })).toBeInTheDocument()
+    expect(screen.queryByRole('meter', { name: 'Coverage health score' })).toBeNull()
   })
 })

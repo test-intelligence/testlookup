@@ -1,12 +1,9 @@
+import { useMemo } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
   Clock, Activity, AlertTriangle, Calendar, FolderTree,
 } from 'lucide-react'
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend,
-} from 'recharts'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
@@ -17,6 +14,18 @@ import { useSuiteTrend } from '@/hooks/useSuiteTrend'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
+import type { TrendPoint } from '@/types/metrics'
+import type { SuiteTrendPoint } from '@/hooks/useSuiteTrend'
+import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
+import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
+import { readyState } from '@/components/charts/chartState'
+import {
+  buildStackedColumnModel,
+  STATUS_STACK_SERIES,
+  utcDayLabel,
+  type StackedColumnModel,
+} from '@/components/charts/stackedColumnModel'
+import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
 
 const PERIODS = [
   { label: '1d',  days: 1 },
@@ -27,12 +36,50 @@ const PERIODS = [
 ] as const
 const PERIOD_DAYS = PERIODS.map(p => p.days) as readonly number[]
 
-const TOOLTIP_STYLE = {
-  backgroundColor: '#1e293b', border: '1px solid #334155',
-  borderRadius: '8px', color: '#e2e8f0', fontSize: '12px',
+/**
+ * The suite's per-day counts as stacked columns. The days are zero-filled by
+ * `suite_history_service`, so a day without a run is a MEASURED zero (a tick
+ * on the baseline), not a gap.
+ */
+function runHistoryModel(points: readonly SuiteTrendPoint[]): StackedColumnModel {
+  return buildStackedColumnModel({
+    buckets: points.map((p) => ({
+      key: p.date,
+      label: utcDayLabel(p.date),
+      values: { passed: p.passed_count, failed: p.failed_count, broken: p.broken_count, skipped: p.skipped_count },
+    })),
+    // Four statuses, four colours and decals, in the kit's one stack order (R2 F4).
+    series: STATUS_STACK_SERIES,
+    valueTitle: 'Executions',
+    bucketTitle: 'Day (UTC)',
+    xType: 'time',
+  })
 }
 
-const AXIS_TICK = { fill: '#64748b', fontSize: 11 }
+/**
+ * The suite's pass rate PER DAY (owner decision OD-4), from the same per-day
+ * counts as the run history. The rate is passed over what was evaluated —
+ * skipped is outside it, as everywhere in the kit (`timeSeriesFromTrends`) —
+ * and a day with nothing evaluated has no rate at all: a gap, never 0 %.
+ */
+function suitePassRateModel(points: readonly SuiteTrendPoint[]): TimeSeriesModel {
+  const trend: TrendPoint[] = points.map((p) => {
+    const evaluated = p.passed_count + p.failed_count + p.broken_count
+    return {
+      date: p.date,
+      passed: p.passed_count,
+      failed: p.failed_count,
+      broken: p.broken_count,
+      skipped: p.skipped_count,
+      total: p.total_tests,
+      pass_rate: evaluated > 0 ? (p.passed_count / evaluated) * 100 : 0,
+    }
+  })
+  return buildTimeSeriesModel({ points: timeSeriesFromTrends(trend) })
+}
+
+/** What one point of the per-day pass rate is, stated under the chart's title (R2 F7). */
+const PASS_RATE_POINT_NOTE = 'One point per day with runs · a day without runs is a gap, never 0%'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -120,7 +167,11 @@ export default function SuiteDetailPage() {
   // shows the same numbers. Keyed on (suiteName, activeProjectId, days) so
   // the chart refreshes in lockstep with the days selector and the active
   // project, without driving state from an effect.
-  const { points: trendPoints, isLoading: trendLoading } = useSuiteTrend(suiteName || null, days)
+  const { points: trendPoints } = useSuiteTrend(suiteName || null, days)
+  // Both charts read the one per-day series, so their days always line up.
+  const historyModel = useMemo(() => runHistoryModel(trendPoints), [trendPoints])
+  const passRateModel = useMemo(() => suitePassRateModel(trendPoints), [trendPoints])
+  const trendHasRuns = trendPoints.some((p) => p.run_count > 0)
   // The reverse-direction link to the catalog needs a TestSuite *id*,
   // but the analytics page only knows the name (from the URL). Use the
   // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
@@ -171,16 +222,7 @@ export default function SuiteDetailPage() {
     (summary.unique_tests ?? 0) > 0
     || (summary.total_executions ?? 0) > 0
     || recentRuns.length > 0
-    || trendPoints.some(p => p.run_count > 0)
-
-  // Chart data — pass rate trend across recent runs (oldest first)
-  const chartData = [...recentRuns].reverse().map((r) => ({
-    name: r.build_number ?? fmtDate(r.run_date),
-    passed:  r.passed,
-    failed:  r.failed,
-    skipped: r.skipped,
-    pass_rate: Number(r.pass_rate ?? 0),
-  }))
+    || trendHasRuns
 
   const periodSelector = (
     <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
@@ -291,68 +333,42 @@ export default function SuiteDetailPage() {
             ))}
           </div>
 
-          {/* Run-history trend — per-day count of runs that included this
-              suite, broken down by status. Independent of the
-              recent-runs pass-rate chart below (which is per-run,
-              snapshot-style). Hidden when there's less than one day of
-              data so empty suites don't show a flat zero chart. */}
-          {trendPoints.some(p => p.run_count > 0) && (
-            <div className="card">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-[var(--color-text)]">
-                  Run history — last {days} days
-                </h3>
-                <span className="text-xs text-[var(--color-text-muted)]">
-                  {trendPoints.reduce((a, p) => a + p.run_count, 0)} runs ·
-                  {' '}{trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions
-                </span>
-              </div>
-              {trendLoading ? (
-                <div className="flex items-center justify-center h-48"><LoadingSpinner size="sm" /></div>
-              ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={trendPoints} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="var(--status-passed)" />
-                    <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="var(--status-failed)" />
-                    <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="var(--status-broken)" />
-                    <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="var(--status-broken)" />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
+          {/* Run history — per-day executions of this suite by status, on the
+              chart kit (VIZ-104). Hidden when no day in the window had a run,
+              so an empty suite does not show a row of zero columns. The run-
+              by-run pass rates stay in the "Recent runs" table below. */}
+          {trendHasRuns && (
+            <StackedColumnChartFrame
+              title={`Run history — last ${days} days`}
+              takeaway={`${trendPoints.reduce((a, p) => a + p.run_count, 0)} runs · ${trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions`}
+              headingLevel={3}
+              state={readyState(trendPoints)}
+              model={historyModel}
+              height={220}
+              bucketNoun="day"
+            />
           )}
 
-          {/* Pass Rate Trend */}
-          {chartData.length > 1 && (
-            <div className="card">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
-                Pass Rate Trend — Last {recentRuns.length} Runs
-              </h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                  <defs>
-                    <linearGradient id="passGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="var(--status-passed)" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="var(--status-passed)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="name" tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} unit="%" />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Pass Rate']} />
-                  <Area
-                    type="monotone" dataKey="pass_rate" stroke="var(--status-passed)"
-                    strokeWidth={2} fill="url(#passGrad)" dot={{ r: 3, fill: 'var(--status-passed)' }}
-                    name="Pass Rate"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+          {/* Pass rate PER DAY (OD-4): the kit's time series over the same
+              days, with its gap semantics — a day nobody ran is a gap.
+
+              The common cadence (nightly on weekdays, every other day) leaves
+              no two adjacent days with a rate, so the chart is a row of dots
+              under a legend that shows a line (R2 F7). The dots stay apart:
+              joining them across a day without runs would draw a trend
+              through a day nobody measured, and Trends does not either (the
+              kit keeps `connectNulls` off, and a no-run day and a skips-only
+              day are the same `null` to it). The takeaway says what a point
+              is instead, where a sighted reader sees it. */}
+          {trendHasRuns && (
+            <TimeSeriesChartFrame
+              title={`Pass rate trend — last ${days} days`}
+              takeaway={PASS_RATE_POINT_NOTE}
+              headingLevel={3}
+              state={readyState(trendPoints)}
+              model={passRateModel}
+              height={220}
+            />
           )}
 
           {/* Test Cases Table */}

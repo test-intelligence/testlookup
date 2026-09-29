@@ -2,7 +2,16 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import FailureAnalysisPage, { buildFailuresCsv } from './FailureAnalysisPage'
+import FailureAnalysisPage, {
+  buildFailuresCsv,
+  failureTimelineCells,
+  failureTimelineLabel,
+  RUN_STRIP_DAYS,
+  runStripCells,
+  runStripLabel,
+  TIMELINE_MAX_CELLS,
+} from './FailureAnalysisPage'
+import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 
 vi.mock('@/hooks/useMetrics', () => ({
@@ -1011,5 +1020,199 @@ describe('buildFailuresCsv', () => {
 
     expect(csv).toContain('# Project,All projects')
     expect(csv).toContain('# Suite filter,Smoke')
+  })
+})
+
+const point = (date: string, passed: number, failed: number, skipped = 0, broken = 0) => ({
+  date, passed, failed, skipped, broken, pass_rate: passed + failed ? (passed / (passed + failed)) * 100 : 0,
+})
+
+describe("runStripCells (What's failing: the 14-day run strip)", () => {
+  const today = '2026-09-28'
+
+  it('is always the last 14 days, oldest first, whatever the trend holds', () => {
+    const cells = runStripCells([point('2026-01-01', 5, 0)], today)
+    expect(cells).toHaveLength(RUN_STRIP_DAYS)
+    expect(cells[0].key).toBe(shiftDayIso(today, -13))
+    expect(cells[13].key).toBe(today)
+    expect(cells.every((c) => c.tone === 'none')).toBe(true)
+  })
+
+  it('a failure makes the day fail; a pass with no failure passes; nothing (or skips only) did not run', () => {
+    const cells = runStripCells(
+      [
+        point(shiftDayIso(today, -4), 9, 1),
+        point(shiftDayIso(today, -3), 4, 0),
+        point(shiftDayIso(today, -2), 0, 0, 3, 0), // skipped only: nothing passed or failed
+      ],
+      today,
+    )
+    expect(cells.slice(-5).map((c) => c.tone)).toEqual(['fail', 'pass', 'none', 'none', 'none'])
+    expect(cells[9].label).toBe(`${shiftDayIso(today, -4)} · failed`)
+    expect(cells[13].label).toBe(`${today} · not run`)
+    // Only `fail` cells carry the failure cue: no mixed tone on this strip.
+    expect(cells.some((c) => c.tone === 'mixed')).toBe(false)
+  })
+
+  // The owner's rule (OD-7 / OD-16): a chart does not silently drop a status.
+  // A broken-only day used to be drawn as "not run" — a quiet day.
+  it('broken is failure-like: a broken-only day is a failing day, not "not run"', () => {
+    const cells = runStripCells(
+      [
+        point(shiftDayIso(today, -1), 0, 0, 2, 1), // skipped + broken only
+        point(today, 5, 0, 0, 2), // passes and breakages, no failure
+      ],
+      today,
+    )
+    expect(cells.slice(-2).map((c) => c.tone)).toEqual(['fail', 'fail'])
+    expect(cells[12].label).toBe(`${shiftDayIso(today, -1)} · broken`)
+    expect(runStripLabel(cells)).toBe('Run strip: 2 failed, 0 passed, 12 not run.')
+    expect(runStripCells([point(today, 0, 1, 0, 1)], today)[13].label).toBe(`${today} · failed and broken`)
+  })
+
+  it('keeps the "Run strip:" name the card and its visual spec find it by, with real counts', () => {
+    const cells = runStripCells([point(shiftDayIso(today, -3), 9, 1), point(shiftDayIso(today, -2), 4, 0)], today)
+    expect(runStripLabel(cells)).toBe('Run strip: 1 failed, 1 passed, 12 not run.')
+  })
+})
+
+describe('failureTimelineCells (the failure timeline)', () => {
+  const today = '2026-09-28'
+
+  it('draws at most 30 days and names the drawn window', () => {
+    const cells = failureTimelineCells([], 90, today)
+    expect(cells).toHaveLength(TIMELINE_MAX_CELLS)
+    expect(failureTimelineLabel(cells)).toBe('Failure timeline: 0 days with failures over the last 30 days.')
+    expect(failureTimelineCells([], 7, today)).toHaveLength(7)
+  })
+
+  it("deepens a failed day by its failed share (the severity), and counts only drawn days", () => {
+    const cells = failureTimelineCells(
+      [
+        point(shiftDayIso(today, -40), 0, 5), // outside the drawn 30: not counted
+        point(shiftDayIso(today, -2), 3, 1),
+        point(shiftDayIso(today, -1), 0, 4),
+        point(today, 6, 0),
+      ],
+      90,
+      today,
+    )
+    const [d2, d1, d0] = cells.slice(-3)
+    expect([d2.tone, d1.tone, d0.tone]).toEqual(['fail', 'fail', 'pass'])
+    expect(d2.severity).toBe(0.25)
+    expect(d1.severity).toBe(1)
+    expect(d0.severity).toBeUndefined()
+    expect(d2.label).toBe(`${shiftDayIso(today, -2)} · 1 of 4 failed`)
+    expect(failureTimelineLabel(cells)).toBe('Failure timeline: 2 days with failures over the last 30 days.')
+  })
+
+  it('a day with results that are all zero is an empty day, not a pass', () => {
+    const cells = failureTimelineCells([point(today, 0, 0)], 3, today)
+    // The run strip's word for the same day, on the same page.
+    expect(cells[2]).toMatchObject({ tone: 'none', label: `${today} · not run` })
+    expect(runStripCells([point(today, 0, 0)], today)[13]).toMatchObject({ tone: 'none', label: `${today} · not run` })
+  })
+
+  // R1 F6: `total` counts skipped, so 5 passed + 3 skipped read "8 passing",
+  // and a skips-only day read "4 passing" and was drawn green, while the run
+  // strip on the same card called that day "not run".
+  it('names passed and skipped truthfully, and a skips-only day is "not run", as on the run strip', () => {
+    const cells = failureTimelineCells(
+      [point(shiftDayIso(today, -1), 5, 0, 3), point(today, 0, 0, 4)],
+      2,
+      today,
+    )
+    expect(cells[0]).toMatchObject({ tone: 'pass', label: `${shiftDayIso(today, -1)} · 5 passed, 3 skipped` })
+    expect(cells[1]).toMatchObject({ tone: 'none', label: `${today} · not run (4 skipped)` })
+    expect(runStripCells([point(today, 0, 0, 4)], today)[13].tone).toBe(cells[1].tone)
+  })
+
+  // OD-7 / OD-16: broken counts, in the total and as failure-like.
+  it('counts broken alongside failed: a broken-only day fails, and broken deepens the severity', () => {
+    const cells = failureTimelineCells(
+      [
+        point(shiftDayIso(today, -2), 0, 0, 0, 3), // broken only: was "0 runs"
+        point(shiftDayIso(today, -1), 6, 1, 0, 1), // 1 failed + 1 broken of 8
+        point(today, 3, 0, 1, 0), // passes and a skip: a pass day
+      ],
+      3,
+      today,
+    )
+    expect(cells.map((c) => c.tone)).toEqual(['fail', 'fail', 'pass'])
+    expect(cells[0]).toMatchObject({ severity: 1, label: `${shiftDayIso(today, -2)} · 3 of 3 broken` })
+    expect(cells[1]).toMatchObject({
+      severity: 0.25,
+      label: `${shiftDayIso(today, -1)} · 2 of 8 failed or broken (1 broken)`,
+    })
+    expect(cells[2].label).toBe(`${today} · 3 passed, 1 skipped`)
+    expect(failureTimelineLabel(cells)).toBe('Failure timeline: 2 days with failures over the last 3 days.')
+  })
+})
+
+describe('FailureAnalysisPage — verdict meter and strips', () => {
+  it('draws the stability score as a meter, and both strips as named day strips', async () => {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'test A', fail_count: 4 }] },
+      isLoading: false,
+    })
+    const today = utcDayIso()
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [point(shiftDayIso(today, -1), 8, 2), point(today, 10, 0)] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    const meter = await screen.findByRole('meter', { name: 'Stability score' })
+    expect(meter).toHaveAttribute('data-gauge-bar', 'fill')
+    expect(meter.getAttribute('aria-valuetext')).toMatch(/^\d+ of 100, /)
+    for (const tick of ['Block · 0', 'At risk · 33', 'Stable · 66', '100']) expect(within(meter).getByText(tick)).toBeInTheDocument()
+
+    const strip = screen.getByRole('img', { name: 'Run strip: 1 failed, 1 passed, 12 not run.' })
+    expect(strip.querySelectorAll('[data-day-cell]')).toHaveLength(14)
+    // The failed day carries the failure cue, not colour alone.
+    expect(strip.querySelectorAll('[data-day-cue="fail"]')).toHaveLength(1)
+    expect(screen.getByText('1 fail · 12 idle · 1 pass')).toBeInTheDocument()
+
+    const timeline = screen.getByRole('img', { name: /^Failure timeline: 1 day with failures over the last \d+ days\.$/ })
+    expect(timeline.closest('[data-day-strip]')).toHaveAttribute('data-day-strip', 'status')
+    // One word for an empty day on this page: both strips state it as "Not run"
+    // (the run strip has no legend; its table says it), never "No runs".
+    for (const img of [strip, timeline]) {
+      const table = img.closest('[data-day-strip]')?.querySelector('[data-day-strip-table]') as HTMLElement
+      expect(table).toHaveTextContent('Not run')
+      expect(table).not.toHaveTextContent('No runs')
+    }
+    const legend = timeline.closest('[data-day-strip]')?.querySelector('[data-day-strip-legend]') as HTMLElement
+    expect(legend).toHaveTextContent('Not run')
+    expect(legend).not.toHaveTextContent('No runs')
+  })
+
+  it('with no runs the verdict is PENDING and the bar is not measured, never a 0 reading', async () => {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('img', { name: 'Stability score: not measured' })).toBeInTheDocument()
+    expect(screen.queryByRole('meter', { name: 'Stability score' })).toBeNull()
   })
 })

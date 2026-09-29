@@ -2,7 +2,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
 import { useChartAnimation } from './motion'
 import {
   ChartLegend,
@@ -42,8 +42,13 @@ interface Props {
 const TOOLTIP_STYLE = RECHARTS_TOOLTIP_STYLE
 const AXIS_TICK = RECHARTS_AXIS_TICK
 
-const BAR_STATUSES = ['passed', 'failed', 'skipped', 'broken'] as const
-const LINE_STATUSES = ['passed', 'failed', 'skipped'] as const
+// The kit's one status order (STATUS_STACK_ORDER): the stack, bottom first, and the legend.
+const BAR_STATUSES = STATUS_STACK_ORDER.filter(
+  (status): status is 'passed' | 'failed' | 'broken' | 'skipped' => status !== 'unknown',
+)
+const LINE_STATUSES = STATUS_STACK_ORDER.filter(
+  (status): status is 'passed' | 'failed' | 'skipped' => status === 'passed' || status === 'failed' || status === 'skipped',
+)
 
 export default function TrendChart({ data, type = 'line', height = 280, animate: requestedAnimate }: Props) {
   // Off under prefers-reduced-motion; otherwise the caller's choice (VIZ-105).
@@ -99,10 +104,18 @@ export default function TrendChart({ data, type = 'line', height = 280, animate:
           <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           <Legend content={() => <ChartLegend entries={legend} />} />
-          <Bar dataKey="passed"  stackId="a" fill={fill('passed')} name="Passed"  radius={[0, 0, 0, 0]} isAnimationActive={animate} />
-          <Bar dataKey="failed"  stackId="a" fill={fill('failed')} name="Failed"  isAnimationActive={animate} />
-          <Bar dataKey="skipped" stackId="a" fill={fill('skipped')} name="Skipped" isAnimationActive={animate} />
-          <Bar dataKey="broken"  stackId="a" fill={fill('broken')} name="Broken"  radius={[3, 3, 0, 0]} isAnimationActive={animate} />
+          {BAR_STATUSES.map((status, i) => (
+            <Bar
+              key={status}
+              dataKey={status}
+              stackId="a"
+              fill={fill(status)}
+              name={STATUS_ENCODING[status].label}
+              // Only the top of the stack is rounded.
+              radius={i === BAR_STATUSES.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+              isAnimationActive={animate}
+            />
+          ))}
         </BarChart>
       </ResponsiveContainer>
     )

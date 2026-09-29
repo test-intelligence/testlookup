@@ -54,6 +54,12 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { TimingCell } from '@/components/ui/TimingCell'
 import UploadReportModal from '@/components/runs/UploadReportModal'
+import DayStrip from '@/components/charts/DayStrip'
+import GaugeBar from '@/components/charts/GaugeBar'
+import Sparkline from '@/components/charts/Sparkline'
+import { buildSparklineModel } from '@/components/charts/Sparkline.model'
+import { countTones, type DayStripCell } from '@/components/charts/dayStrip.model'
+import type { GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
@@ -66,6 +72,7 @@ import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import { isRunInProgress, measuredRunPassRate } from '@/utils/runPassRate'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours, 0 = all time. NB: use 7 (a week), not 6, so the global
@@ -196,7 +203,10 @@ interface PipelineModel {
   failedRuns: number
   passedRuns: number
   inProgressRuns: number
-  avgPassRate: number
+  /** Mean pass rate over MEASURED builds; `null` when none has a result ("—", never 0 %). */
+  avgPassRate: number | null
+  /** Builds with a pass rate (the sparkline's points). */
+  measuredRuns: number
   redStreak: number                  // consecutive failures from newest backwards
   lastGreen: TestRun | null
   /** Most recent failed run. Paired with ``lastGreen`` to populate the
@@ -207,14 +217,10 @@ interface PipelineModel {
   outlierClusters: SignatureCluster[]
   hasMissingMetadata: boolean
   metadataCoveragePct: number
-  velocityCells: VelocityCell[]      // 14 cells for the velocity grid
+  velocityCells: DayStripCell[]      // 14 cells for the velocity strip, oldest first
+  /** Per-build pass rate, OLDEST first; `null` for a build with no result yet. */
+  passRateSeries: (number | null)[]
   uniqueClustersCount: number
-}
-
-interface VelocityCell {
-  kind: 'pass' | 'fail' | 'empty'
-  buildLabel: string | null
-  isLast: boolean
 }
 
 function isFailed(s: string): boolean {
@@ -223,28 +229,51 @@ function isFailed(s: string): boolean {
 function isPassed(s: string): boolean {
   return /^pass(ed)?$/i.test(s) || /success/i.test(s)
 }
-function isInProgress(s: string): boolean {
-  return /running|in[_-]?progress|pending|queued/i.test(s)
-}
+// One rule for "in flight" and "has a pass rate yet", shared with the
+// Intelligence Hub (OD-18, `utils/runPassRate`).
+const isInProgress = isRunInProgress
 
 function clusterSignature(r: TestRun): string {
   return `${r.passed_tests}|${r.failed_tests}|${r.total_tests}`
 }
 
-function buildVelocityCells(runs: TestRun[]): VelocityCell[] {
-  // Take the most-recent 14 runs, oldest first. Pad with "empty" cells if
-  // fewer than 14 runs exist.
+function buildVelocityCells(runs: TestRun[]): DayStripCell[] {
+  // Take the most-recent 14 runs, oldest first. The newest build carries the
+  // strip's "latest" marker: the cell a reader looks for first. With fewer
+  // than 14 runs, the "no build" cells pad the OLDEST end, before the first
+  // build: padded at the end they sat under "Now", newer than the newest
+  // build, and End read "no build" (R2 F2).
   const recent = [...runs]
     .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
     .slice(0, 14)
     .reverse()
-  const cells: VelocityCell[] = recent.map((r, i) => ({
-    kind: isFailed(r.status) ? 'fail' : isPassed(r.status) ? 'pass' : 'empty',
-    buildLabel: `#${r.build_number}`,
-    isLast: i === recent.length - 1,
+  const cells: DayStripCell[] = recent.map((r, i) => {
+    const tone = isFailed(r.status) ? 'fail' : isPassed(r.status) ? 'pass' : 'none'
+    return {
+      key: r.id,
+      label: `#${r.build_number} · ${tone === 'none' ? 'no result' : tone}`,
+      tone,
+      marker: i === recent.length - 1 ? 'today' : undefined,
+    }
+  })
+  const padding: DayStripCell[] = Array.from({ length: 14 - cells.length }, (_, i) => ({
+    key: `empty ${i}`,
+    label: 'no build',
+    tone: 'none',
   }))
-  while (cells.length < 14) cells.push({ kind: 'empty', buildLabel: null, isLast: false })
-  return cells
+  return [...padding, ...cells]
+}
+
+/**
+ * The "Avg pass rate" sparkline's series: one point per build, OLDEST first
+ * (the API lists runs newest first, and a sparkline reads left to right). A
+ * build still running, or one that ran no tests, has no pass rate yet: it is
+ * `null`, a gap in the line — never a 0 that would draw a crash nobody had.
+ */
+function buildPassRateSeries(runs: readonly TestRun[]): (number | null)[] {
+  return [...runs]
+    .sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
+    .map(measuredRunPassRate)
 }
 
 function computeRedStreak(runs: TestRun[]): number {
@@ -348,14 +377,21 @@ function shortSignatureLabel(c: SignatureCluster): string {
   return `${hex}-cluster`
 }
 
-function buildPipelineModel(runs: TestRun[]): PipelineModel {
+export function buildPipelineModel(runs: TestRun[]): PipelineModel {
   const totalRuns      = runs.length
   const failedRuns     = runs.filter(r => isFailed(r.status)).length
   const passedRuns     = runs.filter(r => isPassed(r.status)).length
   const inProgressRuns = runs.filter(r => isInProgress(r.status)).length
-  const avgPassRate    = totalRuns > 0
-    ? runs.reduce((s, r) => s + (Number(r.pass_rate) || 0), 0) / totalRuns
-    : 0
+  // The average is over MEASURED builds only — the same builds the sparkline
+  // draws. A running build or one that ran no tests has no pass rate; reading
+  // it as 0 % dragged the number down while the line beside it left a gap.
+  // With nothing measured the average is `null` ("—"), never 0 %.
+  const passRateSeries = buildPassRateSeries(runs)
+  const measuredRates  = passRateSeries.filter((v): v is number => v !== null)
+  const measuredRuns   = measuredRates.length
+  const avgPassRate    = measuredRuns > 0
+    ? measuredRates.reduce((s, v) => s + v, 0) / measuredRuns
+    : null
   const redStreak = computeRedStreak(runs)
   const lastGreen = findLastGreen(runs)
   const latestFailedRun = findLatestFailed(runs)
@@ -401,6 +437,8 @@ function buildPipelineModel(runs: TestRun[]): PipelineModel {
     primaryCluster: primary, outlierClusters: outliers,
     hasMissingMetadata, metadataCoveragePct,
     velocityCells: buildVelocityCells(runs),
+    passRateSeries,
+    measuredRuns,
     uniqueClustersCount: totalUniqueClusters,
   }
 }
@@ -624,7 +662,22 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
   )
 }
 
-function HealthMeter({ model, verdict }: { model: PipelineModel; verdict: Verdict }) {
+/** The health meter's scale: the band edges the pill uses, in words and values. */
+const HEALTH_TICKS: readonly GaugeTick[] = [
+  { value: 0, label: 'Blocked' },
+  { value: 33, label: 'At risk' },
+  { value: 66, label: 'Stable' },
+  { value: 100 },
+]
+
+const VERDICT_GAUGE_TONE: Record<Verdict, GaugeTone> = {
+  BROKEN: 'bad',
+  MIXED: 'warn',
+  HEALTHY: 'good',
+  PENDING: 'neutral',
+}
+
+export function HealthMeter({ model, verdict }: { model: PipelineModel; verdict: Verdict }) {
   const t = VERDICT_THEME[verdict]
   const score = model.composite
   const pillLabel = score >= 66 ? 'Stable' : score >= 33 ? 'At risk' : 'Blocked'
@@ -647,35 +700,18 @@ function HealthMeter({ model, verdict }: { model: PipelineModel; verdict: Verdic
           {pillLabel}
         </span>
       </div>
-      <div
-        className="relative mt-3 rounded-full"
-        style={{ height: 6, background: 'var(--gradient-confidence)' }}
-        role="img"
-        aria-label={`Pipeline health ${score} of 100, ${pillLabel}`}
-      >
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(0,0,0,0.5)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(0,0,0,0.5)' }} />
-        </div>
-        <span
-          aria-hidden
-          className="absolute rounded-full"
-          style={{
-            top: '50%',
-            left: `${Math.max(0, Math.min(100, score))}%`,
-            transform: 'translate(-50%, -50%)',
-            width: 14, height: 14,
-            background: 'var(--color-bg-card)',
-            boxShadow: `0 0 0 2px ${t.meter === 'var(--status-failed)' ? 'color-mix(in srgb, var(--status-failed) 25%, transparent)' : 'rgba(0,0,0,0.4)'}`,
-            border: `2px solid ${t.meter}`,
-          }}
+      {/* PENDING has no score: the header says "—", so the meter is an empty
+          track ("not measured"), never a marker parked at 0. */}
+      <div className="mt-3">
+        <GaugeBar
+          variant="marker"
+          gradient="health"
+          tone={VERDICT_GAUGE_TONE[verdict]}
+          value={verdict === 'PENDING' ? null : score}
+          label="Pipeline health"
+          valueText={`${score} of 100, ${pillLabel}`}
+          ticks={HEALTH_TICKS}
         />
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Blocked · 0</span>
-        <span>At risk · 33</span>
-        <span>Stable · 66</span>
-        <span>100</span>
       </div>
     </div>
   )
@@ -871,67 +907,118 @@ function KpiCell({
   )
 }
 
-// 7 red bars, last one taller — for "Builds failed".
-function SparklineRedBars({ count, brighterLast = true }: { count: number; brighterLast?: boolean }) {
-  const n = Math.max(1, Math.min(7, count))
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="22" x2="100" y2="22" stroke="var(--color-border)" strokeWidth={1} />
-      {Array.from({ length: n }).map((_, i) => {
-        const x = 3 + i * (97 / n)
-        const w = Math.min(11, 97 / n - 2)
-        const tall = brighterLast && i === n - 1
-        return <rect key={i} x={x} y={tall ? 2 : 6} width={w} height={tall ? 20 : 16} rx={1} fill={tall ? 'var(--status-failed)' : 'var(--status-failed)'} />
-      })}
-    </svg>
-  )
-}
+/** A pass rate's fixed scale: the sparkline shows 80 → 95 as the small rise it is. */
+const PASS_RATE_DOMAIN = [0, 100] as const
 
-// Stacked bar — primary (red) wide, secondary (amber) narrow — for "Unique failures".
-function SparklineStackedShare({ primaryPct }: { primaryPct: number }) {
-  const p = Math.max(0, Math.min(100, primaryPct))
+/**
+ * The five run KPIs. Owner decision OD-1 (Wave 2.5): a KPI glyph draws a REAL
+ * series or a real scalar, or nothing.
+ *
+ *   - Avg pass rate: a `Sparkline` of every build's pass rate, oldest first;
+ *   - Unique failures: a two-segment `GaugeBar` — the builds in the primary
+ *     signature vs the rest (only when something failed);
+ *   - Builds failed, Last green build, Red streak: no glyph. The first and the
+ *     last were bar counts that repeated the Build velocity strip below; the
+ *     middle one was two constant dots.
+ */
+export function RunKpiStrip({ model }: { model: PipelineModel }) {
+  const buildsFailedFraction = model.totalRuns > 0 ? (model.failedRuns / model.totalRuns) * 100 : 0
+  const lastGreenLabel = model.hoursSinceLastGreen != null ? `${model.hoursSinceLastGreen}h` : '—'
+  const avg = model.avgPassRate
+  const avgTone: KpiTone = avg === null ? 'neutral' : avg >= 80 ? 'good' : avg >= 50 ? 'warn' : 'bad'
+  const primaryCount = model.primaryCluster?.members.length ?? 0
+  // Fewer than two builds with a result is no trend: the cell stays short
+  // rather than holding an empty glyph row.
+  const hasPassRateTrend = buildSparklineModel(model.passRateSeries) !== null
+  const uniqueFailuresGauge = model.primaryCluster && model.failedRuns > 0 ? (
+    <GaugeBar
+      value={model.failedRuns}
+      domain={[0, model.failedRuns]}
+      size="sm"
+      label="Failed builds by signature"
+      segments={[
+        { value: primaryCount, label: 'Primary signature', tone: 'bad' },
+        { value: model.failedRuns - primaryCount, label: 'Other signatures', tone: 'neutral' },
+      ]}
+    />
+  ) : undefined
   return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <rect x="2" y="4" width={Math.max(2, p - 2)} height="16" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
-      <rect x={p} y="4" width={Math.max(2, 96 - p)} height="16" rx="2" fill="var(--status-broken)" />
-    </svg>
-  )
-}
-
-// Dashed target line + amber series — for "Avg pass rate" (misleading-headline framing).
-function SparklineTargetWithDot({ valuePct }: { valuePct: number }) {
-  const y = 24 - (Math.max(0, Math.min(100, valuePct)) / 100) * 18
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="3" x2="100" y2="3" stroke="color-mix(in srgb, var(--status-passed) 40%, transparent)" strokeDasharray="2 3" strokeWidth={1} />
-      <line x1="0" y1={y} x2="100" y2={y} stroke="var(--status-broken)" strokeWidth={1.2} />
-      <circle cx={92} cy={y} r={2} fill="var(--status-broken)" />
-    </svg>
-  )
-}
-
-// Two dots connected by a dashed line — for "Last green build".
-function SparklineDottedPair({ leftHealthy = true, rightFailing = true }: { leftHealthy?: boolean; rightFailing?: boolean }) {
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="8" y1="12" x2="92" y2="12" stroke="var(--color-border)" strokeDasharray="2 3" strokeWidth={1} />
-      <circle cx={8}  cy={12} r={3} fill={leftHealthy ? 'var(--status-passed)' : 'var(--color-text-faint)'} />
-      <circle cx={92} cy={12} r={3} fill={rightFailing ? 'color-mix(in srgb, var(--status-failed) 80%, transparent)' : 'var(--status-passed)'} />
-    </svg>
-  )
-}
-
-// 7 red bars — for "Red streak".
-function SparklineRedStreak({ count }: { count: number }) {
-  const n = Math.max(1, Math.min(7, count))
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      {Array.from({ length: n }).map((_, i) => {
-        const x = 2 + i * (96 / n)
-        const w = Math.min(12, 96 / n - 2)
-        return <rect key={i} x={x} y={6} width={w} height={16} rx={1} fill="var(--status-failed)" />
-      })}
-    </svg>
+    <section aria-label="Run KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+      <KpiCell
+        Icon={XCircle}
+        label="Builds failed"
+        value={model.failedRuns}
+        sub={`/ ${model.totalRuns}`}
+        tone={model.failedRuns > 0 ? 'bad' : 'good'}
+        meta={<>{Math.round(buildsFailedFraction)}% of window</>}
+        isFirst
+      />
+      <KpiCell
+        Icon={Layers}
+        label="Unique failures"
+        value={model.uniqueClustersCount}
+        sub={model.uniqueClustersCount === 1 ? 'signature' : 'signatures'}
+        tone={model.uniqueClustersCount === 1 && model.failedRuns >= 2 ? 'bad' : model.uniqueClustersCount > 0 ? 'warn' : 'good'}
+        meta={
+          model.primaryCluster
+            ? <>{model.primaryCluster.members.length} of {model.failedRuns} match · low diversity</>
+            : <>nothing to cluster</>
+        }
+        spark={uniqueFailuresGauge}
+      />
+      <KpiCell
+        Icon={BarChart3}
+        label="Avg pass rate"
+        value={avg === null ? '—' : `${avg.toFixed(1)}`}
+        sub={avg === null ? undefined : '%'}
+        tone={avgTone}
+        meta={
+          avg === null
+            ? <>not measured — no build has a result yet</>
+            : model.failedRuns === model.totalRuns
+              ? <>misleading — every build still failed</>
+              : model.measuredRuns < model.totalRuns
+                ? <>{model.measuredRuns} of {model.totalRuns} builds measured</>
+                : <>{model.passedRuns} pass · {model.failedRuns} fail</>
+        }
+        spark={hasPassRateTrend ? (
+          <Sparkline
+            series={model.passRateSeries}
+            label="Pass rate per build, oldest first"
+            domain={PASS_RATE_DOMAIN}
+            format={(v) => `${v.toFixed(1)}%`}
+            tone={avgTone}
+            height={24}
+          />
+        ) : undefined}
+      />
+      <KpiCell
+        Icon={Clock}
+        label="Last green build"
+        value={lastGreenLabel}
+        sub="ago"
+        tone={
+          model.hoursSinceLastGreen == null ? 'neutral'
+          : model.hoursSinceLastGreen <= 24 ? 'good'
+          : model.hoursSinceLastGreen <= 72 ? 'warn'
+          : 'bad'
+        }
+        meta={
+          model.lastGreen
+            ? <>predecessor of <code className="font-mono text-[10px]">{model.lastGreen.id.slice(0, 8)}</code></>
+            : <>no green build in window</>
+        }
+      />
+      <KpiCell
+        Icon={Sparkles}
+        label="Red streak"
+        value={model.redStreak}
+        sub={model.redStreak === 1 ? 'in a row' : 'in a row'}
+        tone={model.redStreak >= 3 ? 'bad' : model.redStreak > 0 ? 'warn' : 'good'}
+        meta={model.redStreak > 0 ? <>longest streak in window</> : <>no streak — last build passed</>}
+        isLast
+      />
+    </section>
   )
 }
 
@@ -1471,48 +1558,24 @@ function CalloutStat({ label, value, tone }: { label: string; value: React.React
 }
 
 // ── Build velocity card ──────────────────────────────────────────────────
-function BuildVelocityCard({ cells, redStreak }: { cells: VelocityCell[]; redStreak: number }) {
+export function BuildVelocityCard({ cells, redStreak }: { cells: DayStripCell[]; redStreak: number }) {
+  const n = countTones(cells)
   return (
     <CardShell title="Build velocity · 14d" rightSlot={<span>{redStreak} reds in a row</span>}>
       <div className="px-4 pt-1 pb-3.5">
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2.5" style={{ lineHeight: 1.5 }}>
           Each cell is one build, oldest left.
         </p>
-        <div
-          role="img"
-          aria-label={`Build velocity over the last 14 builds: ${cells.filter(c => c.kind === 'pass').length} passed, ${cells.filter(c => c.kind === 'fail').length} failed, ${cells.filter(c => c.kind === 'empty').length} no-build cells.`}
-          className="grid gap-1.5 mb-2.5"
-          style={{ gridTemplateColumns: 'repeat(14, 1fr)' }}
-        >
-          {cells.map((c, i) => (
-            <div
-              key={i}
-              title={c.buildLabel ? `${c.buildLabel} · ${c.kind}` : 'no build'}
-              className="rounded-sm"
-              style={{
-                aspectRatio: '1',
-                background: c.kind === 'pass' ? 'var(--status-passed)' : c.kind === 'fail' ? 'var(--gate-no-go)' : 'var(--color-bg-secondary)',
-                border: c.kind === 'empty' ? '1px solid var(--color-border)' : '1px solid transparent',
-                boxShadow: c.isLast && c.kind === 'fail' ? '0 0 0 1px color-mix(in srgb, var(--status-failed) 45%, transparent)' : 'none',
-              }}
-            />
-          ))}
-        </div>
-        <div className="flex justify-between text-[10px] text-[var(--color-text-muted)]">
-          <span>14 builds ago</span>
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-flex items-center gap-1">
-              <i aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--status-passed)' }} />Pass
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <i aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--gate-no-go)' }} />Fail
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <i aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }} />No build
-            </span>
-          </span>
-          <span>Now</span>
-        </div>
+        <DayStrip
+          mode="status"
+          cells={cells}
+          unit="build"
+          gap={6}
+          title="Build velocity"
+          label={`Build velocity over the last 14 builds: ${n.pass} passed, ${n.fail} failed, ${n.none} no-build cells.`}
+          endLabel="Now"
+          text={{ none: 'No build', today: 'Latest build' }}
+        />
       </div>
     </CardShell>
   )
@@ -2038,13 +2101,6 @@ export default function RunsPage() {
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
-  // KPI sparkline data ────────────────────────────────────────────────────
-  const buildsFailedFraction = model.totalRuns > 0 ? (model.failedRuns / model.totalRuns) * 100 : 0
-  const primaryShare = model.primaryCluster && model.failedRuns > 0
-    ? (model.primaryCluster.members.length / model.failedRuns) * 100
-    : 0
-  const lastGreenLabel = model.hoursSinceLastGreen != null ? `${model.hoursSinceLastGreen}h` : '—'
-
   const onJumpToRow = (run: TestRun) => {
     const el = document.getElementById(`run-row-${run.id}`)
     if (el) {
@@ -2165,72 +2221,7 @@ export default function RunsPage() {
       <WorkflowRibbon stages={ribbonStages} />
 
       {/* KPI strip */}
-      <section aria-label="Run KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-        <KpiCell
-          Icon={XCircle}
-          label="Builds failed"
-          value={model.failedRuns}
-          sub={`/ ${model.totalRuns}`}
-          tone={model.failedRuns > 0 ? 'bad' : 'good'}
-          meta={<>{Math.round(buildsFailedFraction)}% of window</>}
-          spark={<SparklineRedBars count={Math.min(7, model.failedRuns)} />}
-          isFirst
-        />
-        <KpiCell
-          Icon={Layers}
-          label="Unique failures"
-          value={model.uniqueClustersCount}
-          sub={model.uniqueClustersCount === 1 ? 'signature' : 'signatures'}
-          tone={model.uniqueClustersCount === 1 && model.failedRuns >= 2 ? 'bad' : model.uniqueClustersCount > 0 ? 'warn' : 'good'}
-          meta={
-            model.primaryCluster
-              ? <>{model.primaryCluster.members.length} of {model.failedRuns} match · low diversity</>
-              : <>nothing to cluster</>
-          }
-          spark={<SparklineStackedShare primaryPct={primaryShare} />}
-        />
-        <KpiCell
-          Icon={BarChart3}
-          label="Avg pass rate"
-          value={`${model.avgPassRate.toFixed(1)}`}
-          sub="%"
-          tone={model.avgPassRate >= 80 ? 'good' : model.avgPassRate >= 50 ? 'warn' : 'bad'}
-          meta={
-            model.failedRuns === model.totalRuns && model.totalRuns > 0
-              ? <>misleading — every build still failed</>
-              : <>{model.passedRuns} pass · {model.failedRuns} fail</>
-          }
-          spark={<SparklineTargetWithDot valuePct={model.avgPassRate} />}
-        />
-        <KpiCell
-          Icon={Clock}
-          label="Last green build"
-          value={lastGreenLabel}
-          sub="ago"
-          tone={
-            model.hoursSinceLastGreen == null ? 'neutral'
-            : model.hoursSinceLastGreen <= 24 ? 'good'
-            : model.hoursSinceLastGreen <= 72 ? 'warn'
-            : 'bad'
-          }
-          meta={
-            model.lastGreen
-              ? <>predecessor of <code className="font-mono text-[10px]">{model.lastGreen.id.slice(0, 8)}</code></>
-              : <>no green build in window</>
-          }
-          spark={<SparklineDottedPair leftHealthy rightFailing={model.failedRuns > 0} />}
-        />
-        <KpiCell
-          Icon={Sparkles}
-          label="Red streak"
-          value={model.redStreak}
-          sub={model.redStreak === 1 ? 'in a row' : 'in a row'}
-          tone={model.redStreak >= 3 ? 'bad' : model.redStreak > 0 ? 'warn' : 'good'}
-          meta={model.redStreak > 0 ? <>longest streak in window</> : <>no streak — last build passed</>}
-          spark={<SparklineRedStreak count={model.redStreak} />}
-          isLast
-        />
-      </section>
+      <RunKpiStrip model={model} />
 
       {/* Runs table is now full-width — matches the VerdictCard /
           WorkflowRibbon / KPI strip widths above it. Layout updated

@@ -108,14 +108,32 @@ describe('KpiStrip states only what it counted', () => {
     expect(document.body.textContent).toMatch(/2.*at Planning/)
   })
 
-  it('honours an override, which is the only supported source of a real trend', () => {
+  it('honours an override, and still draws no trend line (the prop that could is gone)', () => {
     const { container } = render(
-      <KpiStrip
-        releases={[]}
-        override={[{ label: 'Measured', value: 7, sparkline: [1, 2, 3, 4] }]}
-      />,
+      <KpiStrip releases={[]} override={[{ label: 'Measured', value: 7 }]} />,
     )
     expect(screen.getByText('Measured')).toBeInTheDocument()
-    expect(container.querySelectorAll('svg[aria-label^="trend"]')).toHaveLength(1)
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(container.querySelectorAll('svg[aria-label^="trend"]')).toHaveLength(0)
+  })
+})
+
+// OD-11 (Wave 2.5): the sub-line was an HTML string rendered with
+// `dangerouslySetInnerHTML`. It is JSX now, so markup in it is text.
+describe('KpiStrip renders its sub-line as text, never as HTML', () => {
+  it('keeps the emphasised count as an element, built in JSX', () => {
+    render(<KpiStrip releases={[release({ stage: 'planning' }), release({ stage: 'planning' })]} />)
+    const strong = screen.getByText('2', { selector: 'strong' })
+    expect(strong.parentElement).toHaveTextContent('2 at Planning · promote one to start tracking')
+  })
+
+  it('shows markup handed to it as literal text — no element is created from it', () => {
+    const hostile = '<img src=x onerror="alert(1)"><strong>bold</strong>'
+    const { container } = render(
+      <KpiStrip releases={[]} override={[{ label: 'Hostile', value: 1, sub: hostile }]} />,
+    )
+    expect(screen.getByText(hostile)).toBeInTheDocument()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('strong')).toBeNull()
   })
 })

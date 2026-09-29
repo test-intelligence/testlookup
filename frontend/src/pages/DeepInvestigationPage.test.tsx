@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
-import DeepInvestigationPage from './DeepInvestigationPage'
+import DeepInvestigationPage, { InvestigationKpiStrip } from './DeepInvestigationPage'
 
 vi.mock('@/hooks/useDeepInvestigation', () => ({
   useFailureClusters: vi.fn(),
@@ -295,3 +295,120 @@ async function renderWithFinding(
   )
   await screen.findByText(/Investigation Workflow/i)
 }
+
+// ── Wave 2.5 (VIZ-104, OD-1): the five "Investigation inputs" glyphs draw only
+// real numbers. Three decorated a real scalar (a GaugeBar each); two were the
+// same literal polyline (gone). ────────────────────────────────────────────
+describe('InvestigationKpiStrip — glyphs from real numbers only', () => {
+  type StripModel = Parameters<typeof InvestigationKpiStrip>[0]['model']
+
+  /** The fields the strip reads; everything else in the page model is irrelevant here. */
+  function stripModel(over: Record<string, unknown> = {}): StripModel {
+    return {
+      eligibleFailures: 12,
+      evidenceConnected: 2,
+      evidenceTotal: 3,
+      windowLabel: '7d',
+      severityCounts: { p0: 1, p1: 2, p2: 0, p3: 1 },
+      preScanClusters: 4,
+      preScanAvgConfidence: 0.74,
+      proposedClusters: [{ confidence: 0.9 }, { confidence: 0.6 }],
+      lastRunAgeHours: 5,
+      lastRunSummary: null,
+      spendMtdDollars: 18.42,
+      spendBudgetDollars: 50,
+      ...over,
+    } as unknown as StripModel
+  }
+
+  function kpiCell(label: string): HTMLElement {
+    const cell = screen.getByText(label).closest('div')?.parentElement
+    if (!cell) throw new Error(`no KPI cell labelled ${label}`)
+    return cell
+  }
+
+  it('gauges spend against the budget', () => {
+    render(<InvestigationKpiStrip model={stripModel()} />)
+    const meter = within(kpiCell('Spend MTD')).getByRole('meter', { name: 'Spend this month against the monthly budget' })
+    expect(meter).toHaveAttribute('aria-valuenow', '18.42')
+    expect(meter).toHaveAttribute('aria-valuemax', '50')
+    expect(meter).toHaveAttribute('aria-valuetext', '$18.42 of $50.00')
+  })
+
+  it.each([
+    ['no budget', null],
+    ['a zero budget', 0],
+  ])('draws NO spend bar with %s — not a bar at 0, not eight placeholder bars', (_name, budget) => {
+    render(<InvestigationKpiStrip model={stripModel({ spendBudgetDollars: budget })} />)
+    const cell = kpiCell('Spend MTD')
+    expect(within(cell).queryByRole('meter')).toBeNull()
+    expect(within(cell).queryByRole('img')).toBeNull()
+    expect(cell.querySelector('svg:not(.lucide)')).toBeNull()
+    expect(cell.querySelector('[data-gauge-bar]')).toBeNull()
+    expect(cell).toHaveTextContent('no budget set')
+  })
+
+  // R2 F8: the bar splits the proposed CLUSTERS, the set "Likely clusters"
+  // counts (`preScanClusters = proposedClusters.length`). Under "Eligible
+  // failures 12" a three-segment bar read as a split of the 12 failures.
+  it('stacks the proposed clusters by severity, P0 to P3, under "Likely clusters"', () => {
+    render(<InvestigationKpiStrip model={stripModel()} />)
+    const meter = within(kpiCell('Likely clusters')).getByRole('meter', { name: 'Proposed clusters by severity' })
+    expect(meter).toHaveAttribute('aria-valuetext', '4 of 4; P0 1, P1 2, P2 0, P3 1')
+    expect(within(kpiCell('Eligible failures')).queryByRole('meter')).toBeNull()
+  })
+
+  it('names the severity bar, and its counts, in visible text — not only for a screen reader', () => {
+    render(<InvestigationKpiStrip model={stripModel()} />)
+    const cell = kpiCell('Likely clusters')
+    const name = within(cell).getByText('Proposed clusters by severity')
+    expect(name).toBeVisible()
+    expect(name.closest('.sr-only')).toBeNull()
+    // The segments are not colour-only: the counts are written out.
+    expect(within(cell).getByText('1 P0 · 2 P1 · 1 P3')).toBeVisible()
+  })
+
+  it('draws no severity bar when analysis proposed no cluster', () => {
+    render(<InvestigationKpiStrip model={stripModel({ severityCounts: { p0: 0, p1: 0, p2: 0, p3: 0 } })} />)
+    expect(within(kpiCell('Likely clusters')).queryByRole('meter')).toBeNull()
+    expect(within(kpiCell('Eligible failures')).queryByRole('meter')).toBeNull()
+  })
+
+  it('states no average confidence as "—", never "avg conf 0.00", when there is no cluster', () => {
+    render(<InvestigationKpiStrip model={stripModel({
+      preScanClusters: 0, preScanAvgConfidence: 0, proposedClusters: [], severityCounts: { p0: 0, p1: 0, p2: 0, p3: 0 },
+    })} />)
+    const likely = kpiCell('Likely clusters')
+    expect(likely).toHaveTextContent('pre-scan · avg conf —')
+    expect(likely).not.toHaveTextContent('0.00')
+    // "Avg cluster confidence" says "—" in the neutral tone: not measured is not a bad reading.
+    const value = within(kpiCell('Avg cluster confidence')).getByText('—')
+    expect(value).toHaveStyle({ color: 'var(--color-text)' })
+  })
+
+  it('gauges the average confidence on 0-1 against the 0.7 target, toned by the KPI bands', () => {
+    render(<InvestigationKpiStrip model={stripModel()} />)
+    const meter = within(kpiCell('Avg cluster confidence')).getByRole('meter')
+    expect(meter).toHaveAttribute('aria-valuetext', '0.74 of 1.00; target 0.70')
+    expect(meter).toHaveAttribute('data-tone', 'warn')
+  })
+
+  it('says the confidence is not measured before analysis proposed a cluster — never a bar at 0', () => {
+    render(<InvestigationKpiStrip model={stripModel({ preScanClusters: 0, preScanAvgConfidence: 0 })} />)
+    const cell = kpiCell('Avg cluster confidence')
+    expect(within(cell).queryByRole('meter')).toBeNull()
+    expect(within(cell).getByRole('img', { name: 'Average cluster confidence: not measured' })).toBeInTheDocument()
+  })
+
+  it('deletes the two literal polylines: Likely clusters, Last analysis', () => {
+    render(<InvestigationKpiStrip model={stripModel()} />)
+    for (const label of ['Likely clusters', 'Last analysis']) {
+      const cell = kpiCell(label)
+      expect(cell.querySelector('svg:not(.lucide)'), label).toBeNull()
+      expect(cell.querySelector('polyline'), label).toBeNull()
+    }
+    // Likely clusters now carries the severity bar (R2 F8); Last analysis has no glyph at all.
+    expect(within(kpiCell('Last analysis')).queryByRole('meter')).toBeNull()
+    expect(within(kpiCell('Last analysis')).queryByRole('img')).toBeNull()
+  })
+})

@@ -2,12 +2,31 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+/**
+ * Every unit test runs in ONE time zone, west of UTC, whatever the machine's.
+ *
+ * Without a pin a date test means different things in different places: CI's
+ * Ubuntu runner is UTC, where a local-vs-UTC day bug cannot show, so a test
+ * written to catch exactly that bug (utcDayLabel dropping `timeZone: 'UTC'`
+ * labels every column one day early for anyone west of UTC) passed in CI and
+ * failed only on a developer's machine in the Americas (R1 F12). A NEGATIVE
+ * offset is the one that exposes it: local midnight there is still the previous
+ * UTC day. America/Chicago also has DST, so a test cannot bake in one offset.
+ *
+ * Set on this process BEFORE any worker starts, so forked workers inherit it,
+ * and again through `test.env` for the worker itself; src/test/timeZone.test.ts
+ * fails if it ever stops applying (run it under `TZ=UTC` to see the pin win).
+ */
+export const TEST_TIME_ZONE = 'America/Chicago'
+process.env.TZ = TEST_TIME_ZONE
+
 export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    env: { TZ: TEST_TIME_ZONE },
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     /**
      * Vitest defaults to roughly (CPU count - 1) workers — 23 on a 24-core dev
@@ -37,9 +56,13 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/test/**', 'src/**/*.d.ts'],
-      // Measured 2026-09-15: 60.80 / 56.12 / 52.34 / 62.26. Keep a small
-      // operating margin for V8 instrumentation drift while making a material
-      // loss of exercised frontend behaviour block CI.
+      // The gate (statements / branches / functions / lines) is 60 / 55 / 51 / 61.
+      // Last measured 2026-09-29 (Wave 2.5, full `vitest run --coverage`, 386
+      // files): 76.48 / 68.98 / 68.20 / 77.90. The gate was set 2026-09-15 at
+      // 60.80 / 56.12 / 52.34 / 62.26 with a small margin for V8
+      // instrumentation drift, so that a material loss of exercised frontend
+      // behaviour blocks CI; coverage has grown since and the gate has not been
+      // raised with it.
       thresholds: {
         statements: 60,
         branches: 55,

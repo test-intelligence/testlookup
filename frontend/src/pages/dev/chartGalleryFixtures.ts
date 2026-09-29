@@ -9,7 +9,11 @@
  *
  * Kept free of app imports (no `@/…`, no CSS, no React): the Playwright specs
  * import the ids and canvas size from here, and they run in plain Node.
+ * `import type` is erased, so the kit's prop types are allowed.
  */
+import type { GaugeBarProps } from '@/components/charts/GaugeBar'
+import type { SparklineTone } from '@/components/charts/Sparkline.model'
+import type { TimeSeriesRateTarget } from '@/components/charts/TimeSeriesChart'
 
 /** Same shape `TrendChart` takes; spelt out so a field rename there is a type error here. */
 export interface GalleryTrendPoint {
@@ -338,6 +342,91 @@ export type GalleryTimeSeriesFixture =
 /** The fixture keys for the VIZ-406 duration histogram. */
 export type GalleryHistogramFixture = 'duration-histogram' | 'duration-histogram-empty'
 
+// -- Wave 2.5 (VIZ-104) - the kit pieces the production pages moved onto -------
+//
+// `StackedColumnChart` and `DayStrip` keep their fixtures beside the component
+// (`components/charts/__fixtures__/stackedColumn.ts` and `dayStrip.ts`, read by
+// their unit tests too); those modules import app code, so an item names its
+// fixture by key and `ChartGalleryPage` resolves it, as for the time series.
+// `Sparkline`, `GaugeBar` and `RingGauge` take a handful of literals, spelt out
+// here. A format or a tone RULE is named by key for the same reason: the
+// formatter and `bandsTone` are app code.
+
+/** The fixture keys `ChartGalleryPage` maps to `__fixtures__/stackedColumn.ts`. */
+export type GalleryStackedFixture =
+  | 'stacked-status-daily'
+  | 'stacked-series-monthly'
+  | 'stacked-hostile-labels'
+  | 'stacked-single-bucket'
+  | 'stacked-long-window'
+  | 'stacked-many-categories'
+
+/** The fixture keys `ChartGalleryPage` maps to `DAY_STRIP_FIXTURES` (`__fixtures__/dayStrip.ts`). */
+export type GalleryDayStripFixture =
+  | 'day-strip-presence'
+  | 'day-strip-intensity'
+  | 'day-strip-severity'
+  | 'day-strip-compact'
+  | 'day-strip-builds'
+  | 'day-strip-dense'
+  | 'day-strip-hostile'
+
+/** A value format the page resolves: `percent` is `formatPercent`, `number` is `formatGaugeNumber`. */
+export type GalleryFormat = 'percent' | 'number'
+
+/** What a `Sparkline` item draws: the component's props, and the cell widths it is drawn at. */
+export interface GallerySparkline {
+  series: (number | null)[]
+  label: string
+  tone?: SparklineTone
+  domain?: [number, number]
+  area?: boolean
+  format?: GalleryFormat
+  /** One cell per width (px), side by side: the stretch and the end-dot inset at two sizes. */
+  widths: number[]
+}
+
+/** A `GaugeBar`'s props, less the functions (named by key instead). */
+export interface GalleryGaugeBar extends Omit<GaugeBarProps, 'format' | 'className'> {
+  format?: GalleryFormat
+  /** The box the bar is drawn in (px): its measured tick row lays out against this width. */
+  box: number
+}
+
+/** A `RingGauge`: its value, its caption, and its tone as bands (`bandsTone`). */
+export interface GalleryRingGauge {
+  value: number | null
+  caption: string
+  bands: { direction: 'higher-is-better' | 'lower-is-better'; thresholds: readonly [number, number] }
+  format: GalleryFormat
+}
+
+/** The pass-rate thresholds of the IntelligenceHub meter and the risk bands of the release gate. */
+const HUB_PASS_RATE_BANDS = { direction: 'higher-is-better', thresholds: [60, 80] } as const
+const GATE_RISK_BANDS = { direction: 'lower-is-better', thresholds: [40, 70] } as const
+/** The health scale the verdict meters share (Runs, Defects, Trends, Coverage, FailureAnalysis). */
+const HEALTH_TICKS = [{ value: 0, label: 'Blocked' }, { value: 33, label: 'At risk' }, { value: 66, label: 'Stable' }, { value: 100 }]
+/** RunIntelligence's risk scale. */
+const RISK_TICKS = [{ value: 0, label: 'Safe' }, { value: 30, label: 'Conditional' }, { value: 70, label: 'Block' }, { value: 100 }]
+/** The md bar's box and the sm bar's (a KPI cell). */
+const GAUGE_MD_BOX = 320
+const GAUGE_SM_BOX = 160
+/**
+ * A stacked-column frame's box. MEASURED under Linux fonts: the tallest of
+ * the five frames (the daily one, whose gap note adds a line under the
+ * legend) is 348 px at 640 wide; 440 leaves room for a title or note that
+ * wraps onto more lines on another runner, as the zoom items' do.
+ */
+const STACKED_CANVAS_HEIGHT = 440
+/**
+ * The bar form of a stacked chart grows with its rows (`BAR_ROW_HEIGHT` each):
+ * 16 suites are a 456 px plot, plus the frame's title, toolbar and notes.
+ */
+const STACKED_BARS_CANVAS_HEIGHT = 640
+/** A DayStrip across the plot canvas, and across a phone (SC 1.4.10: its legend wraps, it never overflows). */
+const DAY_STRIP_BOX = GALLERY_CANVAS.width
+const DAY_STRIP_NARROW_BOX = 320
+
 /**
  * The instant the gallery tells `TimeSeriesChart` "now" is, and the zone it
  * resolves UTC buckets into.
@@ -599,6 +688,8 @@ export type GalleryItem =
        * other item, and exports say "Scope unavailable".
        */
       scoped?: boolean
+      /** VIZ-104 K2: a dashed target line on the rate axis. Left out, the frame draws none. */
+      rateTarget?: TimeSeriesRateTarget
     })
   | (GalleryItemBase & { chart: 'duration-histogram'; fixture: GalleryHistogramFixture })
   | (GalleryItemBase & { chart: 'duration-band'; zoom?: GalleryZoom; canvasHeight?: number })
@@ -612,6 +703,24 @@ export type GalleryItem =
       /** VIZ-407: make the frame zoomable (and, with `initial`, open it zoomed). */
       zoom?: GalleryZoom
     })
+  // Wave 2.5 (VIZ-104): the kit pieces the production pages moved onto.
+  | (GalleryItemBase & {
+      chart: 'stacked-column'
+      fixture: GalleryStackedFixture
+      /** What one column is ("day", "month"): the frame's summary and keyboard speak it. */
+      bucketNoun?: string
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
+    })
+  | (GalleryItemBase & { chart: 'sparkline'; sparkline: GallerySparkline })
+  | (GalleryItemBase & { chart: 'gauge-bar'; gauge: GalleryGaugeBar })
+  | (GalleryItemBase & { chart: 'ring-gauge'; ring: GalleryRingGauge })
+  | (GalleryItemBase & {
+      chart: 'day-strip'
+      fixture: GalleryDayStripFixture
+      /** The strip's box (px): a card's width, or a phone's. */
+      box: number
+    })
 
 /**
  * Which engine draws a gallery item, and therefore what a spec may assert on:
@@ -624,9 +733,41 @@ export type GalleryItem =
  * checked by its own rows instead (see the chart-gallery spec).
  */
 export function galleryEngine(item: GalleryItem): 'recharts' | 'echarts' | 'dom' {
-  if (item.chart === 'heatmap') return 'echarts'
-  if (item.chart === 'slowest-tests') return 'dom'
-  return 'recharts'
+  switch (item.chart) {
+    case 'heatmap':
+      return 'echarts'
+    // Wave 2.5: the sparkline is a hand-drawn svg (no Recharts surface), and
+    // the gauge bar and the day strip are plain elements.
+    case 'slowest-tests':
+    case 'sparkline':
+    case 'gauge-bar':
+    case 'day-strip':
+      return 'dom'
+    default:
+      return 'recharts'
+  }
+}
+
+/**
+ * The drawn marks of a `dom` item, as a selector a spec can count and measure:
+ * what `path, rect, circle` inside a Recharts surface is for the other items.
+ * A mark counts when it has a box (a flat sparkline's line has no height, and
+ * is still a drawn line). Its `minMarks` is how many of them must be drawn.
+ */
+export function galleryDomMarks(item: GalleryItem): string {
+  switch (item.chart) {
+    case 'slowest-tests':
+      return '[data-testid="ranked-bar"]'
+    case 'sparkline':
+      return '[data-testid="sparkline"] [data-part]'
+    case 'gauge-bar':
+      // The reading, not the track: a track is drawn for an unmeasured value too.
+      return '[data-gauge-fill], [data-gauge-segment], [data-gauge-marker], [data-gauge-target]'
+    case 'day-strip':
+      return '[data-day-cell]'
+    default:
+      throw new Error(`${item.id} is drawn by ${galleryEngine(item)}, not the DOM`)
+  }
 }
 
 /** Wave-2 items draw a whole `ChartFrame`, so they get a taller box. */
@@ -640,6 +781,7 @@ export function galleryFramed(item: GalleryItem): boolean {
     case 'duration-band':
     case 'slowest-tests':
     case 'multi-series':
+    case 'stacked-column':
       return true
     default:
       return false
@@ -680,6 +822,10 @@ export const GALLERY_TALL_FRAME_CANVAS = { width: 640, height: 520 } as const
  * with the frame around them — nothing a plot height governs.
  */
 export const GALLERY_LIST_CANVAS = { width: 640, height: 820 } as const
+/** The Wave 2.5 kit pieces' canvases: see `galleryCanvasSize`. */
+export const GALLERY_SPARKLINE_CANVAS_HEIGHT = 80
+export const GALLERY_GAUGE_CANVAS_HEIGHT = 120
+export const GALLERY_DAY_STRIP_CANVAS_HEIGHT = 160
 /** The plot height inside a framed item. */
 export const GALLERY_FRAME_PLOT_HEIGHT = 260
 
@@ -697,7 +843,17 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
     case 'bars':
       return item.canvasHeight ? { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_FRAME_CANVAS
     case 'multi-series':
+    case 'stacked-column':
       return { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight }
+    // Wave 2.5: a KPI-sized piece in a box of its own size, not the 320 px
+    // plot canvas (MEASURED, like the rest: the tick row, the legend and a
+    // wrapped legend line on a narrow strip all fit).
+    case 'sparkline':
+      return { width: GALLERY_CANVAS.width, height: GALLERY_SPARKLINE_CANVAS_HEIGHT }
+    case 'gauge-bar':
+      return { width: GALLERY_CANVAS.width, height: GALLERY_GAUGE_CANVAS_HEIGHT }
+    case 'day-strip':
+      return { width: item.box, height: GALLERY_DAY_STRIP_CANVAS_HEIGHT }
     default:
       return galleryFramed(item) ? GALLERY_FRAME_CANVAS : GALLERY_CANVAS
   }
@@ -1048,9 +1204,10 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     title: 'SlowestTests · top 20 by p95',
     chart: 'slowest-tests',
     empty: false,
-    // 0 because there are no SVG marks to count: this one renders `<div>` bars.
-    // Its geometry is asserted separately, on the ranked bars themselves.
-    minMarks: 0,
+    // Its marks are `<div>` bars, not SVG (`galleryDomMarks`): one per row
+    // of the top 20 the list shows (24 tests, capped at SLOWEST_TESTS_LIMIT).
+    // Its ranking is asserted separately, on the bars themselves.
+    minMarks: 20,
   },
 
   // -- Wave 2 - VIZ-404: one item per multi-series edge case --------------------
@@ -1305,6 +1462,402 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // its two edges (3 paths — counted in Chromium, the unzoomed item's floor
     // of 3 predates that count) and each percentile line is one path = 5.
     minMarks: 5,
+  },
+
+  // -- Wave 2.5 - VIZ-104: the kit pieces the production pages moved onto ------
+  //
+  // Appended AFTER every earlier item, never inserted among them: an unframed
+  // item's gallery heading is a fractional 18.56 px tall, so 24 of them placed
+  // earlier moved every later item by a sub-pixel, and the zoom items' Linux
+  // baselines re-antialiased (a 1 px shift, 17 433 pixels). The framed charts
+  // come last, so `chart-fullscreen.spec.ts` still finds a framed chart as the
+  // last item. Each piece gets the edge cases its builder named, one
+  // hostile-name item for every piece that prints a name, and a strip at phone
+  // width.
+  //
+  // Sparkline (K3), each drawn at two cell widths. A mark is the line, the
+  // end dot, and the area when there is one, per cell.
+  {
+    id: 'sparkline-pass-rate',
+    title: 'Sparkline · pass rate with an area, 0-100',
+    chart: 'sparkline',
+    sparkline: {
+      series: [91.2, 93.5, 92.8, 95.1, 94.0, 96.3, 95.8, 97.2],
+      label: 'Pass rate',
+      tone: 'good',
+      domain: [0, 100],
+      area: true,
+      format: 'percent',
+      widths: [160, 96],
+    },
+    empty: false,
+    minMarks: 6, // (area + line + end dot) x 2 cells
+  },
+  {
+    id: 'sparkline-gaps',
+    title: 'Sparkline · days without runs break the line',
+    chart: 'sparkline',
+    sparkline: {
+      series: [88, 90, null, null, 86, 91, null, 93],
+      label: 'Pass rate (days without runs)',
+      tone: 'warn',
+      domain: [0, 100],
+      format: 'percent',
+      widths: [160, 96],
+    },
+    empty: false,
+    // (line + end dot) x 2 cells. The line is ONE path of three runs: two
+    // points, two points, and the lone 93 drawn as a dot by its round cap.
+    minMarks: 4,
+  },
+  {
+    id: 'sparkline-flat',
+    title: 'Sparkline · a flat series, drawn through the middle',
+    chart: 'sparkline',
+    sparkline: { series: [120, 120, 120, 120, 120], label: 'Executions', tone: 'neutral', widths: [160, 96] },
+    empty: false,
+    minMarks: 4, // (line + end dot) x 2 cells; the line has a width and no height
+  },
+  {
+    id: 'sparkline-executions',
+    title: 'Sparkline · executions, a measured 0 is a point',
+    chart: 'sparkline',
+    sparkline: {
+      series: [410, 380, 512, 0, 455, 1284, 640],
+      label: 'Executions',
+      tone: 'accent',
+      area: true,
+      widths: [160, 96],
+    },
+    empty: false,
+    minMarks: 6, // (area + line + end dot) x 2 cells
+  },
+  {
+    id: 'sparkline-too-few',
+    title: 'Sparkline · one point draws nothing (the caller keeps its caption)',
+    chart: 'sparkline',
+    sparkline: { series: [42], label: 'Executions', widths: [160] },
+    empty: true,
+    minMarks: 0,
+  },
+
+  // GaugeBar (K4). A mark is the reading: the fill, each segment, the marker,
+  // the target. The track is drawn for an unmeasured value too, so it is not one.
+  {
+    id: 'gauge-bar-marker',
+    title: 'GaugeBar · marker on the health gradient',
+    chart: 'gauge-bar',
+    gauge: {
+      value: 72,
+      label: 'Pipeline health',
+      variant: 'marker',
+      gradient: 'health',
+      tone: 'good',
+      ticks: HEALTH_TICKS,
+      valueText: '72 of 100, Stable',
+      box: GAUGE_MD_BOX,
+    },
+    empty: false,
+    minMarks: 1, // the marker
+  },
+  {
+    id: 'gauge-bar-fill-risk',
+    title: 'GaugeBar · fill on the risk gradient',
+    chart: 'gauge-bar',
+    gauge: { value: 24, label: 'Composite risk score', gradient: 'risk', ticks: RISK_TICKS, box: GAUGE_MD_BOX },
+    empty: false,
+    minMarks: 1, // the fill
+  },
+  {
+    id: 'gauge-bar-not-measured',
+    title: 'GaugeBar · not measured (an empty track, never 0)',
+    chart: 'gauge-bar',
+    gauge: { value: null, label: 'Coverage health score', gradient: 'health', ticks: HEALTH_TICKS, box: GAUGE_MD_BOX },
+    empty: true,
+    minMarks: 0,
+  },
+  {
+    id: 'gauge-bar-segments',
+    title: 'GaugeBar · segments by severity',
+    chart: 'gauge-bar',
+    gauge: {
+      value: 10,
+      label: 'Proposed clusters by severity',
+      size: 'sm',
+      domain: [0, 10],
+      segments: [
+        { value: 2, label: 'P0', tone: 'bad' },
+        { value: 3, label: 'P1', tone: 'warn' },
+        { value: 4, label: 'P2', tone: 'accent' },
+        { value: 1, label: 'P3', tone: 'neutral' },
+      ],
+      box: GAUGE_SM_BOX,
+    },
+    empty: false,
+    minMarks: 4, // one per segment; the domain is their total, so all four are drawn
+  },
+  {
+    id: 'gauge-bar-target',
+    title: 'GaugeBar · a reading short of its target',
+    chart: 'gauge-bar',
+    gauge: {
+      value: 55,
+      label: 'Avg cluster confidence',
+      size: 'sm',
+      tone: { direction: 'higher-is-better', thresholds: [70, 80] },
+      target: { value: 70, label: 'Target' },
+      box: GAUGE_SM_BOX,
+    },
+    empty: false,
+    minMarks: 2, // the fill and the target
+  },
+  {
+    id: 'gauge-bar-clamped',
+    title: 'GaugeBar · 130 on a 0-100 scale stops at the end',
+    chart: 'gauge-bar',
+    gauge: { value: 130, label: 'Monthly budget', tone: 'bad', box: GAUGE_MD_BOX },
+    empty: false,
+    minMarks: 1, // the fill, clamped to the track
+  },
+  {
+    id: 'gauge-bar-inline',
+    title: 'GaugeBar · a table-cell meter with its value',
+    chart: 'gauge-bar',
+    gauge: {
+      value: 87,
+      label: 'Pass rate',
+      size: 'sm',
+      thickness: 5,
+      outlined: true,
+      showValue: true,
+      format: 'percent',
+      tone: HUB_PASS_RATE_BANDS,
+      box: GAUGE_SM_BOX,
+    },
+    empty: false,
+    minMarks: 1, // the fill
+  },
+  {
+    id: 'gauge-bar-hostile-label',
+    title: 'GaugeBar · a hostile name in the label, a tick and the target',
+    chart: 'gauge-bar',
+    gauge: {
+      value: 40,
+      label: HOSTILE_LABEL,
+      showLabel: true,
+      tone: 'warn',
+      ticks: [{ value: 0 }, { value: 50, label: HOSTILE_LABEL }, { value: 100 }],
+      target: { value: 80, label: HOSTILE_LABEL },
+      box: GAUGE_MD_BOX,
+    },
+    empty: false,
+    minMarks: 2, // the fill and the target
+  },
+
+  // RingGauge (K4b), at the plot canvas's height as `PassRateGauge` is: a
+  // mark is the ring's track and its value arc.
+  {
+    id: 'ring-gauge-risk',
+    title: 'RingGauge · risk score, lower is better',
+    chart: 'ring-gauge',
+    ring: { value: 37, caption: 'Risk Score', bands: GATE_RISK_BANDS, format: 'number' },
+    empty: false,
+    minMarks: 2, // track + value arc
+  },
+  {
+    id: 'ring-gauge-not-measured',
+    title: 'RingGauge · not measured',
+    chart: 'ring-gauge',
+    ring: { value: null, caption: 'Risk Score', bands: GATE_RISK_BANDS, format: 'number' },
+    empty: true,
+    minMarks: 0,
+  },
+  {
+    id: 'ring-gauge-hostile-label',
+    title: 'RingGauge · a hostile caption',
+    chart: 'ring-gauge',
+    ring: { value: 62, caption: HOSTILE_LABEL, bands: GATE_RISK_BANDS, format: 'number' },
+    empty: false,
+    minMarks: 2, // track + value arc
+  },
+
+  // DayStrip (K5): a mark is a cell, one per day (or build) of the fixture.
+  {
+    id: 'day-strip-presence',
+    title: 'DayStrip · presence (Trends run cadence)',
+    chart: 'day-strip',
+    fixture: 'day-strip-presence',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 30, // 30 days
+  },
+  {
+    id: 'day-strip-presence-narrow',
+    title: 'DayStrip · presence at phone width',
+    chart: 'day-strip',
+    fixture: 'day-strip-presence',
+    box: DAY_STRIP_NARROW_BOX,
+    empty: false,
+    minMarks: 30, // the same 30 days, in narrower cells
+  },
+  {
+    id: 'day-strip-intensity',
+    title: 'DayStrip · intensity (Coverage run cadence)',
+    chart: 'day-strip',
+    fixture: 'day-strip-intensity',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 30, // 30 days
+  },
+  {
+    id: 'day-strip-severity',
+    title: 'DayStrip · status with severity (failure timeline)',
+    chart: 'day-strip',
+    fixture: 'day-strip-severity',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 30, // 30 days
+  },
+  {
+    id: 'day-strip-compact',
+    title: 'DayStrip · compact run strip, no legend',
+    chart: 'day-strip',
+    fixture: 'day-strip-compact',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 14, // the last 14 of the 30 days
+  },
+  {
+    id: 'day-strip-builds',
+    title: 'DayStrip · builds (build velocity)',
+    chart: 'day-strip',
+    fixture: 'day-strip-builds',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 14, // 9 builds, padded to 14 cells
+  },
+  {
+    id: 'day-strip-dense',
+    title: 'DayStrip · 90 days',
+    chart: 'day-strip',
+    fixture: 'day-strip-dense',
+    box: DAY_STRIP_BOX,
+    empty: false,
+    minMarks: 90, // 90 days
+  },
+  {
+    id: 'day-strip-hostile-label',
+    title: 'DayStrip · hostile cell and strip names',
+    chart: 'day-strip',
+    fixture: 'day-strip-hostile',
+    // Four square cells: across the 640 px canvas each would be 150 px tall.
+    box: DAY_STRIP_NARROW_BOX,
+    empty: false,
+    minMarks: 4, // 4 builds, one per hostile name
+  },
+
+  // StackedColumnChart (K1): `minMarks` is the number of POSITIVE values in
+  // the fixture. Recharts draws each stacked segment as one path; a 0 is a
+  // path of no height, and a `null` (not measured) draws nothing at all.
+  {
+    id: 'stacked-status-daily',
+    title: 'StackedColumnChart · executions by status, per day',
+    chart: 'stacked-column',
+    fixture: 'stacked-status-daily',
+    bucketNoun: 'day',
+    canvasHeight: STACKED_CANVAS_HEIGHT,
+    empty: false,
+    // 14 days x 4 statuses = 56 values, less 8 for Mar 4 (not measured at
+    // all) and Mar 7 (ran, executed nothing: all four are 0), less 5 more
+    // zeros (broken on Feb 26, Feb 28, Mar 6 and Mar 8; skipped on Mar 1)
+    // and 1 missing value (skipped on Mar 9) = 42.
+    minMarks: 42,
+  },
+  {
+    id: 'stacked-series-monthly',
+    title: 'StackedColumnChart · hours saved by model leg, per month',
+    chart: 'stacked-column',
+    fixture: 'stacked-series-monthly',
+    bucketNoun: 'month',
+    canvasHeight: STACKED_CANVAS_HEIGHT,
+    empty: false,
+    // 6 months x 3 legs = 18, less December's dedup leg (not measured) = 17.
+    minMarks: 17,
+  },
+  {
+    id: 'stacked-hostile-labels',
+    title: 'StackedColumnChart · hostile, long, right-to-left and emoji names, every one on the axis',
+    chart: 'stacked-column',
+    fixture: 'stacked-hostile-labels',
+    canvasHeight: STACKED_CANVAS_HEIGHT,
+    empty: false,
+    // 4 suites x 2 series = 8, less the 0 failed of the right-to-left suite = 7.
+    // A category axis never drops a name: all four are drawn, slanted (the
+    // long one cut in the middle), none only in the tooltip.
+    minMarks: 7,
+  },
+  {
+    id: 'stacked-single-bucket',
+    title: 'StackedColumnChart · one day',
+    chart: 'stacked-column',
+    fixture: 'stacked-single-bucket',
+    bucketNoun: 'day',
+    canvasHeight: STACKED_CANVAS_HEIGHT,
+    empty: false,
+    // One day of 42 / 3 / 1 / 0: three segments (skipped is 0).
+    minMarks: 3,
+  },
+  {
+    id: 'stacked-long-window',
+    title: 'StackedColumnChart · 60 days, thinned or slanted labels',
+    chart: 'stacked-column',
+    fixture: 'stacked-long-window',
+    bucketNoun: 'day',
+    canvasHeight: STACKED_CANVAS_HEIGHT,
+    empty: false,
+    // Day i of 0..59: passed (120 + ...) is always positive (60); failed
+    // (7i mod 11) is 0 on the 6 days i = 0, 11, ... 55 (54); broken is 2 on
+    // the 7 days i = 0, 9, ... 54 and 0 otherwise (7); skipped (3i mod 5)
+    // is 0 on the 12 days i = 0, 5, ... 55 (48). 60 + 54 + 7 + 48 = 169.
+    minMarks: 169,
+  },
+  // `rateTarget` (K2) on the VIZ-403 time series.
+  {
+    id: 'timeseries-rate-target',
+    title: 'TimeSeriesChart · a 90% target on the rate axis',
+    chart: 'time-series',
+    fixture: 'trend-with-releases',
+    rateTarget: { value: 90, label: 'Target 90%' },
+    empty: false,
+    // `trend-with-releases`' own days: 8 execution bars and the rate line = 9.
+    // The target is a reference LINE (`<line>`), not a counted mark.
+    minMarks: 9,
+  },
+  {
+    id: 'timeseries-rate-target-off-axis',
+    title: 'TimeSeriesChart · a target outside the zoomed rate axis',
+    chart: 'time-series',
+    fixture: 'trend-zoomed-axis',
+    // The axis is zoomed onto 95-98 %: an 80 % target is not drawn, and a note says so.
+    rateTarget: { value: 80, label: 'Target 80%' },
+    empty: false,
+    // Four measured days: 4 execution bars and the rate line = 5.
+    minMarks: 5,
+  },
+  // Appended last, as every later wave's items are: an item inserted earlier
+  // moves every item after it by a sub-pixel and breaks their baselines.
+  {
+    id: 'stacked-many-categories',
+    title: 'StackedColumnChart · 16 suites, drawn as bars with every name',
+    chart: 'stacked-column',
+    fixture: 'stacked-many-categories',
+    canvasHeight: STACKED_BARS_CANVAS_HEIGHT,
+    empty: false,
+    // 16 suites x 4 statuses = 64 values, of which 39 are positive: passed is
+    // always positive (16); failed is 0 on suites 0, 4, 7, 8, 12 and 14 (10);
+    // broken is 1 on suites 2, 7 and 12 (3); skipped ((2i) mod 3) is 0 on the
+    // 6 suites i = 0, 3, ... 15 (10). 16 + 10 + 3 + 10 = 39.
+    minMarks: 39,
   },
 ]
 

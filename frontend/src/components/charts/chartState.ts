@@ -101,6 +101,17 @@ export function hasChartData<T>(state: ChartState<T>): state is Extract<ChartSta
 }
 
 /**
+ * The drawn state for a page that owns its own loading, empty and error
+ * branches and mounts a kit frame only once it has something to draw (VIZ-104,
+ * Wave 2.5 K0). `meta: null` because the data came through an existing
+ * endpoint, not a `chart-data` envelope: an export then stamps "Scope
+ * unavailable", which is true, rather than a scope nobody measured.
+ */
+export function readyState<T>(data: T): Extract<ChartState<T>, { status: 'ready' }> {
+  return { status: 'ready', data, meta: null, revalidating: false }
+}
+
+/**
  * Whether a series has anything to plot, tabulate or export: at least one
  * point, cell or node. A point whose value is `null` COUNTS — it is a gap the
  * table states as "—" — so only a series with no positions at all is empty.

@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 
@@ -678,10 +678,11 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
       isLoading: false,
     })
     // Six runs, all on one day — one trend point, so no sparkline anywhere.
+    // The day is today: the payload only ever holds days of the window.
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         data: [
-          { date: '2026-08-16', passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
+          { date: new Date().toISOString().slice(0, 10), passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
         ],
       },
       isLoading: false,
@@ -1022,5 +1023,210 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1')
     await renderEmptyProject()
     expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+  })
+})
+
+// ── Wave 2.5 (VIZ-104): the kit's chart, sparklines and meter ─────────────────
+//
+// The execution trend used to be a page-local Recharts area chart that mapped
+// passed / failed / skipped only: a day's BROKEN executions were drawn nowhere
+// and left out of the "Automation" total (owner decision OD-7: all four
+// statuses, totals included). The pass-rate sparkline drew a day with nothing
+// evaluated as 0 %. Both now go through the chart kit.
+describe('OverviewPage — execution trend, sparklines and meter on the chart kit', () => {
+  const TREND = [
+    { date: '2026-08-14', passed: 40, failed: 4, skipped: 2, broken: 6, total: 52, pass_rate: 80 },
+    // Only skipped: nothing evaluated, so no pass rate — a gap, not 0 %.
+    { date: '2026-08-15', passed: 0, failed: 0, skipped: 5, broken: 0, total: 5, pass_rate: 0 },
+    { date: '2026-08-16', passed: 45, failed: 3, skipped: 1, broken: 2, total: 51, pass_rate: 90 },
+  ]
+
+  beforeEach(() => {
+    valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi', 'new_failures_kpi']
+    // The window is the last 30 UTC days ending "today": pin today to the
+    // fixture's newest day. Only `Date` is faked; the render's timers run.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-16T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function renderWith(trend: unknown[], readiness = 'GREEN', executions = 108) {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: readiness,
+        total_executions_7d: { value: executions },
+        avg_pass_rate_7d: { value: 85.2 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 7 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return (await screen.findByTestId('overview-execution-trend')) as HTMLElement
+  }
+
+  /** The frame's table view, opened: header row and one row per day. */
+  function tableOf(frame: HTMLElement) {
+    fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
+    const table = within(frame).getByRole('table', { name: /data table/i })
+    const headers = within(table).getAllByRole('columnheader').map((th) => th.textContent)
+    const row = (day: string) =>
+      Array.from((within(table).getByRole('rowheader', { name: day }).parentElement as HTMLElement).querySelectorAll('td'), (td) => td.textContent)
+    return { headers, row }
+  }
+
+  it('draws all four statuses, broken included, under the frame’s own heading', async () => {
+    const frame = await renderWith(TREND)
+    expect(within(frame).getByRole('heading', { level: 3, name: 'Execution trend' })).toBeInTheDocument()
+    // jsdom lays out no plot (a zero-size container), so the drawn marks are
+    // the kit's own tests' concern; the table view is built from the same
+    // model the plot draws, and is what this page decides.
+    const { headers, row } = tableOf(frame)
+    expect(headers).toEqual(['Day (UTC)', 'Passed', 'Failed', 'Broken', 'Skipped', 'Total'])
+    expect(row('Aug 14')).toEqual(['40', '4', '6', '2', '52'])
+  })
+
+  it('counts broken executions in the foot totals and in "Automation"', async () => {
+    const frame = await renderWith(TREND)
+    const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
+    expect(totals).not.toBeNull()
+    const cell = (label: string) => (within(totals).getByText(label).parentElement as HTMLElement).textContent
+    expect(cell('Broken')).toMatch(/^Broken8\s/)
+    // 85 passed + 7 failed + 8 broken + 8 skipped.
+    expect(cell('Automation')).toMatch(/^Automation108\s+across 3 days$/)
+    expect(cell('Passed')).toMatch(/^Passed85\s+79%$/)
+  })
+
+  it('shows a status the payload does not carry as "—", never as 0', async () => {
+    // A cached pre-broken response: no `broken` field at all.
+    const legacy = TREND.map(({ broken: _broken, ...rest }) => rest)
+    const frame = await renderWith(legacy)
+    // R1 F4: the foot total under the chart says the same as the table.
+    const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
+    expect((within(totals).getByText('Broken').parentElement as HTMLElement).textContent).toBe('Broken— not measured')
+    expect((within(totals).getByText('Automation').parentElement as HTMLElement).textContent).toMatch(/^Automation100\s/)
+    const { row } = tableOf(frame)
+    expect(row('Aug 14')).toEqual(['40', '4', '—', '2', '46'])
+  })
+
+  it('breaks the pass-rate line on a day with nothing evaluated, rather than drawing 0 %', async () => {
+    await renderWith(TREND)
+    const line = screen.getByRole('img', { name: /^Avg pass rate per day, last 30 days:/ })
+    // 2 evaluated days; the skips-only day and the 27 days with no runs are breaks.
+    expect(line.getAttribute('aria-label')).toMatch(/: 2 points, .*min 80\.0%, max 90\.0%, 28 not measured$/)
+  })
+
+  it('draws the count sparklines from zero, and the pass rate on 0-100', async () => {
+    await renderWith(TREND)
+    // One point per day of the window: a day with no runs is a measured 0.
+    expect(screen.getByRole('img', { name: /^Total executions per day, last 30 days: 30 points, .*min 0, max 52$/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /^New failures · 24h per day, last 30 days: 30 points/ })).toBeInTheDocument()
+  })
+
+  // R2 F1 / R1 F15: `/metrics/trends` sends only the days that had runs. The
+  // chart used to draw those days as adjacent columns under a "Day (UTC)"
+  // axis, so a silent week took no room at all and "last 30 days" sat over
+  // 23 columns; the sparklines bridged the same week.
+  describe('a week with no runs keeps its place on the time axis', () => {
+    // 30 UTC days ending 2026-08-16, with nothing on Aug 5-11.
+    const HOLE = new Set(['2026-08-05', '2026-08-06', '2026-08-07', '2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11'])
+    const WINDOW = Array.from({ length: 30 }, (_, i) => new Date(Date.UTC(2026, 7, 16 - 29 + i)).toISOString().slice(0, 10))
+    const HOLED = WINDOW.filter((day) => !HOLE.has(day)).map((date) => (
+      { date, passed: 10, failed: 1, skipped: 1, broken: 0, total: 12, pass_rate: 90.91 }
+    ))
+
+    it('draws one column per window day, and a day with no runs as a measured zero', async () => {
+      const frame = await renderWith(HOLED)
+      const { row } = tableOf(frame)
+      const table = within(frame).getByRole('table', { name: /data table/i })
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(30)
+      expect(row('Aug 8')).toEqual(['0', '0', '0', '0', '0'])
+      expect(row('Aug 12')).toEqual(['10', '1', '0', '1', '12'])
+    })
+
+    it('breaks the pass-rate line across the hole, and counts it as zero executions', async () => {
+      await renderWith(HOLED)
+      const rate = screen.getByRole('img', { name: /^Avg pass rate per day, last 30 days:/ })
+      expect(rate.getAttribute('aria-label')).toMatch(/: 23 points, .*, 7 not measured$/)
+      const total = screen.getByRole('img', { name: /^Total executions per day, last 30 days:/ })
+      expect(total.getAttribute('aria-label')).toMatch(/: 30 points, .*min 0, max 12$/)
+    })
+
+    it('still says "across N days" for the days that have data', async () => {
+      const frame = await renderWith(HOLED)
+      const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
+      expect((within(totals).getByText('Automation').parentElement as HTMLElement).textContent).toMatch(/across 23 days$/)
+    })
+  })
+
+  // R1 F3: two days of runs whose aggregates are not written yet (live
+  // streaming) are an all-zero window. With no filter that is "No executions
+  // in this window", never "No data matches the current filters"; with a
+  // suite filter set the filter words stay.
+  describe('an all-zero window', () => {
+    const ZEROS = ['2026-08-15', '2026-08-16'].map((date) => ({ date, passed: 0, failed: 0, skipped: 0, broken: 0, total: 0, pass_rate: 0 }))
+
+    afterEach(() => {
+      runsState.windowed = []
+    })
+
+    it('states the window, neutrally, when no filter is set', async () => {
+      const frame = await renderWith(ZEROS)
+      expect(frame).toHaveTextContent('No executions in this window')
+      expect(frame).not.toHaveTextContent('No data matches the current filters')
+    })
+
+    it('keeps the filter words when a suite filter is set', async () => {
+      // The suite picker lists the suites of the window's runs.
+      runsState.windowed = [{ id: 'r1', status: 'RUNNING', created_at: '2026-08-16T10:00:00Z', primary_suite_name: 'Checkout', suite_names: ['Checkout'] }]
+      await renderWith(ZEROS)
+      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+      const frame = await screen.findByTestId('overview-execution-trend')
+      expect(frame).toHaveTextContent('No data matches the current filters')
+      expect(frame).not.toHaveTextContent('No executions in this window')
+    })
+  })
+
+  it('reads the verdict’s pass rate as a meter, and PENDING as not measured', async () => {
+    await renderWith(TREND)
+    const meter = screen.getByRole('meter', { name: 'Pass rate' })
+    expect(meter.getAttribute('aria-valuenow')).toBe('85')
+    expect(meter.getAttribute('data-tone')).toBe('good')
+  })
+
+  it('draws no pass-rate bar at all while the verdict is PENDING', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { release_readiness: 'RED', total_executions_7d: { value: 0 }, avg_pass_rate_7d: { value: 0 } },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findAllByText(/\bPending\b/)
+    expect(screen.queryByRole('meter', { name: 'Pass rate' })).toBeNull()
+    expect(screen.getByRole('img', { name: 'Pass rate: not measured' })).toBeInTheDocument()
+    // The page's own branches and copy are kept: no frame for an empty window.
+    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
+    expect(screen.getByText('No executions in the last 30 days.')).toBeInTheDocument()
   })
 })

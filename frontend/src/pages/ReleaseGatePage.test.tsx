@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { REDUCED_MOTION_QUERY } from '@/components/charts/motion'
 import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 
 import ReleaseGatePage from './ReleaseGatePage'
@@ -25,6 +27,19 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: vi.fn((selector: (state: typeof mockProjectState) => unknown) =>
     selector(mockProjectState)),
 }))
+
+// The risk ring is real Recharts; jsdom lays nothing out, so only the
+// container is given the gauge's own 120 px box (everything else is real).
+vi.mock('recharts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('recharts')>()
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children }: { children: ReactNode }) =>
+      isValidElement(children)
+        ? cloneElement(children as ReactElement<{ width?: number; height?: number }>, { width: 120, height: 120 })
+        : null,
+  }
+})
 
 vi.mock('react-hot-toast', () => ({
   default: {
@@ -316,5 +331,58 @@ describe('ReleaseGatePage — the risk score explains itself', () => {
     await renderGate(flooredDecision())
     // The breakdown header used to read a bare "17/100" beside a gauge of 60.
     expect(await screen.findByText(/17\/100 weighted/)).toBeInTheDocument()
+  })
+})
+
+describe('ReleaseGatePage — the risk ring (OD-6)', () => {
+  const arc = () => document.querySelector('.recharts-radial-bar-sector')
+  // Reduced motion, as the production visual specs run: the arc is drawn at
+  // its value on the first frame instead of animating up from 0.
+  const realMatchMedia = window.matchMedia
+  beforeEach(() => {
+    window.matchMedia = ((query: string) => ({
+      matches: query === REDUCED_MOTION_QUERY,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia
+  })
+  afterEach(() => {
+    window.matchMedia = realMatchMedia
+  })
+
+  it('is a named meter reading the verdict score, in theme tokens', async () => {
+    await renderGate(flooredDecision())
+    const ring = await screen.findByRole('meter', { name: 'Risk Score' })
+    expect(ring).toHaveAttribute('aria-valuenow', '60')
+    expect(ring).toHaveAttribute('aria-valuetext', '60')
+    expect(within(ring).getByText('60').className).toContain('text-[var(--color-text)]')
+    // The old arc: a fixed slate track and a literally white number. Every
+    // fill and stroke is a theme token now (the track's edge included: the
+    // kit's 3:1 non-text edge, R2 F9), never a colour literal.
+    expect(ring.innerHTML).not.toMatch(/(fill|stroke)="(#|rgb|white|black|slate)/)
+    for (const el of ring.querySelectorAll('[stroke]')) {
+      if (el.getAttribute('stroke') !== 'none') expect(el.getAttribute('stroke')).toMatch(/var\(--/)
+    }
+    expect(ring.querySelector('.recharts-radial-bar-background-sector')).toHaveAttribute('fill', 'var(--chart-grid)')
+    // No Recharts application layer: the ring is the meter.
+    expect(ring.querySelector('[role="application"]')).toBeNull()
+  })
+
+  it('lower is better: 60 sits in the 40-70 warning band (amber)', async () => {
+    await renderGate(flooredDecision())
+    await screen.findByRole('meter', { name: 'Risk Score' })
+    // 60 is in the 40-70 warning band.
+    expect(arc()).toHaveAttribute('fill', 'var(--status-broken)')
+  })
+
+  it.each([
+    [85, 'var(--status-failed)'],
+    [70, 'var(--status-failed)'],
+    [39, 'var(--status-passed)'],
+  ])('colours a risk of %s with %s', async (score, fill) => {
+    await renderGate(flooredDecision({ risk_score: score, composite_risk: score, input_snapshot: {} }))
+    await screen.findByRole('meter', { name: 'Risk Score' })
+    expect(arc()).toHaveAttribute('fill', fill)
   })
 })

@@ -562,6 +562,37 @@ describe('ChartFrame — one page-level announcer (no per-frame live regions)', 
     expect(heard).toEqual(['Bravo chart: error'])
   })
 
+  it('an empty window the caller names neutrally is announced in those words, not as a filter result (R1 F3)', async () => {
+    vi.useFakeTimers()
+    const { rerender, container } = render(page({ Alpha: readyOf(MATRIX) }))
+    const live = container.querySelector('[role="status"]') as HTMLElement
+    const heard = recordText(live)
+    act(() => vi.advanceTimersByTime(ANNOUNCE_DEBOUNCE_MS * 2))
+    rerender(
+      <ChartAnnouncerProvider>
+        {[
+          // The same keyed position as `page()`: the same frame, changing state.
+          <ChartFrame
+            key="Alpha"
+            title="Alpha"
+            headingLevel={2}
+            state={{ status: 'filtered-empty', meta: null }}
+            series={MATRIX}
+            chartType="Heatmap"
+            emptyMessage="No executions in this window"
+          >
+            <div />
+          </ChartFrame>,
+        ]}
+      </ChartAnnouncerProvider>,
+    )
+    act(() => vi.advanceTimersByTime(ANNOUNCE_DEBOUNCE_MS * 2))
+    await act(async () => {})
+    expect(heard).toEqual(['Alpha chart: no executions in this window'])
+    expect(screen.getByText('No executions in this window')).toBeInTheDocument()
+    expect(screen.queryByText(CHART_MESSAGES.filteredEmpty)).toBeNull()
+  })
+
   it('load-time state messages are static text in the frame: no alert, no status role', () => {
     const { container } = render(
       page({

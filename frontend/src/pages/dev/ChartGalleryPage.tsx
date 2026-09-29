@@ -29,6 +29,22 @@ import BarChart, { BreakdownChart } from '@/components/charts/BarChart'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
 import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
+import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
+import Sparkline from '@/components/charts/Sparkline'
+import GaugeBar from '@/components/charts/GaugeBar'
+import RingGauge from '@/components/charts/RingGauge'
+import DayStrip, { type DayStripProps } from '@/components/charts/DayStrip'
+import { bandsTone, formatGaugeNumber } from '@/components/charts/gaugeBar.model'
+import type { StackedColumnModel } from '@/components/charts/stackedColumnModel'
+import {
+  hostileLabelsFixture,
+  longWindowFixture,
+  manyCategoriesFixture,
+  seriesMonthlyFixture,
+  singleBucketFixture,
+  statusDailyFixture,
+} from '@/components/charts/__fixtures__/stackedColumn'
+import { DAY_STRIP_FIXTURES } from '@/components/charts/__fixtures__/dayStrip'
 import { buildMultiSeriesModel, readComparability, type MultiSeriesModel } from '@/components/charts/multiSeriesModel'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { ChartResponse, ChartState } from '@/components/charts/chartState'
@@ -51,6 +67,7 @@ import {
   trendZoomReleasesMeta,
 } from '@/components/charts/__fixtures__/wave2Fixtures'
 import type { ChartSeries } from '@/lib/viz/contracts'
+import { formatPercent } from '@/utils/formatters'
 import { THEMES, type ThemeId } from '@/store/themeStore'
 import {
   GALLERY_CANVAS,
@@ -69,8 +86,11 @@ import {
   HOSTILE_LABEL,
   type GalleryCategorySeries,
   type GalleryComparison,
+  type GalleryDayStripFixture,
+  type GalleryFormat,
   type GalleryHistogramFixture,
   type GalleryItem,
+  type GalleryStackedFixture,
   type GalleryTimeSeriesFixture,
 } from './chartGalleryFixtures'
 import { STATES_VIEW_PARAM } from './chartStatesFixtures'
@@ -209,6 +229,49 @@ function comparisonModel(comparison: GalleryComparison): MultiSeriesModel {
   return model
 }
 
+/** Wave 2.5 (K1): the model behind each stacked-column item. Exhaustive, as `timeSeriesFixture` is. */
+function stackedFixture(key: GalleryStackedFixture): StackedColumnModel {
+  switch (key) {
+    case 'stacked-status-daily':
+      return statusDailyFixture
+    case 'stacked-series-monthly':
+      return seriesMonthlyFixture
+    case 'stacked-hostile-labels':
+      return hostileLabelsFixture
+    case 'stacked-single-bucket':
+      return singleBucketFixture
+    case 'stacked-long-window':
+      return longWindowFixture
+    case 'stacked-many-categories':
+      return manyCategoriesFixture
+  }
+}
+
+/**
+ * Wave 2.5 (K5): each DayStrip fixture's props, built ONCE. A new `cells`
+ * array on every render would rebuild the strip's model and restart its
+ * keyboard cursor under the reader. A key with no fixture throws here, at
+ * import, rather than drawing an empty box.
+ */
+const DAY_STRIP_PROPS = new Map<string, DayStripProps>(DAY_STRIP_FIXTURES.map((fixture) => [fixture.id, fixture.props()]))
+function dayStripProps(key: GalleryDayStripFixture): DayStripProps {
+  const props = DAY_STRIP_PROPS.get(key)
+  if (!props) throw new Error(`no DayStrip fixture named ${key}`)
+  return props
+}
+
+/** The formatter a Wave 2.5 item names by key (`chartGalleryFixtures` cannot import one). */
+function galleryFormat(format: GalleryFormat | undefined): ((v: number) => string) | undefined {
+  switch (format) {
+    case 'percent':
+      return (v) => formatPercent(v)
+    case 'number':
+      return formatGaugeNumber
+    case undefined:
+      return undefined
+  }
+}
+
 function renderChart(item: GalleryItem) {
   switch (item.chart) {
     case 'status-donut':
@@ -296,6 +359,8 @@ function renderChart(item: GalleryItem) {
           trendAnalysis={item.trendOverlays ? GALLERY_TREND_ANALYSIS : undefined}
           // VIZ-407: undefined for every earlier item, which then draws no brush.
           zoom={item.zoom}
+          // VIZ-104 K2: undefined for every earlier item, which then draws no target.
+          rateTarget={item.rateTarget}
         />
       )
     case 'duration-histogram':
@@ -348,6 +413,64 @@ function renderChart(item: GalleryItem) {
           animate={false}
           zoom={item.zoom}
         />
+      )
+    case 'stacked-column':
+      return (
+        <StackedColumnChartFrame
+          title={item.title}
+          state={DRAWN_STATE}
+          model={stackedFixture(item.fixture)}
+          bucketNoun={item.bucketNoun}
+          headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+          height={GALLERY_FRAME_PLOT_HEIGHT}
+          animate={false}
+        />
+      )
+    case 'sparkline': {
+      // One cell per width, as a KPI cell holds it; a series too short to
+      // draw leaves the caller's caption (Overview's dashed line) in its place.
+      const { widths, format, ...props } = item.sparkline
+      return (
+        <div className="flex w-full items-end justify-center gap-8">
+          {widths.map((width) => (
+            <div key={width} data-sparkline-cell={width} style={{ width }}>
+              <Sparkline {...props} format={galleryFormat(format)} />
+              {item.empty && (
+                <p className="border-t border-dashed border-[var(--color-border)] pt-1 text-[11px] text-[var(--color-text-secondary)]">
+                  No trend line: fewer than 2 measured days
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )
+    }
+    case 'gauge-bar': {
+      const { box, format, ...props } = item.gauge
+      return (
+        <div style={{ width: box }}>
+          <GaugeBar {...props} format={galleryFormat(format)} />
+        </div>
+      )
+    }
+    case 'ring-gauge':
+      // The gauge is square; fill the canvas height, as `PassRateGauge`'s item does.
+      return (
+        <RingGauge
+          value={item.ring.value}
+          caption={item.ring.caption}
+          format={galleryFormat(item.ring.format)}
+          tone={bandsTone(item.ring.bands)}
+          size={GALLERY_CANVAS.height}
+          animate={false}
+        />
+      )
+    case 'day-strip':
+      // The strip is as wide as its box: a flex child would otherwise shrink to nothing.
+      return (
+        <div className="w-full">
+          <DayStrip {...dayStripProps(item.fixture)} />
+        </div>
       )
   }
 }

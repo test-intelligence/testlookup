@@ -51,6 +51,8 @@ import { clsx } from 'clsx'
 import AISuggestion from '@/components/ai/AISuggestion'
 import EmptyState from '@/components/ui/EmptyState'
 import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
+import GaugeBar from '@/components/charts/GaugeBar'
+import type { GaugeBands } from '@/components/charts/gaugeBar.model'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -1024,50 +1026,129 @@ function KpiCell({
   )
 }
 
-function SeverityDistBar({ p0, p1, p2, p3 }: { p0: number; p1: number; p2: number; p3: number }) {
-  const total = p0 + p1 + p2 + p3 || 1
-  return (
-    <div className="flex h-2.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-      {p0 > 0 && <span style={{ flex: p0, background: 'var(--status-failed)' }} title={`${p0} P0`} />}
-      {p1 > 0 && <span style={{ flex: p1, background: 'var(--status-broken)' }} title={`${p1} P1`} />}
-      {p2 > 0 && <span style={{ flex: p2, background: 'var(--color-accent)' }} title={`${p2} P2`} />}
-      {p3 > 0 && <span style={{ flex: p3, background: 'var(--color-text-faint)' }} title={`${p3} P3`} />}
-      {total === 1 && p0 + p1 + p2 + p3 === 0 && <span style={{ flex: 1, background: 'var(--color-bg-secondary)' }} />}
-    </div>
-  )
-}
+/** The confidence target the meta line states ("target ≥ 0.7"), and the KPI's own tone bands. */
+const CONFIDENCE_TARGET = { value: 0.7, label: 'target' } as const
+const CONFIDENCE_BANDS: GaugeBands = { direction: 'higher-is-better', thresholds: [0.7, 0.8] }
+const CONFIDENCE_DOMAIN = [0, 1] as const
+const confidenceText = (v: number) => v.toFixed(2)
+const dollars = (v: number) => `$${v.toFixed(2)}`
 
-function SparkRisingLine({ stroke }: { stroke: string }) {
-  return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <polyline fill="none" stroke={stroke} strokeWidth={1.5} points="0,18 12,16 24,14 36,12 48,10 60,9 72,7 84,5 96,4" />
-      <circle cx={96} cy={4} r={2} fill={stroke} />
-    </svg>
+/**
+ * The five investigation KPIs. Owner decision OD-1 (Wave 2.5): a KPI glyph
+ * draws a REAL series or a real scalar, or nothing. There is no per-day
+ * history here (spend is per billing period, clusters are per run), so:
+ *
+ *   - Likely clusters: the proposed clusters by severity, P0..P3, as a
+ *     stacked `GaugeBar` (only when there are clusters). It sat under
+ *     "Eligible failures", where a three-segment bar under "12" read as a
+ *     split of the 12 failures; it splits the clusters this cell counts
+ *     (`preScanClusters` is `proposedClusters.length`). Its name is drawn
+ *     above it and the counts are written under it, so neither the name nor
+ *     the P0..P3 split is for a screen reader only, nor colour only (R2 F8);
+ *   - Avg cluster confidence: a `GaugeBar` on 0-1 with the 0.7 target the
+ *     meta line states; not measured until analysis has proposed a cluster;
+ *   - Spend MTD: spend against the budget — and NO bar when there is no
+ *     budget. It used to draw eight bars for "no budget set";
+ *   - Last analysis: no glyph. It and Likely clusters were the same literal
+ *     rising polyline, whatever the numbers said.
+ *
+ * With no proposed cluster there is no average confidence: both cells say
+ * "—" in the neutral tone, never "avg conf 0.00" or a red "—".
+ */
+export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
+  const sev = model.severityCounts
+  const clusterTotal = sev.p0 + sev.p1 + sev.p2 + sev.p3
+  const severitySplit = (['p0', 'p1', 'p2', 'p3'] as const)
+    .filter((key) => sev[key] > 0)
+    .map((key) => `${sev[key]} ${key.toUpperCase()}`)
+    .join(' · ')
+  const severityGauge = clusterTotal > 0 ? (
+    <>
+      <GaugeBar
+        value={clusterTotal}
+        domain={[0, clusterTotal]}
+        size="sm"
+        label="Proposed clusters by severity"
+        showLabel
+        segments={[
+          { value: sev.p0, label: 'P0', tone: 'bad' },
+          { value: sev.p1, label: 'P1', tone: 'warn' },
+          { value: sev.p2, label: 'P2', tone: 'accent' },
+          { value: sev.p3, label: 'P3', tone: 'neutral' },
+        ]}
+      />
+      <div className="mt-1 text-[10.5px] tabular-nums text-[var(--color-text-secondary)]">{severitySplit}</div>
+    </>
+  ) : undefined
+  const hasClusters = model.preScanClusters > 0
+  const confidenceGauge = (
+    <GaugeBar
+      value={model.preScanClusters > 0 ? model.preScanAvgConfidence : null}
+      domain={CONFIDENCE_DOMAIN}
+      tone={CONFIDENCE_BANDS}
+      target={CONFIDENCE_TARGET}
+      size="sm"
+      format={confidenceText}
+      label="Average cluster confidence"
+    />
   )
-}
-
-function SparkTargetLine({ stroke, points }: { stroke: string; points: string }) {
+  const budget = model.spendBudgetDollars
+  const spendGauge = budget != null && budget > 0 ? (
+    <GaugeBar
+      value={model.spendMtdDollars}
+      domain={[0, budget]}
+      tone="accent"
+      size="sm"
+      format={dollars}
+      label="Spend this month against the monthly budget"
+    />
+  ) : undefined
   return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <line x1="0" y1="9" x2="100" y2="9" stroke="var(--color-border)" strokeDasharray="2 3" strokeWidth={1} />
-      <polyline fill="none" stroke={stroke} strokeWidth={1.5} points={points} />
-      <circle cx={98} cy={Number(points.split(' ').pop()?.split(',')[1] ?? 8)} r={2} fill={stroke} />
-    </svg>
-  )
-}
-
-function SparkGrowingBars({ pct }: { pct: number }) {
-  // 8-bar growth, last bar tallest, height proxied from pct (0-100).
-  const tallest = Math.max(2, (Math.min(100, pct) / 100) * 18)
-  return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      {Array.from({ length: 8 }).map((_, i) => {
-        const x = 2 + i * 12
-        const h = Math.max(4, (i / 7) * tallest)
-        const opacity = 0.5 + (i / 7) * 0.5
-        return <rect key={i} x={x} y={22 - h} width="10" height={h} rx={1} fill="var(--color-accent)" opacity={opacity} />
-      })}
-    </svg>
+    <section aria-label="Investigation inputs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+      <KpiCell
+        Icon={AlertCircle}
+        label="Eligible failures"
+        value={model.eligibleFailures}
+        tone={model.eligibleFailures > 0 ? 'bad' : 'good'}
+        meta={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel} window</>}
+        isFirst
+      />
+      <KpiCell
+        Icon={Layers}
+        label="Likely clusters"
+        value={model.preScanClusters}
+        tone="accent"
+        meta={<>pre-scan · avg conf {hasClusters ? model.preScanAvgConfidence.toFixed(2) : '—'}</>}
+        spark={severityGauge}
+      />
+      <KpiCell
+        Icon={Clock}
+        label="Last analysis"
+        value={model.lastRunAgeHours != null ? model.lastRunAgeHours : '—'}
+        sub={model.lastRunAgeHours != null ? 'h ago' : undefined}
+        tone="neutral"
+        meta={model.lastRunSummary ?? <>no prior run</>}
+      />
+      <KpiCell
+        Icon={Target}
+        label="Avg cluster confidence"
+        value={hasClusters ? model.preScanAvgConfidence.toFixed(2) : '—'}
+        tone={!hasClusters ? 'neutral' : model.preScanAvgConfidence >= 0.8 ? 'good' : model.preScanAvgConfidence >= 0.7 ? 'warn' : 'bad'}
+        meta={<>target ≥ 0.7 · {model.proposedClusters.filter(c => c.confidence < 0.7).length} below</>}
+        spark={confidenceGauge}
+      />
+      <KpiCell
+        Icon={DollarSign}
+        label="Spend MTD"
+        value={`$${model.spendMtdDollars.toFixed(2)}`}
+        tone="neutral"
+        meta={model.spendBudgetDollars != null && model.spendBudgetDollars > 0
+          ? <>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>
+          : <>no budget set</>}
+        spark={spendGauge}
+        isLast
+      />
+    </section>
   )
 }
 
@@ -1893,53 +1974,7 @@ export default function DeepInvestigationPage() {
           falling back to the focused run's project in All-Projects mode. */}
       <InvestigatorCockpit runId={runId ?? null} projectId={budgetProjectId} />
 
-      <section aria-label="Investigation inputs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-        <KpiCell
-          Icon={AlertCircle}
-          label="Eligible failures"
-          value={model.eligibleFailures}
-          tone={model.eligibleFailures > 0 ? 'bad' : 'good'}
-          meta={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel} window</>}
-          spark={<SeverityDistBar p0={model.severityCounts.p0} p1={model.severityCounts.p1} p2={model.severityCounts.p2} p3={model.severityCounts.p3} />}
-          isFirst
-        />
-        <KpiCell
-          Icon={Layers}
-          label="Likely clusters"
-          value={model.preScanClusters}
-          tone="accent"
-          meta={<>pre-scan · avg conf {model.preScanAvgConfidence.toFixed(2)}</>}
-          spark={<SparkRisingLine stroke="var(--color-accent)" />}
-        />
-        <KpiCell
-          Icon={Clock}
-          label="Last analysis"
-          value={model.lastRunAgeHours != null ? model.lastRunAgeHours : '—'}
-          sub={model.lastRunAgeHours != null ? 'h ago' : undefined}
-          tone="neutral"
-          meta={model.lastRunSummary ?? <>no prior run</>}
-          spark={<SparkRisingLine stroke="var(--status-passed)" />}
-        />
-        <KpiCell
-          Icon={Target}
-          label="Avg cluster confidence"
-          value={model.preScanAvgConfidence > 0 ? model.preScanAvgConfidence.toFixed(2) : '—'}
-          tone={model.preScanAvgConfidence >= 0.8 ? 'good' : model.preScanAvgConfidence >= 0.7 ? 'warn' : 'bad'}
-          meta={<>target ≥ 0.7 · {model.proposedClusters.filter(c => c.confidence < 0.7).length} below</>}
-          spark={<SparkTargetLine stroke="var(--status-broken)" points="0,13 14,10 28,8 42,11 56,7 70,9 84,6 98,8" />}
-        />
-        <KpiCell
-          Icon={DollarSign}
-          label="Spend MTD"
-          value={`$${model.spendMtdDollars.toFixed(2)}`}
-          tone="neutral"
-          meta={model.spendBudgetDollars != null && model.spendBudgetDollars > 0
-            ? <>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>
-            : <>no budget set</>}
-          spark={<SparkGrowingBars pct={model.spendBudgetDollars != null && model.spendBudgetDollars > 0 ? (model.spendMtdDollars / model.spendBudgetDollars) * 100 : 0} />}
-          isLast
-        />
-      </section>
+      <InvestigationKpiStrip model={model} />
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">

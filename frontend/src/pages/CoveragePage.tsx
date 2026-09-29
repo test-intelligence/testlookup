@@ -64,6 +64,9 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
+import GaugeBar from '@/components/charts/GaugeBar'
+import DayStrip from '@/components/charts/DayStrip'
+import { countTones, dayWindow, intensityLevel, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
 
@@ -758,22 +761,26 @@ function HealthMeter({ model, verdict }: { model: ReturnType<typeof computeHealt
           {t.label}
         </span>
       </div>
-      <div className="relative mt-3 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--color-bg-secondary)' }}>
-        <i className="block h-full rounded-full" style={{ width: `${score}%`, background: 'var(--gradient-health)' }} />
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-        </div>
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Block · 0</span>
-        <span>At risk · 33</span>
-        <span>Healthy · 66</span>
-        <span>100</span>
-      </div>
+      {/* PENDING has no score to place: the header says "—", so the bar is
+          not-measured (an empty track), never a fill at 0. */}
+      <GaugeBar
+        className="mt-3"
+        value={verdict === 'PENDING' ? null : score}
+        label="Coverage health score"
+        valueText={`${score} of 100, ${t.label}`}
+        gradient="health"
+        ticks={HEALTH_TICKS}
+      />
     </div>
   )
 }
+
+const HEALTH_TICKS = [
+  { value: 0, label: 'Block' },
+  { value: 33, label: 'At risk' },
+  { value: 66, label: 'Healthy' },
+  { value: 100 },
+]
 
 function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   return (
@@ -1256,33 +1263,53 @@ function CoverageGaps({ gaps }: { gaps: GapRow[] }) {
 }
 
 // ── Run cadence heatmap ───────────────────────────────────────────────────
-function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) {
-  // Project the trend points into a {date → executions} map keyed by ISO
-  // date. We then walk the last `days` days end-to-today and bucket each.
+
+/** The heatmap draws at most this many days (the README defers a 90-day layout). */
+export const CADENCE_MAX_CELLS = 30
+
+/**
+ * The cadence strip's cells and its aggregate label, for a window of `days`
+ * ending on `todayIso`: one cell per day (quiet days included), its level
+ * from the day's executions (0 / 1-5 / 6-20 / 21-50 / more than 50), and only
+ * the last `CADENCE_MAX_CELLS` days.
+ *
+ * The label counts the cells it DRAWS. It used to count the whole window
+ * while saying "the last 30 days", so a 90-day window read "last 30 days.
+ * 12 active days, 78 empty days" over 30 cells.
+ *
+ * Volume, not outcome: no cell is marked mixed or failed, so this strip
+ * carries no failure cue (Trends' cadence strip is the one that does).
+ */
+export function coverageCadence(
+  trend: TrendPoint[],
+  days: number,
+  todayIso: string,
+): { cells: DayStripCell[]; label: string } {
   const byDate = new Map<string, number>()
   for (const p of trend) {
     const total = p.passed + p.failed + p.skipped + (p.broken ?? 0)
     byDate.set(p.date.slice(0, 10), total)
   }
-  const todayIso = utcDayIso()
-  const cells: { iso: string; runs: number; level: 0 | 1 | 2 | 3 | 4; isToday: boolean }[] = []
-  for (let i = days - 1; i >= 0; i--) {
-    const iso = shiftDayIso(todayIso, -i)
+  const isos = dayWindow(Math.min(days, CADENCE_MAX_CELLS), todayIso)
+  const cells = isos.map<DayStripCell>((iso, i) => {
     const runs = byDate.get(iso) ?? 0
-    const level = runs === 0 ? 0
-                : runs <= 5  ? 1
-                : runs <= 20 ? 2
-                : runs <= 50 ? 3
-                : 4
-    cells.push({ iso, runs, level, isToday: i === 0 })
+    return {
+      key: iso,
+      label: `${iso} · ${runs} execution${runs === 1 ? '' : 's'}`,
+      tone: runs > 0 ? 'pass' : 'none',
+      level: intensityLevel(runs),
+      marker: i === isos.length - 1 ? 'today' : undefined,
+    }
+  })
+  const counts = countTones(cells)
+  return {
+    cells,
+    label: `Run cadence over the last ${cells.length} days. ${counts.pass} active days, ${counts.none} empty days.`,
   }
+}
 
-  // The README §"Out of Scope" defers 90-day adaptation — for v1 we cap
-  // the visual at 30 cells. Anything longer collapses week-by-week
-  // averages; we keep that branch trivial (just slice).
-  const renderCells = days > 30 ? cells.slice(-30) : cells
-  const cols = Math.min(renderCells.length, 30)
-
+function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) {
+  const { cells, label } = useMemo(() => coverageCadence(trend, days, utcDayIso()), [trend, days])
   return (
     <section
       aria-label="Run cadence"
@@ -1292,48 +1319,13 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
       <h3 className="text-[13px] font-semibold m-0 mb-2 flex justify-between items-center text-[var(--color-text)]">
         Run cadence
         <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
-          last {days > 30 ? '30 of ' : ''}{days} days
+          last {days > CADENCE_MAX_CELLS ? `${CADENCE_MAX_CELLS} of ` : ''}{days} days
         </span>
       </h3>
       <p className="text-[11.5px] text-[var(--color-text-muted)] m-0 mb-2.5" style={{ lineHeight: 1.45 }}>
         Each cell is a day. Empty cells are missed windows for the configured schedule.
       </p>
-      <div
-        role="img"
-        aria-label={`Run cadence over the last ${cols} days. ${cells.filter(c => c.runs > 0).length} active days, ${cells.filter(c => c.runs === 0).length} empty days.`}
-        className="grid gap-[3px] mb-2.5"
-        style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
-      >
-        {renderCells.map((c) => (
-          <div
-            key={c.iso}
-            title={`${c.iso} · ${c.runs} execution${c.runs === 1 ? '' : 's'}`}
-            aria-label={`${c.iso}: ${c.runs} execution${c.runs === 1 ? '' : 's'}`}
-            className="rounded-sm"
-            style={{
-              aspectRatio: '1',
-              background: c.level === 0 ? 'var(--color-bg-secondary)'
-                : c.level === 1 ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)'
-                : c.level === 2 ? 'color-mix(in srgb, var(--status-passed) 40%, transparent)'
-                : c.level === 3 ? 'color-mix(in srgb, var(--status-passed) 70%, transparent)'
-                :                 'var(--status-passed)',
-              border: c.level === 0 ? '1px solid var(--color-border)' : '1px solid transparent',
-              boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : 'none',
-            }}
-          />
-        ))}
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-muted)]">
-        <span>{cols} day{cols === 1 ? '' : 's'} ago</span>
-        <span className="inline-flex items-center gap-1">
-          Less
-          <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }} />
-          <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'color-mix(in srgb, var(--status-passed) 40%, transparent)' }} />
-          <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-passed)' }} />
-          More
-        </span>
-        <span>Today</span>
-      </div>
+      <DayStrip cells={cells} mode="intensity" label={label} title="Run cadence" />
     </section>
   )
 }

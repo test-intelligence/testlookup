@@ -95,7 +95,10 @@ import {
   FAILURE_KIND_DEFS, failureKindOf, kindDef, type FailureKind,
 } from '@/utils/failureKind'
 import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
-import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
+import { utcDayIso } from '@/utils/calendarDay'
+import GaugeBar from '@/components/charts/GaugeBar'
+import DayStrip from '@/components/charts/DayStrip'
+import { countTones, dayWindow, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
 
@@ -677,22 +680,26 @@ function StabilityMeter({ model, verdict }: { model: StabilityModel; verdict: Ve
           {t.label}
         </span>
       </div>
-      <div className="relative mt-3 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--color-bg-secondary)' }}>
-        <i className="block h-full rounded-full" style={{ width: `${score}%`, background: 'var(--gradient-stability)' }} />
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-        </div>
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Block · 0</span>
-        <span>At risk · 33</span>
-        <span>Stable · 66</span>
-        <span>100</span>
-      </div>
+      {/* `--gradient-stability` IS `--gradient-health` (index.css). PENDING
+          has no score to place, so the bar is not measured, never a 0 fill. */}
+      <GaugeBar
+        className="mt-3"
+        value={verdict === 'PENDING' ? null : score}
+        label="Stability score"
+        valueText={`${score} of 100, ${t.label}`}
+        gradient="health"
+        ticks={STABILITY_TICKS}
+      />
     </div>
   )
 }
+
+const STABILITY_TICKS = [
+  { value: 0, label: 'Block' },
+  { value: 33, label: 'At risk' },
+  { value: 66, label: 'Stable' },
+  { value: 100 },
+]
 
 function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   return (
@@ -969,27 +976,53 @@ function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }
 }
 
 // ── What's failing card ───────────────────────────────────────────────────
-interface RunCell {
-  iso: string
-  kind: 'pass' | 'fail' | 'notrun'
-}
+/** The What's-failing run strip always shows the last fortnight, whatever the window. */
+export const RUN_STRIP_DAYS = 14
 
-function build14CellStrip(trend: TrendPoint[]): RunCell[] {
-  const byDate = new Map<string, RunCell['kind']>()
+/**
+ * The run strip: the last `RUN_STRIP_DAYS` days ending on `todayIso`, one
+ * cell each — `fail` if the day had a failed OR broken result, `pass` if it
+ * had a pass and neither, otherwise `none` ("not run": nothing, or skips only).
+ *
+ * Broken is a failure-like result, not an absence: a broken-only day used to
+ * be drawn as "not run", so a day whose every test broke looked like a quiet
+ * day. A chart does not silently drop a status (the owner's rule: Overview
+ * OD-7, Trends OD-16); the timeline below counts broken the same way.
+ */
+export function runStripCells(trend: TrendPoint[], todayIso: string): DayStripCell[] {
+  const byDate = new Map<string, { tone: DayStripCell['tone']; word: string }>()
   for (const p of trend) {
     const iso = p.date.slice(0, 10)
-    if (p.failed > 0)      byDate.set(iso, 'fail')
-    else if (p.passed > 0) byDate.set(iso, 'pass')
-    else                   byDate.set(iso, 'notrun')
+    const broken = p.broken ?? 0
+    byDate.set(
+      iso,
+      p.failed > 0
+        ? { tone: 'fail', word: broken > 0 ? 'failed and broken' : 'failed' }
+        : broken > 0
+          ? { tone: 'fail', word: 'broken' }
+          : p.passed > 0
+            ? { tone: 'pass', word: 'passed' }
+            : { tone: 'none', word: NOT_RUN },
+    )
   }
-  const todayIso = utcDayIso()
-  const cells: RunCell[] = []
-  for (let i = 13; i >= 0; i--) {
-    const iso = shiftDayIso(todayIso, -i)
-    cells.push({ iso, kind: byDate.get(iso) ?? 'notrun' })
-  }
-  return cells
+  return dayWindow(RUN_STRIP_DAYS, todayIso).map((iso) => {
+    const day = byDate.get(iso) ?? { tone: 'none' as const, word: NOT_RUN }
+    return { key: iso, label: `${iso} · ${day.word}`, tone: day.tone }
+  })
 }
+
+/** The strip's aggregate name: B0's visual spec finds the strip by its "Run strip:" prefix. */
+export function runStripLabel(cells: readonly DayStripCell[]): string {
+  const c = countTones(cells)
+  return `Run strip: ${c.fail} failed, ${c.pass} passed, ${c.none} not run.`
+}
+
+/**
+ * The word both strips on this page use for a day with nothing evaluated.
+ * Module-level so the strips' models are not rebuilt on every render.
+ */
+const NOT_RUN = 'not run'
+const RUN_STRIP_TEXT = { none: 'Not run' }
 
 function WhatsFailingCard({
   topFailingTest, totalRuns, trend, onMute, muteDisabledReason,
@@ -1065,10 +1098,8 @@ function WhatsFailingCard({
     )
   }
 
-  const cells = build14CellStrip(trend)
-  const failedCells = cells.filter(c => c.kind === 'fail').length
-  const passedCells = cells.filter(c => c.kind === 'pass').length
-  const notRunCells = cells.filter(c => c.kind === 'notrun').length
+  const cells = runStripCells(trend, utcDayIso())
+  const { fail: failedCells, pass: passedCells, none: notRunCells } = countTones(cells)
 
   return (
     <CardShell
@@ -1144,29 +1175,19 @@ function WhatsFailingCard({
           <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
             Last 14 days
           </span>
-          <div
-            role="img"
-            aria-label={`Run strip: ${failedCells} failed, ${passedCells} passed, ${notRunCells} not run.`}
-            className="grid gap-[3px] flex-1"
-            style={{ gridTemplateColumns: 'repeat(14, 1fr)' }}
-          >
-            {cells.map((c, i) => (
-              <div
-                key={i}
-                title={`${c.iso} · ${c.kind}`}
-                aria-label={`${c.iso}: ${c.kind === 'fail' ? 'failed' : c.kind === 'pass' ? 'passed' : 'not run'}`}
-                className="rounded-sm"
-                style={{
-                  height: 14,
-                  background: c.kind === 'fail' ? 'var(--gate-no-go)'
-                    : c.kind === 'pass' ? 'var(--status-passed)'
-                    : 'var(--color-bg-secondary)',
-                  border: c.kind === 'notrun' ? '1px solid var(--color-border)' : '1px solid transparent',
-                  opacity: c.kind === 'pass' ? 0.7 : 1,
-                }}
-              />
-            ))}
-          </div>
+          {/* Fail is `--status-failed` now (it was `--gate-no-go`, which
+              index.css defines as `var(--status-failed)`: the same colour in
+              every theme, one name for one meaning — OD-9). */}
+          <DayStrip
+            className="flex-1 min-w-0"
+            cells={cells}
+            mode="status"
+            label={runStripLabel(cells)}
+            title="Run strip"
+            cellHeight={14}
+            legend={false}
+            text={RUN_STRIP_TEXT}
+          />
           <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
             {failedCells} fail · {notRunCells} idle · {passedCells} pass
           </span>
@@ -1668,27 +1689,53 @@ function ComparisonCell({
 
 
 // ── Failure timeline ──────────────────────────────────────────────────────
-function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number }) {
-  const byDate = new Map<string, { passed: number; failed: number; skipped: number }>()
+
+/** The timeline draws at most this many days. */
+export const TIMELINE_MAX_CELLS = 30
+
+/**
+ * The failure timeline's cells, for a window of `days` ending on `todayIso`
+ * (at most `TIMELINE_MAX_CELLS`, oldest first): `fail` when anything failed or
+ * broke — its `severity` (a deeper red for a worse day) is the
+ * failed-plus-broken share of all four statuses — `pass` when something
+ * passed, otherwise `none`, "not run": no result, or skips only.
+ *
+ * That is the run strip's rule and word for the same day on the same card
+ * (`runStripCells`). A pass day names what it counts: "5 passed, 3 skipped",
+ * never "8 passing", and a skips-only day is not a green "4 passing" (R1 F6).
+ *
+ * Broken counts, in the total and as failure-like: it used to be left out of
+ * both, so a broken-only day was drawn as "0 runs" and broken results thinned
+ * no day's severity (the owner's rule: a chart does not silently drop a
+ * status, OD-7 / OD-16).
+ */
+export function failureTimelineCells(trend: TrendPoint[], days: number, todayIso: string): DayStripCell[] {
+  const byDate = new Map<string, { passed: number; failed: number; skipped: number; broken: number }>()
   for (const p of trend) {
-    byDate.set(p.date.slice(0, 10), { passed: p.passed, failed: p.failed, skipped: p.skipped })
+    byDate.set(p.date.slice(0, 10), { passed: p.passed, failed: p.failed, skipped: p.skipped, broken: p.broken ?? 0 })
   }
-  const today = new Date()
-  const len = Math.min(days, 30)
-  const cells: { iso: string; kind: 'empty' | 'pass' | 'fail'; severity: number }[] = []
-  for (let i = len - 1; i >= 0; i--) {
-    const iso = shiftDayIso(utcDayIso(today), -i)
+  return dayWindow(Math.min(days, TIMELINE_MAX_CELLS), todayIso).map<DayStripCell>((iso) => {
     const r = byDate.get(iso)
-    if (!r || (r.passed === 0 && r.failed === 0 && r.skipped === 0)) {
-      cells.push({ iso, kind: 'empty', severity: 0 })
-    } else if (r.failed > 0) {
-      const total = r.passed + r.failed + r.skipped
-      cells.push({ iso, kind: 'fail', severity: total > 0 ? r.failed / total : 1 })
-    } else {
-      cells.push({ iso, kind: 'pass', severity: 0 })
+    const total = r ? r.passed + r.failed + r.skipped + r.broken : 0
+    if (!r || total === 0) return { key: iso, label: `${iso} · ${NOT_RUN}`, tone: 'none' }
+    const failing = r.failed + r.broken
+    if (failing > 0) {
+      const what = r.broken === 0 ? 'failed' : r.failed === 0 ? 'broken' : `failed or broken (${r.broken} broken)`
+      return { key: iso, label: `${iso} · ${failing} of ${total} ${what}`, tone: 'fail', severity: failing / total }
     }
-  }
-  const failureCount = cells.filter(c => c.kind === 'fail').length
+    if (r.passed === 0) return { key: iso, label: `${iso} · ${NOT_RUN} (${r.skipped} skipped)`, tone: 'none' }
+    const skipped = r.skipped > 0 ? `, ${r.skipped} skipped` : ''
+    return { key: iso, label: `${iso} · ${r.passed} passed${skipped}`, tone: 'pass' }
+  })
+}
+
+export function failureTimelineLabel(cells: readonly DayStripCell[]): string {
+  const failures = countTones(cells).fail
+  return `Failure timeline: ${failures} day${failures === 1 ? '' : 's'} with failures over the last ${cells.length} days.`
+}
+
+function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number }) {
+  const cells = useMemo(() => failureTimelineCells(trend, days, utcDayIso()), [trend, days])
 
   return (
     <CardShell title="Failure timeline" rightSlot={<span>last {days} days</span>}>
@@ -1696,41 +1743,7 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
           Repeat-failure events vs total runs in this window. Each cell = 1 day.
         </p>
-        <div
-          role="img"
-          aria-label={`Failure timeline: ${failureCount} day${failureCount === 1 ? '' : 's'} with failures over the last ${len} days.`}
-          className="grid gap-[3px] mb-2.5"
-          style={{ gridTemplateColumns: `repeat(${len}, 1fr)` }}
-        >
-          {cells.map((c) => (
-            <div
-              key={c.iso}
-              title={`${c.iso} · ${c.kind}`}
-              aria-label={c.kind === 'empty' ? `${c.iso}: 0 runs` : `${c.iso}: ${c.kind === 'fail' ? 'failures' : 'passing'}`}
-              className="rounded-sm"
-              style={{
-                aspectRatio: '1',
-                background: c.kind === 'empty'
-                  ? 'var(--color-bg-secondary)'
-                  : c.kind === 'fail'
-                    ? `color-mix(in srgb, var(--status-failed) ${Math.round((0.45 + 0.55 * Math.min(1, c.severity)) * 100)}%, transparent)`
-                    : 'color-mix(in srgb, var(--status-passed) 70%, transparent)',
-                border: c.kind === 'empty' ? '1px solid var(--color-border)' : '1px solid transparent',
-              }}
-            />
-          ))}
-        </div>
-        <div className="flex justify-between text-[10px] text-[var(--color-text-muted)]">
-          <span>{len} day{len === 1 ? '' : 's'} ago</span>
-          <span className="inline-flex items-center gap-1">
-            Pass
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'color-mix(in srgb, var(--status-passed) 70%, transparent)' }} />
-            <span aria-hidden>·</span>
-            Fail
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-failed)' }} />
-          </span>
-          <span>Today</span>
-        </div>
+        <DayStrip cells={cells} mode="status" label={failureTimelineLabel(cells)} title="Failure timeline" text={RUN_STRIP_TEXT} />
       </div>
     </CardShell>
   )

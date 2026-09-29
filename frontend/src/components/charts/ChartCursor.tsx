@@ -69,7 +69,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useChartAnnouncer } from './ChartAnnouncer'
-import { ChartTooltipBody, TIP_BOX_STYLE } from './ChartTooltip'
+import { ChartTooltipBody, TIP_BOX_STYLE } from './ChartTooltipBody'
 import { tooltipText, type TooltipContent } from './tooltip'
 
 /** One thing the cursor can stop on: a bar, a slice, a day. */

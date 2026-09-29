@@ -1,5 +1,235 @@
 # Changelog
 
+## Unreleased - Java SDK: Jackson 2.18.10 (CVE-2026-68497)
+
+The Java client (``client/java``) moves Jackson core, databind and the YAML
+data format from 2.18.8 to 2.18.10. Trivy's filesystem scan began failing CI on
+2026-09-29, main included, on CVE-2026-68497 (HIGH) in ``jackson-databind``,
+which 2.18.10 fixes. The SDK's own tests pass on the new version, and the shaded
+jar still relocates Jackson under ``ai.testlookup.shaded.jackson``.
+
+## Unreleased - Visualization Upgrade, Wave 2.5: every production chart on the kit (VIZ-104)
+
+Twelve production pages now draw their charts, meters, strips and KPI glyphs
+with the chart kit, not with page-local SVG, CSS grids or raw Recharts. The
+pages are Overview, Suite detail, Value metrics, Runs, Trends, Defects,
+Coverage, Failure analysis, Deep investigation, Run intelligence, Release gate
+and Intelligence hub. Each page keeps its own loading, empty and error states
+and their wording; the kit piece mounts only where the page used to draw. No
+endpoint, payload or cache key changed: every chart reads the data its page
+already fetched. The change is a straight replacement with no feature flag.
+Rollback is a `git revert` of this PR (OD-5).
+
+**The charts (package a and the two Trends plots).**
+- Overview's "Execution trend" was a stacked area of passed, failed and skipped.
+  It is now a stacked column per day that also counts **broken**, and so does
+  the "Automation" total under it, which gains a Broken cell (OD-7). Before, a
+  project with broken tests saw them nowhere in this chart, and its total came
+  out short by that number. A cached payload without a broken count shows "—
+  not measured" in that cell, never "0".
+- Overview's chart and its three KPI sparklines now cover **the whole window**,
+  one slot per day. A day with no runs is a 0 in every count (a baseline tick
+  in the chart) and a break in the pass-rate line. Before, the days without
+  runs were dropped, so a quiet week vanished from the time axis. The totals
+  and "across N days" still count only the days that had runs.
+- Suite detail's "Run history" draws **Skipped and Broken in two colours with
+  two patterns**; they used to share one colour.
+- Suite detail's pass-rate chart is now **per day**, not per run. It is titled
+  "Pass rate trend — last N days", and a day without runs is a gap in the line
+  (OD-4). Its summary line says so: "One point per day with runs · a day
+  without runs is a gap, never 0%". The run-by-run rates stay in the "Recent
+  runs" table.
+- Value metrics' "Hours saved per month" draws its three model legs in series
+  colours with patterns. Before, it borrowed three status colours for series
+  that are not statuses.
+- Trends' "Daily breakdown" is a kit stacked-column chart with nice y ticks,
+  and Skipped and Broken are distinct. A day with no runs is a 0 with a baseline
+  tick, as its cadence strip calls it "No runs"; it is no longer "not
+  measured".
+- Trends' "Pass rate trend" is a kit time series with a dashed 90% target line
+  and a legend entry for it (the new `rateTarget`). Its big number, target pill
+  and delta moved into the chart's one-line summary (OD-15). The old number
+  said "today" but showed the window's rate.
+- Every one of these gains the kit frame: a heading, a summary, "View as
+  table", "Export", "Full screen", status patterns and the kit tooltip. The
+  tooltip is now readable on the light theme; Suite detail's was a fixed dark
+  slate box everywhere.
+- **One status order everywhere: Passed, Failed, Broken, Skipped**, bottom to
+  top in every stacked chart and in every legend, tooltip and table. It is the
+  API's own status order. Trends used to stack Skipped under Broken, and so did
+  the kit's older `TrendChart`.
+- Pass-rate charts label their days "Mar 5", as the stacked charts do; the
+  tooltip, table and export keep the ISO day. A 100% dot is drawn whole (it
+  was cut in half at the top of the plot). Where a line has isolated days,
+  its legend swatch shows a dot on the line.
+- A stacked chart whose buckets are names (suites, not days) **never hides a
+  name**. It lays the names flat, then slants them 30° or 45°, then cuts long
+  names in the middle. Past 12 names, or when even that does not fit, it
+  draws horizontal bars with every name on its own row. A day axis may still
+  thin its labels, and it now counts from the newest day, so today is always
+  labelled.
+- An empty window says **"No executions in this window"** (or "No hours saved
+  in this window"). "No data matches the current filters" appears only when a
+  filter is actually set; Overview and Trends tell the chart when that is.
+
+**KPI sparklines (package b, OD-1).** A sparkline is drawn only from a real
+series.
+- **Twelve glyphs are deleted**, because no data stood behind them. Seven of
+  them were hard-coded shapes drawn whatever the numbers said. The deleted
+  glyphs are:
+  - Runs: "Builds failed", "Last green build" and "Red streak";
+  - Trends: "Days with runs", "Suites" and "Last run";
+  - Defects: "Open defects", "P0 / P1 open", "Mean time to resolve" and
+    "Escape rate";
+  - Deep investigation: "Eligible failures" and "Last analysis".
+
+  Those cells get shorter where no neighbour holds the row's height. The
+  six-tick micro-bar beside every suite on Trends is deleted too (OD-2).
+- **Three sparklines are real now**: Runs "Avg pass rate" (per build, oldest
+  first), Trends "Pass rate" and Trends "Executions" (per day). A rate with
+  nothing measured is a break in the line, never a 0. A count on a day with
+  no runs is a 0, drawn on a scale from 0, as Overview draws it. Overview's three
+  existing sparklines moved to the same component; their end dot is now round,
+  where it used to be stretched into an ellipse.
+- **Five KPI cells show a gauge bar** for the one real number they had:
+  - Runs "Unique failures": the primary signature's share of failed builds.
+  - Defects "Oldest open P0": days open, on a 7-day scale, amber from 2 days
+    and red from 5. It used to be red whatever the value.
+  - Deep investigation "Likely clusters": the proposed clusters by severity,
+    P0 to P3. Its visible name is "Proposed clusters by severity", and a
+    caption under it spells out the split ("1 P0 · 2 P1 · 1 P3"), so the
+    segments are not told by colour alone (OD-19). It used to sit under
+    "Eligible failures", which counts something else.
+  - Deep investigation "Avg cluster confidence": with a 0.70 target mark. With
+    no clusters, it reads "—" in a neutral tone (and "avg conf —"), never a
+    red 0.00.
+  - Deep investigation "Spend MTD": against the budget, and not drawn at all
+    when there is no budget. It used to draw eight bars for "no budget".
+- Runs "Avg pass rate" now averages only builds that have a result (OD-18).
+  A running build, or one that ran no tests, no longer counts as 0%. The
+  caption says "M of N builds measured" when some are not, and the cell shows
+  "—" when none are. The number now agrees with its sparkline.
+
+**Day strips (package c).** Five hand-built strips are one kit `DayStrip`: Trends
+and Coverage run cadence, the Failure-analysis run strip and timeline, and Runs
+build velocity. Each is one keyboard tab stop, with arrow keys, Home, End and
+Escape, spoken through the page's one announcer. Each has a screen-reader table
+with one row per cell. The table's hidden box is a wrapper around it: an
+"sr-only" table still sizes to its content, and it made a narrow window
+scroll sideways. A failed cell also carries a hatched pattern, so fail is
+not told by colour alone.
+- Trends: a day with failed **or broken** results counts as mixed (OD-16). The
+  "last day before a gap" outline is dashed, where it used to be a solid ring
+  told apart from "today" by colour only.
+- Failure analysis: both strips count broken as failure-like (OD-17). A day
+  with only broken results is a failing day, where it used to show as "not
+  run" or "0 runs". A day's red deepens with its failed-plus-broken share. A
+  passing day reads "5 passed, 3 skipped", where it said "8 passing" and
+  counted the skips as passes. A day with only skips, or nothing, is "Not
+  run" on both strips.
+- Coverage: the strip's summary counts the days it draws. Before, it said "last
+  30 days" but counted the whole window.
+- Runs build velocity: **the newest build is the last cell, under "Now"**, with
+  the accent ring. With fewer than 14 builds, the empty cells pad the old end;
+  they used to sit after the newest build, under "Now". Pass cells use the same
+  70% shade as the other status strips.
+- Every strip's start label counts back to its first cell: "13 days ago" for 14
+  days (it said "14 days ago").
+- A mixed day's failure band is at least 3 px tall, so it survives a 90-day
+  strip.
+
+**Gauges (package d).**
+- The six verdict meters are kit `GaugeBar`s, each a named `role="meter"`
+  with its value in words:
+  - Trends "Trend confidence";
+  - Runs "Pipeline health";
+  - Defects "Queue health";
+  - Coverage "Coverage health score";
+  - Failure analysis "Stability score";
+  - Run intelligence "Composite risk score".
+
+  Three of them had no accessible name before. Their notches and scale labels
+  now sit at the true values; before, a "30" or "70" tick was drawn at 33% or
+  67%. The scale labels, and the day strips' legends, use the secondary text
+  colour. The old faint grey was 2.5-3.3:1 against the card on every theme,
+  and the muted grey is 4.15:1 on the light theme; AA asks 4.5:1. A gradient
+  fill is anchored to the track, so a low score ends in the low colour. While
+  the verdict is pending, a meter is "not measured". Before, it drew the score
+  under a header that said "—". An unmeasured track is **dashed and unfilled**,
+  with a "—" at its start, so it no longer looks like a reading of 0; a measured
+  0 keeps a solid track.
+- **Non-text contrast of 3:1.** Every gauge track, the ring gauge's track, the
+  scale notches, a day strip's empty cells and a failed cell's edge now carry
+  an edge in the axis colour mixed with the card: 3.7-4.2:1 against the card on
+  all six themes. Before, the empty track and the empty days were 1.0-1.8:1:
+  nearly invisible.
+- Overview's verdict mini meter keeps its look, except that NO_GO is solid red
+  (it was a red-to-amber gradient). Its PENDING state is an empty track instead
+  of a hard-coded grey gradient.
+- On Intelligence hub:
+  - the pass-rate cell is the same bar, with the 60 and 80 bands;
+  - a run with no pass rate shows an empty track and "—", never 0 (OD-13). A
+    run still in progress, or one that ran no tests, is not measured either;
+    it used to show a red 0% meter. Runs and the hub share the rule (a new
+    `utils/runPassRate.ts`);
+  - the spend bar goes amber from 80% of the budget and red at 100% (OD-14).
+    It used to be a fixed teal gradient.
+- Release gate's risk score is a kit `RingGauge`, where it used to be a
+  hand-drawn semicircle. The card is 30 px taller. The ring's track and number
+  follow the theme; before, the number was literally white and could not be
+  seen on the light theme. Lower is better, and it is a named meter.
+
+**Pre-existing layout bugs fixed on the way.** These were visible in the
+before-screenshots, which were rendered with Linux fonts:
+- Overview's verdict headline ran under the pass-rate block. It now wraps.
+- Two Overview KPI captions ran into their "View …" links.
+- Trends' pass-rate y labels were clipped.
+
+**Also.**
+- `KpiStrip` builds its sub-line as JSX, where it used `dangerouslySetInnerHTML`
+  before. Its unused sparkline prop is gone (OD-11).
+- The page-level chart announcer is now mounted once in the app layout, so
+  every report route has it (PLAN 8.1).
+- The chart gallery gains 32 items for the new pieces, each with a baseline in
+  both themes: stacked columns, the rate target, sparklines, gauge bars, rings
+  and day strips. They include a hostile name in every piece that prints one,
+  and a strip at phone width.
+
+**Dependencies removed.** `d3`, `html2canvas`, `jspdf` and `@types/d3` are gone
+from `package.json`. Nothing imported them, so no bundle shrinks. The gain is
+install and audit surface: 19 packages leave `node_modules`, including canvg,
+core-js and pako. `d3` stays installed only as Mermaid's own dependency.
+
+**Ratchet.** `check:theme` now fails on any value import of `recharts` in `src/`
+outside `src/components/charts`. That covers static, dynamic, `require` and
+re-export imports, and deep paths. `import type` stays allowed. A page draws
+through a kit frame.
+- A value re-export of a chart engine is caught too, anywhere outside
+  `components/charts/engines`: `export * from 'recharts'`, `export { Bar } from
+  'recharts'`, and a binding imported from recharts and exported again. So a
+  kit file cannot become a back door to the engine.
+- The guard now scans `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` and `.cts` files
+  as well as `.ts` and `.tsx`.
+
+**Bundle.**
+- The eager set is 174,421 B gzip, against a 180,000 budget; it was 173,359.
+  The +1 kB is the announcer.
+- Eleven of the twelve page chunks shrank. Release gate's grew by 7.9 kB,
+  because it now carries the ring.
+- The first visit to a page that did not use Recharts before now fetches the
+  shared kit and Recharts chunks: Trends +178 kB and Release gate +98 kB. They
+  are cached across routes.
+- The keyboard cursor's tooltip body moved out of the Recharts-importing
+  tooltip module, so pages with only a day strip no longer fetch Recharts.
+  Runs, Coverage and Failure analysis each save about 58 kB.
+
+**Tests.** The unit tests run in one pinned time zone, America/Chicago, set in
+`vitest.config.ts` whatever the machine's own. It is behind UTC, so a date read
+in local time instead of UTC lands on the wrong day and fails, on a laptop and
+on CI alike. A test checks that the pin applies.
+
+The full table is in the PR description.
+
 ## Unreleased - Visualization Upgrade, Wave 2: tooltip, export, full screen and zoom (VIZ-601, VIZ-606, VIZ-608, VIZ-407)
 
 The charts still live on the dev gallery ``/__charts`` only. The one change a
