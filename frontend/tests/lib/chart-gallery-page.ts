@@ -9,7 +9,7 @@
  * value-import `@/…`, which Playwright's plain-Node transform cannot resolve.
  */
 import { readFileSync } from 'node:fs'
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type ConsoleMessage, type Locator, type Page } from '@playwright/test'
 
 export const GALLERY = '/__charts'
 export const CHART_SVG = '.recharts-wrapper > svg.recharts-surface'
@@ -26,11 +26,38 @@ export const EXPORT = {
 export const exportFileName = (ext: 'png' | 'svg' | 'csv') =>
   new RegExp(`^testlookup_[^_]+_[^_]+_\\d{8}-\\d{4}Z\\.${ext}$`)
 
+/** The path of the app's telemetry endpoint (`utils/errorReporting.ts`). */
+const TELEMETRY_PATH = '/api/v1/observability/frontend'
+
+/**
+ * Whether a console error is Chromium's report that the telemetry BEACON
+ * failed, and nothing else. The hermetic dev server has no backend, so the
+ * beacon gets a 502, and Chromium logs "Failed to load resource" with the
+ * failed URL as the message's location. `openGallery` below answers the
+ * beacon with `page.route`, but a spec that opens a page its own way does
+ * not: `chart-gallery.spec.ts` has its own `openGallery`, and once the gallery
+ * grew to 84 items its longest spec stayed on the page long enough to beacon
+ * and failed on CI (PR #166). Whether a spec lasts long enough to beacon is
+ * the machine's speed, not the charts' behaviour, so exactly this one failure
+ * is not an error to any watcher. Any other failed request, and any other
+ * console error, still is.
+ */
+export function isTelemetryBeaconFailure(message: ConsoleMessage): boolean {
+  if (!message.text().startsWith('Failed to load resource')) return false
+  try {
+    return new URL(message.location().url).pathname === TELEMETRY_PATH
+  } catch {
+    return false
+  }
+}
+
 /** Console errors and uncaught exceptions, collected from before navigation. */
 export function watchErrors(page: Page): string[] {
   const errors: string[] = []
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`)
+    if (message.type() === 'error' && !isTelemetryBeaconFailure(message)) {
+      errors.push(`console.error: ${message.text()}`)
+    }
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   return errors

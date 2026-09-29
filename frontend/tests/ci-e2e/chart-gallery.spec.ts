@@ -18,6 +18,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 // The axe gate (tags, themes, ratcheted allowlist) is shared with the VIZ-405 spec.
 import { ALL_THEMES, expectNoBlockingViolations, type KnownViolation } from '../lib/axe-gate'
+import { isTelemetryBeaconFailure } from '../lib/chart-gallery-page'
 import { textEscapes } from '../lib/chart-text-escapes'
 import {
   GALLERY_CANVAS,
@@ -113,11 +114,17 @@ async function paintedColoursIn(chart: Locator): Promise<number> {
 const paintedColours = (page: Page, itemId: string) =>
   paintedColoursIn(page.locator(`[data-gallery-item="${itemId}"] [data-chart-engine="echarts"]`).first())
 
-/** Console errors and uncaught exceptions, collected from before navigation. */
+/**
+ * Console errors and uncaught exceptions, collected from before navigation.
+ * The telemetry beacon's 502 from the backend-less dev server is the one
+ * failure left out (see `isTelemetryBeaconFailure`).
+ */
 function watchErrors(page: Page): string[] {
   const errors: string[] = []
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`)
+    if (message.type() === 'error' && !isTelemetryBeaconFailure(message)) {
+      errors.push(`console.error: ${message.text()}`)
+    }
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   return errors
