@@ -7,26 +7,27 @@
  *   Verdict → 1.45fr | 1fr split. Variants HEALTHY / MIXED / INSUFFICIENT
  *             / DECLINING / PENDING. Left: pulsing eyebrow → 26 px headline
  *             "<verdict> · <summary>" → lede → 3 issue rows → CTAs. Right:
- *             44 px trend-confidence score with marker-dot meter (red→amber
- *             →green gradient + threshold ticks at 33 / 66) + 2×2 weighted
+ *             44 px trend-confidence score with the kit's marker `GaugeBar`
+ *             (red→amber→green track, ticks at 33 / 66) + 2×2 weighted
  *             dimension grid (Data coverage 40 % / Sample size 25 % /
  *             Variance stability 20 % / Tag quality 15 %).
  *   Ribbon  → slim 3-stage workflow (Trend capture / Signal comparison /
  *             Report delivery). Click → drawer (Phase 2).
- *   KPIs    → 5 cells with sparklines: Pass rate · Days with runs · Executions
- *             · Suites · Last run. Each sparkline reuses one of five
- *             primitives (flat-line-with-dot / tick-grid / spike /
- *             baseline-dot / dotted-pair) so they read consistently across
- *             metrics.
+ *   KPIs    → 5 cells: Pass rate · Days with runs · Executions · Suites ·
+ *             Last run. Pass rate and Executions carry a kit `Sparkline` of
+ *             the window's real per-day series (a day without runs is a
+ *             break in the line); the other three had only decoration and
+ *             carry no glyph (VIZ-104, OD-1).
  *   Body    → 1.65fr | 1fr.
- *     Left  → Run cadence heatmap (the lead chart, 30 cells with the
- *             empty-day gap impossible to miss + amber gap-annotation strip)
- *             → Daily breakdown (bars + ground-line ticks for empty days,
- *             never invisible) → Pass-rate trend (sparse-data overlay
- *             rendered as real DOM text, not stretched SVG).
+ *     Left  → Run cadence (a kit `DayStrip`, presence mode: one cell per day,
+ *             failing days striped, today and the gap edge marked, with an
+ *             amber gap-annotation strip) → Daily breakdown (kit
+ *             `StackedColumnChartFrame`: one column per day by status, a day
+ *             without runs a stated gap) → Pass-rate trend (kit
+ *             `TimeSeriesChartFrame` with the 90 % target line).
  *     Right → Schedule-paused callout (only when the gap is real) → Suite
- *             pass rates (with micro 6-tick bars per suite) → Recommended
- *             actions (role-routed; Idle chip when a role has no work).
+ *             pass rates → Recommended actions (role-routed; Idle chip when a
+ *             role has no work).
  *   Footer → Provenance line + decision-trail link.
  *
  * Out of scope (Phase 2 — README §"Out of Scope"):
@@ -75,7 +76,18 @@ import {
 } from '@/utils/calendarDay'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import { scopeArg } from '@/lib/scopeParams'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
+import DayStrip from '@/components/charts/DayStrip'
+import { countTones, type DayStripCell } from '@/components/charts/dayStrip.model'
+import GaugeBar, { type GaugeTone } from '@/components/charts/GaugeBar'
+import Sparkline from '@/components/charts/Sparkline'
+import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
+import { buildStackedColumnModel, STATUS_STACK_SERIES, utcDayLabel } from '@/components/charts/stackedColumnModel'
+import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
+import { buildTimeSeriesModel, timeSeriesFromTrends } from '@/components/charts/timeSeriesModel'
+import { readyState, type ChartState } from '@/components/charts/chartState'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -579,6 +591,23 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
   )
 }
 
+// The verdict's colour for the meter's ring; the pill beside it says the band in words.
+const VERDICT_GAUGE_TONE: Record<Verdict, GaugeTone> = {
+  HEALTHY: 'good',
+  MIXED: 'warn',
+  INSUFFICIENT: 'warn',
+  DECLINING: 'bad',
+  PENDING: 'neutral',
+}
+
+// The same band edges the pill reads (33 / 66), as real text under the track.
+const CONFIDENCE_TICKS = [
+  { value: 0, label: 'Low' },
+  { value: 33, label: 'Moderate' },
+  { value: 66, label: 'High' },
+  { value: 100 },
+] as const
+
 function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: Verdict }) {
   const t = VERDICT_THEME[verdict]
   const score = model.composite
@@ -602,40 +631,19 @@ function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: 
           {pillLabel}
         </span>
       </div>
-      {/* Confidence bar with marker dot. The bar gradient runs red→amber→green;
-          the marker is a small ring positioned at score%. README §5.4. */}
-      <div
-        className="relative mt-3 rounded-full"
-        style={{ height: 6, background: 'var(--color-bg-secondary)' }}
-        role="img"
-        aria-label={`Trend confidence ${score} of 100, ${pillLabel}`}
-      >
-        <i className="block h-full rounded-full" style={{ width: '100%', background: 'var(--gradient-confidence)' }} />
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-        </div>
-        {/* Marker dot — slightly larger than the bar, with a soft halo. */}
-        <span
-          aria-hidden
-          className="absolute rounded-full"
-          style={{
-            top: '50%',
-            left: `${Math.max(0, Math.min(100, score))}%`,
-            transform: 'translate(-50%, -50%)',
-            width: 12, height: 12,
-            background: t.meter,
-            boxShadow: '0 0 0 2px color-mix(in srgb, var(--status-broken) 25%, transparent)',
-            border: '1.5px solid var(--color-bg-card)',
-          }}
-        />
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Low · 0</span>
-        <span>Moderate · 33</span>
-        <span>High · 66</span>
-        <span>100</span>
-      </div>
+      {/* The kit's marker meter (VIZ-104 G1): the whole track is the
+          red-to-green scale and a ring marks the score. A PENDING verdict has
+          no score, so the track is empty rather than marked at 0. */}
+      <GaugeBar
+        className="mt-3"
+        variant="marker"
+        gradient="health"
+        tone={VERDICT_GAUGE_TONE[verdict]}
+        value={verdict === 'PENDING' ? null : score}
+        label="Trend confidence"
+        valueText={verdict === 'PENDING' ? undefined : `${score} of 100, ${pillLabel}`}
+        ticks={CONFIDENCE_TICKS}
+      />
     </div>
   )
 }
@@ -739,73 +747,38 @@ function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean
   )
 }
 
-// ── Sparkline primitives ──────────────────────────────────────────────────
-// Each one fits the 100×24 KPI sparkline slot. They're decorative — the
-// KPI value + meta line carry the data; sparklines are aria-hidden.
-
-function SparklineFlatLineWithDot({ valuePct }: { valuePct: number }) {
-  const x = 93
-  const y = 24 - (Math.max(0, Math.min(100, valuePct)) / 100) * 18 - 2  // higher value = higher dot
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="12" x2="100" y2="12" stroke="var(--color-border)" strokeDasharray="2 2" />
-      <circle cx={x} cy={y} r={2.5} fill="var(--status-passed)" />
-    </svg>
-  )
+// ── KPI sparklines ────────────────────────────────────────────────────────
+const PERCENT_DOMAIN = [0, 100] as const
+const formatPercent = (v: number) => `${v.toFixed(1)}%`
+/** A count's sparkline scale: from zero to the tallest day (at least 1, so all-zero is not a 0/0 scale). */
+function countDomain(series: readonly (number | null)[]): readonly [number, number] {
+  return [0, Math.max(1, ...series.filter((v): v is number => v !== null))]
 }
 
-function SparklineTickGrid({ activeIdx, total }: { activeIdx: number; total: number }) {
-  const cells = Array.from({ length: total }, (_, i) => i)
-  const w = 2.5
-  const gap = 0.5
-  return (
-    <svg viewBox={`0 0 ${total * (w + gap)} 24`} preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      {cells.map((i) => {
-        const isActive = i === activeIdx
-        return (
-          <rect
-            key={i}
-            x={i * (w + gap)}
-            y={isActive ? 0 : 20}
-            width={w}
-            height={isActive ? 24 : 4}
-            fill={isActive ? 'var(--status-passed)' : 'var(--color-border)'}
-          />
-        )
-      })}
-    </svg>
-  )
-}
-
-function SparklineSpike({ heightPct }: { heightPct: number }) {
-  const h = Math.max(0, Math.min(100, heightPct))
-  const top = 20 - (h / 100) * 18
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="20" x2="93" y2="20" stroke="var(--color-border)" />
-      <line x1="93" y1="20" x2="93" y2={top} stroke="var(--color-accent)" strokeWidth={1.5} />
-      <circle cx={93} cy={top} r={2.5} fill="var(--color-accent)" />
-    </svg>
-  )
-}
-
-function SparklineBaselineDot() {
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="14" x2="100" y2="14" stroke="var(--color-border)" />
-      <circle cx={93} cy={14} r={2.5} fill="var(--color-text-muted)" />
-    </svg>
-  )
-}
-
-function SparklineDottedPair({ leftMuted = true }: { leftMuted?: boolean } = {}) {
-  return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <circle cx={5} cy={12} r={2.5} fill={leftMuted ? 'var(--color-text-faint)' : 'var(--status-passed)'} />
-      <line x1="5" y1="12" x2="93" y2="12" stroke="var(--color-border)" strokeDasharray="2 3" />
-      <circle cx={93} cy={12} r={2.5} fill="var(--status-passed)" />
-    </svg>
-  )
+/**
+ * The per-day series behind the Pass rate and Executions sparklines, oldest
+ * first, one entry per day of the window.
+ *
+ * A day with no runs has no pass rate: `null`, a break in the line, never 0,
+ * because a quiet day is not a 0 % day. The rate uses the headline's
+ * denominator (passed + failed + broken; skips are outside it), so a day of
+ * only skips is a break too.
+ *
+ * Executions are a COUNT, and a day with no runs ran 0 of them: a measured
+ * zero, the one meaning a quiet day has on Overview, SuiteDetail and the
+ * daily breakdown below (R2 F3). A line of those zeros around a single day
+ * that ran is not a trend, so below two such days the series stays
+ * unmeasured and the sparkline draws nothing, as before.
+ */
+function kpiSparkSeries(cells: readonly CadenceCell[]): { passRate: (number | null)[]; executions: (number | null)[] } {
+  const daysWithRuns = cells.filter((c) => c.executions > 0).length
+  return {
+    passRate: cells.map((c) => {
+      const evaluated = c.passed + c.failed + c.broken
+      return evaluated > 0 ? (c.passed / evaluated) * 100 : null
+    }),
+    executions: cells.map((c) => (daysWithRuns >= 2 ? c.executions : null)),
+  }
 }
 
 // ── KPI strip ─────────────────────────────────────────────────────────────
@@ -853,59 +826,53 @@ function KpiCell({
         {value}
       </div>
       {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-      {spark && <div className="mt-1.5">{spark}</div>}
+      {/* Pinned to the cell's bottom: when a meta line wraps (DejaVu on
+          Linux is wider), the sparklines in one row still line up. */}
+      {spark && <div className="mt-auto pt-1.5">{spark}</div>}
     </div>
   )
 }
 
 // ── Run cadence heatmap ───────────────────────────────────────────────────
+/**
+ * One cadence day as a `DayStrip` cell (presence mode). A day whose runs
+ * include a failed OR broken execution is `mixed` — broken counts against the
+ * day exactly as it counts against the headline pass rate — and keeps the
+ * 80/20 mixed-day fill, now with the strip's striped failure band beside the
+ * colour. This is the deliberate difference from Coverage's cadence strip,
+ * which shows volume only and never marks a failure.
+ */
+function cadenceStripCell(c: CadenceCell): DayStripCell {
+  const hasRuns = c.executions > 0
+  const failing = [c.failed > 0 ? `${c.failed} failed` : null, c.broken > 0 ? `${c.broken} broken` : null].filter(Boolean)
+  return {
+    key: c.iso,
+    label: `${c.iso} · ${c.executions} execution${c.executions === 1 ? '' : 's'}${failing.length > 0 ? ` (${failing.join(', ')})` : ''}`,
+    tone: !hasRuns ? 'none' : failing.length > 0 ? 'mixed' : 'pass',
+    marker: c.isToday ? 'today' : c.isLastBeforeGap ? 'gap-edge' : undefined,
+  }
+}
+
 function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
-  const cells = model.cadenceCells
-  const activeCount = cells.filter(c => c.executions > 0).length
-  const emptyCount = cells.length - activeCount
+  const cells = useMemo(() => model.cadenceCells.map(cadenceStripCell), [model.cadenceCells])
+  const counts = countTones(cells)
+  const activeCount = cells.length - counts.none
+  const emptyCount = counts.none
+  const failingCount = counts.mixed
 
   return (
     <CardShell title={`Run cadence — last ${model.windowDays} days`} rightSlot={<span>{activeCount} day{activeCount === 1 ? '' : 's'} with runs · {emptyCount} empty</span>}>
       <div className="px-4 pt-3 pb-4">
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
-          Each cell is one day. Green = had executions. Empty cells mean no runs landed — the schedule, the runner, or someone with a manual trigger has been quiet.
+          Each cell is one day. Green = had executions; a striped band = some of them failed. Empty cells mean no runs landed — the schedule, the runner, or someone with a manual trigger has been quiet.
         </p>
-        <div
-          role="img"
-          aria-label={`Run cadence: ${emptyCount} empty days, ${activeCount} day${activeCount === 1 ? '' : 's'} with executions`}
-          className="grid"
-          style={{ gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 4 }}
-        >
-          {cells.map((c) => {
-            const hasRuns = c.executions > 0
-            const isMixed = hasRuns && c.failed > 0
-            return (
-              <div
-                key={c.iso}
-                title={`${c.iso} · ${c.executions} execution${c.executions === 1 ? '' : 's'}${c.failed > 0 ? ` (${c.failed} failed)` : ''}`}
-                className="rounded-sm"
-                style={{
-                  aspectRatio: '1',
-                  background: hasRuns
-                    ? (isMixed ? 'var(--pattern-mixed-day)' : 'var(--status-passed)')
-                    : 'var(--color-bg-secondary)',
-                  border: hasRuns ? '1px solid color-mix(in srgb, var(--status-passed) 50%, transparent)' : '1px solid var(--color-border)',
-                  boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : c.isLastBeforeGap ? '0 0 0 1px var(--status-broken)' : 'none',
-                }}
-              />
-            )
-          })}
-        </div>
-        <div className="flex justify-between text-[10px] text-[var(--color-text-muted)] mt-2.5">
-          <span>{model.windowDays} days ago</span>
-          <span className="inline-flex items-center gap-1.5">
-            No runs
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }} />
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-passed)' }} />
-            Runs
-          </span>
-          <span>Today</span>
-        </div>
+        <DayStrip
+          mode="presence"
+          cells={cells}
+          gap={4}
+          title="Run cadence"
+          label={`Run cadence: ${emptyCount} empty days, ${activeCount} day${activeCount === 1 ? '' : 's'} with executions, ${failingCount} with failures`}
+        />
 
         {model.silentDays >= 7 && model.gapStart && model.gapEnd && (
           <div
@@ -940,265 +907,122 @@ function shortDate(iso: string): string {
 }
 
 // ── Daily breakdown ───────────────────────────────────────────────────────
-function DailyBreakdown({ trend, days, model }: { trend: TrendPoint[]; days: number; model: ConfidenceModel }) {
-  // Build per-day buckets aligned to the cadence cells (so empty days render
-  // as ground-line ticks at the same x positions).
+// The kit's four statuses in its one stack order (Passed, Failed, Broken,
+// Skipped), as Overview and SuiteDetail stack them (R2 F4). Skipped and Broken
+// are two statuses with two colours and two decals — the hand-drawn version
+// painted both amber.
+
+/** The window's days as trend points keyed by UTC day (the payload's dates may carry a time). */
+function trendByDay(trend: readonly TrendPoint[]): Map<string, TrendPoint> {
   const byDate = new Map<string, TrendPoint>()
   for (const p of trend) byDate.set(p.date.slice(0, 10), p)
-  const cells = model.cadenceCells
-  const yMaxCandidate = Math.max(
-    ...cells.map(c => {
-      const p = byDate.get(c.iso)
-      return p ? p.passed + p.failed + p.skipped + (p.broken ?? 0) : 0
-    }),
-    9,   // floor so the chart doesn't collapse on a single tiny day
-  )
-  // Round up to a visually-clean tick grid (multiples of 9 like the demo)
-  const yMax = Math.ceil(yMaxCandidate / 9) * 9
-  const yTicks = [0, yMax / 4, yMax / 2, (yMax / 4) * 3, yMax]
-
-  const totals = cells.reduce(
-    (acc, c) => {
-      const p = byDate.get(c.iso)
-      if (!p) return acc
-      return {
-        passed:  acc.passed  + p.passed,
-        failed:  acc.failed  + p.failed,
-        skipped: acc.skipped + p.skipped,
-        broken:  acc.broken  + (p.broken ?? 0),
-      }
-    },
-    { passed: 0, failed: 0, skipped: 0, broken: 0 },
-  )
-
-  return (
-    <CardShell title="Daily breakdown" rightSlot={<span>Pass / fail / skip · last {days} days</span>}>
-      <div className="px-4 pt-3 pb-4">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
-          One bar per day. Missing days appear as ground-line ticks so you can see the gap, not just the single bar that <em>does</em> exist.
-        </p>
-
-        <div className="grid items-end" style={{ gridTemplateColumns: '36px 1fr' }}>
-          {/* Y axis */}
-          <div className="flex flex-col-reverse justify-between text-[10px] tabular-nums text-[var(--color-text-muted)]" style={{ height: 200, paddingBottom: 22 }}>
-            {yTicks.map((y, i) => (
-              <span key={i} className="leading-none">{Math.round(y)}</span>
-            ))}
-          </div>
-
-          {/* Plot area */}
-          <div>
-            <div
-              role="img"
-              aria-label={`Daily breakdown: ${cells.filter(c => byDate.get(c.iso)).length} day${cells.filter(c => byDate.get(c.iso)).length === 1 ? '' : 's'} with runs over the last ${days} days.`}
-              className="relative"
-              style={{
-                height: 200,
-                borderLeft: '1px solid var(--color-border)',
-                borderBottom: '1px solid var(--color-border)',
-              }}
-            >
-              {/* Dashed grid lines */}
-              {[0.25, 0.5, 0.75, 1].map((f, i) => (
-                <hr key={i} aria-hidden style={{
-                  position: 'absolute', left: 0, right: 0, bottom: `${f * 100}%`,
-                  margin: 0, border: 0, borderTop: '1px dashed var(--color-border)', opacity: 0.5,
-                }} />
-              ))}
-              <div
-                className="absolute inset-0 grid items-end"
-                style={{ gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 2, paddingBottom: 0 }}
-              >
-                {cells.map((c) => {
-                  const p = byDate.get(c.iso)
-                  const dayTotal = p ? p.passed + p.failed + p.skipped + (p.broken ?? 0) : 0
-                  const heightPct = yMax > 0 ? (dayTotal / yMax) * 100 : 0
-                  if (!p || dayTotal === 0) {
-                    return (
-                      <div key={c.iso} className="relative h-full">
-                        <div className="absolute left-0 right-0" style={{ bottom: 0, height: 2, background: 'var(--color-border)' }} />
-                      </div>
-                    )
-                  }
-                  const passPct  = (p.passed  / dayTotal) * 100
-                  const failPct  = (p.failed  / dayTotal) * 100
-                  const skipPct  = (p.skipped / dayTotal) * 100
-                  const brokenPct = ((p.broken ?? 0) / dayTotal) * 100
-                  return (
-                    <div
-                      key={c.iso}
-                      className="relative flex flex-col-reverse"
-                      style={{ height: '100%' }}
-                      title={`${shortDate(c.iso)} · ${p.passed} pass · ${p.failed} fail`}
-                    >
-                      <div
-                        className="w-full"
-                        style={{
-                          height: `${heightPct}%`,
-                          outline: c.isToday ? '1px solid var(--color-accent)' : 'none',
-                          display: 'flex',
-                          flexDirection: 'column-reverse',
-                        }}
-                      >
-                        {p.passed > 0  && <span style={{ flex: passPct,   background: 'var(--status-passed)' }} />}
-                        {p.failed > 0  && <span style={{ flex: failPct,   background: 'var(--status-failed)' }} />}
-                        {p.skipped > 0 && <span style={{ flex: skipPct,   background: 'var(--status-broken)' }} />}
-                        {(p.broken ?? 0) > 0 && <span style={{ flex: brokenPct, background: 'var(--status-broken)' }} />}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-            {/* X axis labels — sample first / quartile / today */}
-            <div className="grid text-[10px] tabular-nums text-[var(--color-text-muted)] mt-1" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
-              <span>{shortDate(cells[0]?.iso ?? '')}</span>
-              <span>{shortDate(cells[Math.floor(cells.length * 0.25)]?.iso ?? '')}</span>
-              <span>{shortDate(cells[Math.floor(cells.length * 0.5)]?.iso ?? '')}</span>
-              <span>{shortDate(cells[Math.floor(cells.length * 0.75)]?.iso ?? '')}</span>
-              <span className="text-right">{shortDate(cells[cells.length - 1]?.iso ?? '')} (today)</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-3.5 mt-3 text-[11px] text-[var(--color-text-muted)]">
-          <Legend color="var(--status-passed)" label={`Passed (${totals.passed})`} />
-          <Legend color="var(--status-failed)" label={`Failed (${totals.failed})`} />
-          <Legend color="var(--status-broken)" label={`Skipped (${totals.skipped})`} />
-          <Legend color="var(--status-broken)" label={`Broken (${totals.broken})`} />
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-border)' }} />
-            Empty day
-          </span>
-        </div>
-      </div>
-    </CardShell>
-  )
+  return byDate
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+function DailyBreakdown({
+  trend, days, model, filtersApplied,
+}: { trend: TrendPoint[]; days: number; model: ConfidenceModel; filtersApplied: boolean }) {
+  const { chart, state, takeaway } = useMemo(() => {
+    const byDate = trendByDay(trend)
+    const totals = { passed: 0, failed: 0, skipped: 0, broken: 0 }
+    // One column per day of the window, aligned with the cadence strip. A day
+    // the payload never sent had no runs: it ran nothing, a MEASURED zero (a
+    // tick on the baseline), which is what the cadence strip beside it calls
+    // "No runs" and what Overview and SuiteDetail draw for the same day. It
+    // is never "no measured value" (R2 F3).
+    const buckets = model.cadenceCells.map((c) => {
+      const p = byDate.get(c.iso)
+      if (p) {
+        totals.passed += p.passed
+        totals.failed += p.failed
+        totals.skipped += p.skipped
+        totals.broken += p.broken ?? 0
+      }
+      return {
+        key: c.iso,
+        // The kit's UTC day label: one day format for every chart on the page (R2 F5).
+        label: utcDayLabel(c.iso),
+        values: p
+          ? { passed: p.passed, failed: p.failed, skipped: p.skipped, broken: p.broken ?? 0 }
+          : { passed: 0, failed: 0, skipped: 0, broken: 0 },
+      }
+    })
+    const built = buildStackedColumnModel({
+      buckets,
+      series: STATUS_STACK_SERIES,
+      valueTitle: 'Executions',
+      bucketTitle: 'Day (UTC)',
+      xType: 'time',
+    })
+    return {
+      chart: built,
+      state: readyState(built),
+      takeaway: `${totals.passed} passed · ${totals.failed} failed · ${totals.broken} broken · ${totals.skipped} skipped over the last ${days} days`,
+    }
+  }, [trend, days, model.cadenceCells])
+
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
-      {label}
-    </span>
+    <StackedColumnChartFrame
+      title="Daily breakdown"
+      takeaway={takeaway}
+      headingLevel={3}
+      height={240}
+      model={chart}
+      state={state}
+      bucketNoun="day"
+      filtersApplied={filtersApplied}
+    />
   )
 }
 
 // ── Pass-rate trend ───────────────────────────────────────────────────────
-function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }) {
-  const sparse = model.passRatePerDay.length < 3
-  const target = 90
-  const today = model.passRate
-  const deltaToTarget = today - target
-  // Build 0..100 SVG points for the polyline (when not sparse).
-  const points = model.cadenceCells
-    .map((c, i) => {
-      const t = c.passed + c.failed
-      if (c.executions === 0 || t === 0) return null
-      const pct = (c.passed / t) * 100
-      const x = (i / Math.max(model.cadenceCells.length - 1, 1)) * 100
-      const y = 100 - pct  // SVG y is top-down; high pass rate = low y
-      return { x, y }
-    })
-    .filter((p): p is { x: number; y: number } => p !== null)
+const PASS_RATE_TARGET = { value: 90, label: 'Target 90%' } as const
+const NO_EVALUATED_DAY = 'no day in this window has an evaluated execution'
 
-  const todayY = 100 - today
-  const todayX = 100 * ((model.cadenceCells.length - 1) / Math.max(model.cadenceCells.length - 1, 1))
+/**
+ * The window's pass rate per day, on the kit's time-series chart: the
+ * endpoint's own `pass_rate` (gated on evaluated executions, so a day of only
+ * skips is a gap), a gap for a day with no runs, the execution count as bars
+ * and the 90 % target as a dashed line with a legend entry.
+ *
+ * The old card's header block — a big number labelled "today", a target pill
+ * and a delta — becomes the frame's one-line takeaway: the number was the
+ * WINDOW's rate, not today's, and the pill is now the target line's legend.
+ */
+function PassRateTrend({ trend, model, days }: { trend: TrendPoint[]; model: ConfidenceModel; days: number }) {
+  const { chart, state } = useMemo(() => {
+    const cells = model.cadenceCells
+    const points = timeSeriesFromTrends(
+      trend.map((p) => ({ ...p, date: p.date.slice(0, 10) })),
+      { from: cells[0]?.iso, to: cells[cells.length - 1]?.iso },
+    )
+    const built = buildTimeSeriesModel({ points })
+    const measured = built.points.some((point) => point.rate !== null)
+    const frameState: ChartState<unknown> = measured
+      ? readyState(built)
+      : { status: 'not-measured', reason: NO_EVALUATED_DAY, meta: null }
+    return { chart: built, state: frameState }
+  }, [trend, model.cadenceCells])
+
+  const activeDays = model.passRatePerDay.length
+  let takeaway: string | undefined
+  if (model.evaluatedExecutions > 0) {
+    const delta = Math.round(model.passRate - PASS_RATE_TARGET.value)
+    const versus = delta === 0 ? 'at the 90% target' : `${Math.abs(delta)} pp ${delta < 0 ? 'below' : 'above'} the 90% target`
+    const sparse = activeDays < 3 ? ` · ${activeDays} day${activeDays === 1 ? '' : 's'} with data, too few for a trend` : ''
+    takeaway = `${model.passRate.toFixed(1)}% over the last ${days} days, ${versus}${sparse}`
+  }
 
   return (
-    <CardShell
+    <TimeSeriesChartFrame
       title="Pass rate trend"
-      rightSlot={<span>{sparse ? `${model.passRatePerDay.length} data point${model.passRatePerDay.length === 1 ? '' : 's'} — no trend line` : `${model.passRatePerDay.length} data points`}</span>}
-    >
-      <div className="px-4 pt-3 pb-4">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">Target ≥ {target}%</p>
-        <div className="flex items-end justify-between gap-3 mb-3 flex-wrap">
-          <div>
-            <span
-              className="font-bold tabular-nums leading-none"
-              style={{ fontSize: 26, color: today >= 80 ? 'var(--status-passed)' : today >= 50 ? 'var(--status-broken)' : 'var(--status-failed)', letterSpacing: '-0.02em' }}
-            >
-              {today.toFixed(1)}%
-            </span>
-            <span className="text-[12px] text-[var(--color-text-muted)] ml-2">today</span>
-          </div>
-          <div className="flex items-center gap-2 text-[11px]">
-            <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full"
-              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-            >
-              Target {target}%
-            </span>
-            {model.totalExecutions > 0 && (
-              <span style={{ color: deltaToTarget < 0 ? 'var(--status-failed)' : 'var(--status-passed)' }}>
-                {deltaToTarget < 0 ? '↓' : '↑'} {Math.abs(deltaToTarget).toFixed(0)}pp {deltaToTarget < 0 ? 'below' : 'above'} target
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div
-          role="img"
-          aria-label={sparse ? `Pass rate ${today.toFixed(0)}% today; insufficient history for trend line` : `Pass rate trend: ${today.toFixed(0)}% today, ${model.passRatePerDay.length} data points across ${days} days`}
-          className="relative"
-          style={{
-            height: 100,
-            borderLeft: '1px solid var(--color-border)',
-            borderBottom: '1px solid var(--color-border)',
-            paddingLeft: 8,
-          }}
-        >
-          {/* Y-axis labels — real DOM text, NOT inside the stretched SVG. */}
-          {[0, 25, 50, 75, 100].map(p => (
-            <span
-              key={p}
-              aria-hidden
-              className="absolute text-[10px] tabular-nums text-[var(--color-text-faint)] leading-none"
-              style={{ left: -32, bottom: `calc(${p}% - 4px)`, width: 28, textAlign: 'right' }}
-            >
-              {p}%
-            </span>
-          ))}
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="block w-full h-full" aria-hidden="true">
-            {/* Target band shading */}
-            <rect x="0" y="0" width="100" height={100 - target} fill="color-mix(in srgb, var(--status-passed) 6%, transparent)" />
-            <line x1="0" y1={100 - target} x2="100" y2={100 - target} stroke="var(--color-border)" strokeDasharray="2 2" />
-            {!sparse && points.length >= 2 && (
-              <polyline
-                points={points.map(p => `${p.x},${p.y}`).join(' ')}
-                fill="none"
-                stroke={(() => {
-                  if (model.passRatePerDay.length < 2) return 'var(--status-passed)'
-                  const recent = model.passRatePerDay.slice(-1)[0]
-                  const prior = model.passRatePerDay[0]
-                  return recent > prior + 3 ? 'var(--status-passed)' : recent < prior - 3 ? 'var(--status-failed)' : 'var(--status-broken)'
-                })()}
-                strokeWidth={1.5}
-                vectorEffect="non-scaling-stroke"
-              />
-            )}
-            {!sparse && points.map((p, i) => (
-              <circle key={i} cx={p.x} cy={p.y} r={1.5} fill="var(--status-passed)" vectorEffect="non-scaling-stroke" />
-            ))}
-            <circle cx={todayX} cy={todayY} r={2.5} fill="var(--status-passed)" vectorEffect="non-scaling-stroke" />
-          </svg>
-          {sparse && (
-            <span
-              className="absolute text-[11px] text-[var(--color-text-faint)] pointer-events-none whitespace-nowrap"
-              style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
-            >
-              no historical data in window
-            </span>
-          )}
-        </div>
-        <div className="flex justify-between text-[10px] tabular-nums text-[var(--color-text-muted)] mt-1.5">
-          <span>{shortDate(model.cadenceCells[0]?.iso ?? '')}</span>
-          <span>{shortDate(model.cadenceCells[Math.floor(model.cadenceCells.length / 2)]?.iso ?? '')}</span>
-          <span>{shortDate(model.cadenceCells[model.cadenceCells.length - 1]?.iso ?? '')}</span>
-        </div>
-      </div>
-    </CardShell>
+      takeaway={takeaway}
+      headingLevel={3}
+      height={240}
+      model={chart}
+      state={state}
+      rateTarget={PASS_RATE_TARGET}
+    />
   )
 }
 
@@ -1282,6 +1106,9 @@ function SuitePassRates({ suites }: { suites: CoverageSuite[] }) {
   )
 }
 
+// There is no per-suite history to draw, so the row carries no glyph: the
+// "6-tick micro-bar" it once had was five constant ticks and one coloured by
+// tone, the same for every suite whatever its rate (OD-2).
 function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) {
   // Take the rate the API already computed rather than deriving a second
   // one. `suite.failed` already folds broken in, so passed + failed is the
@@ -1293,28 +1120,13 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
   return (
     <div
       className={clsx('grid items-center gap-3', !isLast && 'pb-2.5 mb-2.5')}
-      style={{ gridTemplateColumns: '1fr auto auto', borderBottom: !isLast ? '1px dashed var(--color-border)' : '0', paddingTop: 8 }}
+      style={{ gridTemplateColumns: '1fr auto', borderBottom: !isLast ? '1px dashed var(--color-border)' : '0', paddingTop: 8 }}
     >
       <span
         className="font-mono text-[12.5px] truncate"
         style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
       >
         {suite.suite_name}
-      </span>
-      {/* 6-tick micro-bar — 5 empty + today's tick */}
-      <span aria-hidden className="inline-flex items-end gap-[2px]" style={{ height: 14 }}>
-        {[0, 1, 2, 3, 4].map(i => (
-          <i key={i} className="inline-block" style={{ width: 3, height: 4, background: 'var(--color-border)', borderRadius: 1 }} />
-        ))}
-        <i
-          className="inline-block"
-          style={{
-            width: 3,
-            height: 14,
-            background: tone === 'bad' ? 'var(--status-failed)' : 'var(--status-passed)',
-            borderRadius: 1,
-          }}
-        />
       </span>
       <span className="text-right">
         <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
@@ -1548,6 +1360,11 @@ export default function TrendsPage() {
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // Whether a filter narrowed the trend (a suite, or a release): an all-zero
+  // window then keeps the frame's filter words; without one the frame states
+  // the window neutrally, "No executions in this window" (R1 F3).
+  const releaseScope = useReleaseScope()
+  const trendFiltered = scopeArg(suiteFilter) !== null || scopeArg(releaseScope) !== null
   const analyticsView = useAnalyticsView('trends')
   const { options: suiteOptions } = useSuiteOptions(days)
 
@@ -1692,9 +1509,9 @@ export default function TrendsPage() {
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
-  // KPI sparkline data
-  const todayPct = model.passRate
-  const todayActiveIdx = model.cadenceCells.findIndex(c => c.isToday)
+  // The two KPI sparklines draw the window's real per-day series (OD-1); the
+  // other three cells had only decoration and now carry none.
+  const kpiSeries = kpiSparkSeries(model.cadenceCells)
   const totalEvidence = TRENDS_STAGES.reduce((s, x) => s + x.evidence, 0)
   // Dashboard summary delta — used by KPI 1 when we have a baseline.
   const passRateDelta = (() => {
@@ -1795,7 +1612,15 @@ export default function TrendsPage() {
                 ? <>{passRateDelta > 0 ? '↑' : passRateDelta < 0 ? '↓' : '·'} {Math.abs(Math.round(passRateDelta))}pp vs prev window</>
                 : <>{model.daysWithRuns} active days</>
             }
-            spark={<SparklineFlatLineWithDot valuePct={todayPct} />}
+            spark={
+              <Sparkline
+                series={kpiSeries.passRate}
+                label="Pass rate per day"
+                domain={PERCENT_DOMAIN}
+                format={formatPercent}
+                tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
+              />
+            }
             isFirst
           />
           <KpiCell
@@ -1813,14 +1638,22 @@ export default function TrendsPage() {
                 ? <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% — schedule may be paused</>
                 : <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% of window</>
             }
-            spark={<SparklineTickGrid activeIdx={todayActiveIdx >= 0 ? todayActiveIdx : 0} total={model.windowDays} />}
           />
           <KpiCell
             Icon={BarChart3}
             label="Executions"
             value={model.totalExecutions}
             meta={<>{model.passedExecutions} passed · {model.failedExecutions} failed · {model.brokenExecutions} broken · {model.skippedExecutions} skipped</>}
-            spark={<SparklineSpike heightPct={Math.min(100, (model.totalExecutions / 50) * 100)} />}
+            spark={
+              <Sparkline
+                series={kpiSeries.executions}
+                label="Executions per day"
+                // A count starts at zero, as Overview draws the same measure:
+                // on its own [min, max] a 100-to-104 week filled the cell (R1 F1).
+                domain={countDomain(kpiSeries.executions)}
+                tone="accent"
+              />
+            }
           />
           <KpiCell
             Icon={Layers}
@@ -1834,7 +1667,6 @@ export default function TrendsPage() {
                 .map(s => s.suite_name)
                 .join(', ') || '—'
             }
-            spark={<SparklineBaselineDot />}
           />
           <KpiCell
             Icon={Clock}
@@ -1851,7 +1683,6 @@ export default function TrendsPage() {
                 ? <>previous run was {previousRunGapDays}d prior</>
                 : <>no prior run in window</>
             }
-            spark={<SparklineDottedPair leftMuted={!previousRunRel || (previousRunGapDays != null && previousRunGapDays > 7)} />}
             isLast
           />
         </section>
@@ -1861,10 +1692,10 @@ export default function TrendsPage() {
         <div className="flex flex-col gap-3.5 min-w-0">
           <CadenceHeatmap model={model} />
           {analyticsView.widgetIds.includes('daily_breakdown') && (
-            <DailyBreakdown trend={trend} days={days} model={model} />
+            <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
           )}
           {analyticsView.widgetIds.includes('pass_rate_trend') && (
-            <PassRateTrend model={model} days={days} />
+            <PassRateTrend trend={trend} model={model} days={days} />
           )}
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
