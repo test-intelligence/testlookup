@@ -21,6 +21,8 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import RingGauge from '@/components/charts/RingGauge'
+import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
 
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
@@ -34,25 +36,29 @@ const REC_CONFIG: Record<Recommendation, { label: string; colour: string; bg: st
   PENDING:         { label: 'PENDING',         colour: 'text-[var(--color-text-secondary)]', bg: 'bg-[var(--color-bg-secondary)]/40 border-[var(--color-border)]', icon: HelpCircle },
 }
 
+/**
+ * The risk arc's bands: 70 and up is bad, 40 and up a warning, below is good.
+ * LOWER is better — the reverse of a pass rate — and the direction is said
+ * here, not buried in a colour ternary.
+ */
+export const RISK_SCORE_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [40, 70] }
+const riskTone = bandsTone(RISK_SCORE_BANDS)
+
+/**
+ * The kit's ring (OD-6). It replaced a hand-drawn semicircle whose track was
+ * a fixed slate (`#334155`) and whose number was literally white, so on the
+ * light theme the score was white on a white card. Every colour is a token
+ * now, and the ring is a named meter.
+ */
 function RiskGauge({ score }: { score: number }) {
-  const colour = score >= 70 ? 'var(--status-failed)' : score >= 40 ? 'var(--status-broken)' : 'var(--status-passed)'
-  const pct = Math.min(100, Math.max(0, score))
   return (
-    <div className="flex flex-col items-center gap-1">
-      <svg width="120" height="70" viewBox="0 0 120 70">
-        <path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="#334155" strokeWidth="10" strokeLinecap="round" />
-        <path
-          d="M 10 65 A 50 50 0 0 1 110 65"
-          fill="none"
-          stroke={colour}
-          strokeWidth="10"
-          strokeLinecap="round"
-          strokeDasharray={`${(pct / 100) * 157} 157`}
-        />
-        <text x="60" y="60" textAnchor="middle" fill="white" fontSize="22" fontWeight="bold">{score}</text>
-      </svg>
-      <p className="text-xs text-[var(--color-text-muted)]">Risk Score</p>
-    </div>
+    <RingGauge
+      value={score}
+      caption="Risk Score"
+      format={formatGaugeNumber}
+      tone={riskTone}
+      size={120}
+    />
   )
 }
 
