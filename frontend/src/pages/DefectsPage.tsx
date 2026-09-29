@@ -62,6 +62,8 @@ import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
+import GaugeBar from '@/components/charts/GaugeBar'
+import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { refreshDefects, useDefects } from '@/hooks/useMetrics'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
@@ -603,7 +605,22 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
   )
 }
 
-function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Verdict }) {
+/** The queue meter's scale: the band edges the pill uses (Healthy starts at 70, not 66). */
+const HEALTH_TICKS: readonly GaugeTick[] = [
+  { value: 0, label: 'Blocked' },
+  { value: 33, label: 'At risk' },
+  { value: 70, label: 'Healthy' },
+  { value: 100 },
+]
+
+const VERDICT_GAUGE_TONE: Record<Verdict, GaugeTone> = {
+  BLOCKED: 'bad',
+  AT_RISK: 'warn',
+  HEALTHY: 'good',
+  PENDING: 'neutral',
+}
+
+export function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Verdict }) {
   const t = VERDICT_THEME[verdict]
   const score = model.composite
   const pillLabel = score >= 70 ? 'Healthy' : score >= 33 ? 'At risk' : 'Blocked'
@@ -626,35 +643,18 @@ function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Verdict }
           {pillLabel}
         </span>
       </div>
-      <div
-        className="relative mt-3 rounded-full"
-        style={{ height: 6, background: 'var(--gradient-confidence)' }}
-        role="img"
-        aria-label={`Queue health ${score} of 100, ${pillLabel}`}
-      >
-        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
-          <i className="block w-px h-full" style={{ background: 'rgba(0,0,0,0.5)' }} />
-          <i className="block w-px h-full" style={{ background: 'rgba(0,0,0,0.5)' }} />
-        </div>
-        <span
-          aria-hidden
-          className="absolute rounded-full"
-          style={{
-            top: '50%',
-            left: `${Math.max(0, Math.min(100, score))}%`,
-            transform: 'translate(-50%, -50%)',
-            width: 14, height: 14,
-            background: 'var(--color-bg-card)',
-            boxShadow: '0 0 0 2px rgba(0,0,0,0.4)',
-            border: `2px solid ${t.meter}`,
-          }}
+      {/* PENDING has no score: the header says "—", so the meter is an empty
+          track ("not measured"), never a marker parked at 0. */}
+      <div className="mt-3">
+        <GaugeBar
+          variant="marker"
+          gradient="health"
+          tone={VERDICT_GAUGE_TONE[verdict]}
+          value={verdict === 'PENDING' ? null : score}
+          label="Queue health"
+          valueText={`${score} of 100, ${pillLabel}`}
+          ticks={HEALTH_TICKS}
         />
-      </div>
-      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
-        <span>Blocked · 0</span>
-        <span>At risk · 33</span>
-        <span>Healthy · 70</span>
-        <span>100</span>
       </div>
     </div>
   )
@@ -859,46 +859,99 @@ function KpiCell({
   )
 }
 
-// Rising line + dot — for "Open defects".
-function SparkRisingLine({ stroke = 'var(--status-failed)' }: { stroke?: string } = {}) {
-  return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <polyline fill="none" stroke={stroke} strokeWidth={1.5} points="0,18 12,14 24,16 36,12 48,14 60,8 72,10 84,6 96,4" />
-      <circle cx={96} cy={4} r={2} fill={stroke} />
-    </svg>
-  )
-}
+/**
+ * How long the oldest open P0 has been open, on a one-week scale: the tone
+ * bands are the KPI's own (2 and 5 days), lower is better.
+ */
+const OLDEST_P0_DOMAIN = [0, 7] as const
+const OLDEST_P0_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [2, 5] }
 
-// 4 escalating bars — for "P0 / P1 open".
-function SparkGrowingBars() {
+/**
+ * The five defect KPIs. Owner decision OD-1 (Wave 2.5): a KPI glyph draws a
+ * REAL series or a real scalar, or nothing. Four of these drew literal point
+ * strings and fixed bars whatever the queue held; there is no defect history
+ * to draw instead (`/analytics/defects` is a paged list with no window, and
+ * `chart-data` has no defect metric), so they are gone. "Oldest open P0" is a
+ * real number of days: it keeps a `GaugeBar`, drawn only when a P0 is open.
+ */
+export function DefectKpiStrip({ model }: { model: QueueModel }) {
+  const oldestP0Days = model.oldestP0 ? Math.floor(model.oldestP0.ageMs / 86400000) : null
+  const escapeRate = model.total > 0 ? Math.round((model.unlinkedTotal / model.total) * 100) : 0
+  const oldestP0Gauge = oldestP0Days != null ? (
+    <GaugeBar
+      value={oldestP0Days}
+      domain={OLDEST_P0_DOMAIN}
+      tone={OLDEST_P0_BANDS}
+      size="sm"
+      label="Oldest open P0, days open on a one-week scale"
+      valueText={`${oldestP0Days} ${oldestP0Days === 1 ? 'day' : 'days'} open`}
+    />
+  ) : undefined
   return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <rect x="2"  y="8" width="22" height="14" rx="2" fill="color-mix(in srgb, var(--status-failed) 55%, transparent)" />
-      <rect x="28" y="8" width="22" height="14" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
-      <rect x="54" y="6" width="22" height="16" rx="2" fill="color-mix(in srgb, var(--status-failed) 85%, transparent)" />
-      <rect x="80" y="4" width="18" height="18" rx="2" fill="var(--status-failed)" />
-    </svg>
-  )
-}
-
-// Polyline with dashed target — for "MTTR".
-function SparkLineWithTarget({ stroke, points }: { stroke: string; points: string }) {
-  return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <line x1="0" y1="11" x2="100" y2="11" stroke="var(--color-border)" strokeDasharray="2 3" strokeWidth={1} />
-      <polyline fill="none" stroke={stroke} strokeWidth={1.5} points={points} />
-    </svg>
-  )
-}
-
-// Bar with fill ratio — for "Oldest open P0".
-function SparkAgedBar({ pct }: { pct: number }) {
-  const p = Math.max(0, Math.min(100, pct))
-  return (
-    <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <rect x="2" y="6" width="94" height="10" rx="2" fill="color-mix(in srgb, var(--status-failed) 15%, transparent)" stroke="color-mix(in srgb, var(--status-failed) 40%, transparent)" strokeWidth={1} />
-      <rect x="2" y="6" width={Math.max(2, (p / 100) * 94)} height="10" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
-    </svg>
+    <section aria-label="Defect KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+      <KpiCell
+        Icon={XCircle}
+        label="Open defects"
+        value={model.open + model.inProgress}
+        tone={model.open + model.inProgress > 0 ? 'bad' : 'good'}
+        meta={
+          model.weeklyAdded > 0 || model.weeklyClosed > 0
+            ? <><span style={{ color: model.weeklyAdded > model.weeklyClosed ? 'var(--status-failed)' : 'var(--status-passed)' }}>
+                {model.weeklyAdded - model.weeklyClosed >= 0 ? '+' : ''}{model.weeklyAdded - model.weeklyClosed}
+              </span> vs last week</>
+            : <>no movement this week</>
+        }
+        isFirst
+      />
+      <KpiCell
+        Icon={ShieldCheck}
+        label="P0 / P1 open"
+        value={`${model.p0Count}`}
+        sub={`/ ${model.p1Count}`}
+        tone={model.p0Count > 0 ? 'bad' : model.p1Count > 0 ? 'warn' : 'good'}
+        meta={model.p0Count > 0 ? <>{model.p0Count} blocking release</> : <>no release blockers</>}
+      />
+      <KpiCell
+        Icon={Clock}
+        label="Mean time to resolve"
+        value={model.mttrDays != null ? `${model.mttrDays.toFixed(1)}` : '—'}
+        sub={model.mttrDays != null ? 'd' : undefined}
+        tone={
+          model.mttrDays == null ? 'neutral'
+          : model.mttrDays <= 2 ? 'good'
+          : model.mttrDays <= 5 ? 'warn'
+          : 'bad'
+        }
+        meta={model.mttrDays != null ? <>over {model.resolved + model.closed} closed</> : <>no closures yet</>}
+      />
+      <KpiCell
+        Icon={BarChart3}
+        label="Escape rate"
+        value={`${escapeRate}`}
+        sub="%"
+        tone={escapeRate > 10 ? 'bad' : escapeRate > 5 ? 'warn' : 'good'}
+        meta={<>target ≤ 5% · last 30d</>}
+      />
+      <KpiCell
+        Icon={Bug}
+        label="Oldest open P0"
+        value={oldestP0Days != null ? `${oldestP0Days}` : '—'}
+        sub={oldestP0Days != null ? 'd' : undefined}
+        tone={
+          oldestP0Days == null ? 'good'
+          : oldestP0Days >= 5 ? 'bad'
+          : oldestP0Days >= 2 ? 'warn'
+          : 'good'
+        }
+        meta={
+          model.oldestP0
+            ? <><code className="font-mono text-[10.5px]">{model.oldestP0.keyLabel}</code> · {model.oldestP0.isUnlinked ? 'unlinked' : 'linked'}</>
+            : <>no open P0 in window</>
+        }
+        spark={oldestP0Gauge}
+        isLast
+      />
+    </section>
   )
 }
 
@@ -1665,9 +1718,6 @@ export default function DefectsPage() {
   }
 
   // KPI helpers
-  const oldestP0Days = model.oldestP0 ? Math.floor(model.oldestP0.ageMs / 86400000) : null
-  const oldestP0Pct = oldestP0Days != null ? Math.min(100, (oldestP0Days / 7) * 100) : 0
-  const escapeRate = model.total > 0 ? Math.round((model.unlinkedTotal / model.total) * 100) : 0
 
   // Per-row action handlers
   const onLinkJira = (r: DefectRow) => toast(`Link Jira for ${r.keyLabel} — coming in Phase 2`, { icon: '🔗' })
@@ -1731,74 +1781,7 @@ export default function DefectsPage() {
       <WorkflowRibbon stages={ribbonStages} />
 
       {analyticsView.widgetIds.includes('defect_kpis') && (
-        <section aria-label="Defect KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-          <KpiCell
-            Icon={XCircle}
-            label="Open defects"
-            value={model.open + model.inProgress}
-            tone={model.open + model.inProgress > 0 ? 'bad' : 'good'}
-            meta={
-              model.weeklyAdded > 0 || model.weeklyClosed > 0
-                ? <><span style={{ color: model.weeklyAdded > model.weeklyClosed ? 'var(--status-failed)' : 'var(--status-passed)' }}>
-                    {model.weeklyAdded - model.weeklyClosed >= 0 ? '+' : ''}{model.weeklyAdded - model.weeklyClosed}
-                  </span> vs last week</>
-                : <>no movement this week</>
-            }
-            spark={<SparkRisingLine />}
-            isFirst
-          />
-          <KpiCell
-            Icon={ShieldCheck}
-            label="P0 / P1 open"
-            value={`${model.p0Count}`}
-            sub={`/ ${model.p1Count}`}
-            tone={model.p0Count > 0 ? 'bad' : model.p1Count > 0 ? 'warn' : 'good'}
-            meta={model.p0Count > 0 ? <>{model.p0Count} blocking release</> : <>no release blockers</>}
-            spark={<SparkGrowingBars />}
-          />
-          <KpiCell
-            Icon={Clock}
-            label="Mean time to resolve"
-            value={model.mttrDays != null ? `${model.mttrDays.toFixed(1)}` : '—'}
-            sub={model.mttrDays != null ? 'd' : undefined}
-            tone={
-              model.mttrDays == null ? 'neutral'
-              : model.mttrDays <= 2 ? 'good'
-              : model.mttrDays <= 5 ? 'warn'
-              : 'bad'
-            }
-            meta={model.mttrDays != null ? <>over {model.resolved + model.closed} closed</> : <>no closures yet</>}
-            spark={<SparkLineWithTarget stroke="var(--status-broken)" points="0,16 14,14 28,15 42,12 56,10 70,11 84,8 98,6" />}
-          />
-          <KpiCell
-            Icon={BarChart3}
-            label="Escape rate"
-            value={`${escapeRate}`}
-            sub="%"
-            tone={escapeRate > 10 ? 'bad' : escapeRate > 5 ? 'warn' : 'good'}
-            meta={<>target ≤ 5% · last 30d</>}
-            spark={<SparkLineWithTarget stroke="var(--status-broken)" points="0,12 16,15 32,11 48,13 64,9 80,11 96,8" />}
-          />
-          <KpiCell
-            Icon={Bug}
-            label="Oldest open P0"
-            value={oldestP0Days != null ? `${oldestP0Days}` : '—'}
-            sub={oldestP0Days != null ? 'd' : undefined}
-            tone={
-              oldestP0Days == null ? 'good'
-              : oldestP0Days >= 5 ? 'bad'
-              : oldestP0Days >= 2 ? 'warn'
-              : 'good'
-            }
-            meta={
-              model.oldestP0
-                ? <><code className="font-mono text-[10.5px]">{model.oldestP0.keyLabel}</code> · {model.oldestP0.isUnlinked ? 'unlinked' : 'linked'}</>
-                : <>no open P0 in window</>
-            }
-            spark={<SparkAgedBar pct={oldestP0Pct} />}
-            isLast
-          />
-        </section>
+        <DefectKpiStrip model={model} />
       )}
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>

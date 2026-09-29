@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -262,5 +262,88 @@ describe('DefectsPage — saying that the release filter does not apply', () => 
 
     await screen.findByText(/Defect Workflow/i)
     expect(screen.queryByText('All releases')).toBeNull()
+  })
+})
+
+// ── Wave 2.5 (VIZ-104, OD-1): Defects has no defect history, so four KPI
+// glyphs that drew literal point strings are gone; "Oldest open P0" is a real
+// number of days and keeps a gauge; the queue meter is the kit GaugeBar. ────
+describe('DefectsPage — KPI glyphs draw only real numbers', () => {
+  const DAY = 86_400_000
+  const ago = (days: number) => new Date(Date.now() - days * DAY - 3_600_000).toISOString()
+
+  async function renderWith(items: Record<string, unknown>[]) {
+    const { useDefects } = await import('@/hooks/useMetrics')
+    ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items, total: items.length, pages: 1 },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/defects']}>
+        <Routes>
+          <Route path="/defects" element={<DefectsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return screen.findByRole('region', { name: 'Defect KPIs' })
+  }
+
+  /** A KPI cell by its label: the label sits in the cell's first row. */
+  function kpiCell(kpis: HTMLElement, label: string): HTMLElement {
+    const cell = within(kpis).getByText(label).closest('div')?.parentElement
+    if (!cell) throw new Error(`no KPI cell labelled ${label}`)
+    return cell
+  }
+
+  const p0 = (id: string, days: number) => ({
+    id,
+    test_name: `checkout ${id}`,
+    suite_name: 'Payments',
+    failure_category: 'PRODUCT_BUG',
+    ai_confidence_score: 92,
+    resolution_status: 'OPEN',
+    created_at: ago(days),
+  })
+
+  it('deletes the four hard-coded glyphs', async () => {
+    const kpis = await renderWith([p0('d1', 4)])
+    for (const label of ['Open defects', 'P0 / P1 open', 'Mean time to resolve', 'Escape rate']) {
+      const cell = kpiCell(kpis, label)
+      expect(cell.querySelector('svg:not(.lucide)'), label).toBeNull()
+      expect(cell.querySelector('polyline'), label).toBeNull()
+      expect(within(cell).queryByRole('meter'), label).toBeNull()
+      expect(within(cell).queryByRole('img'), label).toBeNull()
+    }
+  })
+
+  it('gauges the oldest open P0 in days on a one-week scale, toned by the KPI bands', async () => {
+    const kpis = await renderWith([p0('d1', 4), p0('d2', 1)])
+    const meter = within(kpiCell(kpis, 'Oldest open P0')).getByRole('meter')
+    expect(meter).toHaveAttribute('aria-valuenow', '4')
+    expect(meter).toHaveAttribute('aria-valuemax', '7')
+    expect(meter).toHaveAttribute('aria-valuetext', '4 days open')
+    expect(meter).toHaveAttribute('data-tone', 'warn')
+  })
+
+  it.each([
+    [1, 'good'],
+    [6, 'bad'],
+  ])('tones an oldest P0 open %i day(s) as %s — the KPI\'s bands, lower is better', async (days, tone) => {
+    const kpis = await renderWith([p0('d1', days)])
+    expect(within(kpiCell(kpis, 'Oldest open P0')).getByRole('meter')).toHaveAttribute('data-tone', tone)
+  })
+
+  it('draws no oldest-P0 bar when no P0 is open — not a bar at 0', async () => {
+    const kpis = await renderWith([{ ...p0('d1', 4), failure_category: 'FLAKY' }])
+    const cell = kpiCell(kpis, 'Oldest open P0')
+    expect(within(cell).queryByRole('meter')).toBeNull()
+    expect(within(cell).queryByRole('img')).toBeNull()
+    expect(cell).toHaveTextContent('no open P0 in window')
+  })
+
+  it('draws the queue health as a named meter', async () => {
+    await renderWith([p0('d1', 4)])
+    const meter = screen.getByRole('meter', { name: 'Queue health' })
+    expect(meter.getAttribute('aria-valuetext')).toMatch(/^\d+ of 100, (Healthy|At risk|Blocked)$/)
   })
 })
