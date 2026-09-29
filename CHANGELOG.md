@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased - Java SDK: Jackson 2.18.10 (CVE-2026-68497)
+
+The Java client (``client/java``) moves Jackson core, databind and the YAML
+data format from 2.18.8 to 2.18.10. Trivy's filesystem scan began failing CI on
+2026-09-29, main included, on CVE-2026-68497 (HIGH) in ``jackson-databind``,
+which 2.18.10 fixes. The SDK's own tests pass on the new version, and the shaded
+jar still relocates Jackson under ``ai.testlookup.shaded.jackson``.
+
 ## Unreleased - Visualization Upgrade, Wave 2.5: every production chart on the kit (VIZ-104)
 
 Twelve production pages now draw their charts, meters, strips and KPI glyphs
