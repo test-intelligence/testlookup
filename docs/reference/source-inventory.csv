@@ -2997,7 +2997,7 @@ frontend/tests/ci-e2e/accessibility-keyboard.spec.ts,test,143,,@playwright/test;
 frontend/tests/ci-e2e/chart-export.spec.ts,test,282,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures; ../lib/chart-gallery-page; ../lib/png,
 frontend/tests/ci-e2e/chart-fullscreen-text.spec.ts,test,152,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; DOMRectLike; TextReport; readTexts; enterFullscreen; exitFullscreen
 frontend/tests/ci-e2e/chart-fullscreen.spec.ts,test,396,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; enter; sizes; as; as; withoutFullscreenApi; as; ignoredByAssistiveTech
-frontend/tests/ci-e2e/chart-gallery.spec.ts,test,2520,,@playwright/test; ../lib/axe-gate; ../lib/chart-text-escapes; ../../src/pages/dev/chartGalleryFixtures; ../../src/components/charts/multiSeriesModel; ../../src/components/charts/timeSeriesModel; ../../src/pages/dev/chartStatesFixtures,Locator; Page; KnownViolation; GalleryItem; watchCsp; paintedColoursIn; watchErrors; openGallery; drawnDomMarks; drawnMarks; barBoxes; barEncoding; textBoxes; TextBox; overlaps; directLabelGeometry; plotBox; focusedDayPoints; openStates
+frontend/tests/ci-e2e/chart-gallery.spec.ts,test,2527,,@playwright/test; ../lib/axe-gate; ../lib/chart-gallery-page; ../lib/chart-text-escapes; ../../src/pages/dev/chartGalleryFixtures; ../../src/components/charts/multiSeriesModel; ../../src/components/charts/timeSeriesModel; ../../src/pages/dev/chartStatesFixtures,Locator; Page; KnownViolation; GalleryItem; watchCsp; paintedColoursIn; watchErrors; openGallery; drawnDomMarks; drawnMarks; barBoxes; barEncoding; textBoxes; TextBox; overlaps; directLabelGeometry; plotBox; focusedDayPoints; openStates
 frontend/tests/ci-e2e/chart-hostile-names.spec.ts,test,165,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures; ../lib/chart-gallery-page,Locator; Page; HostileItem; hoverUntilNamed
 frontend/tests/ci-e2e/chart-interaction-axe.spec.ts,test,52,,@playwright/test; ../lib/axe-gate; ../lib/chart-gallery-page,
 frontend/tests/ci-e2e/chart-tooltip.spec.ts,test,334,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; DOMRectLike; tipTitle; Hovered; hoverMark; pointCount; shownTitle; sweep; plotBox; pointerAndKeyboard
@@ -3064,7 +3064,7 @@ frontend/tests/e2e/test-runs.spec.ts,test,31,,@playwright/test; ./realLoginHelpe
 frontend/tests/e2e/tier-0-2-features.spec.ts,test,147,,@playwright/test; ./realLoginHelper,
 frontend/tests/e2e/workflow-visual-language.spec.ts,test,26,,@playwright/test; ./realLoginHelper,
 frontend/tests/lib/axe-gate.ts,test,80,,@playwright/test; @axe-core/playwright,Page; KnownViolation; expectNoBlockingViolations
-frontend/tests/lib/chart-gallery-page.ts,test,271,,node:fs; @playwright/test,Locator; Page; watchErrors; openGallery; markCentres; DOMRectLike; pointAt; leaveCharts; intersects; keyboardTo; ExportedFile; exportFile; parseCsv; ParsedSvg; parseSvg
+frontend/tests/lib/chart-gallery-page.ts,test,298,,node:fs; @playwright/test,ConsoleMessage; Locator; Page; isTelemetryBeaconFailure; watchErrors; openGallery; markCentres; DOMRectLike; pointAt; leaveCharts; intersects; keyboardTo; ExportedFile; exportFile; parseCsv; ParsedSvg; parseSvg
 frontend/tests/lib/chart-text-escapes.ts,test,46,,,textEscapes
 frontend/tests/lib/diagram-geometry.ts,test,53,,,is; DiagramGeometry; measureDiagramLabels
 frontend/tests/lib/png.ts,test,125,,node:zlib,DecodedPng; readPngHeader; paeth; decodePng; pixelAt; distance; inkInRow
