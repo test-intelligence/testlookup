@@ -17,11 +17,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import IntelligenceHubPage from './IntelligenceHubPage'
 
-const state = vi.hoisted(() => ({
-  projectId: 'all' as string,
-  quota: null as null | { enabled: boolean; hard_cap_usd: number },
-  usage: null as null | { total_cost_usd: number; total_llm_calls: number; utilization_pct?: number },
-}))
+const { ALL_PROJECTS_ID, state } = vi.hoisted(() => {
+  // The store's sentinel for "all projects", stubbed with the mock below.
+  const ALL_PROJECTS_ID = 'all'
+  return {
+    ALL_PROJECTS_ID,
+    state: {
+      projectId: ALL_PROJECTS_ID as string,
+      quota: null as null | { enabled: boolean; hard_cap_usd: number },
+      usage: null as null | { total_cost_usd: number; total_llm_calls: number; utilization_pct?: number },
+    },
+  }
+})
 
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
@@ -34,7 +41,7 @@ vi.mock('@/hooks/useLlmBudget', () => ({
 }))
 
 vi.mock('@/store/projectStore', () => ({
-  ALL_PROJECTS_ID: 'all',
+  ALL_PROJECTS_ID,
   useProjectStore: (selector: (s: { activeProjectId: string }) => unknown) => selector({ activeProjectId: state.projectId }),
 }))
 
@@ -64,7 +71,7 @@ function passRateCells(): HTMLTableCellElement[] {
 }
 
 beforeEach(() => {
-  state.projectId = 'all'
+  state.projectId = ALL_PROJECTS_ID
   state.quota = null
   state.usage = null
 })
