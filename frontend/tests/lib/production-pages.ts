@@ -148,9 +148,34 @@ export type ApiHandler = (request: ApiRequest) => unknown
  */
 export type ApiHandlers = ReadonlyArray<readonly [string | RegExp, ApiHandler, string?]>
 
+/**
+ * Feature flags a test turns ON, by key (`viz_chart_data_api: true`). Every
+ * key not listed reads OFF, so the default (no map) is the committed
+ * baselines' state: every flag off.
+ */
+export type FlagMap = Readonly<Record<string, boolean>>
+
+/** What `mockApi` can vary besides the handlers. */
+export interface MockOptions {
+  /** Flags answered ON (see `FlagMap`); default none. */
+  flags?: FlagMap
+  /**
+   * A fixed delay before every API answer, in ms (default 0). The LCP
+   * harness uses 40 so a page's request waterfall costs something, and the
+   * same amount on every run.
+   */
+  latencyMs?: number
+}
+
 /** The whitelist of 3.1.1: the only paths with a default answer. */
-const WHITELIST: ApiHandlers = [
-  [/^\/api\/v1\/feature-flags\/[^/]+\/status$/, ({ path }) => ({ key: path.split('/')[4], enabled: false })],
+const whitelist = (flags: FlagMap): ApiHandlers => [
+  [
+    /^\/api\/v1\/feature-flags\/[^/]+\/status$/,
+    ({ path }) => {
+      const key = path.split('/')[4]
+      return { key, enabled: flags[key] === true }
+    },
+  ],
   [/^\/api\/v1\/feature-flags(\/.*)?$/, () => []],
   [/^\/api\/v1\/observability(\/.*)?$/, () => respond(204), 'POST'],
   [/\/count$/, () => ({ count: 0, unread: 0 })],
@@ -171,9 +196,15 @@ export interface MockedApi {
  * Answer the page's API calls from `handlers` (then `me`, then the
  * whitelist); abort and record everything else. Call before `goto`.
  */
-export async function mockApi(page: Page, me: unknown, handlers: ApiHandlers): Promise<MockedApi> {
+export async function mockApi(
+  page: Page,
+  me: unknown,
+  handlers: ApiHandlers,
+  options: MockOptions = {},
+): Promise<MockedApi> {
   const state: MockedApi = { unhandled: [], offHost: [], seen: [] }
-  const all: ApiHandlers = [...handlers, ['/api/v1/auth/me', () => me], ...WHITELIST]
+  const all: ApiHandlers = [...handlers, ['/api/v1/auth/me', () => me], ...whitelist(options.flags ?? {})]
+  const latencyMs = options.latencyMs ?? 0
   // Only what could leave the machine or reach the API is intercepted; the
   // dev server's own module requests (and Vite's HMR socket on `/`, which
   // reloads the page if it is cut) go straight through.
@@ -205,6 +236,8 @@ export async function mockApi(page: Page, me: unknown, handlers: ApiHandlers): P
     }
     state.seen.push(label)
     const answer = await hit[1]({ url, path: url.pathname, method, route })
+    // Node-side, so the page's pinned clock can neither stretch nor skip it.
+    if (latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, latencyMs))
     if (answer instanceof ApiResponse) {
       const { status, json } = answer
       return route.fulfill({
@@ -240,6 +273,8 @@ export interface OpenOptions extends SessionSeed {
   handlers: ApiHandlers
   /** A heading every drawn state of the page shows, awaited after `goto`. */
   ready: Locator | ((page: Page) => Locator)
+  /** Flags on and answer latency (`MockOptions`); default: every flag off, no delay. */
+  mock?: MockOptions
 }
 
 export interface OpenedPage {
@@ -256,7 +291,7 @@ export async function openProductionPage(page: Page, path: string, options: Open
   await seedSession(page, options)
   await freezeClock(page, options.now)
   await stillMotion(page)
-  const api = await mockApi(page, options.me, options.handlers)
+  const api = await mockApi(page, options.me, options.handlers, options.mock)
   await page.goto(path)
   const expected = new URL(path, 'http://x').pathname
   expect(new URL(page.url()).pathname, 'the route redirected').toBe(expected)
