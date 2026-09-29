@@ -21,6 +21,7 @@ import {
   ENGINE_DIRS,
   RECHARTS_BOUNDARY_ENFORCED,
   RECHARTS_DIRS,
+  SOURCE_FILE,
   importBoundaryViolations,
   inEngineDir,
   inRechartsDir,
@@ -232,7 +233,9 @@ function walkAll(dir) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) out.push(...walkAll(full))
-    else if (/\.(ts|tsx)$/.test(entry)) out.push(full)
+    // Every extension the build compiles, not just ts/tsx (R1 F2): a page.jsx
+    // importing recharts is as real as a page.tsx doing it.
+    else if (SOURCE_FILE.test(entry)) out.push(full)
   }
   return out
 }

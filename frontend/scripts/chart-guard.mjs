@@ -19,9 +19,9 @@
  *     RECHARTS (VIZ-104, Wave 2.5) has the same rule with its own boundary: a
  *     value import of `recharts` (or a deep path) is allowed only under
  *     RECHARTS_DIRS, the chart kit, so a page draws through a kit frame and
- *     never builds a raw Recharts chart again. It is written, self-tested and
- *     OFF (`RECHARTS_BOUNDARY_ENFORCED`) until the last three pages that still
- *     import recharts are migrated; the ratchet commit flips the one constant.
+ *     never builds a raw Recharts chart again. It is ON
+ *     (`RECHARTS_BOUNDARY_ENFORCED`) since Wave 2.5 migrated the last three
+ *     pages that imported recharts (Overview, SuiteDetail, ValueMetrics).
  *
  *  2. OPTION RULES, over ENGINE_DIRS, src/components/charts/** and every file
  *     that imports from an engines/ module (it may hand the engine an option).
@@ -83,13 +83,14 @@ export const RECHARTS_DIRS = ['src/components/charts']
 /** recharts, including deep paths such as `recharts/es6/chart/AreaChart`. */
 export const RECHARTS_MODULE = /^recharts(?:\/.*)?$/
 /**
- * Whether the real tree is held to the recharts boundary. OFF while
- * OverviewPage, SuiteDetailPage and ValueMetricsPage still import recharts
- * (Wave 2.5 migrates them); flipped to `true` in the ratchet commit that
- * follows them. The self-test proves the matcher either way, and
- * check-theme-tokens.mjs prints how many files would still fail it.
+ * Whether the real tree is held to the recharts boundary. ON since Wave 2.5
+ * (VIZ-104) moved OverviewPage, SuiteDetailPage and ValueMetricsPage, the
+ * last files outside the kit that imported recharts, onto kit frames: a new
+ * `recharts` import anywhere in `src/` outside RECHARTS_DIRS now fails
+ * `check:theme`. The self-test proves the matcher before any file is read,
+ * whatever this says; set it back to `false` only in a revert of that wave.
  */
-export const RECHARTS_BOUNDARY_ENFORCED = false
+export const RECHARTS_BOUNDARY_ENFORCED = true
 
 export const inRechartsDir = (rel) => RECHARTS_DIRS.some((dir) => rel === dir || rel.startsWith(`${dir}/`))
 
@@ -109,8 +110,21 @@ const RECHARTS_BOUNDARY = {
     '(StackedColumnChartFrame, TimeSeriesChartFrame, BarChart, ...), or use `import type` for types',
 }
 
+/**
+ * Every source extension the guards read. A `.js` / `.jsx` / `.mts` / `.cts` file
+ * is compiled into the app as readily as a `.ts` one, so scanning only ts/tsx left
+ * a plain-JS file free to import recharts from a page (R1 F2).
+ */
+export const SOURCE_FILE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/
+
 function parse(rel, source) {
-  const kind = rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  const kind = /\.tsx$/.test(rel)
+    ? ts.ScriptKind.TSX
+    : /\.jsx$/.test(rel)
+      ? ts.ScriptKind.JSX
+      : /\.(?:js|mjs|cjs)$/.test(rel)
+        ? ts.ScriptKind.JS
+        : ts.ScriptKind.TS
   return ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true, kind)
 }
 
@@ -203,11 +217,92 @@ function boundaryViolations(rel, source, boundaries) {
 }
 
 /**
+ * Re-exports that would launder a boundary (R1 F2). A file inside a boundary may
+ * import the package, so without this rule a kit module could write
+ * `export * from 'recharts'` (or import a name and export it again) and a page
+ * could then build a raw Recharts chart from `@/components/charts/<that file>`
+ * with `check:theme` green. Only ENGINE_DIRS may re-export a package, because
+ * that is where the engine seam lives; everywhere else in a boundary a package
+ * name may be used, never handed on. Types stay free (`export type`, inline
+ * `type` names), as they are erased.
+ *
+ * Caught: `export * from`, `export { A } from`, `export * as RC from`, a local
+ * value binding from the package exported again (`export { A }`, `export default A`,
+ * `export = A`, `export const B = A` / `= RC.A`). Not caught, by design: a
+ * wrapper component the kit writes around a Recharts piece — that is the kit's
+ * job, and it no longer hands the raw engine to a page.
+ */
+function reexportViolations(rel, source, boundaries) {
+  if (inEngineDir(rel)) return []
+  const active = boundaries.filter((boundary) => boundary.allowedIn(rel))
+  if (active.length === 0) return []
+  const sf = parse(rel, source)
+  const out = []
+  const restrictedBy = (spec) => active.find((boundary) => boundary.module.test(spec))
+  const flag = (node, what, boundary) =>
+    out.push(
+      `${rel}:${lineOf(sf, node)} ${what} — a package allowed here may be used, never re-exported, outside ` +
+        `${ENGINE_DIRS.join(', ')}; ${boundary.advice}`,
+    )
+  // Local value names bound to a restricted package, and the boundary each came from.
+  const bound = new Map()
+  for (const stmt of sf.statements) {
+    if (ts.isImportDeclaration(stmt) && isStringish(stmt.moduleSpecifier)) {
+      const boundary = restrictedBy(stmt.moduleSpecifier.text)
+      const clause = stmt.importClause
+      if (!boundary || !clause || clause.isTypeOnly) continue
+      if (clause.name) bound.set(clause.name.text, boundary)
+      const nb = clause.namedBindings
+      if (nb && ts.isNamespaceImport(nb)) bound.set(nb.name.text, boundary)
+      if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (!el.isTypeOnly) bound.set(el.name.text, boundary)
+    } else if (ts.isImportEqualsDeclaration(stmt) && ts.isExternalModuleReference(stmt.moduleReference)) {
+      const e = stmt.moduleReference.expression
+      const boundary = isStringish(e) ? restrictedBy(e.text) : undefined
+      if (boundary && !stmt.isTypeOnly) bound.set(stmt.name.text, boundary)
+    }
+  }
+  // `A`, or `RC.A` / `RC['A']` on a bound namespace.
+  const boundaryOfValue = (expr) => {
+    let e = unwrap(expr)
+    while (e && (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e))) e = unwrap(e.expression)
+    return e && ts.isIdentifier(e) ? bound.get(e.text) : undefined
+  }
+  const isExported = (node) => node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+  for (const stmt of sf.statements) {
+    if (ts.isExportDeclaration(stmt) && !stmt.isTypeOnly) {
+      const clause = stmt.exportClause
+      const values = clause && ts.isNamedExports(clause) ? clause.elements.filter((el) => !el.isTypeOnly) : null
+      if (values && values.length === 0) continue // `export { type A } from 'x'`: erased
+      if (stmt.moduleSpecifier && isStringish(stmt.moduleSpecifier)) {
+        const boundary = restrictedBy(stmt.moduleSpecifier.text)
+        if (boundary) flag(stmt, `re-exports '${stmt.moduleSpecifier.text}'`, boundary)
+      } else if (values) {
+        for (const el of values) {
+          const boundary = bound.get((el.propertyName ?? el.name).text)
+          if (boundary) flag(stmt, `re-exports \`${(el.propertyName ?? el.name).text}\`, imported from an engine package`, boundary)
+        }
+      }
+    } else if (ts.isExportAssignment(stmt)) {
+      const boundary = boundaryOfValue(stmt.expression)
+      if (boundary) flag(stmt, `default-exports \`${stmt.expression.getText(sf)}\`, imported from an engine package`, boundary)
+    } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        const boundary = d.initializer ? boundaryOfValue(d.initializer) : undefined
+        if (boundary) flag(stmt, `exports \`${d.name.getText(sf)}\` bound to \`${d.initializer.getText(sf)}\`, an engine package value`, boundary)
+      }
+    }
+  }
+  return out
+}
+
+/**
  * Every import-boundary violation in one file: the engine packages always,
- * recharts when `recharts` is on (default: `RECHARTS_BOUNDARY_ENFORCED`).
+ * recharts when `recharts` is on (default: `RECHARTS_BOUNDARY_ENFORCED`), plus
+ * any re-export that would carry either package out of its boundary.
  */
 export function importBoundaryViolations(rel, source, { recharts = RECHARTS_BOUNDARY_ENFORCED } = {}) {
-  return boundaryViolations(rel, source, recharts ? [ENGINE_BOUNDARY, RECHARTS_BOUNDARY] : [ENGINE_BOUNDARY])
+  const boundaries = recharts ? [ENGINE_BOUNDARY, RECHARTS_BOUNDARY] : [ENGINE_BOUNDARY]
+  return [...boundaryViolations(rel, source, boundaries), ...reexportViolations(rel, source, boundaries)]
 }
 
 /** The recharts boundary alone: what the ratchet will fail on once it is enforced. */
@@ -449,6 +544,27 @@ export const IMPORT_CASES = [
   ['recharts value import under engines/', E, "import { Bar } from 'recharts'", 'clean'],
   ['a vi.mock of recharts in a page test', 'src/pages/Planted.test.tsx', "vi.mock('recharts', () => ({}))\ntype R = typeof import('recharts')", 'clean'],
   ['unrelated package with the recharts prefix', OUT, "import x from 'rechartsy'", 'clean'],
+  // R1 F2: a kit file must not hand recharts on to a page by re-exporting it.
+  ['recharts star re-export from the kit', KIT, "export * from 'recharts'", 'hit'],
+  ['recharts named re-export from the kit', KIT, "export { AreaChart } from 'recharts'", 'hit'],
+  ['recharts namespace re-export from the kit', KIT, "export * as RC from 'recharts'", 'hit'],
+  ['recharts deep-path re-export from the kit', KIT, "export { Area } from 'recharts/es6/cartesian/Area'", 'hit'],
+  ['recharts import then export from the kit', KIT, "import { AreaChart } from 'recharts'\nexport { AreaChart }", 'hit'],
+  ['recharts import then renamed export from the kit', KIT, "import { AreaChart as A } from 'recharts'\nexport { A as Chart }", 'hit'],
+  ['recharts namespace member exported from the kit', KIT, "import * as RC from 'recharts'\nexport const AreaChart = RC.AreaChart", 'hit'],
+  ['recharts default-exported from the kit', KIT, "import { AreaChart } from 'recharts'\nexport default AreaChart", 'hit'],
+  ['recharts re-export from a kit .js file', 'src/components/charts/Planted.js', "export * from 'recharts'", 'hit'],
+  ['recharts re-export from a kit .mts file', 'src/components/charts/Planted.mts', "export { Bar } from 'recharts'", 'hit'],
+  ['recharts re-export from a kit .cts file', 'src/components/charts/Planted.cts', "import { Bar } from 'recharts'\nexport { Bar }", 'hit'],
+  ['recharts re-export from a kit .jsx file', 'src/components/charts/Planted.jsx', "export { Bar } from 'recharts'\nexport const X = () => <Bar />", 'hit'],
+  ['recharts value import in a page .js file', 'src/pages/Planted.js', "import { AreaChart } from 'recharts'", 'hit'],
+  ['recharts value import in a page .jsx file', 'src/pages/Planted.jsx', "import { AreaChart } from 'recharts'\nexport const P = () => <AreaChart />", 'hit'],
+  ['recharts value import in a page .mts file', 'src/pages/Planted.mts', "import { AreaChart } from 'recharts'", 'hit'],
+  ['recharts dynamic import in a page .cts file', 'src/pages/Planted.cts', "const m = () => import('recharts')", 'hit'],
+  ['recharts re-export under engines/', E, "export { Bar } from 'recharts'", 'clean'],
+  ['recharts type re-export from the kit', KIT, "export type { TooltipProps } from 'recharts'\nexport { type LegendProps } from 'recharts'", 'clean'],
+  ['recharts used, not re-exported, in the kit', KIT, "import { Bar } from 'recharts'\nconst B = Bar\nexport const Kit = () => <B />\nexport { Kit as KitAlias }", 'clean'],
+  ['recharts type name re-exported from the kit', KIT, "import type { TooltipProps } from 'recharts'\nexport type { TooltipProps }", 'clean'],
 ]
 
 export function runSelfTest() {
@@ -470,6 +586,15 @@ export function runSelfTest() {
     const found = importBoundaryViolations(rel, src, { recharts: true })
     if (expect === 'hit' && found.length === 0) problems.push(`self-test: the planted "${label}" was NOT caught`)
     if (expect === 'clean' && found.length) problems.push(`self-test: the clean "${label}" was flagged: ${found.join('; ')}`)
+  }
+  // The walk reads what SOURCE_FILE matches: an extension it drops is a file no rule ever sees.
+  for (const ext of ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs']) {
+    count += 1
+    if (!SOURCE_FILE.test(`src/pages/Planted.${ext}`)) problems.push(`self-test: a .${ext} file would never be scanned`)
+  }
+  for (const name of ['Planted.css', 'Planted.d.ts.map', 'Planted.json']) {
+    count += 1
+    if (SOURCE_FILE.test(`src/pages/${name}`)) problems.push(`self-test: ${name} would be parsed as source`)
   }
   return { problems, count }
 }
