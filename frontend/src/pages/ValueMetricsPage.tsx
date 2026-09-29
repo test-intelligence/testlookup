@@ -1,11 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   BarChart3, Clock, Download, GitMerge, HelpCircle, Save, Shield, ShieldAlert, SlidersHorizontal,
   Sparkles, Bug, AlertTriangle, Timer,
 } from 'lucide-react'
-import {
-  Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
 import { clsx } from 'clsx'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
@@ -13,6 +10,10 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
+import { readyState } from '@/components/charts/chartState'
+import { buildStackedColumnModel, type StackedColumnSeriesInput } from '@/components/charts/stackedColumnModel'
+import { formatNumber } from '@/utils/formatters'
 import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
 import { valueMetricsService } from '@/services/valueMetricsService'
 import { refreshValueMetrics, useValueMethodology, useValueMetrics } from '@/hooks/useValueMetrics'
@@ -310,55 +311,60 @@ function AssumptionsEditor({ projectId, assumptions, source, onSaved }: {
 
 // ── Monthly hours chart ─────────────────────────────────────────────────────
 
-// Series colors come from theme tokens (palette ratchet: no new hex).
-const HOURS_SERIES = [
-  { key: 'hours_triage', name: 'Triage', color: 'var(--color-accent)' },
-  { key: 'hours_quarantine', name: 'Quarantine', color: 'var(--status-skipped)' },
-  { key: 'hours_dedup', name: 'Duplicate absorption', color: 'var(--status-flaky)' },
-] as const
+/**
+ * The three model legs, bottom of the stack first. They are NOT statuses, so
+ * the kit gives them series colours 1-3 and a decal each (`--chart-series-*`);
+ * the accent / skipped / flaky status colours they used to borrow said
+ * "status" about something that is not one.
+ */
+const HOURS_SERIES: StackedColumnSeriesInput[] = [
+  { key: 'hours_triage', label: 'Triage' },
+  { key: 'hours_quarantine', label: 'Quarantine' },
+  { key: 'hours_dedup', label: 'Duplicate absorption' },
+]
 
-function MonthlyHoursChart({ monthly }: { monthly: ValueMetricsMonthly[] }) {
+const formatHours = (value: number) => `${formatNumber(value, { maximumFractionDigits: 1 })} h`
+
+/** A leg the payload does not carry is not measured: a gap, never 0 hours. */
+const hoursOf = (value: unknown) => (typeof value === 'number' ? value : null)
+
+/**
+ * Estimated hours saved per month by model leg, on the chart kit's stacked
+ * columns (VIZ-104). The heading and the methodology line are the frame's
+ * title and takeaway; `monthly-chart` is the frame's test id.
+ */
+function MonthlyHoursChart({ monthly, methodologyVersion }: { monthly: ValueMetricsMonthly[]; methodologyVersion: number }) {
+  const model = useMemo(
+    () =>
+      buildStackedColumnModel({
+        buckets: monthly.map((m) => ({
+          key: m.month,
+          label: fmtMonth(m.month),
+          values: {
+            hours_triage: hoursOf(m.hours_triage),
+            hours_quarantine: hoursOf(m.hours_quarantine),
+            hours_dedup: hoursOf(m.hours_dedup),
+          },
+        })),
+        series: HOURS_SERIES,
+        valueTitle: 'Hours saved',
+        bucketTitle: 'Month',
+        format: formatHours,
+        xType: 'time',
+      }),
+    [monthly],
+  )
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={monthly} margin={{ top: 4, right: 4, left: -8, bottom: 0 }} barSize={28}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-        <XAxis
-          dataKey="month"
-          tickFormatter={fmtMonth}
-          axisLine={false}
-          tickLine={false}
-          tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
-          dy={6}
-        />
-        <YAxis
-          axisLine={false}
-          tickLine={false}
-          tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
-        />
-        <Tooltip
-          labelFormatter={(label) => fmtMonth(String(label))}
-          formatter={(value) => `${value ?? 0} h`}
-          contentStyle={{
-            background: 'var(--color-bg-card)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 8,
-            color: 'var(--color-text)',
-            fontSize: 12,
-          }}
-        />
-        <Legend iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-        {HOURS_SERIES.map(({ key, name, color }, i) => (
-          <Bar
-            key={key}
-            dataKey={key}
-            stackId="hours"
-            name={name}
-            fill={color}
-            radius={i === HOURS_SERIES.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
-          />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
+    <StackedColumnChartFrame
+      data-testid="monthly-chart"
+      title="Hours saved per month"
+      takeaway={`Estimated engineering hours returned each month, split by model leg (methodology v${methodologyVersion}).`}
+      headingLevel={3}
+      state={readyState(monthly)}
+      model={model}
+      height={260}
+      bucketNoun="month"
+    />
   )
 }
 
@@ -515,16 +521,7 @@ export default function ValueMetricsPage() {
 
       {/* Monthly trend + model counts */}
       {hoursSavedAvailable && monthly.length > 0 && (
-        <div className="card p-4 space-y-2">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text)]">Hours saved per month</h3>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              Estimated engineering hours returned each month, split by model leg
-              (methodology v{metrics.methodology_version}).
-            </p>
-          </div>
-          <MonthlyHoursChart monthly={monthly} />
-        </div>
+        <MonthlyHoursChart monthly={monthly} methodologyVersion={metrics.methodology_version} />
       )}
 
       {hoursSavedAvailable && monthly.length > 0 && (

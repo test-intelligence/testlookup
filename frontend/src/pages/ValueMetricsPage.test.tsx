@@ -9,13 +9,14 @@
  *   - available=true → headline + FTE render; the methodology panel opens
  *     from the "How is this calculated?" link and shows legs/formulas/
  *     caveats/research notes ("credibility requires showing the math").
- *   - Monthly chart receives the ascending series verbatim.
+ *   - Monthly chart draws the ascending series verbatim (its table view),
+ *     each model leg in a SERIES colour, not a borrowed status colour.
  *   - Assumptions editor: PUT sends only the changed fields; client-side
  *     bounds (0 < x <= 480) block out-of-range saves; the source badge flips
  *     after a successful save; permission-denied hides the editor.
  */
-import { createElement } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
@@ -61,20 +62,21 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
-// Recharts renders nothing measurable in jsdom (zero-size ResponsiveContainer),
-// so stand it in with a probe that exposes the data the chart received.
-vi.mock('recharts', () => ({
-  ResponsiveContainer: ({ children }: { children?: React.ReactNode }) =>
-    createElement('div', null, children),
-  BarChart: ({ data, children }: { data?: unknown[]; children?: React.ReactNode }) =>
-    createElement('div', { 'data-testid': 'monthly-chart', 'data-chart': JSON.stringify(data ?? []) }, children),
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-}))
+// The monthly chart is the kit's StackedColumnChartFrame (VIZ-104), drawn by
+// real Recharts. jsdom lays nothing out, so the ResponsiveContainer hands its
+// chart a fixed size and the columns, legend and patterns really draw. (This
+// file used to replace recharts with a fixed list of eight stand-ins, which
+// the kit's own imports would have broken.)
+vi.mock('recharts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('recharts')>()
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children }: { children: ReactNode }) =>
+      isValidElement(children)
+        ? cloneElement(children as ReactElement<{ width?: number; height?: number }>, { width: 640, height: 260 })
+        : null,
+  }
+})
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -252,9 +254,44 @@ describe('ValueMetricsPage', () => {
     await renderPage()
 
     const chart = await screen.findByTestId('monthly-chart')
-    const data = JSON.parse(chart.getAttribute('data-chart') ?? '[]') as ValueMetricsMonthly[]
-    expect(data.map((m) => m.month)).toEqual(['2026-05-01', '2026-06-01', '2026-07-01'])
-    expect(data[0].hours_triage).toBe(8)
+    // The PLOT draws the months in the order the API sent them (ascending):
+    // the table view sorts a time axis itself, so it cannot prove this.
+    const ticks = Array.from(chart.querySelectorAll('.recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value'), (el) => el.textContent)
+    expect(ticks).toEqual(['2026-05', '2026-06', '2026-07'])
+    fireEvent.click(within(chart).getByRole('button', { name: 'View as table' }))
+    const table = within(chart).getByRole('table', { name: /data table/i })
+    // One row per month.
+    expect(within(table).getAllByRole('rowheader').map((th) => th.textContent)).toEqual(['2026-05', '2026-06', '2026-07'])
+    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
+      'Month', 'Triage', 'Quarantine', 'Duplicate absorption', 'Total',
+    ])
+    const first = within(table).getByRole('rowheader', { name: '2026-05' }).parentElement as HTMLElement
+    // month('2026-05-01', 0): triage 8, quarantine 4, dedup 1 — and their sum.
+    expect(Array.from(first.querySelectorAll('td'), (td) => td.textContent)).toEqual(['8 h', '4 h', '1 h', '13 h'])
+  })
+
+  it('draws the three model legs in series colours, not in borrowed status colours', async () => {
+    await renderPage()
+
+    const chart = await screen.findByTestId('monthly-chart')
+    expect(within(chart).getByRole('heading', { level: 3, name: 'Hours saved per month' })).toBeInTheDocument()
+    const legend = Array.from(chart.querySelectorAll('[data-chart-legend] li'), (li) => li.textContent)
+    expect(legend).toEqual(['Triage', 'Quarantine', 'Duplicate absorption'])
+    const colours = Array.from(chart.querySelectorAll('pattern[id*="-chart-pattern-series-"] > rect:first-child'), (rect) =>
+      rect.getAttribute('fill'),
+    )
+    expect(colours).toEqual(['var(--chart-series-1)', 'var(--chart-series-2)', 'var(--chart-series-3)'])
+  })
+
+  it('shows a leg the payload does not carry as "—", never as 0 hours', async () => {
+    const partial = { ...month('2026-05-01', 0), hours_dedup: undefined as unknown as number }
+    mockGet.mockResolvedValue(baseMetrics({ monthly: [partial, month('2026-06-01', 1)] }))
+    await renderPage()
+
+    const chart = await screen.findByTestId('monthly-chart')
+    fireEvent.click(within(chart).getByRole('button', { name: 'View as table' }))
+    const row = within(chart).getByRole('rowheader', { name: '2026-05' }).parentElement as HTMLElement
+    expect(Array.from(row.querySelectorAll('td'), (td) => td.textContent)).toEqual(['8 h', '4 h', '—', '12 h'])
   })
 
   it('renders the honest model-count labels (duplicates absorbed, runs unblocked estimate)', async () => {
