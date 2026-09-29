@@ -4,7 +4,16 @@ import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
 } from 'lucide-react'
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
+import Sparkline from '@/components/charts/Sparkline'
+import GaugeBar, { type GaugeTone } from '@/components/charts/GaugeBar'
+import { readyState } from '@/components/charts/chartState'
+import { dayWindow } from '@/components/charts/dayStrip.model'
+import {
+  buildStackedColumnModel,
+  STATUS_STACK_SERIES,
+  utcDayLabel,
+} from '@/components/charts/stackedColumnModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ScopedLink from '@/components/ui/ScopedLink'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -18,6 +27,8 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import { scopeArg } from '@/lib/scopeParams'
 import { SEVERAL_SELECTED, suiteSelectOptions } from '@/lib/scopeControls'
 import { ScopeSummaryButton } from '@/components/ui/ScopeSummaryButton'
 import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
@@ -26,6 +37,7 @@ import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onb
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
 import { formatDuration, dayTimeAgo } from '@/utils/formatters'
+import { utcDayIso } from '@/utils/calendarDay'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
@@ -49,8 +61,8 @@ const VERDICT_THEME: Record<Verdict, {
   eyebrowText: string
   gateText: string
   meterValue: string
-  meterTrack: string
-  meterFill: string
+  /** The pass-rate meter's tone (`GaugeBar`): its fill, and its tinted track. */
+  meterTone: GaugeTone
   eyebrowLabel: string
   headlineSuffix: string
 }> = {
@@ -62,8 +74,7 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowText: 'var(--status-passed)',
     gateText: 'var(--status-passed)',
     meterValue: 'var(--status-passed)',
-    meterTrack: 'color-mix(in srgb, var(--status-passed) 18%, transparent)',
-    meterFill: 'linear-gradient(90deg, var(--status-passed), var(--status-passed))',
+    meterTone: 'good',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'ship cleared',
   },
@@ -78,8 +89,7 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowText: 'var(--status-skipped)',
     gateText: 'var(--status-skipped)',
     meterValue: 'var(--status-skipped)',
-    meterTrack: 'color-mix(in srgb, var(--status-skipped) 18%, transparent)',
-    meterFill: 'linear-gradient(90deg, var(--status-skipped), var(--status-skipped))',
+    meterTone: 'watch',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'go with watch',
   },
@@ -93,8 +103,7 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowText: 'var(--status-broken)',
     gateText: 'var(--status-broken)',
     meterValue: 'var(--status-broken)',
-    meterTrack: 'color-mix(in srgb, var(--status-broken) 18%, transparent)',
-    meterFill: 'linear-gradient(90deg, var(--status-broken), var(--status-broken))',
+    meterTone: 'warn',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'review before shipping',
   },
@@ -106,8 +115,7 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowText: 'var(--status-failed)',
     gateText: 'var(--status-failed)',
     meterValue: 'var(--status-failed)',
-    meterTrack: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',
-    meterFill: 'linear-gradient(90deg, var(--status-failed), var(--status-broken))',
+    meterTone: 'bad',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'ship blocked',
   },
@@ -119,8 +127,7 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowText: 'var(--color-text-muted)',
     gateText: 'var(--color-text-secondary)',
     meterValue: 'var(--color-text-muted)',
-    meterTrack: 'rgba(255,255,255,0.06)',
-    meterFill: 'linear-gradient(90deg, #64748b, #94a3b8)',
+    meterTone: 'neutral',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'awaiting evidence',
   },
@@ -153,47 +160,20 @@ function gateLabel(v: Verdict): string {
 }
 
 
-// ── Sparkline ────────────────────────────────────────────────────────────
+// ── KPI tone ─────────────────────────────────────────────────────────────
 type SparkTone = 'good' | 'warn' | 'bad' | 'neutral'
 
+/** The KPI label's dot. Tokens only: the neutral dot follows the theme. */
 const SPARK_COLOR: Record<SparkTone, string> = {
   good: 'var(--status-passed)',
   warn: 'var(--status-broken)',
   bad:  'var(--status-failed)',
-  neutral: '#9198a1',
+  neutral: 'var(--color-text-muted)',
 }
 
-function Sparkline({ values, tone, gradId }: { values: number[]; tone: SparkTone; gradId: string }) {
-  const w = 120
-  const h = 28
-  const max = Math.max(...values, 1)
-  const min = Math.min(...values, 0)
-  const span = Math.max(max - min, 1)
-  const stepX = w / Math.max(values.length - 1, 1)
-  const points = values.map((v, i) => {
-    const x = i * stepX
-    const y = h - 4 - ((v - min) / span) * (h - 8)
-    return [x, y] as const
-  })
-  const linePath = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
-  const areaPath = `${linePath} L ${w} ${h} L 0 ${h} Z`
-  const last = points[points.length - 1]
-  const color = SPARK_COLOR[tone]
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-7">
-      <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor={color} stopOpacity={0.28} />
-          <stop offset="100%" stopColor={color} stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={last[0]} cy={last[1]} r={2} fill={color} />
-    </svg>
-  )
-}
+/** A pass rate's line runs on the whole percentage scale. */
+const PASS_RATE_DOMAIN = [0, 100] as const
+const formatSparkPercent = (value: number) => `${value.toFixed(1)}%`
 
 // ── KPI card ─────────────────────────────────────────────────────────────
 interface KpiProps {
@@ -202,9 +182,19 @@ interface KpiProps {
   unit?: string
   delta?: { glyph: '▲' | '▼' | '▬'; text: string; tone: SparkTone }
   tone: SparkTone
-  series?: number[]
+  /**
+   * One value per day, OLDEST first; `null` is a day with nothing measured
+   * (the line breaks there). Drawn only with at least two measured days —
+   * otherwise `emptyMsg` explains the missing trend line.
+   */
+  series?: readonly (number | null)[]
+  /** The line's value range. Default `[0, max]`: a count trends up from zero, as it always has here. */
+  sparkDomain?: readonly [number, number]
+  /** How the line's accessible name prints a value. */
+  sparkFormat?: (value: number) => string
+  /** The window, in days, the line covers: part of its accessible name. */
+  days: number
   emptyMsg?: string
-  gradId: string
   /** When set, renders a "View all →" footer linking to this route. */
   linkTo?: string
   /** Footer link label override (default: "View all"). */
@@ -215,10 +205,11 @@ interface KpiProps {
   badge?: ReactNode
 }
 
-function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, linkTo, linkLabel, badge }: KpiProps) {
+function KpiCard({ label, value, unit, delta, tone, series, sparkDomain, sparkFormat, days, emptyMsg, linkTo, linkLabel, badge }: KpiProps) {
   const isBad = tone === 'bad'
   const dotColor = SPARK_COLOR[tone]
   const valueIsDash = value === '—'
+  const measured = series ? series.filter((v): v is number => v !== null && Number.isFinite(v)) : []
   return (
     <div
       className={clsx(
@@ -261,11 +252,23 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
           </span>
         )}
       </div>
-      {series && series.length >= 2 ? (
-        <Sparkline values={series} tone={tone} gradId={gradId} />
+      {series && measured.length >= 2 ? (
+        <Sparkline
+          series={series}
+          label={`${label} per day, last ${days} days`}
+          tone={tone}
+          // The old line ran from 0 to the series' top; a zoomed [min, max]
+          // would turn a 94-97% week into a cliff.
+          domain={sparkDomain ?? [0, Math.max(1, ...measured)]}
+          format={sparkFormat}
+          area
+          className="w-full"
+        />
       ) : (
         <div
-          className="h-7 pt-1.5 text-[11px] text-[var(--color-text-faint)]"
+          // `min-h-7`, not `h-7`: a caption that wraps to two lines in a
+          // narrow card (DejaVu Sans on Linux) ran into the link under it.
+          className="min-h-7 pt-1.5 text-[11px] text-[var(--color-text-faint)]"
           style={{ borderTop: '1px dashed var(--color-border)' }}
         >
           {emptyMsg ?? '—'}
@@ -379,8 +382,14 @@ function VerdictCard({
             className="text-[28px] font-bold mt-1.5 mb-1"
             style={{ color: 'var(--color-text)', lineHeight: 1.1, letterSpacing: '-0.02em' }}
           >
+            {/* `<wbr />`: three adjacent spans with no space between them are
+                ONE unbreakable run, and in DejaVu Sans (the Linux runner) the
+                narrow card could not fit "Conditional · review" — the run
+                slid under the pass-rate column instead of wrapping. */}
             <span style={{ color: t.gateText }}>{gate}</span>
+            <wbr />
             <span className="text-[var(--color-text-muted)] mx-2">·</span>
+            <wbr />
             <span>{t.headlineSuffix}</span>
           </h2>
           <p className="text-[13px] m-0 max-w-[56ch]" style={{ color: 'var(--color-text-secondary)' }}>
@@ -401,12 +410,17 @@ function VerdictCard({
           >
             Pass rate
           </div>
-          <div className="w-[110px] h-1 rounded-full mt-1" style={{ background: t.meterTrack }}>
-            <div
-              className="h-full rounded-full transition-[width] duration-300"
-              style={{ width: `${verdict === 'PENDING' ? 0 : passRatePct}%`, background: t.meterFill }}
-            />
-          </div>
+          {/* PENDING has no pass rate to draw: an empty track, never a bar at 0. */}
+          <GaugeBar
+            className="mt-1"
+            value={verdict === 'PENDING' ? null : passRatePct}
+            label="Pass rate"
+            size="sm"
+            width={110}
+            track="tint"
+            tone={t.meterTone}
+            format={(v) => `${v}%`}
+          />
         </div>
       </div>
 
@@ -605,121 +619,143 @@ function StageCard({ stage }: { stage: RibbonStage }) {
 }
 
 // ── Execution trend chart ────────────────────────────────────────────────
-const CHART_COLORS = {
-  passed:  'var(--status-passed)',
-  failed:  'var(--status-failed)',
-  skipped: 'var(--status-broken)',
+const TREND_TITLE = 'Execution trend'
+const trendSubtitle = (days: number) => `Pass / fail / broken / skip over the last ${days} days`
+const TREND_HEIGHT = 260
+
+/** A count the payload may not carry (a cached pre-broken response): missing is not measured, never 0. */
+const countOf = (value: number | null | undefined) => (typeof value === 'number' ? value : null)
+
+/** One UTC day of the window, and the payload's point for it (`null`: no runs that day). */
+interface TrendDay {
+  iso: string
+  point: TrendPoint | null
 }
 
-interface ChartTooltipPayload {
-  name?: string
-  value?: number
-  color?: string
+/**
+ * The window as one entry per UTC day, oldest first, ending today: the same
+ * days Trends builds from the same endpoint (`buildCadenceCells`).
+ *
+ * `/metrics/trends` sends only the days that HAD runs (it groups by day and
+ * zero-fills nothing), so drawing its points directly collapsed a week with no
+ * runs to nothing: ten days and three days took the same width under a
+ * "Day (UTC)" axis, and "last 30 days" sat over 23 columns (R2 F1). The days
+ * are keyed by UTC day because a payload date may carry a time.
+ */
+function trendWindow(trends: readonly TrendPoint[], days: number): TrendDay[] {
+  const byDay = new Map<string, TrendPoint>()
+  for (const p of trends) byDay.set(p.date.slice(0, 10), p)
+  return dayWindow(days, utcDayIso()).map((iso) => ({ iso, point: byDay.get(iso) ?? null }))
 }
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: ChartTooltipPayload[]; label?: string }) {
-  if (!active || !payload || !payload.length) return null
-  return (
-    <div
-      className="rounded-md px-3 py-2 text-xs"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="text-[11px] uppercase text-[var(--color-text-muted)] mb-1"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        {label}
-      </div>
-      {payload.map((p, i) => (
-        <div key={i} className="flex items-center gap-2 tabular-nums">
-          <span className="h-2 w-2 rounded-sm" style={{ background: p.color }} />
-          <span className="text-[var(--color-text-secondary)] capitalize">{p.name}</span>
-          <span className="ml-auto text-[var(--color-text)] font-semibold">{p.value}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: number }) {
-  const data = useMemo(
+/**
+ * The execution trend card: executions per day by status, drawn by the kit's
+ * stacked columns inside their frame (VIZ-104). The page keeps its own
+ * loading and "fewer than two days" branches and their copy; the frame is
+ * mounted only when there is a trend to draw.
+ *
+ * All FOUR statuses are drawn and totalled. The area chart this replaces
+ * drew passed / failed / skipped only, so a project with broken tests saw
+ * them nowhere in the chart and its "Automation" total undercounted by
+ * exactly that many (owner decision OD-7).
+ */
+function ExecutionTrendCard({
+  window, days, loading, filtersApplied,
+}: { window: readonly TrendDay[]; days: number; loading: boolean; filtersApplied: boolean }) {
+  const model = useMemo(
     () =>
-      trends.map((p) => ({
-        // ``p.date`` is ISO ``yyyy-mm-dd`` from the backend; chart x-axis
-        // wants the short ``mm-dd`` for compactness. Slice 5..10. The
-        // legacy ``"May 16"`` format (length 6) is no longer produced;
-        // the ``length >= 10`` guard keeps any stray short value usable
-        // rather than crashing if a caller injects one.
-        // ``day`` was emitted by an older metrics response. Keep the chart
-        // honest (and crash-free) if that legacy shape is still in cache.
-        date: (p.date ?? (p as TrendPoint & { day?: string }).day ?? '').length >= 10
-          ? (p.date ?? (p as TrendPoint & { day?: string }).day ?? '').slice(5, 10)
-          : (p.date ?? (p as TrendPoint & { day?: string }).day ?? ''),
-        passed: p.passed,
-        failed: p.failed,
-        skipped: p.skipped,
-      })),
-    [trends],
+      buildStackedColumnModel({
+        // One column per day of the window. A day with no runs ran nothing:
+        // a measured 0 for every status (a tick on the baseline), never a
+        // missing column and never "not measured".
+        buckets: window.map(({ iso, point: p }) => ({
+          key: iso,
+          label: utcDayLabel(iso),
+          values: p
+            ? {
+                passed: countOf(p.passed),
+                failed: countOf(p.failed),
+                broken: countOf(p.broken),
+                skipped: countOf(p.skipped),
+              }
+            : { passed: 0, failed: 0, broken: 0, skipped: 0 },
+        })),
+        // Every status the trend counts, broken included (OD-7), in the kit's
+        // one stack order, as Trends and SuiteDetail stack them (R2 F4).
+        series: STATUS_STACK_SERIES,
+        valueTitle: 'Executions',
+        bucketTitle: 'Day (UTC)',
+        xType: 'time',
+      }),
+    [window],
   )
+  // The days that had runs: the "fewer than two days" branch, the totals and
+  // "across N days" count these, never the zero days filled in around them.
+  const trends = useMemo(() => window.flatMap(({ point }) => (point ? [point] : [])), [window])
 
-  if (data.length < 2) {
+  if (loading || trends.length < 2) {
     return (
-      <div
-        className="flex items-center justify-center rounded-md text-[var(--color-text-faint)] text-[12px]"
-        style={{ height: 240, borderTop: '1px dashed var(--color-border)' }}
-      >
-        {data.length === 0
-          ? `No executions in the last ${days} days.`
-          : `1 of ${days} days has data — a trend line needs at least 2.`}
+      <div className="card" style={{ padding: '14px 18px 18px' }}>
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{TREND_TITLE}</h3>
+        <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">{trendSubtitle(days)}</p>
+        <div className="mt-3">
+          {loading ? (
+            <div className="flex items-center justify-center" style={{ height: 240 }}>
+              <LoadingSpinner />
+            </div>
+          ) : (
+            <div
+              className="flex items-center justify-center rounded-md text-[var(--color-text-faint)] text-[12px]"
+              style={{ height: 240, borderTop: '1px dashed var(--color-border)' }}
+            >
+              {trends.length === 0
+                ? `No executions in the last ${days} days.`
+                : `1 of ${days} days has data — a trend line needs at least 2.`}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
-  const totalPassed  = trends.reduce((s, p) => s + p.passed,  0)
-  const totalFailed  = trends.reduce((s, p) => s + p.failed,  0)
-  const totalSkipped = trends.reduce((s, p) => s + p.skipped, 0)
-  const grand = totalPassed + totalFailed + totalSkipped
+  const total = (key: 'passed' | 'failed' | 'broken' | 'skipped') => trends.reduce((s, p) => s + (p[key] ?? 0), 0)
+  const totalPassed = total('passed')
+  const totalFailed = total('failed')
+  const totalBroken = total('broken')
+  const totalSkipped = total('skipped')
+  // A payload that carries no `broken` at all (a cached pre-broken response)
+  // did not measure it: "—" here, as in the table view above it, never a
+  // "Broken 0 · 0%" under a column of "—" (R1 F4).
+  const brokenMeasured = trends.some((p) => typeof p.broken === 'number')
+  const grand = totalPassed + totalFailed + totalBroken + totalSkipped
   const pct = (n: number) => (grand > 0 ? Math.round((n / grand) * 100) : 0)
 
   return (
-    <>
-      <div className="relative" style={{ height: 240 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 14, right: 12, left: 0, bottom: 6 }}>
-            <defs>
-              <linearGradient id="areaPassed" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={CHART_COLORS.passed} stopOpacity={0.5} />
-                <stop offset="100%" stopColor={CHART_COLORS.passed} stopOpacity={0.08} />
-              </linearGradient>
-              <linearGradient id="areaFailed" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={CHART_COLORS.failed} stopOpacity={0.5} />
-                <stop offset="100%" stopColor={CHART_COLORS.failed} stopOpacity={0.08} />
-              </linearGradient>
-              <linearGradient id="areaSkipped" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={CHART_COLORS.skipped} stopOpacity={0.5} />
-                <stop offset="100%" stopColor={CHART_COLORS.skipped} stopOpacity={0.08} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#656d76', fontSize: 10 }} dy={6} />
-            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#656d76', fontSize: 10 }} width={32} />
-            <Tooltip content={<ChartTooltip />} />
-            <Area type="monotone" dataKey="failed"  stackId="1" stroke={CHART_COLORS.failed}  strokeWidth={1.5} fill="url(#areaFailed)" />
-            <Area type="monotone" dataKey="skipped" stackId="1" stroke={CHART_COLORS.skipped} strokeWidth={1.5} fill="url(#areaSkipped)" strokeDasharray="4 3" />
-            <Area type="monotone" dataKey="passed"  stackId="1" stroke={CHART_COLORS.passed}  strokeWidth={1.6} fill="url(#areaPassed)" />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div
-        className="grid grid-cols-4 gap-2.5 mt-3 pt-3"
-        style={{ borderTop: '1px solid var(--color-border)' }}
-      >
-        <FootStat k="Passed"     v={`${totalPassed}`}  small={`${pct(totalPassed)}%`}  smallTone="muted" />
-        <FootStat k="Failed"     v={`${totalFailed}`}  small={`${pct(totalFailed)}%`}  smallTone="bad" />
-        <FootStat k="Skipped"    v={`${totalSkipped}`} small={`${pct(totalSkipped)}%`} smallTone="muted" />
-        <FootStat k="Automation" v={`${grand}`}        small={`across ${data.length} day${data.length === 1 ? '' : 's'}`} smallTone="muted" />
-      </div>
-    </>
+    <StackedColumnChartFrame
+      data-testid="overview-execution-trend"
+      title={TREND_TITLE}
+      takeaway={trendSubtitle(days)}
+      headingLevel={3}
+      state={readyState(trends)}
+      model={model}
+      height={TREND_HEIGHT}
+      bucketNoun="day"
+      filtersApplied={filtersApplied}
+      footer={
+        <div data-overview-trend-totals="" className="grid w-full grid-cols-3 sm:grid-cols-5 gap-2.5 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+          <FootStat k="Passed"     v={`${totalPassed}`}  small={`${pct(totalPassed)}%`}  smallTone="muted" />
+          <FootStat k="Failed"     v={`${totalFailed}`}  small={`${pct(totalFailed)}%`}  smallTone="bad" />
+          <FootStat
+            k="Broken"
+            v={brokenMeasured ? `${totalBroken}` : '—'}
+            small={brokenMeasured ? `${pct(totalBroken)}%` : 'not measured'}
+            smallTone="muted"
+          />
+          <FootStat k="Skipped"    v={`${totalSkipped}`} small={`${pct(totalSkipped)}%`} smallTone="muted" />
+          <FootStat k="Automation" v={`${grand}`}        small={`across ${trends.length} day${trends.length === 1 ? '' : 's'}`} smallTone="muted" />
+        </div>
+      }
+    />
   )
 }
 
@@ -951,6 +987,11 @@ export default function OverviewPage() {
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // Whether a filter narrowed the trend (a suite, or a release): an all-zero
+  // window then keeps the frame's filter words; without one the frame states
+  // the window neutrally, "No executions in this window" (R1 F3).
+  const releaseScope = useReleaseScope()
+  const trendFiltered = scopeArg(suiteFilter) !== null || scopeArg(releaseScope) !== null
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
@@ -1115,9 +1156,23 @@ export default function OverviewPage() {
       ? `${days}d · no executions recorded`
       : `1 of ${days} days has data · no trend line`
 
-  const totalSeries = trendData.map((p) => p.passed + p.failed + p.skipped + (p.broken ?? 0))
-  const passRateSeries = trendData.map((p) => Math.round(((p.pass_rate ?? 0)) * 100) / 100)
-  const failedSeries = trendData.map((p) => p.failed)
+  // The KPI sparklines read the same window as the execution trend: one value
+  // per UTC day, so a week with no runs keeps its width instead of the line
+  // bridging it (R2 F1). A day with no runs ran nothing, so its counts are a
+  // measured 0; it evaluated nothing, so it has no pass rate: `null`, a break
+  // in the line, never a 0% that reads as a collapse. So does a day of only
+  // skips.
+  const trendDays = trendWindow(trendData, days)
+  const daysWithData = trendDays.filter((d) => d.point !== null).length
+  const totalSeries = trendDays.map(({ point: p }) => (p ? p.passed + p.failed + p.skipped + (p.broken ?? 0) : 0))
+  const passRateSeries = trendDays.map(({ point: p }) =>
+    p && p.passed + p.failed + (p.broken ?? 0) > 0 && typeof p.pass_rate === 'number' ? Math.round(p.pass_rate * 100) / 100 : null,
+  )
+  const measuredPassDays = passRateSeries.filter((v) => v !== null).length
+  const failedSeries = trendDays.map(({ point: p }) => (p ? p.failed : 0))
+  // A count line needs two days that HAD runs: the zeros filled in for quiet
+  // days are real, but a line of them around one day of data is not a trend.
+  const countSeries = (series: number[]) => (daysWithData >= 2 ? series : undefined)
 
   const activeWidgets = new Set(analyticsView.widgetIds)
   const kpiOrder = [
@@ -1357,9 +1412,9 @@ export default function OverviewPage() {
                 label="Total executions"
                 value={`${totalExecutions}`}
                 tone="neutral"
-                gradId="kpi-total"
-                series={totalSeries.length >= 2 ? totalSeries : undefined}
-                emptyMsg={sparklineHint(totalSeries.length)}
+                days={days}
+                series={countSeries(totalSeries)}
+                emptyMsg={sparklineHint(daysWithData)}
                 delta={deltaFromMetric(summary?.total_executions_7d)}
                 linkTo="/runs"
                 linkLabel="View runs"
@@ -1371,9 +1426,11 @@ export default function OverviewPage() {
                 value={`${Math.round(passRate)}`}
                 unit="%"
                 tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'}
-                gradId="kpi-pass"
-                series={passRateSeries.length >= 2 ? passRateSeries : undefined}
-                emptyMsg={sparklineHint(passRateSeries.length)}
+                days={days}
+                series={passRateSeries}
+                sparkDomain={PASS_RATE_DOMAIN}
+                sparkFormat={formatSparkPercent}
+                emptyMsg={sparklineHint(measuredPassDays)}
                 delta={deltaFromMetric(summary?.avg_pass_rate_7d, true)}
               />
             )}
@@ -1382,7 +1439,7 @@ export default function OverviewPage() {
                 label="Active defects"
                 value={`${activeDefects}`}
                 tone={activeDefects === 0 ? 'good' : 'bad'}
-                gradId="kpi-defects"
+                days={days}
                 emptyMsg={activeDefects === 0 ? `${days}d · no open defects` : `${days}d · count only`}
                 delta={deltaFromMetric(summary?.active_defects)}
                 linkTo="/defects"
@@ -1394,7 +1451,7 @@ export default function OverviewPage() {
                 label="Flaky tests"
                 value={`${flaky}`}
                 tone={flaky === 0 ? 'warn' : 'bad'}
-                gradId="kpi-flaky"
+                days={days}
                 emptyMsg={flaky === 0 ? `${days}d · no flake events captured` : `${days}d · count only`}
                 delta={deltaFromMetric(summary?.flaky_test_count, true)}
                 linkTo="/flaky-coach"
@@ -1406,9 +1463,9 @@ export default function OverviewPage() {
                 label="New failures · 24h"
                 value={`${newFailures}`}
                 tone={newFailures === 0 ? 'good' : 'bad'}
-                gradId="kpi-failures"
-                series={failedSeries.length >= 2 ? failedSeries : undefined}
-                emptyMsg={sparklineHint(failedSeries.length)}
+                days={days}
+                series={countSeries(failedSeries)}
+                emptyMsg={sparklineHint(daysWithData)}
                 delta={deltaFromMetric(summary?.new_failures_24h)}
                 linkTo="/failures"
                 linkLabel="View failures"
@@ -1420,7 +1477,7 @@ export default function OverviewPage() {
                 value={infraPct == null ? '—' : `${infraPct}`}
                 unit={infraPct == null ? undefined : '%'}
                 tone={infraPct == null ? 'neutral' : infraPct === 0 ? 'good' : infraPct >= 30 ? 'bad' : 'warn'}
-                gradId="kpi-infra-kind"
+                days={days}
                 emptyMsg={infraPct == null
                   ? `${days}d · no analyzed failures`
                   : `AI-classified · ${infraKindCount} of ${kindTotal} failure${kindTotal === 1 ? '' : 's'}`}
@@ -1433,7 +1490,7 @@ export default function OverviewPage() {
                 label="Avg run duration"
                 value={avgDurationMs ? formatDuration(avgDurationMs) : '—'}
                 tone="neutral"
-                gradId="kpi-duration"
+                days={days}
                 emptyMsg={avgDurationMs ? `${days}d · avg only` : 'Needs ≥ 3 timed runs'}
               />
             )}
@@ -1445,7 +1502,7 @@ export default function OverviewPage() {
                 value={formatHoursSaved(hoursSaved30d)}
                 unit="h"
                 tone="good"
-                gradId="kpi-hours-saved"
+                days={days}
                 emptyMsg={`30d · ≈ ${valueMetrics.headline.fte_equivalent_30d.toFixed(1)} FTE · estimated`}
                 // The last card on this page the release filter does not
                 // reach, and deliberately so: the headline is an explicit
@@ -1464,36 +1521,7 @@ export default function OverviewPage() {
       {/* Bottom row — Trend chart + Blockers */}
       <div className="grid grid-cols-1 xl:[grid-template-columns:1.6fr_1fr] gap-4">
         <SectionErrorBoundary message="Failed to load execution trend">
-          <div className="card" style={{ padding: '14px 18px 18px' }}>
-            <div className="flex items-start justify-between gap-2.5 flex-wrap">
-              <div>
-                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Execution trend</h3>
-                <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">
-                  Pass / fail / skip over the last {days} days
-                </p>
-              </div>
-              <div className="flex items-center gap-3.5 text-[11px] text-[var(--color-text-muted)]">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.passed }} />Passed
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.failed }} />Failed
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.skipped }} />Skipped
-                </span>
-              </div>
-            </div>
-            <div className="mt-3">
-              {trendsLoading ? (
-                <div className="flex items-center justify-center" style={{ height: 240 }}>
-                  <LoadingSpinner />
-                </div>
-              ) : (
-                <ExecutionTrendChart trends={trendData} days={days} />
-              )}
-            </div>
-          </div>
+          <ExecutionTrendCard window={trendDays} days={days} loading={trendsLoading} filtersApplied={trendFiltered} />
         </SectionErrorBoundary>
 
         <SectionErrorBoundary message="Failed to load blockers">
