@@ -68,6 +68,19 @@ export const PINNED = {
   launchOptions: { args: RASTER_ARGS },
 }
 
+/**
+ * The flag-on pages' viewport (Wave 2.6, plan 5.2): the same 1280 px width,
+ * 4000 px tall. The flag-on Trends page (three catalogue frames below its
+ * body grid) is taller than 2400, and `visualRegion` fails a region that ends
+ * below the viewport. The shell is `h-screen` with its own scroller, so the
+ * height only sets how much of `#main-content` is on screen; nothing scrolls,
+ * and every lazy section is near at load.
+ */
+export const TALL_VIEWPORT = { width: 1280, height: 4000 } as const
+
+/** `PINNED` with `TALL_VIEWPORT` (`test.use(PINNED_TALL)`). */
+export const PINNED_TALL = { ...PINNED, viewport: { ...TALL_VIEWPORT } }
+
 export interface SessionSeed {
   theme: Theme
   user: Record<string, unknown>
@@ -393,19 +406,19 @@ export async function settle(page: Page) {
  * One soft screenshot of one region: `production/<name>--<theme>.png`
  * (`snapshotPathTemplate` puts it under `__screenshots__/<platform>/`).
  * The region must exist exactly once, be visible, and lie wholly inside the
- * tall `VIEWPORT` with nothing scrolled (see there for why a scrolled
- * capture is not reproducible).
+ * pinned viewport (`VIEWPORT`, or `TALL_VIEWPORT` for the flag-on specs) with
+ * nothing scrolled (see `VIEWPORT` for why a scrolled capture is not
+ * reproducible).
  */
 export async function visualRegion(page: Page, name: string, theme: Theme, region: Locator) {
   await expect(region, `region ${name}`).toHaveCount(1)
   await expect(region).toBeVisible()
   const box = await region.boundingBox()
+  const height = page.viewportSize()?.height ?? VIEWPORT.height
   expect(box, `region ${name} has a box`).not.toBeNull()
   if (box) {
     expect(box.y, `region ${name} starts inside the viewport`).toBeGreaterThanOrEqual(0)
-    expect(box.y + box.height, `region ${name} ends inside the ${VIEWPORT.height} px viewport`).toBeLessThanOrEqual(
-      VIEWPORT.height,
-    )
+    expect(box.y + box.height, `region ${name} ends inside the ${height} px viewport`).toBeLessThanOrEqual(height)
   }
   // Nothing hovered: the pointer rests off every region.
   await page.mouse.move(0, 0)

@@ -40,13 +40,18 @@ import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageE
 import {
   NOW,
   OVERVIEW,
+  OVERVIEW_ON,
   PROJECT_ID,
   RELEASE_GATE,
+  releaseGateOn,
   RUN_ID,
   SUITE,
   SUITE_DETAIL,
+  SUITE_DETAIL_ON,
   SUMMARY_REPORT,
+  SUMMARY_REPORT_ON,
   TRENDS,
+  TRENDS_ON,
   USER,
 } from '../visual/production/fixtures'
 
@@ -85,7 +90,14 @@ const CELLS = parseCells(process.env.LCP_CELLS)
 interface MeasuredPage {
   name: string
   path: string
+  /** Every flag off: the committed baselines' answers. */
   handlers: ApiHandlers
+  /**
+   * The flags-on cells' answers: the same page plus what its catalogue
+   * sections ask (the rollout specs' fixtures). With the flag-off set an `on`
+   * load would fail closed on its first section request.
+   */
+  handlersOn: ApiHandlers
   /** Visible in every drawn state of the page: the load is not over before it. */
   ready: (page: Page) => Locator
 }
@@ -95,25 +107,30 @@ const PAGES: MeasuredPage[] = [
     name: 'Overview',
     path: '/overview',
     handlers: OVERVIEW,
+    handlersOn: OVERVIEW_ON,
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
   },
-  { name: 'Trends', path: '/trends', handlers: TRENDS, ready: (p) => landmark(p, 'Trend metrics') },
+  { name: 'Trends', path: '/trends', handlers: TRENDS, handlersOn: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics') },
   {
     name: 'Summary',
     path: '/reports/summary',
     handlers: SUMMARY_REPORT,
+    handlersOn: SUMMARY_REPORT_ON,
     ready: (p) => p.getByText('Total tests', { exact: true }),
   },
   {
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
     handlers: SUITE_DETAIL,
+    handlersOn: SUITE_DETAIL_ON,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
   },
   {
     name: 'Release gate',
     path: `/release-gate/${RUN_ID}`,
     handlers: RELEASE_GATE,
+    // The same stored decision (no clusters), plus the gate's live reads.
+    handlersOn: releaseGateOn(),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   },
 ]
@@ -256,7 +273,8 @@ for (let run = 0; run <= RUNS; run++) {
         await page.addInitScript(recordPaints)
         await seedSession(page, { theme: 'signal', user: USER, projectId: PROJECT_ID })
         await freezeClock(page, NOW)
-        const api = await mockApi(page, USER, pg.handlers, { flags: FLAGS[cell.flags], latencyMs: LATENCY_MS })
+        const handlers = cell.flags === 'on' ? pg.handlersOn : pg.handlers
+        const api = await mockApi(page, USER, handlers, { flags: FLAGS[cell.flags], latencyMs: LATENCY_MS })
         let requests = 0
         page.on('request', () => {
           requests += 1

@@ -176,25 +176,20 @@ const INVENTORY: Record<string, string[]> = {
     `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
     `GET /api/v1/projects/${P}/activity?limit=8&since=2026-08-19T12:00:00.000Z`,
   ],
-  // Trends resets the shared window to 14 days on mount, AFTER its first
-  // render has already asked for the stored 30: every page-owned read is
-  // made twice at a cold load from any other window (before-notes). Pinned
-  // as it is; a fix removes the six `days=30` lines here.
+  // Trends opens on its own 14 days. Until Wave 2.6 the reset to 14 ran after
+  // the first render had already asked for the stored 30, so every page-owned
+  // read was made twice at a cold load (before-notes 13). Wave 2.6 fixed it
+  // (the page reads 14 until the store holds 14) and removed the six `days=30`
+  // lines that pinned the double fetch: each read is now made once.
   Trends: [
     ...SHELL,
     `GET /api/v1/saved-views?project_id=${P}&page=trends`,
     `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
-    `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
     `GET /api/v1/metrics/summary?project_id=${P}&days=14`,
-    `GET /api/v1/metrics/summary?project_id=${P}&days=30`,
     `GET /api/v1/analytics/coverage?project_id=${P}&days=14`,
-    `GET /api/v1/analytics/coverage?project_id=${P}&days=30`,
     `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=14`,
-    `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=30`,
     `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30`,
     `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
   ],
   Summary: [...SHELL, `GET /api/v1/reports/summary?project_id=${P}&days=30&mode=latest`],
   'Suite detail': [

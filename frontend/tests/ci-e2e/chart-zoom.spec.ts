@@ -204,9 +204,16 @@ test.describe('VIZ-407 zoom and brush', () => {
    * leaves both whole and apart, and the handle itself is what a pointer at
    * its centre hits.
    */
-  for (const [label, viewport] of [
-    ['desktop', { width: 1280, height: 800 }],
-    ['phone', { width: 390, height: 844 }],
+  //
+  // The middle label is the LONG wording where the row holds it and the short
+  // one where it does not (Wave 2.6 R2-20, measured in the row's own font). At
+  // 390 px the row between the strip's insets is 164 px wide: "Feb 17" +
+  // "Mar 30" + two 8 px gaps leave 76 px, and the long "Showing Mar 28, 2026
+  // (1 of 42 days)" is 193 px (Segoe UI; DejaVu is wider still), so the short
+  // "1 of 42 days" is drawn. At 1280 the row is 1,054 px and the long one is.
+  for (const [label, viewport, wording] of [
+    ['desktop', { width: 1280, height: 800 }, 'Showing Mar 28, 2026 (1 of 42 days)'],
+    ['phone', { width: 390, height: 844 }, '1 of 42 days'],
   ] as const) {
     test(`a one-day zoom leaves both handles whole and apart (${label})`, async ({ page }) => {
       await page.setViewportSize(viewport)
@@ -214,7 +221,7 @@ test.describe('VIZ-407 zoom and brush', () => {
       const item = galleryItem(page, TREND)
       await item.scrollIntoViewIfNeeded()
       await press(startHandle(item), 'End', 39)
-      await expect(selectionLabel(item)).toContainText('(1 of 42 days)')
+      await expect(selectionLabel(item)).toHaveText(wording)
       const boxes = []
       for (const handle of [startHandle(item), endHandle(item)]) {
         await handle.scrollIntoViewIfNeeded()
@@ -507,7 +514,10 @@ test.describe('VIZ-407 zoom — a finger has a single-pointer way too (SC 2.5.7)
     const box = (await track.boundingBox()) as { x: number; y: number; width: number; height: number }
     const at = (day: number) => ({ x: box.x + ((day + 0.5) / 42) * box.width, y: box.y + box.height / 2 })
     await page.touchscreen.tap(at(30).x, at(30).y)
-    await expect(selectionLabel(item)).toContainText('click the day the range ends')
+    // A 390 px phone: the row has 76 px between the end days for the middle
+    // label, too narrow for "From Mar 19, 2026: click the day the range ends",
+    // so the short wording (R2-20). The long one is asserted at 1280 above.
+    await expect(selectionLabel(item)).toHaveText('From Mar 19: click the end')
     await page.touchscreen.tap(at(33).x, at(33).y)
     await expect(startHandle(item)).toHaveAttribute('aria-valuenow', '30')
     await expect(endHandle(item)).toHaveAttribute('aria-valuenow', '33')
