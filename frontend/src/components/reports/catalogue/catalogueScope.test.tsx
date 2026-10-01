@@ -20,6 +20,7 @@ import {
   clampCatalogueDays,
   useCatalogueParams,
 } from './catalogueScope'
+import { ALL_PROJECTS_ID } from '@/store/projectStore'
 
 const base = { projectId: 'proj-1', allProjects: false, days: 30 }
 
@@ -69,7 +70,7 @@ describe('catalogueParams (K3)', () => {
   })
 
   it('never sends project_id in All Projects mode, even from extra', () => {
-    const params = catalogueParams({ ...base, projectId: 'all', allProjects: true, extra: { project_id: 'proj-9' } })
+    const params = catalogueParams({ ...base, projectId: ALL_PROJECTS_ID, allProjects: true, extra: { project_id: 'proj-9' } })
     expect(params).not.toBeNull()
     expect(params).not.toHaveProperty('project_id')
   })

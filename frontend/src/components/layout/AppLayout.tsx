@@ -91,6 +91,7 @@ export default function AppLayout() {
             drawer's close button are), so hidden from assistive tech. */}
         {drawerOpen && (
           <div
+            /* not-a-dialog: the drawer panel (Sidebar) carries role="dialog" and aria-modal. */
             data-shell-backdrop=""
             aria-hidden="true"
             className="fixed inset-0 z-[45] bg-black/50 lg:hidden"
