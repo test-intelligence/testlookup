@@ -12,10 +12,10 @@
  * ``useSummaryReport``; the page reads from ``useProjectStore`` for
  * scope.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SummaryReportPage from './SummaryReportPage'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
@@ -51,6 +51,25 @@ vi.mock('@/store/projectStore', () => ({
 vi.mock('react-hot-toast', () => ({
   default: { error: vi.fn(), success: vi.fn() },
 }))
+
+// VIZ-408's one seam. Off unless a test turns it on, so every case written
+// against the Wave 2.5 page still runs that page.
+const rollout = vi.hoisted(() => ({ on: false }))
+vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
+  useCatalogueRollout: () => rollout.on,
+  useCatalogueRolloutStatus: () => rollout.on,
+  useHeatmapRollout: () => false,
+}))
+// Flag on only: the trend's request (K7) held loading, and the top bar's cached
+// release list. The trend's own behaviour is `SummaryCatalogue.test.tsx`'s.
+const trendsCalls = vi.hoisted(() => [] as number[])
+vi.mock('@/components/reports/catalogue/useTrendsSeries', () => ({
+  useTrendsSeries: (days: number) => {
+    trendsCalls.push(days)
+    return { status: 'loading' }
+  },
+}))
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [] } }) }))
 
 function makeReport(overrides: Partial<SummaryReport> = {}): SummaryReport {
   return {
@@ -529,5 +548,166 @@ describe('SummaryReportPage — release scope badge and PDF', () => {
 
     URL.createObjectURL = origCreateUrl
     URL.revokeObjectURL = origRevoke
+  })
+})
+
+describe('SummaryReportPage — VIZ-106 responsive edits and metric tokens (flag independent)', () => {
+  beforeEach(() => {
+    mockGet.mockReset()
+    rollout.on = false
+    mockProjectStore.mockImplementation((selector) => selector({
+      activeProjectId: 'p1',
+      activeProject: { id: 'p1', name: 'GoogleProject' },
+    }))
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+  })
+
+  it('scrolls both tables inside their own card instead of clipping their columns', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('test_pay')
+    const tables = screen.getAllByRole('table')
+    expect(tables).toHaveLength(2)
+    for (const table of tables) {
+      const wrapper = table.parentElement as HTMLElement
+      expect(wrapper.className).toMatch(/\boverflow-x-auto\b/)
+      expect(wrapper.className).not.toMatch(/\boverflow-hidden\b/)
+    }
+  })
+
+  it('lets a keyboard reach each table’s sideways scroll: a named, focusable region with a visible focus ring (R2-6)', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('test_pay')
+    // axe `scrollable-region-focusable`: a scroller a keyboard cannot focus cannot be scrolled without a mouse.
+    for (const [name, header] of [
+      ['Per-suite breakdown table', 'Suite'],
+      ['Top failing tests table', 'Test'],
+    ] as const) {
+      const region = screen.getByRole('region', { name })
+      expect(region.tabIndex).toBe(0)
+      expect(region.className).toMatch(/\boverflow-x-auto\b/)
+      // The ring shows on keyboard focus only (no outline is suppressed without a replacement).
+      expect(region.className.split(/\s+/)).toEqual(
+        expect.arrayContaining(['focus-visible:ring-2', 'focus-visible:ring-[var(--color-accent)]']),
+      )
+      expect(within(region).getByRole('table')).toBeInTheDocument()
+      expect(within(region).getAllByRole('columnheader')[0].textContent).toMatch(new RegExp(`^${header}`))
+    }
+  })
+
+  it('wraps the header action row below 1024 px only, rather than pushing the page sideways', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    const exportButton = await screen.findByRole('button', { name: /Export PDF/ })
+    const classes = (exportButton.parentElement as HTMLElement).className.split(/\s+/)
+    expect(classes).toContain('max-lg:flex-wrap')
+    // Never at 1024 px and above: there the row must be the Wave 2.5 row, byte for
+    // byte (a plain `flex-wrap` moved the flag-off baselines by a pixel on Linux).
+    expect(classes).not.toContain('flex-wrap')
+  })
+
+  it('sizes the metric values on the metric tokens of the same value (22 px stat-md, 18 px stat-sm), which presentation mode raises', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    const tile = (await screen.findByText('Total tests')).nextElementSibling as HTMLElement
+    expect(tile.textContent).toBe('200')
+    expect(tile.style.fontSize).toBe('var(--text-stat-md)')
+    expect(tile.className).not.toMatch(/text-\[22px\]/)
+    const count = screen.getByText('Evaluated').nextElementSibling as HTMLElement
+    expect(count.textContent).toBe('197')
+    // Not `--text-lg` (also 18 px): a UI size, which presentation mode leaves at the desk size.
+    expect(count.style.fontSize).toBe('var(--text-stat-sm)')
+    expect(count.className).not.toMatch(/text-\[18px\]/)
+  })
+})
+
+describe('SummaryReportPage — the catalogue seam (VIZ-408)', () => {
+  beforeEach(() => {
+    mockGet.mockReset()
+    trendsCalls.length = 0
+    mockProjectStore.mockImplementation((selector) => selector({
+      activeProjectId: 'p1',
+      activeProject: { id: 'p1', name: 'GoogleProject' },
+    }))
+    try { localStorage.removeItem('summary-report.mode') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+  })
+
+  afterEach(() => {
+    rollout.on = false
+  })
+
+  /** Different totals per Aggregation mode, as the server sends them. */
+  function servePerMode() {
+    mockGet.mockImplementation(async (params: { mode: SummaryReportMode }) =>
+      params.mode === 'latest'
+        ? makeReport({ mode: 'latest', totals: { ...makeReport().totals, passed: 149, failed: 20, broken: 7, skipped: 10 } })
+        : makeReport({ mode: 'window' }),
+    )
+  }
+
+  const donutCount = (status: string) => {
+    const frame = screen.getByRole('heading', { level: 2, name: 'Status breakdown' }).closest('[data-chart-frame]') as HTMLElement
+    if (!within(frame).queryByRole('table', { name: /data table/i })) {
+      fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
+    }
+    const table = within(frame).getByRole('table', { name: /data table/i })
+    return (within(table).getByRole('rowheader', { name: status }).parentElement as HTMLElement).querySelector('td')?.textContent
+  }
+
+  it('flag off: no catalogue section, no trend request, only the report', async () => {
+    rollout.on = false
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('test_pay')
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+    expect(trendsCalls).toEqual([])
+    expect(mockGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('flag on: the four charts, each above the table it summarises', async () => {
+    rollout.on = true
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    // The first flag-on render loads the section's chunk (and the chart kit) for the first time;
+    // until it lands the page's stand-in carries the same headings, so wait for the sections.
+    await waitFor(
+      () => expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).not.toBeNull(),
+      { timeout: 10_000 },
+    )
+    const ids = Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+    expect(ids).toEqual(['summary-donut', 'summary-suites', 'summary-trend', 'summary-top-failing'])
+    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const section = (id: string) => document.querySelector(`[data-catalogue-section="${id}"]`) as Element
+    const perSuite = screen.getByRole('heading', { name: /Per-suite breakdown/ })
+    const topFailing = screen.getByRole('heading', { name: /^Top failing tests/ })
+    expect(follows(section('summary-trend'), perSuite)).toBe(true)
+    expect(follows(perSuite, section('summary-top-failing'))).toBe(true)
+    expect(follows(section('summary-top-failing'), topFailing)).toBe(true)
+    // The one new request, on the page's window.
+    expect(trendsCalls[trendsCalls.length - 1]).toBe(DEFAULT_TIME_WINDOW_DAYS)
+  })
+
+  it('flag on: the donut follows the Aggregation toggle (the latest totals in latest mode, then the window’s)', async () => {
+    rollout.on = true
+    servePerMode()
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
+    await waitFor(() => expect(donutCount('Passed')).toBe('149'))
+    expect(donutCount('Broken')).toBe('7')
+
+    fireEvent.click(screen.getByText(/All runs in window/i))
+    await waitFor(() => expect(donutCount('Passed')).toBe('180'))
+    expect(donutCount('Broken')).toBe('2')
+  })
+
+  it('flag on: no failing-test chart when the window has no failures (the table says so already)', async () => {
+    rollout.on = true
+    mockGet.mockResolvedValue(makeReport({ top_failing_tests: [] }))
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
+    expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).toBeNull()
+    expect(screen.getByText('No failures in this window.')).toBeInTheDocument()
   })
 })
