@@ -34,6 +34,13 @@ import Sparkline from '@/components/charts/Sparkline'
 import GaugeBar from '@/components/charts/GaugeBar'
 import RingGauge from '@/components/charts/RingGauge'
 import DayStrip, { type DayStripProps } from '@/components/charts/DayStrip'
+import HeatmapChartFrame from '@/components/charts/HeatmapChartFrame'
+import {
+  heatmapFrameDense,
+  heatmapFrameHostile,
+  heatmapFrameMeta,
+  heatmapFrameWorstFirst,
+} from '@/components/charts/__fixtures__/heatmapFrame'
 import { bandsTone, formatGaugeNumber } from '@/components/charts/gaugeBar.model'
 import type { StackedColumnModel } from '@/components/charts/stackedColumnModel'
 import {
@@ -88,6 +95,7 @@ import {
   type GalleryComparison,
   type GalleryDayStripFixture,
   type GalleryFormat,
+  type GalleryHeatmapFrameFixture,
   type GalleryHistogramFixture,
   type GalleryItem,
   type GalleryStackedFixture,
@@ -258,6 +266,30 @@ function dayStripProps(key: GalleryDayStripFixture): DayStripProps {
   const props = DAY_STRIP_PROPS.get(key)
   if (!props) throw new Error(`no DayStrip fixture named ${key}`)
   return props
+}
+
+/**
+ * Wave 2.6 (K5): the settled `chart-data` state behind each heatmap-frame
+ * item, built ONCE (a new state object per render would rebuild the matrix).
+ * The 14-day item arrives `truncated`, as the Trends request does (top 7 of 12
+ * suites); the frame states that by rows, in its own footer.
+ */
+const HEATMAP_FRAME_STATES: Record<GalleryHeatmapFrameFixture, ChartState<ChartResponse>> = {
+  'heatmap-frame': {
+    status: 'truncated',
+    data: heatmapFrameWorstFirst,
+    meta: heatmapFrameMeta,
+    shown: 8,
+    total: 12,
+    revalidating: false,
+  },
+  'heatmap-frame-90d': { status: 'ready', data: heatmapFrameDense, meta: heatmapFrameDense.meta, revalidating: false },
+  'heatmap-frame-hostile': {
+    status: 'ready',
+    data: heatmapFrameHostile,
+    meta: heatmapFrameHostile.meta,
+    revalidating: false,
+  },
 }
 
 /** The formatter a Wave 2.5 item names by key (`chartGalleryFixtures` cannot import one). */
@@ -471,6 +503,18 @@ function renderChart(item: GalleryItem) {
         <div className="w-full">
           <DayStrip {...dayStripProps(item.fixture)} />
         </div>
+      )
+    case 'heatmap-frame':
+      // ECharts, canvas, lazy, as `heatmap`; the frame measures its own width,
+      // so the canvas is as wide as the frame body inside the 640 px box.
+      return (
+        <HeatmapChartFrame
+          title={item.title}
+          state={HEATMAP_FRAME_STATES[item.fixture]}
+          headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+          height={galleryChartHeight(item)}
+          animate={false}
+        />
       )
   }
 }

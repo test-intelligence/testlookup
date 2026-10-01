@@ -38,6 +38,7 @@ import {
   galleryCanvasSize,
   galleryChartHeight,
   galleryDomMarks,
+  galleryFramed,
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_GAPPY_SUITES,
   GALLERY_NOT_COMPARABLE,
@@ -47,7 +48,7 @@ import {
   type GalleryItem,
 } from '../../src/pages/dev/chartGalleryFixtures'
 // VIZ-404: the model only `import type`s from `@/…`, so it resolves in plain Node too.
-import { ALIGNED_X_TITLE, HIDDEN_SUFFIX } from '../../src/components/charts/multiSeriesModel'
+import { ALIGNED_X_TITLE, HIDDEN_SUFFIX, LEADER_GAP } from '../../src/components/charts/multiSeriesModel'
 // Imported rather than retyped, so a reworded indicator fails here instead of
 // quietly passing. `timeSeriesModel` only `import type`s from `@/…`, so it
 // resolves in Playwright's plain-Node transform with no alias.
@@ -233,7 +234,14 @@ test.describe('chart gallery (/__charts)', () => {
       const canvas = section.locator(ECHARTS_CANVAS).first()
       await expect(canvas, `${item.id}: no chart canvas`).toBeVisible()
       const box = await canvas.boundingBox()
-      expect(Math.round(box?.width ?? 0), `${item.id}: canvas width`).toBe(GALLERY_CANVAS.width)
+      if (galleryFramed(item)) {
+        // Wave 2.6: a framed heatmap measures its frame body, so its canvas is
+        // as wide as the body inside the item's box: credible, and never wider.
+        expect(box?.width ?? 0, `${item.id}: canvas too narrow`).toBeGreaterThanOrEqual(300)
+        expect(box?.width ?? Infinity, `${item.id}: canvas wider than its box`).toBeLessThanOrEqual(galleryCanvasSize(item).width)
+      } else {
+        expect(Math.round(box?.width ?? 0), `${item.id}: canvas width`).toBe(GALLERY_CANVAS.width)
+      }
       expect(Math.round(box?.height ?? 0), `${item.id}: canvas height`).toBe(galleryChartHeight(item))
       // Card + axis text + at least a few cell colours — a blank canvas has one colour.
       await expect
@@ -1837,14 +1845,18 @@ test.describe('chart gallery (/__charts)', () => {
       )
       const paths = Array.from(root.querySelectorAll<SVGPathElement>('path.recharts-line-curve'))
       if (paths.length !== keys.length) throw new Error(`${paths.length} paths for ${keys.length} shown series`)
-      const series: Record<string, { stroke: string; dash: string; lastX: number }> = {}
+      const series: Record<string, { stroke: string; dash: string; last: { x: number; y: number } }> = {}
       keys.forEach((key, i) => {
         const path = paths[i]
-        const box = path.getBBox()
+        // The line's last DRAWN point: the final coordinate pair of its path
+        // (an M/L/C path ends on its last point; a lone point's "Z" returns to it).
+        const numbers = (path.getAttribute('d') ?? '').match(/-?\d*\.?\d+(?:e-?\d+)?/gi) ?? []
+        if (numbers.length < 2) throw new Error(`${key}: no drawn point`)
+        const [x, y] = numbers.slice(-2).map(Number)
         series[key] = {
           stroke: getComputedStyle(path).stroke,
           dash: path.getAttribute('stroke-dasharray') ?? 'none',
-          lastX: screen(path, box.x + box.width, box.y).x,
+          last: screen(path, x, y),
         }
       })
       const grid = Array.from(root.querySelectorAll('.recharts-cartesian-grid-horizontal line')).map((n) => n.getBoundingClientRect())
@@ -1853,7 +1865,8 @@ test.describe('chart gallery (/__charts)', () => {
         const key = group.getAttribute('data-direct-label') ?? ''
         const leader = group.querySelector<SVGPolylineElement>('[data-direct-label-leader]')
         const swatch = group.querySelector<SVGLineElement>('[data-direct-label-swatch]')
-        const text = group.querySelector('text')?.getBoundingClientRect()
+        const textBox = group.querySelector('text')?.getBoundingClientRect()
+        const text = textBox ? { left: textBox.left, top: textBox.top, bottom: textBox.bottom, y: textBox.top + textBox.height / 2 } : null
         const swatchBox = swatch?.getBoundingClientRect()
         return {
           key,
@@ -1874,7 +1887,7 @@ test.describe('chart gallery (/__charts)', () => {
                   y: swatchBox.top + swatchBox.height / 2,
                 }
               : null,
-          text: text ? { left: text.left, y: text.top + text.height / 2 } : null,
+          text,
         }
       })
       return { series, plotRight, labels }
@@ -1904,12 +1917,28 @@ test.describe('chart gallery (/__charts)', () => {
           // Not the line's colour, not the line's dash.
           expect(label.leader.stroke, `${where}: leader colour`).not.toBe(line.stroke)
           expect(label.leader.dash, `${where}: leader dash`).not.toBe(line.dash)
-          // Clear of the line's end, and only in the gutter.
-          expect(label.leader.points.length, where).toBeGreaterThanOrEqual(2)
-          expect(label.leader.points[0].x - line.lastX, `${where}: leader starts on the line`).toBeGreaterThanOrEqual(3)
-          for (const point of label.leader.points) {
-            expect(point.x, `${where}: leader enters the plot`).toBeGreaterThanOrEqual(plotRight - 0.5)
+          // Wave 2.6 R2-5: the leader starts at the line's OWN last drawn point
+          // (a line that ends before the axis does is named from where it ends,
+          // not from the plot's edge), LEADER_GAP px clear of it at its height;
+          // inside the plot it only runs flat at that height; it turns and steps
+          // to its name only in the right gutter, and ends on the name's row.
+          const points = label.leader.points
+          const start = points[0]
+          const end = points[points.length - 1]
+          expect(points.length, where).toBeGreaterThanOrEqual(2)
+          expect(start.x - line.last.x, `${where}: leader starts on the line`).toBeGreaterThanOrEqual(3)
+          expect(Math.abs(start.x - line.last.x - LEADER_GAP), `${where}: leader not from the line's last point`).toBeLessThanOrEqual(1)
+          expect(Math.abs(start.y - line.last.y), `${where}: leader not at the line's last point's height`).toBeLessThanOrEqual(1)
+          for (let i = 1; i < points.length; i++) {
+            expect(points[i].x, `${where}: leader runs back`).toBeGreaterThanOrEqual(points[i - 1].x)
           }
+          for (const point of points) {
+            if (point.x < plotRight - 0.5) {
+              expect(Math.abs(point.y - start.y), `${where}: leader angles inside the plot`).toBeLessThanOrEqual(0.5)
+            }
+          }
+          expect(end.x, `${where}: leader ends inside the plot`).toBeGreaterThanOrEqual(plotRight - 0.5)
+          expect(Math.abs(end.y - label.text.y), `${where}: leader ends off its name's row`).toBeLessThan(2)
           // The match: the line's own colour AND dash, right before the name, on its row.
           expect(label.swatch.stroke, `${where}: swatch colour`).toBe(line.stroke)
           expect(label.swatch.dash, `${where}: swatch dash`).toBe(line.dash)
@@ -1920,6 +1949,11 @@ test.describe('chart gallery (/__charts)', () => {
           )
           expect(Math.abs(label.swatch.y - label.text.y), `${where}: swatch off the name's row`).toBeLessThan(2)
           checked += 1
+        }
+        // No two names overlap: one row each, top to bottom.
+        const rows = labels.flatMap((label) => (label.text ? [{ key: label.key, ...label.text }] : [])).sort((a, b) => a.top - b.top)
+        for (let i = 1; i < rows.length; i++) {
+          expect(rows[i].top, `${item.id}: "${rows[i].key}" overlaps "${rows[i - 1].key}"`).toBeGreaterThanOrEqual(rows[i - 1].bottom - 0.5)
         }
       }
       expect(checked, 'no direct label was checked').toBeGreaterThan(0)
@@ -2373,7 +2407,9 @@ test.describe('chart gallery (/__charts)', () => {
     await openStates(page)
     const frame = stateFrame(page, 'ready')
     const chart = frame.locator('[data-chart-keyboard]')
-    const announcement = frame.locator('[data-chart-announcement]')
+    // Spoken through the page's ONE announcer (RULES), never a live region of the chart's own.
+    const announcement = page.locator('[data-chart-announcer="assertive"]')
+    await expect(frame.locator('[data-chart-announcement], [data-chart-keyboard] [aria-live]')).toHaveCount(0)
     const tooltip = frame.locator('[data-chart-tooltip]')
     // Named once — ours; ECharts' own aria label is off.
     await expect(chart).toHaveAttribute('aria-label', 'Pass rate by suite and day.')
@@ -2416,11 +2452,14 @@ test.describe('chart gallery (/__charts)', () => {
       'data-active-index',
       String(cellAt(GALLERY_HEATMAP_DATA.x_labels.length - 1, top - 1)),
     )
+    const lastDay = GALLERY_HEATMAP_DATA.x_labels[GALLERY_HEATMAP_DATA.x_labels.length - 1]
+    await expect(announcement).toContainText(`reports. ${lastDay}:`)
 
+    // Escape clears the highlight and says nothing new (it is not a cell).
     await page.keyboard.press('Escape')
     await expect(chart).toHaveAttribute('data-active-index', '')
     await expect(chart).toBeFocused()
-    await expect(announcement).toHaveText('')
+    await expect(announcement).toContainText(`reports. ${lastDay}:`)
   })
 
   for (const theme of ALL_THEMES) {
