@@ -24,6 +24,20 @@ vi.mock('@/hooks/useMetrics', () => {
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
+// VIZ-408's one seam. Off unless a test turns it on, so every case written
+// against the Wave 2.5 page still runs that page.
+const rollout = vi.hoisted(() => ({ status: false as boolean | undefined }))
+vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
+  useCatalogueRollout: () => rollout.status ?? false,
+  useCatalogueRolloutStatus: () => rollout.status,
+  useHeatmapRollout: () => false,
+}))
+// Flag on only: the top bar's cached release list, and the two server-backed
+// sections held in their loading state (their data is the section's own test).
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [] } }) }))
+vi.mock('@/components/charts/chartCatalogSources', () => ({
+  useCatalogChartData: () => ({ status: 'loading' }),
+}))
 // Eng-hours saved KPI (US-12.2): mutable state so tests can flip between
 // available / unavailable / not-yet-loaded.
 const valueKpiState: { metrics: ValueMetrics | undefined } = { metrics: undefined }
@@ -1228,5 +1242,170 @@ describe('OverviewPage — execution trend, sparklines and meter on the chart ki
     // The page's own branches and copy are kept: no frame for an empty window.
     expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
     expect(screen.getByText('No executions in the last 30 days.')).toBeInTheDocument()
+  })
+})
+
+describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
+  const TREND = [
+    { date: '2026-08-14', passed: 40, failed: 4, skipped: 2, broken: 6, total: 52, pass_rate: 80 },
+    { date: '2026-08-15', passed: 0, failed: 0, skipped: 5, broken: 0, total: 5, pass_rate: 0 },
+    { date: '2026-08-16', passed: 45, failed: 3, skipped: 1, broken: 2, total: 51, pass_rate: 90 },
+  ]
+
+  beforeEach(() => {
+    valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = ['total_executions_kpi']
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-16T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    rollout.status = false
+  })
+
+  async function renderAt(status: boolean | undefined) {
+    rollout.status = status
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 108 },
+        avg_pass_rate_7d: { value: 85.2 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: TREND }, isLoading: false })
+    return render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  const kpiValue = (label: string) =>
+    (screen.getByText(label).closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums')?.textContent
+
+  it('flag off: the Wave 2.5 row, Execution trend beside Blockers, and no catalogue section', async () => {
+    await renderAt(false)
+    expect(await screen.findByTestId('overview-execution-trend')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: "What's blocking release" })).toBeInTheDocument()
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+    expect(document.querySelector('[data-overview-trend-pending]')).toBeNull()
+  })
+
+  it('sizes the metric values on the type tokens of the same value (VIZ-106), flag or no flag', async () => {
+    await renderAt(false)
+    const value = (screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums') as HTMLElement
+    expect(value.style.fontSize).toBe('var(--text-display-sm)')
+    expect(value.className).not.toMatch(/text-\[26px\]/)
+    // The verdict's pass rate: 26 px, the same token.
+    const passRate = screen.getAllByText('85%').find((el) => el.nextElementSibling?.textContent === 'Pass rate') as HTMLElement
+    expect(passRate.style.fontSize).toBe('var(--text-display-sm)')
+    expect(passRate.className).not.toMatch(/text-\[26px\]/)
+  })
+
+  it('presentation mode (R2-13): the coverage strip’s values on the stat token, and no value or change breaks across lines', async () => {
+    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi']
+    await renderAt(false)
+    const PRESENTING = '[[data-presentation=on]_&]:'
+    // The strip under the trend: 18 px at the desk on `--text-stat-sm` (18 px), so the
+    // room's 40 px reaches "4437" and "8m 32s" there as it does in the KPI cards above.
+    for (const label of ['Automation coverage', 'Avg run duration']) {
+      const card = screen.getByText(label).parentElement as HTMLElement
+      const value = (card.lastElementChild as HTMLElement).firstElementChild as HTMLElement
+      expect(value.style.fontSize, label).toBe('var(--text-stat-sm)')
+      expect(value.className.split(/\s+/), label).toContain(`${PRESENTING}whitespace-nowrap`)
+    }
+    // The KPI cards: the value and its change each stay whole, and the change drops
+    // under the value instead of breaking; the grid takes four columns in the room.
+    const card = screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement
+    const value = card.querySelector('.tabular-nums') as HTMLElement
+    expect(value.className.split(/\s+/)).toContain(`${PRESENTING}whitespace-nowrap`)
+    const delta = card.querySelector('[title="Relative change vs the previous period of the same length"]') as HTMLElement
+    expect(delta.textContent).toBe('▬ 0%')
+    expect(delta.className.split(/\s+/)).toContain(`${PRESENTING}whitespace-nowrap`)
+    expect((value.parentElement as HTMLElement).className.split(/\s+/)).toContain(`${PRESENTING}flex-wrap`)
+    const grid = card.parentElement as HTMLElement
+    expect(grid.className.split(/\s+/)).toEqual(expect.arrayContaining(['xl:grid-cols-6', `${PRESENTING}xl:grid-cols-4`]))
+    // Desk mode is untouched: every new rule is scoped to the presentation attribute.
+    for (const el of [value, value.parentElement as HTMLElement, grid]) {
+      const unscoped = el.className.split(/\s+/).filter((c) => /whitespace-nowrap|flex-wrap|grid-cols-4/.test(c) && !c.startsWith(PRESENTING))
+      expect(unscoped).toEqual([])
+    }
+  })
+
+  it('flag not answered yet: holds the trend slot instead of drawing a card it may swap out', async () => {
+    await renderAt(undefined)
+    expect(document.querySelector('[data-overview-trend-pending]')).not.toBeNull()
+    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+    // The rest of the page does not wait for the flag.
+    expect(screen.getByRole('heading', { name: "What's blocking release" })).toBeInTheDocument()
+  })
+
+  it('flag on: the pass-rate trend REPLACES Execution trend (OD-4), beside the donut, above the two breakdowns', async () => {
+    await renderAt(true)
+    expect(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend' }, { timeout: 10_000 })).toBeInTheDocument()
+    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Execution trend' })).toBeNull()
+    const ids = Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+    expect(ids).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
+    // Blockers keeps its content and moves below the catalogue.
+    const blockers = screen.getByRole('heading', { name: "What's blocking release" })
+    const categories = document.querySelector('[data-catalogue-section="overview-categories"]') as HTMLElement
+    expect(categories.compareDocumentPosition(blockers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('flag on: the donut’s totals equal the KPI and the flag-off foot strip (OD-5)', async () => {
+    // Flag off: what the reader saw under the Execution trend.
+    const off = await renderAt(false)
+    const strip = (await screen.findByTestId('overview-execution-trend')).querySelector('[data-overview-trend-totals]') as HTMLElement
+    const foot = (label: string) => (within(strip).getByText(label).nextElementSibling as HTMLElement).firstChild?.textContent
+    const footTotals = { Passed: foot('Passed'), Failed: foot('Failed'), Broken: foot('Broken'), Skipped: foot('Skipped') }
+    const automation = foot('Automation')
+    expect(kpiValue('Total executions')).toBe(automation)
+    off.unmount()
+
+    // Flag on: the donut's table view.
+    await renderAt(true)
+    const donut = (await screen.findByRole('heading', { level: 3, name: 'Status breakdown' }, { timeout: 10_000 })).closest('[data-chart-frame]') as HTMLElement
+    fireEvent.click(within(donut).getByRole('button', { name: 'View as table' }))
+    const table = within(donut).getByRole('table', { name: /data table/i })
+    const count = (status: string) =>
+      (within(table).getByRole('rowheader', { name: status }).parentElement as HTMLElement).querySelector('td')?.textContent
+    expect({ Passed: count('Passed'), Failed: count('Failed'), Broken: count('Broken'), Skipped: count('Skipped') }).toEqual(footTotals)
+    expect(donut.querySelector('[data-donut-table-total]')?.textContent).toBe(`Total ${automation} executions`)
+    expect(kpiValue('Total executions')).toBe('108')
+  })
+
+  it('flag on: Failure categories draws the page’s own failure-categories read (one request, one SWR entry)', async () => {
+    const { useFailureCategories } = await import('@/hooks/useMetrics')
+    const mutate = vi.fn()
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ category: 'environment', count: 4 }, { category: 'assertion', count: 9 }] },
+      error: undefined,
+      isValidating: false,
+      isLoading: false,
+      mutate,
+    })
+    await renderAt(true)
+    const frame = (await screen.findByRole('heading', { level: 3, name: 'Failure categories' }, { timeout: 10_000 })).closest(
+      '[data-chart-frame]',
+    ) as HTMLElement
+    expect(frame.getAttribute('data-chart-state')).toBe('ready')
+    fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
+    expect(within(frame).getByRole('rowheader', { name: 'environment' })).toBeInTheDocument()
+    expect(within(frame).getByRole('rowheader', { name: 'assertion' })).toBeInTheDocument()
+    // The page asked once, with its own window and scope; the section added no read.
+    const windows = (useFailureCategories as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])
+    expect(new Set(windows)).toEqual(new Set([30]))
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
   })
 })
