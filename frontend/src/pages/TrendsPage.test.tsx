@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import type TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
@@ -14,6 +14,7 @@ import TrendsPage from './TrendsPage'
 const frames = vi.hoisted(() => ({
   stacked: [] as unknown[],
   timeSeries: [] as unknown[],
+  timeSeriesMounts: 0,
 }))
 
 vi.mock('@/components/charts/StackedColumnChartFrame', async (importOriginal) => {
@@ -30,15 +31,43 @@ vi.mock('@/components/charts/StackedColumnChartFrame', async (importOriginal) =>
 
 vi.mock('@/components/charts/TimeSeriesChartFrame', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/charts/TimeSeriesChartFrame')>()
+  const { useEffect } = await import('react')
   const Real = actual.default
-  return {
-    ...actual,
-    default: (props: ComponentProps<typeof TimeSeriesChartFrame>) => {
-      frames.timeSeries.push(props)
-      return <Real {...props} />
-    },
+  function SpiedTimeSeriesChartFrame(props: ComponentProps<typeof TimeSeriesChartFrame>) {
+    frames.timeSeries.push(props)
+    // One count per MOUNT, so a test can tell a re-mount from a re-render.
+    useEffect(() => {
+      frames.timeSeriesMounts += 1
+    }, [])
+    return <Real {...props} />
   }
+  return { ...actual, default: SpiedTimeSeriesChartFrame }
 })
+
+// Wave 2.6 (VIZ-408): the one seam, the release list the pass-rate markers
+// read, and the lazy catalogue chunk, each controlled here. The catalogue is
+// a stub that records its props: its own sections are TrendsCatalogue.test.tsx's.
+// `pending`: the status lookup has not answered yet (`useCatalogueRolloutStatus` is undefined).
+const rollout = vi.hoisted(() => ({ on: false, pending: false }))
+vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
+  useCatalogueRollout: () => !rollout.pending && rollout.on,
+  useCatalogueRolloutStatus: () => (rollout.pending ? undefined : rollout.on),
+}))
+
+const releaseList = vi.hoisted(() => ({ items: [] as { id: string; name: string; released_at: string | null; planned_date: string | null }[] }))
+vi.mock('@/hooks/useReleases', () => ({
+  useReleases: () => ({ data: { items: releaseList.items } }),
+}))
+
+// `throws`: the section's top level throws (or its chunk failed to load).
+const catalogue = vi.hoisted(() => ({ props: [] as { days: number; suiteFilter: unknown }[], throws: false }))
+vi.mock('@/components/reports/catalogue/TrendsCatalogue', () => ({
+  default: (props: { days: number; suiteFilter: unknown }) => {
+    catalogue.props.push(props)
+    if (catalogue.throws) throw new Error('Failed to fetch dynamically imported module')
+    return <div data-testid="trends-catalogue" />
+  },
+}))
 
 vi.mock('@/hooks/useMetrics', () => ({
   useTrendData: vi.fn(),
@@ -53,7 +82,7 @@ vi.mock('@/hooks/useRuns', () => ({
 
 // One suite to pick, so a test can apply a filter; nothing else reads it.
 vi.mock('@/hooks/useSuiteOptions', () => ({
-  useSuiteOptions: () => ({ options: ['Checkout'], isLoading: false }),
+  useSuiteOptions: vi.fn(() => ({ options: ['Checkout'], isLoading: false })),
 }))
 
 const analyticsControls = vi.hoisted(() => ({
@@ -518,5 +547,383 @@ describe('TrendsPage on the chart kit', () => {
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
     expect(row.children).toHaveLength(2)
+  })
+})
+
+// Wave 2.6 (VIZ-408 + VIZ-106): the catalogue seam, the one-request window,
+// and the page's own responsive rework.
+describe('TrendsPage rollout (Wave 2.6)', () => {
+  beforeEach(async () => {
+    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+    frames.stacked.length = 0
+    frames.timeSeries.length = 0
+    frames.timeSeriesMounts = 0
+    catalogue.props.length = 0
+    catalogue.throws = false
+    rollout.on = false
+    rollout.pending = false
+    releaseList.items = []
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    // The app-wide default: what a reader arriving from any other page holds.
+    useTimeWindowStore.setState({ days: 30 })
+    const metrics = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { useSuiteOptions } = await import('@/hooks/useSuiteOptions')
+    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, metrics.useFlakyTests, useRuns, useSuiteOptions]) {
+      ;(hook as ReturnType<typeof vi.fn>).mockClear()
+    }
+  })
+
+  /** `back` days before today, as a UTC day. */
+  async function dayBack(back: number) {
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    return shiftDayIso(utcDayIso(), -back)
+  }
+
+  /** `count` consecutive days with runs, ending yesterday, each at `rate`. */
+  async function activeDays(count: number, rate = 90) {
+    return Promise.all(
+      Array.from({ length: count }, async (_, i) => ({
+        date: await dayBack(i + 1), passed: rate, failed: 100 - rate, skipped: 0, broken: 0, total: 100, pass_rate: rate,
+      })),
+    )
+  }
+
+  async function renderTrends(trend: unknown[]) {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    const view = render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Trends' })
+    return view
+  }
+
+  const lastCatalogue = () => catalogue.props[catalogue.props.length - 1]
+
+  // C0 pinned it (before-notes 13): the reset to 14 days was an effect, so the
+  // first render had already asked for the stored 30, and every page read went
+  // out twice on a cold load.
+  it('asks for its 14-day window on the first render: no page read at the stored 30 days first', async () => {
+    await renderTrends(await activeDays(3))
+    const metrics = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { useSuiteOptions } = await import('@/hooks/useSuiteOptions')
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, metrics.useFlakyTests, useSuiteOptions]) {
+      const calls = (hook as ReturnType<typeof vi.fn>).mock.calls
+      expect(calls.length).toBeGreaterThan(0)
+      expect(new Set(calls.map((call) => call[0]))).toEqual(new Set([14]))
+    }
+    const runCalls = (useRuns as ReturnType<typeof vi.fn>).mock.calls
+    expect(runCalls.length).toBeGreaterThan(0)
+    expect(new Set(runCalls.map((call) => (call[0] as { days: number }).days))).toEqual(new Set([14]))
+    // The shared preference is still reset, so other pages follow.
+    expect(useTimeWindowStore.getState().days).toBe(14)
+    expect(screen.getByRole('tab', { name: '14d' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('still follows the window picker after the reset', async () => {
+    await renderTrends(await activeDays(3))
+    const { useTrendData } = await import('@/hooks/useMetrics')
+    fireEvent.click(screen.getByRole('tab', { name: '90d' }))
+    const calls = (useTrendData as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[calls.length - 1][0]).toBe(90)
+    expect(screen.getByRole('tab', { name: '90d' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('with the flag off: no catalogue, no section, and the pass-rate frame exactly as in Wave 2.5', async () => {
+    releaseList.items = [{ id: 'r1', name: 'R1', released_at: await dayBack(2), planned_date: null }]
+    await renderTrends(await activeDays(10))
+    await screen.findByRole('heading', { name: 'Pass rate trend' })
+    expect(screen.queryByTestId('trends-catalogue')).toBeNull()
+    expect(catalogue.props).toHaveLength(0)
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+    expect(document.querySelector('[data-trend-controls]')).toBeNull()
+    const props = frames.timeSeries.map((p) => p as TimeSeriesProps)
+    expect(props.length).toBeGreaterThan(0)
+    for (const p of props) {
+      expect(p.trendAnalysis).toBeUndefined()
+      expect(p.zoom).toBeUndefined()
+      // No release markers: the flag-off page never reads the release list.
+      expect(p.model?.markers ?? []).toEqual([])
+    }
+    expect(Object.keys(lastTimeSeries()).sort()).toEqual(
+      ['headingLevel', 'height', 'model', 'rateTarget', 'state', 'takeaway', 'title'].sort(),
+    )
+  })
+
+  it('with the flag on: the pass-rate frame offers the trend overlays, the brush and the release markers', async () => {
+    rollout.on = true
+    releaseList.items = [
+      { id: 'r1', name: 'R1', released_at: await dayBack(2), planned_date: null },
+      { id: 'r2', name: 'R2', released_at: null, planned_date: await dayBack(4) },
+      { id: 'r3', name: 'R3', released_at: null, planned_date: null },
+    ]
+    await renderTrends(await activeDays(10))
+    const section = document.querySelector('[data-catalogue-section="trends-pass-rate"]') as HTMLElement
+    expect(section).not.toBeNull()
+    // The frame keeps its title as its heading, inside the section.
+    expect(within(section).getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+    const { trendAnalysis, zoom, rateTarget, model } = lastTimeSeries()
+    expect(trendAnalysis).toBe(true)
+    expect(zoom).toBe(true)
+    expect(rateTarget).toEqual({ value: 90, label: 'Target 90%' })
+    // Released, else planned; an undated release is not drawn.
+    expect(model.markers.flatMap((m) => m.names).sort()).toEqual(['R1', 'R2'])
+    // 10 days with runs: the overlays are offered and not disabled.
+    const controls = section.querySelector('[data-trend-controls]') as HTMLElement
+    expect(controls).not.toBeNull()
+    expect(controls.querySelectorAll('[data-trend-toggle]').length).toBeGreaterThan(0)
+    expect(controls.querySelector('[aria-disabled="true"]')).toBeNull()
+  })
+
+  it('at 7 days with fewer than 7 days with runs, offers the overlays disabled with the reason', async () => {
+    rollout.on = true
+    await renderTrends(await activeDays(4))
+    fireEvent.click(screen.getByRole('tab', { name: '7d' }))
+    const section = document.querySelector('[data-catalogue-section="trends-pass-rate"]') as HTMLElement
+    const toggles = [...section.querySelectorAll('[data-trend-toggle]')]
+    expect(toggles.length).toBeGreaterThan(0)
+    for (const toggle of toggles) expect(toggle).toHaveAttribute('aria-disabled', 'true')
+    expect(section.querySelector('[data-trend-disabled-reason]')).toHaveTextContent('Needs at least 7 days with runs')
+    await screen.findByTestId('trends-catalogue')
+    expect(lastCatalogue().days).toBe(7)
+  })
+
+  it('with the flag on, mounts the catalogue with the page window and suite scope', async () => {
+    rollout.on = true
+    await renderTrends(await activeDays(3))
+    await screen.findByTestId('trends-catalogue')
+    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: null })
+    fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: 'Checkout' })
+    // Below the body grid, above the provenance line.
+    const grid = document.querySelector('.trends-body-grid') as HTMLElement
+    const stub = screen.getByTestId('trends-catalogue')
+    expect(grid.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(stub.compareDocumentPosition(screen.getByText('Provenance')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  // R1-1: the section chunk failing to load, or the section throwing, is the
+  // section's own error state. Before, the nearest boundary was the route's,
+  // so the whole page became "Something went wrong loading this page".
+  it('with the flag on, a section that throws leaves the page and shows the section error', async () => {
+    rollout.on = true
+    catalogue.throws = true
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await renderTrends(await activeDays(3))
+      expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Trends' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+      expect(screen.getByText('Provenance')).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // R2-4: at 375 px the three steps shared one row: the ordinals were drawn
+  // over the titles, "comparison" ran into the next check icon and the counts
+  // were cut to "1 e...". At 640 a third of the row still cut every count
+  // (measured). One step per row below lg; the three columns, each but the
+  // last with its divider, from lg up (the desktop shell: unchanged).
+  it('the workflow ribbon stacks its steps below lg and keeps three columns from lg up', async () => {
+    await renderTrends(await activeDays(3))
+    const ribbon = screen.getByRole('region', { name: 'Trends workflow' })
+    const steps = within(ribbon).getAllByRole('button', { name: /^Stage \d/ })
+    expect(steps).toHaveLength(3)
+    const grid = steps[0].parentElement as HTMLElement
+    const classes = grid.className.split(/\s+/)
+    expect(classes).toEqual(expect.arrayContaining(['grid', 'grid-cols-1', 'lg:grid-cols-3']))
+    // No column rule that applies below lg.
+    expect(grid.style.gridTemplateColumns).toBe('')
+    expect(classes.filter((c) => /^grid-cols-/.test(c))).toEqual(['grid-cols-1'])
+    // The dividers are columns' dividers: from lg up only, never on the last step.
+    steps.forEach((step, i) => {
+      expect(step.style.borderRight).toBe('')
+      const stepClasses = step.className.split(/\s+/)
+      expect(stepClasses.includes('lg:border-r')).toBe(i < steps.length - 1)
+      expect(stepClasses.some((c) => c === 'border-r' || c === 'border')).toBe(false)
+    })
+  })
+
+  // The catalogue gets the window the page SHOWS (snapped to its options),
+  // never the raw shared preference: 45 days picked elsewhere reads as 30
+  // here, and the charts must say 30 like every other number on the page.
+  it('hands the catalogue the snapped page window, not the raw stored one', async () => {
+    rollout.on = true
+    await renderTrends(await activeDays(3))
+    await screen.findByTestId('trends-catalogue')
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    act(() => useTimeWindowStore.getState().setDays(45))
+    expect(screen.getByRole('tab', { name: '30d' })).toHaveAttribute('aria-selected', 'true')
+    expect(lastCatalogue().days).toBe(30)
+  })
+
+  it('is one column below 1024 px: the body grid and the verdict card are fluid, with no fixed columns', async () => {
+    await renderTrends(await activeDays(3))
+    const grid = document.querySelector('.trends-body-grid') as HTMLElement
+    expect(grid).toHaveClass('grid-cols-1', 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]')
+    expect(grid.style.gridTemplateColumns).toBe('')
+    const verdict = screen.getByRole('region', { name: 'Trend verdict' })
+    expect(verdict).toHaveClass('grid-cols-1', 'lg:grid-cols-[1.45fr_1fr]')
+    expect(verdict.style.gridTemplateColumns).toBe('')
+  })
+
+  it('no longer apologises for narrow screens', async () => {
+    await renderTrends(await activeDays(3))
+    expect(screen.queryByText(/Wider screen needed/)).toBeNull()
+  })
+
+  // The two pass-rate cards differ in height (the flag-on one adds the overlay
+  // row and the brush), so no placeholder can be the right height for both.
+  // While the rollout answer is unknown the page stays in its loading state;
+  // the card then mounts ONCE, in its final form — whichever the answer.
+  it.each([true, false])('holds the page until the rollout answers after the data (flag %s): the pass-rate card mounts once, in its final form', async (on) => {
+    rollout.on = on
+    rollout.pending = true
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: await activeDays(10) }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    // A fresh element each time, so a rerender reaches the page (as an SWR answer would).
+    const ui = () => (
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>
+    )
+    const { rerender } = render(ui())
+    // The data is in; the flag is not: no card yet, in either form.
+    expect(screen.queryByRole('heading', { name: 'Pass rate trend' })).toBeNull()
+    expect(frames.timeSeries).toHaveLength(0)
+    expect(frames.timeSeriesMounts).toBe(0)
+
+    rollout.pending = false
+    rerender(ui())
+    await screen.findByRole('heading', { name: 'Pass rate trend' })
+    // Mounted once, and every render of it is the final form, at the same height.
+    expect(frames.timeSeriesMounts).toBe(1)
+    const renders = frames.timeSeries.map((p) => p as TimeSeriesProps)
+    for (const p of renders) {
+      expect(p.trendAnalysis).toBe(on ? true : undefined)
+      expect(p.height).toBe(240)
+    }
+    expect(document.querySelector('[data-catalogue-section="trends-pass-rate"]') !== null).toBe(on)
+  })
+})
+
+/**
+ * The flag-off page's DOM is the Wave 2.5 page's DOM (plan 6.4, B3).
+ *
+ * The snapshot below was RECORDED FROM THE UNTOUCHED PAGE (`TrendsPage.tsx` at
+ * 0267bac3 = Wave 2.5 main, put back in place for one run) and is compared
+ * against this branch's page with the flag off. The normalisation removes
+ * exactly the three intended flag-independent changes (plan 6.6 item 2), so
+ * anything else — an extra wrapper, a new attribute, a section rendered with
+ * the flag off — fails here:
+ *   - the narrow-screen banner (deleted);
+ *   - `grid-cols-1` / `lg:grid-cols-[...]` (the responsive grid classes);
+ *   - `grid-template-columns` in a style attribute (the old fixed grids),
+ *     which at >= 1024 px compute to the same columns as the new classes.
+ * Ids are renumbered in document order: module-level counters (Recharts
+ * clip paths, `useId`) depend on how many tests ran first.
+ */
+describe('TrendsPage flag-off DOM (Wave 2.6)', () => {
+  const NOW = Date.parse('2026-09-15T12:00:00Z')
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+    rollout.on = false
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 30 })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // The intended VIZ-106 change to the body grid's columns. The other one,
+  // R2-4 (the workflow ribbon's three columns and their dividers moved from
+  // inline styles to lg-prefixed classes so the steps stack below lg), is IN
+  // the snapshot: its three buttons and their grid are the only lines that
+  // fix changed.
+  const RESPONSIVE_CLASS = /^(?:grid-cols-1|lg:grid-cols-\[.*\])$/
+
+  function normalisedDom(root: HTMLElement): string {
+    const clone = root.cloneNode(true) as HTMLElement
+    for (const el of [...clone.querySelectorAll('div')]) {
+      if (el.children.length === 0 && /^Wider screen needed/.test(el.textContent ?? '')) el.remove()
+    }
+    const ids = new Map<string, string>()
+    for (const el of [clone, ...clone.querySelectorAll('*')]) {
+      if (el.id && !ids.has(el.id)) ids.set(el.id, `id-${ids.size + 1}`)
+    }
+    const byLength = [...ids.keys()].sort((a, b) => b.length - a.length)
+    for (const el of [clone, ...clone.querySelectorAll('*')]) {
+      const cls = el.getAttribute('class')
+      if (cls !== null) {
+        el.setAttribute('class', cls.split(/\s+/).filter((c) => c && !RESPONSIVE_CLASS.test(c)).join(' '))
+      }
+      const style = el.getAttribute('style')
+      if (style !== null) {
+        const kept = style.split(';').map((d) => d.trim()).filter((d) => d && !d.startsWith('grid-template-columns'))
+        if (kept.length === 0) el.removeAttribute('style')
+        else el.setAttribute('style', `${kept.join('; ')};`)
+      }
+      for (const attr of [...el.attributes]) {
+        let value = attr.value
+        for (const id of byLength) if (value.includes(id)) value = value.split(id).join(ids.get(id) as string)
+        if (value !== attr.value) el.setAttribute(attr.name, value)
+      }
+    }
+    return clone.innerHTML
+  }
+
+  it('renders the Wave 2.5 page, apart from the intended responsive classes and the banner', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { date: '2026-09-14', passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
+          { date: '2026-09-12', passed: 10, failed: 0, skipped: 0, broken: 2, total: 12, pass_rate: 83.3 },
+          { date: '2026-09-10', passed: 0, failed: 0, skipped: 5, broken: 0, total: 5, pass_rate: 0 },
+          { date: '2026-09-08', passed: 20, failed: 0, skipped: 0, broken: 0, total: 20, pass_rate: 100 },
+        ],
+      },
+      isLoading: false,
+    })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: { avg_pass_rate_7d: { value: 71, trend: -2 } } })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: {},
+        suites: [
+          { suite_name: 'Checkout', unique_tests: 6, passed: 40, failed: 10, skipped: 5, pass_rate: 80 },
+          { suite_name: 'Payments', unique_tests: 4, passed: 21, failed: 21, skipped: 0, pass_rate: 50 },
+        ],
+      },
+    })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [{ test_fingerprint: 'f1' }] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    const { container } = render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Pass rate trend' })
+    expect(normalisedDom(container)).toMatchSnapshot()
   })
 })
