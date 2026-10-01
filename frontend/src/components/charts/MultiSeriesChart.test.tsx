@@ -15,7 +15,7 @@ import { CURSOR_HINT } from './ChartCursor'
 import { LABELS_DROPPED_NOTE, LEGEND_HINT, MultiSeriesTip, SHOW_ALL_LABEL, multiSeriesTipContent } from './MultiSeriesChart'
 import MultiSeriesChartFrame from './MultiSeriesChartFrame'
 import { addUtcDays } from './seriesAlignment'
-import { sliceMultiSeriesModel } from './zoom/zoomModel'
+import { sliceMultiSeriesModel } from './zoom/zoomSlices'
 import {
   ALIGNED_X_TITLE,
   HIDDEN_SUFFIX,

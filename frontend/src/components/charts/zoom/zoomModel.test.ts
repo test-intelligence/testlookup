@@ -18,7 +18,6 @@ import {
   clampRange,
   dayInWords,
   dayShort,
-  durationBandMax,
   flaggedDaysText,
   isFullRange,
   markersOutsideRange,
@@ -26,8 +25,6 @@ import {
   rangeInWords,
   resolveZoom,
   sameRange,
-  sliceDurationBand,
-  sliceMultiSeriesModel,
   sliceTimeSeriesModel,
   sliceTrendAnalysis,
   zoomChangeLabel,
@@ -37,6 +34,7 @@ import {
   zoomResetLabel,
   zoomScopeLabel,
 } from './zoomModel'
+import { durationBandMax, sliceDurationBand, sliceMultiSeriesModel } from './zoomSlices'
 
 const D = (i: number) => addUtcDays('2026-03-01', i)
 const point = (i: number, rate: number | null, n = 100): TimeSeriesPoint => ({

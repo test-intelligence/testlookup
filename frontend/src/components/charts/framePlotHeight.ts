@@ -13,6 +13,7 @@
  * Outside full screen this is exactly `height`: adopting it changes nothing
  * a page or a committed screenshot can see.
  */
+import { usePresentationStore } from '@/store/presentationStore'
 import { useChartFrameHeight, useChartFullscreen } from './chartFrameContext'
 
 export function useFramePlotHeight(height: number, reserve = 0): number {
@@ -36,9 +37,25 @@ export function useFramePlotHeight(height: number, reserve = 0): number {
  */
 export const PRESENTATION_SCALE = 15 / 11
 
-/** `PRESENTATION_SCALE` while the chart's frame is full screen, else 1. */
+/**
+ * How much bigger every Recharts drawing is shown while presentation mode is
+ * on (VIZ-106, PLAN OD-11): 11 px axis text reads at 16 px, the story's floor
+ * for a wall monitor, on the page and in full screen alike.
+ */
+export const PRESENTATION_MODE_SCALE = 16 / 11
+
+/**
+ * The one scale seam for a chart's drawing: the LARGER of the full-screen
+ * scale (while the chart's frame is full screen) and the presentation-mode
+ * scale (while the mode is on); 1 when neither applies. Larger, never
+ * smaller: going full screen inside presentation mode must not shrink a
+ * drawing the room could already read, and presentation mode must not undo
+ * full screen. Full screen alone stays 15/11.
+ */
 export function usePresentationScale(): number {
-  return useChartFullscreen() ? PRESENTATION_SCALE : 1
+  const fullscreen = useChartFullscreen()
+  const presenting = usePresentationStore((s) => s.enabled)
+  return Math.max(fullscreen ? PRESENTATION_SCALE : 1, presenting ? PRESENTATION_MODE_SCALE : 1)
 }
 
 /**

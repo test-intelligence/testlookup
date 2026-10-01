@@ -15,7 +15,7 @@
  * Everything the reader is told about the data comes from the model, so the
  * plot, the notes, the tooltip and the table view cannot disagree.
  */
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState, type ReactNode } from 'react'
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -40,8 +40,9 @@ import type { TipRect } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { sampleRow, shareRow, tipContent, type TooltipContent } from './tooltip'
 import { COMPACT_CHART_WIDTH, useContainerWidth } from './chartLayout'
+import { useTextMeasure, type TextMeasure } from './textMeasure'
 import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './chartText'
-import { hasChartData, type ChartResponse, type ChartState } from './chartState'
+import { hasChartData, type ChartResponse, type ChartState } from './chartStateCore'
 import { chooseChart, offersPie, type ChartRequest } from './chartCatalog'
 import {
   BAR_CATEGORY_GAP,
@@ -57,6 +58,7 @@ import {
   statusBarModel,
   statusBarSeries,
   statusRowsFromSeries,
+  fitCategoryLabel,
   middleTruncate,
   PERCENT_MODE_NOTE,
   type RankedBar,
@@ -89,6 +91,108 @@ const COMPACT_CATEGORY_AXIS_WIDTH = 92
 const COMPACT_BAR_LABEL = 13
 /** The axis titles, exported so the specs assert the words rather than retype them. */
 export const CATEGORY_AXIS_TITLE_OFFSET = 8
+/** The plots' left margin, px: the one space left of the category axis. */
+const PLOT_MARGIN_LEFT = 4
+/**
+ * What a category label may NOT use of its axis's width, px. Recharts ends a
+ * left tick label `tickSize` (6) + `tickMargin` (2) in from the axis's right
+ * edge, and the label may run into the plot's left margin up to the svg's
+ * edge; 1 px is kept for the glyph's antialiased edge.
+ */
+export const CATEGORY_TICK_ROOM = 6 + 2 + 1 - PLOT_MARGIN_LEFT
+
+/**
+ * The category axis's tick text, drawn on ONE line. Recharts hands each tick
+ * the axis's `width`, and its `Text` then word-wraps any label it measures as
+ * wider — measured with no font size at all (it reads `style`, which a tick
+ * does not have), so at the browser default size, not the 11 px drawn. On
+ * Linux that wrapped labels which fit ("Tax\nro…match") onto two lines that
+ * overlapped the next row. Labels are cut to fit by measurement instead
+ * (`useCategoryAxis`); `width: undefined` turns Recharts' guess off.
+ */
+const CATEGORY_TICK = { ...RECHARTS_AXIS_TICK, width: undefined } as const
+
+/** One callback ref that feeds two (the container width and the text measure). */
+function useJoinedRef<T>(a: (node: T | null) => void, b: (node: T | null) => void): (node: T | null) => void {
+  return useCallback(
+    (node: T | null) => {
+      a(node)
+      b(node)
+    },
+    [a, b],
+  )
+}
+
+/**
+ * The fewest px a compact chart's PLOT keeps beside its category labels: the
+ * bars, the value labels past their ends and two or three value-axis ticks.
+ */
+const MIN_COMPACT_PLOT_WIDTH = 120
+/** The most of a compact chart's width its category labels may take. */
+const COMPACT_AXIS_SHARE = 0.45
+
+/**
+ * The category axis's width, px (Wave 2.6 R2-1).
+ *
+ * A full-width chart keeps its 210 px column. A compact one (under
+ * `COMPACT_CHART_WIDTH`) used a FIXED 92 px column, so a 480 px card at 1280
+ * cut every name to about 13 characters ("Payme…meout") beside 300 px of
+ * empty plot, while the same chart at 640 px showed them whole. Now the column
+ * is as wide as the longest label MEASURED in the chart's font needs (so it
+ * holds on DejaVu, whose glyphs are wider, because it is measured there too),
+ * between the old 92 px and the most the chart can spare: 45 % of its width,
+ * and never so much that the plot keeps less than `MIN_COMPACT_PLOT_WIDTH`.
+ * Before layout (`longest` null: jsdom, a hidden tab) it is the old 92 px.
+ */
+function categoryAxisWidth({
+  compact,
+  layoutWidth,
+  rightMargin,
+  longest,
+}: {
+  compact: boolean
+  /** The chart's width in LAYOUT px (full screen divides out its scale). */
+  layoutWidth: number
+  rightMargin: number
+  /** The widest category label, measured; `null` when nothing can be measured. */
+  longest: number | null
+}): number {
+  if (!compact) return CATEGORY_AXIS_WIDTH
+  if (longest === null) return COMPACT_CATEGORY_AXIS_WIDTH
+  const most = Math.min(
+    CATEGORY_AXIS_WIDTH,
+    Math.floor(layoutWidth * COMPACT_AXIS_SHARE),
+    Math.floor(layoutWidth - PLOT_MARGIN_LEFT - rightMargin - MIN_COMPACT_PLOT_WIDTH),
+  )
+  return Math.max(COMPACT_CATEGORY_AXIS_WIDTH, Math.min(Math.ceil(longest) + CATEGORY_TICK_ROOM, most))
+}
+
+/**
+ * The category axis: its width (`categoryAxisWidth`) and its drawn labels, one
+ * per bar, cut to what it holds by MEASUREMENT in the chart's own font
+ * (`fitCategoryLabel`). Before layout (no measure: jsdom, a hidden tab) they
+ * are exactly the character cuts the axis always drew.
+ */
+function useCategoryAxis(
+  bars: readonly { label: string; short: string }[],
+  compact: boolean,
+  layoutWidth: number,
+  rightMargin: number,
+  measure: TextMeasure | null,
+): { width: number; labels: string[] } {
+  return useMemo(() => {
+    const widthOf = measure ? (text: string) => measure(text, RECHARTS_AXIS_TICK.fontSize) : null
+    const longest = compact && widthOf ? Math.max(0, ...bars.map((bar) => widthOf(bar.short))) : null
+    const width = categoryAxisWidth({ compact, layoutWidth, rightMargin, longest })
+    const room = width - CATEGORY_TICK_ROOM
+    const labels = bars.map((bar) => {
+      // Measured, a compact label starts from the same cut a full axis draws and is fitted to the column.
+      const first = compact && !widthOf ? middleTruncate(bar.short, COMPACT_BAR_LABEL) : bar.short
+      return widthOf ? fitCategoryLabel(bar.label, first, room, widthOf) : first
+    })
+    return { width, labels }
+  }, [bars, compact, layoutWidth, rightMargin, measure])
+}
 
 /** The plot's margins, and the value axis's own height. */
 const PLOT_MARGIN_TOP = 20
@@ -300,8 +404,12 @@ export function RankedBarPlot({
   const prefix = useChartPatternPrefix()
   const risePattern = `${prefix}-chart-pattern-rise`
   const fallPattern = `${prefix}-chart-pattern-fall`
-  const [wrapRef, width] = useContainerWidth<HTMLDivElement>()
+  const [widthRef, width] = useContainerWidth<HTMLDivElement>()
+  const [measureRef, measure] = useTextMeasure<HTMLDivElement>()
+  const wrapRef = useJoinedRef(widthRef, measureRef)
   const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
+  const rightMargin = compact ? 40 : 64
+  const axis = useCategoryAxis(model.bars, compact, width / scale, rightMargin, measure)
   // A diverging axis is a CHANGE: a share of a sum of rises and falls is meaningless.
   const shareOf = model.diverging ? null : whole
 
@@ -323,6 +431,7 @@ export function RankedBarPlot({
       ref={wrapRef}
       data-bar-chart="ranked"
       data-bar-compact={compact ? 'true' : 'false'}
+      data-bar-axis-width={axis.width}
       data-bar-domain={`${model.domain[0]},${model.domain[1]}`}
       data-bar-diverging={model.diverging ? 'true' : 'false'}
       data-bar-page={model.page}
@@ -340,7 +449,7 @@ export function RankedBarPlot({
           data={model.bars}
           accessibilityLayer={false}
           barCategoryGap={CATEGORY_GAP}
-          margin={{ top: PLOT_MARGIN_TOP, right: compact ? 40 : 64, left: 4, bottom: PLOT_MARGIN_BOTTOM }}
+          margin={{ top: PLOT_MARGIN_TOP, right: rightMargin, left: PLOT_MARGIN_LEFT, bottom: PLOT_MARGIN_BOTTOM }}
         >
           <defs>
             {renderPatterns([
@@ -376,16 +485,14 @@ export function RankedBarPlot({
           <YAxis
             type="category"
             dataKey="short"
-            width={compact ? COMPACT_CATEGORY_AXIS_WIDTH : CATEGORY_AXIS_WIDTH}
+            width={axis.width}
             interval={0}
-            tick={RECHARTS_AXIS_TICK}
+            tick={CATEGORY_TICK}
             axisLine={false}
             tickLine={false}
-            // A narrow axis truncates further. The label is already
-            // middle-truncated, so this keeps its head AND its tail.
-            tickFormatter={(value: string) =>
-              compact ? middleTruncate(String(value), COMPACT_BAR_LABEL) : String(value)
-            }
+            // Cut to what the axis MEASURABLY holds (`useCategoryAxis`),
+            // in the middle, so each keeps its head AND its tail.
+            tickFormatter={(value: string, index: number) => axis.labels[index] ?? String(value)}
             label={{
               value: dimension,
               position: 'top',
@@ -454,8 +561,12 @@ export function StatusBarPlot({
   const height = useFramePlotLayoutHeight(requestedHeight)
   const animate = useChartAnimation(requested)
   const prefix = useChartPatternPrefix()
-  const [wrapRef, width] = useContainerWidth<HTMLDivElement>()
+  const [widthRef, width] = useContainerWidth<HTMLDivElement>()
+  const [measureRef, measure] = useTextMeasure<HTMLDivElement>()
+  const wrapRef = useJoinedRef(widthRef, measureRef)
   const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
+  const rightMargin = compact ? 12 : 16
+  const axis = useCategoryAxis(model.bars, compact, width / scale, rightMargin, measure)
   const percent = model.mode === 'percent'
 
   const rows: StatusRow[] = useMemo(
@@ -506,6 +617,7 @@ export function StatusBarPlot({
       data-bar-chart={model.layout}
       data-bar-mode={model.mode}
       data-bar-compact={compact ? 'true' : 'false'}
+      data-bar-axis-width={axis.width}
       data-bar-domain={`${model.domain[0]},${model.domain[1]}`}
       data-bar-statuses={model.statuses.join(',')}
       data-bar-page={model.page}
@@ -523,7 +635,7 @@ export function StatusBarPlot({
           accessibilityLayer={false}
           barCategoryGap={CATEGORY_GAP}
           barGap={GROUPED_BAR_GAP}
-          margin={{ top: PLOT_MARGIN_TOP, right: compact ? 12 : 16, left: 4, bottom: PLOT_MARGIN_BOTTOM }}
+          margin={{ top: PLOT_MARGIN_TOP, right: rightMargin, left: PLOT_MARGIN_LEFT, bottom: PLOT_MARGIN_BOTTOM }}
         >
           <defs>{renderPatterns(statusPatternSpecs(prefix, model.statuses))}</defs>
           <CartesianGrid stroke={CHART_VARS.grid} strokeDasharray="3 3" horizontal={false} />
@@ -552,14 +664,12 @@ export function StatusBarPlot({
           <YAxis
             type="category"
             dataKey="short"
-            width={compact ? COMPACT_CATEGORY_AXIS_WIDTH : CATEGORY_AXIS_WIDTH}
+            width={axis.width}
             interval={0}
-            tick={RECHARTS_AXIS_TICK}
+            tick={CATEGORY_TICK}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(value: string) =>
-              compact ? middleTruncate(String(value), COMPACT_BAR_LABEL) : String(value)
-            }
+            tickFormatter={(value: string, index: number) => axis.labels[index] ?? String(value)}
             label={{
               value: dimension,
               position: 'top',
@@ -613,6 +723,11 @@ export interface BarChartProps {
   dimension?: string
   valueAxisLabel?: string
   onClearFilters?: () => void
+  /**
+   * Extra footer content inside the frame, after the bars' own notes and page
+   * controls, e.g. a dated caption (Wave 2.6 R2-21). Kept in every state.
+   */
+  footer?: ReactNode
   'data-testid'?: string
 }
 
@@ -703,6 +818,7 @@ export default function BarChart({
   dimension = 'category',
   valueAxisLabel,
   onClearFilters,
+  footer,
   'data-testid': testId,
 }: BarChartProps) {
   const [page, setPage] = useState(0)
@@ -794,8 +910,13 @@ export default function BarChart({
       changeLabel={model && model.pages > 1 ? barPageLabel(model.page, model.pages).toLowerCase() : undefined}
       footer={
         model && !empty ? (
-          <BarFooter notes={model.notes} page={model.page} pages={model.pages} onPage={setPage} />
-        ) : undefined
+          <>
+            <BarFooter notes={model.notes} page={model.page} pages={model.pages} onPage={setPage} />
+            {footer}
+          </>
+        ) : (
+          footer
+        )
       }
     >
       {ranked && !empty ? (
@@ -867,6 +988,7 @@ export function BreakdownChart({
           animate={props.animate}
           scopeLabel={props.scopeLabel}
           onClearFilters={props.onClearFilters}
+          footer={props.footer}
           data-testid={props['data-testid']}
           centreCaption={centreCaption ?? breakdownCaption(series)}
           modelOf={categoryModelOf}

@@ -38,13 +38,8 @@ import {
 } from './durationBuckets'
 import ChartRangeBrush from './zoom/ChartRangeBrush'
 import { useFrameZoom } from './zoom/useFrameZoom'
-import {
-  CALENDAR_WORDS,
-  durationBandMax,
-  sliceDurationBand,
-  zoomOptionsOf,
-  type ChartZoomOptions,
-} from './zoom/zoomModel'
+import { CALENDAR_WORDS, zoomOptionsOf, type ChartZoomOptions } from './zoom/zoomModel'
+import { durationBandMax, sliceDurationBand } from './zoom/zoomSlices'
 
 /**
  * The slowest-tests chart draws TWO series in two different units — a p95

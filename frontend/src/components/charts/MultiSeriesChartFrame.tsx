@@ -33,14 +33,8 @@ import { formatPercentPoints, formatPlainValue, type ValueFormatter } from './ch
 import MultiSeriesChart from './MultiSeriesChart'
 import ChartRangeBrush from './zoom/ChartRangeBrush'
 import { useFrameZoom } from './zoom/useFrameZoom'
-import {
-  CALENDAR_WORDS,
-  RELATIVE_DAY_WORDS,
-  sliceMultiSeriesModel,
-  zoomOptionsOf,
-  type ChartZoomOptions,
-  type ZoomRange,
-} from './zoom/zoomModel'
+import { CALENDAR_WORDS, RELATIVE_DAY_WORDS, zoomOptionsOf, type ChartZoomOptions, type ZoomRange } from './zoom/zoomModel'
+import { sliceMultiSeriesModel } from './zoom/zoomSlices'
 import {
   comparabilityCaveat,
   isolateHidden,
@@ -54,7 +48,7 @@ import {
 export interface MultiSeriesChartFrameProps
   extends Omit<
     ChartFrameProps,
-    'children' | 'series' | 'chartType' | 'axes' | 'format' | 'changeLabel' | 'tableExtras' | 'zoomNote'
+    'children' | 'series' | 'chartType' | 'axes' | 'format' | 'changeLabel' | 'tableExtras' | 'zoomNote' | 'truncationSuffix'
   > {
   /** Required for `ready` / `truncated`; ignored for every other state, which the frame owns. */
   model: MultiSeriesModel | null
@@ -159,9 +153,23 @@ const MultiSeriesChartFrame = forwardRef<HTMLDivElement, MultiSeriesChartFramePr
   const caveat = model ? comparabilityCaveat(model.comparability) : null
   const summaryScope = zoomState.scopeLabel(caveat ? (scopeLabel ? `${scopeLabel}; ${caveat}` : caveat) : scopeLabel)
 
+  // "Top N of M" counts the series drawn ON THEIR OWN: the envelope's shown
+  // count includes the merged "Other", and "Showing top 8 of 11" sat beside
+  // "the 7 with the most executions are drawn, and the other 4 are folded
+  // into Other" (Wave 2.6 R2-14).
+  // The sentence then names the remainder: "Showing top 7 of 11 + Other".
+  const { state: givenState } = frameProps
+  const folded = model?.lines.some((line) => line.other) ?? false
+  const state = useMemo<ChartState<unknown>>(() => {
+    if (givenState.status !== 'truncated' || !model || !folded) return givenState
+    return { ...givenState, shown: model.lines.filter((line) => !line.other).length }
+  }, [givenState, model, folded])
+
   return (
     <ChartFrame
       {...frameProps}
+      state={state}
+      truncationSuffix={folded ? ' + Other' : undefined}
       ref={ref}
       height={height}
       scopeLabel={summaryScope}

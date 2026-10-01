@@ -26,6 +26,7 @@
  * plain Node.
  */
 import type { SeriesPoint } from '@/lib/viz/contracts'
+import { ownValue } from './chartText'
 
 /** The x-axis title of an aligned comparison. */
 export const ALIGNED_X_TITLE = 'Days since release start'
@@ -156,7 +157,8 @@ export function alignByReleaseStart(
       byDay.set(point.x, point)
       if (last === null || point.x > last) last = point.x
     }
-    const named = starts[series.key]
+    // Own entries only: a series keyed `constructor` has no named start.
+    const named = ownValue(starts, series.key)
     const namedStart = named && DAY_PATTERN.test(named) ? named : null
     const firstActive = firstActiveDay(series.points)
     const start = namedStart ?? firstActive ?? earliestDay(series.points)

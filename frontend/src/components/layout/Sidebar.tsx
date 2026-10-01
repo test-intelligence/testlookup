@@ -1,10 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, type MouseEvent } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Activity, BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardCheck, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   BookOpen, MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
-  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
+  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -13,6 +13,8 @@ import { useAIConfig } from '@/hooks/useAIConfig'
 import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailuresCountUnscoped'
 import AppLogo from '@/components/ui/AppLogo'
 import AppVersionBadge from '@/components/layout/AppVersionBadge'
+import PresentationToggle from '@/components/ui/PresentationToggle'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 /* ─── Navigation structure: grouped with primary + sub-items ─── */
 
@@ -177,7 +179,38 @@ function SidebarGroup({ group }: { group: NavGroup }) {
 
 /* ─── Sidebar ─── */
 
-export default function Sidebar() {
+/**
+ * The sidebar as a drawer (VIZ-106), handed in by `AppLayout` below 1024 px
+ * only; `null` at 1024 px and above, where the sidebar is the permanent
+ * `w-56` column it always was.
+ */
+export interface SidebarDrawer {
+  open: boolean
+  onClose: () => void
+  /** The element id the top bar's menu button names in `aria-controls`. */
+  id: string
+}
+
+/**
+ * Below 1024 px: hidden until opened, then fixed over the page's left edge as
+ * a modal dialog. Only `max-lg:` utilities, so none of this reaches the
+ * desktop column's styling.
+ */
+const DRAWER_CLOSED = 'max-lg:hidden'
+const DRAWER_OPEN = 'max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:shadow-xl'
+
+export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | null } = {}) {
+  const drawerOpen = drawer?.open === true
+  // The drawer is a modal dialog while it is open: focus moves into it, Tab
+  // and Shift+Tab stay inside, Escape closes it, and focus goes back to the
+  // menu button that opened it. Closed, or at desktop width, the hook holds
+  // no place and handles no keys.
+  const drawerRef = useModalFocus<HTMLElement>({ open: drawerOpen, onClose: drawer?.onClose })
+  // A link inside the drawer closes it even when it points at the page
+  // already shown (no location change for AppLayout to see).
+  const closeOnLink = (event: MouseEvent<HTMLElement>) => {
+    if (event.target instanceof Element && event.target.closest('a[href]')) drawer?.onClose()
+  }
   const { canAccessManagement } = usePermissions()
   const { data: aiConfig } = useAIConfig()
   // Rollout gate (MRU-17): hide the Upload Report item until the flag is on.
@@ -209,10 +242,29 @@ export default function Sidebar() {
   })
 
   return (
-    <aside className="w-56 flex-shrink-0 border-r flex flex-col" style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}>
+    <aside
+      ref={drawerRef}
+      id={drawer?.id}
+      role={drawerOpen ? 'dialog' : undefined}
+      aria-modal={drawerOpen ? true : undefined}
+      aria-label={drawerOpen ? 'Navigation' : undefined}
+      onClick={drawerOpen ? closeOnLink : undefined}
+      className={clsx('w-56 flex-shrink-0 border-r flex flex-col', drawerOpen ? DRAWER_OPEN : DRAWER_CLOSED)}
+      style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
+    >
       {/* Logo */}
-      <div className="px-4 py-5 border-b flex items-center justify-center" style={{ borderColor: 'var(--color-border)' }}>
+      <div className="px-4 py-5 border-b flex items-center justify-center max-lg:relative" style={{ borderColor: 'var(--color-border)' }}>
         <AppLogo className="text-[20px]" />
+        {drawerOpen && (
+          <button
+            type="button"
+            onClick={drawer?.onClose}
+            aria-label="Close navigation"
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-ring)]"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}
@@ -258,6 +310,11 @@ export default function Sidebar() {
             Settings
           </NavLink>
         )}
+        {/* Presentation mode (VIZ-106): here at every width, the drawer's
+            footer below 1024 px. Not beside the theme picker (PLAN OD-13):
+            at 1024 px the top bar already squeezes its search box to 112 px,
+            and one more control there took it to about 60. */}
+        <PresentationToggle />
         <AppVersionBadge />
       </div>
     </aside>

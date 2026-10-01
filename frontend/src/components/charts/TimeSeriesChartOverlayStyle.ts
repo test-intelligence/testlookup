@@ -9,22 +9,32 @@
 import { MOVING_AVERAGE_LABEL, TREND_LINE_LABEL, type TrendOverlayState } from '@/lib/trendStats'
 import { CHART_VARS } from './tokens'
 
+export const TREND_OVERLAY_WIDTH = 2
+/**
+ * The trend line's weight: twice the rate target's 1.5 px. A least-squares
+ * line over a steady pass rate runs ON the target line, and in lab the two
+ * thin broken lines in muted tones could not be told apart (Wave 2.6 R2-19);
+ * where they coincide, the heavy one is the trend.
+ */
+export const TREND_LINE_WIDTH = 3
+
 export const TREND_OVERLAY_STYLE = {
-  movingAverage: { stroke: CHART_VARS.series[2], dash: '8 4', curve: 'monotone', label: MOVING_AVERAGE_LABEL },
-  trendLine: { stroke: CHART_VARS.series[3], dash: '2 4', curve: 'linear', label: TREND_LINE_LABEL },
+  movingAverage: { stroke: CHART_VARS.series[2], dash: '8 4', curve: 'monotone', label: MOVING_AVERAGE_LABEL, width: TREND_OVERLAY_WIDTH },
+  trendLine: { stroke: CHART_VARS.series[3], dash: '2 4', curve: 'linear', label: TREND_LINE_LABEL, width: TREND_LINE_WIDTH },
 } as const
 
 export type TrendOverlayKey = keyof typeof TREND_OVERLAY_STYLE
 /** In drawing order. */
 export const TREND_OVERLAY_KEYS: readonly TrendOverlayKey[] = ['movingAverage', 'trendLine']
 
-export const TREND_OVERLAY_WIDTH = 2
+/** The halo's extra width: 2 px of card on either side of the line. */
+const HALO_EXTRA = 4
 /**
  * The card-coloured halo under each overlay: 2 px of card on either side of
- * the 2 px line, so the line's nearest neighbour is always the card — never a
- * bar it would otherwise sit on at 1.02-1.75:1.
+ * the line, so the line's nearest neighbour is always the card — never a bar
+ * it would otherwise sit on at 1.02-1.75:1. Per overlay, as their weights differ.
  */
-export const TREND_OVERLAY_HALO_WIDTH = TREND_OVERLAY_WIDTH + 4
+export const trendOverlayHaloWidth = (key: TrendOverlayKey) => TREND_OVERLAY_STYLE[key].width + HALO_EXTRA
 /**
  * The halos' Recharts layer: above the bars (`DefaultZIndexes.bar`, 300) and
  * below every line (`DefaultZIndexes.line`, 400). Recharts 3 paints each

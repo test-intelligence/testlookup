@@ -4,6 +4,7 @@ import { VIZ_STATUSES } from '@/lib/viz/contracts'
 import {
   CHART_VARS,
   FLAKY_MARKER,
+  PRESENTATION_TOKEN_ATTRIBUTE,
   SERIES_COUNT,
   STATUS_ENCODING,
   echartsDecal,
@@ -12,6 +13,7 @@ import {
   seriesColor,
   useChartTokens,
 } from './tokens'
+import { PRESENTATION_ATTRIBUTE } from '@/store/presentationStore'
 
 // No colour literals in this directory (check:theme scans tests too): the fake
 // computed style answers with "<theme>:<property>" so every value is traceable.
@@ -91,6 +93,60 @@ describe('useChartTokens', () => {
     })
     expect(result.current.theme).toBe('ember')
     expect(result.current.axis).toBe('ember:--chart-axis')
+  })
+})
+
+describe('presentation mode and the token cache (VIZ-106)', () => {
+  // Presentation mode remaps `--chart-axis` (and the muted text) on <html>. The
+  // fake answers "<theme>+present:<property>" while the attribute is set, so a
+  // stale cache shows up as the old value.
+  function fakePresentationStyle() {
+    return vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element) => {
+      const theme = el.getAttribute('data-theme') ?? 'none'
+      const mode = el.getAttribute(PRESENTATION_TOKEN_ATTRIBUTE) === 'on' ? '+present' : ''
+      return { getPropertyValue: (name: string) => ` ${theme}${mode}:${name} ` } as unknown as CSSStyleDeclaration
+    })
+  }
+
+  beforeEach(() => {
+    resetChartTokenCache()
+    html().setAttribute('data-theme', 'signal')
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    html().removeAttribute('data-theme')
+    html().removeAttribute(PRESENTATION_TOKEN_ATTRIBUTE)
+    resetChartTokenCache()
+  })
+
+  it('uses the attribute the presentation store sets', () => {
+    expect(PRESENTATION_TOKEN_ATTRIBUTE).toBe(PRESENTATION_ATTRIBUTE)
+  })
+
+  it('re-reads when presentation mode toggles under the same theme, and memoises each mode', () => {
+    const spy = fakePresentationStyle()
+    const page = readChartTokens()
+    expect(page.axis).toBe('signal:--chart-axis')
+    html().setAttribute(PRESENTATION_TOKEN_ATTRIBUTE, 'on')
+    const presenting = readChartTokens()
+    expect(presenting).not.toBe(page)
+    expect(presenting.axis).toBe('signal+present:--chart-axis')
+    expect(readChartTokens()).toBe(presenting)
+    html().removeAttribute(PRESENTATION_TOKEN_ATTRIBUTE)
+    expect(readChartTokens().axis).toBe('signal:--chart-axis')
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
+
+  it('re-renders a canvas chart’s tokens when presentation mode is toggled', async () => {
+    fakePresentationStyle()
+    const { result } = renderHook(() => useChartTokens())
+    expect(result.current.axis).toBe('signal:--chart-axis')
+    await act(async () => {
+      html().setAttribute(PRESENTATION_TOKEN_ATTRIBUTE, 'on')
+      // MutationObserver callbacks run as a microtask.
+      await Promise.resolve()
+    })
+    expect(result.current.axis).toBe('signal+present:--chart-axis')
   })
 })
 

@@ -62,7 +62,7 @@
  * would undo the zoom the reader is looking at. The canvas renderer draws no
  * target, as it draws no overlays: past 366 days the sentence says so.
  */
-import { useId, useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   Bar,
@@ -76,8 +76,17 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  useXAxisScale,
 } from 'recharts'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
+import { useTextMeasure, type TextMeasure } from './textMeasure'
+import {
+  MARKER_LABEL_FONT_SIZE,
+  MARKER_LABEL_ROW_HEIGHT,
+  layoutMarkerLabels,
+  markerLabelText,
+  type MarkerLabelRow,
+} from './releaseMarkerLabels'
 import { useFramePlotHeight, useFramePlotLayoutHeight } from './framePlotHeight'
 import ChartResponsive from './ChartResponsive'
 import { COLUMN_SIDES } from './tipPlacement'
@@ -92,11 +101,10 @@ import {
 import { AnomalyMarker, TrendOverlayControls, TrendStatsStrip } from './TimeSeriesChartOverlays'
 import {
   TREND_OVERLAYS_OFF,
-  TREND_OVERLAY_HALO_WIDTH,
   TREND_OVERLAY_HALO_Z_INDEX,
   TREND_OVERLAY_KEYS,
   TREND_OVERLAY_STYLE,
-  TREND_OVERLAY_WIDTH,
+  trendOverlayHaloWidth,
 } from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
 import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens } from './tokens'
@@ -320,6 +328,52 @@ export function TimeSeriesTooltip({
 
 // ── The SVG (Recharts) renderer ──────────────────────────────────────────────
 
+/** The plot's top margin: room for one row of release labels, and one more when a label is raised. */
+const PLOT_MARGIN_TOP = 16
+/** Recharts' own offset of a `position: 'top'` label above its line. */
+const LABEL_OFFSET = 5
+
+/**
+ * Reads where the release markers fall on the x axis (inside the chart, where
+ * the scale is) and reports which row each label takes (`layoutMarkerLabels`).
+ * Mounted only when there is a text measure — a laid-out browser chart with at
+ * least two markers — so under jsdom, or with one marker, nothing about the
+ * labels changes. Draws nothing itself.
+ */
+function MarkerLabelLayout({
+  markers,
+  measure,
+  onLayout,
+}: {
+  markers: TimeSeriesModel['markers']
+  measure: TextMeasure
+  onLayout: (rows: readonly MarkerLabelRow[] | null) => void
+}) {
+  const xScale = useXAxisScale()
+  const rows = useMemo(() => {
+    if (!xScale) return null
+    const items = markers.map((marker) => ({
+      x: xScale(marker.x, { position: 'middle' }) ?? Number.NaN,
+      width: measure(markerLabelText(marker), MARKER_LABEL_FONT_SIZE),
+    }))
+    return items.every((item) => Number.isFinite(item.x)) ? layoutMarkerLabels(items) : null
+  }, [xScale, markers, measure])
+  // Reported by CONTENT: the scale is rebuilt whenever the margin changes, and
+  // the same rows must not be reported again (the margin follows the rows).
+  const key = rows ? rows.map((row) => (row === null ? '-' : String(row))).join(',') : ''
+  useEffect(() => {
+    onLayout(key ? key.split(',').map((row) => (row === '-' ? null : (Number(row) as 0 | 1))) : null)
+  }, [key, onLayout])
+  return null
+}
+
+/** The label prop for one marker: as it always was on the first row, raised one row, or none. */
+function markerLabel(marker: TimeSeriesModel['markers'][number], row: MarkerLabelRow) {
+  if (row === null) return undefined
+  const label = { value: markerLabelText(marker), position: 'top' as const, fill: CHART_VARS.axis, fontSize: MARKER_LABEL_FONT_SIZE }
+  return row === 1 ? { ...label, offset: LABEL_OFFSET + MARKER_LABEL_ROW_HEIGHT } : label
+}
+
 function SvgTimeSeries({
   model,
   rows,
@@ -397,8 +451,19 @@ function SvgTimeSeries({
   )
   const cursor = useChartCursor({ title, chartType: 'line and bar chart', points: cursorPoints, noun: 'day' })
 
+  // Release labels that would touch are raised a row, or dropped (Wave 2.6
+  // R2-10). Measured in the chart's own font; with no measure (no layout) or
+  // fewer than two markers, every label is drawn as it always was.
+  const [plotRef, measure] = useTextMeasure<HTMLDivElement>()
+  const [markerRows, setMarkerRows] = useState<readonly MarkerLabelRow[] | null>(null)
+  const rowOf = (index: number): MarkerLabelRow => (markerRows && markerRows.length === model.markers.length ? markerRows[index] : 0)
+  const raised = model.markers.some((_, index) => rowOf(index) === 1)
+  const dropped = model.markers.filter((_, index) => rowOf(index) === null).length
+
   return (
+    <>
     <div
+      ref={plotRef}
       data-time-series-plot=""
       data-executions-max={model.executionsAxis.largest}
       data-executions-domain={model.executionsAxis.domain.join(',')}
@@ -408,7 +473,11 @@ function SvgTimeSeries({
     >
     <ChartResponsive height={height}>
       {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
-      <ComposedChart data={rows} margin={{ top: 16, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
+      <ComposedChart
+        data={rows}
+        margin={{ top: PLOT_MARGIN_TOP + (raised ? MARKER_LABEL_ROW_HEIGHT : 0), right: 8, left: 0, bottom: 0 }}
+        accessibilityLayer={false}
+      >
         {/*
           `yAxisId="rate"`: the grid's default axis id is 0, which this chart
           does not have, so it drew no line between the plot's top and bottom
@@ -501,7 +570,7 @@ function SvgTimeSeries({
             className="trend-overlay-halo"
             zIndex={TREND_OVERLAY_HALO_Z_INDEX}
             stroke={CHART_VARS.card}
-            strokeWidth={TREND_OVERLAY_HALO_WIDTH}
+            strokeWidth={trendOverlayHaloWidth(key)}
             strokeLinecap="round"
             connectNulls={false}
             dot={false}
@@ -542,7 +611,7 @@ function SvgTimeSeries({
             className="trend-overlay-moving-average"
             stroke={TREND_OVERLAY_STYLE.movingAverage.stroke}
             strokeDasharray={TREND_OVERLAY_STYLE.movingAverage.dash}
-            strokeWidth={TREND_OVERLAY_WIDTH}
+            strokeWidth={TREND_OVERLAY_STYLE.movingAverage.width}
             connectNulls={false}
             dot={false}
             activeDot={false}
@@ -558,7 +627,7 @@ function SvgTimeSeries({
             className="trend-overlay-trend-line"
             stroke={TREND_OVERLAY_STYLE.trendLine.stroke}
             strokeDasharray={TREND_OVERLAY_STYLE.trendLine.dash}
-            strokeWidth={TREND_OVERLAY_WIDTH}
+            strokeWidth={TREND_OVERLAY_STYLE.trendLine.width}
             connectNulls={false}
             dot={false}
             activeDot={false}
@@ -590,20 +659,30 @@ function SvgTimeSeries({
             strokeWidth={1.5}
           />
         )}
-        {model.markers.map((marker) => (
+        {model.markers.map((marker, index) => (
           <ReferenceLine
             key={marker.x}
             yAxisId="rate"
             x={marker.x}
             stroke={CHART_VARS.neutral}
             strokeDasharray="5 3"
-            label={{ value: marker.names.join(', '), position: 'top', fill: CHART_VARS.axis, fontSize: 10 }}
+            label={markerLabel(marker, rowOf(index))}
           />
         ))}
+        {measure && model.markers.length > 1 && (
+          <MarkerLabelLayout markers={model.markers} measure={measure} onLayout={setMarkerRows} />
+        )}
       </ComposedChart>
     </ChartResponsive>
     {cursor.readout}
     </div>
+    {dropped > 0 && (
+      <p data-chart-marker-labels-dropped="" className={NOTE}>
+        {formatNumber(dropped)} release {dropped === 1 ? 'label does' : 'labels do'} not fit over the plot; the day's tooltip
+        and the release table name {dropped === 1 ? 'it' : 'them'}.
+      </p>
+    )}
+    </>
   )
 }
 

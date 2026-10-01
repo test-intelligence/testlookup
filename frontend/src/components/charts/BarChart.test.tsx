@@ -480,6 +480,62 @@ describe('BreakdownChart — the registry picks the chart type', () => {
   })
 })
 
+// Wave 2.6 R2-21: a caller's caption belongs INSIDE the frame, in its footer —
+// whichever chart the registry picked. The Gate's "Stored data…" caption sat
+// under the frame's border because BreakdownChart had no way to pass it in.
+describe('a caller footer, inside the frame', () => {
+  const categories = (n: number) =>
+    categorySeries(
+      Array.from({ length: n }, (_, i) => [`category-${i}`, 10 + i] as [string, number]),
+      'failure_category',
+    )
+  const CAPTION = <span data-test-caption="">Stored data, build b-1.</span>
+  const footerCaption = (root: ParentNode) => root.querySelector('[data-chart-frame] [data-chart-footer] [data-test-caption]')
+
+  it('BreakdownChart forwards it to the donut', () => {
+    const { container } = render(
+      <BreakdownChart title="Failures by category" state={ready(categories(4))} footer={CAPTION} animate={false} />,
+    )
+    expect(container.querySelector('[data-chart-choice]')?.getAttribute('data-chart-choice')).toBe('donut')
+    expect(footerCaption(container)?.textContent).toBe('Stored data, build b-1.')
+    expect(container.querySelectorAll('[data-test-caption]')).toHaveLength(1)
+  })
+
+  it('BreakdownChart forwards it to the ranked bar', () => {
+    const { container } = render(
+      <BreakdownChart title="Failures by category" state={ready(categories(6))} footer={CAPTION} animate={false} />,
+    )
+    expect(container.querySelector('[data-chart-choice]')?.getAttribute('data-chart-choice')).toBe('ranked-bar')
+    expect(footerCaption(container)?.textContent).toBe('Stored data, build b-1.')
+    expect(container.querySelectorAll('[data-test-caption]')).toHaveLength(1)
+  })
+
+  it("BarChart keeps its own notes and puts the caller's footer after them", () => {
+    const change = categorySeries([
+      ['up', 5],
+      ['down', -8],
+      ['small', 2],
+    ])
+    const { container } = render(<BarChart title="Change" state={ready(change)} variant="ranked" footer={CAPTION} animate={false} />)
+    const footer = container.querySelector('[data-chart-frame] [data-chart-footer]') as HTMLElement
+    const note = footer.querySelector('[data-chart-note]') as HTMLElement
+    const caption = footer.querySelector('[data-test-caption]') as HTMLElement
+    expect(note.textContent).toMatch(/diverge from a zero baseline/)
+    expect(caption).not.toBeNull()
+    expect(note.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it("keeps the caller's footer when nothing is drawn (all zero: the frame's empty state)", () => {
+    const zeros = categorySeries([
+      ['a', 0],
+      ['b', 0],
+    ])
+    const { container } = render(<BarChart title="Zeros" state={ready(zeros)} variant="ranked" footer={CAPTION} animate={false} />)
+    expect(container.querySelector('[data-chart-frame]')?.getAttribute('data-chart-state')).toBe('filtered-empty')
+    expect(footerCaption(container)?.textContent).toBe('Stored data, build b-1.')
+  })
+})
+
 describe('BarChart — full screen (VIZ-608)', () => {
   it('grows the plot to the frame body in full screen, and not otherwise', () => {
     const plot = (fullscreen: boolean) => {

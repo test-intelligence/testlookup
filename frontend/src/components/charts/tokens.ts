@@ -10,8 +10,9 @@
  *     no re-render at all.
  *   - ECharts draws on a canvas, which cannot resolve `var()`. It takes
  *     `readChartTokens()` / `useChartTokens()`: the computed values, read ONCE
- *     per theme (memoised on the `data-theme` attribute of `<html>`, re-read
- *     when that attribute changes) — never a `getComputedStyle` per render.
+ *     per theme and presentation mode (memoised on the `data-theme` and
+ *     `data-presentation` attributes of `<html>`, re-read when either
+ *     changes) — never a `getComputedStyle` per render.
  *
  * `npm run check:theme` fails on any hex / rgb / hsl literal anywhere under
  * `components/charts/`, so a colour cannot bypass this module.
@@ -26,8 +27,20 @@ import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
 export const SERIES_COUNT = 8
 export const SEQ_COUNT = 7
 export const DIV_COUNT = 7
-/** The attribute `themeStore` sets on `<html>`; the memo key. */
+/** The attribute `themeStore` sets on `<html>`; part of the memo key. */
 export const THEME_ATTRIBUTE = 'data-theme'
+/**
+ * The attribute presentation mode sets on `<html>` (`store/presentationStore`,
+ * VIZ-106); the other part of the memo key. Presentation mode remaps
+ * `--chart-axis` and the muted text tokens, so a canvas that kept the tokens it
+ * read before the toggle would draw its axis text in the old, low-contrast
+ * colour until the next theme switch. Spelt out here rather than imported so
+ * the token reader stays free of the store and its React state: it only reads
+ * an attribute on `<html>`, whoever sets it (`tokens.test.ts` holds the two
+ * names equal). Not a bundle saving: the store is in the eager entry, and
+ * `framePlotHeight` imports it for every chart anyway.
+ */
+export const PRESENTATION_TOKEN_ATTRIBUTE = 'data-presentation'
 
 const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
 
@@ -91,16 +104,20 @@ export interface ChartTokens {
   textMuted: string
 }
 
-let cache: { root: Element; theme: string; tokens: ChartTokens } | null = null
+let cache: { root: Element; theme: string; presentation: string; tokens: ChartTokens } | null = null
 
 /**
  * The computed chart tokens for the theme currently on `root`. Memoised per
- * theme: calling it again under the same `data-theme` returns the SAME object
- * without touching `getComputedStyle`.
+ * theme AND presentation mode: calling it again under the same `data-theme`
+ * and `data-presentation` returns the SAME object without touching
+ * `getComputedStyle`.
  */
 export function readChartTokens(root: Element = document.documentElement): ChartTokens {
   const theme = root.getAttribute(THEME_ATTRIBUTE) ?? ''
-  if (cache && cache.root === root && cache.theme === theme) return cache.tokens
+  const presentation = root.getAttribute(PRESENTATION_TOKEN_ATTRIBUTE) ?? ''
+  if (cache && cache.root === root && cache.theme === theme && cache.presentation === presentation) {
+    return cache.tokens
+  }
   const style = getComputedStyle(root)
   const read = (name: string) => style.getPropertyValue(name).trim()
   const tokens: ChartTokens = {
@@ -120,7 +137,7 @@ export function readChartTokens(root: Element = document.documentElement): Chart
     text: read('--color-text'),
     textMuted: read('--color-text-muted'),
   }
-  cache = { root, theme, tokens }
+  cache = { root, theme, presentation, tokens }
   return tokens
 }
 
@@ -139,11 +156,14 @@ export function seriesColor(tokens: Pick<ChartTokens, 'series'>, index: number):
 
 function subscribe(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange)
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: [THEME_ATTRIBUTE] })
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: [THEME_ATTRIBUTE, PRESENTATION_TOKEN_ATTRIBUTE],
+  })
   return () => observer.disconnect()
 }
 
-/** The resolved tokens, re-rendering the caller when the theme changes. */
+/** The resolved tokens, re-rendering the caller when the theme or presentation mode changes. */
 export function useChartTokens(): ChartTokens {
   return useSyncExternalStore(subscribe, () => readChartTokens())
 }

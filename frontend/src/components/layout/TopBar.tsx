@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, Bell, CheckCircle, XCircle } from 'lucide-react'
+import { Search, Bell, CheckCircle, Menu, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { ReleasePicker } from './ReleasePicker'
@@ -50,7 +50,7 @@ function UserProfileDropdown() {
   const bgClass = AVATAR_BG[avatarColor] ?? AVATAR_BG['blue']
 
   return (
-    <div className="relative border-l pl-4 h-full flex items-center" style={{ borderColor: 'var(--color-border)' }}>
+    <div className="relative border-l pl-4 h-full flex items-center max-lg:h-auto" style={{ borderColor: 'var(--color-border)' }}>
       <button
         ref={triggerRef}
         type="button"
@@ -58,12 +58,12 @@ function UserProfileDropdown() {
         aria-expanded={open}
         aria-label="Account menu"
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+        className="flex items-center gap-3 h-full rounded-lg max-lg:h-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
       >
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${bgClass}`}>
           {initials}
         </div>
-        <div className="flex flex-col justify-center items-start">
+        <div className="flex flex-col justify-center items-start max-lg:hidden">
           <span className="text-sm font-medium text-[var(--color-text)] leading-none">
             {userName}
           </span>
@@ -96,7 +96,28 @@ function UserProfileDropdown() {
   )
 }
 
-export default function TopBar() {
+/**
+ * The menu button for the navigation drawer (VIZ-106), handed in by
+ * `AppLayout` below 1024 px only; `null` at 1024 px and above.
+ */
+export interface TopBarNavToggle {
+  open: boolean
+  onToggle: () => void
+  /** The drawer's element id. */
+  controls: string
+}
+
+/**
+ * Below 1024 px the bar wraps: the menu button, the pickers and the trailing
+ * group on the first row(s), the search box full width on the last. Only
+ * `max-lg:` utilities, so the desktop bar's styling is untouched. The two
+ * selects (project, release) may not be wider than the bar.
+ */
+const HEADER_NARROW =
+  'max-lg:h-auto max-lg:min-h-14 max-lg:flex-wrap max-lg:px-4 max-lg:py-2 max-lg:gap-x-3 max-lg:gap-y-2 max-lg:[&>select]:min-w-0 max-lg:[&>select]:max-w-full'
+const SEARCH_NARROW = 'max-lg:order-last max-lg:basis-full max-lg:max-w-none'
+
+export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavToggle | null } = {}) {
   const navigate = useNavigate()
   // Individual primitive selectors avoid Zustand v5 infinite-loop pitfall (#30).
   const activeProject = useProjectStore(s => s.activeProject)
@@ -163,9 +184,27 @@ export default function TopBar() {
   }
 
   return (
-    <header className="relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}>
+    <header className={`relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0 ${HEADER_NARROW}`} style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}>
+      {navToggle && (
+        <button
+          type="button"
+          aria-label="Navigation menu"
+          aria-expanded={navToggle.open}
+          aria-controls={navToggle.controls}
+          title="Navigation menu"
+          onClick={(event) => {
+            // Focused first, so the drawer returns focus HERE when it closes
+            // (Safari does not focus a button on click).
+            event.currentTarget.focus()
+            navToggle.onToggle()
+          }}
+          className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+        >
+          <Menu className="w-5 h-5" aria-hidden="true" />
+        </button>
+      )}
       {/* Global search */}
-      <div className="flex-1 max-w-md relative">
+      <div className={`flex-1 max-w-md relative ${SEARCH_NARROW}`}>
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
         <input
           ref={searchInputRef}

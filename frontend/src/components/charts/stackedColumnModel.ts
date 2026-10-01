@@ -26,7 +26,7 @@
  */
 import type { SeriesChart, SeriesPoint, VizStatus } from '@/lib/viz/contracts'
 import { formatPercent } from '@/utils/formatters'
-import { formatPlainValue, NO_VALUE, type ValueFormatter } from './chartText'
+import { formatPlainValue, NO_VALUE, ownValue, type ValueFormatter } from './chartText'
 import { zeroBasedScale, type NiceScale } from './niceScale'
 import { CHART_VARS, STATUS_ENCODING, STATUS_STACK_ORDER, seriesColor, statusStackRank, type DecalKind } from './tokens'
 import { tipContent, type TooltipContent, type TooltipRow } from './tooltip'
@@ -187,7 +187,7 @@ export function buildStackedColumnModel({
   let tallest = 0
   const drawnBuckets: StackedColumnBucket[] = buckets.map((bucket) => {
     const values = series.map((entry) => {
-      const found = measurement(bucket.values[entry.key])
+      const found = measurement(ownValue(bucket.values, entry.key))
       if (found.invalid) invalid += 1
       return found.value
     })

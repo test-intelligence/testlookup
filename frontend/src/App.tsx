@@ -1,4 +1,4 @@
-import { type ComponentType, lazy as reactLazy, Suspense, type LazyExoticComponent } from 'react'
+import { type ComponentType, lazy as reactLazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -8,56 +8,12 @@ import { useWebVitals } from '@/hooks/useWebVitals'
 import { usePermissions } from '@/hooks/usePermissions'
 import { DocumentTitleRouteKeyContext, useRouteDocumentTitle } from '@/hooks/useDocumentTitle'
 import LoginPage from '@/pages/LoginPage'
+import { CHUNK_RELOAD_FLAG, lazyWithRetry } from '@/utils/lazyWithRetry'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
 
-/**
- * Wrap React.lazy so a stale-chunk failure auto-reloads the page.
- *
- * After a deploy, the user's open tab still has the OLD index.html in
- * memory which references chunk filenames like ``DefectsPage-urxoen35.js``.
- * Vite generates fresh content-hashed names on every build, so when the
- * user navigates to a not-yet-loaded route, the chunk 404s with
- * "Failed to fetch dynamically imported module". Without this wrapper
- * the user sees an "ErrorBoundary" page on every cross-deploy navigation.
- *
- * Strategy: on the first import failure of the session, reload
- * ``window.location`` so the browser fetches a fresh index.html with
- * the current chunk hashes. The sessionStorage flag guards against an
- * infinite reload loop in case the failure isn't deploy-related (e.g.
- * permanent network issue).
- */
-const CHUNK_RELOAD_FLAG = '__testlookup_chunk_reload_attempted'
-
-function lazyWithRetry<T extends ComponentType<unknown>>(
-  importFn: () => Promise<{ default: T }>,
-): LazyExoticComponent<T> {
-  return reactLazy(async () => {
-    try {
-      const mod = await importFn()
-      // Successful load — clear the flag so a future stale-chunk
-      // error gets its own one-shot reload chance.
-      try { sessionStorage.removeItem(CHUNK_RELOAD_FLAG) } catch { /* noop */ }
-      return mod
-    } catch (err) {
-      const alreadyTried = (() => {
-        try { return sessionStorage.getItem(CHUNK_RELOAD_FLAG) === '1' } catch { return false }
-      })()
-      if (!alreadyTried) {
-        try { sessionStorage.setItem(CHUNK_RELOAD_FLAG, '1') } catch { /* noop */ }
-        // ``location.reload()`` fetches a fresh index.html — which is
-        // served with ``Cache-Control: no-cache`` so the browser gets
-        // the new chunk hashes immediately.
-        window.location.reload()
-        // Halt the promise chain — the reload will replace the page
-        // before this never-resolving promise settles.
-        return await new Promise<never>(() => undefined)
-      }
-      throw err
-    }
-  })
-}
-
-// Re-export under the original name so the existing ``lazy(() => import(...))``
+// ``lazyWithRetry`` (a stale-chunk failure reloads the page once) lives in
+// ``utils/lazyWithRetry`` so the report pages' lazy sections share it.
+// Aliased to the original name so the existing ``lazy(() => import(...))``
 // call sites below pick up the retry behaviour without per-site edits.
 const lazy = lazyWithRetry as typeof reactLazy
 

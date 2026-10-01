@@ -496,7 +496,9 @@ describe('ChartRangeBrush — under the plot', () => {
     expect(document.querySelector('[data-chart-brush-spark]')).toBeNull()
     unmount()
     render(<Harness xs={XS.slice(0, 4)} spark={[[null, 50, null, null]]} />)
-    expect(document.querySelector('[data-chart-brush-spark]')?.getAttribute('d')).toMatch(/^M[\d.]+ [\d.]+h0$/)
+    // Wave 2.6 R2-20: in its own round-capped dots layer, not as an unseen zero-length bit of the line.
+    expect(document.querySelector('[data-chart-brush-spark]')).toBeNull()
+    expect(document.querySelector('[data-chart-brush-spark-dots]')?.getAttribute('d')).toMatch(/^M[\d.]+ [\d.]+h0$/)
   })
 
   // Baseline review B: the unselected strip was about 1.1:1 against the card in

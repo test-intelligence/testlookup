@@ -33,6 +33,27 @@ export function utcDayLabel(day: string): string {
   return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
+/**
+ * `record[key]` for a key that came from DATA (a suite, test, release or
+ * branch name, a series key), reading the record's OWN properties only.
+ *
+ * On a plain object, `labels['constructor']` is `Object` and
+ * `labels['__proto__']` is `Object.prototype`, not "no entry": a category
+ * named like an `Object.prototype` member turned into a function in the table
+ * header, "function Object() { [native code] }" in the generated summary and a
+ * crash in the bar-label truncation. An own entry for such a name (a JSON
+ * payload can carry one) is still read.
+ */
+export function ownValue<T>(record: Readonly<Record<string, T>> | null | undefined, key: string): T | undefined {
+  return record != null && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined
+}
+
+/** A display label from an `x_labels`-style map: its own TEXT entry for `key`, else `key` itself. */
+export function ownLabel(labels: Readonly<Record<string, string>> | null | undefined, key: string): string {
+  const label = ownValue<unknown>(labels, key)
+  return typeof label === 'string' ? label : key
+}
+
 export type ValueFormatter = (value: number) => string
 
 /**
@@ -56,8 +77,9 @@ export function formatterFor(
 ): ValueFormatter {
   if (!format) return fallback
   if (typeof format === 'function') return format
-  const named = seriesKey === undefined ? undefined : format[seriesKey]
-  return named ?? format[DEFAULT_FORMAT_KEY] ?? fallback
+  // Own entries only: a series keyed `toString` must not pick up Object's.
+  const named = seriesKey === undefined ? undefined : ownValue(format, seriesKey)
+  return named ?? ownValue(format, DEFAULT_FORMAT_KEY) ?? fallback
 }
 
 /** Up to two decimals, grouped: `0.1 + 0.2` reads "0.3", never "0.30000000000000004". */
@@ -114,8 +136,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 function seriesSentences(chart: SeriesChart, format: SeriesFormat | undefined, fallback: ValueFormatter): string[] {
   const out: string[] = []
-  const labels = chart.x_labels ?? {}
-  const name = (x: string) => labels[x] ?? x
+  const name = (x: string) => ownLabel(chart.x_labels, x)
   for (const s of chart.series) {
     // Per series: a duration and a run count in one chart are two units.
     const fmt = formatterFor(format, s.key, fallback)
@@ -287,7 +308,7 @@ function seriesTable(
         const list = byX.get(x)
         return list && k < list.length ? formatChartValue(list[k], formatters[s]) : NO_VALUE
       })
-      const header = (chart.x_labels ?? {})[x] ?? x
+      const header = ownLabel(chart.x_labels, x)
       rows.push(
         k === 0 ? { header, cells } : { header: `${header}${DUPLICATE_SUFFIX}`, cells, duplicate: true },
       )

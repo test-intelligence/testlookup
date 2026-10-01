@@ -18,13 +18,13 @@
  * `filtered-empty` state instead (`handOverWhenEmpty`), so the reader is told
  * their filters match nothing rather than shown an empty ring.
  */
-import { useMemo, type ReactElement, type ReactNode } from 'react'
-import { Cell, Label, Legend, Pie, PieChart, Tooltip } from 'recharts'
+import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { Cell, Label, Legend, Pie, PieChart, Tooltip, usePlotArea } from 'recharts'
 import type { ChartSeries } from '@/lib/viz/contracts'
 import { formatNumber, formatPercent } from '@/utils/formatters'
 import { formatPercentPoints, formatPlainValue, type SeriesFormat } from './chartText'
 import ChartFrame, { type ChartHeadingLevel } from './ChartFrame'
-import { hasChartData, type ChartResponse, type ChartState } from './chartState'
+import { hasChartData, type ChartResponse, type ChartState } from './chartStateCore'
 import {
   donutCentreOf,
   donutSeries,
@@ -51,6 +51,17 @@ import {
   type PatternSpec,
 } from './patterns'
 import { CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
+import { useTextMeasure, type TextMeasure } from './textMeasure'
+import {
+  fitDonut,
+  SLICE_LABEL_FONT_SIZE,
+  SLICE_LABEL_OFFSET,
+  sliceArcLabel,
+  sliceMidAngles,
+  DONUT_TIP_SIDES,
+  type DonutFit,
+  type DonutPlotArea,
+} from './donutFit'
 
 /** How a non-status slice is drawn. Status slices always use their own encoding. */
 export interface SliceStyle {
@@ -94,6 +105,49 @@ export interface DonutPlotProps {
   styleOf?: (slice: DonutSlice, index: number) => SliceStyle
   /** What a slice's value is called in its tooltip ("Executions", "Failures"). */
   valueLabel?: string
+}
+
+/**
+ * Reports the Recharts plot area (the chart less its margin and its legend)
+ * up to the donut, which fits its ring into it. Draws nothing.
+ */
+function PlotAreaProbe({ onPlot }: { onPlot: (plot: DonutPlotArea | null) => void }) {
+  const area = usePlotArea()
+  const width = area?.width ?? 0
+  const height = area?.height ?? 0
+  useEffect(() => {
+    onPlot(width > 0 && height > 0 ? { width, height } : null)
+  }, [width, height, onPlot])
+  return null
+}
+
+/** `fitDonut` for a model: the labelled slices' angles, their labels measured. */
+function fitDonutFor(
+  model: DonutModel,
+  options: {
+    plot: DonutPlotArea | null
+    outerRadius: number
+    innerRadius: number
+    paddingAngle: number
+    showSliceLabels: boolean
+    measure: TextMeasure | null
+  },
+): DonutFit {
+  const { plot, outerRadius, innerRadius, paddingAngle, showSliceLabels, measure } = options
+  const mids = sliceMidAngles(
+    model.slices.map((slice) => slice.arc),
+    paddingAngle,
+  )
+  const labelled = showSliceLabels
+    ? model.slices.map((slice, index) => ({ slice, mid: mids[index] })).filter(({ slice }) => !slice.tiny)
+    : []
+  return fitDonut({
+    plot,
+    outerRadius,
+    innerRadius,
+    midAngles: labelled.map(({ mid }) => mid),
+    labelWidths: measure ? labelled.map(({ slice }) => measure(sliceArcLabel(slice), SLICE_LABEL_FONT_SIZE)) : null,
+  })
 }
 
 interface TooltipEntry {
@@ -144,7 +198,13 @@ export function DonutTooltip({
   valueLabel?: string
 }) {
   const slice = active ? payload?.[0]?.payload?.slice : undefined
-  return <PinnedTip content={slice ? donutTipContent(slice, total ?? null, valueLabel) : null} mark={ringOf} />
+  return (
+    <PinnedTip
+      content={slice ? donutTipContent(slice, total ?? null, valueLabel) : null}
+      mark={ringOf}
+      sides={DONUT_TIP_SIDES}
+    />
+  )
 }
 
 /** The donut itself. Pure: it draws the model it is given and fetches nothing. */
@@ -171,6 +231,18 @@ export function DonutPlot({
   // A ring that is not one whole (no centre total) states no sample for its slices.
   const total = showCentreTotal ? model.total : null
 
+  // The ring is fitted to the plot area Recharts leaves it, its labels measured (`fitDonut`).
+  const [measureRef, measure] = useTextMeasure<HTMLDivElement>()
+  const [plot, setPlot] = useState<DonutPlotArea | null>(null)
+  const onPlot = useCallback((next: DonutPlotArea | null) => {
+    setPlot((prev) => (prev?.width === next?.width && prev?.height === next?.height ? prev : next))
+  }, [])
+  const fit = useMemo(
+    () => fitDonutFor(model, { plot, outerRadius, innerRadius, paddingAngle, showSliceLabels, measure }),
+    [model, plot, outerRadius, innerRadius, paddingAngle, showSliceLabels, measure],
+  )
+  const labelsDrawn = showSliceLabels && fit.sliceLabels
+
   // Every slice, in drawn order, as the keyboard cursor walks them — in the
   // SAME content the pointer's tooltip shows (VIZ-601).
   const cursorPoints = useMemo<ChartCursorPoint[]>(
@@ -191,15 +263,16 @@ export function DonutPlot({
       const fill = patternFill(id)
       entries.push({
         key: slice.key,
-        // A slice too small to carry its own label is named here instead.
-        label: slice.tiny ? sliceLabel(slice) : slice.label,
+        // A slice too small to carry its own label is named here instead, and
+        // so is every slice of a ring too small to carry labels beside it.
+        label: slice.tiny || (showSliceLabels && !fit.sliceLabels) ? sliceLabel(slice) : slice.label,
         status: slice.status,
         fill,
       })
       return { name: slice.label, arc: slice.arc, fill, slice }
     })
     return { specs: patternSpecs, rows: data, legendEntries: entries }
-  }, [model, prefix, styleOf])
+  }, [model, prefix, styleOf, showSliceLabels, fit.sliceLabels])
 
   if (model.empty) {
     return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">{emptyText}</p>
@@ -214,14 +287,14 @@ export function DonutPlot({
     index?: number
   }): ReactNode => {
     const slice = model.slices[props.index ?? -1]
-    if (!slice || slice.tiny || !showSliceLabels) {
+    if (!slice || slice.tiny || !labelsDrawn) {
       // A valid element, NOT null. Returning null makes Recharts fall through
       // to its own default pie label, which draws an empty `<text>` on the arc
       // — a node with a position, a name and nothing to say.
       return <g data-donut-slice-label-omitted={slice?.key ?? ''} />
     }
     const radians = -((props.midAngle ?? 0) * Math.PI) / 180
-    const radius = (props.outerRadius ?? outerRadius) + 14
+    const radius = (props.outerRadius ?? fit.outerRadius) + SLICE_LABEL_OFFSET
     const x = (props.cx ?? 0) + radius * Math.cos(radians)
     const y = (props.cy ?? 0) + radius * Math.sin(radians)
     return (
@@ -230,11 +303,11 @@ export function DonutPlot({
         x={x}
         y={y}
         fill={CHART_VARS.text}
-        fontSize={11}
+        fontSize={SLICE_LABEL_FONT_SIZE}
         textAnchor={x > (props.cx ?? 0) ? 'start' : 'end'}
         dominantBaseline="central"
       >
-        {`${formatNumber(slice.value)} (${formatPercent(slice.percent)})`}
+        {sliceArcLabel(slice)}
       </text>
     )
   }
@@ -268,6 +341,7 @@ export function DonutPlot({
       data-donut-full-ring={model.fullRing ? 'true' : 'false'}
       data-donut-legend-only={model.legendOnly.length}
       className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      ref={measureRef}
       {...cursor.surfaceProps}
     >
       <ChartResponsive height={height}>
@@ -284,8 +358,8 @@ export function DonutPlot({
             data={rows}
             cx="50%"
             cy="50%"
-            innerRadius={innerRadius}
-            outerRadius={outerRadius}
+            innerRadius={fit.innerRadius}
+            outerRadius={fit.outerRadius}
             paddingAngle={paddingAngle}
             // Recharts outlines every sector in white by default. On a full
             // ring the sector's two radial edges meet at 3 o'clock, and that
@@ -299,8 +373,13 @@ export function DonutPlot({
             dataKey="arc"
             nameKey="name"
             isAnimationActive={animate}
-            label={showSliceLabels ? renderSliceLabel : undefined}
+            label={labelsDrawn ? renderSliceLabel : undefined}
             labelLine={false}
+            // Recharts 3 makes the sectors' `g` a Tab stop by default, whatever
+            // `accessibilityLayer` says: a second, role-less stop after the
+            // chart, named only by the centre text run together. The donut's
+            // one stop is the cursor surface above (Wave 2.6 R2-12).
+            rootTabIndex={-1}
           >
             {rows.map((row) => (
               <Cell key={row.slice.key} fill={row.fill} />
@@ -316,6 +395,7 @@ export function DonutPlot({
             {...cursor.tipProps}
           />
           <Legend content={() => <ChartLegend entries={legendEntries} />} />
+          <PlotAreaProbe onPlot={onPlot} />
         </PieChart>
       </ChartResponsive>
       {cursor.readout}
@@ -344,6 +424,8 @@ export interface DonutChartProps {
   scopeLabel?: string
   onClearFilters?: () => void
   toolbar?: ReactNode
+  /** Extra footer content inside the frame, e.g. a dated caption (Wave 2.6 R2-21). */
+  footer?: ReactNode
   /** The slices. The default is the status breakdown (VIZ-401). */
   modelOf?: (series: ChartSeries) => DonutModel
   /** What the slices ARE, for the table's first column and the summary. */
@@ -365,6 +447,7 @@ export default function DonutChart({
   scopeLabel,
   onClearFilters,
   toolbar,
+  footer,
   modelOf,
   dimension = 'Status',
   axisLabel = 'Executions',
@@ -396,6 +479,7 @@ export default function DonutChart({
       height={height}
       onClearFilters={onClearFilters}
       toolbar={toolbar}
+      footer={footer}
       data-testid={testId}
       tableExtras={
         model && !model.empty ? (
