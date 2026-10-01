@@ -17,9 +17,9 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { cloneElement, isValidElement, type ReactElement } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import SuiteDetailPage from './SuiteDetailPage'
+import SuiteDetailPage, { SUITE_CHART_HEIGHT, SUITE_PASS_RATE_PENDING_HEIGHT } from './SuiteDetailPage'
 
 const mockGetSuiteTrend = vi.fn()
 
@@ -53,6 +53,14 @@ vi.mock('@/hooks/useMetrics', () => ({
     isLoading: false,
     error: null,
   })),
+}))
+
+// The one catalogue seam (K1), OFF unless a test turns it on.
+// `pending`: the status lookup has not answered yet (`useCatalogueRolloutStatus` is undefined).
+const rollout = vi.hoisted(() => ({ on: false, pending: false }))
+vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
+  useCatalogueRollout: () => !rollout.pending && rollout.on,
+  useCatalogueRolloutStatus: () => (rollout.pending ? undefined : rollout.on),
 }))
 
 vi.mock('@/hooks/useSuites', () => ({
@@ -226,5 +234,107 @@ describe('SuiteDetailPage — regression', () => {
       // Third positional arg is ``days``.
       expect(mockGetSuiteTrend).toHaveBeenCalledWith('Auth', expect.anything(), 90)
     })
+  })
+})
+
+// ── VIZ-106 / VIZ-408 (Wave 2.6) ────────────────────────────────────────────
+//
+// Both frames rise to the 240 px floor whatever the flag says (the one
+// intended change to this page's baselines). With the catalogue flag on, the
+// pass-rate frame gains the trend overlays and the zoom — and only that frame,
+// and only then: flag off it is the Wave 2.5 frame, with no catalogue section.
+
+describe('SuiteDetailPage — Wave 2.6', () => {
+  const bodyHeight = (frame: HTMLElement) =>
+    (frame.querySelector('[data-chart-body]') as HTMLElement).style.minHeight
+
+  beforeEach(() => {
+    mockGetSuiteTrend.mockReset()
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
+  })
+  afterEach(() => {
+    rollout.on = false
+    rollout.pending = false
+  })
+
+  async function frames() {
+    const history = frameOf(await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' }))
+    const passRate = frameOf(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' }))
+    return { history, passRate }
+  }
+
+  it.each([false, true])('both frames are 240 px tall (flag %s)', async (on) => {
+    rollout.on = on
+    renderPage()
+    const { history, passRate } = await frames()
+    expect(SUITE_CHART_HEIGHT).toBe(240)
+    expect(bodyHeight(history)).toBe('240px')
+    expect(bodyHeight(passRate)).toBe('240px')
+  })
+
+  it('flag off: no catalogue section, no overlays, no zoom', async () => {
+    renderPage()
+    const { history, passRate } = await frames()
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+    for (const frame of [history, passRate]) {
+      expect(frame.querySelector('[data-trend-controls]')).toBeNull()
+      expect(frame.querySelector('[data-chart-brush]')).toBeNull()
+    }
+  })
+
+  it('flag on: the pass-rate frame gains the overlays and the zoom, inside its catalogue section; the run history does not', async () => {
+    rollout.on = true
+    renderPage()
+    const { history, passRate } = await frames()
+    const section = document.querySelector('[data-catalogue-section="suite-pass-rate"]') as HTMLElement
+    expect(section).toContainElement(passRate)
+    expect(document.querySelectorAll('[data-catalogue-section]')).toHaveLength(1)
+    expect(passRate.querySelector('[data-trend-controls]')).toBeTruthy()
+    expect(passRate.querySelector('[data-chart-brush]')).toBeTruthy()
+    // No "apply as window": this page's window is its own ?days.
+    expect(within(passRate).queryByRole('button', { name: /apply/i })).toBeNull()
+    expect(history.querySelector('[data-trend-controls]')).toBeNull()
+    expect(history.querySelector('[data-chart-brush]')).toBeNull()
+  })
+
+  // R1-6: until the flag answers, the pass-rate slot holds a same-height
+  // placeholder instead of drawing the bare frame and swapping it for the
+  // catalogue one (a remount, a re-animation, and a taller frame pushing the
+  // test-case table down) when the answer comes back after the suite data.
+  it('while the flag lookup is in flight: the pass-rate slot holds its height, no frame is drawn yet', async () => {
+    rollout.pending = true
+    renderPage()
+    await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' })
+    const pending = document.querySelector('[data-suite-pass-rate-pending]') as HTMLElement
+    expect(pending).not.toBeNull()
+    expect(pending).toHaveAttribute('aria-busy', 'true')
+    expect(pending.style.minHeight).toBe(`${SUITE_PASS_RATE_PENDING_HEIGHT}px`)
+    expect(SUITE_PASS_RATE_PENDING_HEIGHT).toBeGreaterThan(SUITE_CHART_HEIGHT)
+    expect(screen.queryByRole('heading', { name: 'Pass rate trend — last 30 days' })).toBeNull()
+    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
+  })
+
+  it.each([false, true])('once the flag answers (%s), the slot is the frame and the placeholder is gone', async (on) => {
+    rollout.on = on
+    renderPage()
+    const { passRate } = await frames()
+    expect(document.querySelector('[data-suite-pass-rate-pending]')).toBeNull()
+    expect(passRate.closest('[data-catalogue-section="suite-pass-rate"]') !== null).toBe(on)
+  })
+
+  it('the header actions wrap on a narrow screen', async () => {
+    renderPage()
+    await frames()
+    const periods = screen.getByRole('button', { name: '7d' }).parentElement?.parentElement as HTMLElement
+    expect(periods.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'flex-wrap']))
+  })
+
+  it('the KPI values sit on the stat token (24 px, as the text-2xl they replace)', async () => {
+    renderPage()
+    await frames()
+    const value = screen.getByText('Unique Tests').parentElement?.nextElementSibling as HTMLElement
+    expect(value.textContent).toBe('12')
+    expect(value.className).toContain('text-[length:var(--text-stat-lg)]')
+    expect(value.className).not.toMatch(/\btext-2xl\b/)
   })
 })
