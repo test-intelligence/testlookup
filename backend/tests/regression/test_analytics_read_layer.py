@@ -212,18 +212,40 @@ def test_render_is_byte_identical_to_fastapis_own_json():
 # ── statement timeout ───────────────────────────────────────────────────────
 
 
+class _FakeSavepoint:
+    """``begin_nested()``: SAVEPOINT on enter; RELEASE, or ROLLBACK TO it when
+    the block raised (the exception still propagates, as SQLAlchemy's does)."""
+
+    def __init__(self, session: "_FakeSession") -> None:
+        self._session = session
+
+    async def __aenter__(self):
+        self._session.events.append("SAVEPOINT")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self._session.events.append("ROLLBACK TO SAVEPOINT" if exc_type else "RELEASE SAVEPOINT")
+        return False
+
+
 class _FakeSession:
     def __init__(self, dialect: str = "postgresql", raises: Optional[Exception] = None) -> None:
         self.bind = SimpleNamespace(dialect=SimpleNamespace(name=dialect))
         self.statements: list[str] = []
+        #: The bound parameters of each statement, beside ``statements``.
+        self.params: list[Optional[dict]] = []
         #: Every statement AND every transaction boundary, in order, so a test
         #: can prove the settings were not split across two transactions.
         self.events: list[str] = []
         self.rolled_back = False
         self._raises = raises
 
+    def begin_nested(self) -> _FakeSavepoint:
+        return _FakeSavepoint(self)
+
     async def execute(self, statement, params=None):
         self.statements.append(str(statement))
+        self.params.append(params)
         self.events.append(str(statement))
         if self._raises is not None:
             raise self._raises
@@ -237,13 +259,21 @@ class _FakeSession:
         self.events.append("ROLLBACK")
 
 
-#: What every analytics read's transaction is opened with, in order: the guard
-#: first, then the two planner settings measured in Wave 2.6.
+#: What every analytics read's transaction is opened with: ONE statement, the
+#: guard first, then the two planner settings measured in Wave 2.6, each
+#: ``set_config(..., is_local => true)`` (``SET LOCAL``) and bound, not
+#: interpolated (R1-9).
 _READ_SETTINGS = [
-    "SET LOCAL statement_timeout = 5000",
-    "SET LOCAL jit = off",
-    "SET LOCAL plan_cache_mode = force_custom_plan",
+    "SELECT set_config('statement_timeout', :timeout, true), "
+    "set_config(:name_0, :value_0, true), set_config(:name_1, :value_1, true)",
 ]
+_READ_PARAMS = {
+    "timeout": "5000",
+    "name_0": "jit",
+    "value_0": "off",
+    "name_1": "plan_cache_mode",
+    "value_1": "force_custom_plan",
+}
 
 
 class TestStatementTimeout:
@@ -255,28 +285,31 @@ class TestStatementTimeout:
         db = _FakeSession()
         assert await layer.apply_statement_timeout(db, 5000) is True
         assert db.statements == _READ_SETTINGS
+        assert db.params == [_READ_PARAMS]
+        # ``is_local => true`` on every call: ``false`` is a session-level SET.
+        assert db.statements[0].count(", true)") == 3
+        assert "false" not in db.statements[0]
         assert not any(
-            s.startswith("SET statement_timeout") for s in db.statements
+            s.startswith("SET ") for s in db.statements
         ), "a session-level SET leaks to the next user of this connection"
 
     @pytest.mark.asyncio
-    async def test_exactly_three_set_locals_in_one_transaction(self):
+    async def test_the_three_settings_are_one_statement_in_one_savepoint(self):
         """Wave 2.6: ``jit = off`` and ``plan_cache_mode = force_custom_plan``
         ride the timeout's transaction. Session-level, either would follow the
         pooled connection into ingestion; committed between, the read after
         the commit would run with none of them. ``jit`` on cost 758 ms of
-        compilation on one chart; a generic plan cost another 330 ms."""
+        compilation on one chart; a generic plan cost another 330 ms. R1-9:
+        one statement (all or nothing), inside a savepoint that is RELEASED on
+        success -- a released savepoint keeps its LOCAL settings for the
+        enclosing transaction; a COMMIT would end them."""
         db = _FakeSession()
         assert await layer.apply_statement_timeout(db, 5000) is True
-        assert db.events == _READ_SETTINGS, (
-            "the three settings must be exactly these, LOCAL, with no "
-            f"transaction boundary among them: {db.events!r}"
+        assert db.events == ["SAVEPOINT", *_READ_SETTINGS, "RELEASE SAVEPOINT"], (
+            "the settings must be exactly this one statement, with no "
+            f"transaction boundary but its own savepoint: {db.events!r}"
         )
-        assert all(s.startswith("SET LOCAL ") for s in db.statements)
-        assert not any(
-            s.startswith(("SET jit", "SET plan_cache_mode", "SET SESSION"))
-            for s in db.statements
-        ), "a session-level planner setting leaks to ingestion on the same connection"
+        assert "COMMIT" not in db.events and not db.rolled_back
 
     @pytest.mark.asyncio
     async def test_the_planner_settings_are_not_applied_without_the_timeout(self):
@@ -302,8 +335,15 @@ class TestStatementTimeout:
 
     @pytest.mark.asyncio
     async def test_a_read_is_not_500d_by_its_own_guard(self):
+        """R1-9: a refused setting is rolled back to the savepoint, NOT the
+        whole transaction: on PostgreSQL the transaction would otherwise stay
+        aborted and the read after it 500 with 25P02, and a full rollback would
+        expire every ORM object the request loaded (real-PG proof:
+        ``test_a_refused_setting_leaves_the_callers_transaction_usable``)."""
         db = _FakeSession(raises=RuntimeError("no"))
         assert await layer.apply_statement_timeout(db, 5000) is False
+        assert db.events == ["SAVEPOINT", *_READ_SETTINGS, "ROLLBACK TO SAVEPOINT"]
+        assert not db.rolled_back, "the caller's transaction is not this guard's to roll back"
 
     @pytest.mark.parametrize("attribute", ["sqlstate", "pgcode"])
     def test_57014_is_recognised_through_the_driver_wrapper(self, attribute):

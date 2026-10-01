@@ -871,9 +871,28 @@ _ANALYTICS_PLANNER_SETTINGS = (
 )
 
 
+def _read_settings_statement(timeout_ms: int) -> tuple[Any, dict[str, str]]:
+    """The timeout and the planner settings as ONE bound statement.
+
+    ``set_config(name, value, is_local => true)`` is ``SET LOCAL`` as a function:
+    transaction-scoped, and -- unlike ``SET`` -- it takes bind parameters, so
+    nothing is interpolated. One statement is one round trip instead of three,
+    and all-or-nothing: the server never holds the planner settings without
+    the timeout, or the reverse.
+    """
+    calls = ["set_config('statement_timeout', :timeout, true)"]
+    params = {"timeout": str(int(timeout_ms))}
+    for i, (name, value) in enumerate(_ANALYTICS_PLANNER_SETTINGS):
+        calls.append(f"set_config(:name_{i}, :value_{i}, true)")
+        params[f"name_{i}"] = name
+        params[f"value_{i}"] = value
+    return text("SELECT " + ", ".join(calls)), params
+
+
 async def apply_statement_timeout(db: Optional[AsyncSession], timeout_ms: int) -> bool:
-    """``SET LOCAL statement_timeout`` inside the request's transaction, and
-    the planner settings of :data:`_ANALYTICS_PLANNER_SETTINGS` beside it.
+    """``statement_timeout`` for the request's transaction, and the planner
+    settings of :data:`_ANALYTICS_PLANNER_SETTINGS` beside it, transaction-
+    local (``set_config(..., true)``, i.e. ``SET LOCAL``).
 
     LOCAL, never SET: a session-level ``SET`` survives the COMMIT and rides the
     pooled connection into whatever runs next on it -- an ingestion batch would
@@ -885,27 +904,33 @@ async def apply_statement_timeout(db: Optional[AsyncSession], timeout_ms: int) -
     them for an ingestion batch or a write. Only :func:`open_read` and
     :func:`_serve` call this, and both serve ``@analytics_read`` GETs.
 
-    The value is interpolated because PostgreSQL's ``SET`` takes no bind
-    parameters; ``int()`` is what makes that safe. The planner values are
-    constants of this module.
+    The statement runs inside a SAVEPOINT, which is what makes the failure path
+    really fail open (R1-9). On PostgreSQL a refused setting aborts the whole
+    transaction, so without it the read that followed died with 25P02
+    (``InFailedSQLTransaction``): a 500, not an unguarded read. Rolling back
+    to the savepoint leaves the caller's transaction, and what it already did
+    in it, usable. A full ``rollback()`` would also do, but it expires every
+    ORM object the request has loaded (the current user among them), and the
+    next attribute read would lazy-load outside the event loop. A savepoint
+    released on success keeps its ``SET LOCAL`` for the enclosing transaction;
+    SAVEPOINT + one statement + RELEASE is the same three round trips the
+    three ``SET LOCAL`` statements were.
     """
     if db is None or timeout_ms <= 0:
         return False
     if not _dialect_of(db).startswith("postgres"):
         return False
+    statement, params = _read_settings_statement(timeout_ms)
     try:
-        # The timeout first: it is the guard, the planner settings are only
-        # speed. A refusal of either is counted below under the timeout's
-        # reason: on PostgreSQL a failed SET aborts the transaction, and the
-        # timeout set a moment earlier goes with it.
-        await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
-        for name, value in _ANALYTICS_PLANNER_SETTINGS:
-            await db.execute(text(f"SET LOCAL {name} = {value}"))
+        async with db.begin_nested():
+            await db.execute(statement, params)
     except Exception as exc:  # noqa: BLE001 - a read must not 500 over its own guard
         # Failing open is right (a guard must not be the thing that breaks the
         # read) but it is not free: the query that follows runs under the
         # server default, which on this route means "until it finishes". A log
-        # line alone pages nobody, so it is counted.
+        # line alone pages nobody, so it is counted. One statement, so a
+        # refused planner setting means no timeout either: counted under the
+        # timeout's reason.
         count_degraded("statement_timeout_not_applied")
         logger.warning("analytics_statement_timeout_not_applied", error=str(exc))
         return False
