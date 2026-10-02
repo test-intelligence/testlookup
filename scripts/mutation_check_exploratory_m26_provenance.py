@@ -92,6 +92,24 @@ DEPLOY_MUTATIONS = (
         '[ -n "$component" ] || return 1',
         'true # [ -n "$component" ] || return 1',
     ),
+    # 2026-10-02: finished pods (a completed Job, an evicted replica) are
+    # skipped; every live pod, Pending included, must still match.
+    (
+        'case "$phase" in Succeeded|Failed) continue ;; esac',
+        'true # case "$phase" in Succeeded|Failed) continue ;; esac',
+    ),
+    (
+        'case "$phase" in Succeeded|Failed) continue ;; esac',
+        'case "$phase" in Succeeded|Failed|Pending) continue ;; esac',
+    ),
+    (
+        'until verify_deployment_image "$@"; do',
+        'until verify_deployment_image "$@" || true; do',
+    ),
+    (
+        'wait_for_deployment_image "$deployment" "$expected_image" "$digest" \\',
+        'verify_deployment_image "$deployment" "$expected_image" "$digest" \\',
+    ),
 )
 
 MIGRATION_MUTATIONS = (

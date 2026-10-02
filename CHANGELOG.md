@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased - homelab deploy: image-authority check tolerates finished and briefly un-Ready pods; the fan-out cutover stops repeating
+
+The 2026-10-02 homelab deploy of main 03983f12 stopped at Step 5b with
+`Image authority mismatch for testlookup-backend`. Steps 6-11 never ran. By the
+time anyone looked, both backend pods were Ready on exactly the pushed digest.
+The completed migration Job pod was blamed, but the check's selector
+(`app.kubernetes.io/component=api`) already excludes it: the Job is labelled
+`component: migration`. So the pod that failed was gone by then. The error
+did not say which pod it was, which is why the cause was guessed.
+
+- `verify_deployment_image` skips pods in phase `Succeeded` or `Failed` (a
+  completed Job pod, or an evicted or node-shutdown replica). It does not rely
+  on labels for this. Every live pod with the Deployment's labels still has to
+  be Ready on the expected image and digest, whatever owns it: the Service
+  routes to it. Pending pods count.
+- Step 5b calls the new `wait_for_deployment_image`. It re-runs the check for
+  up to `IMAGE_AUTHORITY_TIMEOUT_SECONDS` (default 120), every 5 s. After the
+  rollouts a correct pod can be un-Ready for a moment: an HPA scale-up, or a
+  readiness probe that flaps while nine Deployments restart. A pod that stays
+  wrong still fails.
+- On failure the error names the pod, with its phase, readiness, image and
+  imageID (`IMAGE_AUTHORITY_FAILURE`).
+- Separate bug in the same log. `scripts/prepare-live-fanout-cutover.sh` read
+  pod protocols with a bare `app=testlookup-backend` selector, so it also saw
+  the migration Job's pod, which has no `live-fanout-protocol` label. Every
+  deploy runs that Job just before the cutover, so the "one-time" cutover ran on
+  every deploy since 2026-09-09: it deleted the HPA and scaled the API to zero.
+  The probe now uses the same serving-pods selector as its wait.
+- Tests: `test_homelab_build_authority.py` adds cases for finished pods,
+  running strays, Pending pods, malformed rows and the retry window (`sleep` is
+  stubbed to move bash's `SECONDS` forward). `test_live_fanout_cutover.py` runs
+  the cutover against a fake kubectl that returns the migration pod for a bare
+  selector. Eight hand mutations were all killed. Four of them are now in
+  `scripts/mutation_check_exploratory_m26_provenance.py`.
+
 ## Unreleased - chart-data tie-breaks are code-point ordered
 
 `GET /analytics/chart-data` broke ranking ties by the database's default
