@@ -92,6 +92,8 @@ def test_the_enums_are_exactly_the_story_s() -> None:
         "retried_tests", "pass_rate", "failure_rate", "flaky_tests",
         "unique_tests", "run_count", "duration_p50", "duration_p95",
         "duration_total",
+        # Wave 3 (VIZ-208, OD-20): failed + broken, what every drill level charts.
+        "failures",
     }
     assert set(svc.DIMENSIONS) == {
         "day", "week", "project", "release", "suite", "status",
@@ -991,3 +993,40 @@ def test_the_definitions_state_the_tie_break_and_the_merged_buckets() -> None:
         "failure_category's absent bucket and an ingested 'Unknown' merge"
     )
     assert "RECOMPUTED" in defs["top_n"]
+
+
+# ── Wave 3: the ``failures`` metric (VIZ-208, OD-20) ────────────────────────
+
+
+def test_failures_counts_failed_and_broken_on_execution_rows() -> None:
+    """Both verdicts that mean "this test did not pass": a drill from
+    "Failures by suite" that dropped BROKEN would hide every crashed test."""
+    sql, _ = svc.build_statement(_spec("failures", ("suite",)), _scope())
+    assert "COUNT(*) FILTER (WHERE tc.status IN ('FAILED', 'BROKEN'))" in sql
+    assert svc.grain_for(_spec("failures", ("suite",)), _scope()) == svc.GRAIN_ROW
+
+
+def test_failures_sums_both_aggregates_on_the_run_grain() -> None:
+    sql, _ = svc.build_statement(_spec("failures", ("day",)), _scope())
+    assert svc.grain_for(_spec("failures", ("day",)), _scope()) == svc.GRAIN_RUN
+    assert "COALESCE(SUM(tr.failed_tests + tr.broken_tests), 0)" in sql
+
+
+def test_failures_is_additive_so_other_is_a_sum_and_n_is_the_executions() -> None:
+    spec = svc.parse_chart_spec("failures", ["day", "suite"], 1, scope=_scope())
+    cells = [
+        _cell("2026-09-21", "kept", failed=9, broken=1, executions=40, sample=40, value=10),
+        _cell("2026-09-21", "a", failed=2, broken=1, executions=5, sample=5, value=3),
+        _cell("2026-09-21", "b", failed=0, broken=4, executions=6, sample=6, value=4),
+    ]
+    payload = svc.assemble(spec, cells, buckets=["2026-09-21"], x_type="time")
+    kept = next(s for s in payload["series"] if s["key"] == "kept")["points"][0]
+    other = next(s for s in payload["series"] if s["key"] == svc.OTHER_KEY)["points"][0]
+    assert (kept["y"], kept["n"]) == (10, 40)
+    assert (other["y"], other["n"], other["measured"]) == (7, 11, True)
+    validate_contract("chart_series", payload)
+
+
+def test_failures_is_named_in_the_definitions() -> None:
+    defs = svc.definitions(_spec("failures", ("day",)), svc.GRAIN_RUN, FROZEN)
+    assert "failed + broken" in defs["failures"]

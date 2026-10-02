@@ -352,6 +352,49 @@ SCOPED_IDS: frozenset[str] = frozenset({
     "defect_ids", "case_ids", "canonical_ids", "cluster_ids",
 })
 
+#: Drill selectors (VIZ-208, ``/analytics/chart-data/rows``): ``bucket_<dim>``
+#: carries the value of ONE mark, and for the ``project``, ``release`` and
+#: ``suite`` dimensions that value is a tenant-owned id. Nothing above matched
+#: the prefix, so the scan could not see them (R1-3): a refactor that dropped
+#: the tenant fragment from a selector drill would have stayed green.
+SELECTOR_PREFIX = "bucket_"
+
+
+def _selector_scoped_id(name: str) -> str | None:
+    """The SCOPED_IDS entry a ``bucket_<dim>`` selector carries, or ``None``."""
+    if not name.startswith(SELECTOR_PREFIX):
+        return None
+    base = name[len(SELECTOR_PREFIX):]
+    return next(
+        (
+            candidate
+            for candidate in (base, f"{base}_id", f"{base}_name")
+            if candidate in SCOPED_IDS
+        ),
+        None,
+    )
+
+
+def _is_scoped_name(name: str) -> bool:
+    return name in SCOPED_IDS or _selector_scoped_id(name) is not None
+
+
+#: Routes whose tenant-owned SELECTORS are bounded by the tenant fragment, not
+#: authorised one by one: ``analytics_scope`` authorises the scope (project,
+#: releases, suites) and the statement builder named here ANDs
+#: ``analytics_service._tenant_filter`` into every statement, so a selector
+#: naming another tenant's project or release selects nothing (no 403, no row;
+#: PG proof: ``test_chart_rows_postgres.py::
+#: test_a_member_s_drill_on_a_foreign_release_selects_nothing``). The evidence
+#: is read from the builder's AST each run: delete its tenant call and the
+#: route is an offender again. Selector ids only; any other id still needs
+#: its own check.
+TENANT_BOUNDED_SELECTORS: dict[tuple[str, str], tuple[str, str]] = {
+    ("GET", "/api/v1/analytics/chart-data/rows"): (
+        "app.services.chart_rows_service", "build_rows_statement",
+    ),
+}
+
 #: Any of these CALLED by a handler — or by a function it calls — is accepted as
 #: evidence that the caller's access to the named object was verified.
 #: Membership calls, ownership filters and project-bound API-key contexts all
@@ -443,11 +486,11 @@ def _body_model(field) -> object | None:
 def _scoped_ids_of(fields) -> set[str]:
     found: set[str] = set()
     for field in fields:
-        if field.name in SCOPED_IDS:
+        if _is_scoped_name(field.name):
             found.add(field.name)
         model_fields = getattr(_body_model(field), "model_fields", None)
         if model_fields:
-            found |= {n for n in model_fields if n in SCOPED_IDS}
+            found |= {n for n in model_fields if _is_scoped_name(n)}
     return found
 
 
@@ -772,7 +815,34 @@ def _route_is_unscoped_nonpath(route: APIRoute) -> bool:
     # A real analytics_scope sub-dependency is evidence for the ids IT
     # declares; anything the route takes besides those still needs a check.
     residual, has_scope = _ids_outside_analytics_scope(route)
+    if has_scope and _route_selectors_are_tenant_bounded(route):
+        residual = {name for name in residual if _selector_scoped_id(name) is None}
     return not (has_scope and not residual)
+
+
+def _builder_applies_the_tenant_filter(module_name: str, func_name: str) -> bool:
+    """``module.func`` CALLS the real ``analytics_service._tenant_filter``.
+
+    Read from the AST (a mention in a comment or a docstring is not a call),
+    and the called name must resolve, in the builder's own globals, to the
+    real helper: a local function spelled ``tenant_filter_sql`` that filters
+    nothing is not evidence.
+    """
+    from app.services.analytics_service import _tenant_filter
+
+    func = getattr(importlib.import_module(module_name), func_name, None)
+    if func is None:
+        return False
+    namespace = getattr(func, "__globals__", {})
+    return any(namespace.get(name) is _tenant_filter for name in _function_names(func))
+
+
+def _route_selectors_are_tenant_bounded(route: APIRoute) -> bool:
+    for method in route.methods or ():
+        builder = TENANT_BOUNDED_SELECTORS.get((method, route.path))
+        if builder is not None:
+            return _builder_applies_the_tenant_filter(*builder)
+    return False
 
 
 def _list_unscoped_nonpath_routes(routes=None) -> list[tuple[str, str]]:
@@ -878,6 +948,78 @@ def test_analytics_scope_really_authorises_what_it_declares() -> None:
     assert "resolve_project_scope" in names and "get_accessible_project_ids" in names, names
     assert "resolve_release_query_scopes" in names, names
     assert "get_accessible_project_ids" in _function_names(deps.resolve_release_query_scopes)
+
+
+def _fixture_builder_without_tenant(params: dict) -> str:
+    """Mentions tenant_filter_sql(params, ...) here, and calls nothing."""
+    return "AND TRUE"
+
+
+def tenant_filter_sql(*_args, **_kwargs) -> str:
+    """A look-alike of the real helper's import alias: filters nothing."""
+    return ""
+
+
+def _fixture_builder_with_look_alike(params: dict) -> str:
+    return tenant_filter_sql(params, project_id=None, allowed_project_ids=None)
+
+
+def _fixture_selector_routes():
+    from fastapi import APIRouter
+
+    from app.services.analytics_scope import ScopePolicy, analytics_scope
+
+    real = analytics_scope(ScopePolicy())
+
+    async def selector_handler(bucket_project: str | None = None, scope=Depends(real)):
+        return bucket_project, scope
+
+    async def day_selector_handler(bucket_day: str | None = None, scope=Depends(real)):
+        return bucket_day, scope
+
+    router = APIRouter()
+    router.add_api_route("/api/v1/_fixture/selector", selector_handler)
+    router.add_api_route("/api/v1/_fixture/day-selector", day_selector_handler)
+    return {route.path.rsplit("/", 1)[1]: route for route in router.routes}
+
+
+def test_bucket_selectors_of_scoped_ids_are_seen() -> None:
+    """Guards the guard (R1-3): a drill selector carrying a project, release
+    or suite is a tenant-owned id like the plain parameter."""
+    assert _selector_scoped_id("bucket_project") == "project_id"
+    assert _selector_scoped_id("bucket_release") == "release_id"
+    assert _selector_scoped_id("bucket_suite") == "suite_name"
+    for name in ("bucket_day", "bucket_status", "bucket_test", "project_id", "bucketproject"):
+        assert _selector_scoped_id(name) is None, name
+    rows = next(r for r in _collect_api_routes() if r.path == "/api/v1/analytics/chart-data/rows")
+    assert {"bucket_project", "bucket_release", "bucket_suite"} <= _non_path_scoped_ids(rows)
+    routes = _fixture_selector_routes()
+    assert _route_is_unscoped_nonpath(routes["selector"]), (
+        "a bucket_project selector next to a real analytics_scope passed unchecked"
+    )
+    assert not _route_is_unscoped_nonpath(routes["day-selector"])
+
+
+def test_a_tenant_bounded_selector_is_vouched_for_only_by_the_tenant_filter() -> None:
+    """The rows route's selectors pass because its statement builder CALLS the
+    real tenant helper, read from the AST each run. A comment, or a local
+    function with the alias's name, is not that call."""
+    for (method, path), builder in TENANT_BOUNDED_SELECTORS.items():
+        route = next(
+            (r for r in _collect_api_routes() if r.path == path and method in r.methods), None
+        )
+        assert route is not None, f"stale TENANT_BOUNDED_SELECTORS entry: {method} {path}"
+        assert any(_selector_scoped_id(n) for n in _non_path_scoped_ids(route)), (
+            f"{method} {path} takes no tenant-owned selector any more: drop the entry"
+        )
+        assert _builder_applies_the_tenant_filter(*builder), (
+            f"{builder[0]}.{builder[1]} no longer ANDs the tenant fragment: a foreign "
+            f"bucket_project / bucket_release would select another tenant's rows"
+        )
+        assert not _route_is_unscoped_nonpath(route)
+    assert not _builder_applies_the_tenant_filter(__name__, "_fixture_builder_without_tenant")
+    assert not _builder_applies_the_tenant_filter(__name__, "_fixture_builder_with_look_alike")
+    assert not _builder_applies_the_tenant_filter(__name__, "_no_such_builder")
 
 
 def test_the_nonpath_scan_actually_inspects_routes() -> None:
