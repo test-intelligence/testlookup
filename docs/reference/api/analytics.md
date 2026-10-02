@@ -373,7 +373,7 @@ count, ``n`` for a rate or a duration) and the number to compare with it;
 ``meta.definitions.chart_grain`` says when the chart counted run
 aggregates, which can hold runs with no per-test rows.
 
-Source: [backend/app/routers/analytics_chart_rows.py:44](../../../backend/app/routers/analytics_chart_rows.py#L44).
+Source: [backend/app/routers/analytics_chart_rows.py:45](../../../backend/app/routers/analytics_chart_rows.py#L45).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

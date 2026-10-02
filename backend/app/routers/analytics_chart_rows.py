@@ -10,7 +10,7 @@ REAL annotations to tell a repeatable parameter (``list[str]``) from a
 single-valued one, and string annotations would make ``group_by`` refuse its
 second value.
 """
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,8 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 _ROWS = ScopePolicy(default_days=30, max_days=365)
 
 
-def _bucket(dimension: str) -> Optional[str]:
+def _bucket(dimension: str) -> Any:
+    # A Query(...) default for an Optional[str] parameter, not the value itself.
     return Query(
         None,
         description=(
