@@ -435,7 +435,9 @@ def analytics_scope(policy: ScopePolicy) -> Callable[..., Awaitable[AnalyticsSco
                 ... if policy.project_required else None,
                 description=(
                     "One project (single-valued). Omit for every project you can read."
-                    if not policy.project_required else "Project to read. Single-valued."
+                    if not policy.project_required
+                    else "Project to read. Single-valued. Required: without it the request is "
+                    "refused with 422 'missing_parameter' (All Projects is not supported here)."
                 ),
             ),
         ),

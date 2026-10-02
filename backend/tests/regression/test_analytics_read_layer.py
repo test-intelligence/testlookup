@@ -209,6 +209,63 @@ def test_render_is_byte_identical_to_fastapis_own_json():
     assert layer.render(payload).encode("utf-8") == JSONResponse(payload).body
 
 
+def _single_encode_payloads():
+    """Shapes a decorated route can return: the C2 envelope (with and without
+    ``generated_at``), values only the encoder can turn into JSON, a model, a
+    ``meta`` that is a model, a list, and a key the encoder drops."""
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from pydantic import BaseModel
+
+    class Meta(BaseModel):
+        generated_at: datetime
+        as_of: datetime
+
+    class Envelope(BaseModel):
+        kind: str
+        meta: dict
+
+    at = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    run = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    return {
+        "envelope": {"kind": "matrix", "cells": [{"x": 0, "y": 0, "value": None}],
+                     "meta": {"as_of": at, "generated_at": at, "scope": {"run": run}},
+                     "tail": Decimal("1.5")},
+        "envelope_generated_at_first": {"meta": {"generated_at": at, "as_of": at}, "a": 1},
+        "meta_without_generated_at": {"meta": {"as_of": at}, "items": [run]},
+        "no_meta": {"items": [1, 2], "total": 2},
+        "model_with_meta": Envelope(kind="tree", meta={"generated_at": at, "as_of": at}),
+        "meta_is_a_model": {"meta": Meta(generated_at=at, as_of=at), "a": "é"},
+        "list": [{"meta": {"generated_at": at}}],
+        "encoder_drops_sa_key": {"_sa_state": 1, "meta": {"generated_at": at, "x": 1}},
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_single_encode_payloads()))
+def test_one_encode_gives_the_bytes_and_etag_material_of_two(name):
+    """BE1's request 3: the miss path encodes once. The body AND the bytes
+    the ETag is computed over must be exactly what the two-pass path made,
+    or every client's cached ETag stops matching on deploy."""
+    result = _single_encode_payloads()[name]
+    body = layer.render(result)
+    assert layer.render_with_canonical(result) == (body, layer.canonical_body(result, body))
+
+
+def test_the_miss_path_encodes_the_payload_once(monkeypatch):
+    calls = []
+    real = layer.jsonable_encoder
+
+    def counting(value, *args, **kwargs):
+        calls.append(1)
+        return real(value, *args, **kwargs)
+
+    monkeypatch.setattr(layer, "jsonable_encoder", counting)
+    body, canonical = layer.render_with_canonical(_single_encode_payloads()["envelope"])
+    assert len(calls) == 1
+    assert '"generated_at"' in body and '"generated_at"' not in canonical
+
+
 # ── statement timeout ───────────────────────────────────────────────────────
 
 
@@ -450,6 +507,32 @@ class TestRateLimit:
             "/api/v1/analytics/heatmap",
         ):
             assert layer.rate_limit_for(route, None)
+
+    def test_the_wave_3_aggregate_routes_carry_the_heatmap_s_limit(self):
+        """Coverage map, failure groups and the scatter each scan a whole
+        window per miss, like the heatmap: they get its 60 a minute, not the
+        120 default a cheap chart-data request gets."""
+        for route in (
+            "/api/v1/analytics/coverage-map",
+            "/api/v1/analytics/failure-groups",
+            "/api/v1/analytics/test-scatter",
+        ):
+            assert layer.rate_limit_for(route, None) == "60/minute"
+
+    def test_every_named_limit_is_a_mounted_route(self):
+        """A key is looked up by the route's path template: a typo, or a router
+        nobody registered in ``bootstrap.py``, leaves the limit silently
+        unused. Every name must be a GET route of the assembled app."""
+        from app.main import app
+
+        mounted = {
+            route.path
+            for route in app.routes
+            if "GET" in (getattr(route, "methods", None) or ())
+        }
+        assert set(layer.RATE_LIMITED_ROUTES) <= mounted, sorted(
+            set(layer.RATE_LIMITED_ROUTES) - mounted
+        )
 
 
 # ── metrics ─────────────────────────────────────────────────────────────────
