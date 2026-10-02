@@ -3153,7 +3153,7 @@ frontend/tests/ci-e2e/project-isolation-outage.spec.ts,test,131,,@playwright/tes
 frontend/tests/ci-e2e/report-context.spec.ts,test,554,,node:fs; node:url; @playwright/test; @axe-core/playwright,name; can; Locator; Page; Route; watchErrors; openGallery; boxOf; tokenPx; expectNoBlockingViolations; RealOptions; SummaryCall; openReportRoute
 frontend/tests/ci-e2e/report-scope.spec.ts,test,197,,@playwright/test,Page; Request; Route; run; json; scopeOf; stub
 frontend/tests/ci-e2e/review-gate.spec.ts,test,178,,@playwright/test,Page; Route; ReviewState; json; seedSession; review; installApi
-frontend/tests/ci-e2e/rollout-flag-off.spec.ts,test,278,,@playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; MockedApi; ReportPage; networkQuiet; withoutAllowedAdditions
+frontend/tests/ci-e2e/rollout-flag-off.spec.ts,test,337,,@playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; MockedApi; ReportPage; networkQuiet; withoutAllowedAdditions
 frontend/tests/ci-e2e/rollout-overview-presentation.spec.ts,test,99,,@playwright/test; ../lib/rollout; ../visual/production/fixtures,Page; seedPresentation; measure
 frontend/tests/ci-e2e/rollout-overview.spec.ts,test,173,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Page
 frontend/tests/ci-e2e/rollout-presentation.spec.ts,test,247,,@playwright/test; ../lib/production-pages; ../lib/chart-text-escapes; ../lib/rollout; ../visual/production/fixtures,Page; ApiHandlers; FlagMap; seedPresentation; metricValues; RoutePage
@@ -3222,7 +3222,7 @@ frontend/tests/lib/diagram-geometry.ts,test,53,,,is; DiagramGeometry; measureDia
 frontend/tests/lib/png.ts,test,125,,node:zlib,DecodedPng; readPngHeader; paeth; decodePng; pixelAt; distance; inkInRow
 frontend/tests/lib/production-pages.ts,test,427,,@playwright/test,Locator; Page; Route; Theme; SessionSeed; seedSession; freezeClock; stillMotion; ApiRequest; ApiResponse; ApiHandler; ApiHandlers; FlagMap; MockOptions; MockedApi; mockApi; watchPageErrors; assertHermetic; OpenOptions; OpenedPage; openProductionPage; cardByHeading; frameByHeading; waitForCharts; settle; finish; visualRegion
 frontend/tests/lib/rollout.ts,test,332,,@playwright/test; ./production-pages; ./chart-text-escapes; ../visual/production/fixtures,Locator; Page; ApiHandlers; FlagMap; MockedApi; OpenedPage; Theme; RolloutOpen; openRollout; requestsTo; networkQuiet; expectInventory; daysOnTheWire; sectionFrame; expectDrawn; frameStates; expectNoTextEscapes; expectNoErrorFrame; normalisedMarkup; belowMainFold; scrollMainUntilBelowFold; LazyProof; proveLazyMount; Overflow; measureOverflow; expectNoHorizontalOverflow
-frontend/tests/perf/lcp.spec.ts,test,309,,node:fs; node:path; @playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; FlagMap; Cell; parseCells; MeasuredPage; PaintReading; recordPaints; readPaints; LcpEntry; Sample; writeSample; summarise
+frontend/tests/perf/lcp.spec.ts,test,330,,node:fs; node:path; @playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; FlagMap; Cell; parseCells; MeasuredPage; PaintReading; recordPaints; readPaints; LcpEntry; Sample; writeSample; summarise
 frontend/tests/probe-bug011-agents-trigger.spec.ts,test,192,,@playwright/test,Page; APIRequestContext; tokenFor; signIn; runOptions
 frontend/tests/probe-color-consistency.spec.ts,test,171,,@playwright/test,login; renderedColours; accents
 frontend/tests/probe-coverage-allprojects.spec.ts,test,53,,@playwright/test,login
@@ -3261,10 +3261,10 @@ frontend/tests/probe-uat-verify002.spec.ts,test,23,,@playwright/test,
 frontend/tests/probe-upload-deeplink.spec.ts,test,139,,@playwright/test,login
 frontend/tests/probe-value-metrics-allprojects.spec.ts,test,47,,@playwright/test,login
 frontend/tests/visual/chart-gallery.visual.spec.ts,test,181,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures,
-frontend/tests/visual/prod-coverage.visual.spec.ts,test,32,,@playwright/test; ../lib/production-pages; ./production/fixtures,
+frontend/tests/visual/prod-coverage.visual.spec.ts,test,45,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-deep-investigation.visual.spec.ts,test,36,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-defects.visual.spec.ts,test,32,,@playwright/test; ../lib/production-pages; ./production/fixtures,
-frontend/tests/visual/prod-failures.visual.spec.ts,test,43,,@playwright/test; ../lib/production-pages; ./production/fixtures,
+frontend/tests/visual/prod-failures.visual.spec.ts,test,56,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-intelligence-hub.visual.spec.ts,test,42,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-overview-on.visual.spec.ts,test,56,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
 frontend/tests/visual/prod-overview.visual.spec.ts,test,52,,@playwright/test; ../lib/production-pages; ./production/fixtures,
