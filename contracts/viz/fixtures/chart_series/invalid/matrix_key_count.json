@@ -1,0 +1,26 @@
+{
+  "description": "x_keys must be exactly as long as x_labels.",
+  "violates": "key_count",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "Sep 17",
+      "Sep 18"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "x_keys": [
+      "2026-09-17"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 96.4,
+        "n": 220
+      }
+    ]
+  }
+}

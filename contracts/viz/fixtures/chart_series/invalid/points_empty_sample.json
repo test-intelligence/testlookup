@@ -1,0 +1,33 @@
+{
+  "description": "A point with no evaluated sample has no rate to plot: exclude and count it, never draw it at 0%.",
+  "violates": "empty_sample",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 1840.5,
+        "y": 0,
+        "size": 3,
+        "n": 0
+      }
+    ]
+  }
+}

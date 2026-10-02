@@ -238,6 +238,9 @@ async def update_suite(
 ):
     suite = await svc.get_suite_or_404(db, suite_id)
     await _enforce_project_access(db, current_user, suite.project_id)
+    # A rename re-keys the coverage map's idle tests (VIZ-206), so it is an
+    # analytics mutation: bump the epoch after the commit (VIZ-212).
+    renamed = payload.name is not None and payload.name.strip() != suite.name
     await svc.update_test_suite(
         db,
         suite,
@@ -246,6 +249,10 @@ async def update_suite(
         tags=payload.tags,
     )
     await db.commit()
+    if renamed:
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(suite.project_id)
     await db.refresh(suite)
     return TestSuiteResponse.model_validate({**suite.__dict__, "test_case_count": None})
 
@@ -505,6 +512,11 @@ async def link_canonical_to_suite(
     target = await svc.get_suite_or_404(db, payload.test_suite_id)
     await svc.link_canonical_to_suite(db, canonical, target)
     await db.commit()
+    # The coverage map places idle tests by canonical suite (VIZ-206): bump
+    # the analytics epoch after the commit that made the move durable.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(canonical.project_id)
     await db.refresh(canonical)
     return _canonical_to_response(canonical)
 
@@ -541,6 +553,11 @@ async def bulk_link_canonicals_to_suite(
         db, target, payload.canonical_ids
     )
     await db.commit()
+    if result["moved"]:
+        # The coverage map places idle tests by canonical suite (VIZ-206).
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(target.project_id)
     return result
 
 

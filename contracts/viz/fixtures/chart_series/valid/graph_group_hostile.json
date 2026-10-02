@@ -1,0 +1,32 @@
+{
+  "description": "Failure-group nodes may carry a free-text group (dominant category); it is untrusted text.",
+  "payload": {
+    "kind": "graph",
+    "nodes": [
+      {
+        "id": "__proto__",
+        "label": "<img src=x onerror=\"window.__xss=1\">",
+        "size": 31,
+        "group": "<b>product_defect</b>"
+      },
+      {
+        "id": "constructor",
+        "label": "assertionerror",
+        "size": 12,
+        "group": "constructor"
+      },
+      {
+        "id": "g3",
+        "label": "timeout waiting for #",
+        "size": 4
+      }
+    ],
+    "edges": [
+      {
+        "source": "__proto__",
+        "target": "constructor",
+        "weight": 0.4
+      }
+    ]
+  }
+}

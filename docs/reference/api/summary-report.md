@@ -202,12 +202,12 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Project to read. Single-valued.",
+      "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
       "in": "query",
       "name": "project_id",
       "required": true,
       "schema": {
-        "description": "Project to read. Single-valued.",
+        "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
         "title": "Project Id",
         "type": "string"
       }

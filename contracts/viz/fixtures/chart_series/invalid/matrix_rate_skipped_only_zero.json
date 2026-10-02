@@ -1,0 +1,29 @@
+{
+  "description": "Skipped and unknown are outside a pass rate's denominator: a cell with only skipped results is not measured (null), never 0%.",
+  "violates": "empty_sample",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "Sep 17"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 0,
+        "n": 4,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "broken": 0,
+          "skipped": 3,
+          "unknown": 1
+        }
+      }
+    ]
+  }
+}

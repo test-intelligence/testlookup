@@ -1,0 +1,28 @@
+{
+  "description": "Every test was left out: no points, no medians (absent, never {x: 0, y: 0}), and the reasons counted so the frame can say why the plot is empty.",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [],
+    "excluded": {
+      "below_min_executions": 37,
+      "no_duration": 0,
+      "no_evaluated": 3
+    }
+  }
+}

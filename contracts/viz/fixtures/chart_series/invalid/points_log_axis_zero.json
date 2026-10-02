@@ -1,0 +1,33 @@
+{
+  "description": "A test with no timings plotted at x = 0 on a log axis: it must be excluded and counted instead.",
+  "violates": "log_axis_positive",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 0,
+        "y": 12.5,
+        "size": 40,
+        "n": 40
+      }
+    ]
+  }
+}

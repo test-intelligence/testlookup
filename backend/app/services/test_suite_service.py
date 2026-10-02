@@ -769,6 +769,14 @@ async def update_test_suite(
     description: Optional[str] = None,
     tags: Optional[list[str]] = None,
 ) -> TestSuite:
+    """Rename / describe / tag a suite. Stage-only: the caller commits.
+
+    A RENAME is an analytics mutation (VIZ-212): the coverage map (VIZ-206)
+    keys and labels the tests that did not run in its window by their
+    canonical suite's name. A caller that commits a rename bumps the
+    project's analytics epoch after that commit; the
+    ``backend.analytics-epoch-bump`` quality-gate guard enforces it.
+    """
     if name is not None:
         suite.name = name.strip()
     if description is not None:
@@ -1031,6 +1039,13 @@ async def link_canonical_to_suite(
     canonical: CanonicalTestCase,
     target_suite: TestSuite,
 ) -> CanonicalTestCase:
+    """Move one canonical case to ``target_suite``. Stage-only: the caller commits.
+
+    A move is an analytics mutation (VIZ-212): the coverage map (VIZ-206)
+    places a test that did not run in its window under its canonical suite.
+    A caller that commits a move bumps the project's analytics epoch after
+    that commit; the ``backend.analytics-epoch-bump`` guard enforces it.
+    """
     if target_suite.project_id != canonical.project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1409,7 +1424,9 @@ async def bulk_link_canonicals_to_suite(
         do NOT block the batch.
       * Successfully resolved canonicals get ``test_suite_id`` flipped to
         ``target_suite.id`` and a single ``db.flush()`` is issued at the
-        end — the caller still owns ``commit()``.
+        end — the caller still owns ``commit()``, and a caller that commits
+        a batch with ``moved > 0`` bumps the analytics epoch after it
+        (VIZ-212; see ``link_canonical_to_suite``).
 
     Returns: ``{"moved": int, "skipped_already_in_target": int,
     "missing_ids": [uuid, ...]}``.
@@ -1515,6 +1532,11 @@ async def reconcile_canonical_deletions(
     Setting ``window_runs=0`` (or the env default ``CANONICAL_DELETION_WINDOW_RUNS=0``)
     short-circuits the reconciler — useful during the Phase 2b cutover
     while comparing canonical vs legacy suite_memberships row counts.
+
+    Stage-only: the caller commits. A retirement is an analytics mutation
+    (VIZ-212): a retired case leaves the coverage map (VIZ-206). A caller
+    that commits ``deleted > 0`` bumps the project's analytics epoch after
+    that commit (finalize_run's terminal invalidation covers its step).
     """
     from app.core.config import settings
 

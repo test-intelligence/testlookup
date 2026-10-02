@@ -1363,3 +1363,354 @@ def test_primary_release_reconcile_sweep_bumps_each_project_once(journal, monkey
         "whose repair rolled back"
     )
     _assert_bumped_after_commit(journal, p1)
+
+
+# ── Canonical case lifecycle (VIZ-206 coverage map) ──────────────────────────
+#
+# The coverage map places a test that did not run in its window under its
+# CANONICAL suite (by id and by name) and drops retired cases, so a move, a
+# retirement, a restore and a suite rename each change a cached map. The
+# services stay stage-only (``tests/test_architectural_transaction_boundaries.py``);
+# whoever commits the change bumps after that commit: the suite routes, the
+# nightly retirement sweep, and finalize_run's terminal invalidation for the
+# restore on re-sighting and finalize's own retirement step.
+
+
+class _JournalSession(_Session):
+    """A ``_Session`` whose flushes are journaled as the mutation itself."""
+
+    async def flush(self):
+        self.journal.append(("mutate", "flush"))
+
+    def begin_nested(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _savepoint():
+            yield
+
+        return _savepoint()
+
+
+def _scalars(rows):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    result.all.return_value = rows
+    return result
+
+
+def _rows(rows):
+    result = MagicMock()
+    result.all.return_value = rows
+    return result
+
+
+def _canonical_row(project_id, suite_id=None):
+    return SimpleNamespace(
+        id=uuid.uuid4(), project_id=project_id, test_suite_id=suite_id or uuid.uuid4(),
+        test_fingerprint="fp", test_name="t", class_name=None, status="active",
+        source="execution", first_seen_run_id=None, last_seen_run_id=None,
+        deleted_at_run_id=None, managed_test_case_id=None,
+        retirement_confirmed_at=None, retirement_confirmed_by_id=None,
+        retirement_reason=None, deleted_observed_at=None, review_tag=None, tags=None,
+        created_at=None, updated_at=None,
+    )
+
+
+def _suite_routes(monkeypatch, *, canonical=None, target=None):
+    from app.routers import suites
+    from app.services import test_suite_service as svc
+
+    monkeypatch.setattr(suites, "_enforce_project_access", AsyncMock())
+    if canonical is not None:
+        monkeypatch.setattr(svc, "get_canonical_or_404", AsyncMock(return_value=canonical))
+    if target is not None:
+        monkeypatch.setattr(svc, "get_suite_or_404", AsyncMock(return_value=target))
+    return suites
+
+
+async def test_canonical_link_route_bumps_after_its_commit(journal, monkeypatch):
+    """Drives the real route and the real (stage-only) service: the move is
+    flushed, the route commits, THEN the project is bumped."""
+    project_id = uuid.uuid4()
+    canonical = _canonical_row(project_id)
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    suites = _suite_routes(monkeypatch, canonical=canonical, target=target)
+
+    await suites.link_canonical_to_suite(
+        canonical.id, SimpleNamespace(test_suite_id=target.id),
+        db=_JournalSession(journal), current_user=SimpleNamespace(),
+    )
+
+    assert canonical.test_suite_id == target.id
+    _assert_bumped_after_commit(journal, project_id)
+
+
+async def test_canonical_link_route_rollback_does_not_bump(journal, monkeypatch):
+    project_id = uuid.uuid4()
+    canonical = _canonical_row(project_id)
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    suites = _suite_routes(monkeypatch, canonical=canonical, target=target)
+    db = _JournalSession(journal, fail_commit=True)
+
+    with pytest.raises(RuntimeError):
+        await suites.link_canonical_to_suite(
+            canonical.id, SimpleNamespace(test_suite_id=target.id),
+            db=db, current_user=SimpleNamespace(),
+        )
+    assert _bumps(journal) == []
+
+
+async def test_bulk_link_route_bumps_once_after_its_commit(journal, monkeypatch):
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    found = [_canonical_row(project_id) for _ in range(3)]
+    suites = _suite_routes(monkeypatch, target=target)
+
+    result = await suites.bulk_link_canonicals_to_suite(
+        SimpleNamespace(target_test_suite_id=target.id, canonical_ids=[c.id for c in found]),
+        db=_JournalSession(journal, results=[_scalars(found)]),
+        current_user=SimpleNamespace(),
+    )
+
+    assert result["moved"] == 3
+    assert _bumps(journal) == [str(project_id)], "one bump per batch, not per case"
+    _assert_bumped_after_commit(journal, project_id)
+
+
+async def test_bulk_link_route_that_moves_nothing_does_not_bump(journal, monkeypatch):
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    already = _canonical_row(project_id, suite_id=target.id)
+    suites = _suite_routes(monkeypatch, target=target)
+
+    result = await suites.bulk_link_canonicals_to_suite(
+        SimpleNamespace(target_test_suite_id=target.id, canonical_ids=[already.id]),
+        db=_JournalSession(journal, results=[_scalars([already])]),
+        current_user=SimpleNamespace(),
+    )
+
+    assert result["skipped_already_in_target"] == 1
+    assert _bumps(journal) == []
+
+
+def _suite_row(project_id):
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    return SimpleNamespace(
+        id=uuid.uuid4(), project_id=project_id, name="Payments", description=None,
+        tags=None, is_default=False, created_at=now, updated_at=now,
+    )
+
+
+async def test_suite_rename_route_bumps_after_its_commit(journal, monkeypatch):
+    project_id = uuid.uuid4()
+    suite = _suite_row(project_id)
+    suites = _suite_routes(monkeypatch, target=suite)
+
+    await suites.update_suite(
+        suite.id, SimpleNamespace(name="  Billing ", description=None, tags=None),
+        db=_JournalSession(journal), current_user=SimpleNamespace(),
+    )
+
+    assert suite.name == "Billing"
+    _assert_bumped_after_commit(journal, project_id)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"description": "d"}, {"tags": ["t"]}, {"name": "Payments "}],
+    ids=["description", "tags", "same-name"],
+)
+async def test_suite_edit_that_is_not_a_rename_does_not_bump(journal, monkeypatch, change):
+    """Only the name is read by cached analytics."""
+    suite = _suite_row(uuid.uuid4())
+    suites = _suite_routes(monkeypatch, target=suite)
+    payload = SimpleNamespace(**{"name": None, "description": None, "tags": None, **change})
+
+    await suites.update_suite(
+        suite.id, payload, db=_JournalSession(journal), current_user=SimpleNamespace(),
+    )
+
+    assert ("commit", "") in journal and _bumps(journal) == []
+
+
+def _reconcile_results(run_ids, seen_fps, actives):
+    return [
+        _rows([(rid,) for rid in run_ids]),
+        _rows([(fp,) for fp in seen_fps]),
+        _scalars(actives),
+    ]
+
+
+def _active(fp: str):
+    return SimpleNamespace(
+        test_fingerprint=fp, status="active", deleted_at_run_id=None,
+        deleted_observed_at=None, retirement_confirmed_at=None,
+        retirement_confirmed_by_id=None, retirement_reason=None,
+    )
+
+
+def test_nightly_retirement_sweep_bumps_only_projects_it_retired_in(journal, monkeypatch):
+    """The beat task drives the real reconciler per project, each in its own
+    session: the project that lost a case is bumped after its commit, the
+    quiet one is not, and a project whose commit fails is not."""
+    import app.db.postgres as pg
+    from app.services import test_management_metrics_service as metrics
+    from app.worker import tasks
+
+    _run_tasks_inline(monkeypatch)
+    retired, quiet, failed = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    sessions = [
+        _Session(journal, results=[_rows([(retired,), (quiet,), (failed,)])]),
+        _JournalSession(journal, results=_reconcile_results(
+            [uuid.uuid4()], [], [_active("gone")]
+        )),
+        _JournalSession(journal, results=_reconcile_results(
+            [uuid.uuid4()], ["kept"], [_active("kept")]
+        )),
+        _JournalSession(journal, fail_commit=True, results=_reconcile_results(
+            [uuid.uuid4()], [], [_active("gone-too")]
+        )),
+    ]
+    monkeypatch.setattr(pg, "AsyncSessionLocal", _factory(*sessions))
+    monkeypatch.setattr(metrics, "emit_staged_test_management_metrics", AsyncMock())
+    journal.append(("mutate", "retire"))  # the status flips the reconciler makes
+
+    result = tasks.reconcile_canonical_deletions.run()
+
+    assert (result["deleted"], result["errors"]) == (1, 1)
+    assert _bumps(journal) == [str(retired)]
+    _assert_bumped_after_commit(journal, retired)
+
+
+async def test_canonical_sync_and_retirement_steps_precede_finalize_invalidation(
+    journal, monkeypatch
+):
+    """Neither the restore on re-sighting (``sync_canonical_test_cases``) nor
+    finalize's own retirement step bumps by itself: both are covered by
+    ``finalize_run``'s terminal invalidation, which must therefore run AFTER
+    their isolated steps have committed."""
+    from app.services import cache_service, ingestion_pipeline
+    from app.services import run_downstream_outbox
+    from app.services import test_suite_service
+
+    project_id = uuid.uuid4()
+    run_row = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+
+    class _StepSession(_Session):
+        async def execute(self, stmt, *_a, **_k):
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = (
+                run_row if "test_runs" in str(stmt) else SimpleNamespace(id=project_id)
+            )
+            result.scalars.return_value.all.return_value = []
+            return result
+
+    monkeypatch.setattr(
+        ingestion_pipeline, "AsyncSessionLocal", lambda: _StepSession(journal)
+    )
+    monkeypatch.setattr(ingestion_pipeline, "_update_run_aggregates", AsyncMock())
+    monkeypatch.setattr(run_downstream_outbox, "stage_finalize_operations", AsyncMock())
+    monkeypatch.setattr(
+        run_downstream_outbox, "activate_finalize_operations", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        test_suite_service, "sync_canonical_test_cases", _mutating(journal, "canonical_sync")
+    )
+    monkeypatch.setattr(
+        test_suite_service, "reconcile_canonical_deletions",
+        _mutating(journal, "canonical_retire", {"deleted": 1}),
+    )
+
+    async def _invalidate(pid=None):
+        journal.append(("bump", str(pid)))
+
+    monkeypatch.setattr(cache_service, "invalidate_analytics_cache", _invalidate)
+
+    await ingestion_pipeline.finalize_run(
+        run_id=str(run_row.id), project_id=str(project_id), build_number="b1",
+    )
+
+    mutated = [name for kind, name in journal if kind == "mutate"]
+    assert {"canonical_sync", "canonical_retire"} <= set(mutated)
+    _assert_bumped_after_commit(journal, project_id)
+
+
+# ── Systemic cluster sweep (VIZ-207, BE3) ─────────────────────────────────────
+#
+# HOOK for BE3 (requested through the orchestrator): ``recompute_systemic_clusters``
+# (worker/tasks.py) rewrites the clusters failure-groups reads and bumps after
+# its commit. ``store_clusters`` is in the quality-gate registry
+# (``app.services.systemic_cluster_service:store_clusters``), so the guard
+# flags the task if that bump is ever removed. Its test goes here, shaped like
+# ``test_nightly_retirement_sweep_bumps_only_projects_it_retired_in`` above:
+# drive ``tasks.recompute_systemic_clusters.run()`` inline with journaled
+# sessions, stub ``cluster_project`` / ``store_clusters``, and assert each
+# project that changed is bumped once after its commit and a sweep that wrote
+# nothing bumps nothing.
+
+
+class _SweepSession(_Session):
+    """One session for the whole cluster sweep (the task's shape); the commit
+    of the project named in ``fail_commit_for`` raises."""
+
+    def __init__(self, journal, ids, fail_commit_for=()):
+        super().__init__(journal, results=[_scalars(list(ids))])
+        self.fail_commit_for = set(fail_commit_for)
+        self.current = None
+
+    async def commit(self):
+        if self.current in self.fail_commit_for:
+            raise RuntimeError("commit failed")
+        self.journal.append(("commit", str(self.current)))
+
+
+def _cluster_sweep(journal, monkeypatch, ids, *, before, written, fail_commit_for=()):
+    import app.db.postgres as pg
+    from app.services import systemic_cluster_service as clusters
+    from app.worker import tasks
+
+    _run_tasks_inline(monkeypatch)
+    session = _SweepSession(journal, ids, fail_commit_for)
+    monkeypatch.setattr(pg, "AsyncSessionLocal", lambda: session)
+
+    async def _cluster_project(_db, pid):
+        session.current = pid
+        return []
+
+    async def _count(_db, pid):
+        return before[pid]
+
+    async def _store(_db, pid, _found):
+        journal.append(("mutate", str(pid)))
+        return written[pid]
+
+    monkeypatch.setattr(clusters, "cluster_project", _cluster_project)
+    monkeypatch.setattr(clusters, "existing_cluster_count", _count)
+    monkeypatch.setattr(clusters, "store_clusters", _store)
+    return tasks.recompute_systemic_clusters.run()
+
+
+def test_systemic_cluster_sweep_bumps_each_changed_project_once(journal, monkeypatch):
+    """Written -> bumped; all clusters dissolved -> bumped (the API answer
+    changed); nothing before or after -> not bumped; a rolled-back replace ->
+    not bumped. Every bump after the last commit."""
+    wrote, dissolved, quiet, failed = (uuid.uuid4() for _ in range(4))
+    result = _cluster_sweep(
+        journal, monkeypatch, [wrote, dissolved, quiet, failed],
+        before={wrote: 1, dissolved: 2, quiet: 0, failed: 1},
+        written={wrote: 3, dissolved: 0, quiet: 0, failed: 2},
+        fail_commit_for={failed},
+    )
+    assert (result["clusters"], result["errors"]) == (3, 1)
+    assert sorted(_bumps(journal)) == sorted([str(wrote), str(dissolved)])
+    last_commit = max(i for i, (kind, _) in enumerate(journal) if kind == "commit")
+    assert all(i > last_commit for i, (kind, _) in enumerate(journal) if kind == "bump"), journal
+
+
+def test_systemic_cluster_sweep_that_changed_nothing_bumps_nothing(journal, monkeypatch):
+    pid = uuid.uuid4()
+    _cluster_sweep(journal, monkeypatch, [pid], before={pid: 0}, written={pid: 0})
+    assert _bumps(journal) == []

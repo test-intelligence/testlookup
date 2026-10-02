@@ -1,0 +1,65 @@
+{
+  "description": "Test scatter: p95 duration (ms, log axis) x failure rate (percent) x executions, with medians and the tests left out, counted by reason.",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 1840.5,
+        "y": 12.5,
+        "size": 40,
+        "n": 40
+      },
+      {
+        "id": "fp-2",
+        "label": "test_login",
+        "x": 1,
+        "y": 0,
+        "size": 220,
+        "n": 220
+      },
+      {
+        "id": "fp-3",
+        "label": "test_refund",
+        "x": 95,
+        "y": 100,
+        "size": 5,
+        "n": 5
+      },
+      {
+        "id": "fp-4",
+        "label": "test_cart",
+        "x": 310,
+        "y": 2.5,
+        "size": 80,
+        "n": 79
+      }
+    ],
+    "medians": {
+      "x": 202.5,
+      "y": 7.5
+    },
+    "excluded": {
+      "below_min_executions": 14,
+      "no_duration": 2,
+      "no_evaluated": 1
+    }
+  }
+}

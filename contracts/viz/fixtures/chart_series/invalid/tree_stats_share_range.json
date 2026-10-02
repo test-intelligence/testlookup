@@ -1,0 +1,26 @@
+{
+  "description": "stats.flaky_share is a ratio, 0-1 (a percentage sent here is out of range).",
+  "violates": "share_range",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:payments",
+        "parent_id": null,
+        "label": "payments",
+        "value": 12,
+        "measure": 96.4,
+        "stats": {
+          "test_count": 12,
+          "executions": 220,
+          "pass_rate": 96.4,
+          "flaky_count": 1,
+          "flaky_share": 8.33,
+          "last_executed_at": "2026-09-30T23:10:04Z",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      }
+    ]
+  }
+}

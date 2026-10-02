@@ -1,0 +1,49 @@
+{
+  "description": "Test x run status matrix: run ids and fingerprints as keys, one-hot counts; a run the test did not take part in is null with n 0, never 'passed'.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "status",
+    "x_labels": [
+      "#41",
+      "#42"
+    ],
+    "y_labels": [
+      "test_checkout"
+    ],
+    "x_keys": [
+      "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    ],
+    "y_keys": [
+      "9f2c1e0b7a6d5c4b"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": "failed",
+        "n": 1,
+        "counts": {
+          "passed": 0,
+          "failed": 1,
+          "broken": 0,
+          "skipped": 0,
+          "unknown": 0
+        }
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": null,
+        "n": 0,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "broken": 0,
+          "skipped": 0,
+          "unknown": 0
+        }
+      }
+    ]
+  }
+}

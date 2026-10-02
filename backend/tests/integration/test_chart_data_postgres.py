@@ -224,6 +224,8 @@ def _value(metric: str, cell: dict):
         )
     if metric in ("passed", "failed", "broken", "skipped", "unknown"):
         return cell[metric]
+    if metric == "failures":
+        return cell["failed"] + cell["broken"]
     if metric == "executions":
         return cell["executions"]
     if metric == "run_count":
@@ -297,6 +299,7 @@ _SINGLE_DIMENSIONS = (
 
 @pytest.mark.parametrize("metric", [
     "executions", "passed", "failed", "broken", "skipped", "unknown",
+    "failures",
     "retried_tests", "pass_rate", "failure_rate", "flaky_tests",
     "unique_tests", "run_count", "duration_p50", "duration_p95", "duration_total",
 ])
@@ -855,3 +858,28 @@ async def test_truncation_reaches_the_envelope_per_axis(world) -> None:
         assert "x" not in axes, "a generated time axis cannot truncate"
     else:  # pragma: no cover - the seed decides
         pytest.skip("this suite has 8 or fewer fingerprints; nothing to truncate")
+
+
+# ── Wave 3: the ``failures`` metric (VIZ-208, OD-20) ───────────────────────
+
+
+@pytest.mark.parametrize("dimension", ("day", "suite", "status", "release", "failure_category"))
+async def test_failures_is_failed_plus_broken_bucket_by_bucket(world, dimension) -> None:
+    """Cross-checked against the endpoint's OWN ``failed`` and ``broken``,
+    on both grains (day and release are run aggregates, the rest rows), so a
+    ``failures`` that dropped BROKEN, or counted it twice, cannot pass."""
+    failures = _single(await _chart(world, _base(world, metric="failures", group_by=dimension)))
+    failed = _single(await _chart(world, _base(world, metric="failed", group_by=dimension)))
+    broken = _single(await _chart(world, _base(world, metric="broken", group_by=dimension)))
+    assert failures, "nothing to compare"
+    assert any(value for value in broken.values()), "the seed has no BROKEN row to tell apart"
+    for bucket, value in failures.items():
+        assert value == failed.get(bucket, 0) + broken.get(bucket, 0), (dimension, bucket)
+
+
+async def test_the_failures_headline_is_the_one_a_human_counted(world, plan) -> None:
+    runs = _runs(plan, 30)
+    want = sum(run.failed_tests + run.broken_tests for run in runs)
+    body = await _chart(world, _base(world, metric="failures", group_by="day"))
+    assert want > 0
+    assert sum(point["y"] for point in body["series"][0]["points"]) == want

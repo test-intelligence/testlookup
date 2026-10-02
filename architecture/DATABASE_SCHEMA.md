@@ -8,7 +8,7 @@
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **relational system of record** (139 declared tables, Alembic head `0191`). Authority is distributed by data type: published decision-report bodies and evidence are also stored in MongoDB, and original uploads/artifacts in object storage. These stores are not all disposable caches. See the current [data architecture](../docs/architecture/data-model.md) and [backup guidance](../docs/operations/deployment.md); this historical document focuses on relational structure.
+PostgreSQL is the **relational system of record** (139 declared tables, Alembic head `0193`). Authority is distributed by data type: published decision-report bodies and evidence are also stored in MongoDB, and original uploads/artifacts in object storage. These stores are not all disposable caches. See the current [data architecture](../docs/architecture/data-model.md) and [backup guidance](../docs/operations/deployment.md); this historical document focuses on relational structure.
 
 ## Storage responsibilities at a glance
 
@@ -3241,3 +3241,23 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `run_tombstones` | `RunTombstone` | [Fields and constraints](../docs/reference/data-dictionary.md#run_tombstones) |
 | `deletion_jobs` | `DeletionJob` | [Fields and constraints](../docs/reference/data-dictionary.md#deletion_jobs) |
 | `project_activity_events` | `ProjectActivityEvent` | [Fields and constraints](../docs/reference/data-dictionary.md#project_activity_events) |
+
+## Systemic cluster membership key (migration 0193, VIZ-207)
+
+`systemic_flake_cluster` gains `membership_key VARCHAR(32) NULL` and the non-unique index
+`ix_systemic_cluster_project_membership (project_id, membership_key)`.
+
+- **Value**: the first 32 hex characters of sha256 over the cluster's member fingerprints, sorted by code
+  point and joined by a newline (`systemic_cluster_service.membership_key`); written by `store_clusters` on
+  every nightly sweep and backfilled by the migration in SQL (`string_agg(... ORDER BY test_fingerprint
+  COLLATE "C")`, held to the Python function by `tests/integration/test_systemic_membership_key_postgres.py`).
+- **What it promises**: identity across nightly sweeps for an UNCHANGED member set. `cluster_key` is a rank
+  (`sfc_001` = tonight's largest) and the sweep deletes and re-inserts every row, so neither it nor `id`
+  survives a night. One test joining or leaving a cluster produces a NEW key; nothing tracks a cluster
+  through membership churn (a best-overlap `lineage_key` was priced as OD-4 and not taken).
+- **Why non-unique**: a duplicate written by a bug must not abort the nightly `store_clusters`, which is
+  unique only on `(project_id, cluster_key)`.
+- **NULL**: only for a row written by pre-0193 code or a cluster with no member row;
+  `/api/v1/analytics/systemic-clusters` then returns the key computed from the full member set.
+- **Rollback**: `downgrade()` drops the index and the column; code before 0193 ignores the column.
+- Field-level entry: the generated [data dictionary](../docs/reference/data-dictionary.md#systemic_flake_cluster).

@@ -65,6 +65,9 @@ _TIME_MODULES = (
     # VIZ-203 (``test_chart_data_postgres.py`` shares this fixture): the chart
     # endpoint's own window start, bucket axis and partial-day flag.
     "app.services.chart_data_service",
+    # VIZ-207 (``test_failure_groups_postgres.py``): failure groups keep their
+    # own ``request_clock``; the other Wave-3 routes read chart-data's.
+    "app.services.failure_groups_service",
     "app.services.suite_history_service",
     "app.services.value_metrics_service",
 )

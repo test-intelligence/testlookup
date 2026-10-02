@@ -1,0 +1,29 @@
+{
+  "description": "A rate matrix may declare its values as a ratio (0-1); 1 and 0 are its ends.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "unit": "ratio",
+    "x_labels": [
+      "staging",
+      "prod"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 1,
+        "n": 40
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": 0.964,
+        "n": 220
+      }
+    ]
+  }
+}

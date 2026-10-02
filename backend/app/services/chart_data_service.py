@@ -238,6 +238,10 @@ _EVALUATED_RUN = "COALESCE(SUM(tr.passed_tests + tr.failed_tests + tr.broken_tes
 _EXECUTIONS_ROW = "COUNT(*)"
 _EXECUTIONS_RUN = "COALESCE(SUM(tr.total_tests), 0)"
 _TIMED_ROW = "COUNT(*) FILTER (WHERE tc.duration_ms IS NOT NULL)"
+_FAILING_ROW = (
+    f"COUNT(*) FILTER (WHERE tc.status IN "
+    f"('{TestStatus.FAILED.value}', '{TestStatus.BROKEN.value}'))"
+)
 
 
 def _status_count(status: TestStatus) -> str:
@@ -273,6 +277,14 @@ METRICS: dict[str, MetricDef] = {
     ),
     "unknown": MetricDef(
         _status_count(TestStatus.UNKNOWN), "COALESCE(SUM(tr.unknown_tests), 0)",
+        _EXECUTIONS_ROW, _EXECUTIONS_RUN, True,
+    ),
+    # Wave 3 (VIZ-208, OD-20): both verdicts that mean "did not pass". It is
+    # what "Failures by suite" and every drill level chart, and the rows
+    # endpoint selects exactly these rows for a ``failures`` mark. ``failed``
+    # alone would drop every crashed (BROKEN) test out of the drill.
+    "failures": MetricDef(
+        _FAILING_ROW, "COALESCE(SUM(tr.failed_tests + tr.broken_tests), 0)",
         _EXECUTIONS_ROW, _EXECUTIONS_RUN, True,
     ),
     # One row per test per run: a retried test is ONE row carrying
@@ -1581,6 +1593,11 @@ def definitions(
         )
     if spec.metric == "unique_tests":
         out["unique_tests"] = "Distinct test fingerprints that ran in the bucket."
+    if spec.metric == "failures":
+        out["failures"] = (
+            "Executions whose verdict is failed + broken. Skipped and unknown "
+            "are not failures; n is every execution in the bucket."
+        )
     if spec.metric.startswith("duration"):
         out[spec.metric] = (
             "Milliseconds, over individual test executions. Executions with no "

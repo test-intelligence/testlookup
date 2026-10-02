@@ -66,7 +66,8 @@ from app.models.postgres import TestStatus
 #: ``test_status_vocab_matches_the_readme_and_the_column_enum`` is for.
 STATUS_VOCAB: tuple[str, ...] = tuple(status.value.lower() for status in TestStatus)
 
-Dimension = Literal[
+#: C4 ``groupBy``: the dimensions a chart-data request can group by.
+GroupByDimension = Literal[
     "day",
     "week",
     "project",
@@ -80,6 +81,11 @@ Dimension = Literal[
     "test",
     "error_signature",
 ]
+GROUP_BY_DIMENSIONS: tuple[str, ...] = get_args(GroupByDimension)
+#: C5 ``dimension_enum``. ``class`` (Wave 3, OD-10) is the coverage map's middle
+#: level and a drill level only: nothing groups chart-data by it, so a stored
+#: widget config naming it would be accepted and could never render.
+Dimension = Literal[GroupByDimension, "class"]
 DIMENSIONS: tuple[str, ...] = get_args(Dimension)
 
 ChartType = Literal[
@@ -97,6 +103,8 @@ MAX_POINTS_PER_SERIES = 366
 MAX_MATRIX_CELLS = 5400
 MAX_TREE_NODES = 500
 MAX_GRAPH_NODES = 200
+#: C3 ``points`` ``point_cap`` (VIZ-506): one mark per test.
+MAX_POINTS = 5000
 MAX_INSTANCES = 12
 MAX_TITLE_LENGTH = 120
 MAX_GROUP_BY = 2
@@ -111,7 +119,21 @@ MAX_NESTING_DEPTH = 32
 #: plus object keys in one payload. A full matrix is about 50 000.
 MAX_PAYLOAD_NODES = 1_000_000
 FORBIDDEN_KEYS: frozenset[str] = frozenset({"__proto__", "constructor", "prototype"})
-CHART_KINDS: tuple[str, ...] = ("series", "matrix", "tree", "graph")
+CHART_KINDS: tuple[str, ...] = ("series", "matrix", "tree", "graph", "points")
+
+#: C3 matrix ``unit`` (OD-7). Absent means ``percent``: what chart-data sends.
+RateUnit = Literal["percent", "ratio"]
+RATE_UNITS: tuple[str, ...] = get_args(RateUnit)
+#: The closed range each rate unit allows, for ``rate_unit_range``.
+RATE_UNIT_RANGES: dict[str, tuple[int, int]] = {"percent": (0, 100), "ratio": (0, 1)}
+#: C3 ``points`` axis ``unit`` and ``scale``.
+AxisUnit = Literal["ms", "percent", "ratio", "count"]
+AXIS_UNITS: tuple[str, ...] = get_args(AxisUnit)
+AxisScale = Literal["linear", "log"]
+AXIS_SCALES: tuple[str, ...] = get_args(AxisScale)
+#: C3 tree ``stats.recency``: why a last-execution date is, or is not, there.
+Recency = Literal["seen", "unknown", "never"]
+RECENCY_STATES: tuple[str, ...] = get_args(Recency)
 
 # Every pattern below is ASCII-only on purpose: Python's ``\d`` also matches
 # Arabic-Indic and full-width digits, JavaScript's does not.
@@ -269,6 +291,22 @@ NonNegativeNumber = Annotated[
 UnitNumber = Annotated[
     Union[int, float], _finite_number("weight_range", minimum=0, maximum=1)
 ]
+#: C6 ``rate_range`` and C3 tree ``stats.pass_rate``: a percentage.
+Rate = Annotated[Union[int, float], _finite_number("rate_range", minimum=0, maximum=100)]
+#: C3 tree ``stats.flaky_share`` ``share_range``: a ratio.
+Share = Annotated[Union[int, float], _finite_number("share_range", minimum=0, maximum=1)]
+
+
+def _absent_not_null(value: Any) -> Any:
+    """``mode="before"`` for an optional key the README gives no ``| null``.
+
+    Runs only for a key that was SENT (a default is never validated), so absent
+    stays valid and an explicit ``null`` -- a second, silent spelling of
+    "absent" -- is refused (change rule 6).
+    """
+    if value is None:
+        raise ValueError("an optional key is omitted when it has no value, never sent as null")
+    return value
 
 
 # ── Payload-wide rules (README change rule 8) ────────────────
@@ -724,12 +762,33 @@ class SeriesChart(VizContract):
         return value
 
 
+class StatusCounts(VizContract):
+    """The status counts behind one matrix cell (Wave 3). Field names are
+    ``STATUS_VOCAB``, in its order; ``test_wave_3_closed_sets_are_the_readme_ones``
+    holds them together. Every key is required: a missing status would read as
+    zero, which is the one thing a count must never be by accident."""
+
+    passed: Count
+    failed: Count
+    broken: Count
+    skipped: Count
+    unknown: Count
+
+    def evaluated(self) -> int:
+        """The pass-rate denominator: skipped and unknown are outside it."""
+        return self.passed + self.failed + self.broken
+
+
 class MatrixCell(VizContract):
     x: Count
     y: Count
     # Checked against ``value_type`` by the chart, which is the one that knows it.
     value: Number | str | None
     n: Count
+    # Optional (Wave 3): the five counts behind ``n``, for the tooltip.
+    counts: StatusCounts | None = None
+
+    _counts_not_null = field_validator("counts", mode="before")(_absent_not_null)
 
 
 class MatrixChart(VizContract):
@@ -738,19 +797,53 @@ class MatrixChart(VizContract):
     x_labels: list[str]
     y_labels: list[str]
     cells: list[MatrixCell] = Field(max_length=MAX_MATRIX_CELLS)
+    # Optional (Wave 3, VIZ-205). The labels are display text and may repeat
+    # (two releases with one name); the keys are what a drill-down, a
+    # cross-filter or a rows request sends back, so they must name exactly one
+    # row or column each.
+    x_keys: list[str] | None = None
+    y_keys: list[str] | None = None
+    # Optional (Wave 3, OD-7): what a ``rate`` value is measured in. Absent is
+    # ``percent``, which is what chart-data and the heatmap route send, so the
+    # one reader that needs a ratio divides by 100 once.
+    unit: RateUnit | None = None
 
     _cell_cap = field_validator("cells", mode="before")(
         _cap("cell_cap", MAX_MATRIX_CELLS, "cells")
     )
+    _optional_not_null = field_validator("x_keys", "y_keys", "unit", mode="before")(
+        _absent_not_null
+    )
+
+    def _check_keys(self, name: str, keys: list[str] | None, labels: list[str]) -> None:
+        if keys is None:
+            return
+        if len(keys) != len(labels):
+            raise ValueError(
+                f"key_count: {name} has {len(keys)} keys for {len(labels)} labels"
+            )
+        duplicate = _first_duplicate(keys)
+        if duplicate is not None:
+            raise ValueError(f"unique_key: {name}[{duplicate}] repeats an earlier key")
 
     @model_validator(mode="after")
     def _cells(self) -> "MatrixChart":
+        self._check_keys("x_keys", self.x_keys, self.x_labels)
+        self._check_keys("y_keys", self.y_keys, self.y_labels)
+        low, high = RATE_UNIT_RANGES[self.unit or "percent"]
         columns, rows = len(self.x_labels), len(self.y_labels)
         for index, cell in enumerate(self.cells):
             if cell.x >= columns or cell.y >= rows:
                 raise ValueError(
                     f"cell_index_range: cells[{index}] does not address a label"
                 )
+            counts = cell.counts
+            if counts is not None:
+                total = counts.evaluated() + counts.skipped + counts.unknown
+                if total != cell.n:
+                    raise ValueError(
+                        f"counts_sum: cells[{index}].counts add up to {total}, not n = {cell.n}"
+                    )
             if self.value_type == "status":
                 if cell.value is not None and cell.value not in STATUS_VOCAB:
                     raise ValueError(
@@ -767,6 +860,57 @@ class MatrixChart(VizContract):
                 except ValueError as exc:
                     rule, _, why = str(exc).partition(": ")
                     raise ValueError(f"{rule}: cells[{index}].value: {why}") from None
+            elif self.value_type == "rate" and cell.value is not None:
+                if not low <= cell.value <= high:
+                    raise ValueError(
+                        f"rate_unit_range: cells[{index}].value is outside "
+                        f"{low}..{high}, the range of unit {self.unit or 'percent'}"
+                    )
+                # Null, never zero: a rate over nothing is not 0%. Skipped and
+                # unknown results are outside a pass rate's denominator, so a
+                # cell of only those is "not measured" too.
+                if cell.n == 0 or (counts is not None and counts.evaluated() == 0):
+                    raise ValueError(
+                        f"empty_sample: cells[{index}] has no evaluated execution, "
+                        "so its rate is null"
+                    )
+        return self
+
+
+class TreeNodeStats(VizContract):
+    """A coverage-map node's figures (Wave 3, VIZ-206). Every key is required;
+    ``null`` is "not measured" or "not known", and which one is ``recency``'s job."""
+
+    test_count: Count
+    executions: Count
+    pass_rate: Rate | None
+    flaky_count: Count
+    flaky_share: Share | None
+    last_executed_at: str | None
+    staleness_days: Count | None
+    recency: Recency
+
+    @field_validator("last_executed_at")
+    @classmethod
+    def _instant(cls, value: str | None) -> str | None:
+        return value if value is None else _check_utc_instant(value)
+
+    @model_validator(mode="after")
+    def _null_semantics(self) -> "TreeNodeStats":
+        # Null, never zero: no executions is no pass rate, no tests no share.
+        if self.executions == 0 and self.pass_rate is not None:
+            raise ValueError("empty_sample: no executions, so pass_rate is null")
+        if self.test_count == 0 and self.flaky_share is not None:
+            raise ValueError("empty_sample: no tests, so flaky_share is null")
+        # A run deletion clears the canonical last-run link, so "we do not
+        # know" (unknown) must not be readable as "it never ran" (never), and
+        # neither may carry a date that says otherwise.
+        dated = (self.last_executed_at is not None, self.staleness_days is not None)
+        if dated != ((True, True) if self.recency == "seen" else (False, False)):
+            raise ValueError(
+                "recency_null_pair: seen carries last_executed_at and staleness_days; "
+                "unknown and never carry neither"
+            )
         return self
 
 
@@ -776,6 +920,10 @@ class TreeNode(VizContract):
     label: str
     value: NonNegativeNumber
     measure: Number | None
+    # Optional (Wave 3): the coverage map's per-node figures.
+    stats: TreeNodeStats | None = None
+
+    _stats_not_null = field_validator("stats", mode="before")(_absent_not_null)
 
 
 class TreeChart(VizContract):
@@ -827,6 +975,11 @@ class GraphNode(VizContract):
     id: str
     label: str
     size: NonNegativeNumber
+    # Optional (Wave 3, VIZ-207): a failure group's dominant category, for its
+    # colour. Untrusted free text, like the label.
+    group: str | None = None
+
+    _group_not_null = field_validator("group", mode="before")(_absent_not_null)
 
 
 class GraphEdge(VizContract):
@@ -860,8 +1013,110 @@ class GraphChart(VizContract):
         return self
 
 
+class PointsAxis(VizContract):
+    """One numeric axis of a ``points`` chart. ``unit`` is required: a reader
+    that had to guess percent from ratio would be off by 100."""
+
+    key: str
+    label: str
+    unit: AxisUnit
+    scale: AxisScale
+
+
+class SizeAxis(VizContract):
+    key: str
+    label: str
+
+
+class ChartPoint(VizContract):
+    """One mark: a test, placed by two numbers. Never ``null``: a test that
+    cannot be placed is left out and counted in ``excluded`` instead."""
+
+    id: str
+    label: str
+    x: Number
+    y: Number
+    size: Count
+    n: Count
+
+    @model_validator(mode="after")
+    def _empty_sample(self) -> "ChartPoint":
+        if self.n == 0:
+            raise ValueError(
+                "empty_sample: a point stands on at least one evaluated sample; "
+                "leave it out and count it in excluded"
+            )
+        return self
+
+
+class PointsMedians(VizContract):
+    x: Number
+    y: Number
+
+
+class PointsExcluded(VizContract):
+    """Counts of TESTS left out, by reason."""
+
+    below_min_executions: Count
+    no_duration: Count
+    no_evaluated: Count
+
+
+def _check_axis_value(axis: PointsAxis, value: int | float, where: str) -> None:
+    """The unit's range first, then the scale: a negative duration is
+    ``non_negative`` whatever the scale, and 0 on a log axis -- the "no
+    duration plotted at zero" bug -- is ``log_axis_positive``."""
+    if axis.unit in RATE_UNIT_RANGES:
+        low, high = RATE_UNIT_RANGES[axis.unit]
+        if not low <= value <= high:
+            raise ValueError(
+                f"rate_unit_range: {where} is outside {low}..{high}, the range of unit {axis.unit}"
+            )
+    elif value < 0:
+        raise ValueError(f"non_negative: {where} is below 0 on a {axis.unit} axis")
+    if axis.scale == "log" and value <= 0:
+        raise ValueError(f"log_axis_positive: {where} is not above 0 on a log axis")
+
+
+class PointsChart(VizContract):
+    """Wave 3 (VIZ-506, OD-6): one mark per entity on two numeric axes plus a
+    size -- the test scatter. The table view and CSV read it like any kind."""
+
+    kind: Literal["points"]
+    x: PointsAxis
+    y: PointsAxis
+    size: SizeAxis
+    points: list[ChartPoint] = Field(max_length=MAX_POINTS)
+    # Optional: absent when there is nothing to take a median of (never 0, 0).
+    medians: PointsMedians | None = None
+    # Optional: absent when the producer leaves nothing out.
+    excluded: PointsExcluded | None = None
+
+    _point_cap = field_validator("points", mode="before")(
+        _cap("point_cap", MAX_POINTS, "points")
+    )
+    _optional_not_null = field_validator("medians", "excluded", mode="before")(
+        _absent_not_null
+    )
+
+    @model_validator(mode="after")
+    def _placed_on_the_axes(self) -> "PointsChart":
+        duplicate = _first_duplicate(point.id for point in self.points)
+        if duplicate is not None:
+            raise ValueError(
+                f"unique_point_id: points[{duplicate}].id repeats an earlier id"
+            )
+        for index, point in enumerate(self.points):
+            _check_axis_value(self.x, point.x, f"points[{index}].x")
+            _check_axis_value(self.y, point.y, f"points[{index}].y")
+        if self.medians is not None:
+            _check_axis_value(self.x, self.medians.x, "medians.x")
+            _check_axis_value(self.y, self.medians.y, "medians.y")
+        return self
+
+
 Chart = Annotated[
-    Union[SeriesChart, MatrixChart, TreeChart, GraphChart],
+    Union[SeriesChart, MatrixChart, TreeChart, GraphChart, PointsChart],
     Field(discriminator="kind"),
 ]
 
@@ -900,7 +1155,7 @@ class WidgetInstance(VizContract):
     chartType: ChartType | None = None
     metricVariant: str | None = None
     filters: dict[str, Any] | None = None
-    groupBy: list[Dimension] | None = Field(default=None, max_length=MAX_GROUP_BY)
+    groupBy: list[GroupByDimension] | None = Field(default=None, max_length=MAX_GROUP_BY)
     topN: Literal[5, 10, 25, 50] | None = None
     scale: Literal["linear", "log"] | None = None
     stack: Literal["none", "absolute", "percent"] | None = None
@@ -993,9 +1248,6 @@ REPORT_METRIC_KEYS: tuple[str, ...] = (
 
 ComparableReasonCode = Literal["no_data", "partial_window", "different_basis", "not_measured"]
 COMPARABLE_REASON_CODES: tuple[str, ...] = get_args(ComparableReasonCode)
-
-#: C6 ``rate_range``: a percentage.
-Rate = Annotated[Union[int, float], _finite_number("rate_range", minimum=0, maximum=100)]
 
 
 class MetricsWindow(VizContract):

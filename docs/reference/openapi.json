@@ -35197,13 +35197,13 @@
         "operationId": "chart_data_api_v1_analytics_chart_data_get",
         "parameters": [
           {
-            "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+            "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, failures, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
             "in": "query",
             "name": "metric",
             "required": false,
             "schema": {
               "default": "executions",
-              "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+              "description": "What to measure. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, failures, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
               "title": "Metric",
               "type": "string"
             }
@@ -35362,6 +35362,422 @@
           }
         ],
         "summary": "Chart Data",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/chart-data/rows": {
+      "get": {
+        "description": "One page of the test executions behind a chart mark, newest first.\n\n``reconciliation`` names the mark field these rows add up to (``y`` for a\ncount, ``n`` for a rate or a duration) and the number to compare with it;\n``meta.definitions.chart_grain`` says when the chart counted run\naggregates, which can hold runs with no per-test rows.",
+        "operationId": "chart_data_rows_api_v1_analytics_chart_data_rows_get",
+        "parameters": [
+          {
+            "description": "The chart's metric; it decides which executions count. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, failures, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "default": "executions",
+              "description": "The chart's metric; it decides which executions count. One of: broken, duration_p50, duration_p95, duration_total, executions, failed, failure_rate, failures, flaky_tests, pass_rate, passed, retried_tests, run_count, skipped, unique_tests, unknown",
+              "title": "Metric",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The chart's dimensions (at most two). One of: day, week, project, release, suite, status, failure_category, branch, environment, ingestion_source, test, error_signature",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's dimensions (at most two). One of: day, week, project, release, suite, status, failure_category, branch, environment, ingestion_source, test, error_signature",
+              "title": "Group By"
+            }
+          },
+          {
+            "description": "The chart's top_n, when it had one.",
+            "in": "query",
+            "name": "top_n",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's top_n, when it had one.",
+              "title": "Top N"
+            }
+          },
+          {
+            "description": "The chart's key for the selected day bucket. Allowed only when day is in group_by.",
+            "in": "query",
+            "name": "bucket_day",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected day bucket. Allowed only when day is in group_by.",
+              "title": "Bucket Day"
+            }
+          },
+          {
+            "description": "The chart's key for the selected week bucket. Allowed only when week is in group_by.",
+            "in": "query",
+            "name": "bucket_week",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected week bucket. Allowed only when week is in group_by.",
+              "title": "Bucket Week"
+            }
+          },
+          {
+            "description": "The chart's key for the selected project bucket. Allowed only when project is in group_by.",
+            "in": "query",
+            "name": "bucket_project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected project bucket. Allowed only when project is in group_by.",
+              "title": "Bucket Project"
+            }
+          },
+          {
+            "description": "The chart's key for the selected release bucket. Allowed only when release is in group_by.",
+            "in": "query",
+            "name": "bucket_release",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected release bucket. Allowed only when release is in group_by.",
+              "title": "Bucket Release"
+            }
+          },
+          {
+            "description": "The chart's key for the selected suite bucket. Allowed only when suite is in group_by.",
+            "in": "query",
+            "name": "bucket_suite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected suite bucket. Allowed only when suite is in group_by.",
+              "title": "Bucket Suite"
+            }
+          },
+          {
+            "description": "The chart's key for the selected status bucket. Allowed only when status is in group_by.",
+            "in": "query",
+            "name": "bucket_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected status bucket. Allowed only when status is in group_by.",
+              "title": "Bucket Status"
+            }
+          },
+          {
+            "description": "The chart's key for the selected failure_category bucket. Allowed only when failure_category is in group_by.",
+            "in": "query",
+            "name": "bucket_failure_category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected failure_category bucket. Allowed only when failure_category is in group_by.",
+              "title": "Bucket Failure Category"
+            }
+          },
+          {
+            "description": "The chart's key for the selected branch bucket. Allowed only when branch is in group_by.",
+            "in": "query",
+            "name": "bucket_branch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected branch bucket. Allowed only when branch is in group_by.",
+              "title": "Bucket Branch"
+            }
+          },
+          {
+            "description": "The chart's key for the selected environment bucket. Allowed only when environment is in group_by.",
+            "in": "query",
+            "name": "bucket_environment",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected environment bucket. Allowed only when environment is in group_by.",
+              "title": "Bucket Environment"
+            }
+          },
+          {
+            "description": "The chart's key for the selected ingestion_source bucket. Allowed only when ingestion_source is in group_by.",
+            "in": "query",
+            "name": "bucket_ingestion_source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected ingestion_source bucket. Allowed only when ingestion_source is in group_by.",
+              "title": "Bucket Ingestion Source"
+            }
+          },
+          {
+            "description": "The chart's key for the selected test bucket. Allowed only when test is in group_by.",
+            "in": "query",
+            "name": "bucket_test",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected test bucket. Allowed only when test is in group_by.",
+              "title": "Bucket Test"
+            }
+          },
+          {
+            "description": "The chart's key for the selected error_signature bucket. Allowed only when error_signature is in group_by.",
+            "in": "query",
+            "name": "bucket_error_signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The chart's key for the selected error_signature bucket. Allowed only when error_signature is in group_by.",
+              "title": "Bucket Error Signature"
+            }
+          },
+          {
+            "description": "From 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "From 1.",
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "1-200; (page - 1) x size <= 10000.",
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "1-200; (page - 1) x size <= 10000.",
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Chart Data Rows",
         "tags": [
           "Analytics"
         ]
@@ -35552,6 +35968,172 @@
           }
         ],
         "summary": "Coverage Stats",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/coverage-map": {
+      "get": {
+        "description": "One level of the coverage map as contract C3 ``tree``: the parent as the\nsingle root, its children (at most 499, the rest in one \"Other (n)\" node),\neach with the ``stats`` block. Test-execution coverage, not code coverage.",
+        "operationId": "coverage_map_api_v1_analytics_coverage_map_get",
+        "parameters": [
+          {
+            "description": "1: the suites. 2: the classes (or files) of one suite. 3: the tests of one class.",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "1: the suites. 2: the classes (or files) of one suite. 3: the tests of one class.",
+              "title": "Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "depth 2 and 3: the suite KEY, as the level-1 node id carries it after its 's:' prefix. Echoed, never parsed.",
+            "in": "query",
+            "name": "suite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "depth 2 and 3: the suite KEY, as the level-1 node id carries it after its 's:' prefix. Echoed, never parsed.",
+              "title": "Suite"
+            }
+          },
+          {
+            "description": "depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>␟' ('__none__' for tests with no class).",
+            "in": "query",
+            "name": "class_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>␟' ('__none__' for tests with no class).",
+              "title": "Class Key"
+            }
+          },
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Coverage Map",
         "tags": [
           "Analytics"
         ]
@@ -35897,6 +36479,152 @@
         ]
       }
     },
+    "/api/v1/analytics/failure-groups": {
+      "get": {
+        "description": "Failing executions grouped by error signature, as contract C3 ``graph``.\n\n``nodes`` are the largest groups (size = failures, ``group`` = dominant\nfailure category); ``groups`` carries their counts, share, categories,\ntrend and top tests in rank order; ``no_message`` and ``singletons`` are\nroll-ups, not nodes. ``edges`` is empty unless ``include=edges``. Labels\nare raw error text: untrusted, render as text.",
+        "operationId": "failure_groups_api_v1_analytics_failure_groups_get",
+        "parameters": [
+          {
+            "description": "Optional parts of the answer (repeatable). One of: edges. 'edges' links groups that fail in the same tests.",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional parts of the answer (repeatable). One of: edges. 'edges' links groups that fail in the same tests.",
+              "title": "Include"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Failure Groups",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
     "/api/v1/analytics/flake-load": {
       "get": {
         "description": "What share of recent runs carried at least one retried test?\n\nThis is deliberately a **load**, not a debt burndown. Flaky-test insertion\nrate tracks the fix rate even under sustained investment, so a \"remaining\"\ncount trending to zero is a promise that will never be kept — it will sit\nnear a floor forever and teach users the tool is broken rather than that\nthe target was wrong. A load has no implied zero: it is read against a\nbudget the team chooses, like an error budget.\n\nReturns ``flake_load: null`` with a reason below the minimum run count,\nsince a share computed from three runs is noise wearing a percentage sign.",
@@ -35991,12 +36719,12 @@
             }
           },
           {
-            "description": "Project to read. Single-valued.",
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
             "in": "query",
             "name": "project_id",
             "required": true,
             "schema": {
-              "description": "Project to read. Single-valued.",
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
               "title": "Project Id",
               "type": "string"
             }
@@ -36223,6 +36951,185 @@
           }
         ],
         "summary": "Flaky Tests",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/heatmap": {
+      "get": {
+        "description": "A two-dimensional read as contract C3 ``matrix``.\n\nRate kinds carry the pass rate in percentage points (``unit: \"percent\"``),\nwith the five status counts behind each cell; a cell with nothing\nevaluated is ``null``, never 0. ``test_run`` carries each execution's\nstatus. Rows and columns beyond the caps are dropped and counted in\n``meta.truncated_axes``.",
+        "operationId": "heatmap_api_v1_analytics_heatmap_get",
+        "parameters": [
+          {
+            "description": "Which matrix. One of: suite_day, test_run, suite_environment, suite_release. kind=suite_release and kind=test_run answer for one project: without project_id they are refused with 422 'project_required'. The other kinds take All Projects.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which matrix. One of: suite_day, test_run, suite_environment, suite_release. kind=suite_release and kind=test_run answer for one project: without project_id they are refused with 422 'project_required'. The other kinds take All Projects.",
+              "title": "Kind"
+            }
+          },
+          {
+            "description": "Rows to keep, worst first (default 40, 1-60).",
+            "in": "query",
+            "name": "rows",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rows to keep, worst first (default 40, 1-60).",
+              "title": "Rows"
+            }
+          },
+          {
+            "description": "kind=test_run only: the last N runs as columns (default 30, 1-90).",
+            "in": "query",
+            "name": "runs",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "kind=test_run only: the last N runs as columns (default 30, 1-90).",
+              "title": "Runs"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Heatmap",
         "tags": [
           "Analytics"
         ]
@@ -36527,12 +37434,12 @@
         "operationId": "systemic_clusters_api_v1_analytics_systemic_clusters_get",
         "parameters": [
           {
-            "description": "Project to read. Single-valued.",
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
             "in": "query",
             "name": "project_id",
             "required": true,
             "schema": {
-              "description": "Project to read. Single-valued.",
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
               "title": "Project Id",
               "type": "string"
             }
@@ -36622,6 +37529,160 @@
           }
         ],
         "summary": "Systemic Clusters",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/test-scatter": {
+      "get": {
+        "description": "p95 duration (ms, log x) x failure rate (%, y) x executions (size), one\npoint per test; tests that cannot be placed are counted in ``excluded``.",
+        "operationId": "get_test_scatter_api_v1_analytics_test_scatter_get",
+        "parameters": [
+          {
+            "description": "Tests with fewer executions in scope are left out and counted (1-1000).",
+            "in": "query",
+            "name": "min_executions",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "description": "Tests with fewer executions in scope are left out and counted (1-1000).",
+              "title": "Min Executions",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "At most this many points (1-5000).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 2000,
+              "description": "At most this many points (1-5000).",
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Which tests are kept when more qualify: failures, volume",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "failures",
+              "description": "Which tests are kept when more qualify: failures, volume",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Test Scatter",
         "tags": [
           "Analytics"
         ]
@@ -56903,12 +57964,12 @@
             }
           },
           {
-            "description": "Project to read. Single-valued.",
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
             "in": "query",
             "name": "project_id",
             "required": true,
             "schema": {
-              "description": "Project to read. Single-valued.",
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
               "title": "Project Id",
               "type": "string"
             }

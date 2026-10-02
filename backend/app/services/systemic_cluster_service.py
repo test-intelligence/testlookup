@@ -47,6 +47,7 @@ never a reason to lower the bar until something appears.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional
 
@@ -134,6 +135,11 @@ class SystemicCluster:
     def size(self) -> int:
         return len(self.members)
 
+    @property
+    def membership_key(self) -> str:
+        """The identity of this exact member set (see :func:`membership_key`)."""
+        return membership_key(self.members)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "cluster_key": self.cluster_key,
@@ -144,6 +150,25 @@ class SystemicCluster:
             "co_failure_runs": self.co_failure_runs,
             "members": list(self.members),
         }
+
+
+def membership_key(fingerprints: Iterable[str]) -> str:
+    """VIZ-207: a cluster's identity across nightly sweeps -- for an UNCHANGED set.
+
+    ``cluster_key`` is a rank (``sfc_001`` = tonight's largest) and the sweep
+    deletes and re-inserts every row, so neither survives a night. This is the
+    first 32 hex characters of sha256 over the fingerprints sorted by code
+    point and joined by a newline: the same members in any order give the same
+    key, and ONE test joining or leaving gives a different one. That is the
+    whole promise; nothing here tracks a cluster through churn (OD-4 priced a
+    best-overlap ``lineage_key`` and it was not taken).
+
+    sha256, not md5: FIPS-mode hosts refuse md5. Migration 0193 computes the
+    same value in SQL (``COLLATE "C"`` for the same order); a PG test holds the
+    two together.
+    """
+    joined = "\n".join(sorted(set(fingerprints)))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:32]
 
 
 def jaccard_distance(left: set, right: set) -> float:
@@ -401,6 +426,28 @@ async def cluster_project(
     )
 
 
+async def existing_cluster_count(db: "AsyncSession", project_id: Any) -> int:
+    """How many clusters the project has stored now (before a replace).
+
+    The sweep bumps the analytics epoch when it wrote clusters OR removed the
+    last ones: a project whose clusters all dissolved changed what the API
+    answers just as much as one that gained some.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.postgres import SystemicFlakeCluster
+
+    return int(
+        (
+            await db.execute(
+                select(func.count()).select_from(SystemicFlakeCluster).where(
+                    SystemicFlakeCluster.project_id == project_id
+                )
+            )
+        ).scalar_one()
+    )
+
+
 async def store_clusters(
     db: "AsyncSession",
     project_id: Any,
@@ -452,6 +499,7 @@ async def store_clusters(
             cohesion=cluster.cohesion,
             co_failure_runs=cluster.co_failure_runs,
             window_days=window_days,
+            membership_key=cluster.membership_key,
         )
         db.add(row)
         await db.flush()

@@ -1,0 +1,23 @@
+{
+  "description": "A matrix that says ratio but carries percentage points (96.4) is the forgotten-/100 bug.",
+  "violates": "rate_unit_range",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "unit": "ratio",
+    "x_labels": [
+      "Sep 17"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 96.4,
+        "n": 220
+      }
+    ]
+  }
+}

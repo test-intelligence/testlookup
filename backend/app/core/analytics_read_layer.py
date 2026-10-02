@@ -147,13 +147,18 @@ ANALYTICS_TIMEOUT_RETRY_AFTER_SECONDS = 5
 #: The default per-principal limit for a decorated route.
 ANALYTICS_RATE_LIMIT = "120/minute"
 
-#: The three routes the story rate-limits by name. They are declared here so
-#: the limit exists the moment VIZ-203/205/208 land; a route not listed uses
-#: :data:`ANALYTICS_RATE_LIMIT` when it asks for a limit at all.
+#: The routes rate-limited by name. The first three were declared before
+#: VIZ-203/205/208 landed so the limit existed the moment they did; Wave 3 adds
+#: the three heavier aggregate reads (VIZ-206/207/506-BE) at the heatmap's 60.
+#: A route not listed uses :data:`ANALYTICS_RATE_LIMIT` when it asks for a
+#: limit at all.
 RATE_LIMITED_ROUTES: dict[str, str] = {
     "/api/v1/analytics/chart-data": "120/minute",
     "/api/v1/analytics/chart-data/rows": "120/minute",
     "/api/v1/analytics/heatmap": "60/minute",
+    "/api/v1/analytics/coverage-map": "60/minute",
+    "/api/v1/analytics/failure-groups": "60/minute",
+    "/api/v1/analytics/test-scatter": "60/minute",
 }
 
 #: PostgreSQL's "query canceled" -- what ``statement_timeout`` raises.
@@ -589,13 +594,13 @@ async def _serve(
         # cache and nothing to compare.
         return result
 
-    body = render(result)
     # The ETag is computed over the payload WITHOUT ``meta.generated_at``: that
     # field is "when THIS response was built", and folding it in would make
     # every hit carry a tag no client could ever revalidate against. The bytes
     # STORED keep it in place, so restamping a hit only rewrites a value that
     # is already there and cannot reorder the JSON a client diffs.
-    etag = etag_for(digest, canonical_body(result, body))
+    body, canonical = render_with_canonical(result)
+    etag = etag_for(digest, canonical)
     if cacheable and epoch is not None:
         from app.services.cache_service import cache_set
 
@@ -719,15 +724,19 @@ def cache_digest(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
-def render(result: Any) -> str:
-    """The response body, exactly as FastAPI's ``JSONResponse`` would render
-    it, so caching changes no byte of any payload."""
+def _dumps(encoded: Any) -> str:
     return json.dumps(
-        jsonable_encoder(result),
+        encoded,
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
     )
+
+
+def render(result: Any) -> str:
+    """The response body, exactly as FastAPI's ``JSONResponse`` would render
+    it, so caching changes no byte of any payload."""
+    return _dumps(jsonable_encoder(result))
 
 
 def canonical_body(result: Any, body: str) -> str:
@@ -738,6 +747,27 @@ def canonical_body(result: Any, body: str) -> str:
 
     stripped = without_generated_at(result)
     return body if stripped is result else render(stripped)
+
+
+def render_with_canonical(result: Any) -> tuple[str, str]:
+    """``(render(result), canonical_body(result, ...))`` with ONE
+    ``jsonable_encoder`` pass instead of two.
+
+    The encoder is the expensive half of a miss on a large payload (about
+    38 ms for a full 60 x 90 heatmap with counts; ``json.dumps`` is ~4 ms), so
+    the canonical bytes are cut from the ENCODED payload. That is only the same
+    thing when the RAW payload is a dict whose ``meta`` is a dict holding
+    ``generated_at`` -- the one case :func:`canonical_body` strips. Anything
+    else (a model, a ``meta`` that is not a plain dict) keeps the body as its
+    canonical form, exactly as before, so no ETag changes.
+    """
+    from app.services.analytics_meta import without_generated_at
+
+    encoded = jsonable_encoder(result)
+    body = _dumps(encoded)
+    if without_generated_at(result) is result:
+        return body, body
+    return body, _dumps(without_generated_at(encoded))
 
 
 def restamp(body: str) -> str:

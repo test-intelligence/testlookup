@@ -12,6 +12,7 @@ The tests stand on their own (no need for the backend test rig).
 """
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import textwrap
@@ -3715,4 +3716,232 @@ def test_epoch_bump_does_not_scan_backend_scripts(
     """backend/scripts is dev seed tooling, documented as out of scope."""
     _epoch_tree(monkeypatch, tmp_path, "x = 1\n")
     _write(tmp_path / "backend" / "scripts" / "seed.py", _EPOCH_EVASIONS["direct_update_test_run"])
+    assert _epoch_messages() == []
+
+
+# Wave 3 (VIZ-206 coverage map, VIZ-207 failure groups): the canonical case
+# lifecycle and the systemic cluster sweep joined the mutation set.
+
+_WAVE3_EPOCH_BASES = {
+    "app.services.test_suite_service:link_canonical_to_suite",
+    "app.services.test_suite_service:bulk_link_canonicals_to_suite",
+    "app.services.test_suite_service:reconcile_canonical_deletions",
+    "app.services.test_suite_service:sync_canonical_test_cases",
+    "app.services.test_suite_service:update_test_suite",
+    "app.services.systemic_cluster_service:store_clusters",
+}
+
+
+def test_epoch_bump_registry_holds_the_wave3_paths() -> None:
+    """The coverage map reads canonical suite + status + suite name; failure
+    groups read the clusters the sweep rewrites. Dropping one of these keys
+    unguards that path -- and the registry check below proves each still
+    names a real function on the real tree."""
+    assert _WAVE3_EPOCH_BASES <= set(qg._ANALYTICS_MUTATION_BASES)
+    messages = [v.message for v in qg._backend_analytics_epoch_bump()]
+    assert not [m for m in messages if "registry entry" in m], messages
+
+
+def _canonical_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, service: str) -> None:
+    """``test_suite_service`` planted under its REAL registry key."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_ANALYTICS_MUTATION_BASES", {
+        "app.services.test_suite_service:link_canonical_to_suite": "canonical case suite move",
+    })
+    _write(tmp_path / "backend" / "app" / "services" / "test_suite_service.py", service)
+
+
+def test_epoch_bump_flags_a_canonical_move_that_commits_without_bumping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Planted: the real path with its bump removed. The guard must name it."""
+    _canonical_tree(monkeypatch, tmp_path, """
+        async def link_canonical_to_suite(db, canonical, target_suite):
+            canonical.test_suite_id = target_suite.id
+            await db.commit()
+            return canonical
+    """)
+    violations = qg._backend_analytics_epoch_bump()
+    assert len(violations) == 1
+    assert "test_suite_service:link_canonical_to_suite" in violations[0].message
+    assert "canonical case suite move" in violations[0].message
+
+
+def test_epoch_bump_accepts_a_stage_only_move_whose_route_commits_then_bumps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The shape the real path takes: the service stays stage-only (the
+    transaction-boundary ratchet), the route commits explicitly, then bumps."""
+    _canonical_tree(monkeypatch, tmp_path, """
+        async def link_canonical_to_suite(db, canonical, target_suite):
+            canonical.test_suite_id = target_suite.id
+            await db.flush()
+    """)
+    _write(tmp_path / "backend" / "app" / "routers" / "suites.py", """
+        from fastapi import APIRouter, Depends
+
+        from app.db.postgres import get_db
+        from app.services import test_suite_service as svc
+
+        router = APIRouter()
+
+
+        @router.post("/canonical-test-cases/{cid}/link")
+        async def link(cid, canonical, target, db=Depends(get_db)):
+            await svc.link_canonical_to_suite(db, canonical, target)
+            await db.commit()
+            from app.services.cache_service import bump_analytics_epoch
+
+            await bump_analytics_epoch(canonical.project_id)
+    """)
+    assert _epoch_messages() == []
+
+
+def test_epoch_bump_a_non_committing_canonical_move_obliges_its_caller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The pre-Wave-3 shape (flush only): the route that commits owes the bump."""
+    _canonical_tree(monkeypatch, tmp_path, """
+        async def link_canonical_to_suite(db, canonical, target_suite):
+            canonical.test_suite_id = target_suite.id
+            await db.flush()
+    """)
+    _write(tmp_path / "backend" / "app" / "routers" / "suites.py", """
+        from app.services import test_suite_service as svc
+
+
+        async def link(db, canonical, target):
+            await svc.link_canonical_to_suite(db, canonical, target)
+            await db.commit()
+    """)
+    violations = qg._backend_analytics_epoch_bump()
+    assert [(v.file.name, v.line) for v in violations] == [("suites.py", 5)]
+
+
+@pytest.mark.parametrize(
+    "body, what",
+    [
+        ("""
+            from app.models.postgres import CanonicalTestCase
+
+
+            async def retire(db, canonical: CanonicalTestCase):
+                canonical.status = "deleted"
+                await db.commit()
+         """, "CanonicalTestCase.status assignment"),
+        ("""
+            from sqlalchemy import select
+
+            from app.models.postgres import CanonicalTestCase
+
+
+            async def move(db, cid, suite_id):
+                canonical = (await db.execute(
+                    select(CanonicalTestCase).where(CanonicalTestCase.id == cid)
+                )).scalar_one()
+                canonical.test_suite_id = suite_id
+                await db.commit()
+         """, "CanonicalTestCase.test_suite_id assignment"),
+        ("""
+            from app.models.postgres import TestSuite
+
+
+            async def rename(db, suite_id, name):
+                suite = await db.get(TestSuite, suite_id)
+                suite.name = name
+                await db.commit()
+         """, "TestSuite.name assignment"),
+    ],
+    ids=["retire", "move", "rename"],
+)
+def test_epoch_bump_discovers_an_unregistered_canonical_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, body: str, what: str
+) -> None:
+    """A NEW function that moves, retires or renames -- not in the registry --
+    is still found by discovery, and a bump after its commit clears it."""
+    _epoch_tree(monkeypatch, tmp_path, body)
+    violations = qg._backend_analytics_epoch_bump()
+    assert len(violations) == 1 and what in violations[0].message
+    fixed = textwrap.dedent(body).strip("\n") + (
+        "\n    from app.services.cache_service import bump_analytics_epoch\n"
+        "\n    await bump_analytics_epoch(1)\n"
+    )
+    # An unparsable tree is skipped by the guard, so "clean" must not mean
+    # "could not read it".
+    ast.parse(fixed)
+    _epoch_tree(monkeypatch, tmp_path, fixed)
+    assert _epoch_messages() == []
+
+
+def test_epoch_bump_other_attributes_of_a_canonical_are_not_mutations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Names, tags, review state: nothing cached reads them."""
+    _epoch_tree(monkeypatch, tmp_path, """
+        from app.models.postgres import CanonicalTestCase, TestSuite
+
+
+        async def touch(db, canonical: CanonicalTestCase, suite: TestSuite):
+            canonical.review_tag = "x"
+            canonical.retirement_reason = "y"
+            suite.description = "z"
+            await db.commit()
+    """)
+    assert _epoch_messages() == []
+
+
+def _sweep_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, task: str) -> None:
+    """The cluster sweep: a non-committing ``store_clusters`` under its real key,
+    and the task that commits it."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_ANALYTICS_MUTATION_BASES", {
+        "app.services.systemic_cluster_service:store_clusters": "systemic cluster sweep",
+    })
+    app = tmp_path / "backend" / "app"
+    _write(app / "services" / "systemic_cluster_service.py", """
+        async def store_clusters(db, project_id, clusters):
+            await db.execute("DELETE FROM systemic_flake_cluster")
+            return len(clusters)
+    """)
+    _write(app / "worker" / "tasks.py", task)
+
+
+def test_epoch_bump_flags_a_cluster_sweep_without_a_bump(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The nightly sweep's shape: a nested coroutine inside the Celery task."""
+    _sweep_tree(monkeypatch, tmp_path, """
+        def recompute_systemic_clusters(project_id=None):
+            async def _run():
+                from app.services.systemic_cluster_service import store_clusters
+
+                async with session() as db:
+                    await store_clusters(db, project_id, [])
+                    await db.commit()
+
+            return run(_run())
+    """)
+    violations = qg._backend_analytics_epoch_bump()
+    assert len(violations) == 1
+    assert "tasks:recompute_systemic_clusters" in violations[0].message
+    assert "systemic cluster sweep" in violations[0].message
+
+
+def test_epoch_bump_accepts_a_cluster_sweep_that_bumps_after_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _sweep_tree(monkeypatch, tmp_path, """
+        def recompute_systemic_clusters(project_id=None):
+            async def _run():
+                from app.services.cache_service import bump_analytics_epoch
+                from app.services.systemic_cluster_service import store_clusters
+
+                async with session() as db:
+                    written = await store_clusters(db, project_id, [])
+                    await db.commit()
+                    if written:
+                        await bump_analytics_epoch(project_id)
+
+            return run(_run())
+    """)
     assert _epoch_messages() == []

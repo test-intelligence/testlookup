@@ -23,6 +23,11 @@ from app.routers import (
     activity,
     analyze,
     analytics,
+    analytics_chart_rows,
+    analytics_coverage_map,
+    analytics_failure_groups,
+    analytics_heatmap,
+    analytics_test_scatter,
     api_keys,
     app_settings,
     audit_dashboard,
@@ -144,6 +149,15 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     search.router,
     analyze.router,
     analytics.router,
+    # Wave 3 (VIZ-205/206/207/208/506-BE): read routes under the same
+    # ``/api/v1/analytics`` prefix, AFTER analytics.router so the literal
+    # ``/chart-data/rows`` is registered after ``/chart-data``. No route under
+    # this prefix has a path parameter, so nothing here can shadow another.
+    analytics_heatmap.router,          # VIZ-205: GET /analytics/heatmap
+    analytics_coverage_map.router,     # VIZ-206: GET /analytics/coverage-map
+    analytics_failure_groups.router,   # VIZ-207: GET /analytics/failure-groups
+    analytics_chart_rows.router,       # VIZ-208: GET /analytics/chart-data/rows
+    analytics_test_scatter.router,     # VIZ-506-BE: GET /analytics/test-scatter
     integrations.router,
     notifications.router,
     app_settings.router,

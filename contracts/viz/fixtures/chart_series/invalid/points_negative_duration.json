@@ -1,0 +1,33 @@
+{
+  "description": "An ms axis holds no negative value, even on a linear scale.",
+  "violates": "non_negative",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "linear"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": -3,
+        "y": 12.5,
+        "size": 40,
+        "n": 40
+      }
+    ]
+  }
+}

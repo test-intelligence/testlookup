@@ -4899,6 +4899,11 @@ def reconcile_canonical_deletions(self) -> dict:
                 try:
                     result = await _reconcile(project_db, project_id)
                     await project_db.commit()
+                    if result.get("deleted"):
+                        # A retired case leaves the coverage map (VIZ-206).
+                        from app.services.cache_service import bump_analytics_epoch
+
+                        await bump_analytics_epoch(project_id)
                     from app.services.test_management_metrics_service import (
                         emit_staged_test_management_metrics,
                     )
@@ -5897,10 +5902,18 @@ def recompute_systemic_clusters(self, project_id: str | None = None) -> dict:
 
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import Project
-        from app.services.systemic_cluster_service import cluster_project, store_clusters
+        from app.services.cache_service import bump_analytics_epochs
+        from app.services.systemic_cluster_service import (
+            cluster_project,
+            existing_cluster_count,
+            store_clusters,
+        )
 
         with _beat_span("recompute_systemic_clusters") as span:
             clusters_written = without = errors = 0
+            # Projects whose replace COMMITTED and changed something (clusters
+            # written, or the last ones removed) -- a rollback is absent.
+            changed_projects: list = []
             async with AsyncSessionLocal() as db:
                 if project_id:
                     ids = [uuid.UUID(project_id)]
@@ -5916,11 +5929,14 @@ def recompute_systemic_clusters(self, project_id: str | None = None) -> dict:
                 for pid in ids:
                     try:
                         found = await cluster_project(db, pid)
+                        had = await existing_cluster_count(db, pid)
                         written = await store_clusters(db, pid, found)
                         await db.commit()
                         clusters_written += written
                         if not written:
                             without += 1
+                        if written or had:
+                            changed_projects.append(pid)
                     except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
                         errors += 1
                         await db.rollback()
@@ -5932,6 +5948,11 @@ def recompute_systemic_clusters(self, project_id: str | None = None) -> dict:
                             error_type=type(exc).__name__,
                         )
 
+            # VIZ-207 / VIZ-212: /analytics/systemic-clusters reads these rows
+            # (its payload carries computed_at) through the epoch-keyed cache;
+            # once per changed project, after every commit (never raises).
+            # Failure groups read test_cases / test_runs, not these rows.
+            await bump_analytics_epochs(changed_projects)
             out = {
                 "projects": len(ids),
                 "clusters": clusters_written,

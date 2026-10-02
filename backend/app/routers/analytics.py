@@ -45,6 +45,7 @@ from app.services.analytics_scope import (
 from app.services.flake_load_service import get_flake_load
 from app.services.flaky_suppression_gate import decide as gate_decide
 from app.services.metrics_service import PASS_RATE_BASIS_EXECUTIONS
+from app.services.systemic_cluster_service import membership_key
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
@@ -338,10 +339,32 @@ async def systemic_clusters(
     if filtered:
         clusters = [c for c in clusters if members_by_cluster.get(c.id)]
 
+    # VIZ-207: the identity of the cluster's FULL member set (never of the
+    # filtered member list shown below). A row written before migration 0193's
+    # code shipped has none stored; its key is computed from all its members.
+    keys = {c.id: c.membership_key for c in clusters if c.membership_key}
+    unkeyed = [c.id for c in clusters if c.id not in keys]
+    if unkeyed:
+        full: dict = {}
+        for cluster_id, fingerprint in (
+            await db.execute(
+                select(
+                    SystemicFlakeClusterMember.cluster_id,
+                    SystemicFlakeClusterMember.test_fingerprint,
+                ).where(SystemicFlakeClusterMember.cluster_id.in_(unkeyed))
+            )
+        ).all():
+            full.setdefault(cluster_id, []).append(fingerprint)
+        keys.update({cid: membership_key(fps) for cid, fps in full.items()})
+
     payload = {
         "items": [
             {
                 "cluster_key": cluster.cluster_key,
+                # Identity across nightly sweeps for an UNCHANGED member set
+                # (one test joining or leaving is a new key); null only for a
+                # cluster with no member row.
+                "membership_key": keys.get(cluster.id),
                 "label": cluster.label,
                 "cause_family": cluster.cause_family,
                 "size": cluster.size,

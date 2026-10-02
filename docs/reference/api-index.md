@@ -67,18 +67,23 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/ai-eval/tier-comparison` | Run Tier Comparison | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/analytics/ai-summary` | Ai Analysis Summary | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/chart-data` | Chart Data | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/chart-data/rows` | Chart Data Rows | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/classify-uncategorized` | Classify Uncategorized Failures | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/coverage` | Coverage Stats | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/coverage-map` | Coverage Map | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects` | List Defects | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/defects` | Create Defect | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/failure-categories` | Failure Categories | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/failure-groups` | Failure Groups | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/flake-load` | Flake Load | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/flaky-scores` | Flaky Scores | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/flaky-tests` | Flaky Tests | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/heatmap` | Heatmap | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/kind-evidence` | Kind Evidence | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/notify-owner` | Notify Suite Owner | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/suite-detail` | Suite Detail | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/systemic-clusters` | Systemic Clusters | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/test-scatter` | Get Test Scatter | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/top-failing` | Top Failing Tests | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analyze` | Analyze Test Case | [AI Analysis](api/ai-analysis.md) |
 | GET | `/api/v1/analyze/{test_case_id}` | Fetch existing AI analysis for a test case (no re-run) | [AI Analysis](api/ai-analysis.md) |
@@ -560,4 +565,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **551 HTTP operations**, **461 paths**, **81 domain pages**.
+Total: **556 HTTP operations**, **466 paths**, **81 domain pages**.

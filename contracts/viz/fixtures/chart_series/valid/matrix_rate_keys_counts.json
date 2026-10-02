@@ -1,0 +1,78 @@
+{
+  "description": "Suite x day pass rate with stable keys, an explicit percent unit and status counts. Null, never zero: a cell with no executions and a cell with only skipped results are null (not measured), while a cell where everything failed is a true 0.",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "unit": "percent",
+    "x_labels": [
+      "Sep 17",
+      "Sep 18"
+    ],
+    "y_labels": [
+      "Payments",
+      "cart"
+    ],
+    "x_keys": [
+      "2026-09-17",
+      "2026-09-18"
+    ],
+    "y_keys": [
+      "payments",
+      "cart"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 96.36,
+        "n": 220,
+        "counts": {
+          "passed": 212,
+          "failed": 3,
+          "broken": 5,
+          "skipped": 0,
+          "unknown": 0
+        }
+      },
+      {
+        "x": 1,
+        "y": 0,
+        "value": null,
+        "n": 0,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "broken": 0,
+          "skipped": 0,
+          "unknown": 0
+        }
+      },
+      {
+        "x": 0,
+        "y": 1,
+        "value": null,
+        "n": 4,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "broken": 0,
+          "skipped": 4,
+          "unknown": 0
+        }
+      },
+      {
+        "x": 1,
+        "y": 1,
+        "value": 0,
+        "n": 12,
+        "counts": {
+          "passed": 0,
+          "failed": 12,
+          "broken": 0,
+          "skipped": 0,
+          "unknown": 0
+        }
+      }
+    ]
+  }
+}

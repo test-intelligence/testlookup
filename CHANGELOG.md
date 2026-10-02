@@ -1,5 +1,116 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 3 data layer: heatmap, coverage map, failure groups, chart rows and test scatter endpoints (VIZ-205, VIZ-206, VIZ-207, VIZ-208, VIZ-506)
+
+Five new read endpoints under `/api/v1/analytics`, one additive migration
+(0193), a new chart-data metric, and cache invalidation for five more mutation
+paths. No page calls the new endpoints yet: the charts that use them arrive in
+the next change, behind `viz_chart_data_api` and `viz_advanced_charts`. Nothing
+a user sees changes at merge. The one change that cannot be switched off is
+migration 0193, which adds a nullable column and an index. Its `downgrade()`
+drops both, and code from before it ignores the column.
+
+Every new route goes through the same analytics read layer as `chart-data`:
+`analytics_scope` authorisation (each release id checked, one project), a 5 s
+statement timeout that answers 503 `analytics_timeout`, a cache keyed by the
+project's epoch with an ETag and 304, and the C2 envelope (`meta`) with
+`definitions` that say what the numbers count. Every body validates against
+contract C3. A cell, node or point with nothing to measure is `null`, never 0.
+A cap that bites sets `meta.truncated` and `truncated_total`, and says which
+axis was cut.
+
+**New endpoints.**
+- `GET /analytics/heatmap?kind=suite_day|test_run|suite_environment|suite_release`
+  (VIZ-205): a C3 `matrix`. The three suite kinds hold pass rates in percent
+  (`unit: "percent"`), with each cell's status `counts` (they sum to `n`) and
+  stable `x_keys`/`y_keys` for drilling. `test_run` is a status matrix of the
+  last `runs` runs (default 30, at most 90) against the tests that failed most
+  in the window. Rows: 40 by default, at most 60. Environments and releases: at
+  most 20 columns, and a caller who names releases gets every one of them. Rows
+  past the cap are dropped and counted, with no "Other" row. Ties on the row
+  and column ranking are broken by key in code-point order, whatever the
+  database's collation. `suite_day` refuses a window
+  over 90 days (one column per day); `test_run` and `suite_release` need one
+  project. 60 requests a minute.
+- `GET /analytics/coverage-map?project_id=&depth=1|2|3` (VIZ-206): a C3 `tree`
+  of suites, then classes (`suite=`), then tests (`suite=` and `class_key=`).
+  Every node carries `stats`: test count, executions, pass rate, flaky count
+  and share, last execution, staleness in whole days, and `recency`
+  (`seen`/`unknown`/`never`). Tests that did not run in the window are counted
+  under their canonical suite. A level with more than 499 children keeps the
+  498 largest plus one `Other (n)` node that has no pass rate. 60 a minute.
+- `GET /analytics/failure-groups[?include=edges]` (VIZ-207): failing executions
+  grouped by error signature, computed in SQL by a port of
+  `flaky_signals.error_signature` (`services/failure_signature.py`, checked
+  against the Python function on a corpus of over 2,000 messages). Returns the
+  200 largest groups, each with counts, affected tests and runs, first and last
+  seen within the window, share of all failures, categories, a zero-filled trend (by day up to
+  90 days, by ISO week beyond) and its top tests. A test is a project plus a
+  fingerprint, so across all projects the same test in two projects counts
+  twice and each top test names its `project_id`. A failing run dated after
+  today stays in the counts and is reported in `meta.outside_window`, as on the
+  heatmap. Blank messages, one-off
+  signatures and the groups past 200 are roll-ups, and all the shares have one
+  denominator, so they sum to 1. `include=edges` links the 60 largest groups
+  by the overlap of their affected tests (Jaccard >= 0.2, at most 300 links).
+  The labels are raw error text: they are returned as data and are not
+  redacted. 60 a minute.
+- `GET /analytics/chart-data/rows` (VIZ-208): the executions behind one
+  chart-data mark. It takes the chart's own `metric`, `group_by` and `top_n`,
+  one `bucket_<dimension>=<key>` per dimension, and `page`/`size` (50 by
+  default, at most 200, offset at most 10,000). `bucket_error_signature`
+  selects the rows of one failure group with the same SQL expression the groups
+  use. `reconciliation` names the mark field the total equals (`y` for counts,
+  `n` for rates and durations, distinct tests or runs for those metrics). 120 a
+  minute.
+- `GET /analytics/test-scatter?project_id=` (VIZ-506): one point per test, p95
+  duration (ms, log axis, floored at 1 ms) against failure rate (percent of the
+  evaluated executions), sized by executions, as the new C3 kind `points`.
+  `min_executions` defaults to 5 (1 to 1,000); `limit` defaults to 2,000 (at
+  most 5,000); `order=failures|volume`. Tests left out are counted by reason in
+  `excluded`. 60 a minute.
+
+**Changed.**
+- `chart-data` has a new metric, `failures` (failed + broken per bucket). The
+  allow-list in the 422 body grows by one.
+- `/analytics/systemic-clusters` items gain `membership_key`. Migration 0193
+  adds `systemic_flake_cluster.membership_key`: the first 32 hex characters of
+  sha256 over the cluster's member fingerprints, sorted. The migration
+  backfills it in SQL. The nightly sweep deletes and re-inserts every cluster
+  and `cluster_key` is a rank, so this key is the only identity that survives
+  a night, and only while the member set is exactly the same. The index is
+  built and dropped `CONCURRENTLY`.
+- **Cache invalidation, five more paths.** The analytics epoch is now bumped
+  after the commit of a canonical test's suite move (`POST
+  /canonical-test-cases/{id}/link`), a bulk move (only when something moved), a
+  suite rename (not other suite edits), the nightly retirement sweep (only for
+  projects where it retired something), and the nightly systemic-cluster sweep
+  (once for each project whose clusters it rewrote or removed). The `backend.analytics-epoch-bump`
+  guard now also treats an assignment to `CanonicalTestCase.status` or
+  `test_suite_id`, or to `TestSuite.name`, as an analytics mutation.
+- The read layer encodes a response once on a cache miss. It used to run
+  `jsonable_encoder` a second time to compute the ETag without
+  `meta.generated_at`. The bytes and the ETag are unchanged (a test compares
+  both paths over eight payload shapes). A full 60 x 90 heatmap miss saved
+  33 to 48 ms in two measurements.
+- Contract C3: matrix `x_keys`, `y_keys`, cell `counts` and `unit`
+  (`percent`, the default, or `ratio`); tree node `stats`; graph node `group`;
+  the new kind `points`. C5 gains the dimension `class`. All of it is additive,
+  and every earlier fixture still validates. The Python and TypeScript
+  validators read the same fixtures, and each new invalid fixture breaks
+  exactly one rule.
+- CI runs the seven new PostgreSQL test files.
+
+**Measured** on a 1M-row dataset: each request went through the app with a cache miss, 9 samples per case.
+At 90 days every route's p95 is under its budget except the suite-by-day heatmap. That case measured p95 519 ms
+(566 ms with 60 rows) against a 500 ms budget, with p50 244 ms (271 ms). Each p95 was a single sample about
+300 ms slower than the rest. The database's own execution time stayed under 210 ms, and the same stall shows up
+in a plain fetch of the result. That points to the Windows test host's container networking rather than the
+query, but it is not proven: Python garbage collection accounts for part of the outliers. It is to be
+re-measured on Linux. Other figures at 90 days: coverage map p95 182-201 ms, failure groups 164 ms with edges,
+chart rows 28-107 ms, scatter 206-233 ms. At 365 days the scatter's p95 is 920 ms (budget 1,500). The first
+request after a database restart took 117-305 ms.
+
 ## Unreleased - Visualization Upgrade, Wave 2.6: the catalogue on the report pages, behind a flag; responsive and presentation mode (VIZ-408, VIZ-106)
 
 Five report pages gain the chart catalogue: Overview, Trends, Summary report,

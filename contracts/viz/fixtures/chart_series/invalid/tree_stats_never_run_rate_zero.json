@@ -1,0 +1,26 @@
+{
+  "description": "A suite with no executions has no pass rate: null, never 0.",
+  "violates": "empty_sample",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:new",
+        "parent_id": null,
+        "label": "new",
+        "value": 2,
+        "measure": null,
+        "stats": {
+          "test_count": 2,
+          "executions": 0,
+          "pass_rate": 0,
+          "flaky_count": 0,
+          "flaky_share": 0,
+          "last_executed_at": null,
+          "staleness_days": null,
+          "recency": "never"
+        }
+      }
+    ]
+  }
+}

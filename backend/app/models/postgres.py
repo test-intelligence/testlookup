@@ -5854,9 +5854,19 @@ class SystemicFlakeCluster(Base):
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
+    # VIZ-207 (migration 0193): sha256 of the sorted member fingerprints, first
+    # 32 hex chars (``systemic_cluster_service.membership_key``). ``cluster_key``
+    # is a RANK ("sfc_001" = the largest tonight) and row ids change on every
+    # sweep (full delete + re-insert); this is the identity that survives a
+    # sweep -- for an UNCHANGED member set only: one test joining or leaving is
+    # a new key. NULL only for a row written by pre-0193 code.
+    membership_key: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         Index("ux_systemic_cluster_project_key", "project_id", "cluster_key", unique=True),
+        # Non-unique on purpose: a duplicate written by a bug must not abort the
+        # nightly store_clusters (unique only on (project_id, cluster_key)).
+        Index("ix_systemic_cluster_project_membership", "project_id", "membership_key"),
     )
 
 

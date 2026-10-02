@@ -1355,15 +1355,19 @@ def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violati
 #   run deletion, retention purge, reset, deactivation, suite repair,
 #   placeholder rows, ingestion finalize, and (for the cached dashboard and
 #   hours-saved model) defects, the active release-gate policy, quarantine
-#   requests, AI analyses and failure clusters. Keys are ``module:qualname``.
+#   requests, AI analyses and failure clusters; for the coverage map, the
+#   canonical case lifecycle (suite moves, retirement, restore, suite rename);
+#   for /analytics/systemic-clusters, the systemic cluster sweep. Keys are
+#   ``module:qualname``.
 # * SOURCE DISCOVERY finds writers the registry does not name. In any
 #   function: ``update(M)`` / ``delete(M)`` / ``insert(M)`` (any import alias,
 #   e.g. ``pg_insert``) of ``TestRun`` or ``TestCase``, and ``update(Project)``
 #   whose ``.values()`` sets ``is_active``; ``TestRun(...)`` / ``TestCase(...)``
 #   constructed in a function that ``.add()``s / ``.add_all()``s; ``db.delete(x)``
-#   of such a row; and an assignment to ``status`` / ``primary_release_id`` /
+#   of such a row; an assignment to ``status`` / ``primary_release_id`` /
 #   ``primary_suite_name`` / ``is_active`` on a variable bound to one of those
-#   models (``x = TestRun(...)``, ``x = await db.get(TestRun, …)``,
+#   models, to ``status`` / ``test_suite_id`` on a ``CanonicalTestCase`` and to
+#   ``name`` on a ``TestSuite`` (``x = TestRun(...)``, ``x = await db.get(TestRun, …)``,
 #   ``x = …select(TestRun)…`` and names derived from it, ``for x in <that>``,
 #   ``x: TestRun``). Model names are resolved through imports (``_Project``).
 #
@@ -1471,6 +1475,28 @@ _ANALYTICS_MUTATION_BASES: dict[str, str] = {
     "app.agents.analysis_agent:AnalysisAgent._batch_upsert_analyses": "AI analyses",
     "app.routers.analyze:analyze_test_case": "AI analysis (single test)",
     "app.agents.deep_persistence:persist_failure_cluster_snapshot": "failure clusters",
+    # Coverage map (VIZ-206): idle tests sit under their CANONICAL suite and
+    # leave the map when retired, so the canonical lifecycle is an analytics
+    # mutation. The services are stage-only, so the obligation lands on their
+    # committing callers: the suite routes (move, bulk move, rename) and the
+    # nightly retirement sweep; finalize_run's terminal invalidation covers
+    # the restore on re-sighting and finalize's own retirement step.
+    "app.services.test_suite_service:link_canonical_to_suite": "canonical case suite move",
+    "app.services.test_suite_service:bulk_link_canonicals_to_suite": (
+        "canonical case suite move (bulk)"
+    ),
+    "app.services.test_suite_service:reconcile_canonical_deletions": (
+        "canonical case retirement"
+    ),
+    "app.services.test_suite_service:sync_canonical_test_cases": (
+        "canonical case restore on re-sighting"
+    ),
+    "app.services.test_suite_service:update_test_suite": "suite rename",
+    # /analytics/systemic-clusters reads the clusters the nightly sweep
+    # rewrites (a full delete + re-insert) and its payload carries their
+    # computed_at; its committing caller bumps. (Failure groups, VIZ-207, read
+    # only test_cases / test_runs, not these rows.)
+    "app.services.systemic_cluster_service:store_clusters": "systemic cluster sweep",
 }
 _ANALYTICS_BUMP_TARGETS = frozenset({
     "app.services.cache_service:bump_analytics_epoch",
@@ -1480,11 +1506,18 @@ _ANALYTICS_BUMP_TARGETS = frozenset({
 _ANALYTICS_OPT_OUT_RE = re.compile(r"#\s*analytics-epoch:\s*none\s*(?:—|--|-)\s*\S")
 # Discovery: which models, and which ORM attributes of them, analytics read.
 _ANALYTICS_ROW_MODELS = frozenset({"TestRun", "TestCase"})
-_ANALYTICS_TAGGED_MODELS = frozenset({"TestRun", "TestCase", "Project"})
+_ANALYTICS_TAGGED_MODELS = frozenset({
+    "TestRun", "TestCase", "Project", "CanonicalTestCase", "TestSuite",
+})
 _ANALYTICS_FIELDS: dict[str, frozenset[str]] = {
     "TestRun": frozenset({"status", "primary_release_id", "primary_suite_name", "is_active"}),
     "TestCase": frozenset({"status", "primary_release_id", "primary_suite_name", "is_active"}),
     "Project": frozenset({"is_active"}),
+    # The coverage map (VIZ-206) places idle tests by canonical suite (its id
+    # and its name) and drops retired ones: an assignment to one of these on a
+    # canonical row or a suite is a mutation wherever it is written.
+    "CanonicalTestCase": frozenset({"status", "test_suite_id"}),
+    "TestSuite": frozenset({"name"}),
 }
 _ROUTE_DECORATOR_ATTRS = frozenset({
     "get", "post", "put", "patch", "delete", "api_route", "websocket",

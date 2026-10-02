@@ -1,0 +1,59 @@
+{
+  "description": "Node labels and ids are untrusted text, including file-path classes and prototype words.",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:__proto__",
+        "parent_id": null,
+        "label": "__proto__",
+        "value": 3,
+        "measure": 50.0,
+        "stats": {
+          "test_count": 3,
+          "executions": 4,
+          "pass_rate": 50.0,
+          "flaky_count": 0,
+          "flaky_share": 0,
+          "last_executed_at": "2026-09-30T10:00:00.5+00:00",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      },
+      {
+        "id": "c:__proto__␟constructor",
+        "parent_id": "s:__proto__",
+        "label": "constructor",
+        "value": 2,
+        "measure": null,
+        "stats": {
+          "test_count": 2,
+          "executions": 0,
+          "pass_rate": null,
+          "flaky_count": 0,
+          "flaky_share": 0,
+          "last_executed_at": null,
+          "staleness_days": null,
+          "recency": "unknown"
+        }
+      },
+      {
+        "id": "c:__proto__␟tests/<img>.py",
+        "parent_id": "s:__proto__",
+        "label": "<img src=x onerror=\"window.__xss=1\">",
+        "value": 1,
+        "measure": 50.0,
+        "stats": {
+          "test_count": 1,
+          "executions": 4,
+          "pass_rate": 50.0,
+          "flaky_count": 1,
+          "flaky_share": 1,
+          "last_executed_at": "2026-09-30T10:00:00Z",
+          "staleness_days": 0,
+          "recency": "seen"
+        }
+      }
+    ]
+  }
+}

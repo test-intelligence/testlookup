@@ -22,10 +22,20 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  ANY_CHART_SERIES_KINDS,
+  CHART_SERIES_KINDS,
   COMPARABILITY_REASON_CODES,
   CONTRACT_KINDS,
   LOCAL_RULE_IDS,
+  VIZ_AXIS_SCALES,
+  VIZ_AXIS_UNITS,
+  VIZ_DIMENSIONS,
   VIZ_LIMITS,
+  VIZ_RATE_UNITS,
+  VIZ_RECENCY_STATES,
+  VIZ_STATUSES,
+  WIDGET_GROUP_BY_DIMENSIONS,
+  validateAnyChartSeries,
   validateChartSeries,
   validateContract,
   validateDrillPath,
@@ -166,6 +176,17 @@ describe('contracts/viz fixtures are present (fail closed)', () => {
       'unique_node_id',
       'tree_acyclic',
       'status_vocab',
+      // C3, Wave 3
+      'key_count',
+      'unique_key',
+      'counts_sum',
+      'rate_unit_range',
+      'empty_sample',
+      'rate_range',
+      'share_range',
+      'recency_null_pair',
+      'unique_point_id',
+      'log_axis_positive',
       // C4, C5
       'unique_instance_id',
       'depth_cap',
@@ -349,6 +370,7 @@ describe('guards never throw', () => {
     validateScope,
     validateEnvelopeMeta,
     validateChartSeries,
+    validateAnyChartSeries,
     validateWidgetConfig,
     validateDrillPath,
   ]
@@ -678,6 +700,18 @@ describe('caps sit exactly where the README puts them', () => {
           kind: 'graph',
           nodes: many(n, (i) => ({ id: `g${i}`, label: 'l', size: 1 })),
           edges: [],
+        }),
+    ],
+    [
+      'point_cap',
+      VIZ_LIMITS.points,
+      (n: number) =>
+        validateAnyChartSeries({
+          kind: 'points',
+          x: { key: 'x', label: 'X', unit: 'count', scale: 'linear' },
+          y: { key: 'y', label: 'Y', unit: 'count', scale: 'linear' },
+          size: { key: 's', label: 'S' },
+          points: many(n, (i) => ({ id: `p${i}`, label: 'l', x: 1, y: 1, size: 1, n: 1 })),
         }),
     ],
     [
@@ -1024,6 +1058,20 @@ describe('widget config and drill path details', () => {
     expect(rules({ groupBy: ['day', 'colour'] })).toEqual(['dimension_enum'])
   })
 
+  it('takes every C5 dimension but class as a groupBy (OD-10: class is a drill level only)', () => {
+    expect([...VIZ_DIMENSIONS]).toEqual([...WIDGET_GROUP_BY_DIMENSIONS, 'class'])
+    for (const dimension of WIDGET_GROUP_BY_DIMENSIONS) expect(rules({ groupBy: [dimension] })).toEqual([])
+    expect(rules({ groupBy: ['class'] })).toEqual(['dimension_enum'])
+    expect(errorsOf(validateDrillPath({ path: [{ dimension: 'class', value: '__none__' }] }))).toEqual([])
+  })
+
+  it('names the same dimensions, in the same order, as the README', () => {
+    const row = README.split('\n').find((line) => line.startsWith('| `dimension_enum` |'))
+    expect(row, 'the C5 table has no dimension_enum row').toBeDefined()
+    const listed = /`([a-z_, ]+)`\s*\|\s*$/.exec(row ?? '')?.[1].split(', ')
+    expect(listed).toEqual([...VIZ_DIMENSIONS])
+  })
+
   it('pins topN to the four values — 10 is fine, "10" and 7 are not', () => {
     expect(rules({ topN: 10 })).toEqual([])
     expect(rules({ topN: '10' })).toEqual(['top_n_enum'])
@@ -1197,5 +1245,241 @@ describe('payload-wide rules (change rule 8) apply to every contract, unknown ke
     const broken = { kind: 'nope', extra: { constructor: 1 } }
     expect(errorsOf(validateChartSeries(broken))).toHaveLength(1)
     expect(errorsOf(validateChartSeries(broken)).map(ruleOf)).toEqual(['forbidden_key'])
+  })
+})
+
+describe('Wave 3 additions (VIZ-205, 206, 207, 506)', () => {
+  const rules = (payload: unknown) => errorsOf(validateAnyChartSeries(payload)).map(ruleOf)
+  const counts = (over: Partial<Record<string, number>> = {}) => ({
+    passed: 0,
+    failed: 0,
+    broken: 0,
+    skipped: 0,
+    unknown: 0,
+    ...over,
+  })
+  const matrix = (cells: unknown[], over: Record<string, unknown> = {}) => ({
+    kind: 'matrix',
+    value_type: 'rate',
+    x_labels: ['a'],
+    y_labels: ['b'],
+    cells,
+    ...over,
+  })
+  const cell = (over: Record<string, unknown> = {}) => ({ x: 0, y: 0, value: null, n: 1, ...over })
+  const unitMatrix = (value: unknown, unit?: unknown, over: Record<string, unknown> = {}) =>
+    matrix([cell({ value, ...over })], unit === undefined ? {} : { unit })
+  const stats = (over: Record<string, unknown> = {}) => ({
+    test_count: 4,
+    executions: 10,
+    pass_rate: 90,
+    flaky_count: 1,
+    flaky_share: 0.25,
+    last_executed_at: '2026-09-30T10:00:00Z',
+    staleness_days: 1,
+    recency: 'seen',
+    ...over,
+  })
+  const statsTree = (over: Record<string, unknown> = {}) => ({
+    kind: 'tree',
+    nodes: [{ id: 'root', parent_id: null, label: 'root', value: 1, measure: null, stats: stats(over) }],
+  })
+  const axis = (unit = 'count', scale = 'linear', over: Record<string, unknown> = {}) => ({
+    key: 'k',
+    label: 'K',
+    unit,
+    scale,
+    ...over,
+  })
+  const point = (over: Record<string, unknown> = {}) => ({ id: 'p', label: 'p', x: 1, y: 1, size: 1, n: 1, ...over })
+  const points = (list: unknown[] = [point()], over: Record<string, unknown> = {}) => ({
+    kind: 'points',
+    x: axis(),
+    y: axis(),
+    size: { key: 'executions', label: 'Executions' },
+    points: list,
+    ...over,
+  })
+
+  it('keeps the closed sets the README names', () => {
+    expect([...ANY_CHART_SERIES_KINDS]).toEqual([...CHART_SERIES_KINDS, 'points'])
+    expect(README).toContain('`kind_enum`): `series`, `matrix`, `tree`, `graph`, `points`.')
+    expect([...VIZ_RATE_UNITS]).toEqual(['percent', 'ratio'])
+    expect(README).toContain('`unit?: "percent"\\|"ratio"`')
+    expect([...VIZ_AXIS_UNITS]).toEqual(['ms', 'percent', 'ratio', 'count'])
+    expect([...VIZ_AXIS_SCALES]).toEqual(['linear', 'log'])
+    expect(README).toContain('unit: "ms"\\|"percent"\\|"ratio"\\|"count", scale: "linear"\\|"log"')
+    expect([...VIZ_RECENCY_STATES]).toEqual(['seen', 'unknown', 'never'])
+    expect(README).toContain('recency: "seen"\\|"unknown"\\|"never"')
+    expect(VIZ_LIMITS.points).toBe(5000)
+    expect(README).toContain('`point_cap` (≤ 5 000 points)')
+  })
+
+  describe('validateChartSeries stays the four kinds; validateAnyChartSeries is all of C3', () => {
+    const chartFixtures = FIXTURES.filter((f) => f.kind === 'chart_series' && f.verdict === 'valid')
+
+    it('has points fixtures to tell the two apart', () => {
+      expect(chartFixtures.filter((f) => (f.payload as { kind: string }).kind === 'points').length).toBeGreaterThan(0)
+    })
+
+    it.each(chartFixtures.map((f) => [f.name, f] as const))('%s', (_name, f) => {
+      expect(errorsOf(validateAnyChartSeries(f.payload))).toEqual([])
+      const narrow = errorsOf(validateChartSeries(f.payload))
+      if ((f.payload as { kind: string }).kind === 'points') {
+        // Exactly what a pre-Wave-3 build said: a reader typed on ChartSeries
+        // can never be handed a points payload it has no branch for.
+        expect(narrow).toEqual(['kind_enum: kind "points" is not one of series, matrix, tree, graph'])
+      } else {
+        expect(narrow).toEqual([])
+      }
+    })
+  })
+
+  it.each([
+    // Absent is percent (OD-7): the existing fixture and chart-data send 96.4.
+    [96.4, undefined, []],
+    [0, undefined, []],
+    [100, undefined, []],
+    [100.0001, undefined, ['rate_unit_range']],
+    [-0.0001, undefined, ['rate_unit_range']],
+    [96.4, 'percent', []],
+    [101, 'percent', ['rate_unit_range']],
+    [0.964, 'ratio', []],
+    [1, 'ratio', []],
+    [0, 'ratio', []],
+    [1.0001, 'ratio', ['rate_unit_range']],
+    [96.4, 'ratio', ['rate_unit_range']], // the forgotten "/ 100"
+    [-0.5, 'ratio', ['rate_unit_range']],
+  ])('a rate of %s in unit %s gives %j', (value, unit, expected) => {
+    expect(rules(unitMatrix(value, unit))).toEqual(expected)
+  })
+
+  it('reads the unit as a closed set, ignored outside rate, never null', () => {
+    expect(rules(unitMatrix(50, 'percentage'))).toEqual(['invalid_value'])
+    expect(rules(unitMatrix(50, 'PERCENT'))).toEqual(['invalid_value'])
+    expect(rules(unitMatrix(50, null))).toEqual(['invalid_type'])
+    expect(rules(matrix([cell({ value: 250 })], { value_type: 'count', unit: 'ratio' }))).toEqual([])
+    expect(rules(matrix([cell({ value: 'passed' })], { value_type: 'status', unit: 'ratio' }))).toEqual([])
+  })
+
+  it('makes a rate over an empty sample null, never zero', () => {
+    for (const value of [0, 50]) expect(rules(unitMatrix(value, undefined, { n: 0 }))).toEqual(['empty_sample'])
+    expect(rules(unitMatrix(null, undefined, { n: 0 }))).toEqual([])
+    const skippedOnly = counts({ skipped: 3, unknown: 1 })
+    expect(rules(unitMatrix(0, undefined, { n: 4, counts: skippedOnly }))).toEqual(['empty_sample'])
+    expect(rules(unitMatrix(null, undefined, { n: 4, counts: skippedOnly }))).toEqual([])
+    // One evaluated execution is a measurement, and everything failing is a true 0.
+    expect(rules(unitMatrix(0, undefined, { n: 4, counts: counts({ broken: 1, skipped: 3 }) }))).toEqual([])
+    // A zero count over nothing is still a count.
+    expect(rules(matrix([cell({ value: 0, n: 0 })], { value_type: 'count' }))).toEqual([])
+  })
+
+  it('wants matrix keys parallel to their labels, unique, exact text', () => {
+    const keyed = (keys: Record<string, unknown>) =>
+      rules(matrix([cell({ value: 50 })], { x_labels: ['a', 'b'], ...keys }))
+    expect(keyed({ x_keys: ['k1', 'k2'], y_keys: ['r'] })).toEqual([])
+    expect(keyed({})).toEqual([])
+    for (const x_keys of [['k1'], ['k1', 'k2', 'k3'], []]) expect(keyed({ x_keys })).toEqual(['key_count'])
+    expect(keyed({ y_keys: [] })).toEqual(['key_count'])
+    expect(keyed({ x_keys: ['k', 'k'] })).toEqual(['unique_key'])
+    expect(keyed({ x_keys: ['k', 'K'] })).toEqual([])
+    expect(keyed({ x_keys: ['k', 'k '] })).toEqual([])
+    expect(keyed({ x_keys: ['r1', 'r2'], x_labels: ['1.0', '1.0'] })).toEqual([])
+    expect(keyed({ x_keys: ['k1', 2] })).toEqual(['invalid_type'])
+    expect(keyed({ x_keys: null })).toEqual(['invalid_type'])
+    expect(keyed({ y_keys: 'r' })).toEqual(['invalid_type'])
+  })
+
+  it('wants every status in a cell’s counts, adding up to n', () => {
+    expect(rules(unitMatrix(50, undefined, { n: 2, counts: counts({ passed: 1, failed: 1 }) }))).toEqual([])
+    expect(rules(unitMatrix(50, undefined, { n: 3, counts: counts({ passed: 1, failed: 1 }) }))).toEqual([
+      'counts_sum',
+    ])
+    const partial: Record<string, number> = counts({ passed: 1 })
+    delete partial.unknown
+    expect(rules(matrix([cell({ value: 1, counts: partial })], { value_type: 'count' }))).toEqual(['required_field'])
+    expect(rules(matrix([cell({ value: 1, counts: { ...counts({ passed: 1 }), quarantined: 9 } })], { value_type: 'count' }))).toEqual([])
+    expect(rules(matrix([cell({ counts: null })]))).toEqual(['invalid_type'])
+    expect(rules(matrix([cell({ counts: counts({ passed: 1.5 }) })]))).toEqual(['integer_count'])
+    expect(rules(matrix([cell({ counts: counts({ passed: -1 }) })]))).toEqual(['non_negative'])
+    expect(Object.keys(counts())).toEqual([...VIZ_STATUSES])
+  })
+
+  it.each([
+    ['seen', '2026-09-30T10:00:00Z', 1, []],
+    ['seen', null, null, ['recency_null_pair']],
+    ['seen', '2026-09-30T10:00:00Z', null, ['recency_null_pair']],
+    ['seen', null, 3, ['recency_null_pair']],
+    ['unknown', null, null, []],
+    ['unknown', '2026-09-30T10:00:00Z', 1, ['recency_null_pair']],
+    ['unknown', null, 3, ['recency_null_pair']],
+    ['never', null, null, []],
+    ['never', '2026-09-30T10:00:00Z', null, ['recency_null_pair']],
+  ])('recency %s with date %s and staleness %s gives %j', (recency, last, staleness, expected) => {
+    expect(rules(statsTree({ recency, last_executed_at: last, staleness_days: staleness }))).toEqual(expected)
+  })
+
+  it('reads tree stats: ranges, null semantics, required keys', () => {
+    expect(rules(statsTree({ pass_rate: null, flaky_share: null }))).toEqual([])
+    expect(rules(statsTree({ pass_rate: 0, flaky_share: 0 }))).toEqual([])
+    expect(rules(statsTree({ pass_rate: 100, flaky_share: 1 }))).toEqual([])
+    expect(rules(statsTree({ pass_rate: 100.5 }))).toEqual(['rate_range'])
+    expect(rules(statsTree({ pass_rate: -1 }))).toEqual(['rate_range'])
+    expect(rules(statsTree({ flaky_share: 25 }))).toEqual(['share_range'])
+    expect(rules(statsTree({ executions: 0, pass_rate: 0 }))).toEqual(['empty_sample'])
+    expect(rules(statsTree({ test_count: 0, flaky_count: 0, flaky_share: 0 }))).toEqual(['empty_sample'])
+    expect(rules(statsTree({ executions: 0, pass_rate: null }))).toEqual([])
+    expect(rules(statsTree({ last_executed_at: '2026-09-30' }))).toEqual(['utc_instant'])
+    expect(rules(statsTree({ staleness_days: 1.5 }))).toEqual(['integer_count'])
+    expect(rules(statsTree({ pass_rate: '90' }))).toEqual(['invalid_type'])
+    expect(rules(statsTree({ recency: 'stale' }))).toEqual(['invalid_value'])
+    expect(rules(statsTree({ recency: null }))).toEqual(['invalid_value'])
+    for (const key of Object.keys(stats())) {
+      expect(rules(statsTree({ [key]: undefined })), key).toEqual(['required_field'])
+    }
+    const nullStats = { kind: 'tree', nodes: [{ id: 'r', parent_id: null, label: 'r', value: 1, measure: null, stats: null }] }
+    expect(rules(nullStats)).toEqual(['invalid_type'])
+  })
+
+  it('reads a graph node group as optional free text', () => {
+    const graph = (node: Record<string, unknown>) =>
+      rules({ kind: 'graph', nodes: [{ id: 'g', label: 'g', size: 1, ...node }], edges: [] })
+    expect(graph({ group: '<b>product_defect</b>' })).toEqual([])
+    expect(graph({})).toEqual([])
+    expect(graph({ group: null })).toEqual(['invalid_type'])
+    expect(graph({ group: 7 })).toEqual(['invalid_type'])
+  })
+
+  it('places points on their axes', () => {
+    const logMs = axis('ms', 'log')
+    expect(rules(points([point({ x: 0.5 })], { x: logMs }))).toEqual([])
+    expect(rules(points([point({ x: 0 })], { x: logMs }))).toEqual(['log_axis_positive'])
+    expect(rules(points([point({ y: 0 })], { y: axis('count', 'log') }))).toEqual(['log_axis_positive'])
+    expect(rules(points(undefined, { x: logMs, medians: { x: 0, y: 1 } }))).toEqual(['log_axis_positive'])
+    // A negative ms value is non_negative first, whatever the scale.
+    expect(rules(points([point({ x: -1 })], { x: logMs }))).toEqual(['non_negative'])
+    expect(rules(points([point({ y: 1.5 })], { y: axis('ratio') }))).toEqual(['rate_unit_range'])
+    expect(rules(points([point({ y: 100 })], { y: axis('percent') }))).toEqual([])
+    expect(rules(points([point(), point()]))).toEqual(['unique_point_id'])
+    expect(rules(points([point({ id: 'p' }), point({ id: 'P' })]))).toEqual([])
+    expect(rules(points([point({ n: 0 })]))).toEqual(['empty_sample'])
+    expect(rules(points([point({ size: 1.5 })]))).toEqual(['integer_count'])
+    expect(rules(points([point({ x: null })]))).toEqual(['invalid_type'])
+    expect(rules(points([point({ y: Number.NaN })]))).toEqual(['invalid_type'])
+    expect(rules(points(undefined, { x: axis('seconds') }))).toEqual(['invalid_value'])
+    expect(rules(points(undefined, { x: axis('count', 'sqrt') }))).toEqual(['invalid_value'])
+    expect(rules(points(undefined, { x: { key: 'k', label: 'K', scale: 'linear' } }))).toEqual(['required_field'])
+    expect(rules(points(undefined, { x: axis('count', 'linear', { unit: null }) }))).toEqual(['invalid_value'])
+    expect(rules(points(undefined, { size: undefined }))).toEqual(['required_field'])
+    expect(rules(points([]))).toEqual([])
+    expect(rules(points(undefined, { medians: null }))).toEqual(['invalid_type'])
+    expect(rules(points(undefined, { excluded: null }))).toEqual(['invalid_type'])
+    expect(
+      rules(points(undefined, { excluded: { below_min_executions: 1, no_duration: 0, no_evaluated: -1 } })),
+    ).toEqual(['non_negative'])
+    expect(rules(points(undefined, { excluded: { below_min_executions: 1, no_duration: 0 } }))).toEqual([
+      'required_field',
+    ])
+    expect(rules({ kind: 'scatter' })).toEqual(['kind_enum'])
   })
 })

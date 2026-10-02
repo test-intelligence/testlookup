@@ -1,0 +1,32 @@
+{
+  "description": "Every axis names its unit; a reader must not guess percent from ratio.",
+  "violates": "required_field",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 1840.5,
+        "y": 12.5,
+        "size": 40,
+        "n": 40
+      }
+    ]
+  }
+}
