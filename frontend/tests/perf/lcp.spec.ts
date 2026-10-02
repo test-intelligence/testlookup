@@ -1,6 +1,8 @@
 /**
  * Hermetic page-load measurement of the five VIZ-408 report pages (Wave 2.6,
- * plan 4.1 A): Largest Contentful Paint, plus First Contentful Paint, the
+ * plan 4.1 A) and of Coverage and Failure analysis, the two pages Wave 3
+ * adds sections to (Wave 3 plan 6.2; Trends and Suite detail gain sections
+ * too): Largest Contentful Paint, plus First Contentful Paint, the
  * JavaScript bytes and the request count of each load. Config and how to
  * run: `playwright.perf.config.ts`. NOT a CI test (plan 4.1: "CI asserts
  * structure, never milliseconds").
@@ -38,6 +40,8 @@ import { dirname } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageErrors, type ApiHandlers, type FlagMap } from '../lib/production-pages'
 import {
+  COVERAGE,
+  FAILURES,
   NOW,
   OVERVIEW,
   OVERVIEW_ON,
@@ -132,6 +136,23 @@ const PAGES: MeasuredPage[] = [
     // The same stored decision (no clusters), plus the gate's live reads.
     handlersOn: releaseGateOn(),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
+  },
+  // Wave 3 C0: these two pages read no flag yet, so the `on` cells use the
+  // flag-off answers until the Wave 3 sections and their `_ON` fixtures land
+  // (then `handlersOn` becomes those, as for the five pages above).
+  {
+    name: 'Coverage',
+    path: '/coverage',
+    handlers: COVERAGE,
+    handlersOn: COVERAGE,
+    ready: (p) => landmark(p, 'Coverage verdict'),
+  },
+  {
+    name: 'Failures',
+    path: '/failures',
+    handlers: FAILURES,
+    handlersOn: FAILURES,
+    ready: (p) => landmark(p, 'Failure verdict'),
   },
 ]
 

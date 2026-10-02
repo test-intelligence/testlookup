@@ -1,6 +1,8 @@
 /**
  * The flag-off request inventory of the five VIZ-408 report pages (Wave 2.6
- * C0, committed BEFORE any rollout code).
+ * C0, committed BEFORE any rollout code), and of Coverage and Failure
+ * analysis, the two pages Wave 3 adds sections to (Wave 3 C0, likewise
+ * committed BEFORE any Wave 3 frontend code).
  *
  * The catalogue rollout is gated behind `viz_chart_data_api` (the heatmap
  * also `viz_advanced_charts`), default OFF. With every flag off a page must
@@ -11,9 +13,14 @@
  * holds all show up here as one extra line, long before they show up as load.
  *
  * `INVENTORY` below was recorded on main @ 71c022e0 (Wave 2.5) with this
- * spec. After the rollout the ONLY permitted addition is the seam's own flag
- * lookup, `GET /feature-flags/viz_chart_data_api/status`, at most once per
- * page (`ALLOWED_ADDITIONS`). Anything else, added or missing, fails.
+ * spec; the Coverage and Failures lists on main @ 03983f12 (Wave 2.6 and
+ * the Wave 3 data layer, which no page calls yet). After the rollout the
+ * ONLY permitted addition is the seam's own flag lookup,
+ * `GET /feature-flags/viz_chart_data_api/status`, at most once per page
+ * (`ALLOWED_ADDITIONS`). Anything else, added or missing, fails. Wave 3
+ * puts every section behind that seam AND `viz_advanced_charts`, read only
+ * inside the lazy sections, so its flag-off pages may add the same one
+ * lookup and nothing else (plan 2.4).
  *
  * Fail-closed, like the visual baselines (`tests/lib/production-pages.ts`):
  * a request with no fixture is aborted and fails the test by name, a request
@@ -38,6 +45,8 @@ import {
   type MockedApi,
 } from '../lib/production-pages'
 import {
+  COVERAGE,
+  FAILURES,
   NOW,
   OVERVIEW,
   PROJECT_ID,
@@ -132,6 +141,27 @@ const PAGES: ReportPage[] = [
     frames: [],
     headings: [],
   },
+  // Wave 3 (VIZ-206/502, VIZ-205/501 env + release heatmaps): the page as
+  // Wave 2.6 left it, which has no kit frame. The new sections mount below
+  // the suite breakdown, behind both flags.
+  {
+    name: 'Coverage',
+    path: '/coverage',
+    handlers: COVERAGE,
+    ready: (p) => landmark(p, 'Run cadence'),
+    frames: [],
+    headings: ['Suite coverage breakdown', 'Coverage gaps', 'Run cadence'],
+  },
+  // Wave 3 (VIZ-207/504 groups and clusters, VIZ-602 drill ladder, VIZ-506
+  // project scatter): no kit frame today either.
+  {
+    name: 'Failures',
+    path: '/failures',
+    handlers: FAILURES,
+    ready: (p) => landmark(p, 'Failure verdict'),
+    frames: [],
+    headings: ["What's failing", 'Failure category distribution', 'Failure timeline'],
+  },
 ]
 
 const P = PROJECT_ID
@@ -206,6 +236,35 @@ const INVENTORY: Record<string, string[]> = {
     'GET /api/v1/scoring-model',
     `GET /api/v1/runs?project_id=${P}&page=1&size=1`,
     'GET /api/v1/settings/ai',
+  ],
+  // Recorded on main @ 03983f12 (Wave 3 C0). The page's own reads: coverage
+  // and trend over its 30 days, its newest run (`size=1`, the header's suite
+  // badge), the runs list and its saved view. Nothing from
+  // the Wave 3 data layer (`/analytics/heatmap`, `/coverage-map`).
+  Coverage: [
+    ...SHELL,
+    `GET /api/v1/saved-views?project_id=${P}&page=coverage`,
+    `GET /api/v1/analytics/coverage?project_id=${P}&days=30`,
+    `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
+    `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30`,
+    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
+  ],
+  // Recorded on main @ 03983f12 (Wave 3 C0). Besides the page's analytics
+  // reads: its newest FAILED run, whose suspects are asked for the top
+  // failing test's fingerprint, and the Jira metadata behind "Create Jira".
+  // Nothing from the Wave 3 data layer (`/analytics/failure-groups`,
+  // `/chart-data/rows`, `/test-scatter`, `/chart-data`).
+  Failures: [
+    ...SHELL,
+    `GET /api/v1/saved-views?project_id=${P}&page=failures`,
+    `GET /api/v1/analytics/failure-categories?project_id=${P}&days=30`,
+    `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=30`,
+    `GET /api/v1/analytics/top-failing?project_id=${P}&days=30`,
+    `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
+    `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30&status=FAILED`,
+    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
+    `GET /api/v1/runs/${RUN_ID}/suspects?fingerprint=fp-top-0`,
+    `GET /api/v1/projects/${P}/defects/jira/metadata`,
   ],
 }
 
