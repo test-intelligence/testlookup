@@ -210,6 +210,7 @@
        "test_name": "testInventoryCase02"
       }
      ],
+     "membership_key": "395524f698eb9382943f84f87782ca2b",
      "size": 4,
      "window_days": 60
     },
@@ -232,6 +233,7 @@
        "test_name": "testInventoryCase05"
       }
      ],
+     "membership_key": "398fa42ff77ee0c8119dd3749c780d3f",
      "size": 3,
      "window_days": 60
     },
@@ -254,6 +256,7 @@
        "test_name": "testInventoryCase03"
       }
      ],
+     "membership_key": "5a28a10db27b29653db1c73983d33b16",
      "size": 2,
      "window_days": 60
     }
