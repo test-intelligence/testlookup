@@ -23,7 +23,7 @@
              2.18.10: CVE-2026-68497 (databind; Trivy fs HIGH, 2026-09-29).
              2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01). -->
         <jackson.version>2.18.11</jackson.version>
-        <junit5.version>5.11.0</junit5.version>
+        <junit5.version>6.1.3</junit5.version>
         <testng.version>7.10.2</testng.version>
     </properties>
 
