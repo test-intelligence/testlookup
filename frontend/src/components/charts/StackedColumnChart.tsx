@@ -36,7 +36,7 @@ import { Bar, BarChart, CartesianGrid, Legend, ReferenceDot, Tooltip, XAxis, YAx
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, sweepOf, useColumnMark } from './ChartTooltip'
 import ChartResponsive from './ChartResponsive'
-import { middleTruncate } from './BarChart.model'
+import { middleTruncate } from './labelTruncate'
 import { useContainerWidth } from './chartLayout'
 import { useFramePlotLayoutHeight, usePresentationScale } from './framePlotHeight'
 import { useChartAnimation } from './motion'
@@ -241,6 +241,40 @@ export function columnAxisLayout(
   return bars
 }
 
+export interface ColumnRightMarginInput {
+  /** The newest label's MEASURED width, px (the one a thinned axis always draws). */
+  lastLabel: number
+  /** The plot's width at the `base` right margin, px. */
+  plotWidth: number
+  /** Columns. */
+  count: number
+  /** The margin the chart has anyway, px. */
+  base: number
+}
+
+/**
+ * The plot's right margin under a FLAT column axis (Wave 2.6, B0 finding 5).
+ *
+ * A flat label is centred on its column, so once labels are thinned (wider
+ * than a column) the newest one — always drawn — reaches past the plot's right
+ * edge by half its width less half a column. A fixed margin sized for one font
+ * cuts it in a wider one: "Sep 18" lost its last glyph in DejaVu Sans on the
+ * CI runner at 640 and 768 px. So the margin is sized from the MEASURED label,
+ * and only grows where it has to (every chart whose label already fits keeps
+ * `base`, pixel for pixel). A wider margin narrows every column, which moves
+ * the last centre right, so the margin is solved for that, not added once:
+ *
+ *   m >= w/2 - band(m)/2 + 1, band(m) = (plotWidth + base - m) / count
+ *
+ * (1 px for the glyph's antialiased edge).
+ */
+export function columnRightMargin({ lastLabel, plotWidth, count, base }: ColumnRightMarginInput): number {
+  if (!(count > 0) || !(lastLabel > 0)) return base
+  const share = 1 / (2 * count)
+  const needed = (lastLabel / 2 - (plotWidth + base) * share + 1) / (1 - share)
+  return Math.max(base, Math.ceil(needed))
+}
+
 export interface BarAxisLayout {
   /** The category axis's width, px. */
   width: number
@@ -381,11 +415,30 @@ export default function StackedColumnChart({
   const yWidth = valueAxisWidth(tickLabels, measure)
   // The band a column has, in LAYOUT px (full screen scales the drawing, not the layout).
   const plotWidth = width / scale - yWidth - PLOT_MARGIN.left - PLOT_MARGIN.right
-  const band = width > 0 && model.buckets.length > 0 ? plotWidth / model.buckets.length : 0
+  const count = model.buckets.length
+  const band = width > 0 && count > 0 ? plotWidth / count : 0
+  const axisOptions = useMemo(() => ({ xType: model.xType, maxHeight: SLANT_AXIS_MAX_SHARE * height }), [model.xType, height])
+  const firstAxis = useMemo(() => columnAxisLayout(labels, band, textMeasure, axisOptions), [labels, band, textMeasure, axisOptions])
+  // A flat axis centres the newest label on the last column: give it the room
+  // it measures (B0 finding 5), then lay the axis out again in the narrower
+  // columns that leaves. A slanted label ends at its column and needs none.
+  const plotRight =
+    firstAxis.orientation === 'columns' && firstAxis.angle === 0 && band > 0
+      ? columnRightMargin({
+          lastLabel: textMeasure(middleTruncate(labels[count - 1] ?? '', firstAxis.maxChars), LABEL_SIZE),
+          plotWidth,
+          count,
+          base: PLOT_MARGIN.right,
+        })
+      : PLOT_MARGIN.right
   const axis = useMemo(
-    () => columnAxisLayout(labels, band, textMeasure, { xType: model.xType, maxHeight: SLANT_AXIS_MAX_SHARE * height }),
-    [labels, band, textMeasure, model.xType, height],
+    () =>
+      plotRight === PLOT_MARGIN.right
+        ? firstAxis
+        : columnAxisLayout(labels, (plotWidth + PLOT_MARGIN.right - plotRight) / count, textMeasure, axisOptions),
+    [plotRight, firstAxis, labels, plotWidth, count, textMeasure, axisOptions],
   )
+  const plotMargin = useMemo(() => ({ ...PLOT_MARGIN, right: plotRight }), [plotRight])
   const asBars = axis.orientation === 'bars'
   const barAxis = useMemo(
     () => (asBars ? barAxisLayout(labels, width / scale, textMeasure) : null),
@@ -477,6 +530,8 @@ export default function StackedColumnChart({
         data-stacked-axis-height={axis.height}
         data-stacked-axis-interval={axis.interval}
         data-stacked-axis-max-chars={maxChars}
+        // Only when it grew (a DOM snapshot of an unchanged chart stays unchanged).
+        data-stacked-plot-right={plotRight === PLOT_MARGIN.right ? undefined : plotRight}
         className="w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         {...cursor.surfaceProps}
       >
@@ -517,7 +572,7 @@ export default function StackedColumnChart({
             </BarChart>
           ) : (
             // `accessibilityLayer={false}` — explicitly; see `ChartCursor`.
-            <BarChart data={rows} margin={PLOT_MARGIN} accessibilityLayer={false}>
+            <BarChart data={rows} margin={plotMargin} accessibilityLayer={false}>
               <defs>{renderPatterns(patterns)}</defs>
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
               <XAxis

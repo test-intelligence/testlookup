@@ -52,6 +52,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -62,6 +63,7 @@ import {
 import { CALENDAR_WORDS, clampRange, isFullRange, type AxisWords, type PromoteDecision, type ZoomRange } from './zoomModel'
 import { applyAsWindowLabel } from './windowWords'
 import { dayAtFraction, dayCentre, edgeAtFraction, edgePosition, tickDays, type BrushScale } from './brushScale'
+import { brushLabelsFit, brushSelectionText } from './brushLabels'
 
 export const RESET_ZOOM_LABEL = 'Reset zoom'
 export const APPLY_AS_FILTER_LABEL = 'Apply as time filter'
@@ -201,10 +203,22 @@ function usePlotSpan(rowRef: RefObject<HTMLDivElement | null>): PlotSpan | null 
   return span
 }
 
-/** One polyline per series, broken at every gap; a day alone between gaps is a dot. */
-function sparkPath(lines: readonly (readonly (number | null)[])[], scale: BrushScale, count: number): string {
+/**
+ * A day alone between gaps is drawn as a dot of this radius, px. As a
+ * zero-length segment of the 1.25 px line it was a dot nobody saw: on Suite
+ * detail (a run every other day) the strip looked empty (Wave 2.6 R2-20).
+ */
+export const SPARK_DOT_RADIUS = 2
+
+/**
+ * One polyline per series, broken at every gap (`line`), and every day alone
+ * between gaps as a zero-length segment (`dots`), drawn apart with a round
+ * cap of `SPARK_DOT_RADIUS`. Both stay `vector-effect: non-scaling-stroke`, so
+ * a dot is round whatever the strip's aspect.
+ */
+function sparkPath(lines: readonly (readonly (number | null)[])[], scale: BrushScale, count: number): { line: string; dots: string } {
   const values = lines.flat().filter((value): value is number => value !== null && Number.isFinite(value))
-  if (values.length === 0) return ''
+  if (values.length === 0) return { line: '', dots: '' }
   let low = Math.min(...values)
   let high = Math.max(...values)
   if (high - low < 1e-9) {
@@ -213,10 +227,11 @@ function sparkPath(lines: readonly (readonly (number | null)[])[], scale: BrushS
   }
   const y = (value: number) => SPARK_BOTTOM - ((value - low) / (high - low)) * (SPARK_BOTTOM - SPARK_TOP)
   const parts: string[] = []
+  const dots: string[] = []
   for (const line of lines) {
     let run: string[] = []
     const flush = () => {
-      if (run.length === 1) parts.push(`${run[0]}h0`)
+      if (run.length === 1) dots.push(`${run[0]}h0`)
       else if (run.length > 1) parts.push(run.join('L'))
       run = []
     }
@@ -231,8 +246,9 @@ function sparkPath(lines: readonly (readonly (number | null)[])[], scale: BrushS
     }
     flush()
   }
-  return parts.join('')
+  return { line: parts.join(''), dots: dots.join('') }
 }
+
 
 export interface ChartRangeBrushProps {
   /** The chart's x keys, in axis order. */
@@ -441,11 +457,9 @@ export default function ChartRangeBrush({
 
   // Before the early return (hooks): the sparkline and the ticks, memoised on
   // what they draw — a drag re-renders the brush on every pointer move.
-  const sparkD = useMemo(() => (spark && count >= 2 ? sparkPath(spark, scale, count) : ''), [spark, scale, count])
+  const sparkPaths = useMemo(() => (spark && count >= 2 ? sparkPath(spark, scale, count) : { line: '', dots: '' }), [spark, scale, count])
   const plotWidth = plot?.width ?? null
   const ticks = useMemo(() => tickDays(count, plotWidth ?? 480), [count, plotWidth])
-
-  if (count < 2) return null
 
   // Where the strip goes: under the plot once it has been measured.
   const inset = plot
@@ -454,14 +468,25 @@ export default function ChartRangeBrush({
   const insetStyle = { paddingLeft: inset.left, paddingRight: inset.right }
   const edge = (k: number) => edgePosition(scale, k, count)
 
-  const first = xs[0]
-  const lastX = xs[last]
+  const firstLabel = count >= 2 ? words.short(xs[0]) : ''
+  const lastLabel = count >= 2 ? words.short(xs[last]) : ''
   const selection =
-    pending !== null && !preview
-      ? `From ${words.full(xs[pending])}: click the day the range ends`
-      : zoomed || preview
-        ? `Showing ${words.range(xs[shown.start], xs[shown.end])} (${(shown.end - shown.start + 1).toLocaleString('en-US')} of ${count.toLocaleString('en-US')} days)`
-        : `Showing all ${count.toLocaleString('en-US')} days`
+    count >= 2
+      ? brushSelectionText({ xs, range: shown, zoomed: zoomed || preview !== null, pending: preview ? null : pending, words })
+      : { long: '', short: '' }
+  // The long label unless the row is measured too narrow for it (R2-20).
+  const labelRowRef = useRef<HTMLDivElement>(null)
+  const [narrow, setNarrow] = useState(false)
+  const insetLeft = inset.left
+  const insetRight = inset.right
+  useLayoutEffect(() => {
+    const row = labelRowRef.current
+    if (!row) return
+    const fits = brushLabelsFit(row, [firstLabel, selection.long, lastLabel], { left: insetLeft, right: insetRight })
+    setNarrow(fits === false)
+  }, [firstLabel, lastLabel, selection.long, insetLeft, insetRight, plotWidth])
+
+  if (count < 2) return null
 
   const handle = (which: Handle) => {
     const value = which === 'start' ? shown.start : shown.end
@@ -572,15 +597,26 @@ export default function ChartRangeBrush({
             preserveAspectRatio="none"
             className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
           >
-            {sparkD && (
+            {sparkPaths.line && (
               <path
                 data-chart-brush-spark=""
-                d={sparkD}
+                d={sparkPaths.line}
                 fill="none"
                 stroke="var(--color-text-muted)"
                 strokeWidth={1.25}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+            {sparkPaths.dots && (
+              <path
+                data-chart-brush-spark-dots=""
+                d={sparkPaths.dots}
+                fill="none"
+                stroke="var(--color-text-muted)"
+                strokeWidth={2 * SPARK_DOT_RADIUS}
+                strokeLinecap="round"
                 vectorEffect="non-scaling-stroke"
               />
             )}
@@ -605,12 +641,22 @@ export default function ChartRangeBrush({
           {handle('end')}
         </div>
       </div>
-      <div style={insetStyle} className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
-        <span aria-hidden="true">{words.short(first)}</span>
-        <span data-chart-brush-selection-label="" className="text-center text-[var(--color-text)]">
-          {selection}
+      {/* The end days never wrap; on a row too narrow for the long middle label, the short one (R2-20). */}
+      <div
+        ref={labelRowRef}
+        data-chart-brush-labels=""
+        style={insetStyle}
+        className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]"
+      >
+        <span aria-hidden="true" className="shrink-0 whitespace-nowrap">
+          {firstLabel}
         </span>
-        <span aria-hidden="true">{words.short(lastX)}</span>
+        <span data-chart-brush-selection-label="" className="text-center text-[var(--color-text)]">
+          {narrow ? selection.short : selection.long}
+        </span>
+        <span aria-hidden="true" className="shrink-0 whitespace-nowrap">
+          {lastLabel}
+        </span>
       </div>
     </div>
   )

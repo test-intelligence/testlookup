@@ -1,5 +1,210 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 2.6: the catalogue on the report pages, behind a flag; responsive and presentation mode (VIZ-408, VIZ-106)
+
+Five report pages gain the chart catalogue: Overview, Trends, Summary report,
+Suite detail and Release gate. The new charts are behind the existing
+`viz_chart_data_api` flag, and Trends' heatmap also needs
+`viz_advanced_charts`. Both flags are seeded OFF (migration 0192) and stay off
+at merge, so merging changes nothing a user sees except the flag-independent
+items listed further down. **Rollback is the flag**: turn
+`viz_chart_data_api` off for a project, or globally, and the page is the
+Wave 2.5 page on its next flag read; turn `viz_advanced_charts` off to drop
+only the heatmap. Nothing is migrated, and no endpoint, payload or cache key
+changes for a flag-off page.
+
+One hook, `useCatalogueRollout`, is the only reader of the two flags, and a
+ratchet test fails on any other reader, so Wave 5 can delete the seam in one
+place. The new sections are lazy chunks mounted only when the flag reads on: a
+flag-off session downloads none of them. With the flag off, each page makes one
+extra request, the flag's own status lookup. Sections below the fold ask for
+nothing until the reader scrolls near them (`LazySection`, rooted at the page's
+own scroller). No catalogue request can ask for more than 90 days.
+
+**With the flag on, page by page.**
+- **Overview**: "Pass rate trend", with release markers, replaces "Execution
+  trend" (OD-4). Beside it, a "Status breakdown" donut sums the page's own day
+  series, so its totals equal the KPI and the old foot strip. Executions no
+  status names are the `unknown` slice, the residual of each day's total; when
+  a day carries no total the slice is left out, not drawn as zero. Below them,
+  lazily: "Top failing tests" (ranked bars, top 10, a tie at the tenth bar
+  said rather than cut) and "Failure categories" (a donut up to five
+  categories, ranked bars past that). Failure categories draws the read the
+  page already makes for its infra KPI, so it adds no request. "What's
+  blocking release" moves down one row. One new request: top failing.
+- **Trends**: the existing "Pass rate trend" gains the trend overlays (moving
+  average and trend line), zoom, and release markers. Below the body grid,
+  lazily: "Pass rate by suite" (the top 7 suites by volume plus "Other"),
+  "Test duration (p50 / p95)", and, with `viz_advanced_charts` too, "Suite pass
+  rate by day", a heatmap drawn from the same suite response as the line
+  chart: one request, two views. Its rows are worst first, read top down, and
+  its footer says "Top 7 of N suites". Each of these frames states its grain
+  ("Counted per test execution."). A one-day window shows the reason instead
+  of a one-point trend and asks nothing. New requests: three `chart-data`
+  reads, one unfiltered "ever had a run" probe, and the second flag's lookup.
+- **Summary report**: a "Status breakdown" donut and "Results by suite"
+  stacked bars, both drawn from the report the page already holds, so they
+  follow the Aggregation toggle and count what the tiles count, and their
+  captions name it ("per unique test"). A lazy "Pass rate trend" reads
+  `/metrics/trends` and says that it counts executions, not unique tests. "Failures by test" ranked bars sit above the
+  existing table. One new request: the trend.
+- **Suite detail**: the pass-rate chart gains the trend overlays and zoom. No
+  new request.
+- **Release gate**: a "Context" group after the recommendation card and the
+  blocking issues, above "Linked Failure Clusters". "Pass rate by release"
+  compares the run's release with up to four recent ones, aligned on each
+  release's start, over 90 days. It reads the run once (no polling) and makes
+  one `chart-data` request, lazily. "Failure cluster share" draws the stored
+  decision's clusters. These charts never draw a threshold, a target or a
+  verdict colour. Each carries a caption: the release chart says its data is
+  live and that the verdict is the stored decision for the build, not computed
+  from the chart; the cluster chart says its data is the decision's own and
+  nothing is recomputed. A run with fewer than two releases gets one sentence
+  instead of an empty frame.
+  Tests render a NO_GO beside a 100% release and a GO beside a 0% one, and the
+  recommendation card and the risk ring are the same DOM with the flag on and
+  off.
+
+**For everyone, with or without the flag.**
+- **Below 1024 px the sidebar is a drawer.** A menu button in the top bar opens
+  it as a modal dialog. Focus moves into it and stays there, Escape closes it
+  and returns focus to the button, and it closes on navigation. The top bar
+  wraps onto two rows (three on a phone), with search on the last. At 1024 px
+  and wider the shell is unchanged (a DOM snapshot of the desktop shell pins
+  it).
+- **Narrow pages.** Trends is one column below 1024 px, and its "Wider screen
+  needed" banner is gone. The Summary report's two tables scroll inside their
+  card instead of clipping columns, and its header buttons wrap below 1024 px.
+  Suite detail's header controls wrap. The Release gate's recommendation card
+  stacks below 640 px.
+- **Suite detail's two charts are 240 px tall** (they were 220), the kit's
+  floor.
+- **Trends asked for everything twice on a cold load**: once for the stored
+  window (30 days) and again for its own 14-day default. The page now reads
+  14 days from its first render, and makes six reads instead of twelve.
+- **Names that are `Object` members.** A suite or test named `constructor`,
+  `__proto__`, `toString` or `hasOwnProperty` printed an inherited function
+  instead of its name ("function Object() { [native code] }") in bar labels,
+  table headers and the generated summary. Labels are now read from the
+  payload's own entries only.
+- **A chart frame's toolbar wraps under its title** when the two cannot share
+  a line. A narrow frame used to squeeze its title to one letter per line.
+- **Donut labels fit.** The ring is sized to its plot with every slice label
+  measured in the reader's font. A label that would leave the drawing shrinks
+  the ring, down to a 44 px radius. Below that, the labels move to the legend.
+  On the CI runner's Linux fonts, Overview's "3,910 (88.1%)" had lost a digit.
+  A slice's tooltip goes to the right or left of the ring, or else to the
+  readout slot under the plot, never below or above the ring: the way there
+  would cross another slice and turn the tooltip into that slice's.
+- **Axis labels fit.** A stacked column chart's newest day label is no longer
+  cut at the right edge: the margin is sized from the measured label. Ranked
+  and stacked bar labels are cut to their measured width, in the middle,
+  instead of to a character count, so a long name neither runs off the drawing
+  nor wraps onto the next bar's row.
+- **Presentation mode.** A "Presentation mode" toggle sits in the sidebar
+  footer (in the drawer below 1024 px). It is a preference of this browser,
+  set on the page before its first paint. It raises metric values to 40 px and
+  headlines to 36, 40 and 64 px, and lifts small text to 16 px. Muted and faint
+  text, and the chart axis colour, become the secondary text colour, which is
+  at least 7.3:1 on every theme's backgrounds. Chart drawings scale by 16/11,
+  so 11 px axis text reads 16 px, and the heatmap's canvas text scales with
+  them. Full screen alone stays at 15/11. A legend inside a scaled drawing
+  keeps its desk size, so it is not enlarged twice. The metric values on
+  Overview, the Summary report and Suite detail moved onto type tokens of the
+  same size, so nothing moves at the desk.
+- A section mounted after the top bar reads the top bar's cached release list
+  instead of asking for it again. A heatmap resizes at most once per animation
+  frame.
+- **Trends waits for the flag.** Trends holds its loading state until the
+  `viz_chart_data_api` lookup answers, so the pass-rate card mounts once, in its
+  final form. The lookup runs beside the page's own reads and is cached per
+  project for the session.
+
+**Chart data reads are faster.** Three changes to the analytics read path,
+measured on a 1M-row dataset:
+- The row-grain query no longer computes a `COUNT(DISTINCT tr.id)` column that
+  nothing read.
+- `jit = off` for these reads. The planner misjudges the group count, and spent
+  700-830 ms compiling each 365-day row-grain query that then ran in well under
+  a second.
+- `plan_cache_mode = force_custom_plan`. After five runs on one connection, the
+  prepared release-comparison query switched to a generic plan of about 500 ms;
+  it now stays at about 177 ms.
+- Before and after, timed in one session (service p50): pass rate by suite over
+  365 days 1,286 -> 198 ms; pass rate by day and suite over 90 days 856 -> 169
+  ms; executions by day and release over 365 days 501 -> 194 ms.
+- All three are `SET LOCAL`, transaction-scoped, and reach only the
+  `@analytics_read` GET routes. Every 7, 14, 30 and 90-day request a page can
+  make is inside its budget (worst HTTP p95: 212 ms for the rate calls against
+  500, 303 ms for the duration percentiles against 1,500). One cost:
+  row-grain day x suite at 30 days is 15-22% slower (about 130 to 155 ms),
+  because the planner loses its parallel plan without the DISTINCT column.
+
+**Bundle.**
+- The eager set is 176,759 B gzip against the 180,000 budget (it was 174,421).
+  The +2.3 kB is the drawer, the presentation toggle and its store, and their
+  CSS.
+- With the flags off, a first visit to these pages is 2 to 13 kB larger:
+  Overview +7.3 kB, Trends +13.1, Suite detail +12.5, Summary +2.0, Release
+  gate +2.0. Part of it is the kit fixes above. The rest is code only the
+  sections run (the chart request queue, the chart registry, release
+  alignment): the bundler now places it in chunks every chart page loads.
+- With the flags on, a section adds what it draws: Overview 51 kB, Trends 22 kB
+  (plus the ECharts chunks when the heatmap mounts), Release gate 102 kB, and
+  Summary 196 kB, its first chart code. Suite detail adds nothing.
+
+**Page load, measured.** A production build, API answers after a fixed 40 ms,
+CPU slowed 4x, 1280 x 800, nine interleaved loads per page and cell, median
+Largest Contentful Paint:
+
+| Page | Before | Flags off | Flags on |
+|---|---:|---:|---:|
+| Overview | 1,284 ms | 1,312 | 952 |
+| Trends | 1,412 | 1,468 | 1,464 |
+| Summary report | 572 | 596 | 1,516 |
+| Suite detail | 1,340 | 1,384 | 1,416 |
+| Release gate | 836 | 816 | 828 |
+
+With the flags off, every page is within its tolerance of the old page
+(5% or 50 ms). With the flags on, Overview is faster because its largest
+paint is the verdict headline and the old stacked trend is gone. The Summary
+report is 944 ms slower: its two headline charts load the page's first chart
+code, and one of them becomes the largest paint. That misses the flag-on
+tolerance (+10% and +150 ms) and is listed under Known limits.
+
+**Deferred, with the reason.**
+- Suite detail's duration histogram: the page has no per-execution durations,
+  and `chart-data` has no histogram metric. It needs a backend
+  `duration_histogram` metric.
+- Suite detail's test-by-run heatmap: `chart-data` has no run dimension. It
+  waits for VIZ-205 and VIZ-501 (Wave 3).
+- A server-side heatmap (worst first across every suite, more than eight rows,
+  other axes): VIZ-205 and VIZ-501. Only the adapter changes then.
+- An `unknown` slice on the Summary donut: `/reports/summary` does not report
+  one.
+- "Slowest tests" (VIZ-406's third chart): not in this story's table.
+
+**Known limits.**
+- A project allow-list reads OFF in All Projects mode, so during a
+  per-project rollout the All Projects view keeps the Wave 2.5 pages.
+- `/analytics/chart-data` itself is not gated by the flag; the flag gates the
+  pages.
+- The Trends heatmap shows the top 7 suites and "Other", ordered on the
+  client.
+- Release gate's risk number, inside its ring, does not grow in presentation
+  mode. The presentation preference is not shared between open tabs; a reload
+  picks it up.
+- The chart axis text is still 11 px at the desk; the story asks for 12
+  (OD-10, deferred to its own change, because it moves every baseline).
+- With the report chrome flags on as well, Overview and Trends show two KPI
+  strips (OD-14), and the chrome's suite filter is not honoured by the Summary
+  report or Suite detail.
+- 365-day row-grain requests still miss 500 ms (about 600 ms), but no page can
+  send one.
+- With the flag on, the Summary report's largest paint comes 944 ms later (see
+  the table above). Decide before turning the flag on for a project that reads
+  that page.
+
 ## Unreleased - Java SDK: Jackson 2.18.10 (CVE-2026-68497)
 
 The Java client (``client/java``) moves Jackson core, databind and the YAML

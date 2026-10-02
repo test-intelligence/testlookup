@@ -28,6 +28,7 @@ import { bandsTone, NOT_MEASURED, PASS_RATE_BANDS, ringTextWidth, type RingTone 
 import { measureTextWidth } from './textMeasure'
 import { CHART_VARS, NON_TEXT_EDGE } from './tokens'
 import { useChartAnimation } from './motion'
+import { usePresentationStore } from '@/store/presentationStore'
 
 export type { RingTone } from './gaugeBar.model'
 
@@ -45,6 +46,17 @@ const RING_COLOR: Record<RingTone, string> = {
 /** The value's font size (`text-xl`) and weight; the caption's (`text-[10px]`). */
 const VALUE_FONT = { px: 20, weight: 700 }
 const CAPTION_FONT = { px: 10, weight: 400 }
+
+/**
+ * Presentation mode (R1-5): the ring, its number and its caption grow by this
+ * one factor — 20 -> 40 px, the room size every other metric value reaches
+ * through `--text-stat-*`; the ring 120 -> 240 px, whose hole (152.8 px) holds
+ * "100.0%" at 40 px bold. One factor for all three keeps the desk proportions.
+ */
+const RING_PRESENTATION_ROOM = 2
+
+const scaled = (font: { px: number; weight: number }, room: number) =>
+  room === 1 ? font : { px: font.px * room, weight: font.weight }
 
 /**
  * The font size that fits `text` in `available` px, measured in the span's
@@ -116,10 +128,21 @@ export function RingGaugeView({
   const text = measured ? format(v) : '—'
 
   const fit = !legacyApplicationLayer
-  const available = ringTextWidth(size)
-  const [valueRef, valuePx] = useFittedFontSize(text, VALUE_FONT, available, fit)
-  const [captionRef, captionPx] = useFittedFontSize(caption, CAPTION_FONT, available, fit)
-  const fontSize = (px: number | undefined): CSSProperties | undefined => (px === undefined ? undefined : { fontSize: px })
+  // `PassRateGauge` (legacy) keeps its pinned bytes in every mode.
+  const presenting = usePresentationStore((s) => s.enabled)
+  const room = fit && presenting ? RING_PRESENTATION_ROOM : 1
+  const side = size * room
+  const valueFont = scaled(VALUE_FONT, room)
+  const captionFont = scaled(CAPTION_FONT, room)
+  const available = ringTextWidth(side)
+  // Measured at the size it is DRAWN: measuring at 20 px while drawing at 40
+  // would let a wide value pass the check and overrun the hole.
+  const [valueRef, valuePx] = useFittedFontSize(text, valueFont, available, fit)
+  const [captionRef, captionPx] = useFittedFontSize(caption, captionFont, available, fit)
+  // Desk mode: the classes' own sizes unless fitted (no inline style: the
+  // render is pinned). In the room, the scaled size is always written.
+  const fontSize = (px: number | undefined, font: { px: number }): CSSProperties | undefined =>
+    px !== undefined ? { fontSize: px } : room === 1 ? undefined : { fontSize: font.px }
 
   const name = label ?? caption
   const semantics = legacyApplicationLayer
@@ -136,7 +159,7 @@ export function RingGaugeView({
       : { role: 'img' as const, 'aria-label': `${name}: ${NOT_MEASURED}` }
 
   return (
-    <div {...semantics} className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+    <div {...semantics} className="relative flex items-center justify-center" style={{ width: side, height: side }}>
       <ResponsiveContainer width="100%" height="100%">
         <RadialBarChart
           cx="50%" cy="50%"
@@ -159,10 +182,10 @@ export function RingGaugeView({
         </RadialBarChart>
       </ResponsiveContainer>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span ref={valueRef} className="text-xl font-bold text-[var(--color-text)]" style={fontSize(valuePx)}>
+        <span ref={valueRef} className="text-xl font-bold text-[var(--color-text)]" style={fontSize(valuePx, valueFont)}>
           {text}
         </span>
-        <span ref={captionRef} className="text-[10px] text-[var(--color-text-muted)]" style={fontSize(captionPx)}>
+        <span ref={captionRef} className="text-[10px] text-[var(--color-text-muted)]" style={fontSize(captionPx, captionFont)}>
           {caption}
         </span>
       </div>

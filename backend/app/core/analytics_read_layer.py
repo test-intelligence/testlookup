@@ -844,30 +844,93 @@ def _dialect_of(db: Any) -> str:
     return ""
 
 
+#: Planner settings every analytics read runs under, beside its timeout. Both
+#: are LOCAL for the same reason the timeout is (see
+#: :func:`apply_statement_timeout`); both were measured on the large seed
+#: (1M executions, one year; ``docs/viz-work/w26/perf/REPORT.md``).
+#:
+#: ``jit = off``. The chart statements group by expressions across two
+#: tables, which the planner cannot estimate: it expects ~1M groups where
+#: there are 73k, prices the query past ``jit_above_cost`` and then spends
+#: longer COMPILING than executing -- 758 ms of JIT on ``pass_rate`` by day x
+#: suite over 365 days (1,366 ms -> 892 ms with it off), and a generic plan
+#: with JIT pushed the 90-day chart to 877 ms (368 ms off). These are
+#: sub-second aggregates; JIT pays off on multi-second scans this layer's
+#: 5 s timeout refuses anyway.
+#:
+#: ``plan_cache_mode = force_custom_plan``. asyncpg prepares every statement,
+#: and after five executions on one connection PostgreSQL may switch it to a
+#: generic plan that no longer sees the bound window or project. The
+#: comparability statement's generic plan guesses 1/3 selectivity and picks a
+#: serial nested loop: 509 ms against 178-188 ms for its custom plan, so the
+#: same request's latency depended on how often that pooled connection had
+#: already run it. Planning these statements costs under 1 ms.
+_ANALYTICS_PLANNER_SETTINGS = (
+    ("jit", "off"),
+    ("plan_cache_mode", "force_custom_plan"),
+)
+
+
+def _read_settings_statement(timeout_ms: int) -> tuple[Any, dict[str, str]]:
+    """The timeout and the planner settings as ONE bound statement.
+
+    ``set_config(name, value, is_local => true)`` is ``SET LOCAL`` as a function:
+    transaction-scoped, and -- unlike ``SET`` -- it takes bind parameters, so
+    nothing is interpolated. One statement is one round trip instead of three,
+    and all-or-nothing: the server never holds the planner settings without
+    the timeout, or the reverse.
+    """
+    calls = ["set_config('statement_timeout', :timeout, true)"]
+    params = {"timeout": str(int(timeout_ms))}
+    for i, (name, value) in enumerate(_ANALYTICS_PLANNER_SETTINGS):
+        calls.append(f"set_config(:name_{i}, :value_{i}, true)")
+        params[f"name_{i}"] = name
+        params[f"value_{i}"] = value
+    return text("SELECT " + ", ".join(calls)), params
+
+
 async def apply_statement_timeout(db: Optional[AsyncSession], timeout_ms: int) -> bool:
-    """``SET LOCAL statement_timeout`` inside the request's transaction.
+    """``statement_timeout`` for the request's transaction, and the planner
+    settings of :data:`_ANALYTICS_PLANNER_SETTINGS` beside it, transaction-
+    local (``set_config(..., true)``, i.e. ``SET LOCAL``).
 
     LOCAL, never SET: a session-level ``SET`` survives the COMMIT and rides the
     pooled connection into whatever runs next on it -- an ingestion batch would
     then inherit a 5 s ceiling it never asked for and fail halfway. LOCAL is
     scoped to the transaction the statement itself opens (SQLAlchemy autobegins
     on the first execute) and is gone when the request's session commits or
-    rolls back.
+    rolls back. The planner settings ride the same transaction for the same
+    reason: they are right for a bounded analytics read, and nobody measured
+    them for an ingestion batch or a write. Only :func:`open_read` and
+    :func:`_serve` call this, and both serve ``@analytics_read`` GETs.
 
-    The value is interpolated because PostgreSQL's ``SET`` takes no bind
-    parameters; ``int()`` is what makes that safe.
+    The statement runs inside a SAVEPOINT, which is what makes the failure path
+    really fail open (R1-9). On PostgreSQL a refused setting aborts the whole
+    transaction, so without it the read that followed died with 25P02
+    (``InFailedSQLTransaction``): a 500, not an unguarded read. Rolling back
+    to the savepoint leaves the caller's transaction, and what it already did
+    in it, usable. A full ``rollback()`` would also do, but it expires every
+    ORM object the request has loaded (the current user among them), and the
+    next attribute read would lazy-load outside the event loop. A savepoint
+    released on success keeps its ``SET LOCAL`` for the enclosing transaction;
+    SAVEPOINT + one statement + RELEASE is the same three round trips the
+    three ``SET LOCAL`` statements were.
     """
     if db is None or timeout_ms <= 0:
         return False
     if not _dialect_of(db).startswith("postgres"):
         return False
+    statement, params = _read_settings_statement(timeout_ms)
     try:
-        await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        async with db.begin_nested():
+            await db.execute(statement, params)
     except Exception as exc:  # noqa: BLE001 - a read must not 500 over its own guard
         # Failing open is right (a guard must not be the thing that breaks the
         # read) but it is not free: the query that follows runs under the
         # server default, which on this route means "until it finishes". A log
-        # line alone pages nobody, so it is counted.
+        # line alone pages nobody, so it is counted. One statement, so a
+        # refused planner setting means no timeout either: counted under the
+        # timeout's reason.
         count_degraded("statement_timeout_not_applied")
         logger.warning("analytics_statement_timeout_not_applied", error=str(exc))
         return False

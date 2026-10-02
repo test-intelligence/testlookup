@@ -3,7 +3,16 @@ import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ChartGalleryPage from './ChartGalleryPage'
-import { GALLERY_ITEM_IDS, GALLERY_ITEMS, galleryCanvasSize, galleryEngine, galleryFramed } from './chartGalleryFixtures'
+import {
+  GALLERY_ITEM_IDS,
+  GALLERY_ITEMS,
+  galleryCanvasSize,
+  galleryEngine,
+  galleryFramed,
+  HOSTILE_LABEL,
+} from './chartGalleryFixtures'
+import { protoKeyNamesSeries } from '@/components/charts/__fixtures__/protoKeyNames'
+import { HEATMAP_FRAME_HOSTILE_NAME } from '@/components/charts/__fixtures__/heatmapFrame'
 import { STATE_ITEM_IDS, STATE_ITEMS } from './chartStatesFixtures'
 
 // Recharts is mocked the way the chart component tests mock it (jsdom has no
@@ -186,7 +195,9 @@ describe('ChartGalleryPage', () => {
     // ReferenceLine, not a series); and the three rings (1 RadialBar each,
     // the unmeasured one included: it draws its 0-length arc over the track)
     // = 3. Sparkline, GaugeBar and DayStrip draw no Recharts at all.
-    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13 + 21 + 4 + 3)
+    // Wave 2.6: the ranked bars of prototype-member names (1 Bar) = 1; the
+    // three heatmap frames are ECharts canvases and draw no Recharts series.
+    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13 + 21 + 4 + 3 + 1)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 
@@ -194,7 +205,16 @@ describe('ChartGalleryPage', () => {
     engine.inits.length = 0
     const { container } = renderAt()
     const heatmaps = GALLERY_ITEMS.filter((item) => galleryEngine(item) === 'echarts')
-    expect(heatmaps.map((item) => item.id)).toEqual(['heatmap', 'heatmap-hostile-label', 'heatmap-status', 'heatmap-empty'])
+    expect(heatmaps.map((item) => item.id)).toEqual([
+      'heatmap',
+      'heatmap-hostile-label',
+      'heatmap-status',
+      'heatmap-empty',
+      // Wave 2.6 (K5): the heatmap inside a ChartFrame, as the Trends catalogue draws it.
+      'heatmap-frame',
+      'heatmap-frame-90d',
+      'heatmap-frame-hostile',
+    ])
     await waitFor(() => expect(engine.inits).toHaveLength(heatmaps.length))
     for (const item of heatmaps) {
       const section = container.querySelector(`[data-gallery-item="${item.id}"]`)
@@ -273,6 +293,25 @@ describe('ChartGalleryPage', () => {
     const notes = (root: Element | null) =>
       [...(root?.querySelectorAll('[data-chart="time-series"] p') ?? [])].map((p) => p.textContent)
     expect(notes(item)).toEqual(notes(headline))
+  })
+
+  // Wave 2.6: the gallery spells two kit fixtures out (it cannot import app
+  // code); these hold the copies equal, so the baselines draw what the kit's
+  // own tests test.
+  it('spells out the kit’s prototype-name bars and hostile suite name exactly', () => {
+    const item = GALLERY_ITEMS.find((candidate) => candidate.id === 'bar-ranked-prototype-names')
+    expect(item?.chart === 'bars' ? item.data : null).toEqual(protoKeyNamesSeries)
+    expect(HEATMAP_FRAME_HOSTILE_NAME).toBe(HOSTILE_LABEL)
+  })
+
+  it('draws each heatmap frame in its own frame, worst row first, and states the truncation by rows', async () => {
+    const { container } = renderAt()
+    const frame = container.querySelector('[data-gallery-item="heatmap-frame"] [data-chart-frame]')
+    expect(frame).toHaveAttribute('data-chart-state', 'ready')
+    expect(frame?.querySelector('[data-heatmap-rows]')).toHaveTextContent('Rows: lowest pass rate first. Top 7 of 12 suites')
+    for (const id of ['heatmap-frame-90d', 'heatmap-frame-hostile']) {
+      expect(container.querySelector(`[data-gallery-item="${id}"] [data-chart-frame]`), id).toHaveAttribute('data-chart-state', 'ready')
+    }
   })
 
   // Baseline review A (D3): a frame title is plain text, so Markdown code-span

@@ -914,6 +914,181 @@ export const RELEASE_GATE: ApiHandlers = [
   ],
 ]
 
+/**
+ * A text that would run script if any code path turned a name into markup.
+ * It must reach the screen as these literal characters, and
+ * `window.__xss` must stay undefined.
+ */
+export const HOSTILE_NAME = '<img src=x onerror="window.__xss=1">'
+
+/**
+ * The floored NO_GO with three linked failure clusters (Wave 2.6 C0): the
+ * "Linked Failure Clusters" card is drawn only when the decision carries
+ * `cluster_insights`, and `FLOORED_DECISION` has none, so today's baseline
+ * never shows it. Sizes 7 / 4 / 1 (the share a cluster chart would draw),
+ * one label hostile, one criticality missing ("unclassified").
+ * A separate decision, not a change to `FLOORED_DECISION`, so the committed
+ * `gate-risk-gauge` baseline keeps exactly its inputs (the workflow timeline
+ * above the card reads the cluster count).
+ */
+const GATE_CLUSTER_SPECS: { label: string; size: number; criticality: 'CRITICAL' | 'HIGH' | null }[] = [
+  { label: 'Payment gateway timeout', size: 7, criticality: 'CRITICAL' },
+  { label: HOSTILE_NAME, size: 4, criticality: 'HIGH' },
+  { label: 'Session cookie not cleared', size: 1, criticality: null },
+]
+
+export const GATE_CLUSTERS = GATE_CLUSTER_SPECS.map((c, i) => ({
+  id: `gate-cluster-row-${i + 1}`,
+  cluster_id: `gate-cluster-${i + 1}`,
+  label: c.label,
+  size: c.size,
+  representative_error: `${c.label}: expected success, got error`,
+  member_test_ids: Array.from({ length: c.size }, (_, j) => `tc-gate-${i}-${j}`),
+  cohesion_score: 0.9 - i * 0.2,
+  criticality_level: c.criticality,
+  dimension_scores: [],
+}))
+
+const CLUSTERED_DECISION = { ...FLOORED_DECISION, cluster_insights: GATE_CLUSTERS }
+
+/** `/release-gate/<run>` answered with the clustered decision. */
+export const RELEASE_GATE_CLUSTERED: ApiHandlers = [
+  [/^\/api\/v1\/release-readiness\/[^/]+$/, () => CLUSTERED_DECISION],
+  ...RELEASE_GATE,
+]
+
+// ── Summary report (/reports/summary) ──────────────────────────────────────
+
+/**
+ * Six suites for the Summary report (Wave 2.6 C0, `SUMMARY_REPORT`), in
+ * `latest` mode (the page's default: each suite's newest run). One suite has
+ * no passing test at all; two carry step data, so the "Step %" column is
+ * drawn with a dash for the other four. `lastRun` is `[days ago, hours]`,
+ * all distinct, so the default "Last run, newest first" order is fixed.
+ */
+const SUMMARY_SUITE_SPECS: {
+  name: string
+  passed: number
+  failed: number
+  skipped: number
+  broken: number
+  lastRun: [number, number]
+  steps?: [number, number]
+}[] = [
+  { name: 'Auth', passed: 40, failed: 3, skipped: 1, broken: 0, lastRun: [0, 2], steps: [212, 220] },
+  { name: 'Checkout', passed: 55, failed: 2, skipped: 0, broken: 1, lastRun: [1, 3], steps: [301, 330] },
+  { name: 'Payments', passed: 20, failed: 11, skipped: 2, broken: 3, lastRun: [0, 5] },
+  { name: 'Search', passed: 22, failed: 4, skipped: 1, broken: 0, lastRun: [2, 1] },
+  { name: 'Notifications', passed: 12, failed: 0, skipped: 0, broken: 0, lastRun: [4, 2] },
+  { name: 'Legacy import', passed: 0, failed: 6, skipped: 2, broken: 1, lastRun: [12, 5] },
+]
+
+/**
+ * Twelve top failing tests, most failures first. Two share the name
+ * "login times out" in two suites (they are two tests, not one), one name
+ * is `HOSTILE_NAME`, one row has neither suite nor class, and the counts tie
+ * at 5 and at 2.
+ */
+const SUMMARY_TOP_FAILING: [string, string | null, string | null, number][] = [
+  ['card declined shows reason', 'Payments', 'CardSpec', 11],
+  ['login times out', 'Auth', 'LoginSpec', 9],
+  ['login times out', 'Checkout', 'GuestLoginSpec', 8],
+  [HOSTILE_NAME, 'Search', 'SearchSpec', 6],
+  ['refund webhook retried', 'Payments', 'RefundSpec', 5],
+  ['legacy csv import keeps encoding', 'Legacy import', 'ImportSpec', 5],
+  ['checkout total includes tax', 'Checkout', 'TotalSpec', 4],
+  ['search paginates', 'Search', 'SearchSpec', 3],
+  ['token refresh', 'Auth', 'AuthSpec', 2],
+  ['apply coupon', 'Checkout', 'CouponSpec', 2],
+  ['orphaned result without a suite', null, null, 1],
+  ['legacy xml import keeps order', 'Legacy import', 'ImportSpec', 1],
+]
+
+const pct1 = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0)
+
+/**
+ * `GET /reports/summary?days=&mode=`. In `window` mode every count is the
+ * latest-run count times the suite's runs in the window (a pure function of
+ * the suite's index), so the two modes differ the way the service's do:
+ * window totals are volume, latest totals one snapshot.
+ */
+export function summaryReport(request: ApiRequest) {
+  const days = intParam(request, 'days', 30)
+  const mode = request.url.searchParams.get('mode') === 'window' ? 'window' : 'latest'
+  const scale = (i: number) => (mode === 'window' ? 2 + (i % 3) : 1)
+  const suites = SUMMARY_SUITE_SPECS.map((s, i) => {
+    const k = scale(i)
+    const passed = s.passed * k
+    const failed = s.failed * k
+    const skipped = s.skipped * k
+    const broken = s.broken * k
+    const total = passed + failed + skipped + broken
+    return {
+      suite_name: s.name,
+      total,
+      passed,
+      failed,
+      skipped,
+      broken,
+      pass_rate_pct: pct1(passed, total),
+      weighted_pass_rate_pct: pct1(passed, passed + failed + broken),
+      last_run_at: isoAgo(s.lastRun[0], s.lastRun[1]),
+      step_success_rate: s.steps ? pct1(s.steps[0], s.steps[1]) : null,
+      passed_steps: s.steps ? s.steps[0] : null,
+      total_steps: s.steps ? s.steps[1] : null,
+    }
+  })
+  const sum = (key: 'total' | 'passed' | 'failed' | 'skipped' | 'broken') => suites.reduce((n, s) => n + s[key], 0)
+  const total = sum('total')
+  const passed = sum('passed')
+  const failed = sum('failed')
+  const skipped = sum('skipped')
+  const broken = sum('broken')
+  const evaluated = passed + failed + broken
+  const runCount = mode === 'window' ? 42 : 14
+  return {
+    project_id: PROJECT_ID,
+    project_name: 'Checkout',
+    mode,
+    window_days: days,
+    generated_at: NOW.toISOString(),
+    period_start: isoAgo(days),
+    period_end: NOW.toISOString(),
+    totals: {
+      total_test_cases: total,
+      passed,
+      failed,
+      skipped,
+      broken,
+      evaluated,
+      pass_rate_pct: pct1(passed, total),
+      pass_rate_basis: 'unique_tests',
+      pass_rate_basis_label: 'per unique test',
+      fail_rate_pct: pct1(failed, total),
+      skip_rate_pct: pct1(skipped, total),
+      broken_rate_pct: pct1(broken, total),
+      weighted_pass_rate_pct: pct1(passed, evaluated),
+    },
+    run_count: runCount,
+    runs_per_day: mode === 'window' ? Math.round((runCount / days) * 100) / 100 : null,
+    avg_duration_ms: 512_400,
+    latest_run_at: isoAgo(0, 2),
+    flaky_test_count: 3,
+    flaky_rate_pct: pct1(3, total),
+    flaky_criteria: { window_runs: 10, min_runs: 5, min_flips: 2, min_failure_ratio: 0.1, max_failure_ratio: 0.9 },
+    suites,
+    top_failing_tests: SUMMARY_TOP_FAILING.map(([test_name, suite_name, class_name, failures]) => ({
+      suite_name,
+      class_name,
+      test_name,
+      failures: mode === 'window' ? failures * 2 : failures,
+    })),
+  }
+}
+
+/** `/reports/summary`: the report is the page's only page-owned request. */
+export const SUMMARY_REPORT: ApiHandlers = [...LAYOUT, ['/api/v1/reports/summary', summaryReport]]
+
 // ── Intelligence hub (/intelligence) ───────────────────────────────────────
 
 /**
@@ -1002,3 +1177,375 @@ export const FAILURES: ApiHandlers = [
     }),
   ],
 ]
+
+// ── Wave 2.6: the catalogue with its flags ON ──────────────────────────────
+//
+// Everything below is used ONLY by the flag-on specs (`tests/ci-e2e/rollout-*`
+// and the `*-on` visual specs). The flag-off handler lists above are not
+// touched, so every committed flag-off PNG keeps exactly its inputs.
+//
+// The `chart-data` payloads follow the contract shapes (`contracts/viz/
+// fixtures/chart_series/valid/series_chart_data_top_n_other.json` for the
+// series, `envelope/valid/*.json` for `meta`): values in PERCENTAGE POINTS,
+// zero-filled days, an unmeasured bucket as `y: null` with `measured: false`
+// and a reason. A payload the client validator refuses draws an error frame;
+// every flag-on spec asserts that no frame is in an error state, so a bad
+// fixture fails there by name instead of as a screenshot of an error.
+
+/** Release ids (UUID-shaped, like the server's). */
+export const RELEASE_ID = {
+  current: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001',
+  august: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002',
+  july: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000003',
+  hostile: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000004',
+  planned: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000005',
+  undated: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000006',
+  empty: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000007',
+} as const
+
+interface ReleaseSpec {
+  id: string
+  name: string
+  status: string
+  /** Days before `NOW` it was released (`released_at`). */
+  released?: number
+  /** Days before `NOW` it is planned (`planned_date`). */
+  planned?: number
+  runs: number
+  /** Days of runs from its start (the length of its comparison line). */
+  length: number
+  /** Its pass rate on the `day`-th day since its start. */
+  rate: (day: number) => number
+}
+
+/**
+ * Seven releases of `PROJECT_ID`, chosen for the markers and the comparison:
+ * `2026.09` (the gate run's own) released 10 days ago, inside every window
+ * and at 100% on every day (the verdict-integrity case: a NO_GO beside a
+ * perfect release); `2026.10` only PLANNED, 3 days ago (a planned-date
+ * marker); `2026.08` 40 days ago (outside Overview's 30 days: counted as
+ * outside the window, not dropped); a hostile name 55 days ago; `2026.07` 70
+ * days ago; one with no date at all (never drawn); one with no runs
+ * (`test_run_count: 0`, left out of the comparison).
+ */
+const RELEASE_SPECS: ReleaseSpec[] = [
+  { id: RELEASE_ID.current, name: '2026.09', status: 'released', released: 10, runs: 9, length: 10, rate: () => 100 },
+  { id: RELEASE_ID.planned, name: '2026.10', status: 'planned', planned: 3, runs: 2, length: 3, rate: (d) => 88 - d * 2 },
+  { id: RELEASE_ID.august, name: '2026.08', status: 'released', released: 40, runs: 14, length: 26, rate: (d) => 82 + ((d * 7) % 11) },
+  { id: RELEASE_ID.hostile, name: HOSTILE_NAME, status: 'released', released: 55, runs: 6, length: 12, rate: (d) => 71 + ((d * 5) % 9) },
+  { id: RELEASE_ID.july, name: '2026.07', status: 'released', released: 70, runs: 12, length: 20, rate: (d) => 76 + ((d * 3) % 13) },
+  { id: RELEASE_ID.undated, name: 'next', status: 'draft', runs: 0, length: 0, rate: () => 0 },
+  { id: RELEASE_ID.empty, name: '2026.06', status: 'released', released: 85, runs: 0, length: 0, rate: () => 0 },
+]
+
+export const RELEASES = RELEASE_SPECS.map((r, i) => ({
+  id: r.id,
+  project_id: PROJECT_ID,
+  project_name: 'Checkout',
+  name: r.name,
+  version: r.name,
+  description: null,
+  status: r.status,
+  planned_date: r.planned !== undefined ? daysAgo(r.planned) : null,
+  released_at: r.released !== undefined ? isoAgo(r.released, 2) : null,
+  created_at: isoAgo(100 - i),
+  updated_at: isoAgo(1),
+  phases: [],
+  test_run_count: r.runs,
+}))
+
+/** The top bar's release list with the releases above (put first: first match wins). */
+const RELEASES_LIST: ApiHandlers = [['/api/v1/releases', () => page(RELEASES)]]
+
+/** `meta` of a `chart-data` answer over the `days` ending today. */
+function chartMeta(days: number, over: Record<string, unknown> = {}) {
+  return {
+    schema_version: 1,
+    scope: {
+      projects: [{ id: PROJECT_ID, name: 'Checkout' }],
+      releases: [],
+      suites: [],
+      window: { from: daysAgo(days - 1), to: daysAgo(0), days, timezone: 'UTC' },
+    },
+    totals: { matched_runs: 13, total_runs: 13, matched_executions: 2_840, total_executions: 2_840 },
+    pass_rate_basis: 'executions',
+    ignored_filters: [],
+    truncated: false,
+    truncated_total: null,
+    measured: true,
+    reason: null,
+    includes_in_progress: 0,
+    partial_day: daysAgo(0),
+    generated_at: NOW.toISOString(),
+    as_of: NOW.toISOString(),
+    // Not in the C2 type yet; the frames read it defensively (plan OD-17).
+    definitions: { grain: 'execution_row' },
+    ...over,
+  }
+}
+
+const NO_RUNS_REASON = 'no executions in this bucket'
+
+/** A bucket with no data: a gap, with the server's reason. */
+const gapPoint = (x: string, reason = NO_RUNS_REASON) => ({ x, y: null, n: 0, measured: false, reason })
+
+/**
+ * The seven busiest suites in the server's order (by executions), one of
+ * them hostile, then the server's "Other" fold of four more. Legacy import is
+ * the worst, so the heatmap must draw it first although it arrives sixth.
+ */
+const SERIES_SUITES: { key: string; label: string; base: number; swing: number; n: number }[] = [
+  { key: 'Checkout', label: 'Checkout', base: 96, swing: 1, n: 120 },
+  { key: 'Auth', label: 'Auth', base: 93, swing: 2, n: 110 },
+  { key: 'Payments', label: 'Payments', base: 71, swing: 4, n: 90 },
+  { key: 'Search', label: 'Search', base: 84, swing: 3, n: 70 },
+  { key: 'Notifications', label: 'Notifications', base: 99, swing: 0.5, n: 40 },
+  { key: 'Legacy import', label: 'Legacy import', base: 52, swing: 5, n: 30 },
+  { key: HOSTILE_NAME, label: HOSTILE_NAME, base: 88, swing: 2, n: 20 },
+  { key: '__other__', label: 'Other', base: 90, swing: 1.5, n: 60 },
+]
+
+const WOBBLE = [0, -1.5, 1, -3, 2, 0.5, -2, 1.5, -0.5, 2.5, -1, 0, 1, -2.5]
+
+/** A rate in 0..100 with one decimal, a pure function of the suite and the day. */
+const wobble = (base: number, swing: number, n: number) =>
+  Math.round(Math.min(100, Math.max(0, base + WOBBLE[n % WOBBLE.length] * swing)) * 10) / 10
+
+/**
+ * `chart-data?metric=pass_rate&group_by=day&group_by=suite&top_n=7`: the
+ * Trends multi-series AND heatmap (one request). The 7-day gap of the Trends
+ * fixture is a gap in every suite; Notifications also did not run 2 days ago.
+ */
+function suiteSeries(days: number) {
+  return {
+    meta: chartMeta(days, {
+      truncated: true,
+      truncated_total: 11,
+      truncated_axes: { series: { dimension: 'suite', kept: 7, total: 11 } },
+    }),
+    series: {
+      kind: 'series',
+      dimensions: ['day', 'suite'],
+      x_type: 'time',
+      series: SERIES_SUITES.map((suite) => ({
+        key: suite.key,
+        label: suite.label,
+        points: Array.from({ length: days }, (_, i) => {
+          const n = days - 1 - i
+          const x = daysAgo(n)
+          if (GAP_DAYS.has(n) || (suite.key === 'Notifications' && n === 2)) return gapPoint(x)
+          return { x, y: wobble(suite.base, suite.swing, n), n: suite.n + (n % 5), measured: true, reason: null }
+        }),
+      })),
+    },
+  }
+}
+
+/**
+ * `chart-data?metric=duration_p50|duration_p95&group_by=day`, in ms. The gap
+ * days have neither; 4 days ago the p95 was not measured (a gap in the p95
+ * line only, never 0 ms); 13 days ago the p95 is BELOW the p50 (an inverted
+ * day, which the band notice names).
+ */
+function durationSeries(days: number, metric: 'duration_p50' | 'duration_p95') {
+  const p95 = metric === 'duration_p95'
+  return {
+    meta: chartMeta(days),
+    series: {
+      kind: 'series',
+      dimensions: ['day'],
+      x_type: 'time',
+      series: [
+        {
+          key: metric,
+          label: p95 ? 'p95' : 'p50',
+          points: Array.from({ length: days }, (_, i) => {
+            const n = days - 1 - i
+            const x = daysAgo(n)
+            if (GAP_DAYS.has(n)) return gapPoint(x)
+            if (p95 && n === 4) return gapPoint(x, 'too few executions for a 95th percentile')
+            const p50 = 1_800 + ((n * 170) % 900)
+            const value = p95 ? (n === 13 ? p50 - 300 : p50 * 3 + ((n * 410) % 2_500)) : p50
+            return { x, y: value, n: 180 + ((n * 13) % 40), measured: true, reason: null }
+          }),
+        },
+      ],
+    },
+  }
+}
+
+/**
+ * `chart-data?metric=pass_rate&group_by=day&group_by=release&release_id=...`:
+ * one series per requested release that exists, over the window, each
+ * measured for `length` days from its start. The lengths differ, so aligned
+ * on their starts some lines run past others.
+ */
+function releaseSeries(days: number, releaseIds: string[], rate?: number) {
+  const picked = releaseIds
+    .map((id) => RELEASE_SPECS.find((r) => r.id === id))
+    .filter((r): r is ReleaseSpec => r !== undefined)
+  return {
+    meta: chartMeta(days, {
+      definitions: { grain: 'run_aggregate' },
+      comparability: { comparable: true, reason: null, reason_code: null },
+    }),
+    series: {
+      kind: 'series',
+      dimensions: ['day', 'release'],
+      x_type: 'time',
+      series: picked.map((release) => {
+        const start = release.released ?? release.planned ?? 0
+        return {
+          key: release.id,
+          label: release.name,
+          points: Array.from({ length: days }, (_, i) => {
+            const n = days - 1 - i
+            const since = start - n
+            if (since < 0 || since >= release.length) return gapPoint(daysAgo(n))
+            const y = rate ?? release.rate(since)
+            return { x: daysAgo(n), y, n: 40 + ((since * 7) % 30), measured: true, reason: null }
+          }),
+        }
+      }),
+    },
+  }
+}
+
+/** Every `chart-data` request the catalogue makes, answered by its parameters. */
+function chartData(request: ApiRequest, releaseRate?: number) {
+  const q = request.url.searchParams
+  const days = intParam(request, 'days', 30)
+  const metric = q.get('metric')
+  const groupBy = q.getAll('group_by').join(',')
+  if (metric === 'pass_rate' && groupBy === 'day,suite') return suiteSeries(days)
+  if ((metric === 'duration_p50' || metric === 'duration_p95') && groupBy === 'day') return durationSeries(days, metric)
+  if (metric === 'pass_rate' && groupBy === 'day,release') return releaseSeries(days, q.getAll('release_id'), releaseRate)
+  // An unexpected chart request is a fixture gap: answer it loudly.
+  return respond(400, { detail: `no chart-data fixture for metric=${metric} group_by=${groupBy}` })
+}
+
+export const CHART_DATA_PATH = '/api/v1/analytics/chart-data'
+const CHART_DATA: ApiHandlers = [[CHART_DATA_PATH, (request) => chartData(request)]]
+
+/**
+ * `GET /analytics/top-failing`: twelve tests, most failures first, a tie at
+ * the 10th / 11th place (3 and 3), a hostile name, one name in two suites.
+ */
+const TOP_FAILING_12: [string, string, number][] = [
+  ['card declined shows reason', 'Payments', 14],
+  ['login times out', 'Auth', 11],
+  ['login times out', 'Checkout', 9],
+  [HOSTILE_NAME, 'Search', 8],
+  ['refund webhook retried', 'Payments', 7],
+  ['checkout total includes tax', 'Checkout', 6],
+  ['search paginates', 'Search', 5],
+  ['token refresh', 'Auth', 4],
+  ['apply coupon', 'Checkout', 4],
+  ['address autocomplete', 'Checkout', 3],
+  ['email receipt sent', 'Notifications', 3],
+  ['legacy csv import keeps encoding', 'Legacy import', 1],
+]
+
+export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => ({
+  test_name: test,
+  fail_count: count,
+  test_fingerprint: `fp-top12-${i}`,
+  suite_name: suite,
+  class_name: 'SuiteSpec',
+  failure_category: i % 3 === 0 ? 'TIMEOUT' : 'ASSERTION',
+  failure_kind: i % 3 === 0 ? 'infrastructure' : 'product',
+  last_failed: isoAgo(i % 4, 2),
+  failure_step: null,
+}))
+
+export const TOP_FAILING_PATH = '/api/v1/analytics/top-failing'
+const TOP_FAILING_HANDLER: ApiHandlers = [[TOP_FAILING_PATH, () => ({ items: TOP_FAILING_ROWS })]]
+
+/** Flags the flag-on specs turn on (`MockOptions.flags`). */
+export const CATALOGUE_ON = { viz_chart_data_api: true } as const
+export const HEATMAP_ON = { viz_chart_data_api: true, viz_advanced_charts: true } as const
+
+/** /overview with the catalogue: + top failing (Failure categories draws the page's own read). */
+export const OVERVIEW_ON: ApiHandlers = [...RELEASES_LIST, ...TOP_FAILING_HANDLER, ...OVERVIEW]
+
+/** /trends with the catalogue: + chart-data (suites, p50, p95); the probe is a `/runs` read. */
+export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...TRENDS]
+
+/** /reports/summary with the catalogue: + the trend (`/metrics/trends`). */
+export const SUMMARY_REPORT_ON: ApiHandlers = [...RELEASES_LIST, ...SUMMARY_REPORT, ['/api/v1/metrics/trends', trends]]
+
+/** /coverage/suite with the catalogue: no new request (the overlays read the page's points). */
+export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...SUITE_DETAIL]
+
+/** Seven clusters: past the donut's five, so the share is a ranked bar. */
+const GATE_CLUSTER_SPECS_7: { label: string; size: number }[] = [
+  { label: 'Payment gateway timeout', size: 9 },
+  { label: 'Tax rounding mismatch', size: 6 },
+  { label: HOSTILE_NAME, size: 5 },
+  { label: 'Session cookie not cleared', size: 4 },
+  { label: 'Search index stale', size: 3 },
+  { label: 'Coupon expiry off by one', size: 2 },
+  { label: 'Webhook signature mismatch', size: 1 },
+]
+
+export const GATE_CLUSTERS_7 = GATE_CLUSTER_SPECS_7.map((c, i) => ({
+  id: `gate7-cluster-row-${i + 1}`,
+  cluster_id: `gate7-cluster-${i + 1}`,
+  label: c.label,
+  size: c.size,
+  representative_error: `${c.label}: expected success, got error`,
+  member_test_ids: Array.from({ length: c.size }, (_, j) => `tc-gate7-${i}-${j}`),
+  cohesion_score: 0.9 - i * 0.1,
+  criticality_level: i < 2 ? 'CRITICAL' : 'HIGH',
+  dimension_scores: [],
+}))
+
+/** A GO (the other half of verdict integrity: a GO beside a 0% release). */
+const GO_DECISION = {
+  ...FLOORED_DECISION,
+  recommendation: 'GO',
+  risk_score: 12,
+  composite_risk: 12,
+  input_snapshot: {},
+  reasoning: 'All dimensions under the GO threshold',
+  pass_rate: 97.5,
+}
+
+export interface GateOnOptions {
+  /** The decision's clusters (default none, as in `FLOORED_DECISION`). */
+  clusters?: readonly unknown[]
+  /** The run's release (default 2026.09); `null`: the run has no release. */
+  releaseId?: string | null
+  /** The release list (default `RELEASES`). */
+  releases?: readonly unknown[]
+  /** The GO decision instead of the floored NO_GO. */
+  go?: boolean
+  /** Every measured release day at this rate (100 or 0 for the integrity cases). */
+  releaseRate?: number
+}
+
+/**
+ * /release-gate/<run> with the catalogue: + `GET /runs/{id}` (the run's
+ * release) and one `chart-data` by release. The decision is the committed
+ * `FLOORED_DECISION` (NO_GO) unless `go`.
+ */
+export function releaseGateOn(options: GateOnOptions = {}): ApiHandlers {
+  const decision = { ...(options.go ? GO_DECISION : FLOORED_DECISION), cluster_insights: options.clusters ?? [] }
+  const releaseId = options.releaseId === undefined ? RELEASE_ID.current : options.releaseId
+  const releaseList = options.releases ?? RELEASES
+  const release = RELEASES.find((r) => r.id === releaseId)
+  return [
+    ['/api/v1/releases', () => page([...releaseList])],
+    [CHART_DATA_PATH, (request) => chartData(request, options.releaseRate)],
+    [
+      /^\/api\/v1\/runs\/[0-9a-f-]{36}$/,
+      ({ path }) => {
+        const run = runs().find((r) => r.id === path.split('/')[4])
+        if (!run) return respond(404, { detail: 'Run not found' })
+        return { ...run, release_id: releaseId, release_name: release?.name ?? null }
+      },
+    ],
+    [/^\/api\/v1\/release-readiness\/[^/]+$/, () => decision],
+    ...RELEASE_GATE,
+  ]
+}

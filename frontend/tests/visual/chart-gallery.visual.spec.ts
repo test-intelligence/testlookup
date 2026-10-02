@@ -113,6 +113,13 @@ const WAVE_2_ITEM_IDS = [
   'day-strip-builds',
   'day-strip-dense',
   'day-strip-hostile-label',
+  // Wave 2.6 (VIZ-408) — the heatmap frame the Trends catalogue draws (the
+  // 14-day default, the 90-day maximum, a hostile suite name), and ranked bars
+  // whose names are Object members (`constructor`, `__proto__`...).
+  'heatmap-frame',
+  'heatmap-frame-90d',
+  'heatmap-frame-hostile',
+  'bar-ranked-prototype-names',
 ] as const
 
 test('every Wave-2 edge case still has a gallery item, and so a baseline', () => {

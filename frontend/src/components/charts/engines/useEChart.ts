@@ -1,7 +1,8 @@
 /**
  * Mounts one ECharts instance for a chart type: loads the engine chunk lazily,
  * `init`s on the container, applies the option, resizes with a ResizeObserver
- * and DISPOSES on unmount (a leaked instance keeps its canvas, listeners and
+ * (once per animation frame, however many callbacks arrive) and DISPOSES on
+ * unmount (a leaked instance keeps its canvas, listeners and
  * animation frame alive).
  *
  * Every failure lands in `status` — a failed load, and an `init` / `setOption`
@@ -36,6 +37,13 @@ export function useEChart(type: ChartEngineType, option: object) {
   useEffect(() => {
     let cancelled = false
     let observer: ResizeObserver | null = null
+    // VIZ-106: at most ONE resize per animation frame. A drag of the window,
+    // a rotation or the drawer sliding in delivers a burst of observer
+    // callbacks, and each `resize()` re-lays out and repaints the whole
+    // canvas; batching them into the next frame paints once, at the final
+    // size, with no visible lag (a timed debounce would make a rotation feel
+    // late).
+    let frame = 0
     const fail = (error: unknown) => {
       if (!cancelled) setStatus(isStaleBuildError(error) ? 'stale-build' : 'error')
     }
@@ -48,7 +56,14 @@ export function useEChart(type: ChartEngineType, option: object) {
           const instance = engine.init(el, null, { renderer: 'canvas' })
           instanceRef.current = instance
           instance.setOption(optionRef.current, { notMerge: true })
-          observer = new ResizeObserver(() => instance.resize())
+          observer = new ResizeObserver(() => {
+            if (frame) return
+            frame = requestAnimationFrame(() => {
+              frame = 0
+              // Not a disposed instance (a later option failed, or a retry replaced it).
+              if (instanceRef.current === instance) instance.resize()
+            })
+          })
           observer.observe(el)
           setStatus('ready')
         } catch (error) {
@@ -61,6 +76,7 @@ export function useEChart(type: ChartEngineType, option: object) {
     return () => {
       cancelled = true
       observer?.disconnect()
+      if (frame) cancelAnimationFrame(frame)
       instanceRef.current?.dispose()
       instanceRef.current = null
     }

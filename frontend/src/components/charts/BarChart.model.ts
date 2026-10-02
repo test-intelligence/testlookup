@@ -13,7 +13,7 @@
  *               a symmetric axis so "down 8" and "up 8" are the same length.
  *   stacked     segments in the FIXED status order, with a toggle between
  *               absolute counts and 100%; the 100% segments sum to exactly
- *               100.0 (largest remainder, `chartCatalog`).
+ *               100.0 (largest remainder, `percents`).
  *   grouped     the same segments side by side, so the axis is sized by the
  *               largest SEGMENT rather than the largest total.
  *   labels      a long test name is middle-truncated — two tests in one class
@@ -25,18 +25,20 @@
 import { VIZ_STATUSES, type ChartSeries, type EnvelopeMeta, type SeriesChart, type VizStatus } from '@/lib/viz/contracts'
 import { formatNumber } from '@/utils/formatters'
 import type { ChartResponse } from './chartState'
-import { largestRemainderPercents } from './chartCatalog'
+import { middleTruncate } from './labelTruncate'
+import { largestRemainderPercents } from './percents'
+import { ownLabel } from './chartText'
 import { STATUS_ENCODING } from './tokens'
 import { symmetricScale, zeroBasedScale } from './niceScale'
+
+// The label cut lives in a leaf so the stacked column chart can share it
+// without this model (see labelTruncate.ts); re-exported for callers.
+export { ELLIPSIS, MAX_BAR_LABEL, MIN_FITTED_LABEL, fitCategoryLabel, middleTruncate } from './labelTruncate'
 
 /** At most this many bars are drawn at once; past it the chart paginates. */
 export const MAX_BARS_PER_PAGE = 50
 /** Ties at the top-N boundary are included up to N + this many bars. */
 export const TIE_CAP_EXTRA = 5
-/** Longest drawn bar label, before middle truncation. */
-export const MAX_BAR_LABEL = 34
-/** The one character that marks a middle truncation. */
-export const ELLIPSIS = '…'
 
 /**
  * The fewest CSS px a ranked or stacked bar's ROW may have.
@@ -128,23 +130,6 @@ export interface RankedOptions {
   topN?: number
   /** 0-based; clamped into range. */
   page?: number
-}
-
-/**
- * `text` shortened to `max` characters by cutting the MIDDLE out:
- * `tests.integration…retries_once`. Two tests in one class share a long
- * prefix and differ at the end, so an end-truncated label renames them both to
- * the same thing.
- */
-export function middleTruncate(text: string, max = MAX_BAR_LABEL): string {
-  // CODE POINTS, not UTF-16 units: `slice` on a surrogate pair leaves a lone
-  // surrogate behind, which is not a character at all — the axis draws a
-  // replacement glyph and the label is no longer the test's name.
-  const points = [...text]
-  if (points.length <= max) return text
-  const head = Math.ceil((max - 1) / 2)
-  const tail = max - 1 - head
-  return `${points.slice(0, head).join('')}${ELLIPSIS}${tail > 0 ? points.slice(points.length - tail).join('') : ''}`
 }
 
 const byValueThenLabel = (a: BarInput, b: BarInput) =>
@@ -444,24 +429,22 @@ export function barsFromSeries(series: ChartSeries): BarInput[] {
       totals.set(point.x, (current ?? 0) + point.y)
     }
   }
-  const labels = series.x_labels ?? {}
   return [...totals]
     .filter(([, value]) => value !== null)
-    .map(([key, value]) => ({ key, label: labels[key] ?? key, value: value as number }))
+    .map(([key, value]) => ({ key, label: ownLabel(series.x_labels, key), value: value as number }))
 }
 
 /** A chart-data series whose SERIES are statuses, as grouped/stacked rows. */
 export function statusRowsFromSeries(series: ChartSeries): StatusBarInput[] {
   if (series.kind !== 'series') return []
   const statuses = new Set<string>(VIZ_STATUSES)
-  const labels = series.x_labels ?? {}
   const rows = new Map<string, StatusBarInput>()
   for (const entry of series.series) {
     if (!statuses.has(entry.key)) continue
     const status = entry.key as VizStatus
     for (const point of entry.points) {
       if (point.y === null) continue
-      const row = rows.get(point.x) ?? { key: point.x, label: labels[point.x] ?? point.x, counts: {} }
+      const row = rows.get(point.x) ?? { key: point.x, label: ownLabel(series.x_labels, point.x), counts: {} }
       row.counts = { ...row.counts, [status]: ((row.counts[status] ?? 0) as number) + point.y }
       rows.set(point.x, row)
     }

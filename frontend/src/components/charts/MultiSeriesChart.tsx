@@ -68,6 +68,7 @@ import { COLUMN_SIDES, TIP_GAP, bandGap, columnMark } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { formatChange, formatRatePoints, tipContent, type TooltipContent } from './tooltip'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { useTextMeasure } from './textMeasure'
 import {
@@ -285,15 +286,19 @@ export function MultiSeriesTip({ active, label, coordinate, model, hidden, forma
 
 function DirectLabels({
   lines,
+  xs,
   onFit,
   gutterOn,
 }: {
   lines: readonly MultiSeriesLine[]
+  /** The model's days, for where each line's last point is. */
+  xs: readonly string[]
   onFit: (fits: boolean) => void
   /** Whether the plot is currently drawn WITH the labels' gutter. */
   gutterOn: boolean
 }) {
   const plot = usePlotArea()
+  const xScale = useXAxisScale()
   const yScale = useYAxisScale()
   // The plot's numbers, not the object: `usePlotArea` hands back a fresh one each render.
   const top = plot?.y
@@ -324,10 +329,15 @@ function DirectLabels({
       {placement.labels.map((placed) => {
         const line = byKey.get(placed.key)
         if (!line) return null
-        // Flat from the height the line ends at, then one angled step to the
-        // label's row: only in the gutter, and clear of the line's end.
+        // From the line's OWN last point — a line that ends before the axis
+        // does (a release with fewer days, a suite that stopped reporting)
+        // is named from where it ends, not from the plot's edge 130-200 px
+        // away (Wave 2.6 R2-5) — flat at that height to the gutter, then one
+        // angled step to the label's row; always clear of the line's end.
+        const endX = line.last ? xScale?.(xs[line.last.index]) : undefined
+        const startX = endX !== undefined && Number.isFinite(endX) && endX < edge ? endX : edge
         const leader = [
-          [edge + LABEL_ROW.leaderStart, placed.target],
+          [startX + LABEL_ROW.leaderStart, placed.target],
           [edge + LABEL_ROW.leaderTurn, placed.target],
           [edge + LABEL_ROW.leaderEnd, placed.y],
         ]
@@ -500,6 +510,12 @@ export default function MultiSeriesChart({
   const bannerId = useId()
   const shown = useMemo(() => model.lines.filter((line) => !hidden.has(line.key)), [model, hidden])
   const dots = useMemo(() => new Map(model.lines.map((line) => [line.key, dotFor(line)])), [model])
+  // Only the ticks on the days drawn: a zoomed slice keeps its model's ticks.
+  const xTicks = useMemo(() => {
+    if (!model.xTicks) return null
+    const drawn = new Set(model.xs)
+    return model.xTicks.filter((tick) => drawn.has(tick))
+  }, [model])
 
   const rows = useMemo(
     () =>
@@ -562,6 +578,14 @@ export default function MultiSeriesChart({
               axisLine={false}
               tickLine={false}
               tick={RECHARTS_AXIS_TICK}
+              // Aligned: day 0 and every multiple of one step, thinned evenly
+              // FROM day 0 on a narrow plot (Wave 2.6 R2-5). Calendar: the
+              // kit's one short day label ("Sep 6"), as the brush under the
+              // plot and every other frame print it (R2-16); the tooltip and
+              // the table keep the full UTC day.
+              ticks={xTicks ?? undefined}
+              interval={xTicks ? 'equidistantPreserveStart' : undefined}
+              tickFormatter={xTicks ? undefined : utcDayLabel}
               height={44}
               label={{ value: model.xTitle, position: 'insideBottom', fill: CHART_VARS.axis, fontSize: 11 }}
             />
@@ -606,7 +630,7 @@ export default function MultiSeriesChart({
                 />
               ),
             )}
-            {shown.length > 0 && <DirectLabels lines={shown} onFit={onLabelsFit} gutterOn={labelsFit} />}
+            {shown.length > 0 && <DirectLabels lines={shown} xs={model.xs} onFit={onLabelsFit} gutterOn={labelsFit} />}
           </LineChart>
         </ChartResponsive>
         {/*
@@ -642,6 +666,12 @@ export default function MultiSeriesChart({
       {model.rangeNote && (
         <p data-chart-range-note="" className={NOTE}>
           {model.rangeNote}
+        </p>
+      )}
+      {/* The trailing days no release measured, left off the aligned axis: said, not silently dropped. */}
+      {model.trimNote && (
+        <p data-chart-trim-note="" className={NOTE}>
+          {model.trimNote}
         </p>
       )}
       {!labelsFit && shown.length > 0 && (

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { Suspense, useCallback, useMemo, useState } from 'react'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
@@ -7,7 +8,7 @@ import {
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import Sparkline from '@/components/charts/Sparkline'
 import GaugeBar, { type GaugeTone } from '@/components/charts/GaugeBar'
-import { readyState } from '@/components/charts/chartState'
+import { readyState } from '@/components/charts/chartStateCore'
 import { dayWindow } from '@/components/charts/dayStrip.model'
 import {
   buildStackedColumnModel,
@@ -19,6 +20,7 @@ import ScopedLink from '@/components/ui/ScopedLink'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
+import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
@@ -42,6 +44,11 @@ import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
 import type { TestRun } from '@/types/runs'
+
+// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk. Mounted only
+// when `useCatalogueRolloutStatus` reads on, so a flag-off session never runs
+// or downloads them, and the flag-off page is the Wave 2.5 page.
+const OverviewCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/OverviewCatalogue'))
 
 // `1` = last 24 hours. Label is rendered as "24h" (the only sub-day option);
 // all other values render as `${d}d`.
@@ -205,6 +212,14 @@ interface KpiProps {
   badge?: ReactNode
 }
 
+/**
+ * `white-space: nowrap` only while presentation mode is on (`data-presentation`
+ * on <html>): the room's sizes broke values like "8m 32s" across two lines
+ * (R2-13). Scoped to the mode so no desk layout, and no committed baseline,
+ * can change.
+ */
+const PRESENTING_NOWRAP = '[[data-presentation=on]_&]:whitespace-nowrap'
+
 function KpiCard({ label, value, unit, delta, tone, series, sparkDomain, sparkFormat, days, emptyMsg, linkTo, linkLabel, badge }: KpiProps) {
   const isBad = tone === 'bad'
   const dotColor = SPARK_COLOR[tone]
@@ -223,15 +238,26 @@ function KpiCard({ label, value, unit, delta, tone, series, sparkDomain, sparkFo
         <span>{label}</span>
         {badge}
       </div>
-      <div className="flex items-baseline justify-between gap-1.5">
+      {/* Presentation mode (R2-13): at room size "8m 32s" broke at its space
+          and "+4.2%" broke under its triangle. There the value and the change
+          each stay whole, and the change wraps under the value as one piece
+          when the card is too narrow for both. Desk mode: no rule applies. */}
+      <div className="flex items-baseline justify-between gap-1.5 [[data-presentation=on]_&]:flex-wrap">
+        {/* Sizes are the type tokens of the SAME value (26 px = display-sm,
+            22 px = stat-md), so nothing moves here, and presentation mode
+            (VIZ-106) raises them by swapping the tokens. */}
         <span
           className={clsx(
             'tabular-nums leading-none',
+            PRESENTING_NOWRAP,
             valueIsDash
-              ? 'text-[22px] font-medium text-[var(--color-text-muted)]'
-              : 'text-[26px] font-bold text-[var(--color-text)]',
+              ? 'font-medium text-[var(--color-text-muted)]'
+              : 'font-bold text-[var(--color-text)]',
           )}
-          style={{ letterSpacing: '-0.02em' }}
+          style={{
+            letterSpacing: '-0.02em',
+            fontSize: valueIsDash ? 'var(--text-stat-md)' : 'var(--text-display-sm)',
+          }}
         >
           {value}
           {unit && !valueIsDash && (
@@ -240,7 +266,7 @@ function KpiCard({ label, value, unit, delta, tone, series, sparkDomain, sparkFo
         </span>
         {delta && (
           <span
-            className="text-[11px] font-semibold tabular-nums"
+            className={`text-[11px] font-semibold tabular-nums ${PRESENTING_NOWRAP}`}
             title="Relative change vs the previous period of the same length"
             style={{
               color: delta.tone === 'good' ? 'var(--status-passed)'
@@ -399,8 +425,9 @@ function VerdictCard({
 
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div
-            className="text-[26px] font-bold tabular-nums leading-none"
-            style={{ color: t.meterValue, letterSpacing: '-0.02em' }}
+            className="font-bold tabular-nums leading-none"
+            // `--text-display-sm` is 26 px: the same size, on the token presentation mode raises.
+            style={{ color: t.meterValue, letterSpacing: '-0.02em', fontSize: 'var(--text-display-sm)' }}
           >
             {verdict === 'PENDING' ? '—' : `${passRatePct}%`}
           </div>
@@ -759,6 +786,34 @@ function ExecutionTrendCard({
   )
 }
 
+/**
+ * The trend slot while the catalogue flag has not answered: the loading
+ * card's own box (padding, the title and subtitle lines, the 240 px body),
+ * with no title, because it may yet become either chart.
+ */
+function TrendSlotPending() {
+  return (
+    <div className="card" style={{ padding: '14px 18px 18px' }} aria-busy="true" data-overview-trend-pending="">
+      <div className="flex items-center justify-center" style={{ height: 240 + 44 }}>
+        <LoadingSpinner />
+      </div>
+    </div>
+  )
+}
+
+/** The catalogue row while its chunk loads: the headline row's two cards, holding their height. */
+function CataloguePending() {
+  return (
+    <div className="grid grid-cols-1 xl:[grid-template-columns:minmax(0,1.6fr)_minmax(0,1fr)] gap-4" aria-busy="true">
+      {[0, 1].map((slot) => (
+        <div key={slot} className="card flex items-center justify-center" style={{ minHeight: TREND_HEIGHT + 110 }}>
+          <LoadingSpinner />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: string; smallTone: 'muted' | 'bad' | 'good' }) {
   const smallColor = smallTone === 'bad' ? 'var(--status-failed)'
     : smallTone === 'good' ? 'var(--status-passed)'
@@ -907,7 +962,11 @@ function MicroStrip({ summary, days }: { summary: DashboardSummary | undefined; 
             {c.k}
           </div>
           <div className="text-[18px] font-semibold tabular-nums text-[var(--color-text)]">
-            {c.v}{' '}
+            {/* The value on `--text-stat-sm` (18 px, the size it always had),
+                which presentation mode raises: the same numbers the KPI cards
+                above show at room size were left at desk size here (R2-13).
+                Kept whole there ("8m 32s" must not break at the space). */}
+            <span className={PRESENTING_NOWRAP} style={{ fontSize: 'var(--text-stat-sm)' }}>{c.v}</span>{' '}
             <small className="text-[11px] font-medium text-[var(--color-text-muted)]">{c.small}</small>
           </div>
         </div>
@@ -1004,6 +1063,9 @@ export default function OverviewPage() {
   const [, bumpGuideDismissed] = useState(0)
   const guideDismissed = isFirstRunGuideDismissed(activeProjectId)
   const analyticsView = useAnalyticsView('dashboard')
+  // VIZ-408: the one seam. `undefined` until the flag answers (the trend slot
+  // waits for it, below), then on / off; off on failure.
+  const catalogue = useCatalogueRolloutStatus()
 
   // `error` is read, not just `data`/`isLoading`: without it a failed fetch is
   // indistinguishable from an empty window, and the page below asserts the
@@ -1013,8 +1075,17 @@ export default function OverviewPage() {
   const { data: trends,  isLoading: trendsLoading  } = useTrendData(days, suiteFilter)
   // Failure-kind triad (US-9.2): the by-kind aggregation ships on the same
   // failure-categories payload /failures uses, so this KPI is one SWR-cached
-  // fetch — no bespoke endpoint.
-  const { data: failureCategories } = useFailureCategories(days, suiteFilter)
+  // fetch — no bespoke endpoint. With the catalogue on, the Failure categories
+  // chart draws this same read (one request, one SWR entry). Only `data` is
+  // read here: SWR re-renders for the fields a component reads, so the
+  // flag-off page keeps exactly its Wave 2.5 renders; the chart's
+  // `error`/`isValidating` are read in the catalogue branch below.
+  const categoriesRead = useFailureCategories(days, suiteFilter)
+  const failureCategories = categoriesRead.data
+  const mutateCategories = categoriesRead.mutate
+  const retryCategories = useCallback(() => {
+    void mutateCategories()
+  }, [mutateCategories])
   // Eng-hours saved (US-12.2): rendered ONLY when the hours-saved model has
   // enough data (`available`). When it doesn't, the card is omitted entirely —
   // no dash-card, no week-one "0 hours" embarrassment.
@@ -1406,7 +1477,9 @@ export default function OverviewPage() {
 
       {/* KPI strip */}
       {(kpiVisible.length > 0 || hoursSaved30d != null) && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+        // Presentation mode: four cards a row at xl, not six. A 40 px "8m 32s"
+        // and its change do not fit a sixth of the row at 1280 (R2-13).
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 [[data-presentation=on]_&]:xl:grid-cols-4 gap-2.5">
             {activeWidgets.has('total_executions_kpi') && (
               <KpiCard
                 label="Total executions"
@@ -1518,16 +1591,52 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* Bottom row — Trend chart + Blockers */}
-      <div className="grid grid-cols-1 xl:[grid-template-columns:1.6fr_1fr] gap-4">
-        <SectionErrorBoundary message="Failed to load execution trend">
-          <ExecutionTrendCard window={trendDays} days={days} loading={trendsLoading} filtersApplied={trendFiltered} />
-        </SectionErrorBoundary>
+      {catalogue === true ? (
+        <>
+          {/* VIZ-408, flag on: the pass-rate trend REPLACES the Execution
+              trend card (OD-4), beside the status donut; Top failing and
+              Failure categories sit below them; Blockers moves down a row. */}
+          <SectionErrorBoundary message="Failed to load charts">
+            <Suspense fallback={<CataloguePending />}>
+              <OverviewCatalogue
+                days={days}
+                window={trendDays}
+                trendsLoading={trendsLoading}
+                categories={{
+                  data: failureCategories,
+                  error: categoriesRead.error,
+                  isValidating: categoriesRead.isValidating,
+                  retry: retryCategories,
+                }}
+                suiteFilter={suiteFilter}
+                filtersApplied={trendFiltered}
+                everHadRun={newestRunLoaded ? everHadRun : null}
+              />
+            </Suspense>
+          </SectionErrorBoundary>
+          <SectionErrorBoundary message="Failed to load blockers">
+            <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
+          </SectionErrorBoundary>
+        </>
+      ) : (
+        /* Bottom row — Trend chart + Blockers */
+        <div className="grid grid-cols-1 xl:[grid-template-columns:1.6fr_1fr] gap-4">
+          <SectionErrorBoundary message="Failed to load execution trend">
+            {/* Until the flag answers, the slot holds its place: drawing the
+                old card and swapping it a moment later would be a layout
+                shift for every reader the flag turns on (plan 8.5). */}
+            {catalogue === undefined ? (
+              <TrendSlotPending />
+            ) : (
+              <ExecutionTrendCard window={trendDays} days={days} loading={trendsLoading} filtersApplied={trendFiltered} />
+            )}
+          </SectionErrorBoundary>
 
-        <SectionErrorBoundary message="Failed to load blockers">
-          <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
-        </SectionErrorBoundary>
-      </div>
+          <SectionErrorBoundary message="Failed to load blockers">
+            <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
+          </SectionErrorBoundary>
+        </div>
+      )}
 
       {/* Coverage micro-strip */}
       <SectionErrorBoundary message="Failed to load coverage strip">

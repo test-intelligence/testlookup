@@ -40,12 +40,17 @@
    --chart-series-1..8  categorical, Okabe-Ito adjusted; every mark >= 3:1 on
                         the theme's card (asserted per theme by
                         src/test/chartTokens.test.ts). 8 = "Other" grey.
-   --chart-seq-1..7     viridis, trimmed so EVERY step (1 included) is >= 3:1
-                        on the theme's card — the no-data cell (card + hatch)
-                        can never be mistaken for the lowest step; 7 is always
-                        the SALIENT end: bright on dark cards, dark on the light
-                        card. A heatmap reverses the ramp when its low end is
-                        the concern (`salient: 'low'`, e.g. pass rate).
+   --chart-seq-1..7     EVERY step (1 included) is >= 3:1 on the theme's card
+                        — the no-data cell (card + hatch) can never be mistaken
+                        for the lowest step; 7 is always the SALIENT end: bright
+                        on dark cards, dark on the light card. A heatmap reverses
+                        the ramp when its low end is the concern (`salient:
+                        'low'`, e.g. pass rate). Lab: viridis, teal -> purple.
+                        Dark: teal -> blue -> ice, in OKLCH (L 0.56 -> 0.94, hue
+                        195 -> 265), so the order reads by lightness alone and
+                        the salient half is never a status hue — the old dark
+                        viridis ran through green, and painted the WORST suite
+                        of a pass-rate heatmap pass-green (R2-3).
    --chart-div-1..7     purple-orange (red keeps meaning "failed"); 4 is the
                         theme's neutral midpoint.
    --chart-grid / --chart-axis, and --status-unknown (the fifth status; flaky
@@ -177,7 +182,7 @@
   [data-theme="signal"], [data-theme="console"], [data-theme="slate"],
   [data-theme="ember"], [data-theme="midnight"] {
     --chart-series-1:#e69f00; --chart-series-2:#56b4e9; --chart-series-3:#009e73; --chart-series-4:#f0e442; --chart-series-5:#0a78b5; --chart-series-6:#d55e00; --chart-series-7:#cc79a7; --chart-series-8:#b8bec8;
-    --chart-seq-1:#2a788e; --chart-seq-2:#21918c; --chart-seq-3:#22a884; --chart-seq-4:#44bf70; --chart-seq-5:#7ad151; --chart-seq-6:#bddf26; --chart-seq-7:#fde725;
+    --chart-seq-1:#098585; --chart-seq-2:#3297a3; --chart-seq-3:#59a7bd; --chart-seq-4:#7bb7d5; --chart-seq-5:#9cc8ea; --chart-seq-6:#bcd9fd; --chart-seq-7:#e2ebff;
     --chart-div-1:#fdb863; --chart-div-2:#e08214; --chart-div-3:#9c5a1c; --chart-div-5:#6f64a0; --chart-div-6:#9e94cc; --chart-div-7:#cfc8ec;
     --chart-axis:#8b94a3;
   }
@@ -279,12 +284,21 @@
     --brand-900: color-mix(in srgb, var(--color-accent) 28%, black);
   }
 
-  /* Display-size + KPI tokens (verdict headlines / hero numbers). */
+  /* Display-size + KPI tokens (verdict headlines / hero numbers).
+     --text-stat-md is the medium metric value (the Summary report's KPI tiles,
+     22px literals before VIZ-106): the same size as the literal it replaces, so
+     moving a page onto it changes no pixel. --text-stat-sm is the small
+     metric value (the Summary report's status counts, 18px literals before
+     VIZ-106), for the same reason: --text-lg is also 18px, but it is a UI
+     size that presentation mode does not raise. Presentation mode (below)
+     raises all of these together. */
   :root {
     --text-display-sm: 26px;
     --text-display-md: 28px;
     --text-display-lg: 44px;
     --text-stat-lg:    24px;
+    --text-stat-md:    22px;
+    --text-stat-sm:    18px;
   }
 
   /* Typography scale — UI dense, optimised for data tables. */
@@ -493,6 +507,61 @@
   .small    { font-size: var(--text-sm); color: var(--color-text-secondary); }
   .code     { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-text-secondary); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Presentation mode (VIZ-106) — BEGIN. Owned by store/presentationStore.ts.
+
+   A per-browser preference for a wall monitor or a projector. The store puts
+   data-presentation="on" on <html> at import time, before the first paint,
+   and removes the attribute when the mode is off, so nothing here can touch
+   a page that has not opted in.
+
+   Only tokens change; no component carries a presentation rule of its own:
+   - the type scale: metric values (--text-stat-*) and headlines
+     (--text-display-*) grow to room sizes, and the small UI sizes reach 16px
+     wherever they are read through the tokens;
+   - text contrast: muted and faint text become the theme's secondary text,
+     at least 7:1 on the page, card, secondary and hover backgrounds in all
+     six themes (7.31:1 at the lowest, lab on hover;
+     store/presentationStore.tokens.test.ts recomputes it). The muted and faint
+     tokens themselves are 2.1-6.5:1 there;
+   - the chart axis colour follows the same secondary text.
+   The Recharts drawings grow by scale, not from here (usePresentationScale,
+   16/11: 11px axis text reads 16px).
+
+   Unlayered on purpose: it must beat the theme blocks, which set the same
+   properties on the same <html> element from @layer base.
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-presentation="on"] {
+  --text-display-sm: 36px;
+  --text-display-md: 40px;
+  --text-display-lg: 64px;
+  --text-stat-lg:    40px;
+  /* The story's floor for every metric value is --text-stat-lg: a medium or
+     small value meets it in the room too. */
+  --text-stat-md:    40px;
+  --text-stat-sm:    40px;
+  --text-xs:   16px;
+  --text-sm:   16px;
+  --text-base: 16px;
+
+  --color-text-muted: var(--color-text-secondary);
+  --color-text-faint: var(--color-text-secondary);
+  --chart-axis:       var(--color-text-secondary);
+}
+/* Inside a SCALED Recharts drawing (ChartResponsive's `data-chart-presentation`
+   wrapper, 16/11 in this mode) the HTML the drawing carries (its legend, its
+   pinned tooltip) is enlarged by the scale already. With the room tokens above
+   as well it was enlarged twice: a 12px legend read at 16 x 16/11 = 23px,
+   wrapped to three lines and pushed the ring out of its own svg (B0 finding
+   4). So the drawing gets the DESK sizes back (the :root values), and the
+   scale alone brings them to room size: 12 x 16/11 = 17.5px. */
+[data-presentation="on"] [data-chart-presentation] {
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+}
+/* ── Presentation mode (VIZ-106) — END ── */
 
 /* ═══════════════════════════════════════════════════════════════════════
    Full-screen chart (VIZ-608) — BEGIN. Owned by ChartFrame.tsx.

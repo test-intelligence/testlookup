@@ -4,6 +4,7 @@ import HeatmapChart from './HeatmapChart'
 import { useEChart } from './engines/useEChart'
 import type { ChartEngineType } from './engines/registry'
 import { StaleBuildError } from './engines/lazyChartEngine'
+import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import type { NumericMatrix } from './engines/echarts/heatmapOption'
 
 // jsdom has no canvas, so the engine is mocked at the registry: the test
@@ -82,7 +83,8 @@ describe('HeatmapChart', () => {
     const view = render(<HeatmapChart data={data} description="Two cells." />)
     await waitFor(() => expect(observers).toHaveLength(1))
     act(() => (observers[0] as unknown as TestResizeObserver).fire())
-    expect(engine.instance.resize).toHaveBeenCalledTimes(1)
+    // `useEChart` batches resizes into the next animation frame (VIZ-106).
+    await waitFor(() => expect(engine.instance.resize).toHaveBeenCalledTimes(1))
     view.unmount()
     expect(engine.instance.dispose).toHaveBeenCalledTimes(1)
     expect(observers[0].disconnect).toHaveBeenCalled()
@@ -129,7 +131,7 @@ describe('HeatmapChart', () => {
     expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
-  it('arrow keys highlight a cell through ECharts actions and announce the SAME tooltip content', async () => {
+  it('arrow keys highlight a cell through ECharts actions and announce the SAME tooltip content (no page announcer: a local region, so nothing goes silent)', async () => {
     engine.load.mockResolvedValue({ init: engine.init })
     engine.instance.dispatchAction.mockClear()
     const { container } = render(<HeatmapChart data={data} description="Two cells." />)
@@ -162,6 +164,47 @@ describe('HeatmapChart', () => {
     expect(engine.instance.dispatchAction).toHaveBeenLastCalledWith({ type: 'hideTip' })
     expect(announcement.textContent).toBe('')
     expect(document.activeElement).toBe(chart)
+  })
+
+  it('under the page announcer: each cell is spoken through it, and the chart has no live region of its own', async () => {
+    // RULES: one page announcer, never an aria-live region inside a chart. A
+    // region of the heatmap's own was not coordinated with the announcer and
+    // stayed outside the full-screen outlet, where the announcer holds the voice.
+    engine.load.mockResolvedValue({ init: engine.init })
+    const view = render(
+      <ChartAnnouncerProvider>
+        <HeatmapChart data={data} description="Two cells." />
+      </ChartAnnouncerProvider>,
+    )
+    const { container } = view
+    await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
+    const chart = container.querySelector('[data-chart-keyboard]') as HTMLElement
+    const announcer = container.querySelector('[data-chart-announcer="assertive"]') as HTMLElement
+    // The page's two regions (polite + assertive) and nothing else.
+    expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(2)
+    expect(chart.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(0)
+    expect(container.querySelector('[data-chart-announcement]')).toBeNull()
+
+    chart.focus()
+    fireEvent.keyDown(chart, { key: 'ArrowRight' })
+    expect(announcer.textContent).toBe('s. a: 1. Samples: 1')
+    fireEvent.keyDown(chart, { key: 'ArrowRight' })
+    expect(announcer.textContent).toBe('s. b: 2. Samples: 2')
+    // Escape is not a cell: nothing new is said.
+    fireEvent.keyDown(chart, { key: 'Escape' })
+    expect(announcer.textContent).toBe('s. b: 2. Samples: 2')
+    // A data refresh under a highlighted cell is not the reader's action: silent.
+    fireEvent.keyDown(chart, { key: 'ArrowLeft' })
+    expect(announcer.textContent).toBe('s. a: 1. Samples: 1')
+    const refreshed: NumericMatrix = { ...data, cells: [{ ...data.cells[0], value: 5, n: 5 }, data.cells[1]] }
+    view.rerender(
+      <ChartAnnouncerProvider>
+        <HeatmapChart data={refreshed} description="Two cells." />
+      </ChartAnnouncerProvider>,
+    )
+    expect(chart).toHaveAttribute('data-active-index', '0')
+    expect(announcer.textContent).toBe('s. a: 1. Samples: 1')
+    expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(2)
   })
 
   it('never animates under prefers-reduced-motion, even when asked to', async () => {

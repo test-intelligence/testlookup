@@ -17908,7 +17908,6 @@ broken: int
 skipped: int
 unknown: int
 executions: int
-runs: int
 value: Optional[float]
 sample: int
 merged: int = 1
@@ -17916,7 +17915,7 @@ merged: int = 1
 
 ## backend/app/services/chart_data_service.py — AxisCounts
 
-[backend/app/services/chart_data_service.py:533](../../backend/app/services/chart_data_service.py#L533)
+[backend/app/services/chart_data_service.py:532](../../backend/app/services/chart_data_service.py#L532)
 
 Bases: ``.
 
@@ -17933,19 +17932,19 @@ bucket: Optional[int] = None
 
 ## backend/app/services/chart_data_service.py — _Accumulator
 
-[backend/app/services/chart_data_service.py:909](../../backend/app/services/chart_data_service.py#L909)
+[backend/app/services/chart_data_service.py:916](../../backend/app/services/chart_data_service.py#L916)
 
 Bases: ``.
 
 The component counts of one ``(series, bucket)`` cell, mergeable.
 
 ```python
-__slots__ = ('passed', 'failed', 'broken', 'skipped', 'unknown', 'executions', 'runs', 'value', 'sample', 'merged')
+__slots__ = ('passed', 'failed', 'broken', 'skipped', 'unknown', 'executions', 'value', 'sample', 'merged')
 ```
 
 ## backend/app/services/chart_data_service.py — SuiteCoverage
 
-[backend/app/services/chart_data_service.py:1234](../../backend/app/services/chart_data_service.py#L1234)
+[backend/app/services/chart_data_service.py:1239](../../backend/app/services/chart_data_service.py#L1239)
 
 Bases: ``.
 

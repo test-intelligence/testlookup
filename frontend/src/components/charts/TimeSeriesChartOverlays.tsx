@@ -252,7 +252,7 @@ function LineSwatch({ overlay, on }: { overlay: TrendOverlayKey; on: boolean }) 
   const style = TREND_OVERLAY_STYLE[overlay]
   return (
     <svg data-trend-toggle-swatch="" width={20} height={10} aria-hidden="true" focusable="false">
-      <line x1={1} y1={5} x2={19} y2={5} stroke={on ? style.stroke : CHART_VARS.neutral} strokeWidth={2} strokeDasharray={style.dash} />
+      <line x1={1} y1={5} x2={19} y2={5} stroke={on ? style.stroke : CHART_VARS.neutral} strokeWidth={style.width} strokeDasharray={style.dash} />
       {!on && <line data-trend-swatch-strike="" x1={4} y1={9} x2={16} y2={1} stroke={CHART_VARS.neutral} strokeWidth={1.5} />}
     </svg>
   )
@@ -275,6 +275,20 @@ function AnomalySwatch() {
   return (
     <svg width={12} height={12} aria-hidden="true" focusable="false">
       <path data-trend-anomaly-swatch="" d={anomalyTrianglePath(6, 6, 5)} fill={ANOMALY_FILL} stroke={ANOMALY_STROKE} strokeWidth={1} />
+    </svg>
+  )
+}
+
+/**
+ * The flagged-days chip's icon when NO day in view is flagged: a check in the
+ * chip's own text colour. The red triangle is the key to the triangles on the
+ * plot; with none there it put the alarm shape and colour on the all-clear
+ * state (Wave 2.6 R2-15).
+ */
+function NoAnomalyMark() {
+  return (
+    <svg data-trend-anomaly-none="" width={12} height={12} viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+      <path d="M2.5 6.4 5 8.8 9.6 3.4" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -354,7 +368,7 @@ export function TrendStatsStrip({ analysis }: { analysis: ZoomedTrendAnalysis })
       {analysis.available && (
         <li data-trend-stat="anomalies">
           <Explained toggletip explanation={analysis.explain.anomalies}>
-            <AnomalySwatch />
+            {analysis.anomalies.length > 0 ? <AnomalySwatch /> : <NoAnomalyMark />}
             {flaggedDaysText(ANOMALY_LABEL, analysis.anomalies.length, analysis.zoomed?.anomaliesInWindow)}
           </Explained>
         </li>

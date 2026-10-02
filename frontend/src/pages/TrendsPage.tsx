@@ -30,8 +30,17 @@
  *             role has no work).
  *   Footer → Provenance line + decision-trail link.
  *
+ * Narrow viewports (VIZ-106, Wave 2.6): below 1024 px the verdict card and
+ * the body grid are one column, so the page needs no "wider screen" notice.
+ *
+ * Catalogue (VIZ-408, Wave 2.6), only with `viz_chart_data_api` on
+ * (`useCatalogueRollout`, the one seam): the pass-rate trend gains the trend
+ * overlays, the range brush and release markers, and a lazy section below the
+ * body grid adds the suite comparison, the duration band and (with
+ * `viz_advanced_charts` too) the suite x day heatmap. With the flag off the
+ * page is the Wave 2.5 page.
+ *
  * Out of scope (Phase 2 — README §"Out of Scope"):
- *   - <600 px mobile (bottom-fixed notice on narrow viewports)
  *   - Workflow stage drawer body
  *   - Decision-trail modal body
  *   - Email-report compose modal
@@ -46,7 +55,7 @@
  * suite micro-history) deterministically. Schedule-resume / email-report /
  * export-PDF emit toasts pending the new endpoints.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useNow } from '@/hooks/useNow'
 import { Link } from 'react-router-dom'
 import {
@@ -60,6 +69,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
@@ -87,7 +97,11 @@ import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame
 import { buildStackedColumnModel, STATUS_STACK_SERIES, utcDayLabel } from '@/components/charts/stackedColumnModel'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import { buildTimeSeriesModel, timeSeriesFromTrends } from '@/components/charts/timeSeriesModel'
-import { readyState, type ChartState } from '@/components/charts/chartState'
+import { readyState, type ChartState } from '@/components/charts/chartStateCore'
+import type { ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
+import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
+import { useReleases } from '@/hooks/useReleases'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -95,6 +109,15 @@ import type { TrendPoint } from '@/types/metrics'
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
 const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
+/** The window /trends opens on, whatever was last picked elsewhere (see the page). */
+const TRENDS_DEFAULT_WINDOW: Window = 14
+
+/**
+ * The catalogue sections (VIZ-408): a lazy chunk, requested only when the
+ * seam reads ON, so a flag-off visit downloads none of it. A stale chunk
+ * (a tab opened before a deploy) reloads the page once, like a route's.
+ */
+const TrendsCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/TrendsCatalogue'))
 
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'HEALTHY' | 'MIXED' | 'INSUFFICIENT' | 'DECLINING' | 'PENDING'
@@ -492,9 +515,9 @@ function VerdictCard({
     <section
       aria-label="Trend verdict"
       aria-live="polite"
-      className="relative rounded-xl border overflow-hidden grid gap-6"
+      // One column below 1024 px (VIZ-106); from lg the design's 1.45fr | 1fr.
+      className="relative rounded-xl border overflow-hidden grid gap-6 grid-cols-1 lg:grid-cols-[1.45fr_1fr]"
       style={{
-        gridTemplateColumns: '1.45fr 1fr',
         background: `${t.glow}, var(--color-bg-card)`,
         borderColor: t.border,
         padding: '18px 20px',
@@ -706,7 +729,11 @@ function TrendsRibbon({ totalEvidence, confidencePct }: { totalEvidence: number;
           Completed · {TRENDS_STAGES.length} stages · {totalEvidence} evidence items · {confidencePct}% confidence
         </div>
       </div>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+      {/* One step per row below lg (VIZ-106, R2-4): three to a 375 px row drew
+          the ordinals over the titles and cut the counts to "1 e…", and at 640
+          a third of the row still cut every count. From lg (the desktop shell)
+          up, the three columns it always was. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3">
         {TRENDS_STAGES.map((s, i) => <TrendStageCell key={s.num} stage={s} isLast={i === TRENDS_STAGES.length - 1} />)}
       </div>
     </section>
@@ -720,8 +747,12 @@ function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean
       tabIndex={0}
       aria-label={`Stage ${stage.num}: ${stage.name}, done, ${stage.evidence} evidence, ${stage.confidencePct}% confidence`}
       onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className="relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]"
-      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
+      className={clsx(
+        'relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
+        // The column divider, only where there are columns.
+        !isLast && 'lg:border-r lg:border-solid lg:border-[var(--color-border)]',
+      )}
+      style={{ padding: '8px 12px', textAlign: 'left' }}
     >
       <span
         className="inline-flex items-center justify-center rounded-full flex-none"
@@ -989,20 +1020,26 @@ const NO_EVALUATED_DAY = 'no day in this window has an evaluated execution'
  * and a delta — becomes the frame's one-line takeaway: the number was the
  * WINDOW's rate, not today's, and the pill is now the target line's legend.
  */
-function PassRateTrend({ trend, model, days }: { trend: TrendPoint[]; model: ConfidenceModel; days: number }) {
-  const { chart, state } = useMemo(() => {
+function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInput[]) {
+  const built = buildTimeSeriesModel({ points, releases })
+  const measured = built.points.some((point) => point.rate !== null)
+  const frameState: ChartState<unknown> = measured
+    ? readyState(built)
+    : { status: 'not-measured', reason: NO_EVALUATED_DAY, meta: null }
+  return { chart: built, state: frameState }
+}
+
+function PassRateTrend({
+  trend, model, days, analysis,
+}: { trend: TrendPoint[]; model: ConfidenceModel; days: number; analysis: boolean }) {
+  const points = useMemo(() => {
     const cells = model.cadenceCells
-    const points = timeSeriesFromTrends(
+    return timeSeriesFromTrends(
       trend.map((p) => ({ ...p, date: p.date.slice(0, 10) })),
       { from: cells[0]?.iso, to: cells[cells.length - 1]?.iso },
     )
-    const built = buildTimeSeriesModel({ points })
-    const measured = built.points.some((point) => point.rate !== null)
-    const frameState: ChartState<unknown> = measured
-      ? readyState(built)
-      : { status: 'not-measured', reason: NO_EVALUATED_DAY, meta: null }
-    return { chart: built, state: frameState }
   }, [trend, model.cadenceCells])
+  const { chart, state } = useMemo(() => passRateChart(points), [points])
 
   const activeDays = model.passRatePerDay.length
   let takeaway: string | undefined
@@ -1012,6 +1049,8 @@ function PassRateTrend({ trend, model, days }: { trend: TrendPoint[]; model: Con
     const sparse = activeDays < 3 ? ` · ${activeDays} day${activeDays === 1 ? '' : 's'} with data, too few for a trend` : ''
     takeaway = `${model.passRate.toFixed(1)}% over the last ${days} days, ${versus}${sparse}`
   }
+
+  if (analysis) return <PassRateTrendAnalysis points={points} takeaway={takeaway} />
 
   return (
     <TimeSeriesChartFrame
@@ -1023,6 +1062,47 @@ function PassRateTrend({ trend, model, days }: { trend: TrendPoint[]; model: Con
       state={state}
       rateTarget={PASS_RATE_TARGET}
     />
+  )
+}
+
+type ReleaseRow = { id: string; name: string; released_at: string | null; planned_date: string | null }
+
+/** A release's marker day: when it shipped, else when it is planned. */
+function releaseMarkerInputs(items: readonly ReleaseRow[]): ReleaseInput[] {
+  return items.map((r) => ({ id: r.id, name: r.name, date: r.released_at ?? r.planned_date }))
+}
+
+/**
+ * The same card with the catalogue on (VIZ-408): the VIZ-405 trend overlays,
+ * the VIZ-407 range brush and the release markers, over the SAME points — no
+ * new request (the release list is the top bar's release picker's own SWR
+ * entry). A component of its own, mounted only with the flag on, so a
+ * flag-off page never even subscribes to the release list. With fewer than 7
+ * days with runs the kit offers the overlays disabled, its reason beside them.
+ * All Projects draws no marker: a release belongs to one project.
+ */
+function PassRateTrendAnalysis({ points, takeaway }: { points: TimeSeriesPoint[]; takeaway: string | undefined }) {
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const { data: releaseList } = useReleases(undefined, { cached: true })
+  const releases = useMemo(
+    () => (activeProjectId === ALL_PROJECTS_ID ? [] : releaseMarkerInputs(releaseList?.items ?? [])),
+    [activeProjectId, releaseList],
+  )
+  const { chart, state } = useMemo(() => passRateChart(points, releases), [points, releases])
+  return (
+    <div data-catalogue-section="trends-pass-rate" className="min-w-0">
+      <TimeSeriesChartFrame
+        title="Pass rate trend"
+        takeaway={takeaway}
+        headingLevel={3}
+        height={240}
+        model={chart}
+        state={state}
+        rateTarget={PASS_RATE_TARGET}
+        trendAnalysis
+        zoom
+      />
+    </div>
   )
 }
 
@@ -1344,16 +1424,26 @@ export default function TrendsPage() {
   // In-page chips still update the shared store so the user can pick
   // 30d / 90d for a wider lens and that propagates downstream. (User
   // request 2026-05-19.)
+  //
+  // The reset is an effect, so it lands AFTER the first render, whose data
+  // hooks have already asked for the stored window: a cold load from any
+  // other window made every page read twice (30 days, then 14; pinned by
+  // Wave 2.6 C0). So until the store holds the reset, the page reads the
+  // window it is about to set, and the first request is the only one. The
+  // hand-over is adjusted during render (as RunsPage does), not in the
+  // effect: this repo forbids a synchronous setState inside useEffect.
   const storedDays = useTimeWindowStore(s => s.days)
   const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const [resetPending, setResetPending] = useState(true)
+  if (resetPending && storedDays === TRENDS_DEFAULT_WINDOW) setResetPending(false)
   useEffect(() => {
-    setStoredDays(14)
+    setStoredDays(TRENDS_DEFAULT_WINDOW)
     // Intentional one-shot on mount — the in-page chip handler still
     // updates ``setStoredDays`` reactively, so this doesn't re-fire on
     // every render and clobber the user's chip selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const days = (resetPending ? TRENDS_DEFAULT_WINDOW : snapToAllowed(storedDays, WINDOWS)) as Window
   const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
@@ -1367,6 +1457,13 @@ export default function TrendsPage() {
   const trendFiltered = scopeArg(suiteFilter) !== null || scopeArg(releaseScope) !== null
   const analyticsView = useAnalyticsView('trends')
   const { options: suiteOptions } = useSuiteOptions(days)
+  // VIZ-408: the catalogue seam. `undefined` until the flag answers, `false`
+  // on failure. The page stays in its loading state until the answer is in
+  // (below): the pass-rate card is taller with the flag on (overlay row and
+  // brush), so drawing it before the answer and swapping it after would
+  // re-mount the card and move everything under it.
+  const catalogueStatus = useCatalogueRolloutStatus()
+  const catalogueOn = catalogueStatus === true
 
   // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
   // and every band, verdict and recommendation below is computed from that
@@ -1424,6 +1521,14 @@ export default function TrendsPage() {
         testId="trends-data-unavailable"
       />
     )
+  }
+
+  // The data is in but the rollout answer is not: keep the loading state
+  // rather than draw a pass-rate card that the answer would replace. The
+  // lookup is asked in parallel with the data and cached per project for the
+  // session, so this only waits on the first visit, if at all.
+  if (catalogueStatus === undefined) {
+    return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
   }
 
   const projectLabel = project?.name ?? 'All Projects'
@@ -1688,14 +1793,15 @@ export default function TrendsPage() {
         </section>
       )}
 
-      <div className="grid gap-3.5 trends-body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+      {/* One column below 1024 px (VIZ-106); from lg the design's 1.65fr | 1fr. */}
+      <div className="grid gap-3.5 trends-body-grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-3.5 min-w-0">
           <CadenceHeatmap model={model} />
           {analyticsView.widgetIds.includes('daily_breakdown') && (
             <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
           )}
           {analyticsView.widgetIds.includes('pass_rate_trend') && (
-            <PassRateTrend trend={trend} model={model} days={days} />
+            <PassRateTrend trend={trend} model={model} days={days} analysis={catalogueOn} />
           )}
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1704,6 +1810,17 @@ export default function TrendsPage() {
           <RecommendedActions recs={recs} />
         </div>
       </div>
+
+      {/* The section's own boundary (VIZ-107): a chunk that fails to load or
+          a section that throws is one error card here, never the route's
+          "Something went wrong" over the whole page. */}
+      {catalogueOn && (
+        <SectionErrorBoundary message="Failed to load charts">
+          <Suspense fallback={null}>
+            <TrendsCatalogue days={days} suiteFilter={suiteFilter} />
+          </Suspense>
+        </SectionErrorBoundary>
+      )}
 
       <ProvenanceFooter totalEvidence={totalEvidence + (flakyCount > 0 ? 1 : 0)} refreshedAt={refreshedAt} />
 
@@ -1715,10 +1832,6 @@ export default function TrendsPage() {
           onClose={() => setShowPicker(false)}
         />
       )}
-
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
-        Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
-      </div>
     </PageShell>
   )
 }

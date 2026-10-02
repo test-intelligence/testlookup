@@ -5,10 +5,14 @@ import {
   buildHeatmapOption,
   defaultSalient,
   formatHeatmapValue,
+  HEATMAP_BORDERED_COLUMNS_MAX,
+  HEATMAP_GRID,
+  HEATMAP_NO_DATA_KEY_ROW,
   heatmapTarget,
   type NumericMatrix,
   type StatusMatrix,
 } from './heatmapOption'
+import { NO_DATA } from '../../chartText'
 
 const HOSTILE = '<img src=x onerror="window.__xss=1">'
 
@@ -257,6 +261,93 @@ describe('the heatmap tooltip (VIZ-601)', () => {
     expect(position([450, 60], {}, null, { x: 420, y: 40, width: 60, height: 40 }, size)).toEqual([308, 40])
     // Cross axis clamped inside the chart: a cell at the very bottom.
     expect(position([150, 310], {}, null, { x: 120, y: 300, width: 60, height: 20 }, size)).toEqual([192, 280])
+  })
+})
+
+/**
+ * R2-18 (Wave 2.6 fix round): the hatched no-data cell has a key, and a dense
+ * matrix is not striped by its own cell borders.
+ */
+describe('buildHeatmapOption — the "No data" key and dense columns (R2-18)', () => {
+  type Legend = { show?: boolean; data: unknown[]; selectedMode: unknown; bottom: number; textStyle: Loose }
+  const legendOf = (option: Loose) => option.legend as Legend | undefined
+  const gridOf = (option: Loose) => option.grid as { bottom: number }
+  const noDataSeries = (option: Loose) => (option.series as Loose[]).find((s) => s.id === 'no-data') as Loose
+  const measured = (option: Loose) => (option.series as Loose[]).find((s) => s.id === 'cells') as Loose
+
+  it('a hatched cell gets a "No data" key in its own row under the colour bar', () => {
+    const option = build()
+    const legend = legendOf(option)
+    // The key names the no-data series, the series that draws the hatch, so
+    // ECharts draws the swatch with that series' own fill, border and decal.
+    expect(noDataSeries(option).name).toBe(NO_DATA)
+    expect(legend).toMatchObject({ data: [NO_DATA], selectedMode: false, bottom: 0 })
+    expect(legend?.show).not.toBe(false)
+    expect(legend?.textStyle).toMatchObject({ color: 'axis' })
+    // Its own row: the colour bar moves up by it, the plot gives it up.
+    const row = HEATMAP_NO_DATA_KEY_ROW
+    expect(row).toBeGreaterThan(0)
+    expect(ramp(option).bottom).toBe(row)
+    expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom + row)
+  })
+
+  it('no hatched cell: no key, and the layout is exactly as before', () => {
+    const full: NumericMatrix = { ...matrix, cells: [{ x: 0, y: 0, value: 0.5, n: 1 }, { x: 1, y: 0, value: 0.9, n: 2 }] }
+    const option = build({ data: full })
+    expect(option).not.toHaveProperty('legend')
+    expect(ramp(option).bottom).toBe(0)
+    expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom)
+  })
+
+  it('every cell hatched (no colour bar drawn): the key takes the bar\'s place, the plot keeps its height', () => {
+    const empty: NumericMatrix = { ...matrix, cells: matrix.cells.map((cell) => ({ ...cell, value: null })) }
+    const option = build({ data: empty })
+    expect(ramp(option).show).toBe(false)
+    expect(legendOf(option)).toMatchObject({ data: [NO_DATA], bottom: 0 })
+    expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom)
+  })
+
+  it('a status matrix (no colour bar) keys its hatched cell in the bar\'s place too', () => {
+    const status: StatusMatrix = {
+      kind: 'matrix',
+      value_type: 'status',
+      x_labels: ['r1', 'r2'],
+      y_labels: ['s'],
+      cells: [
+        { x: 0, y: 0, value: 'failed', n: 1 },
+        { x: 1, y: 0, value: null, n: 0 },
+      ],
+    }
+    const option = buildHeatmapOption({ data: status, tokens, description: 'd' }) as unknown as Loose
+    expect(legendOf(option)).toMatchObject({ data: [NO_DATA], bottom: 0 })
+    expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom)
+  })
+
+  it('the key\'s text and row grow with the canvas text (full screen, presentation)', () => {
+    const option = build({ textScale: 16 / 11 })
+    expect(legendOf(option)?.textStyle.fontSize).toBe(Math.round(12 * (16 / 11)))
+    expect(ramp(option).bottom).toBe(Math.round(HEATMAP_NO_DATA_KEY_ROW * (16 / 11)))
+  })
+
+  const columns = (n: number): NumericMatrix => ({
+    kind: 'matrix',
+    value_type: 'rate',
+    x_labels: Array.from({ length: n }, (_, i) => `d${i}`),
+    y_labels: ['s'],
+    cells: Array.from({ length: n }, (_, x) => ({ x, y: 0, value: 0.9, n: 1 })),
+  })
+
+  it(`up to ${HEATMAP_BORDERED_COLUMNS_MAX} columns each cell keeps its 1 px card-colour border`, () => {
+    expect(HEATMAP_BORDERED_COLUMNS_MAX).toBe(30)
+    expect(measured(build({ data: columns(HEATMAP_BORDERED_COLUMNS_MAX) })).itemStyle).toEqual({ borderColor: 'card', borderWidth: 1 })
+    expect(measured(build({ data: columns(7) })).itemStyle).toEqual({ borderColor: 'card', borderWidth: 1 })
+  })
+
+  it('past it (a 90-day window) the borders go: at a few px per column they striped the plot in the card colour', () => {
+    expect(measured(build({ data: columns(HEATMAP_BORDERED_COLUMNS_MAX + 1) })).itemStyle).toEqual({ borderWidth: 0 })
+    expect(measured(build({ data: columns(90) })).itemStyle).toEqual({ borderWidth: 0 })
+    // The active cell's outline is not a border of the grid: it stays.
+    expect((measured(build({ data: columns(90) })).emphasis as Loose).itemStyle).toMatchObject({ borderWidth: 2 })
   })
 })
 

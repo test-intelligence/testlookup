@@ -295,7 +295,7 @@ def test_a_time_dimension_may_only_be_the_first() -> None:
 def _cell(x, series, **counts):
     base = dict(
         passed=0, failed=0, broken=0, skipped=0, unknown=0,
-        executions=0, runs=0, value=None, sample=0,
+        executions=0, value=None, sample=0,
     )
     base.update(counts)
     return svc.Cell(
@@ -557,12 +557,12 @@ def test_the_contract_fixture_is_this_service_s_own_output() -> None:
 
     spec = svc.parse_chart_spec("pass_rate", ["day", "suite"], 2, scope=_scope(days=3))
     cells = [
-        _cell("2026-09-19", "checkout", passed=90, failed=10, executions=100, runs=2, sample=100),
-        _cell("2026-09-20", "checkout", passed=80, failed=20, executions=100, runs=2, sample=100),
-        _cell("2026-09-19", "payments", passed=40, failed=10, executions=50, runs=1, sample=50),
-        _cell("2026-09-21", "payments", passed=25, failed=25, executions=50, runs=1, sample=50),
-        _cell("2026-09-19", "quarantine", skipped=5, executions=5, runs=1, sample=0),
-        _cell("2026-09-20", "quarantine", skipped=5, executions=5, runs=1, sample=0),
+        _cell("2026-09-19", "checkout", passed=90, failed=10, executions=100, sample=100),
+        _cell("2026-09-20", "checkout", passed=80, failed=20, executions=100, sample=100),
+        _cell("2026-09-19", "payments", passed=40, failed=10, executions=50, sample=50),
+        _cell("2026-09-21", "payments", passed=25, failed=25, executions=50, sample=50),
+        _cell("2026-09-19", "quarantine", skipped=5, executions=5, sample=0),
+        _cell("2026-09-20", "quarantine", skipped=5, executions=5, sample=0),
     ]
     # The label is the suite's ingested spelling, which is what the legend shows.
     cells = [cell._replace(series_label=cell.series.capitalize()) for cell in cells]
@@ -678,7 +678,7 @@ def test_an_other_bucket_sql_rolled_up_is_not_ranked_against_its_own_parts() -> 
             x="2026-09-21", x_label="2026-09-21",
             series=svc.OTHER_KEY, series_label=svc.OTHER_KEY,
             passed=0, failed=0, broken=0, skipped=0, unknown=0,
-            executions=500, runs=0, value=900.0, sample=500, merged=6,
+            executions=500, value=900.0, sample=500, merged=6,
         ),
     ]
     payload = svc.assemble(
@@ -704,7 +704,7 @@ def test_a_sql_rolled_rate_is_recomputed_from_the_merged_counts() -> None:
             x="2026-09-21", x_label="2026-09-21",
             series=svc.OTHER_KEY, series_label=svc.OTHER_KEY,
             passed=1, failed=99, broken=0, skipped=0, unknown=0,
-            executions=100, runs=0, value=None, sample=100, merged=2,
+            executions=100, value=None, sample=100, merged=2,
         ),
     ]
     payload = svc.assemble(
@@ -814,6 +814,38 @@ def test_run_count_s_sample_is_the_executions_not_the_run_count() -> None:
     assert svc.METRICS["run_count"].row_sample == svc.METRICS["executions"].row_sql
     defs = svc.definitions(_spec("run_count", ("day",)), svc.GRAIN_RUN, FROZEN)
     assert "executions in the bucket" in defs["n"]
+
+
+def test_only_run_count_pays_for_a_distinct_run_count() -> None:
+    """Wave 2.6 fix (a). Every row-grain statement used to carry
+    ``COUNT(DISTINCT tr.id) AS runs``, which nothing read. PostgreSQL 16
+    cannot hash-aggregate a DISTINCT, so that column alone forced a sort-based
+    grouping: ``pass_rate`` by suite over 365 days on the large seed took
+    ~1,300 ms in a 76 MB external sort, ~197 ms without it.
+
+    The count is gone from every other metric's statement, in the aggregate
+    CTE as well as the projection -- and ``run_count``, which IS a distinct
+    count of runs on this grain, still asks for exactly one."""
+    assert "runs" not in svc.Cell._fields
+    for metric in ("pass_rate", "failure_rate", "executions", "passed", "duration_p95"):
+        for group_by in (("suite",), ("day", "suite"), ("week", "suite")):
+            spec = _spec(metric, group_by)
+            assert svc.grain_for(spec, _scope()) == svc.GRAIN_ROW
+            sql, _ = svc.build_statement(spec, _scope())
+            assert "DISTINCT tr.id" not in sql, f"{metric} by {group_by} still counts runs"
+            assert "AS runs" not in sql
+
+    spec = _spec("run_count", ("day", "suite"))
+    assert svc.grain_for(spec, _scope()) == svc.GRAIN_ROW
+    sql, _ = svc.build_statement(spec, _scope())
+    assert sql.count("COUNT(DISTINCT tr.id)") == 1
+    assert "COUNT(DISTINCT tr.id) AS metric_value" in sql, (
+        "run_count on the row grain must count DISTINCT runs: one run holds many rows"
+    )
+    # ...and that value is what the chart draws.
+    cells = [_cell("2026-09-21", "checkout", executions=40, sample=40, value=3)]
+    payload = svc.assemble(spec, cells, buckets=["2026-09-21"], x_type="time")
+    assert payload["series"][0]["points"][0]["y"] == 3
 
 
 # ── 11. A filter that moves the grain says so ──────────────────────────────

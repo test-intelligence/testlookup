@@ -27,6 +27,7 @@
  */
 import type { SeriesChart, SeriesPoint } from '@/lib/viz/contracts'
 import { formatDuration, formatNumber } from '@/utils/formatters'
+import { tickDecimals, type NiceScale } from './niceScale'
 
 /** The mantissas of the bucket ladder: three buckets per decade. */
 export const BUCKET_STEPS = [1, 2, 5] as const
@@ -415,4 +416,22 @@ export function slowestToChartSeries(model: SlowestTestsModel): SeriesChart {
       },
     ],
   }
+}
+
+/**
+ * One duration tick, in the AXIS's unit (Wave 2.6 R2-17). `formatDuration`
+ * picks a unit per value, so the zero of a seconds axis read "0ms" among
+ * "2.5s … 10.0s", and a 0-2 s axis mixed "500ms" with "1.0s". The unit follows
+ * the axis's top: under a second, milliseconds; under a minute, seconds, to
+ * the step's own decimal places (at least one, as `formatDuration` prints
+ * them) so no label rounds to a value it is not; past a minute, the kit's
+ * "1m 40s", with the zero as "0s".
+ */
+export function durationTickLabel(value: number, axis: Pick<NiceScale, 'domain' | 'step'> | null): string {
+  const top = axis?.domain[1] ?? 0
+  if (top < 1000) return formatDuration(value)
+  if (value === 0) return '0s'
+  if (top >= 60_000) return formatDuration(value)
+  const places = Math.max(1, tickDecimals((axis?.step ?? 1000) / 1000))
+  return `${(value / 1000).toFixed(places)}s`
 }

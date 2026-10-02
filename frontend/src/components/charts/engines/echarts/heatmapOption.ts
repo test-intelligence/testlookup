@@ -24,6 +24,7 @@ import type { HeatmapSeriesOption } from 'echarts/charts'
 import type {
   AriaComponentOption,
   GridComponentOption,
+  LegendComponentOption,
   TooltipComponentOption,
   VisualMapComponentOption,
 } from 'echarts/components'
@@ -34,7 +35,12 @@ import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
 import { NO_DATA, formatPlainValue, formatRateValue } from '../../chartText'
 
 export type HeatmapOption = ComposeOption<
-  HeatmapSeriesOption | GridComponentOption | TooltipComponentOption | VisualMapComponentOption | AriaComponentOption
+  | HeatmapSeriesOption
+  | GridComponentOption
+  | TooltipComponentOption
+  | VisualMapComponentOption
+  | AriaComponentOption
+  | LegendComponentOption
 >
 
 /** A matrix whose cells are numbers (`rate` 0..1 or `count`), `null` = no data. */
@@ -65,6 +71,21 @@ export const NO_DATA_SERIES_ID = 'no-data'
 export const HEATMAP_GRID = { top: 8, right: 16, bottom: 56, left: 120 } as const
 
 /**
+ * The "No data" key's own row under the colour bar, px at text scale 1 (a
+ * 14 px swatch and its 12 px label, plus a gap). A row, not a place beside the
+ * bar: the bar sits centred, and beside it the two collide on a phone-width
+ * chart; the bar's room is the key's when no bar is drawn.
+ */
+export const HEATMAP_NO_DATA_KEY_ROW = 22
+
+/**
+ * Up to this many columns every cell keeps a 1 px border in the card colour.
+ * Past it (a 90-day window draws ~5 px columns) the borders were a fifth of
+ * the ink: the plot read as card-coloured stripes, not as cells.
+ */
+export const HEATMAP_BORDERED_COLUMNS_MAX = 30
+
+/**
  * Up to this many categories on an axis, EVERY one is labelled (`interval: 0`)
  * and a long label is cut to its own column instead. ECharts' default
  * (`'auto'`) thins labels by the WIDEST one: on a two-column heatmap one long
@@ -81,6 +102,24 @@ export const HEATMAP_ASSUMED_WIDTH = 480
 /** Space kept between two neighbouring labels, px. */
 const LABEL_GAP = 8
 
+/**
+ * A label's width per character, in em, for choosing how many columns one
+ * printed label stands for. An OVER-estimate on purpose: DejaVu Sans (the CI
+ * runner's font) is wider than the Windows fonts, and a step that is one too
+ * many costs a label, where one too few cuts every label to a stub.
+ */
+const LABEL_EM_PER_CHAR = 0.65
+
+/**
+ * How many columns one printed label stands for, past `HEATMAP_ALL_LABELS_MAX`:
+ * the longest label (estimated, `LABEL_EM_PER_CHAR`) plus the gap, in columns.
+ */
+export function heatmapColumnLabelStep(labels: readonly string[], columnWidth: number, fontPx: number): number {
+  const longest = labels.reduce((most, label) => Math.max(most, label.length), 0)
+  const needed = longest * fontPx * LABEL_EM_PER_CHAR + LABEL_GAP
+  return columnWidth > 0 ? Math.max(1, Math.ceil(needed / columnWidth)) : labels.length || 1
+}
+
 export interface HeatmapOptionInput {
   data: HeatmapMatrix
   tokens: ChartTokens
@@ -91,6 +130,48 @@ export interface HeatmapOptionInput {
   salient?: HeatmapSalience
   /** The chart box's width in px, when known; sizes each x label's column. Default `HEATMAP_ASSUMED_WIDTH`. */
   chartWidth?: number
+  /**
+   * How much bigger the canvas text is drawn: `usePresentationScale()` (full
+   * screen, presentation mode). The Recharts charts get this by scaling their
+   * whole SVG drawing; a canvas cannot be scaled without blurring, so its text
+   * is sized here instead. Default 1: the option is exactly as before.
+   */
+  textScale?: number
+  /**
+   * Draw row 0 at the TOP (a ranked matrix: "worst first" reads downward, as
+   * its table does). Default: ECharts' own category order, row 0 at the
+   * bottom, which every existing heatmap was drawn with.
+   */
+  rowsTopDown?: boolean
+  /**
+   * What the column axis PRINTS, one per column (a day axis prints "Sep 5").
+   * The tooltip, the announcement and the table keep `data.x_labels` (the
+   * full day). Default: `data.x_labels`.
+   */
+  columnLabels?: readonly string[]
+}
+
+/** ECharts' own default label size, px: what the heatmap's axis and ramp text draw at unscaled. */
+export const HEATMAP_FONT_SIZE = 12
+
+/** The label size for a text scale; `undefined` at 1, so an unscaled option keeps ECharts' default. */
+export function heatmapFontSize(textScale: number): number | undefined {
+  if (!Number.isFinite(textScale) || textScale <= 1) return undefined
+  return Math.round(HEATMAP_FONT_SIZE * textScale)
+}
+
+/**
+ * The plot's insets for a text scale. The y labels and the x labels + colour
+ * bar live in the left and bottom insets, so those grow with the text; at 1
+ * this is `HEATMAP_GRID` itself.
+ */
+export function heatmapGrid(textScale: number): { top: number; right: number; bottom: number; left: number } {
+  if (heatmapFontSize(textScale) === undefined) return { ...HEATMAP_GRID }
+  return {
+    ...HEATMAP_GRID,
+    bottom: Math.round(HEATMAP_GRID.bottom * textScale),
+    left: Math.round(HEATMAP_GRID.left * textScale),
+  }
 }
 
 /**
@@ -99,15 +180,18 @@ export interface HeatmapOptionInput {
  * past `HEATMAP_ALL_LABELS_MAX`. The FULL label is always in the tooltip, the
  * announcement and the table (`heatmapTooltipContent`) — the cut is display only.
  */
-function categoryLabels(count: number, width: number, color: string) {
+function categoryLabels(count: number, width: number, color: string, fontSize: number | undefined) {
   const every = count <= HEATMAP_ALL_LABELS_MAX
-  return {
+  const style = {
     color,
     interval: every ? 0 : ('auto' as const),
     width: Math.max(1, Math.floor(width)),
     overflow: 'truncate' as const,
     ellipsis: '…',
   }
+  // Only when scaled: an unscaled option must stay byte-identical (the
+  // committed heatmap baselines were drawn at ECharts' default size).
+  return fontSize === undefined ? style : { ...style, fontSize }
 }
 
 export function formatHeatmapValue(valueType: HeatmapMatrix['value_type'], value: number | VizStatus): string {
@@ -175,14 +259,47 @@ export function buildHeatmapOption({
   animate = false,
   salient,
   chartWidth = HEATMAP_ASSUMED_WIDTH,
+  textScale = 1,
+  rowsTopDown = false,
+  columnLabels,
 }: HeatmapOptionInput): HeatmapOption {
   const byCell = new Map<string, Cell>(data.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
   const empty = data.cells.filter((cell) => cell.value === null)
+  const fontSize = heatmapFontSize(textScale)
+  // The colour bar: a numeric matrix with at least one measured cell.
+  const rampShown = data.value_type !== 'status' && empty.length < data.cells.length
+  // R2-18: hatched cells get a "No data" key, in its own row under the bar
+  // (or in the bar's place when there is none). Scaled with the text, as the
+  // insets are; 0 when nothing is hatched, so that layout is exactly as before.
+  const keyRow =
+    empty.length > 0 && rampShown
+      ? fontSize === undefined
+        ? HEATMAP_NO_DATA_KEY_ROW
+        : Math.round(HEATMAP_NO_DATA_KEY_ROW * textScale)
+      : 0
+  const insets = heatmapGrid(textScale)
+  const grid = keyRow === 0 ? insets : { ...insets, bottom: insets.bottom + keyRow }
+  const cellBorder =
+    data.x_labels.length > HEATMAP_BORDERED_COLUMNS_MAX ? { borderWidth: 0 } : { borderColor: tokens.card, borderWidth: 1 }
+  const noDataDecal = decalOf('diagonal', tokens.axis) ?? undefined
 
-  const plotWidth = chartWidth - HEATMAP_GRID.left - HEATMAP_GRID.right
-  const xLabel = categoryLabels(data.x_labels.length, plotWidth / Math.max(1, data.x_labels.length) - LABEL_GAP, tokens.axis)
+  const plotWidth = chartWidth - grid.left - grid.right
+  const columnWidth = plotWidth / Math.max(1, data.x_labels.length)
+  const printed = columnLabels && columnLabels.length === data.x_labels.length ? columnLabels : data.x_labels
+  // Past the limit (a 14- to 90-day axis), label every k-th column and give
+  // each printed label the k columns it stands for. Cutting each to ONE
+  // column's width, whatever ECharts then thinned, printed "S…" under every
+  // other day of a 14-day axis and nothing at all under 90.
+  const step =
+    data.x_labels.length <= HEATMAP_ALL_LABELS_MAX
+      ? 0
+      : heatmapColumnLabelStep(printed, columnWidth, fontSize ?? HEATMAP_FONT_SIZE)
+  const xLabel =
+    step === 0
+      ? categoryLabels(data.x_labels.length, columnWidth - LABEL_GAP, tokens.axis, fontSize)
+      : { ...categoryLabels(data.x_labels.length, step * columnWidth - LABEL_GAP, tokens.axis, fontSize), interval: step - 1 }
   // The y labels share the left inset, whatever the row count.
-  const yLabel = categoryLabels(data.y_labels.length, HEATMAP_GRID.left - LABEL_GAP, tokens.axis)
+  const yLabel = categoryLabels(data.y_labels.length, grid.left - LABEL_GAP, tokens.axis, fontSize)
   const axisLine = { lineStyle: { color: tokens.grid } }
   // Active cell: 2px outline in the text colour + a halo in the card colour.
   const emphasis = {
@@ -203,7 +320,7 @@ export function buildHeatmapOption({
               itemStyle: { color: tokens.status[cell.value], ...(decal ? { decal } : {}) },
             }
           }),
-          itemStyle: { borderColor: tokens.card, borderWidth: 1 },
+          itemStyle: cellBorder,
           emphasis,
         }
       : {
@@ -211,7 +328,7 @@ export function buildHeatmapOption({
           id: 'cells',
           // `null` stays "no data" — ECharts leaves a '-' cell undrawn; the no-data series draws it.
           data: data.cells.map((cell) => [cell.x, cell.y, cell.value ?? '-']),
-          itemStyle: { borderColor: tokens.card, borderWidth: 1 },
+          itemStyle: cellBorder,
           emphasis,
         }
 
@@ -220,12 +337,14 @@ export function buildHeatmapOption({
     series.push({
       type: 'heatmap',
       id: NO_DATA_SERIES_ID,
+      // The key's entry (`legend` below) names this series.
+      name: NO_DATA,
       data: empty.map((cell) => [cell.x, cell.y, 0]),
       itemStyle: {
         color: tokens.card,
         borderColor: tokens.grid,
         borderWidth: 1,
-        decal: decalOf('diagonal', tokens.axis) ?? undefined,
+        decal: noDataDecal,
       },
       emphasis,
     })
@@ -252,24 +371,25 @@ export function buildHeatmapOption({
       // bar under a grid of hatched cells reads as if some of them were data.
       // The ramp stays (ECharts needs every heatmap series under a visualMap),
       // only its bar is hidden.
-      show: empty.length < data.cells.length,
+      show: rampShown,
       seriesIndex: 0,
       min: 0,
       max,
       calculable: false,
       orient: 'horizontal',
       left: 'center',
-      bottom: 0,
+      // Above the "No data" key's row when there is one.
+      bottom: keyRow,
       itemHeight: 120,
       // Step 7 is the salient end: put it where the problem is.
       inRange: { color: direction === 'high' ? [...tokens.seq] : [...tokens.seq].reverse() },
       // The ramp's two ENDS, in words: `[max, min]` (ECharts' order). A colour
       // bar with no values on it cannot be read at all, and because the
       // salient end flips with the metric (a rate is reversed, a count is
-      // not), the same yellow meant "lowest" on one heatmap and "highest" on
+      // not), the same end colour meant "lowest" on one heatmap and "highest" on
       // the next — the first Linux baselines showed both, unlabelled.
       text: [rampEndLabel(data.value_type, max), rampEndLabel(data.value_type, 0)],
-      textStyle: { color: tokens.axis },
+      textStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
     })
   }
   if (empty.length > 0) selfColoured.push(1)
@@ -290,7 +410,7 @@ export function buildHeatmapOption({
     animation: animate,
     // Off: the wrapper names the chart (once) and the frame's summary describes it.
     aria: { enabled: false },
-    grid: { ...HEATMAP_GRID },
+    grid,
     tooltip: {
       trigger: 'item',
       // The same box the Recharts tooltips draw (`TIP_BOX_STYLE`).
@@ -313,9 +433,36 @@ export function buildHeatmapOption({
         return cell ? heatmapTooltipContent(data, cell) : { rows: [] }
       }),
     },
-    xAxis: { type: 'category', data: data.x_labels, axisLabel: xLabel, axisLine, splitArea: { show: false } },
-    yAxis: { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false } },
+    xAxis: {
+      type: 'category',
+      data: columnLabels && columnLabels.length === data.x_labels.length ? [...columnLabels] : data.x_labels,
+      axisLabel: xLabel,
+      axisLine,
+      splitArea: { show: false },
+    },
+    yAxis: rowsTopDown
+      ? { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false }, inverse: true }
+      : { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false } },
     visualMap,
     series,
+    // R2-18: the hatch, keyed. The swatch is drawn as the cell is (card fill,
+    // the same decal), outlined like every other legend swatch in the kit;
+    // not a toggle — hiding the hatched cells would leave holes that read as
+    // the card. Only when something is hatched: otherwise the option is
+    // exactly as before.
+    ...(empty.length > 0
+      ? {
+          legend: {
+            data: [NO_DATA],
+            selectedMode: false,
+            left: 'center',
+            bottom: 0,
+            itemWidth: 14,
+            itemHeight: 14,
+            itemStyle: { color: tokens.card, borderColor: tokens.border, borderWidth: 1, decal: noDataDecal },
+            textStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
+          },
+        }
+      : {}),
   }
 }

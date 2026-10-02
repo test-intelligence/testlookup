@@ -55,3 +55,95 @@ describe('useEChart refuses an option carrying an unapproved formatter (ADR deci
     expect(engine.instance.dispose).toHaveBeenCalled()
   })
 })
+
+/**
+ * VIZ-106 ("no layout thrash: one observer per frame, requestAnimationFrame-
+ * batched"): a burst of ResizeObserver callbacks — a window drag, a rotation,
+ * the navigation drawer sliding in — re-lays out the canvas ONCE, in the next
+ * frame, at the final size.
+ */
+describe('useEChart resizes at most once per animation frame', () => {
+  const observed = { callbacks: [] as Array<() => void> }
+  class RecordingResizeObserver {
+    constructor(cb: () => void) {
+      observed.callbacks.push(cb)
+    }
+    observe() {}
+    disconnect() {}
+  }
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  const runFrames = () => {
+    const due = [...frames.values()]
+    frames.clear()
+    for (const cb of due) cb(0)
+  }
+  const burst = (n: number) => {
+    for (let i = 0; i < n; i++) for (const cb of observed.callbacks) cb()
+  }
+
+  beforeEach(() => {
+    observed.callbacks = []
+    frames.clear()
+    vi.stubGlobal('ResizeObserver', RecordingResizeObserver)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frames.set(++nextFrame, cb)
+      return nextFrame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    engine.instance.resize.mockReset()
+    engine.instance.dispose.mockReset()
+    engine.load.mockReset().mockResolvedValue({ init: engine.init })
+  })
+
+  it('five callbacks in one frame: no resize until the frame, then exactly one', async () => {
+    view = render(<Probe option={{ series: [] }} />)
+    await waitFor(() => expect(status()).toBe('ready'))
+    expect(observed.callbacks).toHaveLength(1)
+
+    burst(5)
+    expect(engine.instance.resize).not.toHaveBeenCalled()
+    expect(frames.size).toBe(1)
+    runFrames()
+    expect(engine.instance.resize).toHaveBeenCalledTimes(1)
+  })
+
+  it('the next burst gets its own frame: batched, never stuck', async () => {
+    view = render(<Probe option={{ series: [] }} />)
+    await waitFor(() => expect(status()).toBe('ready'))
+    burst(3)
+    runFrames()
+    burst(4)
+    runFrames()
+    expect(engine.instance.resize).toHaveBeenCalledTimes(2)
+  })
+
+  it('unmounting with a frame pending cancels it: no resize on a disposed instance', async () => {
+    view = render(<Probe option={{ series: [] }} />)
+    await waitFor(() => expect(status()).toBe('ready'))
+    burst(2)
+    view.unmount()
+    expect(frames.size).toBe(0)
+    runFrames()
+    expect(engine.instance.resize).not.toHaveBeenCalled()
+    expect(engine.instance.dispose).toHaveBeenCalled()
+  })
+
+  it('a frame pending when a later option fails never resizes the disposed instance', async () => {
+    // The refused option disposes the instance but leaves the observer and its
+    // pending frame in place (the mount effect does not re-run): the frame must
+    // see that the instance it was queued for is gone.
+    view = render(<Probe option={{ series: [] }} />)
+    await waitFor(() => expect(status()).toBe('ready'))
+    burst(2)
+    expect(frames.size).toBe(1)
+    await act(async () => {
+      view.rerender(<Probe option={{ tooltip: { formatter: 'x' } }} />)
+    })
+    await waitFor(() => expect(status()).toBe('error'))
+    expect(engine.instance.dispose).toHaveBeenCalledTimes(1)
+    expect(frames.size).toBe(1)
+    runFrames()
+    expect(engine.instance.resize).not.toHaveBeenCalled()
+  })
+})

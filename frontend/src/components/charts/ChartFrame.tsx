@@ -10,7 +10,7 @@
  *            mounted only for `ready` and `truncated`, inside a per-frame error
  *            boundary, so one failing chart never blanks the page
  *   table    "View as table", built from the same `series` the renderer gets
- *   footer   "Showing top N of M" when truncated, "N of M runs" from
+ *   footer   "Showing top N of M" (+ `truncationSuffix`) when truncated, "N of M runs" from
  *            `meta.totals`, then the caller's footer
  *
  * State messages are static text in the group (no `alert` / `status` role). A
@@ -63,7 +63,7 @@ import Skeleton from '@/components/ui/Skeleton'
 import ChartErrorBoundary from './ChartErrorBoundary'
 import ChartExportMenu from './ChartExportMenu'
 import ChartTable from './ChartTable'
-import { hasChartData, seriesHasPoints, type ChartState } from './chartState'
+import { hasChartData, seriesHasPoints, type ChartState } from './chartStateCore'
 import { NO_VALUE, summarizeChart, type ChartAxes, type SeriesFormat } from './chartText'
 import { STALE_BUILD_ACTION, STALE_BUILD_MESSAGE } from './engines/lazyChartEngine'
 import { CHART_MESSAGES } from './chartMessages'
@@ -85,6 +85,12 @@ export interface ChartFrameProps {
   headingLevel: ChartHeadingLevel
   /** Extra footer content, after the frame's own "N of M". */
   footer?: ReactNode
+  /**
+   * Appended to the footer's "Showing top N of M" when the chart also draws a
+   * merged remainder, e.g. " + Other" (Wave 2.6 R2-14). The table button keeps
+   * "View the top N as a table": the remainder is a column of that table too.
+   */
+  truncationSuffix?: string
   /**
    * The renderer. A function receives `series` — pass the renderer that exact
    * object so the plot, the summary and the table read the same data.
@@ -185,6 +191,15 @@ const BUTTON =
  */
 const ICON_BUTTON =
   'inline-flex items-center gap-1.5 rounded border border-[var(--color-border-light)] p-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]'
+
+/**
+ * The narrowest a frame's title column may get beside the toolbar before the
+ * toolbar wraps under it (VIZ-106 fix round): the flex-basis the title grows
+ * from. 8rem holds a two-word title on two lines. Every committed frame at
+ * 1280 px has far more room than that beside its toolbar (the narrowest
+ * gallery frame: 274 px, measured in DejaVu Sans), so none of them wraps.
+ */
+const TITLE_MIN_WIDTH = 'flex-[1_1_8rem]'
 
 /**
  * The chart body's height in full screen before it has been measured (the
@@ -356,6 +371,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
     toolbar,
     headingLevel,
     footer,
+    truncationSuffix,
     children,
     'data-testid': testId,
     series = null,
@@ -572,12 +588,22 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4"
     >
       <ChartFrameContext.Provider value={frameContext}>
-        {/* In full screen the header REFLOWS (SC 1.4.10): the worded, larger
+        {/* The header REFLOWS (SC 1.4.10). In full screen the worded, larger
             toolbar wraps under the title and its buttons wrap among
-            themselves, so a 320 px screen never scrolls sideways. Outside
-            full screen the classes are exactly the frame's old ones. */}
-        <div className={isFullscreen ? 'flex flex-wrap items-start gap-3' : 'flex items-start gap-3'}>
-          <div className={isFullscreen ? 'min-w-0 flex-[1_1_12rem]' : 'min-w-0 flex-1'}>
+            themselves, so a 320 px screen never scrolls sideways.
+
+            On the page (VIZ-106 fix round, B0 finding 2) the toolbar used
+            to stay beside the title whatever the frame's width: in a 311 px
+            frame at 375 px, Summary's four-button "Results by suite" toolbar
+            left its title a 2 px column, one letter per line. Now the title
+            asks for TITLE_MIN_WIDTH before it grows (`flex-basis`); only when
+            that and the toolbar do not fit on one line does the toolbar wrap
+            under the title (and wrap its own buttons if it is still too
+            wide). Wherever they DO fit, the title grows into exactly the
+            width `flex-1` gave it, so a frame wide enough is laid out as it
+            always was, to the pixel. */}
+        <div className="flex flex-wrap items-start gap-3">
+          <div className={isFullscreen ? 'min-w-0 flex-[1_1_12rem]' : `min-w-0 ${TITLE_MIN_WIDTH}`}>
             <Heading
               id={titleId}
               title={title}
@@ -598,7 +624,9 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
               aria-label={`${title} actions`}
               data-chart-toolbar=""
               className={
-                isFullscreen ? 'flex min-w-0 max-w-full flex-wrap items-center gap-1' : 'flex shrink-0 items-center gap-1'
+                isFullscreen
+                  ? 'flex min-w-0 max-w-full flex-wrap items-center gap-1'
+                  : 'flex max-w-full shrink-0 flex-wrap items-center gap-1'
               }
             >
               {toolbar}
@@ -690,6 +718,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
             {state.status === 'truncated' && (
               <span data-chart-truncation="" className="flex items-center gap-2">
                 Showing top {formatNumber(state.shown)} of {formatNumber(state.total)}
+                {truncationSuffix}
                 {canTable && !tableOpen && (
                   <button type="button" onClick={() => setTableOpen(true)} className={BUTTON}>
                     View the top {formatNumber(state.shown)} as a table

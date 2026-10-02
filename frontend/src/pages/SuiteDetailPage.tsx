@@ -18,7 +18,7 @@ import type { TrendPoint } from '@/types/metrics'
 import type { SuiteTrendPoint } from '@/hooks/useSuiteTrend'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
-import { readyState } from '@/components/charts/chartState'
+import { readyState } from '@/components/charts/chartStateCore'
 import {
   buildStackedColumnModel,
   STATUS_STACK_SERIES,
@@ -26,6 +26,7 @@ import {
   type StackedColumnModel,
 } from '@/components/charts/stackedColumnModel'
 import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
+import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 
 const PERIODS = [
   { label: '1d',  days: 1 },
@@ -81,6 +82,52 @@ function suitePassRateModel(points: readonly SuiteTrendPoint[]): TimeSeriesModel
 /** What one point of the per-day pass rate is, stated under the chart's title (R2 F7). */
 const PASS_RATE_POINT_NOTE = 'One point per day with runs · a day without runs is a gap, never 0%'
 
+/**
+ * Both charts' plot height: the VIZ-106 floor for a report chart (it was 220).
+ * Unconditional, flag on or off — the one change to this page's existing
+ * baselines this wave makes on purpose.
+ */
+export const SUITE_CHART_HEIGHT = 240
+
+/**
+ * What the catalogue adds to the pass-rate frame when it is on (VIZ-408,
+ * plan 2.2): the trend overlays and the local zoom. No "apply as window": this
+ * page's window is its own `?days`, not the global one. No `rateTarget`
+ * either: the page has no target of its own to draw. Off, the frame gets
+ * NEITHER prop — not `false` — and is exactly the Wave 2.5 frame.
+ */
+const CATALOGUE_PASS_RATE_PROPS = { trendAnalysis: true, zoom: true } as const
+
+/**
+ * The pass-rate slot's height while the flag lookup is in flight, px: the
+ * flag-off frame as drawn (header and takeaway above a 240 px plot, the legend
+ * and the frame's padding), measured on the hermetic Suite detail page at 1280:
+ * 361 (450 at 375, where the takeaway wraps). The flag-on frame is taller by
+ * its overlay row and brush; holding the flag-off height means a flag-off
+ * page (every project today) barely moves when the answer lands.
+ */
+export const SUITE_PASS_RATE_PENDING_HEIGHT = 360
+
+/**
+ * The pass-rate slot until the catalogue flag answers (R1-6, the Overview's
+ * `TrendSlotPending` and Trends' D12 rule): neither frame yet, so the frame
+ * mounts ONCE, in its final parent, instead of mounting bare and remounting
+ * inside the catalogue section when a flag-on answer comes back after the
+ * suite data.
+ */
+function PassRatePending() {
+  return (
+    <div
+      className="card flex items-center justify-center"
+      aria-busy="true"
+      data-suite-pass-rate-pending=""
+      style={{ minHeight: SUITE_PASS_RATE_PENDING_HEIGHT }}
+    >
+      <LoadingSpinner />
+    </div>
+  )
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function PassRateBar({ rate }: { rate: number }) {
@@ -135,6 +182,12 @@ export default function SuiteDetailPage() {
   const project       = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  // The one seam (K1), with "not known yet" kept apart: `undefined` while the
+  // lookup is in flight (the pass-rate slot holds its place), then the
+  // answer (`false` on failure), so the page is the Wave 2.5 page unless the
+  // flag is known to be on.
+  const catalogueStatus = useCatalogueRolloutStatus()
+  const catalogue = catalogueStatus === true
 
   const suiteName  = searchParams.get('name') ?? ''
   // Precedence: explicit URL ``?days=`` (deep link) > shared global
@@ -249,7 +302,9 @@ export default function SuiteDetailPage() {
   // fallback). For those we hide the link rather than navigating to a
   // 404'd ``/suites/null`` route.
   const headerActions = (
-    <div className="flex items-center gap-2">
+    // `flex-wrap`: below ~480 px the link and five period buttons do not fit
+    // one row (VIZ-106); at desktop widths they do, and nothing moves.
+    <div className="flex flex-wrap items-center gap-2">
       {catalogSuite && (
         <Link
           to={`/suites/${catalogSuite.id}`}
@@ -328,7 +383,10 @@ export default function SuiteDetailPage() {
                   {icon}
                   <p className="text-xs uppercase tracking-wider">{label}</p>
                 </div>
-                <p className={clsx('text-2xl font-bold tabular-nums', color)}>{value}</p>
+                {/* The metric value on the stat token (VIZ-106): 24 px like the
+                    `text-2xl` it replaces, with the same 4:3 line height, so no
+                    pixel moves — and presentation mode raises it with the rest. */}
+                <p className={clsx('text-[length:var(--text-stat-lg)] leading-[calc(2/1.5)] font-bold tabular-nums', color)}>{value}</p>
               </div>
             ))}
           </div>
@@ -344,7 +402,7 @@ export default function SuiteDetailPage() {
               headingLevel={3}
               state={readyState(trendPoints)}
               model={historyModel}
-              height={220}
+              height={SUITE_CHART_HEIGHT}
               bucketNoun="day"
             />
           )}
@@ -360,16 +418,33 @@ export default function SuiteDetailPage() {
               kit keeps `connectNulls` off, and a no-run day and a skips-only
               day are the same `null` to it). The takeaway says what a point
               is instead, where a sighted reader sees it. */}
-          {trendHasRuns && (
+          {trendHasRuns && (catalogueStatus === undefined ? (
+            <PassRatePending />
+          ) : catalogue ? (
+            // Flag on (VIZ-408): the same frame and data, plus the overlays and
+            // the zoom. The wrapper exists only here, so the flag-off DOM has
+            // no catalogue section at all.
+            <div data-catalogue-section="suite-pass-rate">
+              <TimeSeriesChartFrame
+                title={`Pass rate trend — last ${days} days`}
+                takeaway={PASS_RATE_POINT_NOTE}
+                headingLevel={3}
+                state={readyState(trendPoints)}
+                model={passRateModel}
+                height={SUITE_CHART_HEIGHT}
+                {...CATALOGUE_PASS_RATE_PROPS}
+              />
+            </div>
+          ) : (
             <TimeSeriesChartFrame
               title={`Pass rate trend — last ${days} days`}
               takeaway={PASS_RATE_POINT_NOTE}
               headingLevel={3}
               state={readyState(trendPoints)}
               model={passRateModel}
-              height={220}
+              height={SUITE_CHART_HEIGHT}
             />
-          )}
+          ))}
 
           {/* Test Cases Table */}
           <div className="card">

@@ -47,6 +47,34 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+/** OKLab (Ottosson), for perceptual distance and lightness. */
+function oklab(hex: string): [number, number, number] {
+  const [r, g, b] = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
+function deltaE(a: string, b: string): number {
+  const [p, q] = [oklab(a), oklab(b)]
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+}
+
+/**
+ * How far (OKLab ΔE) a ramp step on the salient side must sit from a status
+ * colour. The old dark ramp (viridis) had --chart-seq-4 #44bf70 at 0.09 from
+ * --status-passed and painted the worst suite of a pass-rate heatmap
+ * rgb(102,202,92) (R2-3); every step of today's ramps on that side is >= 0.17.
+ */
+const MIN_STATUS_DISTANCE = 0.15
+
 let tokens: Map<string, Map<string, string>>
 
 beforeAll(async () => {
@@ -121,6 +149,43 @@ describe('chart tokens in index.css', () => {
       .filter((m) => !(m.ratio >= MIN_MARK_CONTRAST))
       .map((m) => `--${m.name}: best ring ${m.ratio.toFixed(2)}:1`)
     expect(failures).toEqual([])
+  })
+
+  it.each(THEME_IDS)('%s: the salient half of the ramp (a pass rate\'s WORST rows) is never status-green', (id) => {
+    // A heatmap puts step 7 on the concern: 0% for a pass rate (`salient:
+    // 'low'`), the most failures for a count. On a page where green means
+    // Passed, the half of the ramp that paints those cells must not be green.
+    const theme = tokens.get(id)
+    const passed = theme?.get('status-passed') ?? ''
+    const failures = SEQ.slice(3)
+      .map((name) => ({ name, value: theme?.get(name) ?? '', d: deltaE(theme?.get(name) ?? '', passed) }))
+      .filter((m) => !(m.d >= MIN_STATUS_DISTANCE))
+      .map((m) => `--${m.name} ${m.value} is ${m.d.toFixed(3)} from --status-passed ${passed}`)
+    expect(failures).toEqual([])
+  })
+
+  it.each(THEME_IDS)('%s: the salient end itself is no status colour at all', (id) => {
+    const theme = tokens.get(id)
+    const end = theme?.get('chart-seq-7') ?? ''
+    const failures = ['passed', 'failed', 'broken', 'skipped', 'flaky', 'unknown']
+      .map((s) => ({ s, d: deltaE(end, theme?.get(`status-${s}`) ?? '') }))
+      .filter((m) => !(m.d >= MIN_STATUS_DISTANCE))
+      .map((m) => `--chart-seq-7 ${end} is ${m.d.toFixed(3)} from --status-${m.s}`)
+    expect(failures).toEqual([])
+  })
+
+  it.each(THEME_IDS)('%s: the ramp reads worst-to-best by lightness alone (monotonic away from the card)', (id) => {
+    // Hue may turn along the ramp, but the order must not depend on it: each
+    // step is further from the card's lightness than the one before.
+    const theme = tokens.get(id)
+    const cardL = oklab(theme?.get('color-bg-card') ?? '')[0]
+    const distance = SEQ.map((name) => Math.abs(oklab(theme?.get(name) ?? '')[0] - cardL))
+    for (let i = 1; i < distance.length; i++) expect(distance[i], `--chart-seq-${i + 1}`).toBeGreaterThan(distance[i - 1])
+  })
+
+  it('measures distance the way it claims: the old dark step 4 sat next to pass-green', () => {
+    expect(deltaE('#44bf70', '#34a06b')).toBeLessThan(MIN_STATUS_DISTANCE)
+    expect(deltaE('#000000', '#ffffff')).toBeCloseTo(1, 2)
   })
 
   it.each(THEME_IDS)('%s: the diverging extremes stand out more than its neutral midpoint', (id) => {

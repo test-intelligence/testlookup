@@ -341,6 +341,120 @@ async def test_an_ingestion_session_on_the_same_pool_has_no_ceiling(
         await session.commit()
 
 
+async def test_the_planner_settings_are_visible_inside_the_request_and_gone_after_it(
+    world, solo, monkeypatch
+) -> None:
+    """Wave 2.6: ``jit = off`` and ``plan_cache_mode = force_custom_plan``
+    ride the timeout's transaction. Inside the request the handler's session
+    must really carry both (the positive control); afterwards the SAME pooled
+    connection must be back to what it was before, so an ingestion batch on it
+    plans exactly as it did before this wave."""
+    from app.services import analytics_service
+
+    probe = ("statement_timeout", "jit", "plan_cache_mode")
+
+    async with solo.sessions() as session:
+        before = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+    if before["jit"] == "off" and before["plan_cache_mode"] == "force_custom_plan":
+        pytest.skip("the server already defaults to both settings; locality is unobservable")
+
+    async def _probe(db, *args, **kwargs):
+        seen = {name: (await db.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+        return {"summary": {"suite_count": 0, "seen": seen}, "suites": []}
+
+    monkeypatch.setattr(analytics_service, "coverage_stats", _probe)
+
+    response = await world.client.get(
+        COVERAGE, params={"project_id": str(world.p1), "days": 48}, headers=world.admin
+    )
+
+    assert response.status_code == 200, response.text
+    seen = response.json()["summary"]["seen"]
+    assert (seen["jit"], seen["plan_cache_mode"]) == ("off", "force_custom_plan"), (
+        f"the analytics planner settings never reached the request's session: {seen!r}"
+    )
+    assert seen["statement_timeout"] != "0", "the settings must share the timeout's transaction"
+
+    async with solo.sessions() as session:
+        after = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+    assert after == before, (
+        f"a planner setting leaked to the pooled connection: {before!r} -> {after!r}. "
+        "SET LOCAL was replaced by a session-level SET, and the next user of this "
+        "connection -- an ingestion batch, a Celery task -- inherits it"
+    )
+
+
+#: A planner value PostgreSQL refuses (22023): how a server or a proxy that
+#: will not take one of the settings looks from here.
+_REFUSED_SETTINGS = (("jit", "off"), ("plan_cache_mode", "not_a_plan_cache_mode"))
+
+
+async def test_a_refused_setting_fails_open_and_the_read_still_runs(
+    world, solo, monkeypatch
+) -> None:
+    """R1-9: the guard's failure path is documented as failing open, but a
+    failed ``SET LOCAL`` aborted the request's transaction, so the read that
+    followed died with 25P02 (``InFailedSQLTransaction``) -- a 500 instead of
+    a slow read. Now the read is served, unguarded and counted."""
+    from app.core import analytics_read_layer as layer
+    from app.core.metrics import analytics_read_degraded_total
+    from app.services import analytics_service
+
+    probe = ("statement_timeout", "jit", "plan_cache_mode")
+    async with solo.sessions() as session:
+        before = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+
+    async def _probe(db, *args, **kwargs):
+        seen = {name: (await db.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+        return {"summary": {"suite_count": 0, "seen": seen}, "suites": []}
+
+    monkeypatch.setattr(analytics_service, "coverage_stats", _probe)
+    monkeypatch.setattr(layer, "_ANALYTICS_PLANNER_SETTINGS", _REFUSED_SETTINGS)
+    degraded = analytics_read_degraded_total.labels(reason="statement_timeout_not_applied")
+    counted = degraded._value.get()
+
+    response = await world.client.get(
+        COVERAGE, params={"project_id": str(world.p1), "days": 49}, headers=world.admin
+    )
+
+    assert response.status_code == 200, response.text
+    # Unguarded, and all or nothing: one statement, so not a timeout without its planner settings.
+    assert response.json()["summary"]["seen"] == before
+    assert degraded._value.get() > counted, "an unguarded read must be counted, not only logged"
+
+    async with solo.sessions() as session:
+        after = {name: (await session.execute(text(f"SHOW {name}"))).scalar() for name in probe}
+    assert after == before
+
+
+async def test_a_refused_setting_leaves_the_callers_transaction_usable(solo, monkeypatch) -> None:
+    """The fail-open path keeps the CALLER's transaction, and what it already
+    did in it: a rollback of the whole transaction would also have expired every
+    ORM object the request had loaded (the current user among them), and the
+    next attribute read would lazy-load outside the event loop."""
+    from app.core import analytics_read_layer as layer
+
+    monkeypatch.setattr(layer, "_ANALYTICS_PLANNER_SETTINGS", _REFUSED_SETTINGS)
+    async with solo.sessions() as session:
+        default_timeout = (await session.execute(text("SHOW statement_timeout"))).scalar()
+        await session.execute(text("CREATE TEMP TABLE r1_9_probe (x int) ON COMMIT DROP"))
+        await session.execute(text("INSERT INTO r1_9_probe VALUES (1)"))
+
+        assert await layer.apply_statement_timeout(session, 5000) is False
+
+        assert (await session.execute(text("SELECT count(*) FROM r1_9_probe"))).scalar() == 1
+        assert (await session.execute(text("SHOW statement_timeout"))).scalar() == default_timeout
+        await session.commit()
+
+    # And the settings that ARE accepted still apply, in one statement.
+    monkeypatch.setattr(layer, "_ANALYTICS_PLANNER_SETTINGS", (("jit", "off"), ("plan_cache_mode", "force_custom_plan")))
+    async with solo.sessions() as session:
+        assert await layer.apply_statement_timeout(session, 5000) is True
+        seen = [(await session.execute(text(f"SHOW {name}"))).scalar() for name in ("statement_timeout", "jit", "plan_cache_mode")]
+        assert seen == ["5s", "off", "force_custom_plan"]
+        await session.rollback()
+
+
 # ── rate limit ──────────────────────────────────────────────────────────────
 
 

@@ -6,7 +6,8 @@
  * Data: ``/api/v1/reports/summary`` via ``useSummaryReport``.
  * Export: ``/api/v1/reports/summary/pdf`` via ``summaryReportService.downloadPdf``.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -19,6 +20,7 @@ import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useSummaryReport, useSummaryReportScope } from '@/hooks/useSummaryReport'
@@ -26,6 +28,15 @@ import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
 import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
+import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
+import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
+
+// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk, mounted only
+// when `useCatalogueRollout` reads on: with the flag off this page is the
+// Wave 2.5 page and downloads none of it. One loader for the lazy component
+// and the preload below, so both wait on the same request.
+const loadSummaryCatalogue = () => import('@/components/reports/catalogue/SummaryCatalogue')
+const SummaryCatalogue = lazyWithRetry(loadSummaryCatalogue)
 
 const DAYS_OPTIONS = [1, 7, 30, 90] as const
 /** Aggregation mode is page-local — different from the global window
@@ -102,10 +113,21 @@ export default function SummaryReportPage() {
   // US-7.5: on-demand download of the self-contained HTML analysis report
   // (the same document daily/weekly digest emails attach).
   const [downloadingReport, setDownloadingReport] = useState<'1d' | '7d' | null>(null)
+  // VIZ-408: the one seam. Read before any early return (a hook), so it is the
+  // only new request on a flag-off page.
+  const catalogue = useCatalogueRollout()
 
   useEffect(() => {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
   }, [mode])
+
+  // Flag on: start the sections' chunk (the page's first chart code) as soon
+  // as the flag answers, which is usually before the report does, instead of
+  // after the report has rendered. A failure here is not reported: the lazy
+  // component asks again, and its error boundary says so.
+  useEffect(() => {
+    if (catalogue) loadSummaryCatalogue().catch(() => undefined)
+  }, [catalogue])
 
   // ONE scope for the screen and the PDF: both requests are built from it, so
   // the exported sign-off document cannot cover different releases from the
@@ -219,7 +241,13 @@ export default function SummaryReportPage() {
         title="Summary Report"
         subtitle={`Project: ${project.name} · ${MODE_LABELS[mode].hint}`}
         actions={
-          <div className="flex items-center gap-2">
+          // Wraps below 1024 px only (VIZ-106): four controls in one unbreakable
+          // row pushed the page sideways on a phone. `max-lg:` and not a plain
+          // `flex-wrap`: on Linux fonts (DejaVu) the plain one re-laid this row
+          // at 1280 and moved everything under the header by a fraction of a
+          // pixel, which changed all four flag-off Summary baselines. At and
+          // above 1024 px the row is exactly the Wave 2.5 row.
+          <div className="flex max-lg:flex-wrap items-center gap-2">
             {/* The report's output LEAVES the tool (a PDF attached to a go/no-go
                 thread), so the badge states the release scope the SERVER
                 applied — `meta.scope.releases` — rather than what the client
@@ -368,6 +396,19 @@ export default function SummaryReportPage() {
             </div>
           </section>
 
+          {/* VIZ-408, flag on: the status donut and results by suite, then the
+              trend (lazy), above the table they summarise. Until their chunk
+              arrives the page draws the frames' boxes itself, from this report
+              and with no chart code, so the tables below never move (R1-2)
+              and the page's largest paint is not held for the charts. */}
+          {catalogue && data && (
+            <SectionErrorBoundary message="Failed to load charts">
+              <Suspense fallback={<SummaryCatalogueShell part="headline" report={data} days={days} mode={mode} />}>
+                <SummaryCatalogue part="headline" report={data} days={days} mode={mode} />
+              </Suspense>
+            </SectionErrorBoundary>
+          )}
+
           {/* Per-suite breakdown */}
           <section className="mb-5">
             <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
@@ -376,6 +417,14 @@ export default function SummaryReportPage() {
             </h2>
             <SuiteTable rows={suites} />
           </section>
+
+          {catalogue && data && topFailing.length > 0 && (
+            <SectionErrorBoundary message="Failed to load charts">
+              <Suspense fallback={<SummaryCatalogueShell part="top-failing" report={data} days={days} mode={mode} />}>
+                <SummaryCatalogue part="top-failing" report={data} days={days} mode={mode} />
+              </Suspense>
+            </SectionErrorBoundary>
+          )}
 
           {/* Top failing tests */}
           <section>
@@ -386,7 +435,16 @@ export default function SummaryReportPage() {
             {topFailing.length === 0 ? (
               <p className="text-[12.5px] text-[var(--color-text-muted)]">No failures in this window.</p>
             ) : (
-              <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+              // `overflow-x-auto`, not `overflow-hidden` (VIZ-106): a narrow
+              // viewport scrolls the table inside its card instead of cutting
+              // off the Failures column.
+              <div
+                role="region"
+                aria-label="Top failing tests table"
+                // A scroller a keyboard cannot focus cannot be scrolled without a mouse (R2-6).
+                tabIndex={0}
+                className={TABLE_SCROLLER}
+              >
                 <table className="w-full text-sm">
                   <thead className="bg-[var(--color-bg-secondary)]/80">
                     <tr>
@@ -515,7 +573,8 @@ function KpiTile({
     >
       <div className="min-w-0 flex-1">
         <p className="text-[10.5px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">{label}</p>
-        <p className="text-[22px] font-bold text-[var(--color-text)] tabular-nums leading-tight">{value}</p>
+        {/* `--text-stat-md` is 22 px: the same size, on the token presentation mode raises. */}
+        <p className="font-bold text-[var(--color-text)] tabular-nums leading-tight" style={{ fontSize: 'var(--text-stat-md)' }}>{value}</p>
         {sub && <p className="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">{sub}</p>}
       </div>
       <div className={clsx('p-2 rounded-lg flex-shrink-0', toneClasses[tone])}>{icon}</div>
@@ -527,10 +586,20 @@ function Count({ label, value, color }: { label: string; value: number; color: s
   return (
     <div>
       <p className="text-[10.5px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
-      <p className={clsx('text-[18px] font-semibold tabular-nums leading-tight', color)}>{value.toLocaleString()}</p>
+      {/* `--text-stat-sm` is 18 px: the same size, on the token presentation mode raises. */}
+      <p className={clsx('font-semibold tabular-nums leading-tight', color)} style={{ fontSize: 'var(--text-stat-sm)' }}>{value.toLocaleString()}</p>
     </div>
   )
 }
+
+/**
+ * The two tables' sideways scroller (VIZ-106). It is a Tab stop (axe
+ * `scrollable-region-focusable`, R2-6): at 375 px both tables are wider than
+ * their card, and a keyboard reader could otherwise not scroll to the right
+ * columns. The ring shows on keyboard focus only, so a click leaves no ring.
+ */
+const TABLE_SCROLLER =
+  'rounded-xl border border-[var(--color-border)] overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]'
 
 type SuiteSortKey = 'suite' | 'last_run'
 type SuiteSortDir = 'asc' | 'desc'
@@ -585,7 +654,10 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
   }
   const arrow = (k: SuiteSortKey) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
   return (
-    <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+    // `overflow-x-auto`, not `overflow-hidden` (VIZ-106): on a narrow viewport
+    // the columns scroll inside the card; they used to be cut off. Focusable
+    // and named, so a keyboard can reach the scroll too (R2-6).
+    <div role="region" aria-label="Per-suite breakdown table" tabIndex={0} className={TABLE_SCROLLER}>
       <table className="w-full text-sm">
         <thead className="bg-[var(--color-bg-secondary)]/80">
           <tr>

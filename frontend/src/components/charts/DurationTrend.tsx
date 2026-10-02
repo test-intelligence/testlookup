@@ -30,7 +30,6 @@ import {
 } from 'recharts'
 import { formatDuration, formatNumber } from '@/utils/formatters'
 import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
-import { NO_VALUE } from './chartText'
 import { useChartAnimation } from './motion'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
@@ -47,9 +46,10 @@ import {
   type TooltipRow,
 } from './tooltip'
 import { ChartLegend, useChartPatternPrefix, type LegendEntry } from './patterns'
-import type { DurationBandModel, DurationBandPoint } from './durationBuckets'
+import { durationTickLabel, type DurationBandModel, type DurationBandPoint } from './durationBuckets'
 import { zeroBasedScale, type NiceScale } from './niceScale'
-import { durationBandMax } from './zoom/zoomModel'
+import { NO_VALUE, utcDayLabel } from './chartText'
+import { durationBandMax } from './zoom/zoomSlices'
 
 /** p95's dash, in the legend, on the line and in the tooltip's swatch. */
 const P95_DASH = '7 3'
@@ -142,10 +142,10 @@ export const DURATION_TREND_CURVE = 'linear' as const
  * `domTooltipFormatter` — a blanket rule worth keeping — and a tick element
  * gets the same formatted duration with no formatter key at all.
  */
-function DurationTick({ x, y, payload }: { x?: number; y?: number; payload?: { value?: number } }) {
+function DurationTick({ x, y, payload, axis }: { x?: number; y?: number; payload?: { value?: number }; axis: NiceScale | null }) {
   return (
     <text x={x} y={y} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={11}>
-      {formatDuration(payload?.value ?? 0)}
+      {durationTickLabel(payload?.value ?? 0, axis)}
     </text>
   )
 }
@@ -236,6 +236,10 @@ export default function DurationTrend({
             axisLine={false}
             tickLine={false}
             tick={RECHARTS_AXIS_TICK}
+            // The kit's one short day label ("Sep 6"), as the brush under the
+            // plot and every other frame print it (Wave 2.6 R2-16); the
+            // tooltip and the table keep the full UTC day.
+            tickFormatter={utcDayLabel}
             dy={8}
             height={48}
             label={{ value: DURATION_TREND_X_AXIS, position: 'insideBottom', fill: CHART_VARS.axis, fontSize: 11 }}
@@ -248,7 +252,7 @@ export default function DurationTrend({
             interval={0}
             axisLine={false}
             tickLine={false}
-            tick={<DurationTick />}
+            tick={<DurationTick axis={axis} />}
             width={78}
             label={{ value: DURATION_TREND_Y_AXIS, angle: -90, position: 'insideLeft', fill: CHART_VARS.axis, fontSize: 11 }}
           />

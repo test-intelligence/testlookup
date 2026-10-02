@@ -90,6 +90,16 @@ export interface TimeSeriesChartFrameProps
 
 const NO_DAYS: readonly string[] = []
 
+/**
+ * The axis caption the drawn chart ALWAYS prints under its plot ("Days are UTC
+ * buckets; …"): one 16 px `text-xs` line, 4 px (`gap-1`) below the plot. The
+ * frame's body reserves it in every state, so a loading or empty frame is as
+ * tall as the drawn one and nothing below moves when the data arrives (Wave
+ * 2.6: Summary's trend grew 60 px as it drew, moving the tables under it).
+ * The other notes under the plot depend on the data and cannot be reserved.
+ */
+export const TIME_SERIES_CAPTION_RESERVE = 16 + 4
+
 /** The summary adds its own full stop after the y axis's name. */
 const withoutFullStop = (text: string) => (text.endsWith('.') ? text.slice(0, -1) : text)
 
@@ -164,7 +174,10 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
     <ChartFrame
       {...frameProps}
       ref={ref}
-      height={height}
+      // Until it draws, the body holds the plot AND its caption line. Drawn,
+      // the chart's own content is that tall already (the plot keeps
+      // `height`), so the drawn frame's markup is exactly what it was.
+      height={frameProps.state.status === 'ready' || frameProps.state.status === 'truncated' ? height : height + TIME_SERIES_CAPTION_RESERVE}
       takeaway={takeaway}
       series={series}
       scopeLabel={zoomState.scopeLabel(frameProps.scopeLabel)}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import {
   AlertTriangle, CheckCircle, HelpCircle, Shield, XCircle, Zap,
@@ -10,6 +10,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
@@ -23,6 +24,17 @@ import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
+import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
+import { GateContextPending } from '@/components/reports/catalogue/GateContextHeader'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
+
+/**
+ * The catalogue's "Context" group (VIZ-408), in its own chunk: a session with
+ * the flag off never downloads it, and with the flag on it arrives after the
+ * verdict it sits below. A stale chunk (a tab opened before a deploy) reloads
+ * the page once, like a route's.
+ */
+const GateCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/GateCatalogue'))
 
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
@@ -117,6 +129,8 @@ export default function ReleaseGatePage() {
   const [overrideReason, setOverrideReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
+  // The one seam (K1): false until the flag is known to be on.
+  const catalogue = useCatalogueRollout()
 
   useProjectChangeRedirect('/release-gate', Boolean(runId))
 
@@ -271,6 +285,31 @@ export default function ReleaseGatePage() {
     }
   }
 
+  // Linked cluster insights. Defined once, placed by the flag: where it always
+  // was with the catalogue off, and under the Context group (whose share chart
+  // summarises it) with the catalogue on.
+  const clustersCard = decision.cluster_insights.length > 0 && (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Linked Failure Clusters</h3>
+      <div className="space-y-2">
+        {decision.cluster_insights.map((c) => (
+          <div key={c.cluster_id} className="flex items-center justify-between bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-[var(--color-text-secondary)] truncate">{c.label}</p>
+              <p className="text-xs text-[var(--color-text-muted)]">{c.size} tests · {c.criticality_level ?? 'unclassified'}</p>
+            </div>
+            <Link
+              to={`/runs/${runId}/intelligence`}
+              className="text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] shrink-0"
+            >
+              Details →
+            </Link>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -358,7 +397,9 @@ export default function ReleaseGatePage() {
       />
 
       {/* Main decision banner */}
-      <div className={clsx('card border rounded-xl p-6 flex items-center gap-6', cfg.bg)}>
+      {/* Stacked below `sm` (VIZ-106): a 120 px ring beside the verdict does not
+          fit a phone. From `sm` up it is the row it always was. */}
+      <div className={clsx('card border rounded-xl p-6 flex flex-col items-start sm:flex-row sm:items-center gap-6', cfg.bg)}>
         <Icon className={clsx('w-16 h-16 shrink-0', cfg.colour)} />
         <div className="flex-1 min-w-0">
           <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Recommendation</p>
@@ -478,28 +519,9 @@ export default function ReleaseGatePage() {
         )}
       </div>
 
-      {/* Linked cluster insights */}
-      {decision.cluster_insights.length > 0 && (
-        <div className="card">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Linked Failure Clusters</h3>
-          <div className="space-y-2">
-            {decision.cluster_insights.map((c) => (
-              <div key={c.cluster_id} className="flex items-center justify-between bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[var(--color-text-secondary)] truncate">{c.label}</p>
-                  <p className="text-xs text-[var(--color-text-muted)]">{c.size} tests · {c.criticality_level ?? 'unclassified'}</p>
-                </div>
-                <Link
-                  to={`/runs/${runId}/intelligence`}
-                  className="text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] shrink-0"
-                >
-                  Details →
-                </Link>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Catalogue off: the cluster list where it always was. */}
+      {!catalogue && clustersCard}
+
 
       {/* Open defects by component */}
       {decision.open_defects_by_component.length > 0 && (
@@ -531,6 +553,30 @@ export default function ReleaseGatePage() {
           title="Risk Dimension Breakdown"
           defaultExpanded={false}
         />
+      )}
+
+      {/* The catalogue's "Context" group (VIZ-408, plan 2.5): AFTER the
+          recommendation card and everything that explains it — the evidence,
+          Decision Rationale, the Risk Dimension Breakdown the floor note
+          points at — and directly above the cluster list its share chart
+          summarises, which moves down with it (R2-8). It is handed the run,
+          the build label and the STORED clusters — never the recommendation,
+          the risk score or an override — so it cannot restyle itself by
+          verdict. Its own boundary: a chunk that fails to load or a section
+          that throws is one error card, never the route's error page over
+          the stored verdict (rule 6). Until the chunk arrives, its heading,
+          note and height hold the place (R1-7). */}
+      {catalogue && (
+        <>
+          <SectionErrorBoundary message="Failed to load charts">
+            <Suspense
+              fallback={<GateContextPending build={decision.build_number ?? runId} clusters={decision.cluster_insights} />}
+            >
+              <GateCatalogue runId={runId} build={decision.build_number ?? runId} clusters={decision.cluster_insights} />
+            </Suspense>
+          </SectionErrorBoundary>
+          {clustersCard}
+        </>
       )}
 
       {/* Override audit trail */}

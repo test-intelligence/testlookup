@@ -12,11 +12,12 @@
  * silently: a stacked bar's legend names STATUSES (its suites are on the
  * category axis), and a time series' legend and CSV hold its two plotted
  * series — a release is a marker on the plot and a row of the release table,
- * not a plotted value. The heatmap's hostile label is covered by
- * `chart-gallery.spec.ts` (its canvas tooltip and its CSP run).
+ * not a plotted value. The plain heatmap's hostile label is covered by
+ * `chart-gallery.spec.ts` (its canvas tooltip and its CSP run); the heatmap
+ * FRAME's (Wave 2.6) is the first test of the second block below.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { HOSTILE_LABEL } from '../../src/pages/dev/chartGalleryFixtures'
+import { GALLERY_PROTOTYPE_NAMES, HOSTILE_LABEL } from '../../src/pages/dev/chartGalleryFixtures'
 import {
   CHART_SVG,
   EXPORT,
@@ -162,4 +163,81 @@ test.describe('VIZ-601 scenario 3 — a hostile name is literal text everywhere 
       expect(errors).toEqual([])
     })
   }
+})
+
+/**
+ * Wave 2.6 (VIZ-408). The heatmap frame the Trends catalogue draws: a suite
+ * name is printed on the canvas (where markup cannot run) and as TEXT in the
+ * tooltip, the keyboard announcement, the table view and the CSV. And ranked
+ * bars whose suites are named like `Object.prototype` members: before the
+ * own-property lookups every place that resolved a label read the inherited
+ * member instead ("function Object() { [native code] }").
+ */
+test.describe('Wave 2.6 — the heatmap frame and prototype-member names', () => {
+  test('heatmap-frame-hostile: keyboard tooltip and announcement, table and CSV print the name as text', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    const item = galleryItem(page, 'heatmap-frame-hostile')
+    await item.scrollIntoViewIfNeeded()
+    await expect(item.locator('[data-chart-engine="echarts"]')).toHaveAttribute('data-chart-status', 'ready')
+
+    // Worst first, drawn top-down: the hostile suite (the lowest rate) is the top
+    // row, and the first cell the keyboard reaches is its first day.
+    await item.locator('[data-chart-keyboard]').focus()
+    await page.keyboard.press('ArrowRight')
+    const tooltip = item.locator('[data-chart-tooltip]')
+    await expect(tooltip).toBeVisible()
+    await expect(tooltip).toContainText(HOSTILE_LABEL)
+    // Through the page's one announcer; the chart has no live region of its own.
+    await expect(page.locator('[data-chart-announcer="assertive"]')).toContainText(HOSTILE_LABEL)
+    await expect(item.locator('[data-chart-announcement]')).toHaveCount(0)
+    await expect(item.locator('[data-chart-tooltip] img')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    await item.getByRole('button', { name: 'View as table' }).click()
+    const table = item.getByRole('table')
+    await expect(table).toBeVisible()
+    await expect(table.locator('tbody th[scope="row"]').first()).toHaveText(HOSTILE_LABEL)
+
+    const csv = await exportFile(page, item, EXPORT.csv)
+    expect(parseCsv(csv.bytes.toString('utf-8')).flat()).toContain(HOSTILE_LABEL)
+
+    await expect(item.locator('img')).toHaveCount(0)
+    expect(await xssFlag(page)).toBeUndefined()
+    expect(errors).toEqual([])
+  })
+
+  test('bar-ranked-prototype-names: axis, tooltip, table and CSV name each bar by its literal name', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    const item = galleryItem(page, 'bar-ranked-prototype-names')
+    await item.scrollIntoViewIfNeeded()
+    await expect(item.locator(CHART_SVG)).toBeVisible()
+    const inherited = /function|native code|\[object Object\]/
+
+    // The category axis prints every name, whole (they are short).
+    const ticks = item.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value')
+    await expect.poll(() => ticks.allTextContents()).toEqual([...GALLERY_PROTOTYPE_NAMES])
+
+    // The pointer tooltip of the first (longest) bar names it.
+    const [first] = await markCentres(item.locator('.recharts-bar-rectangle path'))
+    await leaveCharts(page)
+    await pointAt(page, first)
+    const tooltip = item.locator('[data-chart-tooltip]')
+    await expect(tooltip).toContainText(GALLERY_PROTOTYPE_NAMES[0])
+    expect(squash(await tooltip.innerText())).not.toMatch(inherited)
+    await leaveCharts(page)
+
+    // The table view and the generated summary.
+    await item.getByRole('button', { name: 'View as table' }).click()
+    const table = item.getByRole('table')
+    await expect(table).toBeVisible()
+    expect(await table.locator('tbody th[scope="row"]').allTextContents()).toEqual([...GALLERY_PROTOTYPE_NAMES])
+    expect(squash(await item.innerText())).not.toMatch(inherited)
+
+    const cells = parseCsv((await exportFile(page, item, EXPORT.csv)).bytes.toString('utf-8')).flat()
+    for (const name of GALLERY_PROTOTYPE_NAMES) expect(cells).toContain(name)
+    expect(cells.join('\n')).not.toMatch(inherited)
+    expect(errors).toEqual([])
+  })
 })

@@ -41,9 +41,14 @@
  * import its constants in plain Node.
  */
 import type { EnvelopeMeta, SeriesChart, SeriesPoint } from '@/lib/viz/contracts'
-import { niceScale, zeroBasedScale } from './niceScale'
+import { niceScale, niceStep, zeroBasedScale } from './niceScale'
 import { SVG_POINT_LIMIT, utcDayRange } from './timeSeriesModel'
 import { ALIGNED_X_TITLE, alignByReleaseStart, alignedRowLabel, type AlignmentStartSource } from './seriesAlignment'
+import { finishLine, volumeOf } from './lineFinish'
+
+// `finishLine` and the dashes live in a leaf so the zoom can use them without
+// this model (see lineFinish.ts); re-exported for callers.
+export { SERIES_DASHES, finishLine } from './lineFinish'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -54,24 +59,6 @@ export const KEPT_BEFORE_OTHER = MAX_DRAWN_SERIES - 1
 /** The key `chart-data` gives its merged remainder (`OTHER_KEY` in the service). */
 export const OTHER_KEY = '__other__'
 export const OTHER_LABEL = 'Other'
-
-/**
- * One `stroke-dasharray` per series slot (index 7 is "Other"). Every line
- * differs from every other by its dash as well as its hue — the categorical
- * hues are not all distinguishable to every reader.
- */
-export const SERIES_DASHES: readonly (string | undefined)[] = [
-  undefined,
-  '9 4',
-  '2 3',
-  '10 3 2 3',
-  '5 5',
-  // Paired dashes. It was dash-dot-dot (`14 4 2 4 2 4`), which read as the
-  // dash-dot of slot 3 wherever the two hues were equally light (lab).
-  '6 2 6 10',
-  '16 6',
-  '1 4',
-]
 
 /** The x-axis title on a calendar axis. */
 export const ABSOLUTE_X_TITLE = 'Day (UTC)'
@@ -271,6 +258,18 @@ export interface MultiSeriesModel {
   gaps: number
   /** "R2 has 10 days; days 10–11 are past its range.", one sentence per short line; `null` when none is. */
   rangeNote: string | null
+  /**
+   * Aligned only: the x ticks — day 0, then every multiple of one integer
+   * step to the last day (`alignedTicks`). `null` on a calendar axis, which
+   * keeps the axis default.
+   */
+  xTicks: string[] | null
+  /**
+   * Aligned only: the trailing days no release measured, left off the axis,
+   * in words ("The axis ends at day 25, …; days 26–70 have none."); `null`
+   * when nothing was left off.
+   */
+  trimNote: string | null
   /** Points no alignment could place (their `x` is not a day). */
   unplaced: number
   caption: string
@@ -369,8 +368,6 @@ function absoluteAxis(series: readonly MultiSeriesInputSeries[]): string[] {
   return xs
 }
 
-const volumeOf = (points: readonly { n: number }[]) => points.reduce((sum, p) => sum + (Number.isFinite(p.n) ? p.n : 0), 0)
-
 /** By name, then key: the order a tie on executions is broken in, and the order the notice names it. */
 const byName = (a: Pick<WorkingLine, 'label' | 'key'>, b: Pick<WorkingLine, 'label' | 'key'>) =>
   a.label < b.label ? -1 : a.label > b.label ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0
@@ -446,47 +443,8 @@ export function foldSeries(
   return { lines: [...kept, { key: OTHER_KEY, label: OTHER_LABEL, other: true, points }], folded: foldedCount, tie }
 }
 
-/**
- * A line's derived facts (gaps, past-range days, isolated points, where the
- * direct label points) from its points. Exported for the VIZ-407 zoom, which
- * re-derives them over a SLICE of an already-built line rather than restating
- * the rules — the fold and the colours are never recomputed from a slice.
- */
-export function finishLine(line: WorkingLine, styleIndex: number): MultiSeriesLine {
-  let gaps = 0
-  let pastRange = 0
-  let isolated = false
-  let last: MultiSeriesLine['last'] = null
-  let lastPartial: MultiSeriesLine['last'] = null
-  const { points } = line
-  for (let i = 0; i < points.length; i++) {
-    const y = points[i].y
-    if (y === null) {
-      if (points[i].pastRange) pastRange += 1
-      else gaps += 1
-      continue
-    }
-    // A still-filling day is no place to name a line: its value is still moving.
-    if (points[i].partial) lastPartial = { index: i, y }
-    else last = { index: i, y }
-    const before = i > 0 ? points[i - 1].y : null
-    const after = i < points.length - 1 ? points[i + 1].y : null
-    if (before === null && after === null) isolated = true
-  }
-  return {
-    key: line.key,
-    label: line.label,
-    other: line.other,
-    styleIndex,
-    dash: SERIES_DASHES[styleIndex],
-    points,
-    volume: volumeOf(points),
-    gaps,
-    pastRange,
-    isolated,
-    last: last ?? lastPartial,
-  }
-}
+// `finishLine` (a line's gaps, past-range days, isolated points and label
+// anchor) is in `lineFinish.ts`, imported above.
 
 function yAxisFor(kind: MultiSeriesMetricKind, lines: readonly MultiSeriesLine[]): MultiSeriesModel['yAxis'] {
   if (kind === 'rate') {
@@ -560,6 +518,50 @@ export function rangeNoteOf(lines: readonly Pick<MultiSeriesLine, 'label' | 'poi
   return sentences.length > 0 ? sentences.join(' ') : null
 }
 
+/** At most this many intervals on an aligned axis before Recharts thins them (`equidistantPreserveStart`). */
+const ALIGNED_TICK_INTERVALS = 6
+
+/**
+ * The ticks of an aligned axis of `days` days: day 0, then every multiple of
+ * the smallest whole step on the 1-2-2.5-5 ladder that spends at most
+ * `ALIGNED_TICK_INTERVALS` intervals on the axis — 0, 5, 10 … 25 for 26 days.
+ *
+ * Left to itself Recharts thinned the category axis from its END
+ * (`preserveEnd`): "1, 5, 10, 16, 22" under a caption that says day 0 is each
+ * release's start. The chart thins these evenly from day 0 when a narrow plot
+ * cannot hold them all, so what is printed is always 0 and a multiple of one
+ * step.
+ */
+export function alignedTicks(days: number): string[] {
+  if (!(days > 0)) return []
+  const lastDay = days - 1
+  const step = Math.max(1, niceStep(lastDay / ALIGNED_TICK_INTERVALS, { integer: true }))
+  return Array.from({ length: Math.floor(lastDay / step) + 1 }, (_, i) => String(i * step))
+}
+
+/**
+ * The aligned axis ends at the last day ANY line has a measured value (a
+ * still-filling one included). `chart-data` returns every release over the
+ * whole window, so a release that started 70 days ago brings 71 days — most
+ * of them unmeasured — and the axis ran to day 70 while the data ended on day
+ * 25: the lines took the left third of the plot and their labels sat 130-200
+ * px from them (Wave 2.6 R2-5). Days past the last measured one are drawn as
+ * nothing on every line, so leaving them off loses no mark — and the note
+ * says they were left off. Returns how many days to keep.
+ */
+function measuredDays(lines: readonly WorkingLine[]): number {
+  let last = -1
+  for (const line of lines) {
+    for (let i = line.points.length - 1; i > last; i--) {
+      if (line.points[i].y !== null) {
+        last = i
+        break
+      }
+    }
+  }
+  return last + 1
+}
+
 export function buildMultiSeriesModel({
   series,
   metric,
@@ -575,6 +577,7 @@ export function buildMultiSeriesModel({
   let capped: MultiSeriesModel['capped'] = null
   let unplaced = 0
   let caption = ABSOLUTE_CAPTION
+  let trimNote: string | null = null
   // The still-filling UTC day. Matched against each point's ABSOLUTE date, so
   // an aligned axis marks the release day that falls on it.
   const partialOn = meta?.partial_day && DAY_PATTERN.test(meta.partial_day) ? meta.partial_day : null
@@ -594,6 +597,13 @@ export function buildMultiSeriesModel({
         return i >= s.rangeDays ? { ...point, pastRange: true } : point
       }),
     }))
+    const kept = measuredDays(working)
+    if (kept > 0 && kept < xs.length) {
+      trimNote = `The axis ends at day ${xs[kept - 1]}, the last day any release has a measured value; days ${xs[kept]}–${xs[xs.length - 1]} have none.`
+      xs = xs.slice(0, kept)
+      working = working.map((line) => ({ ...line, points: line.points.slice(0, kept) }))
+      if (capped) capped = { ...capped, shown: kept }
+    }
     rowHeaders = Object.fromEntries(xs.map((x, day) => [x, alignedRowLabel(day, aligned.series)]))
     caption = alignedCaptionOf(aligned.series.map((s) => s.startSource))
   } else {
@@ -660,6 +670,8 @@ export function buildMultiSeriesModel({
     inProgressCount: partialDay ? Math.max(0, meta?.includes_in_progress ?? 0) : 0,
     gaps: lines.reduce((sum, line) => sum + line.gaps, 0),
     rangeNote: rangeNoteOf(lines, xs),
+    xTicks: alignment === 'release-start' ? alignedTicks(xs.length) : null,
+    trimNote,
     unplaced,
     caption,
   }

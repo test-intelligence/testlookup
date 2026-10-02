@@ -124,6 +124,8 @@ export const GALLERY_STATUS_LEGEND_HEIGHT = 40
 
 /** The canvas height a gallery item's chart is given. */
 export function galleryChartHeight(item: GalleryItem): number {
+  // Wave 2.6: the heatmap frame's plot, at the Trends section's height.
+  if (item.chart === 'heatmap-frame') return GALLERY_HEATMAP_FRAME_PLOT_HEIGHT
   return item.chart === 'heatmap' && item.data.value_type === 'status'
     ? GALLERY_CANVAS.height - GALLERY_STATUS_LEGEND_HEIGHT
     : GALLERY_CANVAS.height
@@ -370,6 +372,39 @@ export type GalleryDayStripFixture =
   | 'day-strip-builds'
   | 'day-strip-dense'
   | 'day-strip-hostile'
+
+// -- Wave 2.6 (VIZ-408) - the heatmap frame and prototype-member names --------
+//
+// `HeatmapChartFrame`'s fixtures live beside it (`__fixtures__/heatmapFrame.ts`,
+// read by its unit tests too) and import app code, so an item names its
+// fixture by key and `ChartGalleryPage` resolves it, as for the stacked
+// columns. Each one is a `chart-data` response exactly as the Trends page
+// receives it (percentage points, the server's volume order, `__other__`).
+
+/** The fixture keys `ChartGalleryPage` maps to `__fixtures__/heatmapFrame.ts`. */
+export type GalleryHeatmapFrameFixture = 'heatmap-frame' | 'heatmap-frame-90d' | 'heatmap-frame-hostile'
+
+/** The heatmap frame's plot height: the Trends section's own (`TrendsCatalogue`), so the gallery shows what the page draws. */
+export const GALLERY_HEATMAP_FRAME_PLOT_HEIGHT = 320
+/** The heatmap frame's box (see the items): measured 432 px under Linux fonts, plus two wrapped lines. */
+const GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT = 480
+
+/**
+ * Suite names that are also `Object.prototype` members. Names come from
+ * ingested CI files, so these are real names, and a plain-object label lookup
+ * (`labels[x] ?? x`) once read the inherited member instead: a bar labelled
+ * "function Object() { [native code] }". Spelt out here (the kit's own copy,
+ * `__fixtures__/protoKeyNames.ts`, is app code); a unit test holds the two equal.
+ */
+export const GALLERY_PROTOTYPE_NAMES = ['constructor', '__proto__', 'toString', 'hasOwnProperty'] as const
+
+/** Failures by suite, one ranked bar per name, with NO `x_labels`: every label lookup falls through to the name. */
+export const GALLERY_PROTOTYPE_BARS: GalleryCategorySeries = gallerySeries(
+  GALLERY_PROTOTYPE_NAMES.map((name, i) => [name, 12 - i * 3] as const),
+  'suite',
+  'failures',
+  'Failures',
+)
 
 /** A value format the page resolves: `percent` is `formatPercent`, `number` is `formatGaugeNumber`. */
 export type GalleryFormat = 'percent' | 'number'
@@ -721,6 +756,13 @@ export type GalleryItem =
       /** The strip's box (px): a card's width, or a phone's. */
       box: number
     })
+  // Wave 2.6 (VIZ-408 K5): the suite x day heatmap inside a real ChartFrame.
+  | (GalleryItemBase & {
+      chart: 'heatmap-frame'
+      fixture: GalleryHeatmapFrameFixture
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
+    })
 
 /**
  * Which engine draws a gallery item, and therefore what a spec may assert on:
@@ -735,6 +777,7 @@ export type GalleryItem =
 export function galleryEngine(item: GalleryItem): 'recharts' | 'echarts' | 'dom' {
   switch (item.chart) {
     case 'heatmap':
+    case 'heatmap-frame':
       return 'echarts'
     // Wave 2.5: the sparkline is a hand-drawn svg (no Recharts surface), and
     // the gauge bar and the day strip are plain elements.
@@ -782,6 +825,7 @@ export function galleryFramed(item: GalleryItem): boolean {
     case 'slowest-tests':
     case 'multi-series':
     case 'stacked-column':
+    case 'heatmap-frame':
       return true
     default:
       return false
@@ -844,6 +888,7 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
       return item.canvasHeight ? { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight } : GALLERY_FRAME_CANVAS
     case 'multi-series':
     case 'stacked-column':
+    case 'heatmap-frame':
       return { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight }
     // Wave 2.5: a KPI-sized piece in a box of its own size, not the 320 px
     // plot canvas (MEASURED, like the rest: the tick row, the legend and a
@@ -1858,6 +1903,54 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     // broken is 1 on suites 2, 7 and 12 (3); skipped ((2i) mod 3) is 0 on the
     // 6 suites i = 0, 3, ... 15 (10). 16 + 10 + 3 + 10 = 39.
     minMarks: 39,
+  },
+  // Wave 2.6 (VIZ-408): appended after every earlier item, for the reason above.
+  // K5, the heatmap frame the Trends catalogue draws: the default 14-day
+  // window, truncated to the top 7 suites + Other and drawn worst first.
+  // Box: MEASURED under Linux fonts, the 8-row frames are 432 px tall at 640
+  // wide (the 3-row one 412); 480 leaves two lines for a footer that wraps.
+  {
+    id: 'heatmap-frame',
+    title: 'HeatmapChartFrame - suite by day, worst first',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame',
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // 7 suites + Other x 14 days = 112 cells (2 of them null, hatched);
+    // canvas: checked by pixels, not DOM marks.
+    minMarks: 112,
+  },
+  {
+    id: 'heatmap-frame-90d',
+    title: 'HeatmapChartFrame - 8 suites x 90 days',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame-90d',
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // The largest window a page can ask for: 8 rows x 90 days = 720 cells (cap 5,400).
+    minMarks: 720,
+  },
+  {
+    id: 'heatmap-frame-hostile',
+    title: 'HeatmapChartFrame - hostile suite name',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame-hostile',
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // 3 suites x 7 days = 21 cells, one row named `HOSTILE_LABEL`.
+    minMarks: 21,
+  },
+  // B1's own-property label fix: a suite named `constructor` is a bar named `constructor`.
+  {
+    id: 'bar-ranked-prototype-names',
+    title: 'BarChart - suite names that are Object members',
+    chart: 'bars',
+    variant: 'ranked',
+    dimension: 'Suite',
+    data: GALLERY_PROTOTYPE_BARS,
+    empty: false,
+    // One bar per name.
+    minMarks: GALLERY_PROTOTYPE_NAMES.length,
   },
 ]
 

@@ -10,8 +10,9 @@
  * hint that is also SHOWN while the chart has keyboard focus. Arrow keys move
  * a highlighted cell through ECharts' own `highlight` / `showTip` actions (so
  * the tooltip is the same formatter output the mouse gets), and the cell's
- * tooltip text is announced in a polite live region — a response to the
- * reader's own key press. Escape clears the highlight and keeps focus on the
+ * tooltip text is announced through the page's one chart announcer — a
+ * response to the reader's own key press (a polite region of the chart's own
+ * only when no announcer is mounted). Escape clears the highlight and keeps focus on the
  * chart; Tab leaves. Animation is off under `prefers-reduced-motion`.
  *
  * No-data cells are hatched, never the lowest ramp colour; a status matrix
@@ -21,7 +22,7 @@ import { useCallback, useId, useMemo } from 'react'
 import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
 import { STATUS_ENCODING, useChartTokens } from './tokens'
 import { tooltipText } from './tooltip'
-import { useFramePlotHeight } from './framePlotHeight'
+import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
 import { usePrefersReducedMotion } from './motion'
 import { moveInMatrix, useChartKeyboard, type NavRequest } from './useChartKeyboard'
 import {
@@ -34,6 +35,7 @@ import {
 import { STALE_BUILD_ACTION, STALE_BUILD_MESSAGE } from './engines/lazyChartEngine'
 import { useEChart } from './engines/useEChart'
 import { CHART_DRAW_ERROR } from './ChartErrorBoundary'
+import { useChartAnnouncer } from './ChartAnnouncer'
 import { ChartLegend, patternFill, renderPatterns, statusPatternId, statusPatternSpecs, useChartPatternPrefix } from './patterns'
 
 interface Props {
@@ -46,6 +48,10 @@ interface Props {
   animate?: boolean
   /** Which end is the concern (gets the most salient colour). Default per metric: rate → 'low', count → 'high'. */
   salient?: HeatmapSalience
+  /** Row 0 drawn at the TOP (see `buildHeatmapOption`); the arrow keys follow what is drawn. */
+  rowsTopDown?: boolean
+  /** What the column axis prints (a day axis: "Sep 5"); the tooltip and the table keep `data.x_labels`. */
+  columnLabels?: readonly string[]
 }
 
 export const HEATMAP_KEYBOARD_HINT = 'Arrow keys move, Escape clears, Tab leaves'
@@ -55,7 +61,16 @@ const BUTTON = 'rounded border border-[var(--color-border-light)] px-3 py-1 text
 /** What the keyboard hint and a status legend under the plot keep back in full screen, px. */
 const HEATMAP_NOTES_RESERVE = 56
 
-export default function HeatmapChart({ data, description, width = '100%', height: requestedHeight = 320, animate = false, salient }: Props) {
+export default function HeatmapChart({
+  data,
+  description,
+  width = '100%',
+  height: requestedHeight = 320,
+  animate = false,
+  salient,
+  rowsTopDown = false,
+  columnLabels,
+}: Props) {
   // Full screen (VIZ-608): a numeric height grows to the frame's body; a CSS
   // height (a caller's '100%') already follows its container.
   const fitted = useFramePlotHeight(typeof requestedHeight === 'number' ? requestedHeight : 0, HEATMAP_NOTES_RESERVE)
@@ -67,9 +82,22 @@ export default function HeatmapChart({ data, description, width = '100%', height
   const prefix = useChartPatternPrefix()
   // A px width sizes each x label's column; '100%' falls back to a safe narrow one.
   const chartWidth = typeof width === 'number' ? width : undefined
+  // Full screen and presentation mode draw the canvas text larger (K5): the
+  // Recharts charts scale their whole SVG, a canvas sizes its text instead.
+  const textScale = usePresentationScale()
   const option = useMemo(
-    () => buildHeatmapOption({ data, tokens, description, animate: effectiveAnimate, salient, chartWidth }),
-    [data, tokens, description, effectiveAnimate, salient, chartWidth],
+    () => buildHeatmapOption({
+        data,
+        tokens,
+        description,
+        animate: effectiveAnimate,
+        salient,
+        chartWidth,
+        textScale,
+        rowsTopDown,
+        columnLabels,
+      }),
+    [data, tokens, description, effectiveAnimate, salient, chartWidth, textScale, rowsTopDown, columnLabels],
   )
   const { containerRef, instanceRef, status, retry } = useEChart('heatmap', option)
 
@@ -77,14 +105,31 @@ export default function HeatmapChart({ data, description, width = '100%', height
     (payload: { type: string; [key: string]: unknown }) => instanceRef.current?.dispatchAction?.(payload),
     [instanceRef],
   )
-  const move = useCallback((current: number | null, request: NavRequest) => moveInMatrix(data.cells, current, request), [data.cells])
+  // `moveInMatrix` reads `y` as growing UPWARD (ECharts' default). Drawn top-down,
+  // the rows are handed to it flipped, so ArrowUp still moves to the row above.
+  const navCells = useMemo(() => {
+    if (!rowsTopDown) return data.cells
+    const last = data.y_labels.length - 1
+    return data.cells.map((cell) => ({ x: cell.x, y: last - cell.y }))
+  }, [data, rowsTopDown])
+  const move = useCallback((current: number | null, request: NavRequest) => moveInMatrix(navCells, current, request), [navCells])
+  const describe = useCallback((index: number) => tooltipText(heatmapTooltipContent(data, data.cells[index])), [data])
+  const announcer = useChartAnnouncer()
   const onActivate = useCallback(
     (index: number) => {
       const target = heatmapTarget(data, index)
       dispatch({ type: 'highlight', ...target })
       dispatch({ type: 'showTip', ...target })
+      // The reader's OWN key press, so it is said at once, through the page's
+      // one announcer (which also speaks inside a full-screen frame) — as
+      // `useChartCursor` does. Spoken here, not on every change of the text:
+      // a data refresh under a highlighted cell is not the reader's action.
+      // The cell text alone: focus is on the chart, whose name was read on
+      // arrival, and a sentence-long description before every arrow press
+      // would bury the value.
+      announcer?.assertive(describe(index))
     },
-    [dispatch, data],
+    [dispatch, data, announcer, describe],
   )
   const onClear = useCallback(
     (index: number) => {
@@ -93,7 +138,6 @@ export default function HeatmapChart({ data, description, width = '100%', height
     },
     [dispatch, data],
   )
-  const describe = useCallback((index: number) => tooltipText(heatmapTooltipContent(data, data.cells[index])), [data])
   // Destructured: react-hooks/refs treats a whole object that holds a ref as a ref.
   const {
     containerRef: keyboardRef,
@@ -168,9 +212,15 @@ export default function HeatmapChart({ data, description, width = '100%', height
       >
         {HEATMAP_KEYBOARD_HINT}
       </p>
-      <div className="sr-only" aria-live="polite" data-chart-announcement="">
-        {announcement}
-      </div>
+      {/*
+        Only with no page announcer above the chart (an isolated render): the
+        one place left to say the cell, so the keyboard path never goes silent.
+      */}
+      {announcer === null ? (
+        <div className="sr-only" aria-live="polite" data-chart-announcement="">
+          {announcement}
+        </div>
+      ) : null}
     </div>
   )
   if (statuses.length === 0) return chart
