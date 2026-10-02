@@ -183,6 +183,16 @@ NAMED_RULES = {
     "node_cap",
     "edge_endpoints",
     "weight_range",
+    # C3, Wave 3 (matrix keys/counts/unit, tree stats, points)
+    "key_count",
+    "unique_key",
+    "counts_sum",
+    "rate_unit_range",
+    "empty_sample",
+    "share_range",
+    "recency_null_pair",
+    "unique_point_id",
+    "log_axis_positive",
     # C4
     "unique_instance_id",
     # C5
@@ -402,6 +412,19 @@ def test_the_readme_parser_reads_every_section():
         "unique_node_id",
         "integer_count",
         "non_negative",
+        # Wave 3
+        "key_count",
+        "unique_key",
+        "counts_sum",
+        "rate_unit_range",
+        "empty_sample",
+        "rate_range",
+        "share_range",
+        "utc_instant",
+        "recency_null_pair",
+        "unique_point_id",
+        "log_axis_positive",
+        "required_field",
     } <= rules["chart_series"]
     assert {"instance_cap", "unique_instance_id", "top_n_enum"} <= rules[
         "widget_config"
@@ -414,7 +437,26 @@ def test_the_readme_parser_reads_every_section():
         "status_vocab",
     }
     # Field names that sit in parentheses beside a rule id are not rule ids.
-    assert not {"n", "value", "value_type", "status", "null"} & rules["chart_series"]
+    assert not {
+        "n",
+        "value",
+        "value_type",
+        "status",
+        "null",
+        "counts",
+        "unit",
+        "percent",
+        "ratio",
+        "pass_rate",
+        "flaky_share",
+        "last_executed_at",
+        "seen",
+        "unknown",
+        "never",
+        "ms",
+        "count",
+        "rate",
+    } & rules["chart_series"]
 
 
 def test_every_readme_rule_has_an_invalid_fixture_in_its_own_folder():
@@ -481,6 +523,40 @@ def test_dimension_and_chart_type_sets_match_the_readme():
         vc.validate_contract(
             "widget_config", _widgets([_instance(chartType=chart_type)])
         )
+
+
+def test_class_is_a_drill_dimension_but_not_a_group_by_one():
+    """OD-10: ``class`` joined C5 for the coverage map's middle level. C4
+    ``groupBy`` feeds ``/analytics/chart-data``, which does not group by it, so a
+    stored widget asking for it would be accepted and could never render."""
+    assert vc.DIMENSIONS[-1] == "class"
+    assert list(vc.GROUP_BY_DIMENSIONS) == [d for d in vc.DIMENSIONS if d != "class"]
+    assert _accepts("drill_path", {"path": [{"dimension": "class", "value": "__none__"}]})
+    assert "instances.0.groupBy.0|literal_error|" in _only_error(
+        "widget_config", _widgets([_instance(groupBy=["class"])])
+    )
+    for dimension in vc.GROUP_BY_DIMENSIONS:
+        assert _accepts("widget_config", _widgets([_instance(groupBy=[dimension])]))
+
+
+def test_wave_3_closed_sets_are_the_readme_ones():
+    """Restated from the README rows (``unit?: "percent"|"ratio"``, the points
+    axis, ``recency``): no fixture exercises every member."""
+    text = (CONTRACTS / "README.md").read_text(encoding="utf-8")
+    assert vc.CHART_KINDS == ("series", "matrix", "tree", "graph", "points")
+    assert "`kind_enum`): `series`, `matrix`, `tree`, `graph`, `points`." in text
+    assert vc.RATE_UNITS == ("percent", "ratio")
+    assert '`unit?: "percent"\\|"ratio"`' in text
+    assert vc.AXIS_UNITS == ("ms", "percent", "ratio", "count")
+    assert vc.AXIS_SCALES == ("linear", "log")
+    assert 'unit: "ms"\\|"percent"\\|"ratio"\\|"count", scale: "linear"\\|"log"' in text
+    assert vc.RECENCY_STATES == ("seen", "unknown", "never")
+    assert 'recency: "seen"\\|"unknown"\\|"never"' in text
+    # The README order (passed, failed, broken, skipped, unknown), and the vocabulary.
+    assert list(vc.StatusCounts.model_fields) == _readme_list("drill_path", "status_vocab")
+    assert sorted(vc.StatusCounts.model_fields) == sorted(vc.STATUS_VOCAB)
+    assert vc.MAX_POINTS == 5000
+    assert "`point_cap` (≤ 5 000 points)" in text
 
 
 # -- payload builders ------------------------------------------------------------------------
@@ -557,6 +633,47 @@ def _graph(count: int = 2, weight: float = 0.5) -> dict:
     }
 
 
+def _counts(**over) -> dict:
+    return {status: 0 for status in vc.STATUS_VOCAB} | over
+
+
+def _stats(**over) -> dict:
+    return {
+        "test_count": 4,
+        "executions": 10,
+        "pass_rate": 90,
+        "flaky_count": 1,
+        "flaky_share": 0.25,
+        "last_executed_at": "2026-09-30T10:00:00Z",
+        "staleness_days": 1,
+        "recency": "seen",
+        **over,
+    }
+
+
+def _stats_tree(**over) -> dict:
+    return _tree([_node("root", None) | {"stats": _stats(**over)}])
+
+
+def _axis(unit: str = "count", scale: str = "linear", **over) -> dict:
+    return {"key": "k", "label": "K", "unit": unit, "scale": scale, **over}
+
+
+def _point(**over) -> dict:
+    return {"id": "p", "label": "p", "x": 1, "y": 1, "size": 1, "n": 1, **over}
+
+
+def _points(points: list | None = None, x: dict | None = None, y: dict | None = None, **over) -> dict:
+    return {
+        "kind": "points",
+        "x": x or _axis(),
+        "y": y or _axis(),
+        "size": {"key": "executions", "label": "Executions"},
+        "points": [_point()] if points is None else points,
+        **over,
+    }
+
+
 def _instance(**over) -> dict:
     return {"instanceId": "a", "templateId": "pass_rate_trend", **over}
 
@@ -618,6 +735,12 @@ CAPS = [
         ),
     ),
     ("graph nodes", "chart_series", 200, lambda n: _graph(count=n)),
+    (
+        "points",
+        "chart_series",
+        5000,
+        lambda n: _points([_point(id=f"p{i}") for i in range(n)]),
+    ),
     (
         "instances",
         "widget_config",
@@ -822,6 +945,226 @@ def test_a_matrix_value_matches_its_value_type():
     assert not _accepts("chart_series", _matrix("rate", [_cell(y=1)]))
 
 
+# -- Wave 3 additions (VIZ-205, 206, 207, 506) -----------------------------------------------
+
+
+def _unit_matrix(value, unit=None, **cell) -> dict:
+    payload = _matrix("rate", [_cell(value=value, **cell)])
+    return payload if unit is None else payload | {"unit": unit}
+
+
+@pytest.mark.parametrize(
+    "value, unit, accepted",
+    [
+        # Absent is percent (OD-7): the existing fixture and chart-data send 96.4.
+        (96.4, None, True),
+        (0, None, True),
+        (100, None, True),
+        (100.0001, None, False),
+        (-0.0001, None, False),
+        (96.4, "percent", True),
+        (101, "percent", False),
+        (0.964, "ratio", True),
+        (1, "ratio", True),
+        (0, "ratio", True),
+        (1.0001, "ratio", False),
+        (96.4, "ratio", False),  # the forgotten "/ 100"
+        (-0.5, "ratio", False),
+    ],
+)
+def test_a_rate_value_is_in_its_units_range(value, unit, accepted):
+    payload = _unit_matrix(value, unit)
+    if accepted:
+        assert _accepts("chart_series", payload)
+    else:
+        assert "Value error, rate_unit_range:" in _only_error("chart_series", payload)
+
+
+def test_the_unit_is_a_closed_set_ignored_outside_rate():
+    assert not _accepts("chart_series", _unit_matrix(50, "percentage"))
+    assert not _accepts("chart_series", _unit_matrix(50, "PERCENT"))
+    # Only a rate is measured in a unit: a count of 250 under "ratio" is a count.
+    assert _accepts("chart_series", _matrix("count", [_cell(value=250)]) | {"unit": "ratio"})
+    assert _accepts(
+        "chart_series", _matrix("status", [_cell(value="passed")]) | {"unit": "ratio"}
+    )
+
+
+def test_a_rate_over_an_empty_sample_is_null_never_zero():
+    for value in (0, 0.0, 50):
+        assert "Value error, empty_sample:" in _only_error(
+            "chart_series", _unit_matrix(value, n=0)
+        )
+    assert _accepts("chart_series", _unit_matrix(None, n=0))
+    # Nothing evaluated: skipped and unknown are outside the denominator.
+    skipped_only = _counts(skipped=3, unknown=1)
+    assert "Value error, empty_sample:" in _only_error(
+        "chart_series", _unit_matrix(0, n=4, counts=skipped_only)
+    )
+    assert _accepts("chart_series", _unit_matrix(None, n=4, counts=skipped_only))
+    # One evaluated execution is a measurement, and everything failing is a true 0.
+    assert _accepts("chart_series", _unit_matrix(0, n=4, counts=_counts(broken=1, skipped=3)))
+    # Count and status matrices: a zero count over nothing is still a count.
+    assert _accepts("chart_series", _matrix("count", [_cell(value=0, n=0)]))
+
+
+def test_matrix_keys_are_parallel_and_unique():
+    def keyed(**keys) -> dict:
+        return _matrix("rate", [_cell(value=50)]) | {"x_labels": ["a", "b"], **keys}
+
+    assert _accepts("chart_series", keyed(x_keys=["k1", "k2"], y_keys=["r"]))
+    assert _accepts("chart_series", keyed())
+    for keys in (["k1"], ["k1", "k2", "k3"], []):
+        assert "Value error, key_count: x_keys" in _only_error("chart_series", keyed(x_keys=keys))
+    assert "Value error, key_count: y_keys" in _only_error("chart_series", keyed(y_keys=[]))
+    assert "Value error, unique_key: x_keys[1]" in _only_error(
+        "chart_series", keyed(x_keys=["k", "k"])
+    )
+    # Keys are exact text: case and whitespace make different keys.
+    assert _accepts("chart_series", keyed(x_keys=["k", "K"]))
+    assert _accepts("chart_series", keyed(x_keys=["k", "k "]))
+    # Labels may repeat; that is what keys are for.
+    assert _accepts(
+        "chart_series", keyed(x_keys=["r1", "r2"]) | {"x_labels": ["1.0", "1.0"]}
+    )
+    assert not _accepts("chart_series", keyed(x_keys=["k1", 2]))
+
+
+def test_cell_counts_need_every_status_and_add_up_to_n():
+    assert _accepts("chart_series", _matrix("rate", [_cell(value=50, n=2, counts=_counts(passed=1, failed=1))]))
+    assert "Value error, counts_sum:" in _only_error(
+        "chart_series", _matrix("rate", [_cell(value=50, n=3, counts=_counts(passed=1, failed=1))])
+    )
+    partial = _counts(passed=1)
+    del partial["unknown"]
+    assert "cells.0.counts.unknown|missing|" in _only_error(
+        "chart_series", _matrix("count", [_cell(value=1, counts=partial)])
+    )
+    # Additive inside, too: a key this side does not know is tolerated.
+    assert _accepts(
+        "chart_series",
+        _matrix("count", [_cell(value=1, counts=_counts(passed=1) | {"quarantined": 9})]),
+    )
+
+
+@pytest.mark.parametrize(
+    "recency, last, staleness, accepted",
+    [
+        ("seen", "2026-09-30T10:00:00Z", 1, True),
+        ("seen", None, None, False),
+        ("seen", "2026-09-30T10:00:00Z", None, False),
+        ("seen", None, 3, False),
+        ("unknown", None, None, True),
+        ("unknown", "2026-09-30T10:00:00Z", 1, False),
+        ("unknown", None, 3, False),
+        ("never", None, None, True),
+        ("never", "2026-09-30T10:00:00Z", None, False),
+    ],
+)
+def test_recency_says_why_a_date_is_or_is_not_there(recency, last, staleness, accepted):
+    payload = _stats_tree(recency=recency, last_executed_at=last, staleness_days=staleness)
+    if accepted:
+        assert _accepts("chart_series", payload)
+    else:
+        assert "Value error, recency_null_pair:" in _only_error("chart_series", payload)
+
+
+def test_tree_stats_ranges_null_semantics_and_required_keys():
+    assert _accepts("chart_series", _stats_tree(pass_rate=None, flaky_share=None))
+    assert _accepts("chart_series", _stats_tree(pass_rate=0, flaky_share=0))
+    assert _accepts("chart_series", _stats_tree(pass_rate=100, flaky_share=1))
+    assert "Value error, rate_range:" in _only_error("chart_series", _stats_tree(pass_rate=100.5))
+    assert "Value error, rate_range:" in _only_error("chart_series", _stats_tree(pass_rate=-1))
+    assert "Value error, share_range:" in _only_error("chart_series", _stats_tree(flaky_share=25))
+    # Null, never zero: a rate over nothing, a share of nothing.
+    assert "Value error, empty_sample:" in _only_error(
+        "chart_series", _stats_tree(executions=0, pass_rate=0)
+    )
+    assert "Value error, empty_sample:" in _only_error(
+        "chart_series", _stats_tree(test_count=0, flaky_count=0, flaky_share=0)
+    )
+    assert _accepts("chart_series", _stats_tree(executions=0, pass_rate=None))
+    assert "Value error, utc_instant:" in _only_error(
+        "chart_series", _stats_tree(last_executed_at="2026-09-30")
+    )
+    assert not _accepts("chart_series", _stats_tree(recency="stale"))
+    assert not _accepts("chart_series", _stats_tree(recency=None))
+    for key in _stats():
+        broken = _stats()
+        del broken[key]
+        payload = _tree([_node("root", None) | {"stats": broken}])
+        assert f"nodes.0.stats.{key}|missing|" in _only_error("chart_series", payload)
+
+
+def test_points_axes_values_and_ids():
+    log_ms = _axis("ms", "log")
+    assert _accepts("chart_series", _points([_point(x=0.5)], x=log_ms))
+    assert "Value error, log_axis_positive: points[0].x" in _only_error(
+        "chart_series", _points([_point(x=0)], x=log_ms)
+    )
+    # The y axis and the medians obey their axis too.
+    assert "Value error, log_axis_positive: points[0].y" in _only_error(
+        "chart_series", _points([_point(y=0)], y=_axis("count", "log"))
+    )
+    assert "Value error, log_axis_positive: medians.x" in _only_error(
+        "chart_series", _points(x=log_ms, medians={"x": 0, "y": 1})
+    )
+    # A negative ms value is non_negative first, whatever the scale.
+    assert "Value error, non_negative: points[0].x" in _only_error(
+        "chart_series", _points([_point(x=-1)], x=log_ms)
+    )
+    assert "Value error, rate_unit_range: points[0].y" in _only_error(
+        "chart_series", _points([_point(y=1.5)], y=_axis("ratio"))
+    )
+    assert _accepts("chart_series", _points([_point(y=100)], y=_axis("percent")))
+    assert "Value error, unique_point_id: points[1]" in _only_error(
+        "chart_series", _points([_point(), _point()])
+    )
+    # Ids are exact text.
+    assert _accepts("chart_series", _points([_point(id="p"), _point(id="P")]))
+    assert "Value error, empty_sample:" in _only_error("chart_series", _points([_point(n=0)]))
+    assert not _accepts("chart_series", _points(x=_axis("seconds")))
+    assert not _accepts("chart_series", _points(x=_axis(scale="sqrt")))
+    assert "points.x.unit|missing|" in _only_error(
+        "chart_series", _points(x={"key": "k", "label": "K", "scale": "linear"})
+    )
+    assert not _accepts("chart_series", _points(x=_axis(unit=None)))
+    no_size = _points()
+    del no_size["size"]
+    assert "points.size|missing|" in _only_error("chart_series", no_size)
+    assert _accepts("chart_series", _points([]))
+    assert "Value error, kind_enum:" in _only_error("chart_series", {"kind": "scatter"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(_matrix("rate", []) | {"x_keys": None}, id="x_keys"),
+        pytest.param(_matrix("rate", []) | {"y_keys": None}, id="y_keys"),
+        pytest.param(_matrix("rate", []) | {"unit": None}, id="unit"),
+        pytest.param(_matrix("rate", [_cell(counts=None)]), id="counts"),
+        pytest.param(_tree([_node("root", None) | {"stats": None}]), id="stats"),
+        pytest.param(
+            {"kind": "graph", "nodes": [{"id": "g", "label": "g", "size": 1, "group": None}], "edges": []},
+            id="group",
+        ),
+        pytest.param(_points(medians=None), id="medians"),
+        pytest.param(_points(excluded=None), id="excluded"),
+    ],
+)
+def test_wave_3_optional_keys_are_absent_never_null(payload):
+    """Change rule 6: the README writes ``| null`` for none of these."""
+    line = _only_error("chart_series", payload)
+    assert "omitted" in line or "_type" in line, line
+
+
+def test_wave_3_keys_are_absent_on_a_round_trip_when_they_were_absent():
+    for payload in (_matrix("rate", [_cell(value=50)]), _tree([_node("r", None)]), _graph()):
+        assert _text(vc.dump_contract(vc.validate_contract("chart_series", payload))) == _text(
+            payload
+        )
+
+
 # The README's C2 rows, in order. Five of these are nullable; none is optional.
 ENVELOPE_KEYS = [
     "schema_version",
@@ -1024,6 +1367,30 @@ COUNT_FIELDS = [
         "chart_series",
         lambda v: _matrix("count", [_cell(value=v)]),
     ),
+    # Wave 3. ``n`` stays 1 beside a count so only the field under test breaks.
+    (
+        "matrix counts.passed",
+        "chart_series",
+        lambda v: _matrix("rate", [_cell(counts=_counts(passed=v))]),
+    ),
+    (
+        "matrix counts.unknown",
+        "chart_series",
+        lambda v: _matrix("rate", [_cell(counts=_counts(unknown=v))]),
+    ),
+    ("stats.test_count", "chart_series", lambda v: _stats_tree(test_count=v, flaky_share=None)),
+    ("stats.executions", "chart_series", lambda v: _stats_tree(executions=v, pass_rate=None)),
+    ("stats.flaky_count", "chart_series", lambda v: _stats_tree(flaky_count=v)),
+    ("stats.staleness_days", "chart_series", lambda v: _stats_tree(staleness_days=v)),
+    ("points size", "chart_series", lambda v: _points([_point(size=v)])),
+    ("points n", "chart_series", lambda v: _points([_point(n=v)])),
+    (
+        "points excluded",
+        "chart_series",
+        lambda v: _points(
+            excluded={"below_min_executions": v, "no_duration": 0, "no_evaluated": 0}
+        ),
+    ),
 ]
 
 
@@ -1120,6 +1487,32 @@ NUMBER_FIELDS = [
         "chart_series",
         lambda v: _graph(count=1, weight=v),
         lambda d: d["edges"][0]["weight"],
+    ),
+    # Wave 3: on linear count/percent axes, so 0 is a legal value.
+    ("point x", "chart_series", lambda v: _points([_point(x=v)]), lambda d: d["points"][0]["x"]),
+    (
+        "point y",
+        "chart_series",
+        lambda v: _points([_point(y=v)], y=_axis("percent")),
+        lambda d: d["points"][0]["y"],
+    ),
+    (
+        "median",
+        "chart_series",
+        lambda v: _points(medians={"x": v, "y": 1}),
+        lambda d: d["medians"]["x"],
+    ),
+    (
+        "stats.pass_rate",
+        "chart_series",
+        lambda v: _stats_tree(pass_rate=v),
+        lambda d: d["nodes"][0]["stats"]["pass_rate"],
+    ),
+    (
+        "stats.flaky_share",
+        "chart_series",
+        lambda v: _stats_tree(flaky_share=v),
+        lambda d: d["nodes"][0]["stats"]["flaky_share"],
     ),
 ]
 

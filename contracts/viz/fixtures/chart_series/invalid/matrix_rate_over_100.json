@@ -1,0 +1,22 @@
+{
+  "description": "No unit means percent: a rate of 104.2 is out of range.",
+  "violates": "rate_unit_range",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "Sep 17"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 104.2,
+        "n": 5
+      }
+    ]
+  }
+}

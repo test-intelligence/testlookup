@@ -1,0 +1,76 @@
+{
+  "description": "Coverage map level 1 with node stats: a suite seen yesterday, a suite whose last run record was lost (unknown, not 'never run') and a suite never executed. No executions means a null pass rate, never 0.",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "all",
+        "parent_id": null,
+        "label": "All suites",
+        "value": 20,
+        "measure": 96.4,
+        "stats": {
+          "test_count": 20,
+          "executions": 220,
+          "pass_rate": 96.4,
+          "flaky_count": 1,
+          "flaky_share": 0.05,
+          "last_executed_at": "2026-09-30T23:10:04Z",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      },
+      {
+        "id": "s:payments",
+        "parent_id": "all",
+        "label": "payments",
+        "value": 12,
+        "measure": 96.4,
+        "stats": {
+          "test_count": 12,
+          "executions": 220,
+          "pass_rate": 96.4,
+          "flaky_count": 1,
+          "flaky_share": 0.0833,
+          "last_executed_at": "2026-09-30T23:10:04Z",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      },
+      {
+        "id": "s:legacy",
+        "parent_id": "all",
+        "label": "legacy",
+        "value": 6,
+        "measure": null,
+        "stats": {
+          "test_count": 6,
+          "executions": 0,
+          "pass_rate": null,
+          "flaky_count": 0,
+          "flaky_share": 0,
+          "last_executed_at": null,
+          "staleness_days": null,
+          "recency": "unknown"
+        }
+      },
+      {
+        "id": "s:new",
+        "parent_id": "all",
+        "label": "new",
+        "value": 2,
+        "measure": null,
+        "stats": {
+          "test_count": 2,
+          "executions": 0,
+          "pass_rate": null,
+          "flaky_count": 0,
+          "flaky_share": 0,
+          "last_executed_at": null,
+          "staleness_days": null,
+          "recency": "never"
+        }
+      }
+    ]
+  }
+}

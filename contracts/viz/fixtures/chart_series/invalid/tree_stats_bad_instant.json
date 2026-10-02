@@ -1,0 +1,26 @@
+{
+  "description": "stats.last_executed_at follows the C2 utc_instant profile: no space separator.",
+  "violates": "utc_instant",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:payments",
+        "parent_id": null,
+        "label": "payments",
+        "value": 12,
+        "measure": 96.4,
+        "stats": {
+          "test_count": 12,
+          "executions": 220,
+          "pass_rate": 96.4,
+          "flaky_count": 1,
+          "flaky_share": 0.0833,
+          "last_executed_at": "2026-09-30 23:10:04Z",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      }
+    ]
+  }
+}

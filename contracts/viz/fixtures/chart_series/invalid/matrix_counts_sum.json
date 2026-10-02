@@ -1,0 +1,29 @@
+{
+  "description": "The five status counts add up to the cell's n.",
+  "violates": "counts_sum",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "Sep 17"
+    ],
+    "y_labels": [
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 0,
+        "value": 90,
+        "n": 10,
+        "counts": {
+          "passed": 8,
+          "failed": 1,
+          "broken": 0,
+          "skipped": 0,
+          "unknown": 0
+        }
+      }
+    ]
+  }
+}

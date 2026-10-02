@@ -1,0 +1,41 @@
+{
+  "description": "A point id is what a rows request sends back: it is unique.",
+  "violates": "unique_point_id",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 1840.5,
+        "y": 12.5,
+        "size": 40,
+        "n": 40
+      },
+      {
+        "id": "fp-1",
+        "label": "test_checkout (again)",
+        "x": 95,
+        "y": 100,
+        "size": 5,
+        "n": 5
+      }
+    ]
+  }
+}

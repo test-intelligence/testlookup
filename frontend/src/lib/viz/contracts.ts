@@ -55,8 +55,8 @@ export const LOCAL_RULE_IDS = [
 
 // ── Shared vocabularies ───────────────────────────────────────────────────
 
-/** C5 `dimension_enum`; also the vocabulary of C4 `groupBy`. */
-export const VIZ_DIMENSIONS = [
+/** The vocabulary of C4 `groupBy`: what a chart-data request can group by. */
+export const WIDGET_GROUP_BY_DIMENSIONS = [
   'day',
   'week',
   'project',
@@ -70,6 +70,14 @@ export const VIZ_DIMENSIONS = [
   'test',
   'error_signature',
 ] as const
+export type WidgetGroupByDimension = (typeof WIDGET_GROUP_BY_DIMENSIONS)[number]
+
+/**
+ * C5 `dimension_enum`. `class` (Wave 3, OD-10) is the coverage map's middle
+ * level and a DRILL level only: nothing groups chart-data by it, so it is not
+ * a C4 `groupBy` dimension.
+ */
+export const VIZ_DIMENSIONS = [...WIDGET_GROUP_BY_DIMENSIONS, 'class'] as const
 export type VizDimension = (typeof VIZ_DIMENSIONS)[number]
 
 /** `status_vocab` — the TestStatus vocabulary. */
@@ -106,6 +114,8 @@ export const VIZ_LIMITS = {
   matrixCells: 5400,
   treeNodes: 500,
   graphNodes: 200,
+  /** C3 `points` `point_cap` (VIZ-506): one mark per test. */
+  points: 5000,
   widgetInstances: 12,
   widgetTitleLength: 120,
   widgetGroupBy: 2,
@@ -236,34 +246,155 @@ export interface SeriesChart {
   x_labels?: Record<string, string>
 }
 
+/** C3 matrix `unit` (OD-7): what a `rate` value is measured in. Absent = `percent`. */
+export const VIZ_RATE_UNITS = ['percent', 'ratio'] as const
+export type VizRateUnit = (typeof VIZ_RATE_UNITS)[number]
+
+/** The closed range each rate unit allows (`rate_unit_range`). */
+export const VIZ_RATE_UNIT_RANGES: Readonly<Record<VizRateUnit, readonly [number, number]>> = {
+  percent: [0, 100],
+  ratio: [0, 1],
+}
+
+/** Wave 3: the status counts behind a matrix cell. All five are present, adding up to `n`. */
+export type StatusCounts = Record<VizStatus, number>
+
+export interface MatrixCell {
+  x: number
+  y: number
+  /** `null` = no data: an empty cell, never zero. */
+  value: number | VizStatus | null
+  n: number
+  /** Optional (Wave 3): the five status counts behind `n`, for the tooltip. */
+  counts?: StatusCounts
+}
+
 export interface MatrixChart {
   kind: 'matrix'
   value_type: 'rate' | 'count' | 'status'
+  /** Display text; may repeat. */
   x_labels: string[]
   y_labels: string[]
-  /** `value: null` = no data: an empty cell, never zero. */
-  cells: { x: number; y: number; value: number | VizStatus | null; n: number }[]
+  /**
+   * Optional (Wave 3): stable ids parallel to the labels — what a drill-down,
+   * a cross-filter or a rows request sends back. Unique, and exactly as long
+   * as their label list. Untrusted text: echoed, never parsed.
+   */
+  x_keys?: string[]
+  y_keys?: string[]
+  /** Optional (Wave 3): the unit of a `rate` value. ABSENT MEANS `percent` (0–100). */
+  unit?: VizRateUnit
+  cells: MatrixCell[]
+}
+
+/** C3 tree `stats.recency`: why a last-execution date is, or is not, there. */
+export const VIZ_RECENCY_STATES = ['seen', 'unknown', 'never'] as const
+export type VizRecency = (typeof VIZ_RECENCY_STATES)[number]
+
+/** Wave 3 (VIZ-206): a coverage-map node's figures. Every key is present. */
+export interface TreeNodeStats {
+  test_count: number
+  executions: number
+  /** Percent 0–100 over evaluated executions; `null` when nothing was evaluated. */
+  pass_rate: number | null
+  flaky_count: number
+  /** Ratio 0–1 (`flaky_count / test_count`); `null` when there are no tests. */
+  flaky_share: number | null
+  /** C2 `utc_instant`; `null` exactly when no execution is known. */
+  last_executed_at: string | null
+  /** Whole days since `last_executed_at`; `null` exactly when it is. */
+  staleness_days: number | null
+  /** `unknown` (the last-run record was lost) must never be shown as "never run". */
+  recency: VizRecency
+}
+
+export interface TreeNode {
+  id: string
+  parent_id: string | null
+  label: string
+  value: number
+  measure: number | null
+  /** Optional (Wave 3): the coverage map's per-node figures. */
+  stats?: TreeNodeStats
 }
 
 export interface TreeChart {
   kind: 'tree'
-  nodes: {
-    id: string
-    parent_id: string | null
-    label: string
-    value: number
-    measure: number | null
-  }[]
+  nodes: TreeNode[]
+}
+
+export interface GraphNode {
+  id: string
+  label: string
+  size: number
+  /** Optional (Wave 3): a failure group's dominant category. Untrusted free text. */
+  group?: string
 }
 
 export interface GraphChart {
   kind: 'graph'
-  nodes: { id: string; label: string; size: number }[]
+  nodes: GraphNode[]
   edges: { source: string; target: string; weight: number }[]
 }
 
+/** C3 `points` axis units and scales (Wave 3, VIZ-506). */
+export const VIZ_AXIS_UNITS = ['ms', 'percent', 'ratio', 'count'] as const
+export type VizAxisUnit = (typeof VIZ_AXIS_UNITS)[number]
+export const VIZ_AXIS_SCALES = ['linear', 'log'] as const
+export type VizAxisScale = (typeof VIZ_AXIS_SCALES)[number]
+
+export interface PointsAxis {
+  key: string
+  label: string
+  /** Required: a reader must never guess percent from ratio. */
+  unit: VizAxisUnit
+  scale: VizAxisScale
+}
+
+export interface PointsChartPoint {
+  /** Unique; what a rows request sends back. Untrusted text. */
+  id: string
+  label: string
+  /** Finite, never null: a test that cannot be placed is excluded and counted instead. */
+  x: number
+  y: number
+  /** A count (executions). */
+  size: number
+  /** The evaluated sample behind the point; at least 1. */
+  n: number
+}
+
+/**
+ * Wave 3 (VIZ-506, OD-6): one mark per entity on two numeric axes plus a size —
+ * the test scatter. Not part of `ChartSeries` yet (see `AnyChartSeries`).
+ */
+export interface PointsChart {
+  kind: 'points'
+  x: PointsAxis
+  y: PointsAxis
+  size: { key: string; label: string }
+  points: PointsChartPoint[]
+  /** Optional: absent when there is nothing to take a median of — never `{x: 0, y: 0}`. */
+  medians?: { x: number; y: number }
+  /** Optional: counts of TESTS left out, by reason. Absent = nothing is left out. */
+  excluded?: { below_min_executions: number; no_duration: number; no_evaluated: number }
+}
+
+/**
+ * The kinds every chart-kit reader handles today. `validateChartSeries`
+ * accepts exactly these, so a `points` payload cannot reach a reader whose
+ * `switch (series.kind)` has no branch for it.
+ */
 export type ChartSeries = SeriesChart | MatrixChart | TreeChart | GraphChart
 export const CHART_SERIES_KINDS = ['series', 'matrix', 'tree', 'graph'] as const
+
+/**
+ * All of C3, `points` included: what `validateAnyChartSeries` and
+ * `validateContract('chart_series')` accept. A reader moves to this type (and
+ * that guard) once it has a branch for every kind.
+ */
+export type AnyChartSeries = ChartSeries | PointsChart
+export const ANY_CHART_SERIES_KINDS = [...CHART_SERIES_KINDS, 'points'] as const
 
 // ── C4 · Widget config ────────────────────────────────────────────────────
 
@@ -274,7 +405,7 @@ export interface WidgetInstanceConfig {
   chartType?: WidgetChartType
   metricVariant?: string
   filters?: Record<string, unknown>
-  groupBy?: VizDimension[]
+  groupBy?: WidgetGroupByDimension[]
   topN?: WidgetTopN
   scale?: 'linear' | 'log'
   stack?: 'none' | 'absolute' | 'percent'
@@ -1087,13 +1218,110 @@ function checkSeriesChart(input: Dict, fail: Fail): void {
   }
 }
 
+/**
+ * Optional, never `null` (change rule 6): `undefined` is "absent" and passes;
+ * any other value is returned for the caller to check. `null` is reported here.
+ */
+function optionalPresent(obj: Dict, key: string, where: string, fail: Fail): boolean {
+  const v = obj[key]
+  if (v === undefined) return false
+  if (v === null) {
+    fail('invalid_type', `${where}${key} is omitted when it has no value, never sent as null`)
+    return false
+  }
+  return true
+}
+
+/** Matrix `x_keys` / `y_keys` (Wave 3): strings, parallel to the labels, unique. */
+function checkMatrixKeys(input: Dict, keysKey: string, labelsKey: string, fail: Fail): void {
+  if (!optionalPresent(input, keysKey, '', fail)) return
+  const keys = input[keysKey]
+  if (!Array.isArray(keys)) {
+    fail('invalid_type', `${keysKey} must be an array, got ${show(keys)}`)
+    return
+  }
+  keys.forEach((key, i) => {
+    if (typeof key !== 'string') {
+      fail('invalid_type', `${keysKey}[${i}] must be a string, got ${show(key)}`)
+    }
+  })
+  const labels = input[labelsKey]
+  if (Array.isArray(labels) && keys.length !== labels.length) {
+    fail('key_count', `${keysKey} has ${keys.length} keys for ${labels.length} labels`)
+  }
+  // Exact comparison: keys are untrusted text and are never folded.
+  for (const dup of duplicates(keys)) {
+    fail('unique_key', `${keysKey}[${dup.index}] ${show(dup.id)} repeats an earlier key`)
+  }
+}
+
+/**
+ * A cell's optional `counts` (Wave 3): all five statuses, each a count, adding
+ * up to `n`. Returns the evaluated total (passed + failed + broken) when every
+ * count is well-formed, else `null`.
+ */
+function checkCellCounts(cell: Dict, where: string, n: number | null, fail: Fail): number | null {
+  if (!optionalPresent(cell, 'counts', where, fail)) return null
+  const counts = cell.counts
+  if (!isDict(counts)) {
+    fail('invalid_type', `${where}counts must be an object, got ${show(counts)}`)
+    return null
+  }
+  const values: Partial<Record<VizStatus, number>> = {}
+  let wellFormed = true
+  for (const status of VIZ_STATUSES) {
+    const value = requireCount(counts, status, `${where}counts.`, fail)
+    if (value === null) wellFormed = false
+    else values[status] = value
+  }
+  if (!wellFormed) return null
+  const total = VIZ_STATUSES.reduce((sum, status) => sum + (values[status] ?? 0), 0)
+  if (n !== null && total !== n) {
+    fail('counts_sum', `${where}counts add up to ${total}, not n = ${n}`)
+  }
+  return (values.passed ?? 0) + (values.failed ?? 0) + (values.broken ?? 0)
+}
+
+/**
+ * A `rate` value against its unit (`rate_unit_range`), then null-never-zero
+ * (`empty_sample`): a rate over no evaluated execution is not 0%.
+ */
+function checkRateCell(
+  value: number,
+  where: string,
+  range: readonly [number, number] | null,
+  unitName: string,
+  sample: { n: number | null; evaluated: number | null },
+  fail: Fail,
+): void {
+  if (range && (value < range[0] || value > range[1])) {
+    fail('rate_unit_range', `${where}value ${value} is outside ${range[0]}–${range[1]}, the range of unit ${unitName}`)
+  } else if (sample.n === 0 || sample.evaluated === 0) {
+    fail('empty_sample', `${where}value: no evaluated execution, so the rate is null`)
+  }
+}
+
 function checkMatrixChart(input: Dict, fail: Fail): void {
   const valueTypes = ['rate', 'count', 'status'] as const
   requireEnum(input, 'value_type', valueTypes, 'invalid_value', '', fail)
   requireStringArray(input, 'x_labels', '', fail)
   requireStringArray(input, 'y_labels', '', fail)
+  checkMatrixKeys(input, 'x_keys', 'x_labels', fail)
+  checkMatrixKeys(input, 'y_keys', 'y_labels', fail)
   const width = Array.isArray(input.x_labels) ? input.x_labels.length : 0
   const height = Array.isArray(input.y_labels) ? input.y_labels.length : 0
+
+  // Absent means percent (OD-7). An unknown unit is reported once and its
+  // range is not guessed.
+  let range: readonly [number, number] | null = VIZ_RATE_UNIT_RANGES.percent
+  if (optionalPresent(input, 'unit', '', fail)) {
+    if (oneOf(VIZ_RATE_UNITS, input.unit)) range = VIZ_RATE_UNIT_RANGES[input.unit]
+    else {
+      fail('invalid_value', `unit ${show(input.unit)} is not one of ${VIZ_RATE_UNITS.join(', ')}`)
+      range = null
+    }
+  } else if (input.unit === null) range = null
+  const unitName = typeof input.unit === 'string' ? input.unit : 'percent'
 
   const cells = requireArray(input, 'cells', '', fail, {
     rule: 'cell_cap',
@@ -1114,6 +1342,8 @@ function checkMatrixChart(input: Dict, fail: Fail): void {
         fail('cell_index_range', `${where}${axis} ${index} does not address one of ${size} labels`)
       }
     }
+    const n = requireCount(cell, 'n', where, fail)
+    const evaluated = checkCellCounts(cell, where, n, fail)
     if (has(cell, 'value', where, fail) && cell.value !== null) {
       if (input.value_type === 'status') {
         if (!oneOf(VIZ_STATUSES, cell.value)) {
@@ -1124,12 +1354,88 @@ function checkMatrixChart(input: Dict, fail: Fail): void {
         }
       } else if (input.value_type === 'count') {
         count(cell.value, `${where}value`, fail)
-      } else {
+      } else if (!isNumber(cell.value)) {
         nullableNumber(cell.value, `${where}value`, fail)
+      } else if (input.value_type === 'rate') {
+        checkRateCell(cell.value, where, range, unitName, { n, evaluated }, fail)
       }
     }
-    requireCount(cell, 'n', where, fail)
   })
+}
+
+/** A required `number | null` in `[lo, hi]`; returns whether it is a non-null number. */
+function requireRangedOrNull(
+  obj: Dict,
+  key: string,
+  where: string,
+  [lo, hi]: readonly [number, number],
+  rule: string,
+  fail: Fail,
+): boolean {
+  if (!has(obj, key, where, fail) || obj[key] === null) return false
+  const v = obj[key]
+  if (!isNumber(v)) {
+    fail('invalid_type', `${where}${key} must be a number or null, got ${show(v)}`)
+    return false
+  }
+  if (v < lo || v > hi) {
+    fail(rule, `${where}${key} ${v} is not within ${lo}–${hi}`)
+    return false
+  }
+  return true
+}
+
+/**
+ * A tree node's optional `stats` (Wave 3, VIZ-206). Every key is required;
+ * `null` is "not measured" or "not known", and `recency` says which.
+ */
+function checkTreeStats(node: Dict, where: string, fail: Fail): void {
+  if (!optionalPresent(node, 'stats', where, fail)) return
+  const stats = node.stats
+  if (!isDict(stats)) {
+    fail('invalid_type', `${where}stats must be an object, got ${show(stats)}`)
+    return
+  }
+  const at = `${where}stats.`
+  // The cross-key rules below read only well-formed keys, as the backend's
+  // model does: a missing or malformed key is reported once, as itself.
+  let malformed = false
+  const fieldFail: Fail = (rule, message) => {
+    malformed = true
+    fail(rule, message)
+  }
+  const tests = requireCount(stats, 'test_count', at, fieldFail)
+  const executions = requireCount(stats, 'executions', at, fieldFail)
+  requireCount(stats, 'flaky_count', at, fieldFail)
+  const rated = requireRangedOrNull(stats, 'pass_rate', at, [0, 100], 'rate_range', fieldFail)
+  const shared = requireRangedOrNull(stats, 'flaky_share', at, [0, 1], 'share_range', fieldFail)
+  const last = stats.last_executed_at
+  if (has(stats, 'last_executed_at', at, fieldFail) && last !== null && !isUtcInstant(last)) {
+    fieldFail('utc_instant', `${at}last_executed_at ${show(last)} is not the C2 utc_instant profile`)
+  }
+  const staleness = stats.staleness_days
+  if (has(stats, 'staleness_days', at, fieldFail) && staleness !== null) {
+    count(staleness, `${at}staleness_days`, fieldFail)
+  }
+  if (has(stats, 'recency', at, fieldFail) && !oneOf(VIZ_RECENCY_STATES, stats.recency)) {
+    fieldFail('invalid_value', `${at}recency ${show(stats.recency)} is not one of ${VIZ_RECENCY_STATES.join(', ')}`)
+  }
+  if (malformed) return
+  // Null, never zero: no executions is no pass rate, no tests no share.
+  if (rated && executions === 0) fail('empty_sample', `${at}pass_rate: no executions, so it is null`)
+  if (shared && tests === 0) fail('empty_sample', `${at}flaky_share: no tests, so it is null`)
+  // A run deletion clears the canonical last-run link: "we do not know"
+  // (unknown) must not read as "it never ran" (never), and neither may carry
+  // a date that says otherwise.
+  const dated = last !== null
+  const staled = staleness !== null
+  const paired = stats.recency === 'seen' ? dated && staled : !dated && !staled
+  if (!paired) {
+    fail(
+      'recency_null_pair',
+      `${at}recency ${stats.recency}: seen carries last_executed_at and staleness_days; unknown and never carry neither`,
+    )
+  }
 }
 
 function checkTreeChart(input: Dict, fail: Fail): void {
@@ -1164,6 +1470,7 @@ function checkTreeChart(input: Dict, fail: Fail): void {
       }
     }
     if (has(node, 'measure', where, fail)) nullableNumber(node.measure, `${where}measure`, fail)
+    checkTreeStats(node, where, fail)
 
     if (typeof node.id !== 'string') return
     if (parentOf.has(node.id)) {
@@ -1226,6 +1533,9 @@ function checkGraphChart(input: Dict, fail: Fail): void {
         fail('non_negative', `${where}size ${node.size} < 0`)
       }
     }
+    if (optionalPresent(node, 'group', where, fail) && typeof node.group !== 'string') {
+      fail('invalid_type', `${where}group must be a string, got ${show(node.group)}`)
+    }
     if (typeof node.id !== 'string') return
     if (ids.has(node.id)) fail('unique_node_id', `${where}id ${show(node.id)} is a duplicate`)
     ids.add(node.id)
@@ -1255,12 +1565,116 @@ function checkGraphChart(input: Dict, fail: Fail): void {
   })
 }
 
-export const validateChartSeries = guard<ChartSeries>((input, fail) => {
+/** A `points` axis; returns it when its unit and scale are both known. */
+function checkPointsAxis(input: Dict, key: 'x' | 'y', fail: Fail): PointsAxis | null {
+  if (!has(input, key, '', fail)) return null
+  const axis = input[key]
+  if (!isDict(axis)) {
+    fail('invalid_type', `${key} must be an object, got ${show(axis)}`)
+    return null
+  }
+  const where = `${key}.`
+  requireString(axis, 'key', where, fail)
+  requireString(axis, 'label', where, fail)
+  requireEnum(axis, 'unit', VIZ_AXIS_UNITS, 'invalid_value', where, fail)
+  requireEnum(axis, 'scale', VIZ_AXIS_SCALES, 'invalid_value', where, fail)
+  return oneOf(VIZ_AXIS_UNITS, axis.unit) && oneOf(VIZ_AXIS_SCALES, axis.scale)
+    ? (axis as unknown as PointsAxis)
+    : null
+}
+
+/**
+ * One value against its axis: the unit's range first, then the scale. A
+ * negative duration is `non_negative` whatever the scale; 0 on a log axis —
+ * the "no duration plotted at zero" bug — is `log_axis_positive`.
+ */
+function checkAxisValue(axis: PointsAxis | null, value: number, label: string, fail: Fail): void {
+  if (!axis) return
+  if (axis.unit === 'percent' || axis.unit === 'ratio') {
+    const [lo, hi] = VIZ_RATE_UNIT_RANGES[axis.unit]
+    if (value < lo || value > hi) {
+      fail('rate_unit_range', `${label} ${value} is outside ${lo}–${hi}, the range of unit ${axis.unit}`)
+      return
+    }
+  } else if (value < 0) {
+    fail('non_negative', `${label} ${value} is below 0 on a ${axis.unit} axis`)
+    return
+  }
+  if (axis.scale === 'log' && value <= 0) {
+    fail('log_axis_positive', `${label} ${value} is not above 0 on a log axis`)
+  }
+}
+
+/** A required finite number, then checked against its axis. */
+function requireAxisNumber(obj: Dict, key: 'x' | 'y', where: string, axis: PointsAxis | null, fail: Fail): void {
+  if (!has(obj, key, where, fail)) return
+  const v = obj[key]
+  if (!isNumber(v)) fail('invalid_type', `${where}${key} must be a number, got ${show(v)}`)
+  else checkAxisValue(axis, v, `${where}${key}`, fail)
+}
+
+function checkPointsChart(input: Dict, fail: Fail): void {
+  const xAxis = checkPointsAxis(input, 'x', fail)
+  const yAxis = checkPointsAxis(input, 'y', fail)
+  if (has(input, 'size', '', fail)) {
+    if (!isDict(input.size)) fail('invalid_type', `size must be an object, got ${show(input.size)}`)
+    else {
+      requireString(input.size, 'key', 'size.', fail)
+      requireString(input.size, 'label', 'size.', fail)
+    }
+  }
+  const points = requireArray(input, 'points', '', fail, {
+    rule: 'point_cap',
+    max: VIZ_LIMITS.points,
+    noun: 'points',
+  })
+  points?.forEach((point, i) => {
+    const where = `points[${i}].`
+    if (!isDict(point)) {
+      fail('invalid_type', `points[${i}] must be an object, got ${show(point)}`)
+      return
+    }
+    requireString(point, 'id', where, fail)
+    requireString(point, 'label', where, fail)
+    requireAxisNumber(point, 'x', where, xAxis, fail)
+    requireAxisNumber(point, 'y', where, yAxis, fail)
+    requireCount(point, 'size', where, fail)
+    if (requireCount(point, 'n', where, fail) === 0) {
+      fail('empty_sample', `${where}n is 0: leave the point out and count it in excluded`)
+    }
+  })
+  // Exact comparison: ids are untrusted text and are never folded.
+  const ids = (points ?? []).map((point) => (isDict(point) ? point.id : undefined))
+  for (const dup of duplicates(ids)) {
+    fail('unique_point_id', `points[${dup.index}].id ${show(dup.id)} repeats an earlier id`)
+  }
+  if (optionalPresent(input, 'medians', '', fail)) {
+    const medians = input.medians
+    if (!isDict(medians)) fail('invalid_type', `medians must be an object, got ${show(medians)}`)
+    else {
+      requireAxisNumber(medians, 'x', 'medians.', xAxis, fail)
+      requireAxisNumber(medians, 'y', 'medians.', yAxis, fail)
+    }
+  }
+  if (optionalPresent(input, 'excluded', '', fail)) {
+    const excluded = input.excluded
+    if (!isDict(excluded)) fail('invalid_type', `excluded must be an object, got ${show(excluded)}`)
+    else {
+      for (const key of ['below_min_executions', 'no_duration', 'no_evaluated']) {
+        requireCount(excluded, key, 'excluded.', fail)
+      }
+    }
+  }
+}
+
+/** Dispatch on `kind` over the kinds a guard admits. */
+function checkChart(input: unknown, fail: Fail, kinds: readonly string[]): void {
   if (!isDict(input)) {
     fail('invalid_type', `chart series must be an object, got ${show(input)}`)
     return
   }
-  switch (input.kind) {
+  const kind = kinds.includes(input.kind as string) ? input.kind : undefined
+  switch (kind) {
     case 'series':
       return checkSeriesChart(input, fail)
     case 'matrix':
@@ -1269,10 +1683,26 @@ export const validateChartSeries = guard<ChartSeries>((input, fail) => {
       return checkTreeChart(input, fail)
     case 'graph':
       return checkGraphChart(input, fail)
+    case 'points':
+      return checkPointsChart(input, fail)
     default:
-      fail('kind_enum', `kind ${show(input.kind)} is not one of ${CHART_SERIES_KINDS.join(', ')}`)
+      fail('kind_enum', `kind ${show(input.kind)} is not one of ${kinds.join(', ')}`)
   }
-})
+}
+
+/**
+ * The four kinds every chart-kit reader handles today (`ChartSeries`).
+ * `points` is refused here as `kind_enum` — exactly as before Wave 3 — so a
+ * reader typed on `ChartSeries` can never be handed one.
+ */
+export const validateChartSeries = guard<ChartSeries>((input, fail) =>
+  checkChart(input, fail, CHART_SERIES_KINDS),
+)
+
+/** All of C3, `points` included (`AnyChartSeries`). The contract's own guard. */
+export const validateAnyChartSeries = guard<AnyChartSeries>((input, fail) =>
+  checkChart(input, fail, ANY_CHART_SERIES_KINDS),
+)
 
 // ── C4 · Widget config ────────────────────────────────────────────────────
 
@@ -1316,7 +1746,8 @@ function checkWidgetInstance(instance: unknown, i: number, fail: Fail): void {
       fail('group_by_cap', `${where}groupBy has ${groupBy.length} items > ${VIZ_LIMITS.widgetGroupBy}`)
     } else {
       groupBy.forEach((dimension, j) => {
-        if (!oneOf(VIZ_DIMENSIONS, dimension)) {
+        // Not `class`: a drill level only, which no chart-data request groups by.
+        if (!oneOf(WIDGET_GROUP_BY_DIMENSIONS, dimension)) {
           fail('dimension_enum', `${where}groupBy[${j}] ${show(dimension)} is not a dimension`)
         }
       })
@@ -1539,7 +1970,7 @@ export const validateReportMetrics = guard<ReportMetrics>((input, fail) => {
 const VALIDATORS = {
   scope: validateScope,
   envelope: validateEnvelopeMeta,
-  chart_series: validateChartSeries,
+  chart_series: validateAnyChartSeries,
   widget_config: validateWidgetConfig,
   drill_path: validateDrillPath,
   report_metrics: validateReportMetrics,
@@ -1552,7 +1983,7 @@ export const CONTRACT_KINDS = Object.keys(VALIDATORS) as ContractKind[]
 export interface ContractTypes {
   scope: Scope
   envelope: EnvelopeMeta
-  chart_series: ChartSeries
+  chart_series: AnyChartSeries
   widget_config: WidgetConfig
   drill_path: DrillPath
   report_metrics: ReportMetrics

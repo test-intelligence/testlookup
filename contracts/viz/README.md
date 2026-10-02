@@ -35,7 +35,9 @@ check: every rule id listed here must have at least one `invalid/` fixture.
    2⁵³ − 1 (`safe_integer`), so JavaScript reads it exactly. "Count" means every field typed
    `int` below: `n`, `totals.*`, `includes_in_progress`, `truncated_total`, `schema_version`,
    `version`, the envelope's `scope.window.days`, matrix `x`/`y`, matrix `value` when
-   `value_type` is `count`, and every C6 period count (`runs` … `duration_runs`, `window.days`).
+   `value_type` is `count`, every C6 period count (`runs` … `duration_runs`, `window.days`),
+   and the Wave 3 additions: matrix `counts.*`, tree `stats.test_count`, `stats.executions`,
+   `stats.flaky_count`, `stats.staleness_days`, points `size`, `n` and `excluded.*`.
    Two refinements keep the ids unambiguous:
    - The **C1 scope** `window.days` is not covered here: every bad value there (fraction, 0,
      366, 2⁵³) reports `window_days_range`.
@@ -88,6 +90,12 @@ What a report is filtered by. Built by the frontend, parsed by the backend.
 | | | `window_order` | `from` ≤ `to`, both `YYYY-MM-DD` real calendar dates (years 0001–9999), and `to − from` ≤ 366 days (a difference, so 08-20 → 09-19 is 30). |
 
 Semantics: **OR within a dimension, AND across dimensions.**
+
+**When `project_id` is `null` is refused.** Two error codes say "All Projects is not supported", and a
+client handles both: a route that always needs one project (coverage map, test scatter, and every route
+whose scope policy is `project_required`) answers 422 `missing_parameter` with `param: "project_id"`; the
+heatmap takes All Projects for its suite kinds, and its one-project kinds (`kind=test_run`,
+`kind=suite_release`) answer 422 `project_required` with `param: "project_id"`. Neither echoes a value.
 
 Wire mapping (query string): `project_id` · `release_id` (repeated) · `suite_name` (repeated) ·
 `days` or `from`/`to`. An empty list is sent as **no parameter**. Exactly one value is sent as a
@@ -151,15 +159,21 @@ a partially-landed series (some runs with rows, some without) is judged on the r
 ## C3 · ChartSeries — `fixtures/chart_series`
 
 The single normalised model the renderers, the table view, CSV export and keyboard
-navigation all read. Discriminated by `kind` (`kind_enum`): `series`, `matrix`, `tree`, `graph`.
+navigation all read. Discriminated by `kind` (`kind_enum`): `series`, `matrix`, `tree`, `graph`, `points`.
 
 | Kind | Shape | Rule ids |
 |---|---|---|
-| any | `{kind, …}` | `kind_enum` (`kind` is one of the four below) |
+| any | `{kind, …}` | `kind_enum` (`kind` is one of the five below) |
 | `series` | `{dimensions: string[], x_type: "time"\|"category", series: [{key, label, points: [{x: string, y: number\|null, n: int, measured?: bool, reason?: string\|null}]}], x_labels?: {string: string}}` | `series_cap` (≤ 8 series), `unique_series_key`, `point_cap` (≤ 366 points per series), `non_negative` (`n`), `measured_reason` (a point saying it was not measured carries a non-whitespace reason) |
 | `matrix` | `{value_type: "rate"\|"count"\|"status", x_labels, y_labels, cells: [{x: int, y: int, value, n: int}]}` | `cell_index_range`, `cell_cap` (≤ 5 400 cells), `status_vocab` (when `value_type` is `status`, `value` ∈ `passed, failed, broken, skipped, unknown` or `null`), `non_negative` and `integer_count` (when `value_type` is `count`, `value` is an integer ≥ 0 or `null`) |
 | `tree` | `{nodes: [{id, parent_id\|null, label, value: number ≥ 0, measure: number\|null}]}` | `tree_parent_exists`, `tree_acyclic` (no cycles and no self-parent; a **non-empty** tree has ≥ 1 root; an empty `nodes` list is valid and means no data), `unique_node_id`, `node_cap` (≤ 500 nodes) |
 | `graph` | `{nodes: [{id, label, size ≥ 0}], edges: [{source, target, weight}]}` | `edge_endpoints`, `weight_range` (0–1), `unique_node_id`, `node_cap` (≤ 200 nodes) |
+| `matrix` keys (Wave 3) | `x_keys?: string[]`, `y_keys?: string[]` | `key_count` (each list is exactly as long as its label list), `unique_key` (no key repeats inside one list) |
+| `matrix` cell counts (Wave 3) | `cells[].counts?: {passed, failed, broken, skipped, unknown}`, every key required, each a count | `counts_sum` (the five add up to the cell's sample size `n`), `required_field` (a status missing from `counts`) |
+| `matrix` unit (Wave 3) | `unit?: "percent"\|"ratio"` | `rate_unit_range` (when `value_type` is `rate`: 0–100 for `percent` and when `unit` is absent, 0–1 for `ratio`), `empty_sample` (a `rate` cell over nothing is null: `n` is 0, or `counts` show nothing evaluated) |
+| `tree` node stats (Wave 3) | `nodes[].stats?: {test_count: int, executions: int, pass_rate: number 0–100\|null, flaky_count: int, flaky_share: number 0–1\|null, last_executed_at: instant\|null, staleness_days: int\|null, recency: "seen"\|"unknown"\|"never"}`, every key required | `rate_range` (`pass_rate` is 0–100), `share_range` (`flaky_share` is 0–1), `utc_instant` (`last_executed_at`, the C2 profile), `recency_null_pair` (`seen` carries a date and a staleness; `unknown` and `never` carry neither), `empty_sample` (no executions means a null pass rate; no tests means a null flaky share) |
+| `graph` node group (Wave 3) | `nodes[].group?: string` | — |
+| `points` (Wave 3) | `{kind, x: axis, y: axis, size: {key, label}, points: [{id, label, x: number, y: number, size: int, n: int}], medians?: {x: number, y: number}, excluded?: {below_min_executions: int, no_duration: int, no_evaluated: int}}`; an axis is `{key, label, unit: "ms"\|"percent"\|"ratio"\|"count", scale: "linear"\|"log"}`, every axis key required | `point_cap` (≤ 5 000 points), `unique_point_id`, `log_axis_positive` (every value on a log axis is above 0, medians included), `rate_unit_range` (a `percent` axis holds 0–100, a `ratio` axis 0–1), `non_negative` (an `ms` or `count` axis holds no value below 0), `empty_sample` (a point stands on at least one evaluated sample), `required_field` (an axis without its unit) |
 
 `y: null` and `value: null` mean **no data** and are drawn as a gap or an empty cell, never as zero.
 Numbers are finite: `NaN` and `±Infinity` are rejected wherever a number is allowed.
@@ -171,6 +185,70 @@ Two optional, additive keys on `series` (VIZ-203). A point may carry **measured*
 is a boolean, never null. A chart may carry **x_labels**, display names for `x` values that
 are ids (a project or release bucket) — the `x` key stays the id, because that is what a
 drill-down (C5) sends back.
+
+### Wave 3 additions (VIZ-205, 206, 207, 506)
+
+All optional and additive: every payload written before them is unchanged and still valid,
+and like every optional key they may be absent but never `null` (change rule 6). The one
+exception is the `rate` range below, which an absent `unit` now also obeys.
+
+**Matrix `x_keys` / `y_keys`.** Stable ids parallel to `x_labels` / `y_labels`: a UTC day
+`YYYY-MM-DD`, a suite key, a release id (or `unattributed`), an environment, a test
+fingerprint, a run id. The labels stay display text and may repeat (two releases with one
+name); the keys are what a drill-down, a cross-filter or a rows request sends back, so they
+are unique within their list and exactly as long as the label list. They are untrusted text
+like the labels: never parsed, only echoed. Absent means the labels are the only handle.
+
+**Matrix cell `counts`.** The status counts behind the cell — `passed`, `failed`, `broken`,
+`skipped`, `unknown`, all five present, each a count — adding up to the cell's `n` (its
+executions). They are what a tooltip states ("220 executions, 3 failed"); a cell with no
+executions sends all five as `0`, which is a true zero, while its `value` stays `null`.
+
+**Matrix `unit`.** What a `rate` value is measured in: `"percent"` (0–100, percentage
+points) or `"ratio"` (0–1). **Absent means `percent`**, which is what `/analytics/chart-data`
+and `/analytics/heatmap` send, so one reader divides by 100 once. A value outside its unit's
+range is rejected (`rate_unit_range`); the key is ignored for `count` and `status` matrices.
+A `rate` cell over nothing is `null`, never `0` (`empty_sample`): `n` is `0`, or `counts`
+show nothing evaluated (passed + failed + broken = 0: skipped and unknown are outside a pass
+rate's denominator). A cell with `n > 0` and only skipped results is that second case: it is
+"not measured", not 0%.
+
+**Tree node `stats`.** Per-node figures for the coverage map. `value` stays the rectangle
+size (`test_count`) and `measure` stays the pass rate; `stats` carries the rest, every key
+present (a list rather than a table: tables in this section are rule tables):
+
+- `test_count` — tests (a count). Never `null`.
+- `executions` — executions in the window (a count). Never `null`; `0` is a real "nothing ran".
+- `pass_rate` — percent 0–100 over the evaluated executions. `null` when nothing was
+  evaluated, and always `null` when `executions` is `0`.
+- `flaky_count` — tests (a count). Never `null`.
+- `flaky_share` — ratio 0–1, `flaky_count / test_count`. `null` when there is nothing to
+  divide by, and always `null` when `test_count` is `0`.
+- `last_executed_at` — a UTC instant (the C2 `utc_instant` profile). `null` when no
+  execution is known.
+- `staleness_days` — whole days since `last_executed_at` (a count). `null` exactly when
+  `last_executed_at` is.
+- `recency` — `seen`, `unknown` or `never`. Never `null`.
+
+`recency` says why a date is or is not there (`recency_null_pair`): `seen` carries both
+`last_executed_at` and `staleness_days`; `unknown` (the record of the last run was lost — a
+deleted run's id was cleared) and `never` (no execution was ever recorded) carry neither. A
+reader must not show `unknown` as "never run".
+
+**Graph node `group`.** Free text, untrusted: the dominant failure category of a failure-group
+node, for its colour. Absent means no category.
+
+**`points`.** One mark per entity (a test) on two numeric axes plus a size — the scatter.
+Each axis names its `key` and display `label`, its `unit` (`ms`, `percent` 0–100, `ratio`
+0–1, `count`) and its `scale` (`linear` or `log`). Point `x` and `y` are finite numbers,
+never `null`: a test that cannot be placed is not drawn at zero, it is left out and counted
+in `excluded` (`below_min_executions`, `no_duration`, `no_evaluated` — counts of TESTS). On
+a `log` axis every value is above 0 (`log_axis_positive`); a value at 0 is the "no duration
+plotted at zero" bug. `size` is a count (executions); `n` is the evaluated sample behind the
+point and is at least 1 (`empty_sample`). `id` is unique (`unique_point_id`) and is what a
+rows request sends back; `label` is display text. At most 5 000 points (`point_cap`).
+`medians` (unweighted, over the returned points) is absent when there is nothing to take a
+median of — never `{x: 0, y: 0}`. `excluded` absent means the producer excludes nothing.
 
 ## C4 · Widget config — `fixtures/widget_config`
 
@@ -187,7 +265,7 @@ The object stored in `saved_views.filters` by the analytics pages. The `page` / 
 | `.chartType` | `chart_type_enum` | `line, bar, area, pie, gauge, metric, table, stacked_bar, donut` |
 | `.metricVariant` | | string |
 | `.filters` | | object |
-| `.groupBy` | `group_by_cap` | ≤ 2 items from the dimension enum (C5) |
+| `.groupBy` | `group_by_cap` | ≤ 2 items from the dimension enum (C5) except `class`, which only a coverage-map drill path uses (no chart-data request groups by it) |
 | `.topN` | `top_n_enum` | 5, 10, 25 or 50 |
 | `.scale` | | `linear` \| `log` |
 | `.stack` | | `none` \| `absolute` \| `percent` |
@@ -208,9 +286,51 @@ describes what is **written** from now on, and is not applied to legacy rows on 
 |---|---|
 | `depth_cap` | At most 4 levels. |
 | `unique_dimension` | A dimension appears once. |
-| `dimension_enum` | `day, week, project, release, suite, status, failure_category, branch, environment, ingestion_source, test, error_signature` |
+| `dimension_enum` | `day, week, project, release, suite, status, failure_category, branch, environment, ingestion_source, test, error_signature, class` |
 | `value_length` | 1–2 000 characters. |
 | `status_vocab` | When `dimension` is `status`, `value` ∈ `passed, failed, broken, skipped, unknown`. |
+
+`class` (Wave 3, VIZ-502) is the coverage map's middle level, "Class / file": its `value` is
+the class KEY the coverage map sent as the node id's class part (`__none__` for tests with no
+class), echoed and never parsed. It is a drill level only: it is not a C4 `groupBy`
+dimension and `/analytics/chart-data` does not group by it.
+
+## C5 · URL encoding — the `drill` and `rows` keys
+
+How a drill path and an open rows panel live in the address bar (VIZ-602, 603). There is no
+fixture folder for it: a parsed URL IS a C5 drill path and is judged by the rules above.
+
+| Key | Form | Notes |
+|---|---|---|
+| `drill` | repeatable `drill=<dimension>~<value>`, in path order: `?drill=suite~payments&drill=status~failed` | The path, top level first. Split on the **first** `~` only: `drill=test~a~b` is dimension `test`, value `a~b`. `URLSearchParams` does all percent-encoding and decoding; nothing else escapes or unescapes a value. |
+| `rows` | repeatable `rows=<dimension>~<value>` | The selectors of the open rows panel (a heatmap cell: `rows=suite~payments&rows=day~2026-09-12`). Absent means the panel is closed. Same split, same rules as a drill path. |
+| `drill.<id>` | reserved | One path per chart, for Wave 4. This wave has one drill host per page (Coverage: the treemap; Failure analysis: the ladder), so the plain key is enough. |
+
+Reading:
+
+- A bad URL never throws. The path is read level by level and truncated at the first level
+  that breaks a C5 rule (an entry with no `~` is such a level); the page says so through its
+  scope notice, as filter keys do (VIZ-306).
+- When the encoded `drill` and `rows` parameters together are longer than 6 000 characters,
+  the deepest drill level is dropped, with a notice, until they fit.
+
+Writing:
+
+- Each drill step PUSHES a history entry, so Back and Forward walk the levels; a filter change
+  keeps REPLACING the entry, as it does today.
+- `drill` and `rows` are reserved URL keys (the frontend's `RESERVED_URL_KEYS`): scope writers
+  leave every other key, its order and its repetition alone, and no page-local key (`suite`,
+  `days`, `name`, `tab`, …) is read or written by the drill.
+
+What each dimension asks of the next request:
+
+| Dimension | Next request |
+|---|---|
+| `suite`, `release` | extends the scope (`suite_name`, `release_id`) |
+| `status` | selects the metric (`failed`, `broken`, …) |
+| `class` | the coverage map's `class_key` |
+| `test`, `error_signature` | ends the ladder: the rows panel opens with that selector |
+| any other | becomes a rows selector, `bucket_<dimension>` |
 
 ## C6 · Report metrics — `fixtures/report_metrics`
 

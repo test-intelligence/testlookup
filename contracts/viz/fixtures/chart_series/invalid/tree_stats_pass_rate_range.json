@@ -1,0 +1,26 @@
+{
+  "description": "stats.pass_rate is a percentage, 0-100.",
+  "violates": "rate_range",
+  "payload": {
+    "kind": "tree",
+    "nodes": [
+      {
+        "id": "s:payments",
+        "parent_id": null,
+        "label": "payments",
+        "value": 12,
+        "measure": null,
+        "stats": {
+          "test_count": 12,
+          "executions": 220,
+          "pass_rate": 101.5,
+          "flaky_count": 1,
+          "flaky_share": 0.0833,
+          "last_executed_at": "2026-09-30T23:10:04Z",
+          "staleness_days": 1,
+          "recency": "seen"
+        }
+      }
+    ]
+  }
+}

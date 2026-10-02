@@ -1,0 +1,27 @@
+{
+  "description": "Labels may repeat, keys may not: a drill on either row would open the same one.",
+  "violates": "unique_key",
+  "payload": {
+    "kind": "matrix",
+    "value_type": "rate",
+    "x_labels": [
+      "Sep 17"
+    ],
+    "y_labels": [
+      "Payments",
+      "payments"
+    ],
+    "y_keys": [
+      "payments",
+      "payments"
+    ],
+    "cells": [
+      {
+        "x": 0,
+        "y": 1,
+        "value": 96.4,
+        "n": 220
+      }
+    ]
+  }
+}

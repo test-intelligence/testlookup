@@ -1,0 +1,15 @@
+{
+  "description": "The coverage map's drill: a suite, then a class key (a file path for pytest). A value may contain the URL separator ~; it is split on the first one only.",
+  "payload": {
+    "path": [
+      {
+        "dimension": "suite",
+        "value": "payments"
+      },
+      {
+        "dimension": "class",
+        "value": "tests/api/test~pay.py"
+      }
+    ]
+  }
+}

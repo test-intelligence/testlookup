@@ -1,0 +1,33 @@
+{
+  "description": "A percent axis holds 0-100.",
+  "violates": "rate_unit_range",
+  "payload": {
+    "kind": "points",
+    "x": {
+      "key": "p95_duration_ms",
+      "label": "p95 duration (ms)",
+      "unit": "ms",
+      "scale": "log"
+    },
+    "y": {
+      "key": "failure_rate",
+      "label": "Failure rate (%)",
+      "unit": "percent",
+      "scale": "linear"
+    },
+    "size": {
+      "key": "executions",
+      "label": "Executions"
+    },
+    "points": [
+      {
+        "id": "fp-1",
+        "label": "test_checkout",
+        "x": 1840.5,
+        "y": 125,
+        "size": 40,
+        "n": 40
+      }
+    ]
+  }
+}
