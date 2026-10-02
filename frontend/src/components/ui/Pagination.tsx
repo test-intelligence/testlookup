@@ -10,6 +10,7 @@ export default function Pagination({ page, pages, total, onChange }: Props) {
       <div className="flex items-center gap-1">
         <button
           className="btn-ghost disabled:opacity-30"
+          aria-label="Previous page"
           disabled={page <= 1}
           onClick={() => onChange(page - 1)}
         >
@@ -18,6 +19,7 @@ export default function Pagination({ page, pages, total, onChange }: Props) {
         <span className="text-xs text-[var(--color-text-muted)] px-2">Page {page} of {pages}</span>
         <button
           className="btn-ghost disabled:opacity-30"
+          aria-label="Next page"
           disabled={page >= pages}
           onClick={() => onChange(page + 1)}
         >
