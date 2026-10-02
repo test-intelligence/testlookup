@@ -18081,7 +18081,7 @@ bucket: Optional[int] = None
 
 ## backend/app/services/chart_data_service.py — _Accumulator
 
-[backend/app/services/chart_data_service.py:928](../../backend/app/services/chart_data_service.py#L928)
+[backend/app/services/chart_data_service.py:939](../../backend/app/services/chart_data_service.py#L939)
 
 Bases: ``.
 
@@ -18093,7 +18093,7 @@ __slots__ = ('passed', 'failed', 'broken', 'skipped', 'unknown', 'executions', '
 
 ## backend/app/services/chart_data_service.py — SuiteCoverage
 
-[backend/app/services/chart_data_service.py:1251](../../backend/app/services/chart_data_service.py#L1251)
+[backend/app/services/chart_data_service.py:1262](../../backend/app/services/chart_data_service.py#L1262)
 
 Bases: ``.
 
