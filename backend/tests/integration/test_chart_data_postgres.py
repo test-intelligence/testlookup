@@ -35,6 +35,7 @@ What is proved here:
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -785,7 +786,7 @@ def plan_of(world):
 
 async def test_the_sql_ranking_keeps_the_same_keys_the_assembly_would_have(world) -> None:
     """Two rankings, one rule. The SQL ``ORDER BY rank_total DESC, rank_key
-    ASC`` has to agree with ``assemble``'s ``(-rank, key)`` exactly, or a
+    COLLATE "C" ASC`` has to agree with ``assemble``'s ``(-rank, key)`` exactly, or a
     smaller series stays in the chart while a bigger one is rolled into
     'other'."""
     from app.services import chart_data_service as svc
@@ -807,6 +808,138 @@ async def test_the_sql_ranking_keeps_the_same_keys_the_assembly_would_have(world
         }
         expected = sorted(totals, key=lambda key: (-totals[key], key))[:top_n]
         assert [s["key"] for s in ranked["series"] if s["key"] != OTHER] == expected, metric
+
+
+@contextlib.asynccontextmanager
+async def _icu_shadow(world):
+    """A connection on which ``test_runs`` / ``test_cases`` are empty temp
+    tables of the same names, with every text key column in an ICU collation.
+
+    This container's ``en_US.utf8`` is musl's, i.e. byte order, so the default
+    database cannot tell a collation tie-break from a code-point one. Under
+    ``und-x-icu`` ``épée`` sorts before ``fence``; by code point it is after
+    ``zebra`` (``é`` is U+00E9). Yields ``(session, add, locale_order)``: ``add``
+    writes one run on P1 an hour before the frozen clock with one PASSED case
+    in it, ``locale_order`` lists a run column's distinct keys in the shadow's
+    collation.
+
+    A connection of its own, outside the shared pool and with no statement
+    cache: a pooled connection may hold these very statements prepared against
+    the real tables (asyncpg then refuses the shadowed schema), and its cache
+    would hand the shadow's plans to the next test. Everything is rolled back.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    at = FROZEN - timedelta(hours=1)
+    engine = create_async_engine(
+        world.engine.url.update_query_dict({"prepared_statement_cache_size": "0"}),
+        poolclass=NullPool,
+    )
+    try:
+        async with engine.connect() as conn:
+            if not await conn.scalar(text(
+                    "SELECT count(*) FROM pg_collation WHERE collname = 'und-x-icu'")):
+                pytest.skip("no ICU collation in this PostgreSQL build")
+            try:
+                shadow = {
+                    "test_runs": ("primary_suite_name", "branch", "environment"),
+                    "test_cases": ("suite_name",),
+                }
+                for table, columns in shadow.items():
+                    await conn.execute(text(
+                        f"CREATE TEMP TABLE {table} AS SELECT * FROM public.{table} WITH NO DATA"))
+                    for column in columns:
+                        await conn.execute(text(
+                            f'ALTER TABLE pg_temp.{table} ALTER COLUMN {column} '
+                            f'TYPE text COLLATE "und-x-icu"'))
+
+                async def add(*, suite: str, branch: str = "main", environment: str = "ci"):
+                    run_id = uuid.uuid4()
+                    await conn.execute(text(
+                        "INSERT INTO pg_temp.test_runs "
+                        "(id, project_id, build_number, trigger_source, branch, environment, "
+                        "total_tests, passed_tests, created_at) "
+                        "VALUES (:id, :p, :b, 'push', :branch, :env, 1, 1, :at)"),
+                        {"id": run_id, "p": world.p1, "b": f"cp-{run_id.hex[:8]}",
+                         "branch": branch, "env": environment, "at": at})
+                    await conn.execute(text(
+                        "INSERT INTO pg_temp.test_cases "
+                        "(id, test_run_id, test_fingerprint, test_name, suite_name, status, "
+                        "created_at) VALUES (:id, :run, :fp, :name, :suite, 'PASSED', :at)"),
+                        {"id": uuid.uuid4(), "run": run_id, "fp": f"cp-{run_id.hex[:8]}",
+                         "name": f"test_{run_id.hex[:8]}", "suite": suite, "at": at})
+
+                async def locale_order(column: str) -> str:
+                    return await conn.scalar(text(
+                        f"SELECT string_agg(DISTINCT LOWER({column}), ',' "
+                        f"ORDER BY LOWER({column})) FROM test_runs"))
+
+                yield AsyncSession(bind=conn), add, locale_order
+            finally:
+                await conn.rollback()  # the temp tables go with the transaction
+    finally:
+        await engine.dispose()
+
+
+async def test_tie_breaks_are_code_point_order_whatever_the_collation(world) -> None:
+    """The ranking tie-break compares keys by code point (``COLLATE "C"``), as
+    ``assemble``'s Python ``str`` sort and the heatmap do, so the same data
+    keeps the same series on an ``en_US`` server and a ``C`` one.
+
+    The three keys tie on executions, so only the tie-break decides which two
+    ``top_n=2`` keeps -- and a collation tie-break (see :func:`_icu_shadow`)
+    would keep ``épée`` and roll ``zebra`` into "other"."""
+    from app.services import chart_data_service as svc
+
+    async with _icu_shadow(world) as (session, add, locale_order):
+        for key in ("épée", "fence", "zebra"):
+            await add(suite=key, branch=key)
+        assert await locale_order("branch") == "épée,fence,zebra", (
+            "precondition: the shadow must reorder"
+        )
+
+        scope = _scope_for(world)
+        # Code point order: "f" (U+0066) and "z" (U+007A) before "é" (U+00E9).
+        want = ["fence", "zebra", OTHER]
+        spec = svc.parse_chart_spec("executions", ["day", "suite"], 2, scope=scope)
+        got = await svc.build_chart_data(session, scope, spec, now=FROZEN)
+        assert [series["key"] for series in got["series"]] == want, "series axis"
+        for dims in (["suite"], ["branch"]):
+            spec = svc.parse_chart_spec("executions", dims, 2, scope=scope)
+            got = await svc.build_chart_data(session, scope, spec, now=FROZEN)
+            points = got["series"][0]["points"]
+            assert [point["x"] for point in points] == want, dims
+            assert [point["y"] for point in points] == [1, 1, 1], dims
+
+
+async def test_the_label_a_key_keeps_does_not_depend_on_the_collation(world) -> None:
+    """A key spelled two ways keeps the label of its FIRST row, and the rows
+    come back ``ORDER BY bucket_key, series_key`` -- by code point, so the
+    same data shows the same label on every server.
+
+    ``orders`` is ``Orders`` in environment ``épée`` and ``ORDERS`` in
+    ``fence``: the first bucket by code point is ``fence``. Environment
+    ``fence`` is ``Fence`` beside suite ``épée`` and ``FENCE`` beside
+    ``orders``: the first series by code point is ``orders``. Under the ICU
+    shadow a collation order would pick ``Orders`` and ``Fence``."""
+    from app.services import chart_data_service as svc
+
+    async with _icu_shadow(world) as (session, add, locale_order):
+        await add(suite="Orders", environment="épée")
+        await add(suite="ORDERS", environment="FENCE")
+        await add(suite="épée", environment="Fence")
+        assert await locale_order("environment") == "épée,fence", (
+            "precondition: the shadow must reorder"
+        )
+
+        scope = _scope_for(world)
+        spec = svc.parse_chart_spec("executions", ["environment", "suite"], None, scope=scope)
+        got = await svc.build_chart_data(session, scope, spec, now=FROZEN)
+        labels = {series["key"]: series["label"] for series in got["series"]}
+        assert labels["orders"] == "ORDERS", "the series label follows the bucket order"
+        assert got["x_labels"]["fence"] == "FENCE", "the bucket label follows the series order"
 
 
 async def test_run_count_s_n_is_the_executions_not_the_run_count(world) -> None:

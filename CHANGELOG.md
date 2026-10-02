@@ -37,6 +37,27 @@ before the app serves, a second start-up in the same process does not freeze
 again, garbage is collected rather than frozen, and the thresholds stay put.
 Mutation-checked: dropping the call, moving it to shutdown, removing the
 once-guard, removing the collect, or adding a threshold each fail a test.
+## Unreleased - chart-data tie-breaks are code-point ordered
+
+`GET /analytics/chart-data` broke ranking ties by the database's default
+collation, while `assemble` (Python `str` order) and the heatmap, coverage map
+and failure groups break them by code point. On an ICU or glibc server `épée`
+sorts before `fence`; by code point it sorts after `zebra`. So when keys tied
+on the ranked total, the same data could keep different series (or category
+buckets) under `top_n`, and the C3 caps, on different servers.
+
+- The ranking tie-break is now `rank_key COLLATE "C"` on both axes.
+- The final projection emits `bucket_key` and `series_key` with
+  `COLLATE "C"`, so `ORDER BY 1, 3` is code-point ordered too. That order
+  decides which rows the row cap keeps and which spelling of a key's label
+  wins. Grouping does not change.
+- The comparability statement orders its series the same way.
+- New Postgres tests shadow `test_runs`/`test_cases` with ICU-collated key
+  columns, because this container's `en_US` already sorts by byte. Removing any
+  of the three main `COLLATE`s fails one of them.
+
+Not changed: the `MIN(...)` label aggregates still use the column collation.
+That is a separate follow-up.
 
 ## Unreleased - Visualization Upgrade, Wave 3 data layer: heatmap, coverage map, failure groups, chart rows and test scatter endpoints (VIZ-205, VIZ-206, VIZ-207, VIZ-208, VIZ-506)
 

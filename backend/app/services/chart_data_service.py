@@ -603,6 +603,12 @@ def _ranking_ctes(name: str, key: str, metric: MetricDef, keep: str) -> str:
     how many keys there are (the cap gives one of its slots to "other" only
     when it actually bites), and because the full count has to come back with
     the rows: it is what ``meta.truncated_total`` reports.
+
+    The tie-break is the key by code point (``COLLATE "C"``), which is how
+    ``assemble`` sorts a Python ``str`` and how the heatmap ranks: under the
+    database's default collation, ``'épée'`` sorts before ``'fence'`` on an ICU
+    or glibc server and after ``'zebra'`` on one that compares bytes, so the
+    same data kept different series on different servers.
     """
     return f"""
         {name}_totals AS (
@@ -612,7 +618,7 @@ def _ranking_ctes(name: str, key: str, metric: MetricDef, keep: str) -> str:
         ), {name}_ranked AS (
             SELECT
                 rank_key,
-                ROW_NUMBER() OVER (ORDER BY rank_total DESC, rank_key ASC) AS rn,
+                ROW_NUMBER() OVER (ORDER BY rank_total DESC, rank_key COLLATE "C" ASC) AS rn,
                 COUNT(*) OVER () AS key_total
             FROM {name}_totals
         ), {name}_kept AS (
@@ -777,12 +783,17 @@ def build_statement(
             bucket_join = "JOIN bucket_kept bk ON bk.rank_key IS NOT DISTINCT FROM g.bucket_key"
 
     sums = ', '.join(f"SUM(g.{name}) AS {name}" for name in _COUNT_COLUMNS)
+    # The keys come out in code-point order (an ordinal cannot carry a
+    # COLLATE, so the output columns do): ``ORDER BY 1, 3`` is what the row
+    # cap cuts and which row's label ``assemble`` keeps, and it must not
+    # depend on the server's collation. Grouping is unchanged -- a
+    # deterministic collation's equality is byte equality.
     sql = f"""
         WITH {', '.join(ctes)}
         SELECT
-            {bucket_key_out} AS bucket_key,
+            {bucket_key_out} COLLATE "C" AS bucket_key,
             {bucket_label_out} AS bucket_label,
-            {series_key_out} AS series_key,
+            {series_key_out} COLLATE "C" AS series_key,
             {series_label_out} AS series_label,
             {sums},
             SUM(g.metric_value) AS metric_value,
@@ -1384,7 +1395,7 @@ def build_comparability_statement(
             (SELECT COUNT(*) FROM per_suite
               WHERE series_count = (SELECT COUNT(*) FROM per_series)) AS common_suites
         FROM per_series ps
-        ORDER BY ps.series_key
+        ORDER BY ps.series_key COLLATE "C"
         LIMIT :cmp_row_cap
     """
     return sql, params

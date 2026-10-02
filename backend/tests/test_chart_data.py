@@ -618,9 +618,13 @@ def test_a_ranked_axis_is_ranked_and_cut_in_sql(metric, dims, top_n) -> None:
     rank in Python instead and the ORDER BY is gone."""
     spec = svc.parse_chart_spec(metric, dims, top_n, scope=_scope())
     sql, _ = svc.build_statement(spec, _scope())
-    assert "ROW_NUMBER() OVER (ORDER BY rank_total DESC, rank_key ASC)" in sql, (metric, dims)
+    assert (
+        'ROW_NUMBER() OVER (ORDER BY rank_total DESC, rank_key COLLATE "C" ASC)' in sql
+    ), (metric, dims)
     # The tie-break is the SAME one ``assemble`` applies, spelled in SQL: rank
-    # descending, then the key ascending. Two rules would rank two ways.
+    # descending, then the key ascending by code point (a Python ``str``
+    # compare). Two rules would rank two ways; the database's collation would
+    # be a third.
     assert "COUNT(*) OVER () AS key_total" in sql, "the full key count must come back"
 
 
