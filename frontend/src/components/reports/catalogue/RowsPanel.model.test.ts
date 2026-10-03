@@ -71,6 +71,21 @@ describe('rowsRequestParams', () => {
     })
   })
 
+  it('puts a time dimension first in group_by, as /chart-data/rows requires (a heatmap is suite × day)', () => {
+    const heatmap = { metric: 'executions', groupBy: ['suite', 'day'] as const }
+    const params = rowsRequestParams(
+      { selectors: [{ dimension: 'suite', value: 'paymentsuite' }, { dimension: 'day', value: '2026-07-31' }], chart: heatmap, scope },
+      1,
+    )
+    // The server answers 422 time_dimension_position for group_by=suite&group_by=day.
+    expect(params?.group_by).toEqual(['day', 'suite'])
+    expect(params?.bucket_day).toBe('2026-07-31')
+    expect(params?.bucket_suite).toBe('paymentsuite')
+    // Weeks too; two non-time dimensions keep their order.
+    expect(rowsRequestParams({ selectors: [{ dimension: 'suite', value: 'x' }], chart: { metric: 'executions', groupBy: ['environment', 'week'] }, scope }, 1)?.group_by).toEqual(['week', 'environment'])
+    expect(rowsRequestParams({ selectors: [{ dimension: 'suite', value: 'x' }], chart, scope }, 1)?.group_by).toEqual(['suite', 'status'])
+  })
+
   it('a scope cannot override the chart’s metric, and no top_n is sent without one; page is at least 1', () => {
     const params = rowsRequestParams(
       { selectors: [{ dimension: 'test', value: 'fp' }], chart: { metric: 'failed', groupBy: ['test'] }, scope: { metric: 'executions' } },
