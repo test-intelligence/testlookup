@@ -386,7 +386,10 @@ def _run_image_wait(
     """Drive wait_for_deployment_image with a pod that turns Ready after N checks.
 
     `sleep` is stubbed to advance bash's SECONDS instead of waiting, so the
-    window is exercised without wall-clock time.
+    window is exercised without wall-clock time. It sets SECONDS from its own
+    fake clock (`FAKE_NOW`), never from `SECONDS + n`: SECONDS also counts real
+    time, and re-reading it on every call accumulated that drift, so on a
+    loaded machine (the push gate) the deadline came one check early.
     """
     wait = textwrap.dedent(_extract("wait_for_deployment_image"))
     verify = textwrap.dedent(_extract("verify_deployment_image"))
@@ -396,7 +399,9 @@ def _run_image_wait(
         "NAMESPACE=testlookup\n"
         f"IMAGE_AUTHORITY_TIMEOUT_SECONDS={timeout}\n"
         "IMAGE_AUTHORITY_POLL_SECONDS=5\n"
-        "sleep() { SECONDS=$((SECONDS + $1)); }\n"
+        "FAKE_NOW=0\n"
+        "SECONDS=0\n"
+        "sleep() { FAKE_NOW=$((FAKE_NOW + $1)); SECONDS=$FAKE_NOW; }\n"
         "kubectl() {\n"
         "  case \" $* \" in\n"
         "    *\" get deployment \"*) printf 'api\\n' ;;\n"
