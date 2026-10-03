@@ -17,6 +17,8 @@ export interface SummaryReportParams {
   /** Scope every number to one release (or, VIZ-303, several). Omitted = all
    *  releases. */
   release_id?: ScopeValue
+  /** VIZ-308: scope every number to these suites (OR). Omitted = all suites. */
+  suite_name?: ScopeValue
 }
 
 /** Release scoping, OMITTED when absent rather than sent as null or empty —
@@ -49,6 +51,9 @@ export function summaryReportQueryParams(
     // byte-identical SQL, and a `release_id=` on every request would undo
     // that for callers who never asked for the feature.
     ...releaseParam(params.release_id),
+    // VIZ-308: the suites too, so a PDF downloaded under a suite filter covers
+    // those suites and says so in its context block. Omitted when none.
+    ...scopeParam('suite_name', params.suite_name),
   }
 }
 

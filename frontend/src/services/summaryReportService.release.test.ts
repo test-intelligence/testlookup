@@ -115,3 +115,22 @@ describe('summaryReportService — the release axis at the wire', () => {
     expect(params.mode).toBe('latest')
   })
 })
+
+describe('summaryReportService — the suite filter reaches the screen AND the PDF (VIZ-308)', () => {
+  it('sends suite_name to both: a scalar for one suite, a repeated key for several', async () => {
+    for (const suiteName of [['payments'], ['cart', 'payments']]) {
+      const args = { project_id: PROJECT, days: 30, mode: 'window' as const, suite_name: suiteName }
+      await summaryReportService.get(args)
+      await summaryReportService.downloadPdf(args)
+      const screen = lastParams()
+      const pdf = apiGet.mock.calls[apiGet.mock.calls.length - 1]?.[1]?.params
+      expect(screen.suite_name).toEqual(suiteName.length === 1 ? suiteName[0] : suiteName)
+      expect(pdf).toEqual(screen)
+    }
+  })
+
+  it('omits suite_name when no suite is chosen', async () => {
+    await summaryReportService.get({ project_id: PROJECT, days: 30, mode: 'window', suite_name: null })
+    expect(lastParams()).not.toHaveProperty('suite_name')
+  })
+})

@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase B: exported reports say which data they show (VIZ-308)
+
+**Summary PDF.** Page 1 now opens with the same context block the report
+chrome shows on screen: Project, Release, Test Suite, Window (with its UTC
+dates), Aggregation, Pass-rate basis, Generated (UTC), any filter the server
+did not apply with its reason, and the "Showing 18 of 143 runs · 412 of 3,960
+executions" line. Every page repeats Project, Release and Suite in its footer,
+with the page number, so a page read on its own still says what it covers.
+Every release and suite is listed in full on page 1 (long lists wrap). The
+one-line footer names as many as fit and counts the rest ("+5 more (listed on
+page 1)"). It never cuts a list without saying so. The values come from the
+response's `meta` (`build_meta`, contract C2): what the server applied, never
+what was asked.
+
+**The Summary report honours the suite filter.** The screen and its PDF now
+send `suite_name` (one scalar, or a repeated key for several), which
+`/reports/summary` already accepted. Until now a suite chosen in the report
+chrome was silently ignored on this page.
+
+**Emailed trends report** (`POST /api/v1/reports/email-trends`, API-only):
+`release_id` takes several ids and a new `suite_name` list scopes it to
+suites. Both are parsed and authorised as the analytics routes do it
+(`resolve_analytics_scope`, at most 365 days). The email carries the same
+context block, every value HTML-escaped (the project name in the email was
+not escaped before).
+
+No flag, no migration. A payload without `meta` (an older caller) renders the
+one-line PDF header it always had.
+
 ## Unreleased - Visualization Upgrade, Wave 3 charts: heatmaps, coverage map, failure groups, test scatter, drill-down and cross-filtering, behind flags (VIZ-501, VIZ-502, VIZ-504, VIZ-506, VIZ-602, VIZ-603)
 
 The charts that read the Wave 3 endpoints arrive on four pages: Trends,
