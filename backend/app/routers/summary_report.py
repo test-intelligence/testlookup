@@ -92,10 +92,14 @@ async def export_summary_report_pdf(
         release_id=scope.release_arg, suite_name=scope.suite_arg,
     )
 
+    # VIZ-308: the PDF prints the same context block as the screen's report
+    # chrome, from the same envelope the JSON report carries.
+    meta = await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_UNIQUE_TESTS)
+
     # ReportLab is sync + CPU-bound — keep the event loop free.
     from app.services.summary_report_pdf import render_summary_report_pdf
 
-    pdf_bytes = await run_in_threadpool(render_summary_report_pdf, payload)
+    pdf_bytes = await run_in_threadpool(render_summary_report_pdf, {**payload, "meta": meta})
 
     project_slug = (payload.get("project_name") or "project").replace(" ", "_").lower()
     filename = f"summary-{project_slug}-{days}d-{mode}.pdf"
