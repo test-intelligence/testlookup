@@ -10,7 +10,7 @@ List Saved Views
 
 List saved views: user's personal + shared views for the project.
 
-Source: [backend/app/routers/saved_views.py:96](../../../backend/app/routers/saved_views.py#L96).
+Source: [backend/app/routers/saved_views.py:150](../../../backend/app/routers/saved_views.py#L150).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -57,7 +57,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
               "trends",
               "coverage",
               "defects",
-              "failures"
+              "failures",
+              "summary_report",
+              "explore"
             ],
             "type": "string"
           },
@@ -125,7 +127,7 @@ Create Saved View
 
 Create a new saved view.
 
-Source: [backend/app/routers/saved_views.py:168](../../../backend/app/routers/saved_views.py#L168).
+Source: [backend/app/routers/saved_views.py:222](../../../backend/app/routers/saved_views.py#L222).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -206,7 +208,7 @@ Delete Saved View
 
 Delete a saved view (owner only).
 
-Source: [backend/app/routers/saved_views.py:318](../../../backend/app/routers/saved_views.py#L318).
+Source: [backend/app/routers/saved_views.py:389](../../../backend/app/routers/saved_views.py#L389).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -287,7 +289,7 @@ Get Saved View
 
 Get a single saved view.
 
-Source: [backend/app/routers/saved_views.py:239](../../../backend/app/routers/saved_views.py#L239).
+Source: [backend/app/routers/saved_views.py:292](../../../backend/app/routers/saved_views.py#L292).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -392,7 +394,7 @@ Update Saved View
 
 Update a saved view (owner only).
 
-Source: [backend/app/routers/saved_views.py:281](../../../backend/app/routers/saved_views.py#L281).
+Source: [backend/app/routers/saved_views.py:334](../../../backend/app/routers/saved_views.py#L334).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

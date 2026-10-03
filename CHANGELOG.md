@@ -63,6 +63,52 @@ merged into one chart state (one loading state, one error, one Retry). The
 shared multi-series model gained an optional per-series `styles` override
 (colour slot and dash slot). Without one, every existing chart is drawn as
 before.
+## Unreleased - Visualization Upgrade, Phase B: saved views manager and the backend defects under it (VIZ-609)
+
+**What users see.** The report header (with `viz_report_context` and
+`viz_multi_filters` on) has a **Views** button on Overview, Trends, Coverage,
+Failures, Defects and Summary, for one project.
+
+- **The panel** lists this page's named views: mine, then those shared in the
+  project, with my default first.
+- **Open** applies a view's releases, suites and window through the same
+  scope store as the filter bar, so the URL, chips and every chart follow.
+- **Owner actions:** set default, share or unshare, and delete. Only my own
+  views can be changed.
+- **Save current view** stores the scope under a name, optionally shared with
+  the project and optionally as my default. A duplicate name is allowed but
+  flagged.
+- **My default view** opens once per browser tab for that page. It never
+  overrides a link whose URL already names releases or suites.
+- **A release a reader may no longer apply** (archived, or in a project they
+  cannot read) is dropped when the view opens, with the server's reason. The
+  data requests re-authorise everything for the reader, so a shared view
+  never widens access.
+
+**Backend fixes** (`routers/saved_views.py`):
+
+- **One default per user, project and page.** PATCH did not unset the other
+  defaults, so two could coexist. Create unset the user's defaults on every
+  page of the project, so a Trends default cleared the Coverage one.
+- **PATCH merges `filters`** over the stored object, so neither writer loses
+  the other's keys. The layout writer (`{page, instances, version}`) used to
+  drop the digests' `release_id`, and the other way round. Sending `null`
+  removes a key.
+- **`saved_view.created`, `.updated`** (with the changed fields)**, `.deleted`
+  and `.shared`** now land in the activity ledger. The catalog declared them,
+  but nothing emitted them. A global view (no project) has no ledger.
+- **`filters` is capped at 32 KB**, and the keys the manager writes are typed:
+  `kind`, `release_ids`, `suites`, `window`. The spec suggested a key
+  allow-list. It was not added, because `filters` has always been an open
+  object (older views and MCP clients store `severity`, `category`, `days`
+  ...), so an allow-list would 422 views that exist today.
+- `SAVED_VIEW_PAGES` gains `summary_report` and `explore`. This is a Literal
+  only, so there is no migration.
+
+A named view is a row whose `filters.kind` is `report_view`.
+`useAnalyticsView` (the per-page widget layout) skips such rows, so a named
+view can never become, or be patched as, a layout.
+
 ## Unreleased - Visualization Upgrade, Phase B: exported reports say which data they show (VIZ-308)
 
 **Summary PDF.** Page 1 now opens with the same context block the report

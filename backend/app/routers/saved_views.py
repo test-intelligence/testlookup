@@ -17,6 +17,7 @@ from app.models.schemas import (
     SavedViewUpdate,
 )
 from app.services import saved_view_release
+from app.services.activity.service import ActorRef, record as record_activity
 
 logger = logging.getLogger("routers.saved_views")
 
@@ -91,6 +92,59 @@ async def _with_release(
     )
     view.release = SavedViewRelease(**verdict)
     return view
+
+
+async def _unset_other_defaults(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID | None,
+    page: str | None,
+    keep_id: uuid.UUID | None,
+) -> None:
+    """VIZ-609: exactly one default per user, project and page.
+
+    The create path used to unset every default of the user in the project,
+    whatever the page (so a Trends default silently cleared the Coverage one),
+    and PATCH did not unset anything (so two defaults could coexist). Both now
+    call this, scoped by all three. ``None`` matches ``IS NULL``: a global view
+    and a page-less view are their own scope.
+    """
+    query = select(SavedView).where(
+        SavedView.user_id == user_id,
+        SavedView.is_default == True,  # noqa: E712
+        SavedView.project_id.is_(None) if project_id is None else SavedView.project_id == project_id,
+        SavedView.page.is_(None) if page is None else SavedView.page == page,
+    )
+    if keep_id is not None:
+        query = query.where(SavedView.id != keep_id)
+    for other in (await db.execute(query)).scalars().all():
+        other.is_default = False
+
+
+async def _record_view_event(
+    db: AsyncSession,
+    view: SavedView,
+    event_type: str,
+    user: User,
+    *,
+    changed: list[str] | None = None,
+) -> None:
+    """VIZ-609: the four ``saved_view.*`` events the catalog declared and nothing
+    emitted. The ledger is per project, so a global view (no project) has no
+    feed to write to and records nothing."""
+    if view.project_id is None:
+        return
+    await record_activity(
+        db,
+        project_id=view.project_id,
+        event_type=event_type,
+        actor=ActorRef.from_user(user),
+        entity_id=view.id,
+        entity_label=view.name,
+        changed_fields=changed,
+        context={"page": view.page or "", "changed": ", ".join(changed or []) or "nothing"},
+    )
 
 
 @router.get("", response_model=list[SavedViewResponse])
@@ -206,19 +260,18 @@ async def create_saved_view(
         is_shared=payload.is_shared,
         is_default=payload.is_default,
     )
-    db.add(view)
-
-    # If setting as default, unset other defaults for same scope
+    # If setting as default, unset the other defaults for the same user,
+    # project AND page (VIZ-609), before the new row joins the session.
     if payload.is_default:
-        existing = await db.execute(
-            select(SavedView).where(
-                SavedView.user_id == current_user.id,
-                SavedView.project_id == payload.project_id,
-                SavedView.is_default == True,  # noqa: E712
-            )
+        await _unset_other_defaults(
+            db, user_id=current_user.id, project_id=payload.project_id,
+            page=payload.page, keep_id=None,
         )
-        for old_view in existing.scalars().all():
-            old_view.is_default = False
+    db.add(view)
+    await db.flush()
+    await _record_view_event(db, view, "saved_view.created", current_user)
+    if view.is_shared:
+        await _record_view_event(db, view, "saved_view.shared", current_user)
 
     await db.commit()
     await db.refresh(view)
@@ -296,14 +349,32 @@ async def update_saved_view(
 
     updates = payload.model_dump(exclude_unset=True)
     if "filters" in updates:
+        # VIZ-609: a SHALLOW MERGE over the stored object, so neither writer
+        # loses the other's keys. ``useAnalyticsView`` sends {page, instances,
+        # version} and the digests' ``withRelease`` sends release_id; replacing
+        # the object made each save drop the other's half. A key is removed by
+        # sending it as null: ``store_release`` drops a falsy release_id, and
+        # any other null is removed below.
+        merged = {**(view.filters or {}), **updates["filters"]}
+        merged = {key: value for key, value in merged.items() if value is not None or key == "release_id"}
         # Same canonicalisation as create. Without it the two paths store the
         # release differently and a view edited once stops carrying it — the
         # producer/consumer drift RELEASE_KEY exists to prevent.
         updates["filters"] = saved_view_release.store_release(
-            updates["filters"], saved_view_release.extract_release(updates["filters"])
+            merged, saved_view_release.extract_release(merged)
         )
+    was_shared = bool(view.is_shared)
+    changed = sorted(field for field, value in updates.items() if getattr(view, field) != value)
     for field, value in updates.items():
         setattr(view, field, value)
+    if updates.get("is_default"):
+        await _unset_other_defaults(
+            db, user_id=view.user_id, project_id=view.project_id, page=view.page, keep_id=view.id,
+        )
+    if changed:
+        await _record_view_event(db, view, "saved_view.updated", current_user, changed=changed)
+    if view.is_shared and not was_shared:
+        await _record_view_event(db, view, "saved_view.shared", current_user)
 
     await db.commit()
     await db.refresh(view)
@@ -329,6 +400,8 @@ async def delete_saved_view(
     await _require_view_project_access(db, current_user, view)
     if view.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete")
+    # Recorded before the delete: the label is the name the reader knew it by.
+    await _record_view_event(db, view, "saved_view.deleted", current_user)
     await db.delete(view)
     await db.commit()
     return None

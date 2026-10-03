@@ -92,4 +92,9 @@ async def test_a_member_can_still_create_in_their_own_project():
         await mod.create_saved_view(
             payload=_payload(_MINE), db=db, current_user=_user()
         )
-    db.add.assert_called_once()
+    # One view row. (A project view also adds its saved_view.created activity
+    # row since VIZ-609, so count the views, not every add.)
+    from app.models.postgres import SavedView
+
+    added = [call.args[0] for call in db.add.call_args_list]
+    assert sum(isinstance(obj, SavedView) for obj in added) == 1
