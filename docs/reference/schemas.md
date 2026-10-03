@@ -9112,10 +9112,30 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "string"
         },
         {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
           "type": "null"
         }
       ],
       "title": "Release Id"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
     }
   },
   "required": [

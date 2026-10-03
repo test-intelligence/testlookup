@@ -1,6 +1,7 @@
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { useReleaseScope } from './useReleaseScope'
+import { useSuiteScope } from './useSuiteScope'
 import { keyPart, scopeArg } from '@/lib/scopeParams'
 import { summaryReportService } from '@/services/summaryReportService'
 import { scopedFetch } from '@/services/scopeAbort'
@@ -14,6 +15,8 @@ export interface SummaryReportScope {
    *  release is the scalar; several (VIZ-303, flag on) a sorted array, which
    *  the service sends as a repeated `release_id`. */
   release_id?: string | string[]
+  /** VIZ-308: the settled suite selection (multi-filters on), absent when none. */
+  suite_name?: string | string[]
 }
 
 /**
@@ -33,10 +36,12 @@ export function useSummaryReportScope(params: {
   mode: SummaryReportMode
 }): SummaryReportScope {
   const releaseId = scopeArg(useReleaseScope())
+  const suiteName = scopeArg(useSuiteScope())
   return {
     days: params.days,
     mode: params.mode,
     ...(releaseId ? { release_id: releaseId } : {}),
+    ...(suiteName ? { suite_name: suiteName } : {}),
   }
 }
 
@@ -60,6 +65,6 @@ export function useSummaryReport(params: { days: number; mode: SummaryReportMode
     // filter until the next revalidation.
     // `keyPart`: several releases enter the key as one sorted joined string,
     // never an array (a fresh array per render would refetch every render).
-    [scope.days, scope.mode, keyPart(scope.release_id) ?? null],
+    [scope.days, scope.mode, keyPart(scope.release_id) ?? null, keyPart(scope.suite_name) ?? null],
   )
 }

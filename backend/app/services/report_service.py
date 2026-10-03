@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import smtplib
 import ssl
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.services.report_context import context_fields, has_context, n_of_m_text
 
 
 CHART_LABELS = {
@@ -26,7 +28,11 @@ CHART_LABELS = {
 
 
 async def fetch_trend_data(
-    db: AsyncSession, project_id: str, days: int, release_id: str | None = None
+    db: AsyncSession,
+    project_id: str,
+    days: int,
+    release_id: str | tuple[str, ...] | None = None,
+    suite_name: str | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Daily pass-rate trend for a project, optionally for one release.
 
@@ -38,10 +44,13 @@ async def fetch_trend_data(
     """
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
     params: dict = {"project_id": str(project_id), "period_start": period_start}
-    from app.services.analytics_service import _add_release_param
+    from app.services.analytics_scope import release_filter_sql, scoped_text, suite_filter_sql
 
-    release_filter = _add_release_param(params, release_id)
-    query = text(
+    release_filter = release_filter_sql(params, release_id)
+    # VIZ-308: the suites of the chart it exports, by the effective suite
+    # (row label, else the run's), as every analytics route filters them.
+    suite_filter = suite_filter_sql(params, suite_name)
+    query = scoped_text(
         f"""
         SELECT
             DATE_TRUNC('day', tr.created_at)::date::text   AS date,
@@ -59,9 +68,11 @@ async def fetch_trend_data(
         WHERE tr.project_id = :project_id
           AND tc.created_at >= :period_start
           {release_filter}
+          {suite_filter}
         GROUP BY 1
         ORDER BY 1
-        """
+        """,
+        params,
     )
     result = await db.execute(query, params)
     return [dict(row._mapping) for row in result.fetchall()]
@@ -74,12 +85,34 @@ async def fetch_project_name(db: AsyncSession, project_id: str) -> str:
     return row[0] if row else project_id
 
 
+def _context_html(meta: dict | None) -> str:
+    """VIZ-308: the report's context block (Project, Release, Test Suite,
+    Window, basis, Generated) and its "N of M" line, from ``meta``. Every value
+    is escaped: release and suite names are untrusted text."""
+    if meta is None or not has_context(meta):
+        return ""
+    cell = "padding:4px 12px;border-bottom:1px solid #e5e7eb;vertical-align:top;"
+    rows = "".join(
+        f'<tr><td style="{cell}font-weight:600;white-space:nowrap;">{html_lib.escape(f.label)}</td>'
+        f'<td style="{cell}">{html_lib.escape(f.value)}</td></tr>'
+        for f in context_fields(meta)
+    )
+    return (
+        '<h2 style="font-size:16px;margin:0 0 8px;">Report context</h2>'
+        f'<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">{rows}</table>'
+        f'<p style="font-size:13px;color:#6b7280;margin:0 0 20px;">{html_lib.escape(n_of_m_text(meta))}</p>'
+    )
+
+
 def build_html_report(
     project_name: str,
     days: int,
     chart_ids: list[str],
     trend_data: list[dict],
+    meta: dict | None = None,
 ) -> str:
+    # The project name is untrusted text inside an HTML email.
+    project_name = html_lib.escape(project_name)
     total_passed = sum(row["passed"] for row in trend_data)
     total_failed = sum(row["failed"] for row in trend_data)
     total_skipped = sum(row["skipped"] for row in trend_data)
@@ -122,6 +155,7 @@ def build_html_report(
     </div>
 
     <div style="padding:24px 32px;">
+      {_context_html(meta)}
       <h2 style="font-size:16px;margin:0 0 16px;">Summary KPIs</h2>
       <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
         <tr>
@@ -221,16 +255,30 @@ def send_email(recipient: str, subject: str, html_body: str) -> None:
         server.sendmail(settings.SMTP_FROM, recipient, msg.as_string())
 
 
-async def email_trends_report(db: AsyncSession, body) -> dict:
+async def email_trends_report(db: AsyncSession, body, scope=None) -> dict:
+    """Build and send the trends email. ``scope`` (the router's resolved
+    :class:`~app.services.analytics_scope.AnalyticsScope`) carries the
+    releases and suites and adds the context block (VIZ-308); without one the
+    report is the project-wide one it always was."""
     project_name = await fetch_project_name(db, body.project_id)
-    trend_data = await fetch_trend_data(
-        db, body.project_id, body.days, getattr(body, "release_id", None)
-    )
+    if scope is not None:
+        trend_data = await fetch_trend_data(
+            db, str(scope.project_id), body.days, scope.release_arg, scope.suite_arg
+        )
+        from app.services.analytics_meta import build_meta
+
+        meta = await build_meta(db, scope, pass_rate_basis="executions")
+    else:
+        trend_data = await fetch_trend_data(
+            db, body.project_id, body.days, getattr(body, "release_id", None)
+        )
+        meta = None
     html = build_html_report(
         project_name=project_name,
         days=body.days,
         chart_ids=body.chart_ids,
         trend_data=trend_data,
+        meta=meta,
     )
     subject = f"QA Trends Report - {project_name} ({body.days}d)"
 
