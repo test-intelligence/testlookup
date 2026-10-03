@@ -183,6 +183,35 @@ afterEach(() => {
 })
 
 describe('TrendsCatalogue (VIZ-408, Trends)', () => {
+  it('Customise (VIZ-604): a side panel changes the metric and the lines; the request and title follow; Reset restores', async () => {
+    const KEY = 'testlookup.chartConfig.trends.suite-series'
+    window.localStorage.removeItem(KEY)
+    responses.failures = { meta: META, series: suiteSeries(['checkout', 'search']) }
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(metricCalls('pass_rate')).toHaveLength(1))
+    fireEvent.click(within(section('trends-multi-series') as HTMLElement).getByRole('button', { name: 'Customise' }))
+    // A side panel beside the chart, not a modal.
+    const panel = screen.getByRole('complementary', { name: /^Customise / })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    fireEvent.change(within(panel).getByLabelText('Metric'), { target: { value: 'failures' } })
+    fireEvent.change(within(panel).getByLabelText(/^Lines/), { target: { value: '5' } })
+    await waitFor(() =>
+      expect(metricCalls('failures').slice(-1)[0]).toEqual({ metric: 'failures', group_by: ['day', 'suite'], top_n: 5, project_id: 'p1', days: 14 }),
+    )
+    await waitFor(() =>
+      expect(within(section('trends-multi-series') as HTMLElement).getByRole('heading', { name: 'Failures by suite' })).toBeInTheDocument(),
+    )
+    expect(JSON.parse(window.localStorage.getItem(KEY) ?? '{}')).toMatchObject({ metric: 'failures', topN: 5 })
+    // The guard rails are listed with their reasons, never silently missing.
+    expect(within(panel).getByText(/A pie shows the parts of one whole/)).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reset to default' }))
+    await waitFor(() =>
+      expect(within(section('trends-multi-series') as HTMLElement).getByRole('heading', { name: SUITE_SERIES_TITLE })).toBeInTheDocument(),
+    )
+    expect(window.localStorage.getItem(KEY)).toBeNull()
+  })
+
   it('the heatmap asks /analytics/heatmap for suite x day; the suite series feeds the multi-series alone', async () => {
     renderCatalogue({ days: 14 })
     await waitFor(() => expect(within(section('trends-heatmap') as HTMLElement).getByText(/Rows: lowest pass rate first/)).toBeInTheDocument())
