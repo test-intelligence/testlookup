@@ -543,9 +543,16 @@ def _rendered(overlay: str) -> list[dict]:
     kubectl = shutil.which("kubectl")
     if kubectl is None:
         pytest.skip("kubectl not installed (rendering only; no cluster access)")
-    out = subprocess.run([kubectl, "kustomize", str(REPO_ROOT / "k8s" / "overlays" / overlay)],
-                         capture_output=True, text=True, check=True).stdout
-    return [d for d in yaml.safe_load_all(out) if d]
+    rendered = subprocess.run([kubectl, "kustomize", str(REPO_ROOT / "k8s" / "overlays" / overlay)],
+                              capture_output=True, text=True)
+    if rendered.returncode != 0 and 'unknown command "kustomize"' in rendered.stderr:
+        # A kubectl WRAPPER, not kubectl: Rancher Desktop's kuberlr picks a
+        # kubectl build from the current context's server, and with no cluster
+        # answering it runs one without kustomize. Nothing about the overlay
+        # was tested; any other failure still fails below.
+        pytest.skip(f"{kubectl} has no kustomize command (a version-picking wrapper)")
+    rendered.check_returncode()
+    return [d for d in yaml.safe_load_all(rendered.stdout) if d]
 
 
 def _before(text: str, first: str, then: str, inside: str) -> bool:
