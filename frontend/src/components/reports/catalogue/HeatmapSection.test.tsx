@@ -386,7 +386,8 @@ describe('HeatmapSection: View rows on a cell (VIZ-602 seam)', () => {
       days: 14,
       suite_name: 'checkout',
       metric: 'executions',
-      group_by: ['suite', 'day'],
+      // The rows endpoint requires the time dimension first.
+      group_by: ['day', 'suite'],
       bucket_suite: 'legacy-import',
       bucket_day: '2026-09-01',
       page: 1,
