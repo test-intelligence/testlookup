@@ -1,5 +1,5 @@
-import { Layers } from 'lucide-react'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
+import ScopeBadge from './ScopeBadge'
 
 /**
  * Marks a panel that does NOT honour the global release filter.
@@ -35,18 +35,16 @@ export default function AllReleasesBadge({ reason }: { reason?: string }) {
   const releaseId = useReleaseScope()
   // No release selected → nothing to explain.
   if (!releaseId) return null
-
+  // VIZ-307: the same badge every panel uses, worded for a panel that covers every release.
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+    <ScopeBadge
+      dimension="release"
+      label="All releases"
       title={
         reason
           ? `Not filtered by the selected release. ${reason}`
           : 'Not filtered by the selected release — this panel covers all releases.'
       }
-    >
-      <Layers className="h-3 w-3" />
-      All releases
-    </span>
+    />
   )
 }

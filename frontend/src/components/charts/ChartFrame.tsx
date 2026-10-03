@@ -53,6 +53,7 @@ import {
   type Ref,
 } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
+import { IgnoredFilterBadges } from '@/components/ui/ScopeBadge'
 import type { AnyChartSeries, ChartSeries } from '@/lib/viz/contracts'
 // `totalsLine` is shared with the export so the footer and an exported file
 // can never state the scope differently.
@@ -623,7 +624,15 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
               </p>
             )}
           </div>
-          {scope && <div data-chart-scope="">{scope}</div>}
+          {/* VIZ-307: a filter the server received but could not apply is
+              named on the panel ("Not filtered by release"), from
+              `meta.ignored_filters` only — never a client-side guess. */}
+          {(scope || (meta?.ignored_filters?.length ?? 0) > 0) && (
+            <div data-chart-scope="">
+              {scope}
+              <IgnoredFilterBadges meta={meta} />
+            </div>
+          )}
           {(toolbar || canTable || canFullscreen) && (
             <div
               role="toolbar"
