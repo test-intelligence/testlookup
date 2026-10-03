@@ -81,8 +81,14 @@ export async function openGallery(page: Page, search = '') {
   await page.goto(`${GALLERY}${search}`)
   // Fail, never skip: a 404 or an auth bounce lands on /overview → /login.
   expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe(GALLERY)
-  await expect(page.getByTestId('chart-gallery')).toBeVisible()
+  // The whole gallery renders in one commit: 2.6-3.2 s to the main element on
+  // a fresh dev server with the Wave 3 items (I-G, measured), past the default
+  // 5 s under load. Same budget as chart-gallery.spec.ts's own `openGallery`.
+  await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: GALLERY_RENDER_TIMEOUT })
 }
+
+/** How long the gallery may take to render its one big commit (see `openGallery`). */
+export const GALLERY_RENDER_TIMEOUT = 15_000
 
 export const galleryItem = (page: Page, id: string): Locator => page.locator(`[data-gallery-item="${id}"]`)
 

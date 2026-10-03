@@ -123,7 +123,9 @@ test.describe('VIZ-608 full screen', () => {
       }
       await openGallery(page)
       const last = page.locator('[data-gallery-item]').last()
-      await expect(last.locator(CHART_SVG)).toBeVisible()
+      // The last item is whatever the gallery appended last (a Wave 3 frame, no
+      // Recharts svg): wait for its FRAME, which every framed item has.
+      await expect(last.locator('[data-chart-frame]')).toBeVisible()
       await last.locator('[data-gallery-canvas]').evaluate((el) => {
         ;(el as HTMLElement).style.height = 'auto'
       })

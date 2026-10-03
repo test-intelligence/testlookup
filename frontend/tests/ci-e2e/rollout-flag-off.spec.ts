@@ -20,7 +20,10 @@
  * (`ALLOWED_ADDITIONS`). Anything else, added or missing, fails. Wave 3
  * puts every section behind that seam AND `viz_advanced_charts`, read only
  * inside the lazy sections, so its flag-off pages may add the same one
- * lookup and nothing else (plan 2.4).
+ * lookup and nothing else (plan 2.4). Since the Wave 3 frontend landed
+ * (PR-B), Coverage and Failures make that one lookup (their composites read
+ * the seam); every page is additionally held to: no Wave 3 read, no second
+ * (`viz_advanced_charts`) lookup, no lazy placeholder.
  *
  * Fail-closed, like the visual baselines (`tests/lib/production-pages.ts`):
  * a request with no fixture is aborted and fails the test by name, a request
@@ -84,6 +87,12 @@ const NOT_INVENTORIED = /^POST \/api\/v1\/observability\//
  * flag-off page (plan 2.3: "1 flag lookup" per page).
  */
 const ALLOWED_ADDITIONS = [`GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${PROJECT_ID}`]
+
+/**
+ * The Wave 3 reads (PR-A's routes): with every flag off no page may ask one,
+ * and the second seam lookup is made only once the catalogue flag is on.
+ */
+const WAVE3_READ = /^GET \/api\/v1\/(analytics\/(heatmap|coverage-map|failure-groups|systemic-clusters|test-scatter|chart-data\/rows)|feature-flags\/viz_advanced_charts\/status)(\?|$)/
 
 /** How long no new request may arrive before the page's load counts as over. */
 const NETWORK_QUIET_MS = 1_500
@@ -322,12 +331,15 @@ test.describe('Report pages with every flag off: the Wave 2.5 page, the Wave 2.5
       await settle(page)
       await networkQuiet(page, api)
       await expect(page.locator('[data-catalogue-section]')).toHaveCount(0)
+      // Wave 3: no placeholder of a lazy section, no composite, nothing asked for one.
+      await expect(page.locator('[data-lazy-section], [data-coverage-advanced], [data-suite-advanced]')).toHaveCount(0)
 
       const observed = api.seen.filter((line) => !NOT_INVENTORIED.test(line))
       if (process.env.ROLLOUT_INVENTORY_PRINT) {
         console.log(`INVENTORY ${JSON.stringify(report.name)}: ${JSON.stringify([...observed].sort(), null, 2)},`)
       }
       assertHermetic(api, errors)
+      expect(observed.filter((line) => WAVE3_READ.test(line)), `${report.name}: a Wave 3 read with every flag off`).toEqual([])
       expect(INVENTORY[report.name], `no recorded inventory for ${report.name}`).toBeDefined()
       expect(withoutAllowedAdditions(observed), `${report.name}: requests with every flag off`).toEqual(
         [...INVENTORY[report.name]].sort(),

@@ -41,7 +41,9 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageErrors, type ApiHandlers, type FlagMap } from '../lib/production-pages'
 import {
   COVERAGE,
+  COVERAGE_ON,
   FAILURES,
+  FAILURES_ON,
   NOW,
   OVERVIEW,
   OVERVIEW_ON,
@@ -137,21 +139,22 @@ const PAGES: MeasuredPage[] = [
     handlersOn: releaseGateOn(),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   },
-  // Wave 3 C0: these two pages read no flag yet, so the `on` cells use the
-  // flag-off answers until the Wave 3 sections and their `_ON` fixtures land
-  // (then `handlersOn` becomes those, as for the five pages above).
+  // Wave 3: the `on` cells answer the sections' reads (coverage map, heatmaps,
+  // failure groups, the ladder's chart-data, the scatter, rows) from the
+  // wire-shaped `_ON` fixtures (B0 round 2; C0 measured A0 with the flag-off
+  // answers, before any section existed).
   {
     name: 'Coverage',
     path: '/coverage',
     handlers: COVERAGE,
-    handlersOn: COVERAGE,
+    handlersOn: COVERAGE_ON,
     ready: (p) => landmark(p, 'Coverage verdict'),
   },
   {
     name: 'Failures',
     path: '/failures',
     handlers: FAILURES,
-    handlersOn: FAILURES,
+    handlersOn: FAILURES_ON,
     ready: (p) => landmark(p, 'Failure verdict'),
   },
 ]

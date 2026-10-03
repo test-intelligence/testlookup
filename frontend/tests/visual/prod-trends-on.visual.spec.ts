@@ -4,8 +4,11 @@
  * pass-rate frame with release markers and the overlay row (then with both
  * overlays switched on), the suite series (top 7 + Other, a hostile suite
  * name), the p50/p95 duration band (a p95 gap, an inverted day) and the suite
- * x day heatmap (worst first, canvas). The page is taller than 2400 px with
- * the catalogue: `PINNED_TALL` (1280 x 4000).
+ * x day heatmap (worst first, canvas). Wave 3: the heatmap has its own
+ * `/analytics/heatmap` read (the server's top suites by failures, the cut
+ * stated, the Rows / Fit colour scale toolbar, the reserved action row), so
+ * `trends-on-heatmap` is RE-BASELINED; the other regions keep their PNGs. The
+ * page is taller than 2400 px with the catalogue: `PINNED_TALL` (1280 x 4000).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -41,7 +44,7 @@ for (const theme of THEMES) {
     await waitForCharts(duration)
     // The heatmap draws on a canvas once the lazy engine has loaded.
     await expect(heatmap.locator('canvas').first()).toBeVisible()
-    await expect(heatmap.locator('[data-heatmap-rows]')).toContainText('7 of 11')
+    await expect(heatmap.locator('[data-heatmap-rows]')).toContainText('Top 7 of 11 suites by failures.')
     await expectNoErrorFrame(page)
 
     await visualRegion(page, 'trends-on-pass-rate', theme, passRate)

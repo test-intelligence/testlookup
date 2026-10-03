@@ -20,7 +20,7 @@
  * cell on Runs, a P0 on Defects, usage against a budget on Deep
  * investigation, and a floored release-gate decision.
  */
-import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { respond, type ApiHandler, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
 
 /** Friday 2026-09-18, 12:00 UTC. The browser clock is pinned here. */
 export const NOW = new Date('2026-09-18T12:00:00Z')
@@ -1411,15 +1411,36 @@ function releaseSeries(days: number, releaseIds: string[], rate?: number) {
   }
 }
 
+/**
+ * A `{meta, series}` chart response as the SERVER sends it: every analytics
+ * route answers `with_meta(payload, meta)` (`backend/app/services/
+ * analytics_meta.py`), i.e. the C3 series' keys at the TOP level and `meta`
+ * beside them, so a chart-data body's `series` is the ARRAY of lines.
+ * Wave 3 FK0 found that every Wave 2.6 fixture was hand-wrapped as
+ * `{meta, series: {kind, ...}}`, which hid that the client read only the
+ * wrapped form; the client now reshapes the wire body
+ * (`chartResponseFromEnvelope`), and these fixtures send the wire body so the
+ * e2e runs that reshape. The data is unchanged, so every flag-on PNG is too.
+ */
+export function onTheWire(response: { meta: unknown; series: Record<string, unknown> }): Record<string, unknown> {
+  return { ...response.series, meta: response.meta }
+}
+
 /** Every `chart-data` request the catalogue makes, answered by its parameters. */
 function chartData(request: ApiRequest, releaseRate?: number) {
   const q = request.url.searchParams
   const days = intParam(request, 'days', 30)
   const metric = q.get('metric')
   const groupBy = q.getAll('group_by').join(',')
-  if (metric === 'pass_rate' && groupBy === 'day,suite') return suiteSeries(days)
-  if ((metric === 'duration_p50' || metric === 'duration_p95') && groupBy === 'day') return durationSeries(days, metric)
-  if (metric === 'pass_rate' && groupBy === 'day,release') return releaseSeries(days, q.getAll('release_id'), releaseRate)
+  if (metric === 'pass_rate' && groupBy === 'day,suite') return onTheWire(suiteSeries(days))
+  if ((metric === 'duration_p50' || metric === 'duration_p95') && groupBy === 'day') {
+    return onTheWire(durationSeries(days, metric))
+  }
+  if (metric === 'pass_rate' && groupBy === 'day,release') {
+    return onTheWire(releaseSeries(days, q.getAll('release_id'), releaseRate))
+  }
+  const ladder = ladderChartData(request)
+  if (ladder) return ladder
   // An unexpected chart request is a fixture gap: answer it loudly.
   return respond(400, { detail: `no chart-data fixture for metric=${metric} group_by=${groupBy}` })
 }
@@ -1468,14 +1489,11 @@ export const HEATMAP_ON = { viz_chart_data_api: true, viz_advanced_charts: true 
 /** /overview with the catalogue: + top failing (Failure categories draws the page's own read). */
 export const OVERVIEW_ON: ApiHandlers = [...RELEASES_LIST, ...TOP_FAILING_HANDLER, ...OVERVIEW]
 
-/** /trends with the catalogue: + chart-data (suites, p50, p95); the probe is a `/runs` read. */
-export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...TRENDS]
+// `TRENDS_ON` and `SUITE_DETAIL_ON` are declared after `WAVE3` (end of file): they answer the Wave 3 reads too.
 
 /** /reports/summary with the catalogue: + the trend (`/metrics/trends`). */
 export const SUMMARY_REPORT_ON: ApiHandlers = [...RELEASES_LIST, ...SUMMARY_REPORT, ['/api/v1/metrics/trends', trends]]
 
-/** /coverage/suite with the catalogue: no new request (the overlays read the page's points). */
-export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...SUITE_DETAIL]
 
 /** Seven clusters: past the donut's five, so the share is a ranked bar. */
 const GATE_CLUSTER_SPECS_7: { label: string; size: number }[] = [
@@ -1548,4 +1566,1386 @@ export function releaseGateOn(options: GateOnOptions = {}): ApiHandlers {
     [/^\/api\/v1\/release-readiness\/[^/]+$/, () => decision],
     ...RELEASE_GATE,
   ]
+}
+
+// ── Wave 3: the advanced sections (both flags ON) ──────────────────────────
+//
+// Used ONLY by the Wave 3 flag-on specs (`tests/ci-e2e/rollout-heatmaps`,
+// `-coverage-map`, `-failure-groups`, `-scatter`, `-drill`, `-cross-filter`,
+// the Wave 3 lines of `rollout-trends` / `rollout-suite-detail`, and the Wave 3
+// regions of the `*-on` visual specs). The flag-off handler lists are not
+// touched, so every committed flag-off PNG keeps exactly its inputs.
+//
+// Every body is the server's WIRE shape, transcribed (not imported, see the
+// header) from the response builders named on each: the C3 keys at the TOP
+// level with `meta` beside them (`with_meta`), the envelope keys a route
+// lifts into `meta` (`truncated`, `truncated_axes`, `outside_window`) absent
+// from the body, ids and keys spelled as the SQL spells them (suite keys
+// LOWER-cased, `s:` / `c:` / `t:` node ids, UPPERCASE sentinel ids), and
+// `meta.scope.suites` the suites the SQL applied (`build_meta`).
+// `tests/ci-e2e/rollout-fixtures.spec.ts` validates every one with the
+// client's own `validateAnyChartSeries` / `validateEnvelopeMeta`, so a bad
+// fixture fails there by name, never as an error frame in a screenshot.
+
+/** Both flags: every Wave 3 section draws. */
+export const ADVANCED_ON = HEATMAP_ON
+/** Only the advanced flag: the catalogue seam is off, so nothing new may render or be asked (plan 2.4). */
+export const ADVANCED_ONLY = { viz_advanced_charts: true } as const
+
+/** A 250-character name: every label channel must cut or wrap it, never spill. */
+export const HOSTILE_LONG_NAME = `Checkout regression ${'with a very long generated test name '.repeat(8)}`.slice(0, 250)
+/** The hostile names every Wave 3 label channel carries: markup, two Object members, and a 250-character name. */
+export const HOSTILE_NAMES = [HOSTILE_NAME, 'constructor', '__proto__', HOSTILE_LONG_NAME] as const
+
+export const HEATMAP_PATH = '/api/v1/analytics/heatmap'
+export const COVERAGE_MAP_PATH = '/api/v1/analytics/coverage-map'
+export const FAILURE_GROUPS_PATH = '/api/v1/analytics/failure-groups'
+export const SYSTEMIC_CLUSTERS_PATH = '/api/v1/analytics/systemic-clusters'
+export const TEST_SCATTER_PATH = '/api/v1/analytics/test-scatter'
+export const CHART_ROWS_PATH = '/api/v1/analytics/chart-data/rows'
+
+/**
+ * An analytics refusal as `core/analytics_errors.error_body` writes it (a 422
+ * carries `param` and `allowed`). The client never sends one of these
+ * requests; a fixture answers it so a section that did would fail loudly.
+ */
+export const refusal = (code: string, param: string | null = null) => ({
+  code,
+  message: `refused: ${code}`,
+  param,
+  allowed: null,
+  request_id: `req-fixture-${code}`,
+  detail: `refused: ${code}`,
+})
+
+/** chart-data's suite KEY: `LOWER(effective suite)` (`chart_data_service.DIMENSIONS['suite']`). */
+export const suiteKey = (label: string) => label.toLowerCase()
+
+/**
+ * `build_meta`'s `scope.suites`: the suites the SQL applied, through
+ * `suite_keys` (trimmed, lower-cased, blanks dropped, duplicates collapsed).
+ * The drill ladder's stale-response guard reads it (FK5 decision 7).
+ */
+function scopedTo<T>(request: ApiRequest, body: T): T {
+  const suites = [
+    ...new Set(
+      request.url.searchParams
+        .getAll('suite_name')
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ]
+  const record = body as unknown as { meta?: { scope?: Record<string, unknown> } }
+  if (!record.meta?.scope || suites.length === 0) return body
+  return { ...record, meta: { ...record.meta, scope: { ...record.meta.scope, suites } } } as unknown as T
+}
+
+/** Two decimals, as Python's `round(x, 2)` (every value here is exact enough not to hit a half). */
+const round2 = (value: number) => Math.round(value * 100) / 100
+
+interface StatusCounts {
+  passed: number
+  failed: number
+  broken: number
+  skipped: number
+  unknown: number
+}
+
+const NO_COUNTS: StatusCounts = { passed: 0, failed: 0, broken: 0, skipped: 0, unknown: 0 }
+
+/** `n` executions, `skipped` of them skipped, the rest `rate` % passed; a third of the failures broken. */
+function statusCounts(n: number, rate: number, skipped = 0): StatusCounts {
+  const evaluated = n - skipped
+  const passed = Math.round((evaluated * rate) / 100)
+  const bad = evaluated - passed
+  const broken = Math.floor(bad / 3)
+  return { passed, failed: bad - broken, broken, skipped, unknown: 0 }
+}
+
+const evaluatedOf = (c: StatusCounts) => c.passed + c.failed + c.broken
+const executionsOf = (c: StatusCounts) => c.passed + c.failed + c.broken + c.skipped + c.unknown
+
+/** `core/pass_rate.canonical_pass_rate`, two decimals; `null` (never 0) with nothing evaluated. */
+function passRateOf(c: StatusCounts): number | null {
+  const evaluated = evaluatedOf(c)
+  return evaluated === 0 ? null : round2((c.passed / evaluated) * 100)
+}
+
+/** Code-unit order, never the locale's (the server sorts `COLLATE "C"`). */
+const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
+/** An instant as Python's `datetime.isoformat()` writes a UTC one (`+00:00`, no millisecond part when 0). */
+const pyInstant = (iso: string) => iso.replace('.000Z', '+00:00')
+
+// ── /analytics/heatmap (BE1, `heatmap_service.build_heatmap` + the router) ─
+
+interface HeatRow {
+  key: string
+  label: string
+  /** One per column; `null`: no execution of that row in that column. */
+  cells: (StatusCounts | null)[]
+}
+
+/** The server's row rank (`definitions.rows`): most failed + broken, then most executions, then key by code point. */
+function rankHeatRows(rows: HeatRow[]): HeatRow[] {
+  const sum = (row: HeatRow, of: (c: StatusCounts) => number) => row.cells.reduce((total, c) => total + (c ? of(c) : 0), 0)
+  return [...rows].sort(
+    (a, b) =>
+      sum(b, (c) => c.failed + c.broken) - sum(a, (c) => c.failed + c.broken) ||
+      sum(b, executionsOf) - sum(a, executionsOf) ||
+      byCode(a.key, b.key),
+  )
+}
+
+/** `_cell` for a rate kind: no execution -> `null, n 0` with zero counts; nothing evaluated -> `null` with its real n. */
+function rateCell(x: number, y: number, counts: StatusCounts | null) {
+  if (counts === null) return { x, y, value: null, n: 0, counts: { ...NO_COUNTS } }
+  return { x, y, value: passRateOf(counts), n: executionsOf(counts), counts: { ...counts } }
+}
+
+interface AxisCut {
+  dimension: string
+  kept: number
+  total: number
+}
+
+function heatmapMeta(days: number, kind: string, cut: { series?: AxisCut; x?: AxisCut }, rate: boolean) {
+  const axes = { ...(cut.x ? { x: cut.x } : {}), ...(cut.series ? { series: cut.series } : {}) }
+  const truncated = Object.keys(axes).length > 0
+  return chartMeta(days, {
+    pass_rate_basis: rate ? 'executions' : null,
+    truncated,
+    // The column axis first, as chart-data's scalar does.
+    truncated_total: cut.x ? cut.x.total : cut.series ? cut.series.total : null,
+    ...(truncated ? { truncated_axes: axes } : {}),
+    definitions: {
+      kind,
+      grain: 'execution_row',
+      window_clock: 'test_runs.created_at, UTC',
+      timezone: 'UTC',
+      rows: 'worst first: the most failed + broken executions in the window',
+      ...(rate ? { value: 'Pass rate in percentage points (unit: percent, 0-100)' } : {}),
+    },
+  })
+}
+
+function rateMatrix(columns: readonly (readonly [string, string])[], rows: HeatRow[], meta: Record<string, unknown>) {
+  const ranked = rankHeatRows(rows)
+  return {
+    kind: 'matrix',
+    value_type: 'rate',
+    x_labels: columns.map(([, label]) => label),
+    y_labels: ranked.map((row) => row.label),
+    x_keys: columns.map(([key]) => key),
+    y_keys: ranked.map((row) => row.key),
+    cells: ranked.flatMap((row, y) => row.cells.map((counts, x) => rateCell(x, y, counts))),
+    unit: 'percent',
+    meta,
+  }
+}
+
+/** The suites the server ranked for the suite x day heatmap: it keeps the default rows and counts the rest. */
+export const HEATMAP_SUITE_TOTAL = 11
+
+/**
+ * `kind=suite_day`: the seven suites of the Trends series (the hostile name
+ * among them), one column per UTC day of the window, oldest first. The 7-day
+ * gap of the Trends fixture is a gap in every row; Notifications did not run
+ * 2 days ago; Search ran only SKIPPED tests 3 days ago (a cell with
+ * executions and no rate: `null`, never 0%). 11 suites ranked, 7 kept
+ * (`truncated_axes.series`), never an "Other" row.
+ */
+export function suiteDayMatrix(days: number) {
+  const columns = Array.from({ length: days }, (_, i) => [daysAgo(days - 1 - i), daysAgo(days - 1 - i)] as const)
+  const rows: HeatRow[] = SERIES_SUITES.filter((suite) => suite.key !== '__other__').map((suite) => ({
+    key: suiteKey(suite.label),
+    label: suite.label,
+    cells: columns.map((_, i) => {
+      const n = days - 1 - i
+      if (GAP_DAYS.has(n) || (suite.key === 'Notifications' && n === 2)) return null
+      const executions = suite.n + (n % 5)
+      if (suite.key === 'Search' && n === 3) return { ...NO_COUNTS, skipped: executions }
+      return statusCounts(executions, wobble(suite.base, suite.swing, n), n % 3)
+    }),
+  }))
+  const cut = { series: { dimension: 'suite', kept: rows.length, total: HEATMAP_SUITE_TOTAL } }
+  return rateMatrix(columns, rows, heatmapMeta(days, 'suite_day', cut, true))
+}
+
+/**
+ * The suites of the Coverage page and the hostile ones (markup and two Object
+ * members, as suite names an ingested CI file can carry), each with a base
+ * pass rate.
+ */
+const MATRIX_SUITES: { label: string; base: number }[] = [
+  { label: 'Auth', base: 94 },
+  { label: 'Checkout', base: 97 },
+  { label: 'Payments', base: 56 },
+  { label: 'Search', base: 76 },
+  { label: 'Notifications', base: 99 },
+  { label: HOSTILE_NAME, base: 88 },
+  { label: 'constructor', base: 91 },
+  { label: '__proto__', base: 83 },
+]
+
+/**
+ * Environment columns, busiest first: the key is `LOWER(TRIM(environment))`,
+ * the label its ingested spelling; runs with none are the `(none)` bucket.
+ */
+export const HEATMAP_ENVIRONMENTS = [
+  ['ci', 'CI'],
+  ['staging', 'Staging'],
+  ['production', 'Production'],
+  ['(none)', '(none)'],
+] as const
+
+/**
+ * `kind=suite_environment`: eight suites x four environments. Notifications
+ * never ran in production (no execution: `null`, n 0); the hostile suite ran
+ * only skipped tests with no environment (n 6, nothing evaluated: `null`).
+ */
+export function suiteEnvironmentMatrix(days: number) {
+  const rows: HeatRow[] = MATRIX_SUITES.map((suite, s) => ({
+    key: suiteKey(suite.label),
+    label: suite.label,
+    cells: HEATMAP_ENVIRONMENTS.map(([env], e) => {
+      if (suite.label === 'Notifications' && env === 'production') return null
+      if (suite.label === HOSTILE_NAME && env === '(none)') return { ...NO_COUNTS, skipped: 6 }
+      const offset = [0, -4, 2, -10][e]
+      return statusCounts(30 + e * 7 + s * 3, Math.min(100, suite.base + offset), e % 2)
+    }),
+  }))
+  return rateMatrix(HEATMAP_ENVIRONMENTS, rows, heatmapMeta(days, 'suite_environment', {}, true))
+}
+
+/**
+ * Release columns, oldest version first, then the runs no release claims
+ * (`order_release_columns`: key `unattributed`, label `(unattributed)`): the
+ * releases of `RELEASES` that ran, the hostile name among them.
+ */
+export const HEATMAP_RELEASES: readonly (readonly [string, string])[] = [
+  [RELEASE_ID.july, '2026.07'],
+  [RELEASE_ID.hostile, HOSTILE_NAME],
+  [RELEASE_ID.august, '2026.08'],
+  [RELEASE_ID.current, '2026.09'],
+  [RELEASE_ID.planned, '2026.10'],
+  ['unattributed', '(unattributed)'],
+]
+
+/** `kind=suite_release`: eight suites x six release columns; Notifications has nothing in 2026.10. */
+export function suiteReleaseMatrix(days: number) {
+  const rows: HeatRow[] = MATRIX_SUITES.map((suite, s) => ({
+    key: suiteKey(suite.label),
+    label: suite.label,
+    cells: HEATMAP_RELEASES.map(([id], r) => {
+      if (suite.label === 'Notifications' && id === RELEASE_ID.planned) return null
+      const drift = [-6, -3, 0, 2, -8, -12][r]
+      return statusCounts(20 + r * 5 + s * 2, Math.max(0, Math.min(100, suite.base + drift)), r % 3 === 2 ? 1 : 0)
+    }),
+  }))
+  return rateMatrix(HEATMAP_RELEASES, rows, heatmapMeta(days, 'suite_release', {}, true))
+}
+
+/** Suite detail's last runs as test x run columns, oldest to newest (key = run id, label = build number, which may repeat). */
+export const HEATMAP_RUNS = Array.from({ length: 12 }, (_, i) => {
+  const build = i === 7 ? 228 : 218 + i * 2
+  return [`77777777-7777-4777-8777-${String(i).padStart(12, '0')}`, String(build)] as const
+})
+
+/** The tests of the Auth suite that failed in the window (the hostile names among them), with a status per run. */
+export const HEATMAP_TESTS: { fingerprint: string; name: string; pattern: string }[] = [
+  // p passed, f failed, b broken, s skipped, - not in that run
+  { fingerprint: 'fp-auth-3', name: 'logout clears session', pattern: 'ppfpfffbpfff' },
+  { fingerprint: 'fp-auth-2', name: 'token refresh', pattern: 'pfpfp-pfpfpf' },
+  { fingerprint: 'fp-auth-1', name: 'login rejects bad password', pattern: 'pppppfpppppb' },
+  { fingerprint: 'fp-auth-h', name: HOSTILE_NAME, pattern: 'ppppfpppfppp' },
+  { fingerprint: 'fp-auth-c', name: 'constructor', pattern: 'sppppppbpppp' },
+  { fingerprint: 'fp-auth-p', name: '__proto__', pattern: '--ppppfppppp' },
+  { fingerprint: 'fp-auth-l', name: HOSTILE_LONG_NAME, pattern: 'pppppppppfpp' },
+]
+
+const RUN_STATUS: Record<string, string | null> = { p: 'passed', f: 'failed', b: 'broken', s: 'skipped', '-': null }
+
+/**
+ * `kind=test_run` (a STATUS matrix, `_cell`'s non-rate branch: one execution
+ * per cell, `value` its status, `null` with n 0 when the test was not in that
+ * run; no `unit`, no `counts`; `pass_rate_basis: null`). Rows: the tests with
+ * the most failed + broken executions in the window, fingerprint ascending on
+ * a tie (a never-failing test is not a row).
+ */
+export function testRunMatrix(days: number) {
+  const fails = (pattern: string) => [...pattern].filter((c) => c === 'f' || c === 'b').length
+  const ranked = [...HEATMAP_TESTS].sort((a, b) => fails(b.pattern) - fails(a.pattern) || byCode(a.fingerprint, b.fingerprint))
+  return {
+    kind: 'matrix',
+    value_type: 'status',
+    x_labels: HEATMAP_RUNS.map(([, label]) => label),
+    y_labels: ranked.map((t) => t.name),
+    x_keys: HEATMAP_RUNS.map(([key]) => key),
+    y_keys: ranked.map((t) => t.fingerprint),
+    cells: ranked.flatMap((t, y) =>
+      [...t.pattern].map((c, x) => {
+        const status = RUN_STATUS[c]
+        return status === null ? { x, y, value: null, n: 0 } : { x, y, value: status, n: 1 }
+      }),
+    ),
+    meta: heatmapMeta(days, 'test_run', {}, false),
+  }
+}
+
+/** `GET /analytics/heatmap?kind=...` (refusing what the service refuses; the client never asks it). */
+function heatmap(request: ApiRequest) {
+  const q = request.url.searchParams
+  const kind = q.get('kind')
+  const days = intParam(request, 'days', 30)
+  const project = q.get('project_id')
+  if ((kind === 'test_run' || kind === 'suite_release') && !project) return respond(422, refusal('project_required', 'project_id'))
+  if (kind === 'suite_day' && days > 90) return respond(422, refusal('window_cap', 'days'))
+  if (days < 1 || days > 365) return respond(422, refusal('window_range', 'days'))
+  if (kind === 'suite_day') return scopedTo(request, suiteDayMatrix(days))
+  if (kind === 'suite_environment') return scopedTo(request, suiteEnvironmentMatrix(days))
+  if (kind === 'suite_release') return scopedTo(request, suiteReleaseMatrix(days))
+  if (kind === 'test_run') return scopedTo(request, testRunMatrix(days))
+  return respond(422, refusal('kind_enum', 'kind'))
+}
+
+// ── /analytics/coverage-map (BE2, `coverage_map_service.assemble`) ─────────
+
+/** Separates a class node id's suite key from its class key (`KEY_SEPARATOR`, U+241F). */
+export const COVERAGE_KEY_SEPARATOR = '␟'
+/** The class key of tests with no class (`NO_CLASS_KEY`), labelled `(ungrouped)`. */
+export const NO_CLASS_KEY = '__none__'
+
+interface MapTest {
+  fingerprint: string
+  name: string
+  /** Executions in the window; `null`: none (idle). */
+  counts: StatusCounts | null
+  /** Days since its last execution anywhere in the project; `null`: never seen. */
+  lastDays: number | null
+  /** Ingestion created it but its runs are gone (`unknown`, not `never`). */
+  lost?: boolean
+  flaky?: boolean
+}
+
+interface MapClass {
+  key: string
+  tests: MapTest[]
+}
+
+interface MapSuite {
+  label: string
+  classes: MapClass[]
+}
+
+/** Tests named `names`, each run 12-20 times at about `rate` %, last run `lastDays` (or one more) ago. */
+function mapTests(prefix: string, names: string[], rate: number, lastDays: number, flaky: number[] = []): MapTest[] {
+  return names.map((name, i) => ({
+    fingerprint: `fp-${prefix}-${i}`,
+    name,
+    counts: statusCounts(12 + ((i * 5) % 9), Math.max(0, Math.min(100, rate - ((i * 7) % 15))), i % 3 === 2 ? 1 : 0),
+    lastDays: lastDays + (i % 2),
+    flaky: flaky.includes(i),
+  }))
+}
+
+const numbered = (stem: string, count: number) => Array.from({ length: count }, (_, i) => `${stem} ${i + 1}`)
+
+/** Tests with no execution in the window and `lastDays` since their last one (seen, idle). */
+const idle = (tests: MapTest[]) => tests.map((t) => ({ ...t, counts: null }))
+
+/**
+ * The project's coverage map: ten suites under the root. Checkout is the
+ * largest (one class is a FILE PATH, as pytest reports it); Auth holds the
+ * Suite detail page's four tests, an `(ungrouped)` class and a hostile class;
+ * Payments a test that never ran; Notifications ONE test; Legacy import never
+ * ran at all (`never`); Archived lost its runs (`unknown`); Search last ran 40
+ * days ago (seen, not run in a 30-day window); the hostile suite; and the
+ * `(none)` bucket of rows with no suite, and a suite named `__proto__`.
+ */
+export const COVERAGE_MAP_SUITES: MapSuite[] = [
+  {
+    label: 'Checkout',
+    classes: [
+      { key: 'CheckoutSpec', tests: mapTests('checkout-0', numbered('checkout step', 8), 97, 0, [3]) },
+      { key: 'CouponSpec', tests: mapTests('checkout-1', numbered('apply coupon', 5), 92, 1, [0]) },
+      { key: 'tests/checkout/test_cart.py', tests: mapTests('checkout-2', numbered('cart total', 4), 99, 0) },
+    ],
+  },
+  {
+    label: 'Auth',
+    classes: [
+      {
+        key: 'AuthSpec',
+        tests: mapTests('auth', ['login succeeds', 'login rejects bad password', 'token refresh', 'logout clears session'], 90, 0, [2]),
+      },
+      { key: NO_CLASS_KEY, tests: mapTests('auth-n', ['smoke: home page', 'smoke: sign-in form'], 100, 0) },
+      { key: HOSTILE_NAME, tests: mapTests('auth-h', ['constructor', '__proto__', HOSTILE_LONG_NAME], 70, 2) },
+    ],
+  },
+  {
+    label: 'Payments',
+    classes: [
+      { key: 'PaymentsSpec', tests: mapTests('payments-0', numbered('card payment', 6), 60, 0, [1, 4]) },
+      {
+        key: 'RefundSpec',
+        tests: [
+          ...mapTests('payments-1', numbered('refund', 2), 50, 3),
+          { fingerprint: 'fp-payments-1-n', name: 'refund to a closed card', counts: null, lastDays: null },
+        ],
+      },
+    ],
+  },
+  { label: 'Search', classes: [{ key: 'SearchSpec', tests: idle(mapTests('search', numbered('search query', 5), 80, 40)) }] },
+  { label: 'Notifications', classes: [{ key: 'NotifySpec', tests: mapTests('notify', ['sends the receipt email'], 100, 5) }] },
+  {
+    label: 'Legacy import',
+    classes: [
+      {
+        key: 'ImportSpec',
+        tests: numbered('legacy import', 3).map((name, i) => ({ fingerprint: `fp-legacy-${i}`, name, counts: null, lastDays: null })),
+      },
+    ],
+  },
+  {
+    label: 'Archived',
+    classes: [
+      {
+        key: 'ArchivedSpec',
+        tests: numbered('archived check', 2).map((name, i) => ({
+          fingerprint: `fp-archived-${i}`,
+          name,
+          counts: null,
+          lastDays: null,
+          lost: true,
+        })),
+      },
+    ],
+  },
+  { label: HOSTILE_NAME, classes: [{ key: 'HostileSpec', tests: mapTests('hostile', ['constructor', '__proto__'], 75, 1) }] },
+  // A suite NAMED `__proto__` (its node id `s:__proto__`, its class `constructor`): a key that must stay data.
+  { label: '__proto__', classes: [{ key: 'constructor', tests: mapTests('proto', ['constructor', '__proto__'], 88, 2) }] },
+  { label: '(none)', classes: [{ key: NO_CLASS_KEY, tests: mapTests('nosuite', numbered('orphan test', 2), 85, 4) }] },
+]
+
+/** `node_stats` over a set of tests: every key present; null, never 0, with nothing to measure; `seen` iff a date. */
+function nodeStats(tests: MapTest[]) {
+  const sum = tests.reduce<StatusCounts>(
+    (acc, t) =>
+      t.counts
+        ? {
+            passed: acc.passed + t.counts.passed,
+            failed: acc.failed + t.counts.failed,
+            broken: acc.broken + t.counts.broken,
+            skipped: acc.skipped + t.counts.skipped,
+            unknown: acc.unknown + t.counts.unknown,
+          }
+        : acc,
+    { ...NO_COUNTS },
+  )
+  const seen = tests.filter((t) => t.lastDays !== null).map((t) => t.lastDays as number)
+  const last = seen.length > 0 ? Math.min(...seen) : null
+  const flaky = tests.filter((t) => t.flaky).length
+  return {
+    test_count: tests.length,
+    executions: executionsOf(sum),
+    pass_rate: passRateOf(sum),
+    flaky_count: flaky,
+    flaky_share: tests.length > 0 ? Math.round((flaky / tests.length) * 10_000) / 10_000 : null,
+    // The run's created_at, 2 h before NOW's hour: whole UTC days to NOW's day = `last`.
+    last_executed_at: last === null ? null : pyInstant(isoAgo(last, 2)),
+    staleness_days: last,
+    recency: last !== null ? 'seen' : tests.some((t) => t.lost) ? 'unknown' : 'never',
+  }
+}
+
+const classLabel = (key: string) => (key === NO_CLASS_KEY ? '(ungrouped)' : key)
+const suiteTests = (suite: MapSuite) => suite.classes.flatMap((c) => c.tests)
+
+/** One node (`value` = test_count, `measure` = the pass rate, every `stats` key). */
+function treeNode(id: string, parentId: string | null, label: string, tests: MapTest[]) {
+  const stats = nodeStats(tests)
+  return { id, parent_id: parentId, label, value: stats.test_count, measure: stats.pass_rate, stats }
+}
+
+/** Children ranked as the SQL does: most tests first, then the key by code point. */
+function rankChildren<T extends { key: string; tests: MapTest[] }>(children: T[]): T[] {
+  return [...children].sort((a, b) => b.tests.length - a.tests.length || byCode(a.key, b.key))
+}
+
+/**
+ * One level of the map (`assemble`): the parent as the single root, then its
+ * children. No children -> `nodes: []` (the contract's "no data"), never a
+ * root of zero tests. Depth 3 lists a class's tests by fingerprint.
+ */
+export function coverageMapLevel(days: number, depth: number, suite: string | null, classKey: string | null) {
+  const meta = chartMeta(days, {
+    definitions: {
+      coverage: 'test_execution',
+      coverage_note:
+        'Test-execution coverage: how many tests sit under a node and how they ran in the window. It is not code coverage.',
+      grain: 'execution_row',
+      depth,
+      level: ({ 1: 'suite', 2: 'class', 3: 'test' } as Record<number, string>)[depth],
+      timezone: 'UTC',
+    },
+  })
+  const empty = { kind: 'tree', nodes: [], meta }
+  if (depth === 1) {
+    const children = rankChildren(COVERAGE_MAP_SUITES.map((s) => ({ key: suiteKey(s.label), label: s.label, tests: suiteTests(s) })))
+    return {
+      kind: 'tree',
+      nodes: [
+        treeNode('all', null, 'All suites', children.flatMap((c) => c.tests)),
+        ...children.map((c) => treeNode(`s:${c.key}`, 'all', c.label, c.tests)),
+      ],
+      meta,
+    }
+  }
+  const found = COVERAGE_MAP_SUITES.find((s) => suiteKey(s.label) === suite)
+  if (!found || suite === null) return empty
+  const rootId = `s:${suite}`
+  if (depth === 2) {
+    return {
+      kind: 'tree',
+      nodes: [
+        treeNode(rootId, null, found.label, suiteTests(found)),
+        ...rankChildren(found.classes).map((c) =>
+          treeNode(`c:${suite}${COVERAGE_KEY_SEPARATOR}${c.key}`, rootId, classLabel(c.key), c.tests),
+        ),
+      ],
+      meta,
+    }
+  }
+  const cls = found.classes.find((c) => c.key === classKey)
+  if (!cls || classKey === null) return empty
+  const classId = `c:${suite}${COVERAGE_KEY_SEPARATOR}${classKey}`
+  const tests = [...cls.tests].sort((a, b) => byCode(a.fingerprint, b.fingerprint))
+  return {
+    kind: 'tree',
+    nodes: [treeNode(classId, null, classLabel(classKey), cls.tests), ...tests.map((t) => treeNode(`t:${t.fingerprint}`, classId, t.name, [t]))],
+    meta,
+  }
+}
+
+/** `GET /analytics/coverage-map?depth=1|2|3[&suite][&class_key]` (refusals as `parse_level`'s). */
+function coverageMap(request: ApiRequest) {
+  const q = request.url.searchParams
+  if (!q.get('project_id')) return respond(422, refusal('missing_parameter', 'project_id'))
+  const depth = intParam(request, 'depth', 1)
+  const suite = q.get('suite')
+  const classKey = q.get('class_key')
+  if (![1, 2, 3].includes(depth)) return respond(422, refusal('depth_enum', 'depth'))
+  if (depth === 1 && (suite !== null || classKey !== null)) return respond(422, refusal('parent_unexpected', 'suite'))
+  if (depth >= 2 && suite === null) return respond(422, refusal('parent_required', 'suite'))
+  if (depth === 2 && classKey !== null) return respond(422, refusal('parent_unexpected', 'class_key'))
+  if (depth === 3 && classKey === null) return respond(422, refusal('parent_required', 'class_key'))
+  return scopedTo(request, coverageMapLevel(intParam(request, 'days', 30), depth, suite, classKey))
+}
+
+// ── /analytics/failure-groups (BE3, `failure_groups_service.assemble`) ─────
+
+export const NO_MESSAGE_ID = '__NO_MESSAGE__'
+export const SINGLETONS_ID = '__SINGLETONS__'
+
+interface GroupSpec {
+  signature: string
+  label: string
+  /** `[category, failures]`, most first (`_categories`). */
+  categories: [string, number][]
+  tests: number
+  runs: number
+  distinct: number
+  /** The days (before NOW) of its first and last failure in the window. */
+  first: number
+  last: number
+  /** `[fingerprint, name, failures]`, most first. */
+  top: [string, string, number][]
+}
+
+/** 160 characters, the last one an ellipsis (`_label`). */
+const groupLabel = (text: string) => (text.length <= 160 ? text : `${text.slice(0, 159)}…`)
+
+/**
+ * Eight groups, largest first: an assertion, a timeout, a refused
+ * connection, a group whose most frequent line is MARKUP, two whose
+ * signatures are Object members (`constructor`, `__proto__`), one whose line
+ * is 250 characters (cut to 160), and a small one. Plus failures with no
+ * message, singletons, nothing omitted.
+ */
+export const FAILURE_GROUP_SPECS: GroupSpec[] = [
+  {
+    signature: 'assertionerror: expected # to equal #',
+    label: 'AssertionError: expected 200 to equal 500',
+    categories: [
+      ['product_bug', 15],
+      ['flaky', 6],
+    ],
+    tests: 6,
+    runs: 9,
+    distinct: 4,
+    first: 27,
+    last: 0,
+    top: [
+      ['fp-top-0', 'card declined shows reason', 7],
+      ['fp-top-1', 'checkout total includes tax', 6],
+      ['fp-pay-2', 'refund amount matches', 4],
+    ],
+  },
+  {
+    signature: 'timeouterror: waiting for selector "#checkout" failed: timeout #ms exceeded',
+    label: 'TimeoutError: waiting for selector "#checkout" failed: timeout 30000ms exceeded',
+    categories: [['infrastructure', 12]],
+    tests: 4,
+    runs: 6,
+    distinct: 1,
+    first: 20,
+    last: 1,
+    top: [
+      ['fp-top-2', 'refund webhook retried', 5],
+      ['fp-co-4', 'checkout loads', 4],
+    ],
+  },
+  {
+    signature: 'connectionrefusederror: [errno #] connection refused',
+    label: 'ConnectionRefusedError: [Errno 111] Connection refused',
+    categories: [
+      ['infrastructure', 7],
+      ['unknown', 2],
+    ],
+    tests: 3,
+    runs: 3,
+    distinct: 1,
+    first: 13,
+    last: 12,
+    top: [
+      ['fp-pay-5', 'gateway health', 4],
+      ['fp-pay-6', 'gateway retry', 3],
+    ],
+  },
+  {
+    signature: HOSTILE_NAME.toLowerCase(),
+    label: HOSTILE_NAME,
+    categories: [['unknown', 6]],
+    tests: 2,
+    runs: 4,
+    distinct: 1,
+    first: 9,
+    last: 2,
+    top: [
+      ['fp-auth-h', HOSTILE_NAME, 4],
+      ['fp-auth-l', HOSTILE_LONG_NAME, 2],
+    ],
+  },
+  {
+    signature: 'constructor',
+    label: 'constructor',
+    categories: [['test_data', 4]],
+    tests: 1,
+    runs: 4,
+    distinct: 1,
+    first: 6,
+    last: 3,
+    top: [['fp-auth-c', 'constructor', 4]],
+  },
+  {
+    signature: '__proto__',
+    label: '__proto__',
+    categories: [['automation_defect', 3]],
+    tests: 1,
+    runs: 3,
+    distinct: 1,
+    first: 4,
+    last: 1,
+    top: [['fp-auth-p', '__proto__', 3]],
+  },
+  {
+    signature: HOSTILE_LONG_NAME.toLowerCase().slice(0, 80),
+    label: groupLabel(HOSTILE_LONG_NAME),
+    categories: [['flaky', 2]],
+    tests: 2,
+    runs: 2,
+    distinct: 2,
+    first: 15,
+    last: 14,
+    top: [
+      ['fp-auth-l', HOSTILE_LONG_NAME, 1],
+      ['fp-co-9', 'checkout regression', 1],
+    ],
+  },
+  {
+    signature: "keyerror: 'sku'",
+    label: "KeyError: 'sku'",
+    categories: [['product_bug', 2]],
+    tests: 1,
+    runs: 2,
+    distinct: 1,
+    first: 3,
+    last: 3,
+    top: [['fp-co-2', 'order line items', 2]],
+  },
+]
+
+const NO_MESSAGE = { failures: 4, tests: 2, runs: 3 }
+const SINGLETONS = { groups: 5, failures: 5 }
+
+export const groupFailures = (g: GroupSpec) => g.categories.reduce((sum, [, n]) => sum + n, 0)
+
+/** Every failing execution in scope: the groups', the ones with no message and the singletons'. */
+export const FAILURE_GROUPS_TOTAL =
+  FAILURE_GROUP_SPECS.reduce((sum, g) => sum + groupFailures(g), 0) + NO_MESSAGE.failures + SINGLETONS.failures
+
+/** `trend_axis`: every UTC day of the window (the Monday of each ISO week past 90 days), oldest first. */
+function trendAxis(days: number): string[] {
+  if (days <= 90) return Array.from({ length: days }, (_, i) => daysAgo(days - 1 - i))
+  const monday = (n: number) => {
+    const d = new Date(`${daysAgo(n)}T00:00:00Z`)
+    return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10)
+  }
+  return [...new Set(Array.from({ length: days }, (_, i) => monday(days - 1 - i)))]
+}
+
+/** A group's failures spread over the days from its last to its first failure (sums to its failure_count). */
+function groupTrend(g: GroupSpec, axis: string[], weekly: boolean) {
+  const counts = new Map<string, number>()
+  const span = g.first - g.last + 1
+  for (let j = 0; j < groupFailures(g); j++) {
+    const n = g.last + (j % span)
+    const d = new Date(`${daysAgo(n)}T00:00:00Z`)
+    const bucket = weekly ? new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10) : daysAgo(n)
+    counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
+  }
+  return axis.map((x) => ({ x, y: counts.get(x) ?? 0 }))
+}
+
+/** Jaccard edges between the groups above (by index): weight >= 0.2, strongest first. */
+const GROUP_EDGES: [number, number, number][] = [
+  [0, 1, 0.5],
+  [4, 5, 0.4],
+  [1, 2, 0.3333],
+  [0, 3, 0.25],
+]
+
+/**
+ * `GET /analytics/failure-groups[?include=edges]`: `nodes` (size = failures,
+ * `group` = the dominant category), `edges` only with `include=edges` (source
+ * < target by code point), `groups` in rank order, the roll-ups as objects
+ * (never nodes). `empty`: a scope with no failing execution
+ * (`total_failures: 0`, every share `null`).
+ */
+export function failureGroupsBody(days: number, options: { edges?: boolean; empty?: boolean } = {}) {
+  const specs = options.empty ? [] : FAILURE_GROUP_SPECS
+  const total = options.empty ? 0 : FAILURE_GROUPS_TOTAL
+  const share = (n: number) => (total <= 0 ? null : n / total)
+  const weekly = days > 90
+  const axis = trendAxis(days)
+  const edges =
+    options.edges && !options.empty
+      ? GROUP_EDGES.map(([a, b, weight]) => {
+          const [source, target] = [specs[a].signature, specs[b].signature].sort(byCode)
+          return { source, target, weight }
+        })
+      : []
+  return {
+    kind: 'graph',
+    nodes: specs.map((g) => ({ id: g.signature, label: g.label, size: groupFailures(g), group: g.categories[0][0] })),
+    edges,
+    groups: specs.map((g) => ({
+      id: g.signature,
+      signature: g.signature,
+      label: g.label,
+      distinct_raw_lines: g.distinct,
+      failure_count: groupFailures(g),
+      affected_tests: g.tests,
+      affected_runs: g.runs,
+      first_seen: pyInstant(isoAgo(g.first, 3)),
+      last_seen: pyInstant(isoAgo(g.last, 1)),
+      share_of_failures: share(groupFailures(g)),
+      categories: g.categories.map(([category, count]) => ({ category, count })),
+      dominant_category: g.categories[0][0],
+      trend: groupTrend(g, axis, weekly),
+      top_tests: g.top.map(([fingerprint, name, count]) => ({ fingerprint, project_id: PROJECT_ID, name, count })),
+    })),
+    trend_grain: weekly ? 'week' : 'day',
+    total_failures: total,
+    no_message: {
+      id: NO_MESSAGE_ID,
+      failure_count: options.empty ? 0 : NO_MESSAGE.failures,
+      affected_tests: options.empty ? 0 : NO_MESSAGE.tests,
+      affected_runs: options.empty ? 0 : NO_MESSAGE.runs,
+      share_of_failures: share(NO_MESSAGE.failures),
+    },
+    singletons: {
+      id: SINGLETONS_ID,
+      group_count: options.empty ? 0 : SINGLETONS.groups,
+      failure_count: options.empty ? 0 : SINGLETONS.failures,
+      share_of_failures: share(SINGLETONS.failures),
+    },
+    omitted: { group_count: 0, failure_count: 0, share_of_failures: share(0) },
+    meta: chartMeta(days, {
+      // The groups route passes no rate basis to `build_meta`.
+      pass_rate_basis: null,
+      definitions: {
+        grain: 'execution_row',
+        population: 'FAILED and BROKEN executions in scope; passed, skipped and unknown are not counted',
+        label: 'the most frequent raw first line of the group, <= 160 characters, untrusted text',
+      },
+    }),
+  }
+}
+
+function failureGroups(request: ApiRequest) {
+  const include = request.url.searchParams.getAll('include')
+  if (include.some((token) => token !== 'edges')) return respond(422, refusal('include_enum', 'include'))
+  return scopedTo(request, failureGroupsBody(intParam(request, 'days', 30), { edges: include.includes('edges') }))
+}
+
+// ── /analytics/systemic-clusters (`routers/analytics.systemic_clusters`) ───
+
+const SYSTEMIC_CLUSTER_SPECS: [string, string, string, string, number, number, [string, string, number][]][] = [
+  [
+    'sfc_001',
+    '46b7fe3fb233da6b97021fc6646e24b3',
+    'Payment gateway timeouts',
+    'external_dependency',
+    0.82,
+    7,
+    [
+      ['fp-pay-5', 'gateway health', 7],
+      ['fp-pay-6', 'gateway retry', 6],
+      ['fp-top-2', 'refund webhook retried', 6],
+      ['fp-top-0', 'card declined shows reason', 5],
+    ],
+  ],
+  [
+    'sfc_002',
+    '9a0c3f1e2d4b5a69788766554433aa01',
+    HOSTILE_NAME,
+    'unknown',
+    0.64,
+    4,
+    [
+      ['fp-auth-h', HOSTILE_NAME, 4],
+      ['fp-auth-c', 'constructor', 4],
+      ['fp-auth-p', '__proto__', 3],
+    ],
+  ],
+  [
+    'sfc_003',
+    '0f1e2d3c4b5a69788796a5b4c3d2e1f0',
+    'Search index warm-up',
+    'environment',
+    0.55,
+    3,
+    [
+      ['fp-search-0', 'search query 1', 3],
+      ['fp-search-1', 'search query 2', 3],
+    ],
+  ],
+]
+
+/** Three clusters, largest first, keyed by `membership_key` (0193); one is hostile in its label and members. */
+export const SYSTEMIC_CLUSTERS = SYSTEMIC_CLUSTER_SPECS.map(([clusterKey, membershipKey, label, cause, cohesion, runs, members]) => ({
+  cluster_key: clusterKey,
+  membership_key: membershipKey,
+  label,
+  cause_family: cause,
+  size: members.length,
+  cohesion,
+  co_failure_runs: runs,
+  window_days: 60,
+  computed_at: pyInstant(isoAgo(0, 5)),
+  members: members.map(([fingerprint, name, failureRuns]) => ({
+    test_fingerprint: fingerprint,
+    test_name: name,
+    failure_runs: failureRuns,
+  })),
+}))
+
+export const CLUSTERS_EMPTY_IS_NORMAL =
+  'Most projects have no systemic clusters. An empty list means no group of tests met the co-failure cohesion bar, not that clustering failed.'
+
+/** `{items, total, empty_is_normal, meta}`; `scope` only when a release or suite filter applied. */
+export function systemicClustersBody(days: number, options: { empty?: boolean } = {}) {
+  const items = options.empty ? [] : SYSTEMIC_CLUSTERS
+  return { items, total: items.length, empty_is_normal: CLUSTERS_EMPTY_IS_NORMAL, meta: chartMeta(days, { pass_rate_basis: null }) }
+}
+
+function systemicClusters(request: ApiRequest) {
+  if (!request.url.searchParams.get('project_id')) return respond(422, refusal('missing_parameter', 'project_id'))
+  return scopedTo(request, systemicClustersBody(intParam(request, 'days', 30)))
+}
+
+// ── /analytics/test-scatter (BE4, `test_scatter_service.build_test_scatter`) ─
+
+export interface ScatterTest {
+  id: string
+  label: string
+  x: number
+  y: number
+  size: number
+  n: number
+}
+
+/** Python's `statistics.median` (the mean of the two middle values for an even count). */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * `count` tests, a pure function of the index: p95 from 1 ms (the log floor,
+ * the first test) to ~10 s on a log spread, executions 5..124, failure rate
+ * over the EVALUATED executions (two tests in three never fail, so the median
+ * rate is 0%), the hostile names at fixed indexes.
+ */
+function scatterTests(prefix: string, count: number, salt: number): ScatterTest[] {
+  const named: Record<number, string> = { 3: HOSTILE_NAME, 5: 'constructor', 7: '__proto__', 9: HOSTILE_LONG_NAME }
+  return Array.from({ length: count }, (_, i) => {
+    const size = 5 + ((i * 13 + salt) % 120)
+    const n = Math.max(1, size - (i % 4))
+    const bad = (i * 7 + salt) % 3 === 0 ? (i * 17 + salt) % n : 0
+    return {
+      id: `fp-${prefix}-p${i}`,
+      label: named[i] ?? `${prefix} test ${i + 1}`,
+      x: i === 0 ? 1 : round2(10 ** (1 + ((i * 37 + salt) % 300) / 100)),
+      y: round2((bad / n) * 100),
+      size,
+      n,
+    }
+  })
+}
+
+/** The Suite detail scatter (the Auth suite) and the project-wide one (Failures). */
+export const SCATTER_SUITE_TESTS = scatterTests('auth', 40, 3)
+export const SCATTER_PROJECT_TESTS = scatterTests('project', 90, 11)
+/** Tests the server could not place, by reason (always sent, zeros included). */
+export const SCATTER_EXCLUDED = { below_min_executions: 3, no_duration: 1, no_evaluated: 2 }
+
+/** `{kind: points, x, y, size, points, medians?, excluded, meta}`; `medians` absent with no point (never 0, 0). */
+export function testScatterBody(days: number, tests: ScatterTest[], options: { allExcluded?: boolean } = {}) {
+  const points = options.allExcluded ? [] : tests
+  return {
+    kind: 'points',
+    x: { key: 'p95_duration_ms', label: 'p95 duration (ms)', unit: 'ms', scale: 'log' },
+    y: { key: 'failure_rate', label: 'Failure rate (%)', unit: 'percent', scale: 'linear' },
+    size: { key: 'executions', label: 'Executions' },
+    points,
+    ...(points.length > 0 ? { medians: { x: round2(median(points.map((p) => p.x))), y: round2(median(points.map((p) => p.y))) } } : {}),
+    excluded: options.allExcluded ? { below_min_executions: 7, no_duration: 2, no_evaluated: 1 } : { ...SCATTER_EXCLUDED },
+    meta: chartMeta(days, {
+      definitions: {
+        grain: 'execution_row',
+        point: 'One test (its fingerprint) with at least min_executions executions in scope.',
+        x: "p95 of duration_ms (percentile_cont) over the test's executions that carry a duration, on a log axis.",
+      },
+    }),
+  }
+}
+
+function testScatter(request: ApiRequest) {
+  const q = request.url.searchParams
+  if (!q.get('project_id')) return respond(422, refusal('missing_parameter', 'project_id'))
+  const order = q.get('order') ?? 'failures'
+  if (order !== 'failures' && order !== 'volume') return respond(422, refusal('order_enum', 'order'))
+  const tests = q.getAll('suite_name').length > 0 ? SCATTER_SUITE_TESTS : SCATTER_PROJECT_TESTS
+  return scopedTo(request, testScatterBody(intParam(request, 'days', 30), tests))
+}
+
+// ── chart-data for the Failures drill ladder (VIZ-602, FK5) ────────────────
+
+/** The ladder's suites and their executions by status over the window (keys lower-cased, labels as ingested). */
+export const LADDER_SUITES: { label: string; counts: StatusCounts }[] = [
+  { label: 'Payments', counts: { passed: 240, failed: 150, broken: 40, skipped: 14, unknown: 0 } },
+  { label: 'Search', counts: { passed: 300, failed: 70, broken: 26, skipped: 4, unknown: 0 } },
+  { label: 'Auth', counts: { passed: 610, failed: 30, broken: 8, skipped: 12, unknown: 0 } },
+  { label: 'Checkout', counts: { passed: 820, failed: 16, broken: 5, skipped: 9, unknown: 0 } },
+  { label: HOSTILE_NAME, counts: { passed: 40, failed: 6, broken: 0, skipped: 0, unknown: 1 } },
+  { label: 'Notifications', counts: { passed: 150, failed: 0, broken: 0, skipped: 2, unknown: 0 } },
+]
+export const LADDER_STATUSES = ['passed', 'failed', 'broken', 'skipped', 'unknown'] as const
+type LadderStatus = (typeof LADDER_STATUSES)[number]
+const isLadderStatus = (value: string): value is LadderStatus => (LADDER_STATUSES as readonly string[]).includes(value)
+
+const categoryPoint = (x: string, y: number) => ({ x, y, n: y, measured: true, reason: null })
+
+/** A category chart-data body (`x_type: category`); `x_labels` maps a key to what the axis shows. */
+function categoryBody(
+  days: number,
+  dimensions: string[],
+  series: { key: string; label: string; points: unknown[] }[],
+  xLabels?: Record<string, string>,
+) {
+  return { kind: 'series', dimensions, x_type: 'category', series, ...(xLabels ? { x_labels: xLabels } : {}), meta: chartMeta(days) }
+}
+
+/** The tests behind one (suite, status) leaf: six per pair, the hostile names among them. */
+export function ladderTests(suite: string, status: string): { fingerprint: string; name: string; count: number }[] {
+  const found = LADDER_SUITES.find((x) => suiteKey(x.label) === suite)
+  const total = found && isLadderStatus(status) ? found.counts[status] : 0
+  if (!found || total === 0) return []
+  const names = [`${found.label} ${status} check`, HOSTILE_NAME, 'constructor', '__proto__', HOSTILE_LONG_NAME, `${found.label} other check`]
+  const shares = [0.4, 0.2, 0.15, 0.1, 0.1, 0.05]
+  const slug = suite.replace(/[^a-z0-9]/g, '') || 'x'
+  return names.map((name, i) => ({ fingerprint: `fp-${slug}-${status}-${i}`, name, count: Math.max(1, Math.floor(total * shares[i])) }))
+}
+
+/**
+ * The ladder's chart-data reads (FK5.md request 3): L0 executions by suite x
+ * status; one suite's statuses; one status's suites; a (suite, status) leaf's
+ * tests (`top_n`). `null` when the request is none of these.
+ */
+function ladderChartData(request: ApiRequest) {
+  const q = request.url.searchParams
+  const days = intParam(request, 'days', 30)
+  const metric = q.get('metric') ?? ''
+  const groupBy = q.getAll('group_by').join(',')
+  const suites = q.getAll('suite_name').map((name) => name.trim().toLowerCase())
+  const inScope = LADDER_SUITES.filter((s) => suites.length === 0 || suites.includes(suiteKey(s.label)))
+  const labels = Object.fromEntries(inScope.map((s) => [suiteKey(s.label), s.label]))
+  if (metric === 'executions' && groupBy === 'suite,status') {
+    const series = LADDER_STATUSES.map((status) => ({
+      key: status,
+      label: status,
+      points: inScope.map((s) => categoryPoint(suiteKey(s.label), s.counts[status])),
+    }))
+    return scopedTo(request, categoryBody(days, ['suite', 'status'], series, labels))
+  }
+  if (metric === 'executions' && groupBy === 'status') {
+    const sum = (status: LadderStatus) => inScope.reduce((total, s) => total + s.counts[status], 0)
+    const series = [{ key: 'value', label: 'executions', points: LADDER_STATUSES.map((st) => categoryPoint(st, sum(st))) }]
+    return scopedTo(request, categoryBody(days, ['status'], series))
+  }
+  if (isLadderStatus(metric) && groupBy === 'suite') {
+    const series = [{ key: 'value', label: metric, points: inScope.map((s) => categoryPoint(suiteKey(s.label), s.counts[metric])) }]
+    return scopedTo(request, categoryBody(days, ['suite'], series, labels))
+  }
+  if (isLadderStatus(metric) && groupBy === 'test' && suites.length === 1) {
+    const tests = ladderTests(suites[0], metric)
+    const series = [{ key: 'value', label: metric, points: tests.map((t) => categoryPoint(t.fingerprint, t.count)) }]
+    return scopedTo(request, categoryBody(days, ['test'], series, Object.fromEntries(tests.map((t) => [t.fingerprint, t.name]))))
+  }
+  return null
+}
+
+// ── /analytics/chart-data/rows (BE4, `chart_rows_service.assemble_page`) ───
+
+/** `RECONCILIATION`: which mark field the rows add up to, by the chart's metric. */
+const ROWS_RECONCILIATION: Record<string, [string, string]> = {
+  executions: ['y', 'rows'],
+  passed: ['y', 'rows'],
+  failed: ['y', 'rows'],
+  broken: ['y', 'rows'],
+  skipped: ['y', 'rows'],
+  unknown: ['y', 'rows'],
+  failures: ['y', 'rows'],
+  pass_rate: ['n', 'rows'],
+  failure_rate: ['n', 'rows'],
+}
+
+/** The rows a metric counts among some executions (`ROW_PREDICATES`). */
+function rowsOf(metric: string, c: StatusCounts): number {
+  if (metric === 'executions') return executionsOf(c)
+  if (metric === 'failures') return c.failed + c.broken
+  if (metric === 'pass_rate' || metric === 'failure_rate') return evaluatedOf(c)
+  return isLadderStatus(metric) ? c[metric] : 0
+}
+
+interface FixtureCell {
+  x: number
+  y: number
+  n: number
+  counts?: StatusCounts
+}
+
+/** The cell of a matrix whose row and column keys are these, or `null`. */
+function matrixCell(matrix: { x_keys: readonly string[]; y_keys: readonly string[]; cells: FixtureCell[] }, row: string, column: string) {
+  const y = matrix.y_keys.indexOf(row)
+  const x = matrix.x_keys.indexOf(column)
+  return matrix.cells.find((cell) => cell.x === x && cell.y === y) ?? null
+}
+
+/**
+ * How many executions a selection holds, from the SAME fixtures the charts
+ * drew, so a panel opened from a mark reconciles with it (a heatmap cell's
+ * `n`, a scatter point's `n`, a group's failures, a ladder bar's `y`).
+ */
+export function rowsTotal(metric: string, sel: Record<string, string>, days: number): number {
+  const keys = Object.keys(sel).sort().join(',')
+  const fromCell = (cell: FixtureCell | null) => (cell === null ? 0 : cell.counts ? rowsOf(metric, cell.counts) : cell.n)
+  if (keys === 'day,suite') return fromCell(matrixCell(suiteDayMatrix(Math.min(days, 90)), sel.suite, sel.day))
+  if (keys === 'environment,suite') return fromCell(matrixCell(suiteEnvironmentMatrix(days), sel.suite, sel.environment))
+  if (keys === 'release,suite') return fromCell(matrixCell(suiteReleaseMatrix(days), sel.suite, sel.release))
+  if (keys === 'error_signature') {
+    const group = FAILURE_GROUP_SPECS.find((g) => g.signature === sel.error_signature)
+    return group ? groupFailures(group) : 0
+  }
+  if (keys === 'test') {
+    const point = [...SCATTER_SUITE_TESTS, ...SCATTER_PROJECT_TESTS].find((p) => p.id === sel.test)
+    if (point) return metric === 'executions' ? point.size : point.n
+    const row = HEATMAP_TESTS.find((t) => t.fingerprint === sel.test)
+    if (row) return [...row.pattern].filter((c) => c !== '-').length
+    const covered = COVERAGE_MAP_SUITES.flatMap(suiteTests).find((t) => t.fingerprint === sel.test)
+    return covered?.counts ? rowsOf(metric, covered.counts) : 0
+  }
+  const ladder = LADDER_SUITES.find((s) => suiteKey(s.label) === sel.suite)
+  if (keys === 'suite') return ladder ? rowsOf(metric, ladder.counts) : 0
+  if (keys === 'status') return isLadderStatus(sel.status) ? LADDER_SUITES.reduce((sum, s) => sum + s.counts[sel.status as LadderStatus], 0) : 0
+  if (keys === 'status,suite') return ladder && isLadderStatus(sel.status) ? ladder.counts[sel.status] : 0
+  if (keys === 'status,test') {
+    for (const s of LADDER_SUITES) {
+      const test = ladderTests(suiteKey(s.label), sel.status).find((t) => t.fingerprint === sel.test)
+      if (test) return test.count
+    }
+  }
+  return 0
+}
+
+/** The statuses a metric's rows can have, in a repeating order. */
+function rowStatuses(metric: string, sel: Record<string, string>): string[] {
+  if (sel.status) return [sel.status]
+  if (metric === 'failures') return ['failed', 'broken']
+  if (metric === 'pass_rate' || metric === 'failure_rate') return ['passed', 'failed', 'passed', 'broken']
+  if (isLadderStatus(metric)) return [metric]
+  return ['passed', 'failed', 'skipped', 'passed', 'broken']
+}
+
+const ROW_NAMES = ['checkout total includes tax', HOSTILE_NAME, 'constructor', '__proto__', HOSTILE_LONG_NAME, 'card declined shows reason']
+
+/** A fingerprint's test name, from whichever fixture drew it (the heatmap, the scatter, the map, the ladder). */
+function testNameOf(fingerprint: string): string {
+  const named =
+    HEATMAP_TESTS.find((t) => t.fingerprint === fingerprint)?.name ??
+    [...SCATTER_SUITE_TESTS, ...SCATTER_PROJECT_TESTS].find((p) => p.id === fingerprint)?.label ??
+    COVERAGE_MAP_SUITES.flatMap(suiteTests).find((t) => t.fingerprint === fingerprint)?.name ??
+    LADDER_SUITES.flatMap((s) => LADDER_STATUSES.flatMap((st) => ladderTests(suiteKey(s.label), st))).find(
+      (t) => t.fingerprint === fingerprint,
+    )?.name
+  return named ?? fingerprint
+}
+
+/** One page of rows, newest first (`row_item`); every name channel carries the hostile names. */
+export function chartRowsPage(
+  metric: string,
+  sel: Record<string, string>,
+  days: number,
+  page: number,
+  size: number,
+  /** The request's `suite_name` scope, when it had one (every row is then in that suite). */
+  scopeSuite?: string,
+) {
+  const total = rowsTotal(metric, sel, days)
+  const statuses = rowStatuses(metric, sel)
+  const start = (page - 1) * size
+  const count = Math.max(0, Math.min(size, total - start))
+  const [field, measure] = ROWS_RECONCILIATION[metric] ?? ['y', 'rows']
+  const suite = sel.suite ?? (scopeSuite === undefined ? undefined : suiteKey(scopeSuite))
+  const suiteLabel =
+    suite === undefined ? null : ([...MATRIX_SUITES, ...LADDER_SUITES].find((s) => suiteKey(s.label) === suite)?.label ?? suite)
+  const testName = sel.test === undefined ? null : testNameOf(sel.test)
+  const items = Array.from({ length: count }, (_, k) => {
+    const i = start + k
+    const status = statuses[i % statuses.length]
+    const failing = status === 'failed' || status === 'broken'
+    const release = RELEASES[i % 3]
+    return {
+      id: `88888888-8888-4888-8888-${String(i).padStart(12, '0')}`,
+      test_name: testName ?? ROW_NAMES[i % ROW_NAMES.length],
+      test_fingerprint: sel.test ?? `fp-row-${i % ROW_NAMES.length}`,
+      suite: suiteLabel ?? (i % 4 === 3 ? null : 'Payments'),
+      status,
+      duration_ms: i % 5 === 4 ? null : 800 + i * 37,
+      run_id: `55555555-5555-4555-8555-${String(100000000000 + (i % 8))}`,
+      release: i % 3 === 2 ? null : { id: release.id, name: release.name },
+      created_at: pyInstant(isoAgo(Math.floor(i / 4), 2)),
+      failure_category: failing ? (i % 2 === 0 ? 'product_bug' : 'infrastructure') : null,
+      error_line: failing ? (i % 3 === 0 ? HOSTILE_NAME : `AssertionError: expected ${200 + i} to equal 500`) : null,
+    }
+  })
+  return {
+    items,
+    total,
+    page,
+    size,
+    pages: Math.ceil(total / size),
+    reconciliation: { mark_field: field, measure, value: total },
+    meta: chartMeta(days, {
+      definitions: {
+        rows: 'the executions behind the mark, newest first',
+        chart_grain: 'execution_row',
+        order: 'test_runs.created_at DESC, test_cases.id DESC',
+      },
+    }),
+  }
+}
+
+/** The dimensions a rows request may select by (`ROWS_DIMENSIONS`). */
+const ROWS_DIMENSIONS = [
+  'day',
+  'week',
+  'project',
+  'release',
+  'suite',
+  'status',
+  'failure_category',
+  'branch',
+  'environment',
+  'ingestion_source',
+  'test',
+  'error_signature',
+]
+
+/** `GET /analytics/chart-data/rows`: each selector must be one of the chart's own dimensions (`parse_rows_request`). */
+function chartRows(request: ApiRequest) {
+  const q = request.url.searchParams
+  const metric = q.get('metric') ?? ''
+  const groupBy = q.getAll('group_by')
+  if (!(metric in ROWS_RECONCILIATION)) return respond(422, refusal('metric_enum', 'metric'))
+  if (groupBy.length === 0) return respond(422, refusal('missing_parameter', 'group_by'))
+  if (groupBy.length > 2) return respond(422, refusal('group_by_cap', 'group_by'))
+  if (groupBy.some((d) => !ROWS_DIMENSIONS.includes(d))) return respond(422, refusal('dimension_enum', 'group_by'))
+  const sel: Record<string, string> = {}
+  for (const [name, value] of q.entries()) {
+    if (!name.startsWith('bucket_')) continue
+    const dimension = name.slice('bucket_'.length)
+    if (!groupBy.includes(dimension)) return respond(422, refusal('selector_not_in_group_by', name))
+    if (value === '' || value === '__other__') return respond(422, refusal('bucket_value', name))
+    sel[dimension] = value
+  }
+  if (Object.keys(sel).length === 0) return respond(422, refusal('missing_parameter', 'bucket'))
+  const page = intParam(request, 'page', 1)
+  const size = intParam(request, 'size', 50)
+  if (page < 1) return respond(422, refusal('page_range', 'page'))
+  if (size < 1 || size > 200) return respond(422, refusal('size_range', 'size'))
+  const scopeSuite = q.getAll('suite_name')
+  return scopedTo(request, chartRowsPage(metric, sel, intParam(request, 'days', 30), page, size, scopeSuite.length === 1 ? scopeSuite[0] : undefined))
+}
+
+/** Every Wave 3 read, answered from the fixtures above. */
+export const WAVE3: ApiHandlers = [
+  [HEATMAP_PATH, heatmap],
+  [COVERAGE_MAP_PATH, coverageMap],
+  [FAILURE_GROUPS_PATH, failureGroups],
+  [SYSTEMIC_CLUSTERS_PATH, systemicClusters],
+  [TEST_SCATTER_PATH, testScatter],
+  [CHART_ROWS_PATH, chartRows],
+]
+
+/** /coverage with both flags: + the coverage map and the environment / release heatmaps (and their rows). */
+export const COVERAGE_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...COVERAGE]
+
+/** /failures with both flags: + failure groups, clusters, the ladder's chart-data, the project scatter, rows. */
+export const FAILURES_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...FAILURES]
+
+/** A request with only a query (and the project), to build a fixture body outside a route. */
+function fixtureRequest(query: string): ApiRequest {
+  const url = new URL(`http://127.0.0.1/fixture?${query}&project_id=${PROJECT_ID}`)
+  return { url, path: url.pathname, method: 'GET', route: undefined as never }
+}
+
+export interface FixtureBody {
+  name: string
+  body: Record<string, unknown>
+  /** `chart`: C3 + C2 (the catalogue's sources); `rows` / `clusters`: C2 `meta` beside the route's own list. */
+  kind: 'chart' | 'rows' | 'clusters'
+}
+
+/** Every body the Wave 3 specs draw, built by the handlers' own builders, for the contract check. */
+export function wave3Bodies(): FixtureBody[] {
+  const chart = (name: string, body: unknown): FixtureBody => ({ name, body: body as Record<string, unknown>, kind: 'chart' })
+  const ladder = (query: string) => ladderChartData(fixtureRequest(query))
+  return [
+    chart('heatmap suite_day 14 d', suiteDayMatrix(14)),
+    chart('heatmap suite_day 30 d', suiteDayMatrix(30)),
+    chart('heatmap suite_day 90 d', suiteDayMatrix(90)),
+    chart('heatmap suite_environment', suiteEnvironmentMatrix(30)),
+    chart('heatmap suite_release', suiteReleaseMatrix(30)),
+    chart('heatmap test_run', testRunMatrix(30)),
+    chart('coverage-map depth 1', coverageMapLevel(30, 1, null, null)),
+    ...COVERAGE_MAP_SUITES.map((s) => chart(`coverage-map depth 2 ${s.label}`, coverageMapLevel(30, 2, suiteKey(s.label), null))),
+    ...COVERAGE_MAP_SUITES.flatMap((s) =>
+      s.classes.map((c) => chart(`coverage-map depth 3 ${s.label} / ${c.key}`, coverageMapLevel(30, 3, suiteKey(s.label), c.key))),
+    ),
+    chart('coverage-map unknown suite (no children)', coverageMapLevel(30, 2, 'no such suite', null)),
+    chart('failure-groups', failureGroupsBody(30)),
+    chart('failure-groups include=edges', failureGroupsBody(30, { edges: true })),
+    chart('failure-groups 120 d (weekly trend)', failureGroupsBody(120, { edges: true })),
+    chart('failure-groups empty', failureGroupsBody(30, { empty: true })),
+    chart('test-scatter suite', testScatterBody(30, SCATTER_SUITE_TESTS)),
+    chart('test-scatter project', testScatterBody(30, SCATTER_PROJECT_TESTS)),
+    chart('test-scatter all excluded', testScatterBody(30, SCATTER_SUITE_TESTS, { allExcluded: true })),
+    chart('ladder L0', ladder('metric=executions&group_by=suite&group_by=status&days=30')),
+    chart('ladder suite', ladder('metric=executions&group_by=status&suite_name=payments&days=30')),
+    chart('ladder status', ladder('metric=failed&group_by=suite&days=30')),
+    chart('ladder leaf', ladder('metric=failed&group_by=test&top_n=20&suite_name=payments&days=30')),
+    chart('chart-data suites (wire)', onTheWire(suiteSeries(14))),
+    chart('chart-data p95 (wire)', onTheWire(durationSeries(14, 'duration_p95'))),
+    chart('chart-data releases (wire)', onTheWire(releaseSeries(90, [RELEASE_ID.current, RELEASE_ID.hostile]))),
+    { name: 'systemic-clusters', body: systemicClustersBody(30), kind: 'clusters' },
+    { name: 'systemic-clusters empty', body: systemicClustersBody(30, { empty: true }), kind: 'clusters' },
+    { name: 'rows heatmap cell', body: chartRowsPage('executions', { suite: 'payments', day: daysAgo(1) }, 14, 1, 50), kind: 'rows' },
+    { name: 'rows group', body: chartRowsPage('failures', { error_signature: FAILURE_GROUP_SPECS[0].signature }, 30, 1, 50), kind: 'rows' },
+    { name: 'rows point', body: chartRowsPage('failure_rate', { test: SCATTER_SUITE_TESTS[3].id }, 30, 1, 50), kind: 'rows' },
+    { name: 'rows page 2', body: chartRowsPage('executions', { suite: 'auth' }, 30, 2, 50), kind: 'rows' },
+    { name: 'rows empty', body: chartRowsPage('executions', { suite: 'no such suite', day: daysAgo(1) }, 14, 1, 50), kind: 'rows' },
+  ]
+}
+
+/**
+ * /trends with the catalogue: + chart-data (suites, p50, p95); the probe is a
+ * `/runs` read. Wave 3: with `viz_advanced_charts` too, the suite x day
+ * heatmap asks `/analytics/heatmap?kind=suite_day` itself (and a cell's rows).
+ */
+export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...TRENDS]
+
+/**
+ * /coverage/suite with the catalogue: no new request (the overlays read the
+ * page's points). Wave 3: with `viz_advanced_charts` too, the test x run
+ * heatmap, the scatter, their rows, and the sections' unfiltered "ever had a
+ * run?" probe (`/runs?page=1&size=1`).
+ */
+export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...RUNS, ...SUITE_DETAIL]
+
+/** The two Object members the hostile fixtures use as names (`constructor`, `__proto__`). */
+export const OBJECT_MEMBER_NAMES: readonly string[] = ['constructor', '__proto__']
+
+/**
+ * `handlers` with every matrix row and tree node NAMED like an Object member
+ * left out of the answer. For the specs that test something other than
+ * hostile names (axe, the visual regions): a canvas label `__proto__`
+ * pollutes `Object.prototype` through zrender's text cache (B0.md), and a
+ * polluted page breaks axe itself; the hostile specs keep the names and
+ * assert the pollution away.
+ */
+export function withoutObjectMemberLabels(handlers: ApiHandlers): ApiHandlers {
+  const drop = (label: unknown) => typeof label === 'string' && OBJECT_MEMBER_NAMES.includes(label)
+  const clean = (answer: unknown): unknown => {
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return answer
+    const body = answer as Record<string, unknown>
+    if (body.kind === 'matrix' && Array.isArray(body.y_labels)) {
+      const labels = body.y_labels as string[]
+      const keep = labels.map((label, y) => (drop(label) ? -1 : y)).filter((y) => y >= 0)
+      const index = new Map(keep.map((y, i) => [y, i]))
+      const cells = (body.cells as { y: number }[]).filter((c) => index.has(c.y)).map((c) => ({ ...c, y: index.get(c.y) }))
+      return {
+        ...body,
+        y_labels: keep.map((y) => labels[y]),
+        y_keys: keep.map((y) => (body.y_keys as string[])[y]),
+        cells,
+      }
+    }
+    if (body.kind === 'tree' && Array.isArray(body.nodes)) {
+      const nodes = body.nodes as { parent_id: string | null; label: string }[]
+      return { ...body, nodes: nodes.filter((node) => node.parent_id === null || !drop(node.label)) }
+    }
+    return answer
+  }
+  return handlers.map(([matcher, handler, method]) => {
+    const wrapped: ApiHandler = (request) => {
+      const answer = handler(request)
+      return answer instanceof Promise ? answer.then(clean) : clean(answer)
+    }
+    return method ? ([matcher, wrapped, method] as const) : ([matcher, wrapped] as const)
+  })
 }
