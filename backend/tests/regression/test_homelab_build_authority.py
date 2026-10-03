@@ -143,6 +143,32 @@ def test_non_commit_build_input_is_rejected(
     assert result.returncode != 0
 
 
+EXPECTED_IMAGE = "expected/backend:tag"
+EXPECTED_ID = "registry/expected/backend@sha256:abc"
+
+
+def _pod(
+    *,
+    name: str = "testlookup-backend-7d9f-abcde",
+    phase: str = "Running",
+    image: str = EXPECTED_IMAGE,
+    ready: str = "true",
+    image_id: str = EXPECTED_ID,
+    deleting: str = "<none>",
+) -> str:
+    """One `kubectl get pod -o custom-columns=...` row, in the script's order."""
+    return f"{name} {phase} {image} {ready} {image_id} {deleting}"
+
+
+# The retained migration Job pod as the 2026-10-02 homelab deploy listed it:
+# same image and digest as the backend, completed, never Ready.
+COMPLETED_MIGRATION_POD = _pod(
+    name="testlookup-migrate-1253898204-20261002135906-38162-16907-ptvzb",
+    phase="Succeeded",
+    ready="false",
+)
+
+
 def _run_image_check(
     tmp_path: Path, *, rows: str, component: str = "api"
 ) -> subprocess.CompletedProcess[str]:
@@ -161,30 +187,92 @@ def _run_image_check(
         "  esac\n"
         "}\n"
         f"{function}\n"
-        "verify_deployment_image testlookup-backend expected/backend:tag sha256:abc\n"
+        "status=0\n"
+        f"verify_deployment_image testlookup-backend {EXPECTED_IMAGE} sha256:abc"
+        " || status=$?\n"
         "cat kubectl.log\n"
+        "printf 'FAILURE=%s\\n' \"$IMAGE_AUTHORITY_FAILURE\"\n"
+        "exit \"$status\"\n"
     )
     return _run_script(tmp_path, body)
 
 
 def test_ready_pod_on_exact_tag_and_digest_is_accepted(tmp_path: Path):
-    result = _run_image_check(
-        tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
-    )
+    result = _run_image_check(tmp_path, rows=_pod())
     assert result.returncode == 0, result.stderr
 
 
 def test_deployment_component_excludes_retained_migration_job_pods(tmp_path: Path):
-    result = _run_image_check(
-        tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
-    )
+    result = _run_image_check(tmp_path, rows=_pod())
     assert result.returncode == 0, result.stderr
     assert (
         "-l app=testlookup-backend,app.kubernetes.io/component=api"
         in result.stdout
     )
+
+
+def test_completed_job_pod_beside_ready_replicas_is_accepted(tmp_path: Path):
+    """2026-10-02: a finished pod is READY=false forever and serves nothing.
+
+    The check must not rely on the label selector alone to keep it out: the
+    fake kubectl returns every row whatever `-l` says.
+    """
+    result = _run_image_check(
+        tmp_path,
+        rows="\n".join(
+            [
+                _pod(name="testlookup-backend-c8546b48d-l2tpk"),
+                _pod(name="testlookup-backend-c8546b48d-n8cqd"),
+                COMPLETED_MIGRATION_POD,
+            ]
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_failed_evicted_pod_beside_ready_replicas_is_accepted(tmp_path: Path):
+    result = _run_image_check(
+        tmp_path,
+        rows="\n".join(
+            [
+                _pod(),
+                _pod(
+                    name="testlookup-backend-55fd5b7578-whqgb",
+                    phase="Failed",
+                    image="old/backend:tag",
+                    ready="false",
+                    image_id="registry/old/backend@sha256:old",
+                ),
+            ]
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_only_finished_pods_are_rejected(tmp_path: Path):
+    result = _run_image_check(tmp_path, rows=COMPLETED_MIGRATION_POD)
+    assert result.returncode != 0
+    assert "FAILURE=no live pod matches" in result.stdout
+
+
+def test_a_running_pod_is_checked_whatever_owns_it(tmp_path: Path):
+    """Only finished pods are skipped. A live pod with the Deployment's labels
+    is a Service endpoint, so a running stray on another image still fails."""
+    result = _run_image_check(
+        tmp_path,
+        rows="\n".join(
+            [
+                _pod(),
+                _pod(
+                    name="testlookup-migrate-stray-x1",
+                    image="old/backend:tag",
+                    image_id="registry/old/backend@sha256:old",
+                ),
+            ]
+        ),
+    )
+    assert result.returncode != 0
+    assert "FAILURE=pod testlookup-migrate-stray-x1 " in result.stdout
 
 
 def test_backend_readiness_and_execs_exclude_retained_migration_job_pods():
@@ -200,34 +288,29 @@ def test_backend_readiness_and_execs_exclude_retained_migration_job_pods():
 
 
 def test_deployment_without_component_label_is_rejected(tmp_path: Path):
-    result = _run_image_check(
-        tmp_path,
-        rows="expected/backend:tag true registry/expected/backend@sha256:abc <none>",
-        component="",
-    )
+    result = _run_image_check(tmp_path, rows=_pod(), component="")
     assert result.returncode != 0
 
 
 def test_terminating_old_replica_is_excluded_from_image_authority(tmp_path: Path):
     result = _run_image_check(
         tmp_path,
-        rows=(
-            "old/backend:tag true registry/old/backend@sha256:old "
-            "2026-09-16T20:00:00Z\n"
-            "expected/backend:tag true registry/expected/backend@sha256:abc <none>"
+        rows="\n".join(
+            [
+                _pod(
+                    image="old/backend:tag",
+                    image_id="registry/old/backend@sha256:old",
+                    deleting="2026-09-16T20:00:00Z",
+                ),
+                _pod(),
+            ]
         ),
     )
     assert result.returncode == 0, result.stderr
 
 
 def test_only_terminating_replicas_are_rejected(tmp_path: Path):
-    result = _run_image_check(
-        tmp_path,
-        rows=(
-            "expected/backend:tag true registry/expected/backend@sha256:abc "
-            "2026-09-16T20:00:00Z"
-        ),
-    )
+    result = _run_image_check(tmp_path, rows=_pod(deleting="2026-09-16T20:00:00Z"))
     assert result.returncode != 0
 
 
@@ -242,35 +325,47 @@ def test_mcp_deployment_carries_component_label_into_its_pods():
 
 
 @pytest.mark.parametrize(
-    ("image", "ready", "image_id"),
+    ("image", "ready", "image_id", "phase"),
     [
-        ("old/backend:tag", "true", "registry/old/backend@sha256:abc"),
-        ("expected/backend:tag", "false", "registry/expected/backend@sha256:abc"),
-        ("expected/backend:tag", "true", "registry/expected/backend@sha256:wrong"),
+        ("old/backend:tag", "true", "registry/old/backend@sha256:abc", "Running"),
+        (EXPECTED_IMAGE, "false", EXPECTED_ID, "Running"),
+        (EXPECTED_IMAGE, "<none>", "<none>", "Pending"),
+        (EXPECTED_IMAGE, "true", "registry/expected/backend@sha256:wrong", "Running"),
     ],
+    ids=["wrong-image", "not-ready", "pending", "wrong-digest"],
 )
-def test_wrong_or_unready_pod_is_rejected(tmp_path: Path, image: str, ready: str, image_id: str):
-    result = _run_image_check(tmp_path, rows=f"{image} {ready} {image_id} <none>")
+def test_wrong_or_unready_pod_is_rejected(
+    tmp_path: Path, image: str, ready: str, image_id: str, phase: str
+):
+    result = _run_image_check(
+        tmp_path,
+        rows=_pod(
+            name="testlookup-backend-bad-1",
+            phase=phase,
+            image=image,
+            ready=ready,
+            image_id=image_id,
+        ),
+    )
     assert result.returncode != 0
+    assert "FAILURE=pod testlookup-backend-bad-1 " in result.stdout
 
 
 @pytest.mark.parametrize(
     "second_row",
     [
-        "old/backend:tag true registry/old/backend@sha256:old <none>",
-        "expected/backend:tag false registry/expected/backend@sha256:abc <none>",
-        "expected/backend:tag true registry/expected/backend@sha256:wrong <none>",
+        _pod(image="old/backend:tag", image_id="registry/old/backend@sha256:old"),
+        _pod(ready="false"),
+        _pod(image_id="registry/expected/backend@sha256:wrong"),
     ],
+    ids=["wrong-image", "not-ready", "wrong-digest"],
 )
 def test_one_correct_pod_cannot_hide_an_invalid_sibling(
     tmp_path: Path, second_row: str
 ):
     result = _run_image_check(
         tmp_path,
-        rows=(
-            "expected/backend:tag true registry/expected/backend@sha256:abc <none>\n"
-            + second_row
-        ),
+        rows="\n".join([_pod(), COMPLETED_MIGRATION_POD, second_row]),
     )
     assert result.returncode != 0
 
@@ -278,6 +373,80 @@ def test_one_correct_pod_cannot_hide_an_invalid_sibling(
 def test_no_selected_pods_is_rejected(tmp_path: Path):
     result = _run_image_check(tmp_path, rows="")
     assert result.returncode != 0
+
+
+def test_malformed_pod_row_is_rejected(tmp_path: Path):
+    result = _run_image_check(tmp_path, rows=_pod() + " surplus-column")
+    assert result.returncode != 0
+
+
+def _run_image_wait(
+    tmp_path: Path, *, unready_checks: int, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Drive wait_for_deployment_image with a pod that turns Ready after N checks.
+
+    `sleep` is stubbed to advance bash's SECONDS instead of waiting, so the
+    window is exercised without wall-clock time.
+    """
+    wait = textwrap.dedent(_extract("wait_for_deployment_image"))
+    verify = textwrap.dedent(_extract("verify_deployment_image"))
+    unready_row = _pod(ready="false")
+    ready_row = _pod()
+    body = (
+        "NAMESPACE=testlookup\n"
+        f"IMAGE_AUTHORITY_TIMEOUT_SECONDS={timeout}\n"
+        "IMAGE_AUTHORITY_POLL_SECONDS=5\n"
+        "sleep() { SECONDS=$((SECONDS + $1)); }\n"
+        "kubectl() {\n"
+        "  case \" $* \" in\n"
+        "    *\" get deployment \"*) printf 'api\\n' ;;\n"
+        "    *)\n"
+        "      echo check >> checks.log\n"
+        f"      if [ \"$(wc -l < checks.log)\" -le {unready_checks} ]; then\n"
+        f"        printf '%s\\n' '{unready_row}'\n"
+        "      else\n"
+        f"        printf '%s\\n' '{ready_row}'\n"
+        "      fi ;;\n"
+        "  esac\n"
+        "}\n"
+        f"{verify}\n{wait}\n"
+        "status=0\n"
+        f"wait_for_deployment_image testlookup-backend {EXPECTED_IMAGE} sha256:abc"
+        " || status=$?\n"
+        "printf 'CHECKS=%s\\n' \"$(wc -l < checks.log | tr -d ' ')\"\n"
+        "printf 'FAILURE=%s\\n' \"$IMAGE_AUTHORITY_FAILURE\"\n"
+        "exit \"$status\"\n"
+    )
+    return _run_script(tmp_path, body)
+
+
+def test_briefly_unready_pod_is_accepted_once_it_becomes_ready(tmp_path: Path):
+    result = _run_image_wait(tmp_path, unready_checks=3, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "CHECKS=4" in result.stdout
+
+
+def test_pod_that_stays_unready_fails_when_the_window_closes(tmp_path: Path):
+    result = _run_image_wait(tmp_path, unready_checks=10_000, timeout=20)
+    assert result.returncode != 0
+    # Checks at t=0, 5, 10, 15 and 20; after that the deadline has passed.
+    assert "CHECKS=5" in result.stdout
+    assert "FAILURE=pod testlookup-backend-7d9f-abcde " in result.stdout
+
+
+def test_main_flow_waits_for_image_authority_and_names_the_failing_pod():
+    source = DEPLOY.read_text(encoding="utf-8")
+    authority = source[source.index("APP_IMAGE_AUTHORITIES=(") :]
+    authority = authority[: authority.index("TRAEFIK_IP=")]
+    assert 'wait_for_deployment_image "$deployment" "$expected_image" "$digest"' in (
+        authority
+    )
+    assert "verify_deployment_image" not in authority
+    assert "${IMAGE_AUTHORITY_FAILURE}" in authority
+    assert (
+        'IMAGE_AUTHORITY_TIMEOUT_SECONDS="${IMAGE_AUTHORITY_TIMEOUT_SECONDS:-120}"'
+        in source
+    )
 
 
 def test_serving_revision_must_equal_candidate(tmp_path: Path):
