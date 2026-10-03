@@ -22,6 +22,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { GALLERY_ITEMS, galleryCanvasSize } from '../../src/pages/dev/chartGalleryFixtures'
 import { ALL_THEMES, expectNoBlockingViolations } from '../lib/axe-gate'
 import { textEscapes } from '../lib/chart-text-escapes'
+import { isTelemetryBeaconFailure } from '../lib/chart-gallery-page'
 
 const GALLERY = '/__charts'
 const ANALYSIS_ID = 'timeseries-trend-analysis'
@@ -51,7 +52,11 @@ const TREND_ITEMS = GALLERY_ITEMS.filter(
 function watchErrors(page: Page): string[] {
   const errors: string[] = []
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`)
+    // The hermetic server has no backend: the telemetry beacon's 502 is the
+    // machine's speed, not the chart's behaviour (see isTelemetryBeaconFailure).
+    if (message.type() === 'error' && !isTelemetryBeaconFailure(message)) {
+      errors.push(`console.error: ${message.text()}`)
+    }
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   return errors

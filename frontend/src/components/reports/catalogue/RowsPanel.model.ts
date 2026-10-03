@@ -101,6 +101,9 @@ export interface RowsResponse extends RowsPage {
 
 // ── Request ───────────────────────────────────────────────────────────────────
 
+/** The time dimensions, which the rows endpoint requires as the first `group_by`. */
+const TIME_DIMENSIONS: ReadonlySet<string> = new Set(['day', 'week'])
+
 /** A stable identity for a selector list (SWR key, React key). */
 export function selectorsKey(selectors: readonly DrillLevel[]): string {
   return JSON.stringify(selectors.map(({ dimension, value }) => [dimension, value]))
@@ -117,7 +120,11 @@ export function rowsRequestParams(
   page: number,
 ): CatalogParams | null {
   if (selectors.length === 0 || scope === null) return null
-  const params: CatalogParams = { ...scope, metric: chart.metric, group_by: [...chart.groupBy] }
+  // /chart-data/rows refuses a time dimension anywhere but first (422
+  // time_dimension_position); a heatmap's chart is suite × day, so order it.
+  // The sort is stable: two non-time dimensions keep the chart's order.
+  const groupBy = [...chart.groupBy].sort((a, b) => Number(TIME_DIMENSIONS.has(b)) - Number(TIME_DIMENSIONS.has(a)))
+  const params: CatalogParams = { ...scope, metric: chart.metric, group_by: groupBy }
   if (chart.topN !== undefined) params.top_n = chart.topN
   for (const { dimension, value } of selectors) params[`bucket_${dimension}`] = value
   params.page = Math.max(1, Math.trunc(page))

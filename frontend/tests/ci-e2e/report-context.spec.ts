@@ -370,6 +370,8 @@ interface RealOptions {
   storedDays?: number
   /** Answer the chrome's summary request (the one with include=report_metrics) with this status. */
   chromeStatus?: number
+  /** The reader's stored choice (OD-16): expanded (the default here, so the header and strip are read), or the first-visit collapsed line. */
+  expanded?: boolean
 }
 
 /** Every `/metrics/summary` request, as sent. */
@@ -379,18 +381,19 @@ interface SummaryCall {
 }
 
 async function openReportRoute(page: Page, path: string, options: RealOptions = {}): Promise<SummaryCall[]> {
-  const { multiFilters = true, reportContext = true, storedDays = 30, chromeStatus = 200 } = options
+  const { multiFilters = true, reportContext = true, storedDays = 30, chromeStatus = 200, expanded = true } = options
   const calls: SummaryCall[] = []
   await page.addInitScript(
-    ({ user, projectId, days }) => {
+    ({ user, projectId, days, expanded }) => {
       localStorage.setItem(
         'auth-storage',
         JSON.stringify({ state: { token: 'access', refreshToken: 'refresh', user, isAuthenticated: true }, version: 0 }),
       )
       localStorage.setItem('testlookup-active-project', JSON.stringify({ state: { activeProjectId: projectId }, version: 0 }))
       localStorage.setItem('testlookup-time-window', JSON.stringify({ state: { days }, version: 3 }))
+      if (expanded) localStorage.setItem('testlookup.reportChrome.expanded', '1')
     },
-    { user: USER, projectId: PROJECT, days: storedDays },
+    { user: USER, projectId: PROJECT, days: storedDays, expanded },
   )
   const json = (route: Route, body: unknown, status = 200) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
@@ -466,6 +469,25 @@ test.describe('Report chrome on real report routes (flags stubbed)', () => {
       expect(chromeCalls(otherCalls), JSON.stringify(flags)).toEqual([])
       await other.close()
     }
+  })
+
+  test('a first visit opens collapsed: the context on one line, no metrics strip, one click to the full header (OD-16)', async ({ page }) => {
+    await openReportRoute(page, '/trends', { expanded: false })
+    const line = page.locator('[data-report-context-compact][data-state="ready"]')
+    await expect(line).toBeVisible({ timeout: 20_000 })
+    await expect(line).toContainText('Checkout')
+    await expect(page.locator('[data-metrics-strip]')).toHaveCount(0)
+    await expect(page.locator('[data-report-context-header]')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Show details and metrics' }).click()
+    await expect(page.locator('[data-report-context-header][data-state="ready"]')).toBeVisible()
+    await expect(page.locator('[data-metrics-strip]')).toBeVisible()
+  })
+
+  test('the document never scrolls past the shell: sr-only text deep in the page stays inside main', async ({ page }) => {
+    await openReportRoute(page, '/trends')
+    await expect(page.locator('[data-report-context-header][data-state="ready"]')).toBeVisible({ timeout: 20_000 })
+    const { doc, view } = await page.evaluate(() => ({ doc: document.documentElement.scrollHeight, view: window.innerHeight }))
+    expect(doc).toBeLessThanOrEqual(view)
   })
 
   test('a stored 1-year window is sent as 90 days, and the header says so (M2)', async ({ page }) => {
