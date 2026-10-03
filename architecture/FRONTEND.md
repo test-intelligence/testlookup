@@ -98,6 +98,37 @@ data). The `.badge-*` primitives already sit on the tokens.
 - Genuine DOM/network effects that must stay effects carry a **scoped,
   justified** `eslint-disable-next-line` — never a file-wide disable.
 
+## 7. Flagged chart sections and the first-visit bundle (Visualization Upgrade, Waves 2.6-3)
+
+- **One flag reader.** `components/reports/catalogue/useCatalogueRollout.ts` is the only
+  module that reads `viz_chart_data_api` / `viz_advanced_charts` (`useAdvancedRollout()` =
+  both on); `flagSeam.ratchet.test.ts` fails on any other reader.
+- **A page change is one import and one mount** of a small static composite
+  (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only the gates
+  and ONE `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported
+  chunk's whole preload list into the importing chunk, and anything a composite imports
+  statically (`LazySection`, `SectionErrorBoundary`) lands in every flag-off first visit. Each
+  section also gates itself and sits in its own `LazySection`.
+- **Section-only code stays out of page closures.** `components/charts/sectionOnlyModules.test.ts`
+  walks each page's static value imports and fails on an edge into a section-only module
+  (the chart request queue, the catalogue models, mark activation, the drill URL, the rows
+  panel). The fix is a leaf module or injection, not an exception: `ChartCursor` and
+  `BarChart` take mark activation from their host (`markKit`), because a kit import there
+  would ship it to every page that draws a bar.
+- **New shared consumers split shared chunks.** rolldown groups modules by the set of chunks
+  that reach them; a new lazy section that uses PART of an existing shared chart chunk splits
+  it into more files, and every extra file costs every page that loaded it (a gzip-per-file and
+  export/import cost) plus a name in the entry's preload map (eager bytes). Wave 3 measured
+  this: +0.19 kB eager and 2-3.5 kB on the chart pages' first visit with no new code on them.
+  Measure with `vite build --sourcemap` and compare page closures by module before adding a
+  lazy consumer of the chart kit.
+- **Drill state lives in the URL** (`hooks/useDrillPath.ts`, C5 in `contracts/viz/README.md`):
+  `drill=` levels and the open rows panel `rows=by~<section id>&rows=<dimension>~<value>`; a
+  host opens its panel only for its own owner tag (`ownedRows`). It is never written into a
+  saved view.
+- **d3 is confined** to `components/charts/failureGroups/**`
+  (`d3Confinement.ratchet.test.ts`); ECharts to `components/charts/engines/**` (`chart-guard`).
+
 ## Related docs
 
 - Route-level UX behaviors users see: [user-guide/](../user-guide/README.md)

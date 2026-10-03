@@ -1,5 +1,150 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Wave 3 charts: heatmaps, coverage map, failure groups, test scatter, drill-down and cross-filtering, behind flags (VIZ-501, VIZ-502, VIZ-504, VIZ-506, VIZ-602, VIZ-603)
+
+The charts that read the Wave 3 endpoints arrive on four pages: Trends,
+Coverage, Failure analysis and Suite detail. Every new section needs BOTH
+`viz_chart_data_api` and `viz_advanced_charts`; filtering the page from a chart
+also needs `viz_multi_filters`. All three are seeded OFF (migration 0192) and
+stay off at merge. **Rollback is the flag**: turn `viz_advanced_charts` off for
+a project, or globally, and every Wave 3 section disappears on the next flag
+read. Nothing is migrated in this change.
+
+The one seam (`useCatalogueRollout`) is still the only reader of the flags;
+`useAdvancedRollout()` is "both flags on" and replaces Wave 2.6's
+`useHeatmapRollout`. Each section is a lazy chunk inside its own `LazySection`:
+with a flag off it renders nothing, downloads nothing and asks nothing. With
+every flag off, Coverage and Failure analysis make ONE new request each, the
+`viz_chart_data_api` status lookup (Trends and Suite detail already made it).
+Every window sent by a section is at most 90 days.
+
+**With both flags on, page by page.**
+- **Trends**: "Suite pass rate by day" now reads its own endpoint,
+  `/analytics/heatmap?kind=suite_day` (90 days, as measured on the Linux client
+  next to the database: p95 383 ms), instead of reshaping the suite line
+  chart's response. Rows are the server's top rows by failures, so there is no
+  "Other" row; the footer says "Top N of M suites by failures". New controls in
+  the frame's toolbar (they stay in full screen): a "Rows" order (worst first,
+  name, most executions) and a "Fit colour scale" toggle (rate kinds only; the
+  default stays 0-100%). Requests: three `chart-data` reads plus one heatmap
+  read, where Wave 2.6 made three.
+- **Coverage**: a "Test coverage map", captioned "Test execution coverage —
+  not code coverage": a treemap of suites, then classes or files, then tests,
+  sized by tests and coloured by pass rate, days since the last run, or flaky
+  share. A gap is a pattern and words, never a colour step: "not run in the
+  window", "last run unknown" and "never run" each have a hatch. Clicking or
+  pressing Enter on a suite or class drills in (the path is in the address bar,
+  so Back walks up and a link reopens the level); the breadcrumb goes up;
+  Backspace goes up one level. A test opens its executions. Beside it, a
+  heatmap of suites by environment or by release (one kind at a time). In All
+  Projects the map and the release kind say why they need one project and ask
+  nothing.
+- **Failure analysis**: "Failures grouped by error message": one bubble per
+  error signature, a "Related groups" view (captioned "Linked groups fail in
+  the same tests. Position has no other meaning.") and a ranked table; each
+  group opens a side panel with its line, figures, trend, categories and top
+  tests, and "View rows". A second tab, "Systemic flake clusters", lists "Tests
+  that fail together (last 60 days, whole project)", keyed by the stable
+  `membership_key`. Below, "Results by suite" is a drill ladder: suite and
+  status stacked bars; clicking a segment re-groups to that suite's tests with
+  that status (one history entry, so Back undoes it), and a test opens its
+  executions. With `viz_multi_filters` on, Shift-click, Shift+Enter or "Filter
+  page by this" ADDS the suite or release to the page filter (never replaces
+  it; at the filter's cap nothing is added and the page says so). Last, the
+  project-wide test scatter.
+- **Suite detail**: "Test results by run" (a test x run status heatmap, the
+  last runs of the suite) and "Test duration vs failure rate": one point per
+  test (p95 duration on a log axis, failure rate, size by executions),
+  quadrants split at the medians, each quadrant its own colour AND shape.
+  "Select slow and flaky" selects the tests strictly above both medians; "Drag
+  to select" turns on a rectangle (off by default, so a finger scrolling the
+  page never selects). The selection is a sortable list with "View rows" per
+  test. A test with fewer than 5 executions is left out and counted in the
+  footer; no ECharts `large` mode at any size.
+
+**The rows panel and the drill URL (VIZ-602).** "View rows" on any of these
+marks opens a side panel ("Executions in ...") listing the executions behind
+it from `/analytics/chart-data/rows`, 50 a page, in a table that scrolls
+sideways inside the panel (a named, focusable region), each linking to its test in
+its run, with the error line under the name. It says when its total differs
+from the mark's (a run-aggregate chart, or data that arrived since). The
+address bar carries the drill path (`drill=<dimension>~<value>`, repeatable)
+and the open panel (`rows=by~<section>&rows=<dimension>~<value>`): opening
+pushes a history entry, closing replaces it. The `by~` entry names the section
+that opened the panel, because two sections on one page can select the same
+shape (on Suite detail the heatmap and the scatter both select a lone test):
+only that section opens its panel, for a click and for a pasted link alike. A
+link that names a level the page cannot open is cut at the last valid level,
+with a notice.
+
+**Keyboard, text and accessibility.** Every new chart has one tab stop, an
+arrow-key walk, Enter for its first action and Shift+Enter for the filter,
+and its actions as real buttons (WCAG 2.1.1: nothing is pointer-only); a
+table view, CSV and image export through the frame; announcements through the
+page's one announcer. Names from ingested files (suites, tests, error lines)
+are text everywhere: no HTML, no string-built SVG, no ECharts formatter
+strings (the chart guard forbids them).
+
+**For everyone, with or without the flags.**
+- **Coverage, "Suite coverage breakdown"**: a segment's count is drawn only
+  when it fits (before, a narrow "38" beside a narrow "12" read "3812"); the
+  bar is exactly proportional; the name column fits the widest name between
+  160 and 240 px in the font actually drawn, so "Notifications" is no longer
+  cut on Linux. Its rows are now a real table (rows of cells): axe reported
+  two critical errors on them before. Every count is still in the row's
+  accessible name and each segment's tooltip.
+- **Failure analysis, "Failure category distribution"**: one grid for the six
+  rows, so a long label ("Assertion / product") is no longer cut; the bars are
+  narrower.
+- **The Wave 2.6 catalogue's `chart-data` reads would have failed against the
+  real backend** (found while building this change, fixed here). The analytics
+  routes answer `{kind, ..., meta}` and the charts read `{meta, series}`; the
+  `chart-data` adapter passed the body through, so every catalogue chart would
+  have shown "invalid payload". Nobody saw it because the flag is off
+  everywhere and every test fixture was already wrapped. The adapter now
+  reshapes the wire body (`chartResponseFromEnvelope`); a live check of one
+  flag-on section is on the rollout list.
+- **The sections' "has this project ever had a run?" probe is quiet** (it
+  only runs with the flags on, on the Wave 2.6 sections too): when it failed
+  it raised the page-wide "Network Error" toast; it now opts out of the
+  global error toast (`useRuns(..., { quiet: true })`) and the section falls
+  back to "nothing matches", as before. Every other `/runs` read, Overview's
+  own probe included, still toasts.
+- **A name like `__proto__` on a canvas chart no longer pollutes every object
+  in the page.** ECharts measures drawn text through a cache keyed by the text
+  in a plain object; a suite, test, environment or release NAMED `__proto__` or
+  `constructor` (names come from ingested CI files) made it write `prev` and
+  `next` onto `Object.prototype`. Every name ECharts draws from data (heatmap
+  rows and columns, treemap nodes, the time series' release markers, scatter
+  axis names) now goes through `canvasSafeText`, which draws such a name with
+  an invisible word joiner. Tables, tooltips and the rows panel show the name
+  as given.
+- `d3-hierarchy` 3.1.2 and `d3-force` 3.0.0 are direct, pinned dependencies
+  (already installed through `mermaid`), with their types pinned as dev
+  dependencies; a ratchet test fails if anything outside
+  `components/charts/failureGroups/` imports d3, or if a page reaches that
+  folder statically.
+
+**Not in this change (deferred, see the PR):** no prefetch of a mark's next
+level on hover; the treemap's "Other (n)" node does not expand; `needs_review`
+tests are counted but not badged on the map; Escape on the map clears its
+highlight only (so Escape still reaches full screen and the side panel); a
+per-chart drill namespace (`drill.<id>`) is Wave 4.
+
+**Bundle (production build, gzip).** Eager: 177,130 B (budget 180,000; before
+this change 176,913). The +217 B is almost all not code: it is the entry's list of what
+each page preloads, which grew because the new lazy sections share parts of the
+existing chart chunks and the bundler splits those chunks into more files.
+Mark activation, the drill URL and the rows panel are kept out of every
+page's first visit (a ratchet test lists them): `ChartCursor` and `BarChart`
+take the activation code from their host (`markKit`), and Coverage's and
+Suite detail's additions load their sections through one lazy module each.
+First visit with the flags off: Coverage +2.5 kB, Failure analysis +2.3 kB
+(mostly their own new code, the fixes above and the one-column phone layout),
+Suite detail +6.0 kB, Trends +5.5 kB (mostly the chart-chunk split). The eager growth and
+these first-visit numbers were accepted by the owner; follow-up: deliberate
+chunk grouping before Wave 4.
+
 ## Unreleased - Visualization Upgrade, Wave 3 data layer: heatmap, coverage map, failure groups, chart rows and test scatter endpoints (VIZ-205, VIZ-206, VIZ-207, VIZ-208, VIZ-506)
 
 Five new read endpoints under `/api/v1/analytics`, one additive migration

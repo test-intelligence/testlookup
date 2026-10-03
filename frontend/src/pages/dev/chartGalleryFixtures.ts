@@ -11,7 +11,11 @@
  * import the ids and canvas size from here, and they run in plain Node.
  * `import type` is erased, so the kit's prop types are allowed.
  */
+import type { CoverageColorBy } from '@/components/charts/coverageMap.model'
+import type { FailureGroupsFixtureOptions } from '@/components/charts/failureGroups/failureGroups.fixtures'
+import type { FailureGroupsView } from '@/components/charts/failureGroups/failureGroups.model'
 import type { GaugeBarProps } from '@/components/charts/GaugeBar'
+import type { HeatmapNouns } from '@/components/charts/heatmapFromMatrix'
 import type { SparklineTone } from '@/components/charts/Sparkline.model'
 import type { TimeSeriesRateTarget } from '@/components/charts/TimeSeriesChart'
 
@@ -47,6 +51,8 @@ export const GALLERY_PASS_RATE = 96.4
 export interface GalleryMatrix {
   kind: 'matrix'
   value_type: 'rate' | 'count'
+  /** C3 (OD-7): what a `rate` is measured in. These fixtures are 0..1 ratios, so they say so. */
+  unit?: 'ratio'
   x_labels: string[]
   y_labels: string[]
   cells: { x: number; y: number; value: number | null; n: number }[]
@@ -76,6 +82,7 @@ const HEATMAP_RATES: (number | null)[][] = [
 export const GALLERY_HEATMAP_DATA: GalleryMatrix = {
   kind: 'matrix',
   value_type: 'rate',
+  unit: 'ratio',
   x_labels: HEATMAP_DAYS,
   y_labels: HEATMAP_SUITES,
   cells: HEATMAP_RATES.flatMap((row, y) => row.map((value, x) => ({ x, y, value, n: 40 + x + y }))),
@@ -126,6 +133,11 @@ export const GALLERY_STATUS_LEGEND_HEIGHT = 40
 export function galleryChartHeight(item: GalleryItem): number {
   // Wave 2.6: the heatmap frame's plot, at the Trends section's height.
   if (item.chart === 'heatmap-frame') return GALLERY_HEATMAP_FRAME_PLOT_HEIGHT
+  // Wave 3: each plot at its section's height.
+  if (item.chart === 'coverage-map') return GALLERY_COVERAGE_MAP_PLOT_HEIGHT
+  if (item.chart === 'scatter') return GALLERY_SCATTER_PLOT_HEIGHT
+  if (item.chart === 'failure-groups') return GALLERY_FAILURE_GROUPS_PLOT_HEIGHT
+  if (item.chart === 'systemic-clusters') return GALLERY_CLUSTERS_PLOT_HEIGHT
   return item.chart === 'heatmap' && item.data.value_type === 'status'
     ? GALLERY_CANVAS.height - GALLERY_STATUS_LEGEND_HEIGHT
     : GALLERY_CANVAS.height
@@ -378,16 +390,81 @@ export type GalleryDayStripFixture =
 // `HeatmapChartFrame`'s fixtures live beside it (`__fixtures__/heatmapFrame.ts`,
 // read by its unit tests too) and import app code, so an item names its
 // fixture by key and `ChartGalleryPage` resolves it, as for the stacked
-// columns. Each one is a `chart-data` response exactly as the Trends page
-// receives it (percentage points, the server's volume order, `__other__`).
+// columns. Each one is an `/analytics/heatmap` matrix exactly as the page
+// receives it (percent points with their `unit`, keys, counts, the server's
+// failures order); there is no `__other__` row.
 
 /** The fixture keys `ChartGalleryPage` maps to `__fixtures__/heatmapFrame.ts`. */
-export type GalleryHeatmapFrameFixture = 'heatmap-frame' | 'heatmap-frame-90d' | 'heatmap-frame-hostile'
+export type GalleryHeatmapFrameFixture =
+  | 'heatmap-frame'
+  | 'heatmap-frame-90d'
+  | 'heatmap-frame-hostile'
+  // Wave 3 (FK1): a test x run status matrix, the edge cases, and fit-to-data colour.
+  | 'heatmap-frame-status'
+  | 'heatmap-frame-edges'
+  | 'heatmap-frame-fit'
 
 /** The heatmap frame's plot height: the Trends section's own (`TrendsCatalogue`), so the gallery shows what the page draws. */
 export const GALLERY_HEATMAP_FRAME_PLOT_HEIGHT = 320
 /** The heatmap frame's box (see the items): measured 432 px under Linux fonts, plus two wrapped lines. */
 const GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT = 480
+
+// -- Wave 3 (PR-B) - the coverage treemap, the test scatter, failure groups --
+//
+// Their fixtures live beside the kit too (`__fixtures__/coverageMap.ts`,
+// `__fixtures__/testScatter.ts`, `failureGroups/failureGroups.fixtures.ts`)
+// and import app code, so an item names its fixture by key (or, for failure
+// groups, by the options of the fixture builder) and `ChartGalleryPage`
+// resolves it. Each item draws its frame the way its catalogue section does,
+// from a settled state and with none of the section's data hooks.
+
+/** The fixture keys `ChartGalleryPage` maps to `__fixtures__/coverageMap.ts`. */
+export type GalleryCoverageMapFixture =
+  | 'coverage-suites'
+  | 'coverage-payments-classes'
+  | 'coverage-hostile'
+  | 'coverage-one-test'
+  | 'coverage-empty'
+
+/** The fixture keys `ChartGalleryPage` maps to `__fixtures__/testScatter.ts`. */
+export type GalleryScatterFixture = 'scatter-default' | 'scatter-dense' | 'scatter-hostile' | 'scatter-all-excluded'
+
+/**
+ * The plot heights the sections draw at (`COVERAGE_MAP_HEIGHT`,
+ * `SCATTER_HEIGHT`, `FailureGroupsFrame`'s default), spelt out because this
+ * file cannot import them; a unit test holds each equal to the section's.
+ */
+export const GALLERY_COVERAGE_MAP_PLOT_HEIGHT = 360
+export const GALLERY_SCATTER_PLOT_HEIGHT = 320
+export const GALLERY_FAILURE_GROUPS_PLOT_HEIGHT = 360
+
+// The boxes, MEASURED at 640 px wide in Chromium (docs/viz-work/w3/i-g, `measure.spec.ts`), twice: with
+// the machine's fonts and with every text forced to a DejaVu-wide face (Verdana stands in on Windows; it
+// reproduces the Linux 432 px of the Wave 2.6 heatmap frame). The box is the wide-font height plus room
+// for one more wrapped line (a footer sentence or a long title), so CI's fonts never spill into the next
+// item. Wide-font frame heights: treemap 598-638 (empty level 485), scatter 559-615 (every test left out
+// 448), failure groups 908-927 with 8 short names, 1,059 hostile and 1,071 with 200 groups (the table's
+// long names wrap).
+const GALLERY_COVERAGE_MAP_CANVAS_HEIGHT = 680
+// The empty states draw one sentence in a 120 px body since the R2-B fixes (X2/X3/X4, F-14): re-measured by I,
+// final round, at 245 (coverage level), 212 (every test left out) and 248 px (no cluster), both font set-ups.
+const GALLERY_COVERAGE_MAP_EMPTY_CANVAS_HEIGHT = 320
+const GALLERY_SCATTER_CANVAS_HEIGHT = 660
+const GALLERY_SCATTER_EXCLUDED_CANVAS_HEIGHT = 290
+const GALLERY_FAILURE_GROUPS_CANVAS_HEIGHT = 970
+const GALLERY_FAILURE_GROUPS_TALL_CANVAS_HEIGHT = 1110
+/**
+ * The clusters tab's frame (plot, the two-cluster list, the identity note): 585 px with both font set-ups;
+ * the empty answer's frame 248 px since X3. MEASURED as above (I, `i-g/measure.spec.ts`), plus room for a wrapped line.
+ */
+const GALLERY_CLUSTERS_CANVAS_HEIGHT = 660
+const GALLERY_CLUSTERS_EMPTY_CANVAS_HEIGHT = 320
+
+/** The plot height `SystemicClusters` draws at (its default), held equal to the component's by a unit test. */
+export const GALLERY_CLUSTERS_PLOT_HEIGHT = 300
+
+/** The clusters bodies `ChartGalleryPage` builds from `clustersBody` (FK3's fixtures). */
+export type GalleryClustersFixture = 'clusters' | 'clusters-empty'
 
 /**
  * Suite names that are also `Object.prototype` members. Names come from
@@ -762,6 +839,46 @@ export type GalleryItem =
       fixture: GalleryHeatmapFrameFixture
       /** MEASURED, like the other framed canvases. */
       canvasHeight: number
+      /** Wave 3: start with the colour scale fitted to the data. Left out, the fixed scale. */
+      fit?: boolean
+      /** Wave 3: what a row and a column are. Left out, suites and days. */
+      nouns?: HeatmapNouns
+      /** Wave 3: the axis titles. Left out, the frame's own. */
+      rowAxis?: string
+      columnAxis?: string
+    })
+  // Wave 3 (VIZ-502): one level of the coverage map, as `CoverageMapSection` draws it.
+  | (GalleryItemBase & {
+      chart: 'coverage-map'
+      fixture: GalleryCoverageMapFixture
+      /** The measure the map starts coloured by (the toolbar can change it). */
+      colorBy: CoverageColorBy
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
+    })
+  // Wave 3 (VIZ-506): the test scatter, as `ScatterSection` draws it.
+  | (GalleryItemBase & {
+      chart: 'scatter'
+      fixture: GalleryScatterFixture
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
+    })
+  // Wave 3 (VIZ-504): failure groups, as `FailureGroupsSection`'s groups tab draws them.
+  | (GalleryItemBase & {
+      chart: 'failure-groups'
+      /** The options `failureGroupsResponse` builds the body from. */
+      groups: FailureGroupsFixtureOptions
+      /** The first view. Left out, the bubbles. */
+      view?: FailureGroupsView
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
+    })
+  // Wave 3 (VIZ-504 / VIZ-207): the "Systemic flake clusters" tab, from a settled state (no fetch).
+  | (GalleryItemBase & {
+      chart: 'systemic-clusters'
+      fixture: GalleryClustersFixture
+      /** MEASURED, like the other framed canvases. */
+      canvasHeight: number
     })
 
 /**
@@ -779,12 +896,21 @@ export function galleryEngine(item: GalleryItem): 'recharts' | 'echarts' | 'dom'
     case 'heatmap':
     case 'heatmap-frame':
       return 'echarts'
+    // Wave 3: canvases too, unless the item has nothing to draw. An empty
+    // level and a scatter whose every test was left out mount NO engine (the
+    // frame says why in words), so there is no canvas to wait for.
+    case 'coverage-map':
+    case 'scatter':
+      return item.empty ? 'dom' : 'echarts'
     // Wave 2.5: the sparkline is a hand-drawn svg (no Recharts surface), and
-    // the gauge bar and the day strip are plain elements.
+    // the gauge bar and the day strip are plain elements. Wave 3: failure
+    // groups are React SVG circles, laid out by d3 but drawn by no engine.
     case 'slowest-tests':
     case 'sparkline':
     case 'gauge-bar':
     case 'day-strip':
+    case 'failure-groups':
+    case 'systemic-clusters':
       return 'dom'
     default:
       return 'recharts'
@@ -808,6 +934,10 @@ export function galleryDomMarks(item: GalleryItem): string {
       return '[data-gauge-fill], [data-gauge-segment], [data-gauge-marker], [data-gauge-target]'
     case 'day-strip':
       return '[data-day-cell]'
+    case 'failure-groups':
+    case 'systemic-clusters':
+      // A group's (or cluster's) own circle, not the selection or focus rings drawn after it.
+      return '[data-group-plot] [data-group-id] > circle:first-child'
     default:
       throw new Error(`${item.id} is drawn by ${galleryEngine(item)}, not the DOM`)
   }
@@ -826,6 +956,10 @@ export function galleryFramed(item: GalleryItem): boolean {
     case 'multi-series':
     case 'stacked-column':
     case 'heatmap-frame':
+    case 'coverage-map':
+    case 'scatter':
+    case 'failure-groups':
+    case 'systemic-clusters':
       return true
     default:
       return false
@@ -889,6 +1023,10 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
     case 'multi-series':
     case 'stacked-column':
     case 'heatmap-frame':
+    case 'coverage-map':
+    case 'scatter':
+    case 'failure-groups':
+    case 'systemic-clusters':
       return { width: GALLERY_FRAME_CANVAS.width, height: item.canvasHeight }
     // Wave 2.5: a KPI-sized piece in a box of its own size, not the 320 px
     // plot canvas (MEASURED, like the rest: the tick row, the legend and a
@@ -1906,7 +2044,7 @@ export const GALLERY_ITEMS: GalleryItem[] = [
   },
   // Wave 2.6 (VIZ-408): appended after every earlier item, for the reason above.
   // K5, the heatmap frame the Trends catalogue draws: the default 14-day
-  // window, truncated to the top 7 suites + Other and drawn worst first.
+  // window, truncated to the top 7 of 12 suites and drawn worst first.
   // Box: MEASURED under Linux fonts, the 8-row frames are 432 px tall at 640
   // wide (the 3-row one 412); 480 leaves two lines for a footer that wraps.
   {
@@ -1916,19 +2054,19 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     fixture: 'heatmap-frame',
     canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
     empty: false,
-    // 7 suites + Other x 14 days = 112 cells (2 of them null, hatched);
+    // 7 suites x 14 days = 98 cells (2 null, hatched);
     // canvas: checked by pixels, not DOM marks.
-    minMarks: 112,
+    minMarks: 98,
   },
   {
     id: 'heatmap-frame-90d',
-    title: 'HeatmapChartFrame - 8 suites x 90 days',
+    title: 'HeatmapChartFrame - 7 suites x 90 days',
     chart: 'heatmap-frame',
     fixture: 'heatmap-frame-90d',
     canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
     empty: false,
-    // The largest window a page can ask for: 8 rows x 90 days = 720 cells (cap 5,400).
-    minMarks: 720,
+    // The largest window a page can ask for: 7 rows x 90 days = 630 cells (cap 5,400).
+    minMarks: 630,
   },
   {
     id: 'heatmap-frame-hostile',
@@ -1951,6 +2089,222 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     empty: false,
     // One bar per name.
     minMarks: GALLERY_PROTOTYPE_NAMES.length,
+  },
+  // Wave 3 (PR-B): appended after every earlier item, for the reason above.
+  // FK1: the heatmap frame on the Suite detail page's test x run status
+  // matrix, the edge cases in one week, and the colour scale fitted to the data.
+  {
+    id: 'heatmap-frame-status',
+    title: 'HeatmapChartFrame - test by run, statuses',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame-status',
+    nouns: { rows: ['test', 'tests'], columns: ['run', 'runs'] },
+    rowAxis: 'Test',
+    columnAxis: 'Build (oldest to newest)',
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // 4 tests x 8 runs = 32 cells (one did not run, hatched).
+    minMarks: 32,
+  },
+  {
+    id: 'heatmap-frame-edges',
+    title: 'HeatmapChartFrame - all-null row, skipped-only cell, partial day, Object-member and long names',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame-edges',
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // 4 suites x 7 days = 28 cells, a whole row of them null.
+    minMarks: 28,
+  },
+  {
+    id: 'heatmap-frame-fit',
+    title: 'HeatmapChartFrame - colour scale fitted to the data',
+    chart: 'heatmap-frame',
+    fixture: 'heatmap-frame-fit',
+    fit: true,
+    canvasHeight: GALLERY_HEATMAP_FRAME_CANVAS_HEIGHT,
+    empty: false,
+    // The 14-day default's 7 suites x 14 days = 98 cells.
+    minMarks: 98,
+  },
+  // FK4 (VIZ-506): the test scatter, one point per test.
+  {
+    id: 'scatter',
+    title: 'TestScatter - 300 tests, p95 duration by failure rate',
+    chart: 'scatter',
+    fixture: 'scatter-default',
+    canvasHeight: GALLERY_SCATTER_CANVAS_HEIGHT,
+    empty: false,
+    // One point per test; canvas: checked by pixels.
+    minMarks: 300,
+  },
+  {
+    id: 'scatter-dense',
+    title: 'TestScatter - 2,400 tests, past the dense threshold',
+    chart: 'scatter',
+    fixture: 'scatter-dense',
+    canvasHeight: GALLERY_SCATTER_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 2400,
+  },
+  {
+    id: 'scatter-hostile',
+    title: 'TestScatter - hostile test names',
+    chart: 'scatter',
+    fixture: 'scatter-hostile',
+    canvasHeight: GALLERY_SCATTER_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 10,
+  },
+  {
+    // Not an empty response: every test was LEFT OUT, and the counts are the answer.
+    id: 'scatter-all-excluded',
+    title: 'TestScatter - every test left out',
+    chart: 'scatter',
+    fixture: 'scatter-all-excluded',
+    canvasHeight: GALLERY_SCATTER_EXCLUDED_CANVAS_HEIGHT,
+    empty: true,
+    minMarks: 0,
+  },
+  // FK2 (VIZ-502): the coverage treemap, one level per item.
+  {
+    id: 'coverage-map-pass-rate',
+    title: 'CoverageTreemap - pass rate, gaps and Other',
+    chart: 'coverage-map',
+    fixture: 'coverage-suites',
+    colorBy: 'pass_rate',
+    canvasHeight: GALLERY_COVERAGE_MAP_CANVAS_HEIGHT,
+    empty: false,
+    // 10 suites + Other = 11 rectangles.
+    minMarks: 11,
+  },
+  {
+    id: 'coverage-map-staleness',
+    title: 'CoverageTreemap - days since last run',
+    chart: 'coverage-map',
+    fixture: 'coverage-suites',
+    colorBy: 'staleness',
+    canvasHeight: GALLERY_COVERAGE_MAP_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 11,
+  },
+  {
+    id: 'coverage-map-flaky-share',
+    title: 'CoverageTreemap - classes by flaky share',
+    chart: 'coverage-map',
+    fixture: 'coverage-payments-classes',
+    colorBy: 'flaky_share',
+    canvasHeight: GALLERY_COVERAGE_MAP_CANVAS_HEIGHT,
+    empty: false,
+    // 6 classes or files of one suite.
+    minMarks: 6,
+  },
+  {
+    id: 'coverage-map-hostile',
+    title: 'CoverageTreemap - hostile suite names',
+    chart: 'coverage-map',
+    fixture: 'coverage-hostile',
+    colorBy: 'pass_rate',
+    canvasHeight: GALLERY_COVERAGE_MAP_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 6,
+  },
+  {
+    id: 'coverage-map-empty',
+    title: 'CoverageTreemap - an empty level',
+    chart: 'coverage-map',
+    fixture: 'coverage-empty',
+    colorBy: 'pass_rate',
+    canvasHeight: GALLERY_COVERAGE_MAP_EMPTY_CANVAS_HEIGHT,
+    empty: true,
+    minMarks: 0,
+  },
+  {
+    id: 'coverage-map-one-test',
+    title: 'CoverageTreemap - one suite, one test',
+    chart: 'coverage-map',
+    fixture: 'coverage-one-test',
+    colorBy: 'pass_rate',
+    canvasHeight: GALLERY_COVERAGE_MAP_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 1,
+  },
+  // FK3 (VIZ-504): failure groups, from `failureGroupsResponse`'s options.
+  {
+    id: 'failure-groups',
+    title: 'FailureGroupsFrame - bubbles',
+    chart: 'failure-groups',
+    groups: {},
+    canvasHeight: GALLERY_FAILURE_GROUPS_CANVAS_HEIGHT,
+    empty: false,
+    // The builder's default 8 groups, one circle each.
+    minMarks: 8,
+  },
+  {
+    id: 'failure-groups-related',
+    title: 'FailureGroupsFrame - related groups',
+    chart: 'failure-groups',
+    groups: {},
+    view: 'relations',
+    canvasHeight: GALLERY_FAILURE_GROUPS_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 8,
+  },
+  {
+    id: 'failure-groups-hostile',
+    title: 'FailureGroupsFrame - hostile group names',
+    chart: 'failure-groups',
+    groups: { hostile: true },
+    canvasHeight: GALLERY_FAILURE_GROUPS_TALL_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 8,
+  },
+  {
+    id: 'failure-groups-giant',
+    title: 'FailureGroupsFrame - one group holds most failures',
+    chart: 'failure-groups',
+    groups: { giant: true },
+    canvasHeight: GALLERY_FAILURE_GROUPS_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 8,
+  },
+  {
+    id: 'failure-groups-no-edges',
+    title: 'FailureGroupsFrame - no related groups',
+    chart: 'failure-groups',
+    groups: { edges: false },
+    canvasHeight: GALLERY_FAILURE_GROUPS_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 8,
+  },
+  {
+    id: 'failure-groups-200',
+    title: 'FailureGroupsFrame - 200 groups',
+    chart: 'failure-groups',
+    groups: { groups: 200 },
+    canvasHeight: GALLERY_FAILURE_GROUPS_TALL_CANVAS_HEIGHT,
+    empty: false,
+    minMarks: 200,
+  },
+  // R6: the clusters tab, from `clustersBody` (two clusters, one named `constructor`, a hostile member name).
+  {
+    id: 'systemic-clusters',
+    title: 'SystemicClusters - tests that fail together',
+    chart: 'systemic-clusters',
+    fixture: 'clusters',
+    canvasHeight: GALLERY_CLUSTERS_CANVAS_HEIGHT,
+    empty: false,
+    // Two clusters, one circle each.
+    minMarks: 2,
+  },
+  {
+    id: 'systemic-clusters-empty',
+    title: 'SystemicClusters - no clusters (an answer, not no data)',
+    chart: 'systemic-clusters',
+    fixture: 'clusters-empty',
+    canvasHeight: GALLERY_CLUSTERS_EMPTY_CANVAS_HEIGHT,
+    empty: true,
+    minMarks: 0,
   },
 ]
 

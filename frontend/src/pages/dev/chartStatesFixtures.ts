@@ -66,6 +66,7 @@ export const INVALID_PAYLOAD = {
   series: {
     kind: 'matrix',
     value_type: 'rate',
+    unit: 'ratio',
     x_labels: ['09-01'],
     y_labels: ['auth'],
     cells: [{ x: 3, y: 0, value: 0.9, n: 10 }],
