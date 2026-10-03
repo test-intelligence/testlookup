@@ -43,6 +43,9 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** Lazy section chunks can outlast findBy's default 1 s on a loaded machine. */
+const LAZY_TIMEOUT = 5_000
+
 describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
   it('every flag off: renders nothing, and the only lookup is the catalogue seam', () => {
     const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} />)
@@ -78,7 +81,7 @@ describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
     expect(outer.getAttribute('aria-hidden')).toBe('true')
     expect(outer.style.minHeight).toBe(`${COVERAGE_ADVANCED_HEIGHT}px`)
     expect(COVERAGE_ADVANCED_HEIGHT).toBe(14 + COVERAGE_MAP_SECTION_HEIGHT + 14 + COVERAGE_HEATMAP_SECTION_HEIGHT)
-    expect(await screen.findByTestId('heatmap')).toBeInTheDocument()
+    expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     const placeholders = [...container.querySelectorAll('[data-lazy-section]')] as HTMLElement[]
     expect(placeholders.map((el) => [el.getAttribute('data-lazy-section'), el.style.minHeight])).toEqual([
       ['coverage-map', `${COVERAGE_MAP_SECTION_HEIGHT}px`],
@@ -89,8 +92,8 @@ describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
   it('both on and near: the map and the environment / release heatmaps, with the page scope', async () => {
     flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
     render(<CoverageAdvanced days={14} suiteFilter={['a', 'b']} />)
-    expect(await screen.findByTestId('map')).toBeInTheDocument()
-    expect(await screen.findByTestId('heatmap')).toBeInTheDocument()
+    expect(await screen.findByTestId('map', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     await waitFor(() => expect(mounted.map[mounted.map.length - 1]).toEqual({ days: 14, suiteFilter: ['a', 'b'] }))
     expect(mounted.heatmap[mounted.heatmap.length - 1]).toEqual({ days: 14, suiteFilter: ['a', 'b'], kinds: ['suite_environment', 'suite_release'] })
 
