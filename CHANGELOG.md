@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased - the shared pager's chevron buttons have accessible names
+
+The shared `Pagination` component (`components/ui/Pagination.tsx`, used on
+Runs, Run detail, Search, Releases, Reviews, My failures, Live execution,
+Intelligence hub and Test management) drew its previous and next controls as
+icon-only chevrons with no accessible name. A screen reader announced each as
+just "button", and axe flagged `button-name` (found during Visualization
+Wave 3). It has no first or last buttons.
+
+- The buttons are now named "Previous page" and "Next page" with
+  `aria-label`. Only the labels change: no classes or markup, so nothing
+  looks different.
+- `Pagination.test.tsx` finds each button by its name, including when it is
+  disabled on the first or last page, and checks that no pager button has an
+  empty name. Removing or renaming either label fails it.
+- `RunsPage.signaturePagination.test.tsx` and `tests/e2e/runs-table.spec.ts`
+  click "Next page" by name. Before, they used "the last button" and an XPath
+  sibling selector.
 ## Unreleased - API workers freeze their start-up heap out of the garbage collector
 
 Every API worker now ends start-up with `gc.collect()` then `gc.freeze()`

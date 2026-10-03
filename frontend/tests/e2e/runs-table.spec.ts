@@ -73,8 +73,9 @@ test.describe('Runs table — filter / sort / pagination', () => {
     await expect(page.getByText('Page 1 of 2')).toBeVisible();
     await expect(runLink(page, 1)).toHaveCount(0);
 
-    // Advance to page 2 via the next chevron (sibling of the page indicator).
-    await page.getByText('Page 1 of 2').locator('xpath=following-sibling::button[1]').click();
+    // Advance to page 2 via the named next control of the pager showing
+    // "Page 1 of 2" (scoped: /runs can render more than one pager).
+    await page.getByText('Page 1 of 2').locator('..').getByRole('button', { name: 'Next page' }).click();
 
     await expect(page.getByText('Page 2 of 2')).toBeVisible();
     await expect(runLink(page, 1)).toBeVisible();
