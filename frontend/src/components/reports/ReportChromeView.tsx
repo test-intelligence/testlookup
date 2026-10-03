@@ -17,7 +17,7 @@
  * `data-report-chrome` marks the one mount per report route (the ratchet
  * counts it).
  */
-import { useId, useRef, useState } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import FilterChips, { type FilterChipsProps } from '@/components/filters/FilterChips'
 import FilteredSummary from '@/components/filters/FilteredSummary'
@@ -47,6 +47,8 @@ export interface ReportChromeViewProps {
    * choice is remembered in this browser. Off (the default): always full.
    */
   collapsible?: boolean
+  /** VIZ-609: controls beside the toggle (the saved-views menu). */
+  actions?: ReactNode
   className?: string
   'data-testid'?: string
 }
@@ -93,6 +95,7 @@ export default function ReportChromeView({
   include,
   showFilterBar = true,
   collapsible = false,
+  actions,
   className = '',
   'data-testid': testId,
 }: ReportChromeViewProps) {
@@ -144,7 +147,12 @@ export default function ReportChromeView({
       </h2>
       {expanded ? (
         <>
-          {toggle && <div className="-mb-2 flex justify-end">{toggle}</div>}
+          {(toggle || actions) && (
+            <div className="-mb-2 flex justify-end gap-1">
+              {actions}
+              {toggle}
+            </div>
+          )}
           <ReportContextHeader
             meta={meta}
             allProjects={allProjects}
@@ -171,6 +179,7 @@ export default function ReportChromeView({
               windowNote={windowNote}
             />
             {showFilterBar && <ReportFilterBar ref={barRef} {...bar} />}
+            {actions}
             {toggle}
           </div>
           {chipsApplied && <FilterChips {...chips} ignoredFilters={meta?.ignored_filters ?? []} fallbackFocusRef={barRef} />}

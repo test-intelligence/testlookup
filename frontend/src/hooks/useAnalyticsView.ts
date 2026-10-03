@@ -93,7 +93,9 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
     setDirty(false)
   } else if (!isLoading && !error && hydratedScope !== scopeKey) {
     const scopedViews = (savedViews ?? []).filter(view => (
-      (view.page === page || view.filters?.page === page)
+      // A named report view (VIZ-609, `kind: 'report_view'`) is not a layout.
+      view.filters?.kind !== 'report_view'
+      && (view.page === page || view.filters?.page === page)
       && (projectId ? view.project_id === projectId : view.project_id == null)
     ))
     const ownedView = currentUserId

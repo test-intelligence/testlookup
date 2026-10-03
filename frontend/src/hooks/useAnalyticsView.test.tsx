@@ -142,6 +142,23 @@ describe('useAnalyticsView persistence authority', () => {
     )
   })
 
+  it('never takes a named report view (VIZ-609) as the layout, nor patches it', async () => {
+    http.getData.mockResolvedValue([
+      // Listed first (the server orders a default first): still not a layout.
+      { ...savedView('report-view', undefined), filters: { kind: 'report_view', page: 'dashboard', window: 30 } },
+      savedView('layout-view', [{ instanceId: 'owned', templateId: 'avg_pass_rate_kpi' }]),
+    ])
+    const { result } = renderHook(() => useAnalyticsView('dashboard'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.widgetIds).toEqual(['avg_pass_rate_kpi'])
+
+    await act(async () => {
+      await result.current.setWidgets(['total_executions_kpi'])
+    })
+    expect(http.patchData).toHaveBeenCalledWith('/api/v1/saved-views/layout-view', expect.any(Object))
+    expect(http.patchData).not.toHaveBeenCalledWith('/api/v1/saved-views/report-view', expect.any(Object))
+  })
+
   it('hydrates after a failed request is retried successfully', async () => {
     http.getData
       .mockRejectedValueOnce(new Error('temporary outage'))

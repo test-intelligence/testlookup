@@ -87,6 +87,9 @@ class _Session:
     async def commit(self):
         return None
 
+    async def flush(self):
+        return None
+
     async def refresh(self, obj):
         return None
 
@@ -205,7 +208,9 @@ async def test_creating_a_view_stores_the_release_through_the_service():
 
     class _CaptureSession(_Session):
         def add(self, obj):
-            captured["filters"] = obj.filters
+            # The view, not its saved_view.created activity row (VIZ-609).
+            if hasattr(obj, "filters"):
+                captured["filters"] = obj.filters
 
         async def refresh(self, obj):
             # What a real refresh does: the server-side defaults land. The
