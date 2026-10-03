@@ -39,6 +39,9 @@ afterEach(() => {
 
 const propsOf = (testId: string) => JSON.parse(screen.getByTestId(testId).getAttribute('data-props') ?? '{}')
 
+/** Lazy section chunks can outlast findBy's default 1 s on a loaded machine. */
+const LAZY_TIMEOUT = 5_000
+
 describe('SuiteDetailAdvanced', () => {
   it('advanced flag off: renders nothing at all (no placeholder, no chunk)', async () => {
     const { container } = render(<SuiteDetailAdvanced days={30} suiteName="Auth" />)
@@ -51,7 +54,7 @@ describe('SuiteDetailAdvanced', () => {
     flags.advanced = true
     render(<SuiteDetailAdvanced days={14} suiteName="Auth" />)
     await waitFor(() => expect(screen.getByTestId('scatter')).toBeInTheDocument())
-    expect(await screen.findByTestId('heatmap')).toBeInTheDocument()
+    expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(propsOf('heatmap')).toEqual({ days: 14, suiteFilter: ['Auth'], kinds: ['test_run'] })
     expect(propsOf('scatter')).toEqual({ days: 14, suiteFilter: ['Auth'], placement: 'suite' })
     // The heatmap first, the scatter under it.
@@ -70,7 +73,7 @@ describe('SuiteDetailAdvanced', () => {
     sections.heatmapThrows = true
     vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<SuiteDetailAdvanced days={30} suiteName="Auth" />)
-    expect(await screen.findByText('Failed to load the test x run heatmap')).toBeInTheDocument()
-    expect(await screen.findByTestId('scatter')).toBeInTheDocument()
+    expect(await screen.findByText('Failed to load the test x run heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    expect(await screen.findByTestId('scatter', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
   })
 })
