@@ -32,7 +32,7 @@ import MultiSelect, { type MultiSelectOption } from '@/components/ui/MultiSelect
 import { REPORT_WINDOW_OPTIONS } from './filterOptions'
 
 export interface DroppedFilterNotice {
-  dimension: 'release' | 'suite'
+  dimension: 'release' | 'suite' | 'drill'
   values: string[]
   reason: string
 }
@@ -70,6 +70,8 @@ const FOCUS =
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)]'
 
 function noticeText(notice: DroppedFilterNotice, releaseOptions: MultiSelectOption[]): string {
+  // A drill notice already carries its sentence (the levels the ladder cut).
+  if (notice.dimension === 'drill') return notice.values.join(' ')
   const names =
     notice.dimension === 'release'
       ? notice.values.map((v) => releaseOptions.find((o) => o.value === v)?.label ?? v)

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import FailureAnalysisPage, {
   buildFailuresCsv,
@@ -65,6 +65,17 @@ vi.mock('@/hooks/useAnalysisLookup', () => ({
   useAnalysisLookup: vi.fn(() => ({ lookup: undefined, isLoading: true, isError: false })),
 }))
 
+// Wave 3 (VIZ-504 and friends): the page's one mount. The composite's own
+// flag gates are `FailuresAdvanced.test.tsx`'s; here, only that the page hands
+// it its window and suite scope, once.
+const advanced = vi.hoisted(() => ({ props: [] as unknown[] }))
+vi.mock('@/components/reports/catalogue/FailuresAdvanced', () => ({
+  default: (props: unknown) => {
+    advanced.props.push(props)
+    return <div data-testid="failures-advanced" />
+  },
+}))
+
 describe('FailureAnalysisPage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = [
@@ -111,6 +122,38 @@ describe('FailureAnalysisPage', () => {
     expect(await screen.findByText(/Failure analysis workflow/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Flaky Detection/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Failure Analysis/i).length).toBeGreaterThan(0)
+  })
+
+  // X3: at 375 px the 205 + 124 px body columns pushed a card past the screen; below 768 px it is one column.
+  it.each([
+    [false, 'minmax(0, 1fr)'],
+    [true, 'minmax(0, 1.65fr) minmax(0, 1fr)'],
+  ])('body grid at min-width 768 = %s: %s', async (wide, columns) => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(min-width: 768px)' ? wide : true,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    try {
+      const { useRuns } = await import('@/hooks/useRuns')
+      ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+      const { container } = render(
+        <MemoryRouter initialEntries={['/failure-analysis']}>
+          <Routes>
+            <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+      await screen.findByText(/Failure analysis workflow/i)
+      expect((container.querySelector('.body-grid') as HTMLElement).style.gridTemplateColumns).toBe(columns)
+      // The workflow ribbon: four stages across from 768 px, two by two below (a quarter of 375 px is
+      // narrower than "Categorization").
+      const ribbon = container.querySelector('[data-ribbon-columns]') as HTMLElement
+      expect(ribbon.style.gridTemplateColumns).toBe(`repeat(${wide ? 4 : 2}, minmax(0, 1fr))`)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('removes deselected failure panels from the rendered layout', async () => {
@@ -1214,5 +1257,106 @@ describe('FailureAnalysisPage — verdict meter and strips', () => {
 
     expect(await screen.findByRole('img', { name: 'Stability score: not measured' })).toBeInTheDocument()
     expect(screen.queryByRole('meter', { name: 'Stability score' })).toBeNull()
+  })
+})
+
+describe('FailureAnalysisPage — Wave 3', () => {
+  async function renderWithCategories() {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ category: 'PRODUCT_BUG', count: 21 }, { category: 'UNKNOWN', count: 6 }] },
+      isLoading: false,
+    })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    analyticsControls.widgetIds = ['failures_kpis', 'failure_category_pie']
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: 30 })
+    advanced.props = []
+    render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    return screen.findByText('Failure category distribution')
+  }
+
+  it('mounts the advanced sections once, with the page window and suite scope', async () => {
+    await renderWithCategories()
+    expect(screen.getAllByTestId('failures-advanced')).toHaveLength(1)
+    expect(advanced.props[advanced.props.length - 1]).toEqual({ days: 30, suiteFilter: null })
+  })
+
+  it('category rows share ONE grid whose label column is as wide as the widest label (no fixed 220 px)', async () => {
+    const heading = await renderWithCategories()
+    const rows = within(heading.closest('.rounded-xl') as HTMLElement).getAllByRole('row')
+    expect(rows).toHaveLength(6)
+    const grid = rows[0].parentElement as HTMLElement
+    // The label column's FLOOR is its min-content: the widest whole name (or badge), never 0 (R2-B F-17).
+    expect(grid.style.gridTemplateColumns).toBe('minmax(min-content, max-content) minmax(48px, 1fr) 56px 56px')
+    expect(grid).toHaveAttribute('data-category-layout', 'columns')
+    for (const row of rows) {
+      expect(row.parentElement).toBe(grid)
+      expect(row.style.gridTemplateColumns).toBe('subgrid')
+      expect(row.style.gridColumn).toBe('1 / -1')
+    }
+    expect(screen.getByRole('row', { name: 'Assertion / product: 78% (21 of 27)' })).toBeInTheDocument()
+  })
+
+  // R2-B F-17: at 640 the label column collapsed to the badge ("Un…", three INFRASTRUCTURE rows with no name), at 375
+  // name and badge were drawn over the bars, and on Linux at 768 the names were cut again.
+  describe('category names are never cut, at any card width', () => {
+    const widths = (grid: number) => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        const width = this.hasAttribute('data-category-grid')
+          ? grid
+          : this.hasAttribute('data-category-name')
+            ? 140
+            : this.hasAttribute('data-category-badge')
+              ? 105
+              : 0
+        return { width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+      })
+    }
+    const grid = (heading: HTMLElement) =>
+      (heading.closest('.rounded-xl') as HTMLElement).querySelector('[data-category-grid]') as HTMLElement
+
+    afterEach(() => vi.restoreAllMocks())
+
+    it('a name is whole text that never truncates; the badge may wrap under it', async () => {
+      const heading = await renderWithCategories()
+      for (const name of grid(heading).querySelectorAll<HTMLElement>('[data-category-name]')) {
+        expect(name).toHaveClass('whitespace-nowrap')
+        expect(name.querySelector('.truncate')).toBeNull()
+        expect(name).not.toHaveClass('truncate')
+        expect((name.parentElement as HTMLElement).style.flexWrap).toBe('wrap')
+      }
+      expect(grid(heading).querySelectorAll('[data-category-name]')).toHaveLength(6)
+      expect(grid(heading).querySelector('[data-category-name]')).toHaveTextContent('Unknown')
+    })
+
+    it('the four columns while the widest name + bar + counts fit (140 + 196 = 336 px)', async () => {
+      widths(336)
+      const heading = await renderWithCategories()
+      expect(grid(heading)).toHaveAttribute('data-category-layout', 'columns')
+    })
+
+    it('narrower: each row stacks, its name (and badge) on a line above its bar and counts', async () => {
+      widths(335)
+      const heading = await renderWithCategories()
+      const card = grid(heading)
+      expect(card).toHaveAttribute('data-category-layout', 'stacked')
+      expect(card.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+      const rows = within(card).getAllByRole('row')
+      expect(rows).toHaveLength(6)
+      for (const row of rows) {
+        expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr) 56px 56px')
+        expect((row.firstElementChild as HTMLElement).style.gridColumn).toBe('1 / -1')
+      }
+      expect(screen.getByRole('row', { name: 'Assertion / product: 78% (21 of 27)' })).toHaveTextContent('Assertion / product')
+    })
   })
 })

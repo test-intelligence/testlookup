@@ -116,6 +116,35 @@ describe('ReportFilterBar', () => {
     expect(onDismissNotice).toHaveBeenCalledOnce()
   })
 
+  // Wave 3 (FK5-1): a drill level a link named and the page could not open
+  // arrives as `dimension: 'drill'` whose values ARE sentences: shown verbatim,
+  // never dressed as "Removed suites ... from the filter" (and the reason,
+  // which only says where it came from, is not appended).
+  it('shows a drill notice as its own sentences, verbatim and hostile-safe', () => {
+    const hostile = '<img src=x onerror="window.__xss=1">'
+    render(
+      <ReportFilterBar
+        {...props({
+          droppedNotice: [
+            {
+              dimension: 'drill',
+              values: ['Part of the drill-down in this link was not valid.', `The level ${hostile} is outside the filter.`],
+              reason: 'drill-down link',
+            },
+          ],
+        })}
+      />,
+    )
+    const notice = document.querySelector('[data-dropped-notice]') as HTMLElement
+    expect(within(notice).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      `Part of the drill-down in this link was not valid. The level ${hostile} is outside the filter.`,
+    ])
+    expect(notice.querySelector('img')).toBeNull()
+    expect(document.querySelector('[data-dropped-notice-live]')?.textContent).toBe(
+      `Part of the drill-down in this link was not valid. The level ${hostile} is outside the filter.`,
+    )
+  })
+
   // Fix round B (a11y m3): a live region inserted together with its text is
   // often not announced; the region is there, empty, BEFORE any notice.
   it('keeps ONE empty live region mounted without a notice, and writes the notice into it', () => {

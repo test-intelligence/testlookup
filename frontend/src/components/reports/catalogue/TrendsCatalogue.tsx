@@ -10,12 +10,13 @@
  *      `chart-data` day series joined by `durationBandPoints`. A day whose p95
  *      the server did not measure is a GAP in the line and "—" in the table,
  *      never 0 ms.
- *   3. **Suite pass rate by day** — the heatmap, only with
- *      `viz_advanced_charts` on as well (`useHeatmapRollout`). It is the SAME
- *      response as section 1, read by a second view: ONE request (plan OD-6).
- *      That is why the request lives here, in the parent, and both sections
- *      receive its state — two hook calls would be one SWR entry only while
- *      their keys stay equal by construction, and nothing would keep them so.
+ *   3. **Suite pass rate by day** — the heatmap (VIZ-501, Wave 3), only with
+ *      `viz_advanced_charts` on as well: the shared `HeatmapSection` over
+ *      `/analytics/heatmap?kind=suite_day`, which reads the advanced seam
+ *      itself (`useAdvancedRollout`). It has its own request since Wave 3:
+ *      the server ranks, caps and counts the rows (top 40 by failures, no
+ *      "Other" row), where the Wave 2.6 heatmap re-read section 1's top-7
+ *      series. The suite series request below therefore feeds section 1 only.
  *
  * Every request is built by `useCatalogueParams`: the page's window clamped to
  * `ROW_GRAIN_MAX_WINDOW_DAYS` (these are the per-execution, "row grain"
@@ -42,19 +43,19 @@ import { useCatalogChartData, type CatalogParams } from '@/components/charts/cha
 import { hasChartData, type ChartResponse, type ChartState } from '@/components/charts/chartState'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
 import { durationBandPoints } from '@/components/charts/durationBuckets'
-import HeatmapChartFrame from '@/components/charts/HeatmapChartFrame'
 import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
 import { buildMultiSeriesModel, multiSeriesInputFromChartData } from '@/components/charts/multiSeriesModel'
 import type { ScopeValue } from '@/lib/scopeParams'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import LazySection from './LazySection'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
-import { useHeatmapRollout } from './useCatalogueRollout'
+import { HeatmapSection } from './HeatmapSection'
+import type { HeatmapKind } from './sectionContracts'
 import { useEverHadRun } from './useEverHadRun'
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-/** Section 1 and 3's one request: pass rate, day x suite, the top 7 + Other. */
+/** Section 1's request: pass rate, day x suite, the top 7 + Other. */
 export const SUITE_SERIES_PARAMS: CatalogParams = { metric: 'pass_rate', group_by: ['day', 'suite'], top_n: 7 }
 export const DURATION_P50_PARAMS: CatalogParams = { metric: 'duration_p50', group_by: 'day' }
 export const DURATION_P95_PARAMS: CatalogParams = { metric: 'duration_p95', group_by: 'day' }
@@ -66,6 +67,8 @@ const ROW_GRAIN = { maxDays: ROW_GRAIN_MAX_WINDOW_DAYS } as const
 export const SUITE_SERIES_TITLE = 'Pass rate by suite'
 export const DURATION_TITLE = 'Test duration (p50 / p95)'
 export const HEATMAP_TITLE = 'Suite pass rate by day'
+/** The one heatmap kind Trends offers: its columns are the page's days. */
+const TRENDS_HEATMAP_KINDS: readonly HeatmapKind[] = ['suite_day']
 
 export const ONE_DAY_SUITES_REASON =
   'a one-day window has one point per suite, which is not a trend; pick 7 days or more to compare suites over time'
@@ -99,7 +102,6 @@ function GrainNote({ meta }: { meta: EnvelopeMeta | null }) {
 
 const SUITE_SERIES_HEIGHT = 280
 const DURATION_HEIGHT = 260
-const HEATMAP_HEIGHT = 320
 /**
  * A frame's header, toolbar, brush and footer around its plot, px. An
  * estimate: the placeholder only has to stop the page from jumping by a
@@ -251,27 +253,6 @@ function DurationSection({
   )
 }
 
-function HeatmapSection({
-  state,
-  onNear,
-}: {
-  state: ChartState<ChartResponse>
-  onNear: () => void
-}) {
-  useReportNear(onNear)
-  return (
-    <div data-catalogue-section="trends-heatmap" className="min-w-0">
-      <HeatmapChartFrame
-        title={HEATMAP_TITLE}
-        headingLevel={3}
-        height={HEATMAP_HEIGHT}
-        state={state}
-        footer={<GrainNote meta={metaOf(state)} />}
-      />
-    </div>
-  )
-}
-
 // ── The catalogue ───────────────────────────────────────────────────────────
 
 export interface TrendsCatalogueProps {
@@ -282,12 +263,11 @@ export interface TrendsCatalogueProps {
 }
 
 export default function TrendsCatalogue({ days, suiteFilter }: TrendsCatalogueProps) {
-  const heatmapOn = useHeatmapRollout()
   const windowDays = clampCatalogueDays(days, ROW_GRAIN_MAX_WINDOW_DAYS)
   const singleDay = windowDays < 2
 
   // Latches, set by the sections as they mount: whether the suite request is
-  // wanted (its multi-series OR its heatmap is near) and whether any section is.
+  // wanted (its multi-series is near) and whether any section is.
   const [suitesNear, setSuitesNear] = useState(false)
   const [anyNear, setAnyNear] = useState(false)
   const onSuitesNear = useCallback(() => {
@@ -298,7 +278,6 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
 
   const everHadData = useEverHadRun(anyNear && !singleDay)
   const suiteParams = useCatalogueParams(days, suiteFilter, SUITE_SERIES_PARAMS, ROW_GRAIN)
-  // ONE request for the multi-series and the heatmap.
   const suites = useCatalogChartData('chart-data', {
     params: suitesNear && !singleDay ? suiteParams : null,
     everHadData,
@@ -322,11 +301,14 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
           onNear={onDurationNear}
         />
       </LazySection>
-      {heatmapOn && (
-        <LazySection label="trends-heatmap" minHeight={HEATMAP_HEIGHT + FRAME_CHROME}>
-          <HeatmapSection state={suiteState} onNear={onSuitesNear} />
-        </LazySection>
-      )}
+      {/* Its own seam read, lazy placeholder and request: nothing at all with either flag off. */}
+      <HeatmapSection
+        days={days}
+        suiteFilter={suiteFilter}
+        kinds={TRENDS_HEATMAP_KINDS}
+        title={HEATMAP_TITLE}
+        sectionId="trends-heatmap"
+      />
     </div>
   )
 }

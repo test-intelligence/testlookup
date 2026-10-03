@@ -1,0 +1,32 @@
+/**
+ * The Coverage sections module failing to load (a deploy removed it and the
+ * one reload did not help, or it throws) leaves the page whole: the Wave-3
+ * additions vanish, nothing else does (integrator I, the composite split).
+ */
+import { act, render } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import CoverageAdvanced from './CoverageAdvanced'
+
+vi.mock('./useCatalogueRollout', () => ({ useAdvancedRollout: () => true, useCatalogueRollout: () => true }))
+vi.mock('./CoverageAdvancedSections', () => ({
+  default: () => {
+    throw new Error('chunk gone')
+  },
+}))
+
+describe('CoverageAdvanced when its sections chunk fails', () => {
+  it('renders nothing in its place, and the page around it stays', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { container } = render(
+      <main>
+        <p>the page</p>
+        <CoverageAdvanced days={7} suiteFilter={null} />
+      </main>,
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(container.querySelector('main')?.innerHTML).toBe('<p>the page</p>')
+    error.mockRestore()
+  })
+})

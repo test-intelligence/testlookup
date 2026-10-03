@@ -3,7 +3,8 @@
  * catalogue sections are on.
  *
  * The catalogue rides on `viz_chart_data_api` (owner decision OD-1: no seventh
- * flag), and the suite x day heatmap additionally needs `viz_advanced_charts`.
+ * flag), and the advanced sections (the Trends heatmap, every Wave-3 section)
+ * additionally need `viz_advanced_charts`.
  * Both are seeded OFF, so merging the pages changes nothing a user sees, and
  * rollback is turning the flag off for a project.
  *
@@ -39,11 +40,14 @@ export function useCatalogueRolloutStatus(): boolean | undefined {
 }
 
 /**
- * Whether the suite x day heatmap is on: the catalogue flag AND
- * `viz_advanced_charts`. Called from inside the (lazy) heatmap section, so a
- * page with the catalogue off never even looks the second flag up.
+ * Whether the ADVANCED sections are on (Wave 3: heatmaps, coverage map,
+ * failure groups, scatter, drill-down): the catalogue flag AND
+ * `viz_advanced_charts` (plan 2.4: no seventh flag). Called from inside each
+ * lazy section, so a page with the catalogue off never even looks the second
+ * flag up: flag-off, the only request a page adds is its one
+ * `useCatalogueRollout()` lookup.
  */
-export function useHeatmapRollout(): boolean {
+export function useAdvancedRollout(): boolean {
   const catalogue = useFeatureEnabled(VIZ_FLAGS.chartDataApi)
   const advanced = useFeatureEnabled(VIZ_FLAGS.advancedCharts)
   return catalogue && advanced

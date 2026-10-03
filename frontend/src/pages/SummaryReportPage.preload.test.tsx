@@ -27,7 +27,7 @@ const rollout = vi.hoisted(() => ({ on: false }))
 vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useCatalogueRollout: () => rollout.on,
   useCatalogueRolloutStatus: () => rollout.on,
-  useHeatmapRollout: () => false,
+  useAdvancedRollout: () => false,
 }))
 
 const chunk = vi.hoisted(() => ({ asked: 0 }))

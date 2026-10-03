@@ -30,7 +30,7 @@ const rollout = vi.hoisted(() => ({ status: false as boolean | undefined }))
 vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useCatalogueRollout: () => rollout.status ?? false,
   useCatalogueRolloutStatus: () => rollout.status,
-  useHeatmapRollout: () => false,
+  useAdvancedRollout: () => false,
 }))
 // Flag on only: the top bar's cached release list, and the two server-backed
 // sections held in their loading state (their data is the section's own test).

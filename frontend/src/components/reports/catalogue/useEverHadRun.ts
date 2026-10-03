@@ -10,8 +10,11 @@
  * (lesson: a global filter poisons an existence probe).
  *
  * The params are EXACTLY Overview's own probe (`OverviewPage`: `useRuns({ page:
- * 1, size: 1 }, { ignoreGlobalRelease: true })`), so on a page that already
- * asks, SWR answers both from one request.
+ * 1, size: 1 }, { ignoreGlobalRelease: true })`), but this read is QUIET, and a
+ * quiet read is its own SWR entry (R1B-7): sharing Overview's would let
+ * whichever fetcher fired first decide whether a failure toasts, for both. On
+ * Overview with the catalogue on that is one more small request; on every
+ * other page nothing else asks.
  *
  *   - `null` while disabled or while the probe is in flight;
  *   - `true` once a run is seen — and then it LATCHES for that project and
@@ -22,13 +25,14 @@
  *   - `true` if the probe FAILS: the frame then says "nothing matches" for an
  *     empty chart, which is at worst unhelpful, where `false` would show the
  *     first-run setup on a populated project and `null` would hold a skeleton
- *     forever.
+ *     forever. The probe is QUIET (`useRuns`' `quiet`): its failure is not
+ *     the reader's problem, so it never raises the page-wide error toast.
  */
 import { useState } from 'react'
 import { useRuns } from '@/hooks/useRuns'
 import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 
-/** Overview's probe parameters, verbatim (module-level: one identity, one SWR key). */
+/** Overview's probe parameters, verbatim (module-level: one identity, a stable SWR key). */
 export const EVER_HAD_RUN_PARAMS = { page: 1, size: 1 } as const
 
 export function useEverHadRun(enabled: boolean): boolean | null {
@@ -36,7 +40,7 @@ export function useEverHadRun(enabled: boolean): boolean | null {
   const [latchedFor, setLatchedFor] = useState<string | null>(null)
   const latched = projectId !== null && latchedFor === projectId
 
-  const { data, error } = useRuns(EVER_HAD_RUN_PARAMS, { ignoreGlobalRelease: true, enabled: enabled && !latched })
+  const { data, error } = useRuns(EVER_HAD_RUN_PARAMS, { ignoreGlobalRelease: true, enabled: enabled && !latched, quiet: true })
   const hasRun = data === undefined ? undefined : (data.items?.length ?? 0) > 0
   // Latched during render (React's "adjust state while rendering"), not in an
   // effect: the next render already has no key, so no poll is scheduled.
