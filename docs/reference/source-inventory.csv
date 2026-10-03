@@ -3428,7 +3428,7 @@ frontend/tests/visual/prod-suite-detail-on.visual.spec.ts,test,66,,@playwright/t
 frontend/tests/visual/prod-suite-detail.visual.spec.ts,test,43,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-summary-on.visual.spec.ts,test,48,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
 frontend/tests/visual/prod-summary.visual.spec.ts,test,66,,@playwright/test; ../lib/production-pages; ./production/fixtures,
-frontend/tests/visual/prod-trends-on.visual.spec.ts,test,68,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
+frontend/tests/visual/prod-trends-on.visual.spec.ts,test,71,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
 frontend/tests/visual/prod-trends.visual.spec.ts,test,57,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-value-metrics.visual.spec.ts,test,39,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/production/fixtures.ts,test,2951,,"../../lib/production-pages; , passed: 0, failed: 6, skipped: 2, broken: 1, lastRun: [12, 5] },

@@ -8,7 +8,8 @@
  * `/analytics/heatmap` read (the server's top suites by failures, the cut
  * stated, the Rows / Fit colour scale toolbar, the reserved action row), so
  * `trends-on-heatmap` is RE-BASELINED; the other regions keep their PNGs. The
- * page is taller than 2400 px with the catalogue: `PINNED_TALL` (1280 x 4000).
+ * page is taller than 2400 px with the catalogue: `PINNED_TALL`, 5000 px tall
+ * since Compare (VIZ-605) joined the catalogue.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -16,7 +17,9 @@ import { assertHermetic, landmark, PINNED_TALL, settle, THEMES, visualRegion, wa
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
 import { HEATMAP_ON, TRENDS_ON } from './production/fixtures'
 
-test.use(PINNED_TALL)
+// Compare (VIZ-605) sits between the suite series and the durations, so the
+// page no longer fits 4000 px: the heatmap ended at 4085.
+test.use({ ...PINNED_TALL, viewport: { width: 1280, height: 5000 } })
 
 for (const theme of THEMES) {
   test(`trends regions, catalogue on — ${theme}`, async ({ page }) => {
