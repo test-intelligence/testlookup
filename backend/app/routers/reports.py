@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import (
     get_current_active_user,
     require_link_access,
@@ -20,6 +21,7 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User
 from app.services import report_service
+from app.services.analytics_scope import ScopePolicy, resolve_analytics_scope
 
 logger = logging.getLogger("routers.reports")
 
@@ -32,14 +34,23 @@ router = APIRouter(prefix="/api/v1/reports", tags=["Reports"])
 class EmailTrendsRequest(BaseModel):
     project_id: str
     days: int = 30
-    #: Scope the emailed report to one release, matching the on-screen chart it
-    #: exports. Omitted = every release, which is what it always did.
-    release_id: str | None = None
+    #: Scope the emailed report to the releases of the on-screen chart it
+    #: exports (one id, as before, or several: VIZ-308). Omitted = every
+    #: release, which is what it always did.
+    release_id: str | list[str] | None = None
+    #: VIZ-308: and to its suites (OR). Omitted = every suite.
+    suite_name: list[str] | None = None
     recipient_email: EmailStr
     chart_ids: list[str] = []
 
 
+#: The emailed report's scope: a project, a window of at most a year, and the
+#: same release and suite filters as the analytics routes (VIZ-308).
+_EMAIL_SCOPE = ScopePolicy(default_days=30, max_days=365, project_required=True)
+
+
 @router.post("/email-trends")
+@analytics_error_contract
 async def email_trends_report(
     body: EmailTrendsRequest = Body(...),
     db: AsyncSession = Depends(get_db),
@@ -51,8 +62,16 @@ async def email_trends_report(
     # tenant's trend report mailed to an address of their choosing. Unlike the
     # other holes in this class the data leaves the system entirely, so no
     # later access control can contain it.
-    await resolve_project_scope(db, current_user, body.project_id)
-    return await report_service.email_trends_report(db, body)
+    pinned, _ = await resolve_project_scope(db, current_user, body.project_id)
+    # VIZ-308: the releases and suites are authorised and parsed exactly as the
+    # analytics routes do it, and the email carries the context block those
+    # filters produce (``meta``), so a mailed report says what it covers.
+    scope = await resolve_analytics_scope(
+        db, current_user, policy=_EMAIL_SCOPE,
+        project_id=str(pinned) if pinned is not None else body.project_id,
+        release_id=body.release_id, suite_name=body.suite_name, days=body.days,
+    )
+    return await report_service.email_trends_report(db, body, scope)
 
 
 # ── ENT-03: PDF Export ──────────────────────────────────────────────────────

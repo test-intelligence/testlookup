@@ -16991,7 +16991,7 @@ reason: str = Field(min_length=3, max_length=2000)
 - Validator/serializer `reason_must_contain_text`: [backend/app/routers/releases.py:156](../../backend/app/routers/releases.py#L156). Read source for the cross-field or conversion rule.
 ## backend/app/routers/reports.py — EmailTrendsRequest
 
-[backend/app/routers/reports.py:32](../../backend/app/routers/reports.py#L32)
+[backend/app/routers/reports.py:34](../../backend/app/routers/reports.py#L34)
 
 Bases: `BaseModel`.
 
@@ -17000,14 +17000,15 @@ Bases: `BaseModel`.
 ```python
 project_id: str
 days: int = 30
-release_id: str | None = None
+release_id: str | list[str] | None = None
+suite_name: list[str] | None = None
 recipient_email: EmailStr
 chart_ids: list[str] = []
 ```
 
 ## backend/app/routers/reports.py — CreateShareLinkRequest
 
-[backend/app/routers/reports.py:180](../../backend/app/routers/reports.py#L180)
+[backend/app/routers/reports.py:199](../../backend/app/routers/reports.py#L199)
 
 Bases: `BaseModel`.
 
@@ -17020,7 +17021,7 @@ expiry_days: int = Field(default=7, ge=1, le=30)
 
 ## backend/app/routers/reports.py — ShareLinkResponse
 
-[backend/app/routers/reports.py:185](../../backend/app/routers/reports.py#L185)
+[backend/app/routers/reports.py:204](../../backend/app/routers/reports.py#L204)
 
 Bases: `BaseModel`.
 
@@ -19791,6 +19792,19 @@ top_analyses: list[dict] = field(default_factory=list)
 defect_candidates: list[dict] = field(default_factory=list)
 evidence_artifacts: list[dict] = field(default_factory=list)
 draft_watermark: str = ''
+```
+
+## backend/app/services/report_context.py — ContextField
+
+[backend/app/services/report_context.py:37](../../backend/app/services/report_context.py#L37)
+
+Bases: ``.
+
+
+
+```python
+label: str
+value: str
 ```
 
 ## backend/app/services/report_distribution_policy.py — DistributionDecision

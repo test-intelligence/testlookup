@@ -17,6 +17,13 @@ import io
 from typing import Any
 
 from app.services.privacy_service import sanitize_for_report
+from app.services.report_context import (
+    FOOTER_INLINE_MAX,
+    context_fields,
+    footer_text,
+    has_context,
+    n_of_m_text,
+)
 
 _BRAND_BLUE = "#1E40AF"
 _HEADER_BG = "#1E3A5F"
@@ -56,6 +63,11 @@ def _fmt_int(value: int | None) -> str:
 # goal only needs the failing step + surrounding context, so we render a window
 # of at most this many steps centred on the first failed/broken step.
 _MAX_PDF_STEPS = 50
+
+# The context block lists every release and suite (VIZ-308: long lists wrap,
+# never truncate). A ceiling only so a pathological value cannot build an
+# unbounded paragraph; 50 suites of 200 characters fit under it.
+_CONTEXT_MAX_CHARS = 12_000
 
 
 def _select_pdf_steps(
@@ -170,17 +182,47 @@ def render_summary_report_pdf(payload: dict) -> bytes:
 
     # ── Header ───────────────────────────────────────────────────────────
     story.append(Paragraph("TestLookup — Summary Report", title_style))
-    meta = (
-        f"Project: <b>{_safe(project_name)}</b> &nbsp; | &nbsp; "
-        f"Window: <b>{window_label}</b> &nbsp; | &nbsp; "
-        f"Aggregation: <b>{_safe(mode_label)}</b>"
-    )
-    story.append(Paragraph(meta, body))
-    story.append(
-        Paragraph(
-            f"Generated {_safe(payload.get('generated_at') or '')}", small
+    # VIZ-308: the context block the report chrome shows on screen, from the
+    # response's ``meta`` (what the server applied). Every release and suite is
+    # listed and wraps; nothing is cut. A payload without ``meta`` (an older
+    # caller) keeps the one-line header it always had.
+    raw_meta = payload.get("meta")
+    context_meta: dict | None = raw_meta if has_context(raw_meta) else None
+    if context_meta is not None:
+        context_rows = [
+            [
+                Paragraph(f"<b>{_safe(field.label)}</b>", cell_wrap),
+                Paragraph(_safe(field.value, max_len=_CONTEXT_MAX_CHARS), cell_wrap),
+            ]
+            for field in context_fields(context_meta, aggregation=mode_label)
+        ]
+        context_tbl = Table(context_rows, colWidths=[95, doc.width - 95])
+        context_tbl.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(_LIGHT_BG)),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BORDER)),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
         )
-    )
+        story.append(context_tbl)
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(_safe(n_of_m_text(context_meta)), body))
+    else:
+        meta = (
+            f"Project: <b>{_safe(project_name)}</b> &nbsp; | &nbsp; "
+            f"Window: <b>{window_label}</b> &nbsp; | &nbsp; "
+            f"Aggregation: <b>{_safe(mode_label)}</b>"
+        )
+        story.append(Paragraph(meta, body))
+        story.append(
+            Paragraph(
+                f"Generated {_safe(payload.get('generated_at') or '')}", small
+            )
+        )
     story.append(Spacer(1, 4 * mm))
 
     # ── Headline KPIs ────────────────────────────────────────────────────
@@ -498,5 +540,34 @@ def render_summary_report_pdf(payload: dict) -> bytes:
             step_tbl.setStyle(TableStyle(step_styles))
             story.append(step_tbl)
 
-    doc.build(story)
+    # VIZ-308: every page repeats Project, Release and Suite in the footer, so
+    # a page read on its own (printed, attached) still says what it covers.
+    def _footer_for(canvas: Any, room: float) -> str | None:
+        """The longest footer that fits: name fewer values (counting the rest)
+        before cutting anything, and say so when even that does not fit."""
+        if context_meta is None:
+            return None
+        width = lambda value: canvas.stringWidth(value, "Helvetica", 7)  # noqa: E731
+        text = ""
+        for inline_max in range(FOOTER_INLINE_MAX, -1, -1):
+            text = sanitize_for_report(footer_text(context_meta, inline_max))
+            if width(text) <= room:
+                return text
+        tail = "... (full context on page 1)"
+        while text and width(text + tail) > room:
+            text = text[:-1]
+        return text.rstrip() + tail
+
+    def _draw_footer(canvas: Any, page_doc: Any) -> None:
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.grey)
+        page_label = f"Page {page_doc.page}"
+        footer = _footer_for(canvas, page_doc.width - canvas.stringWidth(page_label, "Helvetica", 7) - 12)
+        if footer:
+            canvas.drawString(page_doc.leftMargin, 10 * mm, footer)
+        canvas.drawRightString(page_doc.leftMargin + page_doc.width, 10 * mm, page_label)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     return buf.getvalue()

@@ -10,7 +10,7 @@ Email Trends Report
 
 Generate and email a trends report for the specified project and period.
 
-Source: [backend/app/routers/reports.py:42](../../../backend/app/routers/reports.py#L42).
+Source: [backend/app/routers/reports.py:52](../../../backend/app/routers/reports.py#L52).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -86,7 +86,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await report_service.email_trends_report(db, body)
+await report_service.email_trends_report(db, body, scope)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -97,7 +97,7 @@ Export Evidence Bundle
 
 Generate and download a ZIP evidence bundle for the given run.
 
-Source: [backend/app/routers/reports.py:143](../../../backend/app/routers/reports.py#L143).
+Source: [backend/app/routers/reports.py:162](../../../backend/app/routers/reports.py#L162).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -195,7 +195,7 @@ E8.4: an AI report nobody has accepted is refused (409) once the review gate
 is enforced, unless the project allows drafts or a QA lead passes
 ``include_unreviewed``; either way it is watermarked and audited.
 
-Source: [backend/app/routers/reports.py:61](../../../backend/app/routers/reports.py#L61).
+Source: [backend/app/routers/reports.py:80](../../../backend/app/routers/reports.py#L80).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -313,7 +313,7 @@ Create Share Link Endpoint
 
 Create a time-limited share link for the run report.
 
-Source: [backend/app/routers/reports.py:215](../../../backend/app/routers/reports.py#L215).
+Source: [backend/app/routers/reports.py:234](../../../backend/app/routers/reports.py#L234).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -410,7 +410,7 @@ List Share Links Endpoint
 
 List all share links for a run.
 
-Source: [backend/app/routers/reports.py:304](../../../backend/app/routers/reports.py#L304).
+Source: [backend/app/routers/reports.py:323](../../../backend/app/routers/reports.py#L323).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -495,7 +495,7 @@ Revoke Share Link Endpoint
 
 Revoke a share link. Creator, project members, and admins can revoke.
 
-Source: [backend/app/routers/reports.py:331](../../../backend/app/routers/reports.py#L331).
+Source: [backend/app/routers/reports.py:350](../../../backend/app/routers/reports.py#L350).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_link_access.<locals>._check`.
 
