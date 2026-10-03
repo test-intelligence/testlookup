@@ -4370,12 +4370,57 @@ class TeamChannelResponse(BaseModel):
 # ── Saved Views & Digest Schemas (ENT-05) ────────────────────────────────────
 
 
-SAVED_VIEW_PAGES = Literal["dashboard", "trends", "coverage", "defects", "failures"]
+# VIZ-609: ``summary_report`` and ``explore`` join. Never REMOVE a value: ``page``
+# is an unconstrained String(50) column, and one row carrying a retired value
+# would 422 the whole list endpoint, which declares this Literal as its filter.
+SAVED_VIEW_PAGES = Literal[
+    "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore",
+]
 MAX_SAVED_VIEW_INSTANCES = 12
+
+#: VIZ-609: ``filters`` is stored as JSON with no size limit of its own. 32 KB
+#: holds 12 widget instances with room to spare; anything larger is not a view.
+MAX_SAVED_VIEW_FILTERS_BYTES = 32 * 1024
+
+#: The one ``kind`` a named report view carries (the saved-views manager). A
+#: layout row (``useAnalyticsView``) has no kind.
+SAVED_VIEW_KINDS = ("report_view",)
+
+
+def _check_string_list(filters: dict, key: str) -> None:
+    value = filters.get(key)
+    if value is None:
+        return
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"filters.{key} must be a list of non-empty strings")
+    if len(value) > 50:
+        raise ValueError(f"filters.{key} cannot hold more than 50 values")
 
 
 def _validate_saved_view_filters(filters: dict) -> dict:
-    """Reject malformed analytics layouts while preserving legacy filters."""
+    """Reject malformed analytics layouts while preserving legacy filters.
+
+    VIZ-609: a 32 KB cap, and the keys the saved-views manager writes
+    (``kind``, ``release_ids``, ``suites``, ``window``) are type-checked. Other
+    keys stay free-form: ``filters`` has always been an open object (MCP
+    clients and older views store ``severity``, ``category``, ``days`` ...),
+    so a key allow-list would 422 views that exist today.
+    """
+    import json  # noqa: PLC0415
+
+    size = len(json.dumps(filters, separators=(",", ":"), default=str).encode("utf-8"))
+    if size > MAX_SAVED_VIEW_FILTERS_BYTES:
+        raise ValueError(
+            f"filters is {size} bytes; a saved view holds at most {MAX_SAVED_VIEW_FILTERS_BYTES}"
+        )
+    kind = filters.get("kind")
+    if kind is not None and kind not in SAVED_VIEW_KINDS:
+        raise ValueError(f"filters.kind must be one of {', '.join(SAVED_VIEW_KINDS)}")
+    _check_string_list(filters, "release_ids")
+    _check_string_list(filters, "suites")
+    window = filters.get("window")
+    if window is not None and (isinstance(window, bool) or not isinstance(window, int) or not 1 <= window <= 365):
+        raise ValueError("filters.window must be a whole number of days, 1 to 365")
     for key in ("instances", "widgets"):
         if key not in filters:
             continue
