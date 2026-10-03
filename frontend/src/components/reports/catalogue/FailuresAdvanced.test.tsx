@@ -61,6 +61,9 @@ beforeEach(() => {
   loaded.drillThrows = false
 })
 
+/** How long a lazy section chunk may take to arrive on a loaded machine. */
+const LAZY_TIMEOUT = 5_000
+
 describe('FailuresAdvanced', () => {
   it('flags off: nothing rendered, nothing loaded, and only the catalogue flag looked up', async () => {
     const { container } = render(<FailuresAdvanced days={30} suiteFilter={null} />)
@@ -93,7 +96,10 @@ describe('FailuresAdvanced', () => {
     flags.values = { [CATALOGUE]: true, [ADVANCED]: true }
     const { container } = render(<FailuresAdvanced days={14} suiteFilter="payments" />)
     await settle()
-    expect(await screen.findByTestId('scatter')).toBeInTheDocument()
+    // The sections are lazy chunks: under a loaded machine (the push gate runs
+    // vitest with coverage) the imports outlast findBy's default 1 s. This
+    // test is about order and props, not speed.
+    expect(await screen.findByTestId('scatter', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     const order = [...container.querySelectorAll('[data-testid]')].map((el) => el.getAttribute('data-testid'))
     expect(order).toEqual(['groups', 'drill', 'scatter'])
     expect(loaded.props).toEqual({
@@ -109,7 +115,7 @@ describe('FailuresAdvanced', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<FailuresAdvanced days={14} suiteFilter={null} />)
     await settle()
-    expect(await screen.findByText('Failures by suite failed to load')).toBeInTheDocument()
+    expect(await screen.findByText('Failures by suite failed to load', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(screen.getByTestId('groups')).toBeInTheDocument()
     expect(screen.getByTestId('scatter')).toBeInTheDocument()
     error.mockRestore()

@@ -44,7 +44,7 @@ import type { EnvelopeMeta, SeriesChart, SeriesPoint } from '@/lib/viz/contracts
 import { niceScale, niceStep, zeroBasedScale } from './niceScale'
 import { SVG_POINT_LIMIT, utcDayRange } from './timeSeriesModel'
 import { ALIGNED_X_TITLE, alignByReleaseStart, alignedRowLabel, type AlignmentStartSource } from './seriesAlignment'
-import { finishLine, volumeOf } from './lineFinish'
+import { finishLine, SERIES_DASHES, volumeOf } from './lineFinish'
 
 // `finishLine` and the dashes live in a leaf so the zoom can use them without
 // this model (see lineFinish.ts); re-exported for callers.
@@ -287,6 +287,12 @@ export interface BuildMultiSeriesInput {
   comparability?: Comparability | null
   /** What one series is, plural, for the notices: "suites", "releases", "branches". */
   seriesNoun?: string
+  /**
+   * VIZ-605: a line's colour slot and dash slot (0..7), by series key, when
+   * the two encode different dimensions (colour by suite, dash by release).
+   * A line without an entry keeps its rank's slot for both.
+   */
+  styles?: Readonly<Record<string, { colour: number; dash: number }>>
 }
 
 // ── Comparability ────────────────────────────────────────────────────────────
@@ -570,6 +576,7 @@ export function buildMultiSeriesModel({
   starts,
   comparability: comparabilityInput = null,
   seriesNoun = 'series',
+  styles,
 }: BuildMultiSeriesInput): MultiSeriesModel {
   let xs: string[]
   let working: WorkingLine[]
@@ -643,7 +650,12 @@ export function buildMultiSeriesModel({
   }
 
   let slot = 0
-  const lines = folding.lines.map((line) => finishLine(line, line.other ? MAX_DRAWN_SERIES - 1 : slot++))
+  const lines = folding.lines.map((line) => {
+    const finished = finishLine(line, line.other ? MAX_DRAWN_SERIES - 1 : slot++)
+    const style = line.other ? undefined : styles?.[line.key]
+    // The colour is the slot's hue (`styleIndex`); the dash is its own field.
+    return style ? { ...finished, styleIndex: style.colour, dash: SERIES_DASHES[style.dash] } : finished
+  })
   const comparability = comparabilityInput ?? comparabilityFromMeta(meta)
   const partialDay = partialOn !== null && lines.some((line) => line.points.some((p) => p.partial)) ? partialOn : null
 

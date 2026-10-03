@@ -72,7 +72,8 @@ const PAGES: RoutePage[] = [
     off: TRENDS,
     on: TRENDS_ON,
     flags: HEATMAP_ON,
-    frames: { off: 2, on: 5 },
+    // + Compare (VIZ-605): with nothing chosen it is a frame that says so.
+    frames: { off: 2, on: 6 },
   },
   {
     name: 'Summary',

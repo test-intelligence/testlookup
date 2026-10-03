@@ -161,7 +161,7 @@ interface RoutePage {
 
 const PAGES: RoutePage[] = [
   { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: CATALOGUE_ON, frames: 4 },
-  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: HEATMAP_ON, frames: 5 },
+  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: HEATMAP_ON, frames: 6 },
   {
     name: 'Summary',
     path: '/reports/summary',
@@ -203,7 +203,8 @@ test.describe('presentation mode, every catalogue section drawn (1280 x 4000)', 
       await networkQuiet(page, api)
       await expect(page.locator('[data-chart-frame]')).toHaveCount(report.frames)
       await expect
-        .poll(async () => (await frameStates(page)).filter((s) => !/: (ready|truncated)$/.test(s)), { timeout: 20_000 })
+        // Compare (VIZ-605) with nothing chosen in the filter bar states it, by design: not-measured.
+        .poll(async () => (await frameStates(page)).filter((s) => !/: (ready|truncated)$/.test(s) && s !== 'Compare: not-measured'), { timeout: 20_000 })
         .toEqual([])
       await expectNoErrorFrame(page)
       // Metric values sit on their raised tokens (Release gate has none: D10 of B4).
