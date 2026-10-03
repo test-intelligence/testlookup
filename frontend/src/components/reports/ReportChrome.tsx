@@ -24,6 +24,7 @@
  * states the reason and every tile is "—" with it.
  */
 import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { MultiSelectOption } from '@/components/ui/MultiSelect'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { useReleases } from '@/hooks/useReleases'
@@ -37,15 +38,30 @@ import { releaseOptionsFrom } from './releaseOptions'
 import ReportChromeView from './ReportChromeView'
 import { windowOptionsFor, type ReportRoute } from './reportRoutes'
 
+/**
+ * A route that reports on ONE suite of its own (`/coverage/suite?name=…`):
+ * the chrome is scoped to that suite, so its header and numbers are the
+ * page's, not the project's, and it offers no suite filter of its own.
+ */
+function usePageSuite(route: ReportRoute): string | null {
+  const [params] = useSearchParams()
+  if (route !== '/coverage/suite') return null
+  const name = params.get('name')?.trim()
+  return name ? name : null
+}
+
 export default function ReportChrome({ route }: { route: ReportRoute }) {
   const scope = useReportScope()
+  const pageSuite = usePageSuite(route)
   // The page's window (its own snap of the stored value) and what the summary
   // endpoint is asked for (capped at 90).
   const windowOptions = windowOptionsFor(route)
   const win = summaryWindow(scope.windowDays, windowOptions)
   // The DATA clock: the settled selection the page's own hooks request with.
   const settledReleases = useReleaseScope()
-  const settledSuites = useSuiteScope()
+  const scopeSuites = useSuiteScope()
+  const pageSuites = useMemo(() => (pageSuite ? [pageSuite] : null), [pageSuite])
+  const settledSuites = pageSuites ?? scopeSuites
   const requestScope = useMemo<ReportMetricsScope>(
     () => ({
       projectId: scope.projectId,
@@ -81,6 +97,8 @@ export default function ReportChrome({ route }: { route: ReportRoute }) {
       // OD-16: the pages have their own headers and KPI rows; the chrome opens
       // as one line and the full header and strip are a click away.
       collapsible
+      // A one-suite page has its own window buttons and no suite choice to make.
+      showFilterBar={pageSuite === null}
       meta={meta}
       allProjects={scope.allProjects}
       loading={isLoading && !summary}
@@ -105,7 +123,7 @@ export default function ReportChrome({ route }: { route: ReportRoute }) {
       }}
       chips={{
         releases: (scope.allProjects ? [] : scope.releaseIds).map((id) => ({ id, label: releaseLabel(id) })),
-        suites: scope.suiteNames,
+        suites: pageSuite ? [] : scope.suiteNames,
         windowDays: win.pageDays,
         defaultWindowDays: DEFAULT_WINDOW_DAYS,
         onRemoveRelease: (id) => scope.setReleaseIds(scope.releaseIds.filter((r) => r !== id)),

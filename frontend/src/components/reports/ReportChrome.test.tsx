@@ -11,6 +11,7 @@
  */
 import type { ReactNode } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GALLERY_CASES } from '@/pages/dev/reportContextFixtures'
@@ -64,11 +65,16 @@ const SERVER_META = {
   ignored_filters: [{ dimension: 'release', reason: 'Defect counts are project-wide.' }],
 }
 
+let initialUrl = '/overview'
 function wrapper({ children }: { children: ReactNode }) {
-  return <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
+  return (
+    <MemoryRouter initialEntries={[initialUrl]}>
+      <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
+    </MemoryRouter>
+  )
 }
 
-const renderChrome = (route: '/overview' | '/value-metrics' | '/reports/summary' = '/overview') =>
+const renderChrome = (route: '/overview' | '/value-metrics' | '/reports/summary' | '/coverage/suite' = '/overview') =>
   render(<ReportChrome route={route} />, { wrapper })
 /** The params of the LAST summary request. */
 const summaryParams = () => {
@@ -247,5 +253,37 @@ describe('ReportChrome opens collapsed (OD-16)', () => {
     fireEvent.click(screen.getByRole('button', { name: HIDE_DETAILS_TEXT }))
     expect(document.querySelector('[data-report-context-header]')).toBeNull()
     expect(window.localStorage.getItem(CHROME_EXPANDED_KEY)).toBe('0')
+  })
+})
+
+describe('ReportChrome on a one-suite page (/coverage/suite)', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(CHROME_EXPANDED_KEY)
+    get.mockReset()
+    get.mockResolvedValue({ total_executions_7d: { value: 96 }, meta: SERVER_META })
+    scopeState.windowDays = 30
+    scopeState.releaseIds = []
+    scopeState.suiteNames = ['cart']
+    settled.releases = []
+    settled.suites = ['cart']
+  })
+
+  it('asks for the page’s suite, not the global suite filter, and offers no filter bar of its own', async () => {
+    initialUrl = '/coverage/suite?name=PaymentSuite&days=90'
+    try {
+      renderChrome('/coverage/suite')
+      await waitFor(() => expect(get).toHaveBeenCalled())
+      expect(summaryParams().suite_name).toBe('PaymentSuite')
+      expect(document.querySelector('[data-report-filter-bar]')).toBeNull()
+    } finally {
+      initialUrl = '/overview'
+    }
+  })
+
+  it('every other route keeps the global suite filter and its bar', async () => {
+    renderChrome('/overview')
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    expect(summaryParams().suite_name).toBe('cart')
+    expect(document.querySelector('[data-report-filter-bar]')).not.toBeNull()
   })
 })
