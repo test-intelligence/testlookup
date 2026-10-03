@@ -5,7 +5,7 @@
  * safe diff only while no page branches on a flag by itself. So a reference to
  * `VIZ_FLAGS.chartDataApi` / `VIZ_FLAGS.advancedCharts` — or to their raw
  * strings — anywhere but the definition and the seam fails here, and the fix
- * is to call `useCatalogueRollout()` / `useHeatmapRollout()` instead.
+ * is to call `useCatalogueRollout()` / `useAdvancedRollout()` instead.
  */
 import { describe, expect, it } from 'vitest'
 

@@ -17,20 +17,34 @@ import { CHART_VARS, DECAL_TILE, STATUS_ENCODING, type DecalKind } from './token
 
 const TILE = DECAL_TILE
 
+/**
+ * Every shape a pattern can carry: the five status decals (shared with the
+ * ECharts canvas, `tokens.ts`) and two more that only the SVG failure-category
+ * set uses (`vertical` stripes, an upright `grid`; VIZ-504), because seven
+ * categories need seven shapes. The set itself — which category gets which
+ * shape and colour — is `failureGroups/categoryPatterns.ts`, a plain module,
+ * so this one keeps exporting components and the few helpers it always had.
+ */
+export type PatternDecal = DecalKind | 'vertical' | 'grid'
+
 export interface PatternSpec {
   /** The full element id (already prefixed). */
   id: string
   /** Fill colour: a `var(--…)` reference from `CHART_VARS`. */
   color: string
-  decal: DecalKind
+  decal: PatternDecal
+  /** The marks' colour; default the card (a cut-out). The "No data" key draws axis-coloured lines on the card. */
+  mark?: string
 }
 
-function decalMarks(kind: DecalKind, cut: string): ReactNode {
+function decalMarks(kind: PatternDecal, cut: string): ReactNode {
   switch (kind) {
     case 'solid':
       return null
     case 'diagonal':
+    case 'vertical':
       return <rect x={0} y={0} width={2.5} height={TILE} fill={cut} />
+    case 'grid':
     case 'crosshatch':
       return (
         <>
@@ -47,7 +61,7 @@ function decalMarks(kind: DecalKind, cut: string): ReactNode {
 
 /** `<pattern>` elements for `specs`; put them inside the chart's `<defs>`. */
 export function renderPatterns(specs: readonly PatternSpec[]): ReactNode {
-  return specs.map(({ id, color, decal }) => (
+  return specs.map(({ id, color, decal, mark }) => (
     <pattern
       key={id}
       id={id}
@@ -58,7 +72,7 @@ export function renderPatterns(specs: readonly PatternSpec[]): ReactNode {
       patternTransform={decal === 'diagonal' || decal === 'crosshatch' ? 'rotate(45)' : undefined}
     >
       <rect width={TILE} height={TILE} fill={color} />
-      {decalMarks(decal, CHART_VARS.card)}
+      {decalMarks(decal, mark ?? CHART_VARS.card)}
     </pattern>
   ))
 }

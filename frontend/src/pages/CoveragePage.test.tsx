@@ -1,6 +1,7 @@
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import axe from 'axe-core'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import CoveragePage, { buildCoverageCsv, CADENCE_MAX_CELLS, CoverageComparisonStrip, coverageCadence } from './CoveragePage'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
@@ -50,9 +51,20 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
 
+// Wave 3: the page's one seam call is inside `CoverageAdvanced` (its one
+// import and one mount). Both flags default OFF here, as in production.
+const rollout = vi.hoisted(() => ({ catalogue: false, advanced: false }))
+vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
+  useCatalogueRollout: () => rollout.catalogue,
+  useCatalogueRolloutStatus: () => rollout.catalogue,
+  useAdvancedRollout: () => rollout.catalogue && rollout.advanced,
+}))
+
 describe('CoveragePage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    rollout.catalogue = false
+    rollout.advanced = false
   })
 
   it('renders the coverage workflow strip above the suite breakdown', async () => {
@@ -599,5 +611,283 @@ describe('CoveragePage — verdict meter and cadence strip', () => {
     renderPage()
     expect(await screen.findByRole('img', { name: 'Coverage health score: not measured' })).toBeInTheDocument()
     expect(screen.queryByRole('meter', { name: 'Coverage health score' })).toBeNull()
+  })
+})
+
+
+/** `matchMedia` answering `(min-width: 768px)` with `wide` (jsdom has none, which reads as wide). */
+function stubViewportWide(wide: boolean) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 768px)' ? wide : true,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+}
+
+describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
+  const coverage = {
+    summary: { unique_tests: 18, suite_count: 2, total_executions: 120, avg_pass_rate: 92.5, days_with_runs: 7 },
+    suites: [{ suite_name: 'Payments', unique_tests: 6, passed: 48, failed: 2, skipped: 1, pass_rate: 96 }],
+  }
+  beforeEach(async () => {
+    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    const { useCoverage } = await import('@/hooks/useMetrics')
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: coverage, isLoading: false })
+  })
+  const renderCoverage = () =>
+    render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+  // X2-3: below 768 px the breakdown and the gaps get the whole width; from 768 px the desktop's 1.65 : 1.
+  it.each([
+    [false, 'minmax(0, 1fr)'],
+    [true, 'minmax(0, 1.65fr) minmax(0, 1fr)'],
+  ])('body grid at min-width 768 = %s: %s', async (wide, columns) => {
+    stubViewportWide(wide)
+    onTestFinished(() => {
+      vi.unstubAllGlobals()
+    })
+    const { container } = renderCoverage()
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    expect((container.querySelector('.body-grid') as HTMLElement).style.gridTemplateColumns).toBe(columns)
+  })
+
+  it.each([
+    ['every flag off', false, false],
+    ['only viz_chart_data_api on', true, false],
+    ['only viz_advanced_charts on', false, true],
+  ])('%s: the Wave 2.6 page, no Wave 3 section and no placeholder', async (_name, catalogue, advanced) => {
+    rollout.catalogue = catalogue
+    rollout.advanced = advanced
+    const { container } = renderCoverage()
+    expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
+    expect(container.querySelector('[data-coverage-advanced]')).toBeNull()
+    expect(container.querySelector('[data-lazy-section]')).toBeNull()
+  })
+
+  it('both flags on: the coverage map and the heatmaps are mounted lazily, below the body grid', async () => {
+    rollout.catalogue = true
+    rollout.advanced = true
+    // An observer that never reports the sections near: they stay placeholders.
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    onTestFinished(() => {
+      vi.unstubAllGlobals()
+    })
+    const { container } = renderCoverage()
+    expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
+    // The sections arrive as ONE lazy module (the page chunk holds only the gates).
+    const advanced = await waitFor(() => {
+      const found = container.querySelector('[data-coverage-advanced]') as HTMLElement | null
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    // Not near the reader yet: placeholders (the heatmap section's own, once its module loads), no section, no request.
+    await waitFor(() =>
+      expect([...advanced.querySelectorAll('[data-lazy-section]')].map((el) => el.getAttribute('data-lazy-section'))).toEqual([
+        'coverage-map',
+        'heatmap-suite_environment',
+      ]),
+    )
+    expect(container.querySelector('[data-catalogue-section]')).toBeNull()
+    // After the body grid, before the provenance footer.
+    expect((container.querySelector('.body-grid') as HTMLElement).compareDocumentPosition(advanced)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+  })
+})
+
+describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', () => {
+  const realRect = HTMLElement.prototype.getBoundingClientRect
+  let barWidth = 0
+  // The rows' grid is measured too (F-18): a desktop card unless a test narrows it.
+  let gridWidth = 800
+  beforeEach(() => {
+    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    gridWidth = 800
+    // The rows' grid reports `gridWidth`; every other measured element (the bars) reports `barWidth`.
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const width = this.hasAttribute('data-suite-rows') ? gridWidth : barWidth
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 18, width, height: 18, toJSON: () => ({}) } as DOMRect
+    }
+  })
+  afterEach(() => {
+    HTMLElement.prototype.getBoundingClientRect = realRect
+  })
+
+  async function renderSuites(suites: { suite_name: string; passed: number; failed: number; skipped: number }[]) {
+    const { useCoverage } = await import('@/hooks/useMetrics')
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 18, suite_count: suites.length, total_executions: 1000, avg_pass_rate: 92.5, days_with_runs: 7 },
+        suites: suites.map((s) => ({ ...s, unique_tests: 12, pass_rate: 90 })),
+      },
+      isLoading: false,
+    })
+    const view = render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await within(view.container).findByText('Suite coverage breakdown')
+    return view
+  }
+  const segments = (container: HTMLElement, suite: string) =>
+    [...(container.querySelector(`[role="row"][aria-label^="${suite}:"]`) as HTMLElement).querySelectorAll('[data-suite-segment]')].map(
+      (el) => [el.getAttribute('data-suite-segment'), el.textContent, el.getAttribute('title')],
+    )
+
+  it('a narrow segment hides its count instead of running it into the next one ("38" + "12" read "3812")', async () => {
+    barWidth = 300
+    const { container } = await renderSuites([{ suite_name: 'Auth', passed: 900, failed: 38, skipped: 12 }])
+    // 300 px over 950: failed 12 px, skipped 3.8 px: neither count fits; every count stays in the title.
+    expect(segments(container, 'Auth')).toEqual([
+      ['passed', '900', '900 passed'],
+      ['failed', '', '38 failed'],
+      ['skipped', '', '12 skipped'],
+    ])
+    expect(container.textContent).not.toContain('3812')
+  })
+
+  it('a segment wide enough for its digits shows them, the same rule for every count', async () => {
+    barWidth = 3000
+    const { container } = await renderSuites([{ suite_name: 'Auth', passed: 900, failed: 38, skipped: 12 }])
+    // failed 120 px, skipped 37.9 px: both fit two bold digits and their padding (21.1 px).
+    expect(segments(container, 'Auth').map(([, text]) => text)).toEqual(['900', '38', '12'])
+  })
+
+  it('a count is shown only where it fits with its padding: one digit needs 13.6 px, two need 21.1 px', async () => {
+    // 100 px over 100 executions: a segment is exactly its count in px.
+    barWidth = 100
+    const { container } = await renderSuites([
+      { suite_name: 'One', passed: 72, failed: 14, skipped: 14 },
+      { suite_name: 'Two', passed: 66, failed: 13, skipped: 21 },
+    ])
+    // 14 px: under the 21.1 px two digits need; 21 px: just under too.
+    expect(segments(container, 'One').map(([, text]) => text)).toEqual(['72', '', ''])
+    expect(segments(container, 'Two').map(([, text]) => text)).toEqual(['66', '', ''])
+    cleanup()
+    barWidth = 200
+    const wider = await renderSuites([{ suite_name: 'Three', passed: 92, failed: 7, skipped: 1 }])
+    // failed 14 px: "7" fits (13.6 px); skipped 2 px: "1" does not.
+    expect(segments(wider.container, 'Three').map(([, text]) => text)).toEqual(['92', '7', ''])
+  })
+
+  it('draws no count before the bar is measured', async () => {
+    barWidth = 0
+    const { container } = await renderSuites([{ suite_name: 'Auth', passed: 900, failed: 38, skipped: 12 }])
+    expect(segments(container, 'Auth').map(([, text]) => text)).toEqual(['', '', ''])
+  })
+
+  it('sizes the name column from the widest name (160 to 240 px) on one grid, so a long name is not cut by a fixed width', async () => {
+    barWidth = 300
+    const { container } = await renderSuites([
+      { suite_name: 'Notifications', passed: 10, failed: 0, skipped: 2 },
+      { suite_name: 'Auth', passed: 5, failed: 1, skipped: 0 },
+    ])
+    const rows = [...container.querySelectorAll('[role="row"]')] as HTMLElement[]
+    const grid = rows[0].parentElement as HTMLElement
+    expect(grid.style.gridTemplateColumns).toBe('fit-content(240px) minmax(0, 1fr) 64px 76px')
+    for (const row of rows) {
+      expect(row.parentElement).toBe(grid)
+      expect(row.style.gridTemplateColumns).toBe('subgrid')
+      expect(row.style.gridColumn).toBe('1 / -1')
+      expect((row.firstElementChild as HTMLElement).style.minWidth).toBe('160px')
+    }
+    expect(within(container).getByTitle('Notifications')).toHaveTextContent('Notifications')
+  })
+
+  const SUITES_TWO = [
+    { suite_name: 'Auth', passed: 610, failed: 38, skipped: 12 },
+    { suite_name: 'Notifications', passed: 10, failed: 0, skipped: 2 },
+  ]
+  const nameCell = (row: HTMLElement) => within(row).getAllByRole('cell')[0]
+
+  it('rows 320-399 px wide drop the runs column and hold the name at 160 px, so the bar keeps its width (F-18)', async () => {
+    barWidth = 60
+    gridWidth = 360
+    const { container } = await renderSuites(SUITES_TWO)
+    const card = container.querySelector('section[aria-label="Suite coverage breakdown"]') as HTMLElement
+    const grid = card.querySelector('[data-suite-rows]') as HTMLElement
+    // 160 + 16 + bar + 16 + 76: at 360 px the bar is 92 px (it was 0 px in a 322 px card, and a row 348 px wide).
+    expect(grid.style.gridTemplateColumns).toBe('fit-content(160px) minmax(0, 1fr) 76px')
+    const rows = within(card).getAllByRole('row')
+    for (const row of rows) {
+      expect(within(row).getAllByRole('cell')).toHaveLength(3)
+      expect(nameCell(row).style.minWidth).toBe('160px')
+      expect(nameCell(row).style.gridColumn).toBe('')
+    }
+    expect(card.textContent).not.toMatch(/\d runs?\b/)
+    // The pass rate and every count stay: the cell, and the row's name.
+    expect(within(rows[0]).getByText('92%')).toBeInTheDocument()
+    expect(within(card).getByRole('row', { name: 'Auth: 610 passed, 38 failed, 12 skipped' })).toBeInTheDocument()
+    const results = await axe.run(card, { rules: { 'color-contrast': { enabled: false } } })
+    expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([])
+  })
+
+  it('rows under 320 px (the card at a 375 px viewport is ~170 px) put the name on its own line over the bar (F-18)', async () => {
+    barWidth = 60
+    for (const width of [319, 167]) {
+      gridWidth = width
+      const { container } = await renderSuites(SUITES_TWO)
+      const card = container.querySelector('section[aria-label="Suite coverage breakdown"]') as HTMLElement
+      const grid = card.querySelector('[data-suite-rows]') as HTMLElement
+      // The bar takes everything the pass rate leaves: no fixed 160 px name column beside it.
+      expect(grid.style.gridTemplateColumns).toBe('minmax(0, 1fr) 76px')
+      for (const row of within(card).getAllByRole('row')) {
+        expect(within(row).getAllByRole('cell')).toHaveLength(3)
+        expect(nameCell(row).style.gridColumn).toBe('1 / -1')
+        expect(nameCell(row).style.minWidth).toBe('0px')
+      }
+      expect(card.textContent).not.toMatch(/\d runs?\b/)
+      expect(within(card).getByTitle('Notifications')).toHaveTextContent('Notifications')
+      const results = await axe.run(card, { rules: { 'color-contrast': { enabled: false } } })
+      expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([])
+      cleanup()
+    }
+  })
+
+  it('keeps the runs column from 400 px up, and before the card is measured (the committed desktop baselines)', async () => {
+    for (const width of [400, 0]) {
+      gridWidth = width
+      barWidth = 200
+      const { container } = await renderSuites([{ suite_name: 'Auth', passed: 610, failed: 38, skipped: 12 }])
+      const grid = container.querySelector('[data-suite-rows]') as HTMLElement
+      expect(grid.style.gridTemplateColumns).toBe('fit-content(240px) minmax(0, 1fr) 64px 76px')
+      expect(within(grid).getAllByRole('cell')).toHaveLength(4)
+      expect(within(grid).getByText('660 runs')).toBeInTheDocument()
+      expect(nameCell(within(grid).getByRole('row')).style.minWidth).toBe('160px')
+      cleanup()
+    }
+    // The compact layout starts exactly at 320 px.
+    gridWidth = 320
+    const { container } = await renderSuites(SUITES_TWO)
+    expect((container.querySelector('[data-suite-rows]') as HTMLElement).style.gridTemplateColumns).toBe(
+      'fit-content(160px) minmax(0, 1fr) 76px',
+    )
+  })
+
+  it('the rows are a real table (rows of cells, a table parent): axe finds nothing on the card (FK2-4)', async () => {
+    barWidth = 300
+    const { container } = await renderSuites([
+      { suite_name: 'Auth', passed: 610, failed: 38, skipped: 12 },
+      { suite_name: 'Notifications', passed: 10, failed: 0, skipped: 2 },
+    ])
+    const card = container.querySelector('section[aria-label="Suite coverage breakdown"]') as HTMLElement
+    const table = within(card).getByRole('table', { name: 'Suites' })
+    const rows = within(table).getAllByRole('row')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getAllByRole('cell')).toHaveLength(4)
+    expect(within(card).getByRole('row', { name: 'Auth: 610 passed, 38 failed, 12 skipped' })).toBeInTheDocument()
+    const results = await axe.run(card, { rules: { 'color-contrast': { enabled: false } } })
+    expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([])
   })
 })

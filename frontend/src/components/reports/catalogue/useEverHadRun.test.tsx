@@ -63,7 +63,7 @@ describe('useEverHadRun (K6)', () => {
     list.mockResolvedValue(page(1))
     renderHook(() => useEverHadRun(true), { wrapper })
     await waitFor(() => expect(list).toHaveBeenCalled())
-    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 })
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 }, { suppressToast: true })
     expect(EVER_HAD_RUN_PARAMS).toEqual({ page: 1, size: 1 })
   })
 
@@ -71,10 +71,10 @@ describe('useEverHadRun (K6)', () => {
     activeProjectId = 'all'
     list.mockResolvedValue(page(1))
     renderHook(() => useEverHadRun(true), { wrapper })
-    await waitFor(() => expect(list).toHaveBeenCalledWith(null, { page: 1, size: 1 }))
+    await waitFor(() => expect(list).toHaveBeenCalledWith(null, { page: 1, size: 1 }, { suppressToast: true }))
   })
 
-  it('shares ONE request with Overview’s own probe (same params, same SWR key)', async () => {
+  it('beside Overview’s own probe (same params), asks QUIETLY on its own key: one loud and one quiet request (R1B-7)', async () => {
     list.mockResolvedValue(page(1))
     const { result } = renderHook(
       () => ({
@@ -84,7 +84,10 @@ describe('useEverHadRun (K6)', () => {
       { wrapper },
     )
     await waitFor(() => expect(result.current.probe).toBe(true))
-    expect(list).toHaveBeenCalledTimes(1)
+    // A shared entry would let the first fetcher decide the other's toast rule.
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 })
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 }, { suppressToast: true })
   })
 
   it('a failed probe never claims "no data yet": it answers true, so an empty chart says "nothing matches"', async () => {
@@ -132,7 +135,7 @@ describe('useEverHadRun (K6)', () => {
     await waitFor(() => expect(result.current).toBe(true))
     activeProjectId = 'proj-2'
     rerender()
-    await waitFor(() => expect(list).toHaveBeenCalledWith('proj-2', { page: 1, size: 1 }))
+    await waitFor(() => expect(list).toHaveBeenCalledWith('proj-2', { page: 1, size: 1 }, { suppressToast: true }))
     await waitFor(() => expect(result.current).toBe(false))
   })
 })

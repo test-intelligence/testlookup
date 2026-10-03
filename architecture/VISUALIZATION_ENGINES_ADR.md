@@ -6,6 +6,7 @@
 | **Decision** | Keep **Recharts 3** for simple charts. Add **Apache ECharts 6**, registered per chart type on the canvas renderer, for dense charts. Use **three.js** for the single opt-in 3D scatter. Reject `echarts-gl`, Plotly and Highcharts. |
 | **Applies to** | `frontend/` — every chart added by the Visualization Upgrade (stories `VIZ-*`) |
 | **Supersedes** | — |
+| **Amended** | 2026-10-02, Wave 3: the treemap and scatter types, `d3-hierarchy` / `d3-force` for the failure-group layouts, no ECharts `large` mode (section "Wave 3 amendment") |
 
 ## Context
 
@@ -127,6 +128,55 @@ scans the real tree.
   renders ECharts yet, so no build tests that ceiling, and the script's output says so. The script
   also prints the remaining eager headroom. On 2026-09-22 it measured 178 205 of 180 000 bytes,
   which leaves 1 795 bytes (1.0%).
+
+## Wave 3 amendment (2026-10-02)
+
+Wave 3 (VIZ-501, 502, 504, 506) added two ECharts types and two small d3 modules. Three spikes ran
+first under the production CSP `<meta>` (`docs/viz-work/w3/spikes.md`, gitignored; summarised
+here): S1 treemap `highlight` + `showTip`, S2 brush without a toolbox, S3 d3 pack + force. All
+three passed with zero CSP violations.
+
+1. **Treemap** (`engines/echarts/treemap.ts`: `TreemapChart`; option in
+   `engines/echarts/treemapOption.ts`) draws the coverage map. It is never allowed to zoom
+   (`nodeClick: false`): drilling is ours, through the page's drill path, so Back and a link work.
+   The keyboard highlight dispatches `highlight` / `showTip` with `dataIndex` k + 1 for child k
+   (index 0 is the hidden root; spike S1). `stateAnimation.duration` is 0: under a pinned clock the
+   300 ms emphasis blend never ran and the focus ring stayed invisible. Gaps (not run, last run
+   unknown, never run) are decals, never a colour step. The lazy chunk is about 12 kB gzip.
+2. **Scatter** (`engines/echarts/scatter.ts`: `ScatterChart`, `MarkLineComponent`,
+   `BrushComponent`; no `ToolboxComponent`) draws the test scatter. **No `large` mode at any size**:
+   S2 measured that with `large: true` the size callback draws nothing and `brushSelected` returns
+   no index. The C3 cap is 5,000 points, which draw in about 210 ms without it. The selection is OUR
+   pure filter (`testScatter.model.ts`, inclusive) over the `brushEnd` data rectangle, never
+   `brushSelected`, and the keyboard's "Select slow and flaky" dispatches a programmatic brush that
+   the same filter reads, so pointer and keyboard select identical sets. The brush's own
+   preprocessor always writes a `toolbox` option, which made a dev build log "Component toolbox
+   is used but not imported" on every scatter; `scatter.ts` registers a preprocessor after it that
+   drops that synthetic toolbox from any option with a `brush` (importing the toolbox component
+   instead would cost about 11 kB). The lazy chunk is about 10 kB gzip.
+3. **d3, confined.** `d3-hierarchy` 3.1.2 (`pack`) and `d3-force` 3.0.0 lay out the failure-group
+   bubbles and the related-groups view (SVG, drawn by React: no engine, no canvas). Both are
+   pinned direct dependencies (ISC, pure ESM, no `eval`; they were already installed through
+   `mermaid`), with their `@types` pinned as dev dependencies. A ratchet test
+   (`components/charts/failureGroups/d3Confinement.ratchet.test.ts`, with a planted-violation
+   self-test) fails if any module outside `components/charts/failureGroups/` imports `d3` or a
+   `d3-*` package, and if any page statically reaches that folder: the layouts ride only in the
+   failure groups' lazy chunk (about 25 kB gzip with the views and the panel; d3 itself about
+   8 kB). Layouts are deterministic: `pack` sorts by value then id, and the force layout sorts its
+   links by (source, target) before 300 synchronous ticks with no random start (S3: byte-identical
+   on Windows, Linux, Chromium and Node). ECharts' own `graph` force layout was rejected because it
+   is not deterministic.
+4. **Mark activation stays out of the default path.** A chart that can be activated (drill, rows,
+   filter) gets its handler AND, for the SVG cursor charts, the activation code (`markKit`) from
+   its host, so `ChartCursor` and `BarChart` import only types and the pages that draw a bar or a
+   day strip with the flags off download none of it. `sectionOnlyModules.test.ts` lists the
+   Wave 3 modules no page may reach statically.
+5. **No formatter, still.** Every new option is built without a `*formatter` (axis numbers are
+   ECharts' defaults on a decade-snapped log axis with the unit in the axis name; labels are
+   pre-truncated text), and tooltips stay `domTooltipFormatter`. The chart guard and the runtime
+   check above did not change.
+
+The ECharts base chunk measured 160,453 bytes gzip with Wave 3 (ceiling 198,600).
 
 ## Consequences
 

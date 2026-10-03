@@ -19,8 +19,8 @@
  * the server marked `measured: false` (which every renderer draws as a gap) —
  * is an EMPTY cell, never 0.
  */
-import type { ChartSeries, EnvelopeMeta } from './contracts'
-import { chartTableModel, NO_DATA, NO_VALUE, type ChartAxes } from '@/components/charts/chartText'
+import type { AnyChartSeries, EnvelopeMeta, PointsChart } from './contracts'
+import { chartTableModel, NO_DATA, NO_VALUE, type ChartAxes, type ChartTableModel } from '@/components/charts/chartText'
 import { formatNumber } from '@/utils/formatters'
 import { CSV_EOL, csvRow } from './csv'
 
@@ -200,7 +200,7 @@ export function exportFilename(
 // ── CSV ───────────────────────────────────────────────────────────────────────
 
 /** A point the server marked `measured: false` is drawn as a gap; so it is exported as one. */
-function withGaps(series: ChartSeries): ChartSeries {
+function withGaps(series: AnyChartSeries): AnyChartSeries {
   if (series.kind !== 'series') return series
   return {
     ...series,
@@ -214,6 +214,19 @@ function withGaps(series: ChartSeries): ChartSeries {
 /** Raw, locale-free, full precision: what the chart plots, as a spreadsheet re-reads it. */
 const rawValue = (value: number) => String(value)
 
+/**
+ * A `points` table with RAW numbers (Wave 3, VIZ-506). The table view prints
+ * each axis in its declared unit ("1,841 ms", "12.5%"), which a spreadsheet
+ * re-reads as text; the CSV keeps the table's columns and row names and
+ * writes the numbers the server sent, as every other kind's CSV does.
+ */
+function rawPointsModel(series: PointsChart, table: ChartTableModel): ChartTableModel {
+  return {
+    ...table,
+    rows: series.points.map((p) => ({ header: p.label, cells: [p.x, p.y, p.size, p.n].map(rawValue) })),
+  }
+}
+
 /** "No value" in the table model is an empty CSV cell (never 0, never a dash). */
 const emptyWhenMissing = (cell: string) => (cell === NO_VALUE || cell === NO_DATA ? '' : cell)
 
@@ -224,11 +237,14 @@ const emptyWhenMissing = (cell: string) => (cell === NO_VALUE || cell === NO_DAT
  */
 export function buildChartCsv(
   title: string,
-  series: ChartSeries,
+  series: AnyChartSeries,
   provenance: ChartProvenance | null,
   axes: ChartAxes = {},
 ): string {
-  const model = chartTableModel(withGaps(series), axes, rawValue)
+  const model =
+    series.kind === 'points'
+      ? rawPointsModel(series, chartTableModel(series, axes))
+      : chartTableModel(withGaps(series), axes, rawValue)
   const lines: string[] = []
   lines.push(`# TestLookup chart export,${csvRow([title])}`)
   for (const [label, value] of provenanceFields(provenance)) lines.push(`# ${label},${csvRow([value])}`)

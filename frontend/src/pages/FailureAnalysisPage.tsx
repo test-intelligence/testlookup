@@ -52,7 +52,7 @@
  *     GET /api/v1/runs/{id}/suspects). Bisect = "show the suspect commit range
  *     for this failure". Framed as suspects, never culprits (monorepo caveat).
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
@@ -97,10 +97,13 @@ import {
 import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 import { utcDayIso } from '@/utils/calendarDay'
 import GaugeBar from '@/components/charts/GaugeBar'
+import { useContainerWidth } from '@/components/charts/chartLayout'
 import DayStrip from '@/components/charts/DayStrip'
 import { countTones, dayWindow, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
+import FailuresAdvanced from '@/components/reports/catalogue/FailuresAdvanced'
+import { BODY_GRID_MIN_WIDTH, BODY_GRID_ONE_COLUMN, BODY_GRID_TWO_COLUMNS, useMinWidth } from '@/hooks/useMinWidth'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -866,6 +869,9 @@ function CoverageRibbon({ stages }: { stages: RibbonStage[] }) {
   const completed = stages.filter(s => s.status === 'done').length
   const skipped   = stages.filter(s => s.status === 'skipped').length
   const evidence  = stages.reduce((s, x) => s + (x.status === 'skipped' ? 0 : x.evidence), 0)
+  // Four cells across from 768 px; two by two below it. At 375 px a quarter (77 px) is narrower than a
+  // one-word stage name ("Categorization"), and the ribbon pushed the page sideways (Wave 3, X3).
+  const columns = useMinWidth(BODY_GRID_MIN_WIDTH) ? 4 : 2
   return (
     <section
       aria-label="Failure analysis workflow"
@@ -881,8 +887,10 @@ function CoverageRibbon({ stages }: { stages: RibbonStage[] }) {
           <> · {evidence} evidence item{evidence === 1 ? '' : 's'}</>
         </div>
       </div>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-        {stages.map((s, i) => <StageCell key={s.num} stage={s} isLast={i === stages.length - 1} />)}
+      <div className="grid" data-ribbon-columns={columns} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+        {stages.map((s, i) => (
+          <StageCell key={s.num} stage={s} isLast={i === stages.length - 1 || (i + 1) % columns === 0} />
+        ))}
       </div>
     </section>
   )
@@ -1468,6 +1476,21 @@ const CANONICAL_CATEGORIES: { id: string; label: string; color: string; matcher:
   { id: 'infra',     label: 'Infra / runner',      color: 'var(--cat-infra)',      matcher: /infra|runner|ci|env/i,  kind: 'infrastructure' },
 ]
 
+/**
+ * The category rows' columns: label + badge, bar, "n of N", percent. The label
+ * column is never narrower than its min-content — the widest WHOLE name (or
+ * badge: the badge wraps under the name before a name is cut) — and never
+ * wider than name + badge on one line; the bar gives up the width.
+ */
+const CATEGORY_GRID = {
+  gridTemplateColumns: 'minmax(min-content, max-content) minmax(48px, 1fr) 56px 56px',
+  columnGap: 12,
+} as const
+/** The width right of the label column: the bar's floor, the two 56 px figures and the three 12 px gaps. */
+const CATEGORY_FIXED_WIDTH = 48 + 56 + 56 + 3 * 12
+/** A card too narrow for even that: one column, each row stacked (name line, then bar and figures). */
+const CATEGORY_STACKED_GRID = { gridTemplateColumns: 'minmax(0, 1fr)' } as const
+
 function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, kindFilter = 'all' }: {
   categories: FailureCategoryItem[]
   totalFailures: number
@@ -1485,6 +1508,29 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
   }
   const total = Array.from(buckets.values()).reduce((s, n) => s + n, 0)
     || (kindFilter === 'all' ? totalFailures : 0)
+
+  // Wave 3 R2-B F-17: a card narrower than the widest whole name + the three
+  // other columns STACKS each row (name line above bar and figures) instead of
+  // cutting the names or drawing them over the bars. Measured in the reader's
+  // font: the name and badge spans keep their natural width in both layouts,
+  // so the choice never flips back and forth. Unmeasured (0): the columns.
+  const [measureGrid, gridWidth] = useContainerWidth<HTMLDivElement>()
+  const gridRef = useRef<HTMLDivElement | null>(null)
+  const attachGrid = useCallback((node: HTMLDivElement | null) => {
+    gridRef.current = node
+    measureGrid(node)
+  }, [measureGrid])
+  const [labelMin, setLabelMin] = useState(0)
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    let widest = 0
+    for (const part of grid.querySelectorAll<HTMLElement>('[data-category-name], [data-category-badge]')) {
+      widest = Math.max(widest, part.getBoundingClientRect().width)
+    }
+    setLabelMin(widest)
+  }, [gridWidth])
+  const stacked = gridWidth > 0 && labelMin > 0 && gridWidth < labelMin + CATEGORY_FIXED_WIDTH
 
   return (
     <CardShell
@@ -1523,7 +1569,22 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
           </div>
         )}
 
-        <div className="flex flex-col">
+        {/* ONE grid for the six rows (each row a subgrid of it), so the label
+            column is as wide as the WIDEST label + badge in the reader's own
+            font — never a reserve tuned to one font. A fixed 220 px fitted
+            every label in Segoe UI and cut "Assertion / prod…", "Network …"
+            and "Infra / ru…" in DejaVu Sans (the Linux CI renderer, Wave 3
+            BEFORE note 3). The bar gives up the width; it never drops below
+            48 px. A name is never cut: the badge wraps under it first, and a
+            card too narrow for the widest name and the other columns stacks
+            each row instead (R2-B F-17). */}
+        <div
+          ref={attachGrid}
+          data-category-grid=""
+          data-category-layout={stacked ? 'stacked' : 'columns'}
+          className="grid"
+          style={stacked ? CATEGORY_STACKED_GRID : CATEGORY_GRID}
+        >
           {CANONICAL_CATEGORIES.map((c, i, arr) => {
             const count = buckets.get(c.id) ?? 0
             const pct = total > 0 ? Math.round((count / total) * 100) : 0
@@ -1535,15 +1596,24 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 aria-label={`${c.label}: ${pct}% (${count} of ${total})`}
                 className={clsx('grid items-center gap-3', i < arr.length - 1 && 'pb-2 mb-2')}
                 style={{
-                  gridTemplateColumns: '220px 1fr 56px 56px',
+                  gridTemplateColumns: stacked ? 'minmax(0, 1fr) 56px 56px' : 'subgrid',
+                  gridColumn: '1 / -1',
+                  rowGap: stacked ? 6 : undefined,
                   borderBottom: i < arr.length - 1 ? '1px dashed var(--color-border)' : '0',
                   paddingTop: 8,
                 }}
               >
-                <div className="flex items-center gap-2 min-w-0 text-[12.5px] text-[var(--color-text)]">
-                  <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: c.color }} />
-                  <span className="truncate">{c.label}</span>
-                  <FailureKindBadge kind={c.kind} compact />
+                <div
+                  className="flex items-center min-w-0 text-[12.5px] text-[var(--color-text)]"
+                  style={{ flexWrap: 'wrap', columnGap: 8, rowGap: 4, gridColumn: stacked ? '1 / -1' : undefined }}
+                >
+                  <span data-category-name="" className="inline-flex items-center gap-2 flex-none whitespace-nowrap">
+                    <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: c.color }} />
+                    {c.label}
+                  </span>
+                  <span data-category-badge="" className="inline-flex flex-none">
+                    <FailureKindBadge kind={c.kind} compact />
+                  </span>
                 </div>
                 <div className="relative h-3.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
                   <i
@@ -2168,6 +2238,8 @@ function MuteTestModal({
 
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function FailureAnalysisPage() {
+  // Two body columns from 768 px; one below, where 205 + 124 px columns squeezed the cards (Wave 3, X2/X3).
+  const twoBodyColumns = useMinWidth(BODY_GRID_MIN_WIDTH)
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -2750,7 +2822,7 @@ export default function FailureAnalysisPage() {
 
       <KindFilterChips byKind={byKind} value={kindFilter} onChange={setKindFilter} />
 
-      <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+      <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
         <div className="flex flex-col gap-3.5 min-w-0">
           {analyticsView.widgetIds.includes('top_failing_bar') && (
             <WhatsFailingCard
@@ -2816,6 +2888,8 @@ export default function FailureAnalysisPage() {
           <RecommendedActions recs={recs} />
         </div>
       </div>
+
+      <FailuresAdvanced days={days} suiteFilter={suiteFilter} />
 
       <ProvenanceFooter model={model} refreshedAt={refreshedAt} />
 

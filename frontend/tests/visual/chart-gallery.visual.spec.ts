@@ -122,8 +122,44 @@ const WAVE_2_ITEM_IDS = [
   'bar-ranked-prototype-names',
 ] as const
 
+/**
+ * Wave 3 (PR-B), named for the same reason: the heatmap frame on a test x run
+ * status matrix, its edge cases and a fitted colour scale (VIZ-408); the test
+ * scatter (VIZ-506); the coverage treemap, one level per item (VIZ-502); and
+ * failure groups (VIZ-504). The systemic-clusters view is not here: it fetches
+ * its own data, and the gallery fetches nothing.
+ */
+const WAVE_3_ITEM_IDS = [
+  'heatmap-frame-status',
+  'heatmap-frame-edges',
+  'heatmap-frame-fit',
+  'scatter',
+  'scatter-dense',
+  'scatter-hostile',
+  'scatter-all-excluded',
+  'coverage-map-pass-rate',
+  'coverage-map-staleness',
+  'coverage-map-flaky-share',
+  'coverage-map-hostile',
+  'coverage-map-empty',
+  'coverage-map-one-test',
+  'failure-groups',
+  'failure-groups-related',
+  'failure-groups-hostile',
+  'failure-groups-giant',
+  'failure-groups-no-edges',
+  'failure-groups-200',
+  // R6: the clusters tab, drawn from a settled state.
+  'systemic-clusters',
+  'systemic-clusters-empty',
+] as const
+
 test('every Wave-2 edge case still has a gallery item, and so a baseline', () => {
   for (const id of WAVE_2_ITEM_IDS) expect(GALLERY_ITEM_IDS, id).toContain(id)
+})
+
+test('every Wave-3 edge case still has a gallery item, and so a baseline', () => {
+  for (const id of WAVE_3_ITEM_IDS) expect(GALLERY_ITEM_IDS, id).toContain(id)
 })
 
 const THEMES = ['signal', 'lab'] as const

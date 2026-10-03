@@ -26,7 +26,7 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (sel: (s: { activeProjectId: string | null }) => unknown) => sel({ activeProjectId }),
 }))
 
-import { useCatalogueRollout, useCatalogueRolloutStatus, useHeatmapRollout } from './useCatalogueRollout'
+import { useAdvancedRollout, useCatalogueRollout, useCatalogueRolloutStatus } from './useCatalogueRollout'
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>{children}</SWRConfig>
@@ -85,38 +85,33 @@ describe('useCatalogueRollout (K1)', () => {
   })
 })
 
-describe('useHeatmapRollout (K1, heatmap)', () => {
+describe('useAdvancedRollout (Wave 3 sections)', () => {
   beforeEach(() => status.mockReset())
 
-  it('needs BOTH flags: advanced alone is not enough', async () => {
+  it.each([
+    [false, false, false],
+    [true, false, false],
+    [false, true, false],
+    [true, true, true],
+  ])('catalogue %s, advanced %s -> %s', async (catalogue, advanced, expected) => {
     answer({
-      [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: false }),
-      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: true }),
+      [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: catalogue }),
+      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: advanced }),
     })
-    const { result } = renderHook(() => useHeatmapRollout(), { wrapper })
+    const { result } = renderHook(() => ({ on: useAdvancedRollout(), cat: useCatalogueRolloutStatus() }), { wrapper })
+    await waitFor(() => expect(result.current.cat).toBe(catalogue))
     await waitFor(() => expect(status).toHaveBeenCalledWith('viz_advanced_charts', 'proj-1'))
-    await waitFor(() => expect(status).toHaveBeenCalledWith('viz_chart_data_api', 'proj-1'))
-    // Give both answers time to land; the result must stay closed.
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current.on).toBe(expected))
   })
 
-  it('catalogue alone is not enough either', async () => {
+  it('is false while either lookup is still pending', async () => {
     answer({
       [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: true }),
-      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: false }),
+      [VIZ_FLAGS.advancedCharts]: () => new Promise(() => {}),
     })
-    const { result } = renderHook(() => ({ heat: useHeatmapRollout(), cat: useCatalogueRollout() }), { wrapper })
+    const { result } = renderHook(() => ({ on: useAdvancedRollout(), cat: useCatalogueRollout() }), { wrapper })
     await waitFor(() => expect(result.current.cat).toBe(true))
-    expect(result.current.heat).toBe(false)
-  })
-
-  it('opens with both flags on', async () => {
-    answer({
-      [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: true }),
-      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: true }),
-    })
-    const { result } = renderHook(() => useHeatmapRollout(), { wrapper })
-    await waitFor(() => expect(result.current).toBe(true))
+    expect(result.current.on).toBe(false)
   })
 })

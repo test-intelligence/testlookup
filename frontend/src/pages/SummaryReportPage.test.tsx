@@ -58,7 +58,7 @@ const rollout = vi.hoisted(() => ({ on: false }))
 vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useCatalogueRollout: () => rollout.on,
   useCatalogueRolloutStatus: () => rollout.on,
-  useHeatmapRollout: () => false,
+  useAdvancedRollout: () => false,
 }))
 // Flag on only: the trend's request (K7) held loading, and the top bar's cached
 // release list. The trend's own behaviour is `SummaryCatalogue.test.tsx`'s.

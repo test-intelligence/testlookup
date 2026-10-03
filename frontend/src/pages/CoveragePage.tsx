@@ -66,9 +66,12 @@ import type { TrendPoint } from '@/types/metrics'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 import GaugeBar from '@/components/charts/GaugeBar'
 import DayStrip from '@/components/charts/DayStrip'
+import { useContainerWidth } from '@/components/charts/chartLayout'
+import { BODY_GRID_MIN_WIDTH, BODY_GRID_ONE_COLUMN, BODY_GRID_TWO_COLUMNS, useMinWidth } from '@/hooks/useMinWidth'
 import { countTones, dayWindow, intensityLevel, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
+import CoverageAdvanced from '@/components/reports/catalogue/CoverageAdvanced'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -965,6 +968,12 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
   const tagged   = suites.filter(s => !isUntaggedRow(s))
   const untagged = suites.filter(isUntaggedRow)
   const visible = [...tagged, ...untagged]
+  // F-18: a row's fixed columns (160 + 64 + 76 + gaps = 348 px) left the bar
+  // 0 px wide in a narrow card and scrolled the page sideways at 375 px. The
+  // layout follows the rows' OWN width (the card is a column of a two-column
+  // grid at every viewport): see `suiteRowsLayout`.
+  const [rowsRef, rowsWidth] = useContainerWidth<HTMLDivElement>()
+  const layout = suiteRowsLayout(rowsWidth)
   return (
     <section
       aria-label="Suite coverage breakdown"
@@ -984,14 +993,31 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
         </div>
       </div>
 
-      <div className="flex flex-col">
+      {/* One grid for every row (each row is a subgrid of it), so the name
+          column is as wide as the widest name and its test chip need, between
+          160 and 240 px, in the font that is actually drawn. A fixed 160 px
+          fitted Windows fonts and cut "Notifications" to "Notificatio…" in
+          DejaVu Sans on Linux (W3 C0 BEFORE note 2).
+          Each row is a `row` with four `cell`s, so the grid is a `table`
+          (an ARIA row needs a table parent and cells: axe
+          aria-required-parent / -children, critical). Roles only: nothing
+          is drawn differently. With no suite there is no row, so no table. */}
+      <div
+        ref={rowsRef}
+        data-suite-rows=""
+        className="grid"
+        role={visible.length > 0 ? 'table' : undefined}
+        aria-label={visible.length > 0 ? 'Suites' : undefined}
+        data-suite-rows-layout={layout}
+        style={{ gridTemplateColumns: SUITE_ROWS_COLUMNS[layout], columnGap: 16 }}
+      >
         {visible.length === 0 && (
-          <div className="text-[12.5px] text-[var(--color-text-muted)] py-6 text-center">
+          <div className="text-[12.5px] text-[var(--color-text-muted)] py-6 text-center" style={{ gridColumn: '1 / -1' }}>
             No suite data for the selected window.
           </div>
         )}
         {visible.map((s, i) => (
-          <SuiteRow key={`${s.suite_name}-${i}`} suite={s} totalExecutions={totalExecutions} isLast={i === visible.length - 1} />
+          <SuiteRow key={`${s.suite_name}-${i}`} suite={s} totalExecutions={totalExecutions} isLast={i === visible.length - 1} layout={layout} />
         ))}
       </div>
 
@@ -1019,9 +1045,22 @@ function Legend({ color, label }: { color: string; label: string }) {
   )
 }
 
-function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; totalExecutions: number; isLast: boolean }) {
+function SuiteRow({
+  suite,
+  totalExecutions,
+  isLast,
+  layout,
+}: {
+  suite: CoverageSuite
+  totalExecutions: number
+  isLast: boolean
+  layout: SuiteRowsLayout
+}) {
+  const stacked = layout === 'stacked'
   const untagged = isUntaggedRow(suite)
   const total = suite.passed + suite.failed + suite.skipped
+  // The bar's drawn width: each segment is exactly its share of it, so a count is shown only where it fits.
+  const [barRef, barWidth] = useContainerWidth<HTMLDivElement>()
   const passRate = total > 0 ? Math.round((suite.passed / total) * 100) : 0
   const passRateTone: 'good' | 'warn' | 'bad' | 'dim' =
     untagged ? 'dim' : passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'
@@ -1037,19 +1076,23 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
       aria-label={`${untagged ? 'Untagged group' : suite.suite_name}: ${suite.passed} passed, ${suite.failed} failed, ${suite.skipped} skipped`}
       className={clsx('grid items-center gap-4', !isLast && 'pb-2.5 mb-2.5')}
       style={{
-        gridTemplateColumns: '160px 1fr 64px 76px',
+        gridColumn: '1 / -1',
+        gridTemplateColumns: 'subgrid',
         borderBottom: !isLast ? '1px dashed var(--color-border)' : '0',
         paddingTop: 10,
+        // Stacked: the name's line and the bar's line sit close (one row of the table).
+        ...(stacked ? { rowGap: 6 } : {}),
       }}
     >
-      {/* Suite name + count */}
-      <div className="flex items-center gap-1.5 min-w-0" style={{
+      {/* Suite name + count (stacked: a line of its own, over the bar and the pass rate) */}
+      <div role="cell" className="flex items-center gap-1.5 min-w-0" style={{
+        ...(stacked ? { gridColumn: '1 / -1', minWidth: 0 } : { minWidth: SUITE_NAME_MIN_WIDTH }),
         color: untagged ? 'var(--color-text-muted)' : (suite.failed > 0 && !untagged ? 'var(--status-failed)' : 'var(--color-text)'),
         fontFamily: untagged ? 'var(--font-sans)' : 'var(--font-mono)',
         fontStyle: untagged ? 'italic' : 'normal',
         fontSize: 12.5,
       }}>
-        <span className="truncate">{untagged ? 'Untagged' : suite.suite_name}</span>
+        <span className="truncate" title={untagged ? undefined : suite.suite_name}>{untagged ? 'Untagged' : suite.suite_name}</span>
         <span
           className="text-[9.5px] uppercase font-sans border rounded-sm px-1 py-0.5 flex-none"
           style={{ color: 'var(--color-text-faint)', borderColor: 'var(--color-border)', letterSpacing: 'var(--tracking-wide)' }}
@@ -1059,7 +1102,7 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
       </div>
 
       {/* Stacked bar */}
-      <div className="relative rounded-sm overflow-hidden flex" style={{ height: 18, background: 'var(--color-bg-secondary)' }}>
+      <div role="cell" ref={barRef} className="relative rounded-sm overflow-hidden flex" style={{ height: 18, background: 'var(--color-bg-secondary)' }}>
         {untagged ? (
           <div
             className="h-full flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
@@ -1073,36 +1116,95 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
           </div>
         ) : (
           <>
-            {suite.passed > 0  && <StackSegment count={suite.passed}  color="var(--status-passed)" />}
-            {suite.failed > 0  && <StackSegment count={suite.failed}  color="var(--status-failed)" />}
-            {suite.skipped > 0 && <StackSegment count={suite.skipped} color="var(--status-broken)" />}
+            {suite.passed > 0  && <StackSegment count={suite.passed}  status="passed"  color="var(--status-passed)" fits={segmentCountFits(suite.passed, (barWidth * suite.passed) / total)} />}
+            {suite.failed > 0  && <StackSegment count={suite.failed}  status="failed"  color="var(--status-failed)" fits={segmentCountFits(suite.failed, (barWidth * suite.failed) / total)} />}
+            {suite.skipped > 0 && <StackSegment count={suite.skipped} status="skipped" color="var(--status-broken)" fits={segmentCountFits(suite.skipped, (barWidth * suite.skipped) / total)} />}
             {total === 0 && <div className="flex-1" />}
           </>
         )}
       </div>
 
-      {/* Total */}
-      <div className="text-[13px] tabular-nums text-right" style={{ color: 'var(--color-text-secondary)' }}>
-        {total} run{total === 1 ? '' : 's'}
-      </div>
+      {/* Total (only in the full layout: under 400 px the bar needs the room, F-18) */}
+      {layout === 'full' && (
+        <div role="cell" className="text-[13px] tabular-nums text-right" style={{ color: 'var(--color-text-secondary)' }}>
+          {total} run{total === 1 ? '' : 's'}
+        </div>
+      )}
 
-      {/* Pass-rate */}
-      <div className="text-[13px] font-semibold tabular-nums text-right" style={{ color: passRateColor }}>
+      {/* Pass-rate (the screen-reader total sits in this cell: a row owns cells only; sr-only takes no room) */}
+      <div role="cell" className="text-[13px] font-semibold tabular-nums text-right" style={{ color: passRateColor }}>
         {untagged ? '—' : `${passRate}%`}
+        <span className="sr-only">Total executions across all suites: {totalExecutions}</span>
       </div>
-
-      <span className="sr-only">Total executions across all suites: {totalExecutions}</span>
     </div>
   )
 }
 
-function StackSegment({ count, color }: { count: number; color: string }) {
+/**
+ * The suite rows' columns: name (and its test chip), bar, runs, pass rate.
+ * The name column is as wide as the widest row needs, measured by the
+ * browser in the font it draws, never under 160 px (the old fixed width) and
+ * never over 240 px (a long name is cut, with the full text in its title).
+ */
+const SUITE_ROW_COLUMNS = 'fit-content(240px) minmax(0, 1fr) 64px 76px'
+const SUITE_NAME_MIN_WIDTH = 160
+
+/**
+ * The suite rows' layout for their own width, px (F-18; 0 = not measured yet,
+ * so the full layout every desktop width draws, and the committed baselines):
+ *   - full (400 px up): name, bar, runs, pass rate;
+ *   - compact (320-399): the runs column goes (the row's name still says every
+ *     count) and the name column is held at 160 px, so the bar keeps 50+ px;
+ *   - stacked (under 320: the card is a column of a two-column grid even at a
+ *     375 px viewport, about 170 px wide): the name on a line of its own, the
+ *     bar and the pass rate under it.
+ */
+type SuiteRowsLayout = 'full' | 'compact' | 'stacked'
+const SUITE_ROWS_COMPACT_PX = 400
+const SUITE_ROWS_STACKED_PX = 320
+function suiteRowsLayout(width: number): SuiteRowsLayout {
+  if (!(width > 0) || width >= SUITE_ROWS_COMPACT_PX) return 'full'
+  return width >= SUITE_ROWS_STACKED_PX ? 'compact' : 'stacked'
+}
+const SUITE_ROWS_COLUMNS: Record<SuiteRowsLayout, string> = {
+  full: SUITE_ROW_COLUMNS,
+  compact: 'fit-content(160px) minmax(0, 1fr) 76px',
+  stacked: 'minmax(0, 1fr) 76px',
+}
+
+/** The segment count's font size, px, and the room a count needs around it, px a side. */
+const SEGMENT_FONT_PX = 10.5
+const SEGMENT_PAD_PX = 3
+/**
+ * A bold digit's width, em: an OVER-estimate (DejaVu Sans Bold, the Linux
+ * runner's font, is 0.70 em; the Windows fonts are narrower), so a count is
+ * only ever hidden that would just have fitted, never drawn clipped.
+ */
+const SEGMENT_DIGIT_EM = 0.72
+
+/** Whether `count` fits, with its padding, in a segment `width` px wide (`0` = not measured: it does not). */
+function segmentCountFits(count: number, width: number): boolean {
+  const digits = String(Math.max(0, Math.trunc(count))).length
+  return width > 0 && width >= digits * SEGMENT_FONT_PX * SEGMENT_DIGIT_EM + 2 * SEGMENT_PAD_PX
+}
+
+/**
+ * A count is drawn inside its segment only when it FITS there (the bar is
+ * measured; each segment is exactly its share of it): before this, a narrow
+ * "38" beside a narrow "12" read as one number, "3812", and a "4" was cut to
+ * a sliver (W3 C0 BEFORE note 1). A hidden count stays in the row's name, the
+ * segment's title and the runs column. Segments no longer grow to hold their
+ * text (`min-w-0`), so the bar is exactly proportional.
+ */
+function StackSegment({ count, status, color, fits }: { count: number; status: 'passed' | 'failed' | 'skipped'; color: string; fits: boolean }) {
   return (
     <div
-      className="h-full flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
+      data-suite-segment={status}
+      title={`${count} ${status}`}
+      className="h-full min-w-0 overflow-hidden flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
       style={{ flex: count, background: color, color: 'rgba(255,255,255,0.92)' }}
     >
-      {count}
+      {fits ? count : null}
     </div>
   )
 }
@@ -1476,6 +1578,8 @@ function ProvenanceFooter({ evidenceCount, refreshedAt }: { evidenceCount: numbe
 
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function CoveragePage() {
+  // Two body columns from 768 px; one below, where 205 + 124 px columns squeezed the cards (Wave 3, X2/X3).
+  const twoBodyColumns = useMinWidth(BODY_GRID_MIN_WIDTH)
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1798,8 +1902,8 @@ export default function CoveragePage() {
             </section>
           )}
 
-          {/* Body grid — 1.65fr | 1fr (collapses to single column under 1100 px) */}
-          <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+          {/* Body grid — 1.65fr | 1fr from 768 px, one column below it */}
+          <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
             <div className="flex flex-col gap-3.5 min-w-0">
               {analyticsView.widgetIds.includes('pass_rate_by_suite') && (
                 <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
@@ -1812,6 +1916,8 @@ export default function CoveragePage() {
               <RecommendedActions recs={recs} />
             </div>
           </div>
+
+          <CoverageAdvanced days={days} suiteFilter={suiteFilter} />
 
           <ProvenanceFooter evidenceCount={totalEvidence} refreshedAt={refreshedAt} />
         </>

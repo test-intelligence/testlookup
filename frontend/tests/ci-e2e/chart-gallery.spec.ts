@@ -38,6 +38,7 @@ import {
   galleryCanvasSize,
   galleryChartHeight,
   galleryDomMarks,
+  galleryEngine,
   galleryFramed,
   GALLERY_FLUID_CANVAS_PARAM,
   GALLERY_GAPPY_SUITES,
@@ -131,11 +132,17 @@ function watchErrors(page: Page): string[] {
   return errors
 }
 
+/** How long the whole gallery may take to render (see `openGallery`). */
+const GALLERY_RENDER_TIMEOUT = 15_000
+
 async function openGallery(page: Page, search = '') {
   await page.goto(`${GALLERY}${search}`)
   // Fail, never skip: a 404 or an auth bounce lands on /overview → /login.
   expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe(GALLERY)
-  await expect(page.getByTestId('chart-gallery')).toBeVisible()
+  // Every item renders in ONE commit: ~2-3 s on a developer machine in a dev
+  // build since Wave 3 (a 2 s main-thread task), which a busy runner can push
+  // past the default 5 s. The wait is for the page, not a chart's behaviour.
+  await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: GALLERY_RENDER_TIMEOUT })
   await expect(page.getByRole('heading', { level: 1, name: 'Chart gallery (dev only)' })).toBeVisible()
   // The login page is a form; the gallery has none.
   await expect(page.locator('form')).toHaveCount(0)
@@ -244,9 +251,11 @@ test.describe('chart gallery (/__charts)', () => {
       }
       expect(Math.round(box?.height ?? 0), `${item.id}: canvas height`).toBe(galleryChartHeight(item))
       // Card + axis text + at least a few cell colours — a blank canvas has one colour.
+      // A one-mark chart (Wave 3: the one-test treemap, a single rectangle and
+      // its label, no axis) paints card, fill and label: three.
       await expect
         .poll(() => paintedColours(page, item.id), { message: `${item.id}: canvas is blank` })
-        .toBeGreaterThanOrEqual(4)
+        .toBeGreaterThanOrEqual(item.minMarks === 1 ? 3 : 4)
     }
 
     // `dom` items draw no engine at all: VIZ-406's slowest-tests (a ranked list
@@ -2561,6 +2570,83 @@ test.describe('Wave 2.5 kit pieces in the gallery', () => {
       expect(fit.overhang, `${id}: the strip runs past its box`).toBeLessThanOrEqual(0.5)
       expect(fit.scroll, `${id}: the strip scrolls sideways`).toBeLessThanOrEqual(0)
     }
+  })
+})
+
+// ── Wave 3 (PR-B) ─────────────────────────────────────────────────────────────
+//
+// The heatmap frame's new items (FK1), the test scatter (FK4), the coverage
+// treemap (FK2) and failure groups (FK3), each drawn as its catalogue section
+// draws it. The first test of this file already checks their geometry per
+// engine (canvas size and paint for the treemaps and scatters, one drawn circle
+// per group for failure groups); these check what is specific to them.
+
+const WAVE_3_CHARTS: readonly GalleryItem['chart'][] = ['coverage-map', 'scatter', 'failure-groups']
+const WAVE_3_HEATMAP_FRAMES: readonly string[] = ['heatmap-frame-status', 'heatmap-frame-edges', 'heatmap-frame-fit']
+const WAVE_3_ITEMS = GALLERY_ITEMS.filter((item) => WAVE_3_CHARTS.includes(item.chart) || WAVE_3_HEATMAP_FRAMES.includes(item.id))
+
+test.describe('Wave 3 items in the gallery', () => {
+  test('every Wave 3 frame is drawn whole inside its gallery box', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openGallery(page)
+    // 3 heatmap frames + 4 scatters + 6 treemap levels + 6 failure-group frames.
+    expect(WAVE_3_ITEMS).toHaveLength(19)
+    for (const item of WAVE_3_ITEMS) {
+      const section = page.locator(`[data-gallery-item="${item.id}"]`)
+      await section.scrollIntoViewIfNeeded()
+      // Settled before it is measured: a canvas reports ready, a failure-group plot has its circles.
+      if (galleryEngine(item) === 'echarts') {
+        await expect(section.locator('[data-chart-engine="echarts"]')).toHaveAttribute('data-chart-status', 'ready')
+      } else if (!item.empty) {
+        await expect.poll(() => drawnDomMarks(page, item), { message: item.id }).toBeGreaterThanOrEqual(item.minMarks)
+      }
+      const canvas = await page.locator(`[data-gallery-canvas="${item.id}"]`).boundingBox()
+      const frame = await section.locator('[data-chart-frame]').first().boundingBox()
+      expect(canvas && frame, item.id).toBeTruthy()
+      // MEASURED boxes (chartGalleryFixtures): a frame taller than its box spills into the next item's screenshot.
+      expect((frame?.y ?? 0) + (frame?.height ?? 0), `${item.id}: the frame spills out of its gallery box`).toBeLessThanOrEqual(
+        (canvas?.y ?? 0) + (canvas?.height ?? 0) + 1,
+      )
+    }
+    expect(errors).toEqual([])
+  })
+
+  test('an empty level and a scatter whose every test was left out draw no canvas, and say why', async ({ page }) => {
+    await openGallery(page)
+    const level = page.locator('[data-gallery-item="coverage-map-empty"] [data-chart-frame]')
+    await expect(level).toHaveAttribute('data-chart-state', 'filtered-empty')
+    await expect(level.locator('canvas')).toHaveCount(0)
+    const excluded = page.locator('[data-gallery-item="scatter-all-excluded"] [data-chart-frame]')
+    // Not "no data": a drawn frame whose body is the reason.
+    await expect(excluded).toHaveAttribute('data-chart-state', 'ready')
+    await expect(excluded.locator('[data-scatter-nothing]')).toContainText('No test can be placed on this chart: 3 tests')
+    // Said once, in the body: the footer does not repeat the exclusions (F-14, X4).
+    await expect(excluded.locator('[data-scatter-excluded]')).toHaveCount(0)
+    await expect(excluded.locator('canvas')).toHaveCount(0)
+  })
+
+  test('the treemap, the scatter and the group plot are keyboard-walkable through the ONE page announcer', async ({ page }) => {
+    await openGallery(page)
+    const announcer = page.locator('[data-chart-announcer="assertive"]')
+    for (const [id, surface, expected] of [
+      // Largest first: checkout, 120 tests.
+      ['coverage-map-pass-rate', '[data-chart-keyboard="treemap"]', /checkout.*1 of 11/],
+      // Fastest first.
+      ['scatter', '[data-chart-keyboard="scatter"]', /p95/],
+      // Largest first.
+      ['failure-groups', '[data-group-plot]', /Error 0: AssertionError at step 0/],
+    ] as const) {
+      const item = page.locator(`[data-gallery-item="${id}"]`)
+      await item.scrollIntoViewIfNeeded()
+      const target = item.locator(surface)
+      await target.focus()
+      await expect(target).toBeFocused()
+      await page.keyboard.press('ArrowRight')
+      await expect(announcer, id).toContainText(expected)
+      await page.keyboard.press('Escape')
+    }
+    // Still one polite and one assertive announcer for the whole page.
+    expect(await page.locator('[data-chart-announcer]').count()).toBe(2)
   })
 })
 

@@ -7,7 +7,11 @@
  *   - Pass rate by suite: `chart-data` pass_rate, day x suite, top 7 + Other;
  *   - Test duration p50 / p95: two `chart-data` day series;
  *   - Suite pass rate by day: the heatmap, ONLY with `viz_advanced_charts` as
- *     well, drawn from the SAME response as the suite series (one request).
+ *     well. Wave 3 (VIZ-501, FK1) gave it its own read,
+ *     `/analytics/heatmap?kind=suite_day` (the server's top suites by
+ *     failures, the cut stated, no "Other" row), so with both flags the page
+ *     makes 3 chart-data requests and 1 heatmap request; the suite series'
+ *     request feeds the multi-series only.
  *
  * Plus the unfiltered "ever had a run?" probe (`/runs?page=1&size=1`, no days).
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
@@ -30,7 +34,16 @@ import {
   SHORT_VIEWPORT,
 } from '../lib/rollout'
 import { TALL_VIEWPORT } from '../lib/production-pages'
-import { CATALOGUE_ON, CHART_DATA_PATH, HEATMAP_ON, HOSTILE_NAME, PROJECT_ID, TRENDS_ON } from '../visual/production/fixtures'
+import {
+  ADVANCED_ONLY,
+  CATALOGUE_ON,
+  CHART_DATA_PATH,
+  HEATMAP_ON,
+  HEATMAP_PATH,
+  HOSTILE_NAME,
+  PROJECT_ID,
+  TRENDS_ON,
+} from '../visual/production/fixtures'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 
 const P = PROJECT_ID
@@ -39,6 +52,8 @@ const ready = (p: Page) => landmark(p, 'Trend metrics')
 const SUITES_Q = `metric=pass_rate&group_by=day&group_by=suite&top_n=7&project_id=${P}&days=14`
 const P50_Q = `metric=duration_p50&group_by=day&project_id=${P}&days=14`
 const P95_Q = `metric=duration_p95&group_by=day&project_id=${P}&days=14`
+/** The heatmap's own read (Wave 3): the page's 14 days, the page scope. */
+const HEATMAP_Q = `kind=suite_day&project_id=${P}&days=14`
 /** The existence probe: unfiltered, so no `days` (K6). */
 const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
 
@@ -64,6 +79,9 @@ const INVENTORY_ON = [
   `GET ${CHART_DATA_PATH}?${P50_Q}`,
   `GET ${CHART_DATA_PATH}?${P95_Q}`,
 ]
+
+/** Both flags (Wave 3): the same, plus the heatmap's own request. */
+const INVENTORY_BOTH = [...INVENTORY_ON, `GET ${HEATMAP_PATH}?${HEATMAP_Q}`]
 
 const SECTIONS: [string, string][] = [
   ['trends-pass-rate', 'Pass rate trend'],
@@ -96,7 +114,7 @@ async function openTrends(page: Page, flags: FlagMap, days?: number) {
 test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => {
   test.use({ viewport: { ...TALL_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  test('both flags: four sections with their headings, drawn; ONE suite request feeds the series and the heatmap', async ({
+  test('both flags: four sections with their headings, drawn; the heatmap asks /analytics/heatmap once, the series chart-data once', async ({
     page,
   }) => {
     const echarts = watchEcharts(page)
@@ -113,7 +131,9 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     // The heatmap is a canvas (the lazy ECharts engine), and it says which rows it shows.
     const heatmap = sectionFrame(page, ...HEATMAP)
     await expect(heatmap.locator('canvas').first()).toBeVisible()
-    await expect(heatmap.locator('[data-heatmap-rows]')).toContainText('7 of 11')
+    // The server's cut, stated: its top 7 of 11 suites by failures, never an "Other" row.
+    await expect(heatmap.locator('[data-heatmap-rows]')).toContainText('Top 7 of 11 suites by failures.')
+    await expect(heatmap).not.toContainText('combined in Other')
     expect(echarts.length, 'the ECharts engine loaded for the heatmap').toBeGreaterThan(0)
     // Each chart-data frame states its grain.
     for (const [id] of [SECTIONS[1], SECTIONS[2], HEATMAP]) {
@@ -127,7 +147,8 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     await expectNoTextEscapes(page, 'Trends at 1280')
     await networkQuiet(page, api)
     expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('group_by=suite'))).toHaveLength(1)
-    expectInventory(api, errors, INVENTORY_ON, 'Trends, both flags')
+    expect(requestsTo(api, HEATMAP_PATH)).toEqual([`GET ${HEATMAP_PATH}?${HEATMAP_Q}`])
+    expectInventory(api, errors, INVENTORY_BOTH, 'Trends, both flags')
   })
 
   test('only viz_chart_data_api: no heatmap, no placeholder for it, no ECharts download', async ({ page }) => {
@@ -139,8 +160,24 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     await expect(page.locator(`[data-lazy-section="${HEATMAP[0]}"]`)).toHaveCount(0)
     await expect(page.getByRole('heading', { name: HEATMAP[1] })).toHaveCount(0)
     expect(echarts, 'ECharts modules requested without the heatmap').toEqual([])
-    // The same requests: the heatmap never had one of its own.
+    // The heatmap asked nothing: no /analytics/heatmap, the seam's second lookup only.
+    expect(requestsTo(api, HEATMAP_PATH)).toEqual([])
     expectInventory(api, errors, INVENTORY_ON, 'Trends, catalogue only')
+  })
+
+  test('only viz_advanced_charts: the Wave 2.5 page, no section, no heatmap request, no second lookup', async ({ page }) => {
+    const echarts = watchEcharts(page)
+    const { api, errors } = await openTrends(page, ADVANCED_ONLY)
+    await networkQuiet(page, api)
+    await expect(page.locator('[data-catalogue-section], [data-lazy-section]')).toHaveCount(0)
+    expect(echarts, 'ECharts modules requested with the catalogue off').toEqual([])
+    expect(requestsTo(api, HEATMAP_PATH)).toEqual([])
+    expect(requestsTo(api, '/api/v1/feature-flags/viz_advanced_charts/status')).toEqual([])
+    // The flag-off list plus the seam's one lookup (rollout-flag-off.spec.ts), nothing else.
+    const flagOffPlusLookup = INVENTORY_ON.filter(
+      (line) => !line.includes('viz_advanced_charts') && line !== PROBE && !line.startsWith(`GET ${CHART_DATA_PATH}`),
+    )
+    expectInventory(api, errors, flagOffPlusLookup, 'Trends, only viz_advanced_charts')
   })
 
   // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -163,7 +200,7 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     await networkQuiet(page, api)
     expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
     // Trends opens on its own 14 days whatever was stored: one window, no double fetch.
-    expectInventory(api, errors, INVENTORY_ON, 'Trends at a stored 365 days')
+    expectInventory(api, errors, INVENTORY_BOTH, 'Trends at a stored 365 days')
   })
 })
 
@@ -187,6 +224,8 @@ test.describe('Trends, catalogue on, a short screen (1280 x 600)', () => {
     await networkQuiet(page, api)
     await expect(page.locator('[data-lazy-section="trends-duration"]')).toHaveCount(1)
     expect(chartData(P50_Q)() + chartData(P95_Q)(), 'duration asked while far below the fold').toBe(0)
+    // The heatmap (Wave 3) is further down still: its own read waits for it to be near.
+    expect(requestsTo(api, HEATMAP_PATH), 'the heatmap asked while far below the fold').toEqual([])
     await expectDrawn(sectionFrame(page, 'trends-multi-series', 'Pass rate by suite'), 'suites')
     expect(api.unhandled).toEqual([])
     expect(errors).toEqual([])

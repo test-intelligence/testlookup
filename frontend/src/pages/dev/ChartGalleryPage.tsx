@@ -18,7 +18,7 @@
  * derived tokens resolve exactly as they do in the app — but the STORE is not
  * touched: a screenshot run must not rewrite the developer's saved theme.
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import TrendChart from '@/components/charts/TrendChart'
 import DefectDonut from '@/components/charts/DefectDonut'
@@ -37,10 +37,62 @@ import DayStrip, { type DayStripProps } from '@/components/charts/DayStrip'
 import HeatmapChartFrame from '@/components/charts/HeatmapChartFrame'
 import {
   heatmapFrameDense,
+  heatmapFrameEdges,
   heatmapFrameHostile,
   heatmapFrameMeta,
+  heatmapFrameStatus,
   heatmapFrameWorstFirst,
 } from '@/components/charts/__fixtures__/heatmapFrame'
+import ChartFrame from '@/components/charts/ChartFrame'
+import CoverageTreemap from '@/components/charts/CoverageTreemap'
+import TestScatter from '@/components/charts/TestScatter'
+import FailureGroupsFrame from '@/components/charts/FailureGroupsFrame'
+import {
+  COLOR_BY_OPTIONS,
+  COVERAGE_MAP_CAPTION,
+  COVERAGE_MAP_EMPTY_HEIGHT,
+  coverageDescription,
+  coverageEmptyText,
+  isColorBy,
+  levelView,
+  otherNote,
+  type CoverageColorBy,
+  type CoverageLevelView,
+} from '@/components/charts/coverageMap.model'
+import {
+  coverageEmpty,
+  coverageHostile,
+  coverageOneTest,
+  coveragePaymentsClasses,
+  coverageSuites,
+  type CoverageMapFixture,
+} from '@/components/charts/__fixtures__/coverageMap'
+import {
+  scatterAllExcluded,
+  scatterDefault,
+  scatterDense,
+  scatterHostile,
+} from '@/components/charts/__fixtures__/testScatter'
+import { ScatterFooter } from '@/components/reports/catalogue/ScatterSection'
+import {
+  nothingPlacedSentence,
+  scatterDescription,
+  scatterTakeaway,
+} from '@/components/charts/testScatter.model'
+import {
+  clustersBody,
+  failureGroupsResponse,
+  type FailureGroupsFixtureOptions,
+} from '@/components/charts/failureGroups/failureGroups.fixtures'
+import SystemicClusters from '@/components/charts/failureGroups/SystemicClusters'
+import { validateClustersResponse, type SystemicClustersResponse } from '@/components/charts/failureGroups/systemicClusters.model'
+import { SUITE_RULE_NOTE } from '@/components/reports/catalogue/CoverageMapSection'
+import {
+  NO_TESTS_MESSAGE,
+  SCATTER_CHART_TYPE,
+  SCATTER_MIN_EXECUTIONS,
+  scatterFrameHeight,
+} from '@/components/reports/catalogue/ScatterSection.model'
 import { bandsTone, formatGaugeNumber } from '@/components/charts/gaugeBar.model'
 import type { StackedColumnModel } from '@/components/charts/stackedColumnModel'
 import {
@@ -73,7 +125,7 @@ import {
   trendZoomReleasesFixture,
   trendZoomReleasesMeta,
 } from '@/components/charts/__fixtures__/wave2Fixtures'
-import type { ChartSeries } from '@/lib/viz/contracts'
+import type { ChartSeries, GraphChart, PointsChart, TreeChart } from '@/lib/viz/contracts'
 import { formatPercent } from '@/utils/formatters'
 import { THEMES, type ThemeId } from '@/store/themeStore'
 import {
@@ -93,9 +145,12 @@ import {
   HOSTILE_LABEL,
   type GalleryCategorySeries,
   type GalleryComparison,
+  type GalleryCoverageMapFixture,
   type GalleryDayStripFixture,
   type GalleryFormat,
+  type GalleryClustersFixture,
   type GalleryHeatmapFrameFixture,
+  type GalleryScatterFixture,
   type GalleryHistogramFixture,
   type GalleryItem,
   type GalleryStackedFixture,
@@ -269,20 +324,22 @@ function dayStripProps(key: GalleryDayStripFixture): DayStripProps {
 }
 
 /**
- * Wave 2.6 (K5): the settled `chart-data` state behind each heatmap-frame
- * item, built ONCE (a new state object per render would rebuild the matrix).
- * The 14-day item arrives `truncated`, as the Trends request does (top 7 of 12
- * suites); the frame states that by rows, in its own footer.
+ * Wave 2.6 (K5): the settled `/analytics/heatmap` state behind each
+ * heatmap-frame item, built ONCE (a new state object per render would rebuild
+ * the matrix). The 14-day items arrive `truncated`, as the Trends request does
+ * (top 7 of 12 suites by failures); the frame states that by rows, in its own
+ * footer.
  */
+const TRUNCATED_FORTNIGHT: ChartState<ChartResponse> = {
+  status: 'truncated',
+  data: heatmapFrameWorstFirst,
+  meta: heatmapFrameMeta,
+  shown: 7,
+  total: 12,
+  revalidating: false,
+}
 const HEATMAP_FRAME_STATES: Record<GalleryHeatmapFrameFixture, ChartState<ChartResponse>> = {
-  'heatmap-frame': {
-    status: 'truncated',
-    data: heatmapFrameWorstFirst,
-    meta: heatmapFrameMeta,
-    shown: 8,
-    total: 12,
-    revalidating: false,
-  },
+  'heatmap-frame': TRUNCATED_FORTNIGHT,
   'heatmap-frame-90d': { status: 'ready', data: heatmapFrameDense, meta: heatmapFrameDense.meta, revalidating: false },
   'heatmap-frame-hostile': {
     status: 'ready',
@@ -290,6 +347,243 @@ const HEATMAP_FRAME_STATES: Record<GalleryHeatmapFrameFixture, ChartState<ChartR
     meta: heatmapFrameHostile.meta,
     revalidating: false,
   },
+  // Wave 3 (FK1).
+  'heatmap-frame-status': { status: 'ready', data: heatmapFrameStatus, meta: heatmapFrameStatus.meta, revalidating: false },
+  'heatmap-frame-edges': { status: 'ready', data: heatmapFrameEdges, meta: heatmapFrameEdges.meta, revalidating: false },
+  'heatmap-frame-fit': TRUNCATED_FORTNIGHT,
+}
+
+// ── Wave 3 (PR-B) ───────────────────────────────────────────────────────────
+//
+// Each item draws its frame as its catalogue section does, from a settled
+// state built ONCE, with none of the section's data hooks, flags, drill URL or
+// rows panel: the gallery fetches nothing.
+
+/** A settled state over a fixture response, with its envelope `meta`. */
+function settled<T extends { meta: ChartResponse['meta'] }>(response: T): ChartState<T> {
+  return { status: 'ready', data: response, meta: response.meta, revalidating: false }
+}
+
+/** The coverage-map level behind each item. Exhaustive, as `timeSeriesFixture` is. */
+function coverageFixture(key: GalleryCoverageMapFixture): CoverageMapFixture {
+  switch (key) {
+    case 'coverage-suites':
+      return coverageSuites
+    case 'coverage-payments-classes':
+      return coveragePaymentsClasses
+    case 'coverage-hostile':
+      return coverageHostile
+    case 'coverage-one-test':
+      return coverageOneTest
+    case 'coverage-empty':
+      return coverageEmpty
+  }
+}
+
+/** The scatter body behind each item. */
+function scatterFixture(key: GalleryScatterFixture): ChartResponse<PointsChart> {
+  switch (key) {
+    case 'scatter-default':
+      return scatterDefault
+    case 'scatter-dense':
+      return scatterDense
+    case 'scatter-hostile':
+      return scatterHostile
+    case 'scatter-all-excluded':
+      return scatterAllExcluded
+  }
+}
+
+/**
+ * What `CoverageMapSection` hands its frame: the level's tree, or, for a
+ * level with no node at all, the frame's own empty state (the section's
+ * `useCatalogChartData` reads `nodes: []` as `filtered-empty`).
+ */
+function coverageState({ response }: CoverageMapFixture): ChartState<ChartResponse<TreeChart>> {
+  return response.series.nodes.length > 0 ? settled(response) : { status: 'filtered-empty', meta: response.meta }
+}
+/**
+ * Each coverage item's state and level view, built ONCE per fixture: a new
+ * `children` array on every render would rebuild the treemap's option and
+ * restart its keyboard cursor under the reader.
+ */
+interface CoverageItemData {
+  fixture: CoverageMapFixture
+  state: ChartState<ChartResponse<TreeChart>>
+  view: CoverageLevelView
+}
+const COVERAGE_ITEMS = new Map<GalleryCoverageMapFixture, CoverageItemData>()
+function coverageItemOf(key: GalleryCoverageMapFixture): CoverageItemData {
+  let data = COVERAGE_ITEMS.get(key)
+  if (!data) {
+    const fixture = coverageFixture(key)
+    const state = coverageState(fixture)
+    const view = levelView(state.status === 'ready' ? state.data.series : null, fixture.level)
+    data = { fixture, state, view }
+    COVERAGE_ITEMS.set(key, data)
+  }
+  return data
+}
+
+/** `CoverageMapSection`'s grain line, from `meta.definitions.grain` (read defensively, as there). */
+function coverageGrain(meta: ChartResponse['meta']): string | null {
+  const definitions = (meta as { definitions?: unknown } | null)?.definitions
+  const grain = typeof definitions === 'object' && definitions !== null ? (definitions as { grain?: unknown }).grain : undefined
+  return grain === 'execution_row' ? 'Counted per test execution.' : null
+}
+
+/** `CoverageMapSection`'s "Colour by" select: the toolbar of the map, so the gallery can switch the measure too. */
+function CoverageColorBySelect({ value, onChange }: { value: CoverageColorBy; onChange: (next: CoverageColorBy) => void }) {
+  return (
+    <label className="inline-flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
+      Colour by
+      <select
+        value={value}
+        data-coverage-color-by=""
+        className="min-h-6 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-1.5 py-0.5 text-xs text-[var(--color-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        onChange={(event) => {
+          if (isColorBy(event.target.value)) onChange(event.target.value)
+        }}
+      >
+        {COLOR_BY_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+/**
+ * One coverage-map level, composed as `CoverageMapSection` composes it: the
+ * frame (title, the honest-labelling caption, the colour select, the footer's
+ * fold, suite rule and grain) around `CoverageTreemap`. Two things are left
+ * out on purpose: the breadcrumb (six `<nav aria-label="Breadcrumb">`
+ * landmarks on one page fail axe's landmark-unique rule; the production
+ * region baseline has it) and the drill handlers (the gallery is static).
+ */
+function CoverageMapItem({ item }: { item: Extract<GalleryItem, { chart: 'coverage-map' }> }) {
+  const { fixture, state, view } = coverageItemOf(item.fixture)
+  const [colorBy, setColorBy] = useState<CoverageColorBy>(item.colorBy)
+  const tree = state.status === 'ready' ? state.data.series : null
+  const meta = state.status === 'ready' ? state.meta : null
+  const note = otherNote(view, meta?.truncated_total ?? null, fixture.level.depth)
+  const grain = coverageGrain(meta)
+  return (
+    <ChartFrame
+      title={item.title}
+      takeaway={COVERAGE_MAP_CAPTION}
+      headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+      state={state}
+      // As the section: an empty level is one sentence in a short body (X2 / F-14), not a 360 px band.
+      height={state.status === 'filtered-empty' ? COVERAGE_MAP_EMPTY_HEIGHT : galleryChartHeight(item)}
+      emptyMessage={coverageEmptyText(fixture.level)}
+      series={tree}
+      chartType="Treemap"
+      scopeLabel="last 30 days"
+      toolbar={<CoverageColorBySelect value={colorBy} onChange={setColorBy} />}
+      footer={
+        <>
+          {note ? <span data-coverage-other-note="">{note}</span> : null}
+          <span data-coverage-suite-rule="">{SUITE_RULE_NOTE}</span>
+          {grain ? <span data-catalogue-grain="">{grain}</span> : null}
+        </>
+      }
+    >
+      {view.children.length > 0 ? (
+        <CoverageTreemap
+          items={view.children}
+          level={fixture.level}
+          colorBy={colorBy}
+          description={coverageDescription(view, fixture.level, colorBy)}
+          height={galleryChartHeight(item)}
+          animate={false}
+        />
+      ) : null}
+    </ChartFrame>
+  )
+}
+
+const SCATTER_STATES = new Map<GalleryScatterFixture, ChartState<ChartResponse<PointsChart>>>()
+function scatterStateOf(key: GalleryScatterFixture) {
+  let state = SCATTER_STATES.get(key)
+  if (!state) {
+    // Ready even with no point: every test LEFT OUT is an answer (the section's own accessors).
+    state = settled(scatterFixture(key))
+    SCATTER_STATES.set(key, state)
+  }
+  return state
+}
+
+/**
+ * The test scatter, composed as `ScatterSection` composes it: the frame
+ * (takeaway, axes, table view, the footer's exclusions) around `TestScatter`,
+ * or, when every test was left out, the sentence that says why. No selection
+ * list and no rows panel: they follow a reader's action, and the gallery is
+ * static.
+ */
+function ScatterItem({ item }: { item: Extract<GalleryItem, { chart: 'scatter' }> }) {
+  const state = scatterStateOf(item.fixture)
+  const chart = state.status === 'ready' ? state.data.series : null
+  return (
+    <ChartFrame
+      title={item.title}
+      takeaway={chart ? scatterTakeaway(chart) : undefined}
+      headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+      // As the section (X4 / F-14): every test left out is one sentence in a short body, not a plot-sized band.
+      height={scatterFrameHeight(chart)}
+      state={state}
+      series={chart && chart.points.length > 0 ? chart : null}
+      chartType={SCATTER_CHART_TYPE}
+      axes={chart ? { x: chart.x.label, y: chart.y.label } : undefined}
+      scopeLabel="last 30 days"
+      emptyMessage={NO_TESTS_MESSAGE}
+      footer={chart ? <ScatterFooter chart={chart} /> : undefined}
+    >
+      {chart === null ? null : chart.points.length === 0 ? (
+        <p data-scatter-nothing="" className="py-8 text-center text-sm text-[var(--color-text-secondary)]">
+          {nothingPlacedSentence(chart.excluded, SCATTER_MIN_EXECUTIONS)}
+        </p>
+      ) : (
+        <TestScatter
+          data={chart}
+          description={scatterDescription(item.title, chart)}
+          height={galleryChartHeight(item)}
+          animate={false}
+        />
+      )}
+    </ChartFrame>
+  )
+}
+
+/** Each failure-groups item's state, built ONCE per item (its options object is the key). */
+const FAILURE_GROUP_STATES = new Map<FailureGroupsFixtureOptions, ChartState<ChartResponse<GraphChart>>>()
+function failureGroupsStateOf(options: FailureGroupsFixtureOptions) {
+  let state = FAILURE_GROUP_STATES.get(options)
+  if (!state) {
+    state = settled(failureGroupsResponse(options))
+    FAILURE_GROUP_STATES.set(options, state)
+  }
+  return state
+}
+
+/** Nothing to open: the gallery has no group panel. */
+const OPEN_NO_GROUP = () => {}
+
+/**
+ * R6: each clusters item's settled state, from FK3's `clustersBody` through
+ * the tab's own validator (a body that does not validate fails here, at
+ * import, not as an error frame in a screenshot). Built once.
+ */
+function clustersState(body: unknown): ChartState<SystemicClustersResponse> {
+  const checked = validateClustersResponse(body)
+  if (!checked.ok) throw new Error(`gallery clusters fixture: ${checked.errors.join('; ')}`)
+  return { status: 'ready', data: checked.value, meta: checked.value.meta, revalidating: false }
+}
+const CLUSTERS_STATES: Record<GalleryClustersFixture, ChartState<SystemicClustersResponse>> = {
+  clusters: clustersState(clustersBody()),
+  'clusters-empty': clustersState(clustersBody({ items: [], total: 0 })),
 }
 
 /** The formatter a Wave 2.5 item names by key (`chartGalleryFixtures` cannot import one). */
@@ -514,6 +808,42 @@ function renderChart(item: GalleryItem) {
           headingLevel={GALLERY_FRAME_HEADING_LEVEL}
           height={galleryChartHeight(item)}
           animate={false}
+          // Wave 3: undefined for every earlier item, which then draws exactly as before.
+          fit={item.fit}
+          nouns={item.nouns}
+          rowAxis={item.rowAxis}
+          columnAxis={item.columnAxis}
+        />
+      )
+    case 'coverage-map':
+      return <CoverageMapItem item={item} />
+    case 'scatter':
+      return <ScatterItem item={item} />
+    case 'failure-groups':
+      // React SVG laid out by d3: the plot measures its own width inside the frame.
+      return (
+        <FailureGroupsFrame
+          title={item.title}
+          headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+          state={failureGroupsStateOf(item.groups)}
+          scopeLabel="last 7 days"
+          height={galleryChartHeight(item)}
+          initialView={item.view}
+          // Six frames on one page: each table's scrolling region needs its own name (axe landmark-unique).
+          tableCaption={`${item.title}: groups, largest first`}
+          onOpenGroup={OPEN_NO_GROUP}
+        />
+      )
+    case 'systemic-clusters':
+      // The tab's own frame, drawn from a settled state: the gallery fetches nothing.
+      return (
+        <SystemicClusters
+          params={null}
+          allProjects={false}
+          headingLevel={GALLERY_FRAME_HEADING_LEVEL}
+          height={galleryChartHeight(item)}
+          state={CLUSTERS_STATES[item.fixture]}
+          title={item.title}
         />
       )
   }

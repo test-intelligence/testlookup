@@ -16,6 +16,12 @@ export interface ChartInstance {
   isDisposed?(): boolean
   /** `highlight` / `downplay` / `showTip` / `hideTip` — keyboard exploration (VIZ-105). */
   dispatchAction?(payload: { type: string; [key: string]: unknown }): void
+  /** Wave 3: a mark click, `brushEnd`, … (`useEChart`'s `events`). */
+  on?(eventName: string, handler: (params: unknown) => void): void
+  off?(eventName: string, handler?: (params: unknown) => void): void
+  /** Wave 3: data space <-> pixels, for an overlay placed on the plot (the scatter's quadrant names). */
+  convertToPixel?(finder: string | object, value: unknown): number | number[]
+  convertFromPixel?(finder: string | object, value: unknown): number | number[]
 }
 
 /** The slice of the `echarts/core` namespace the kit uses. */
@@ -28,6 +34,9 @@ const LOADERS = {
   // Only for a series past `SVG_POINT_LIMIT` points (VIZ-403); a short trend
   // stays in Recharts and never fetches this chunk.
   timeSeries: () => import('./echarts/timeSeries').then((m): ChartEngine => m.echarts),
+  // Wave 3: the coverage map (VIZ-502) and the test scatter (VIZ-506).
+  treemap: () => import('./echarts/treemap').then((m): ChartEngine => m.echarts),
+  scatter: () => import('./echarts/scatter').then((m): ChartEngine => m.echarts),
 } satisfies Record<string, () => Promise<ChartEngine>>
 
 export type ChartEngineType = keyof typeof LOADERS

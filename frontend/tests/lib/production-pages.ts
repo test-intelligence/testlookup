@@ -139,16 +139,18 @@ export interface ApiRequest {
   route: Route
 }
 
-/** An explicit response: a status other than 200, or no body (`respond`). */
+/** An explicit response: a status other than 200, no body, or headers (`respond`). */
 export class ApiResponse {
   constructor(
     readonly status: number,
     readonly json?: unknown,
+    /** Response headers (Wave 3: a 429's `Retry-After`). */
+    readonly headers?: Record<string, string>,
   ) {}
 }
 
-/** Mark an explicit response (status other than 200, or no body). */
-export const respond = (status: number, json?: unknown) => new ApiResponse(status, json)
+/** Mark an explicit response (status other than 200, no body, or headers such as `Retry-After`). */
+export const respond = (status: number, json?: unknown, headers?: Record<string, string>) => new ApiResponse(status, json, headers)
 
 /** A handler's answer: a JSON body (status 200), or an `ApiResponse`. */
 export type ApiHandler = (request: ApiRequest) => unknown
@@ -252,10 +254,11 @@ export async function mockApi(
     // Node-side, so the page's pinned clock can neither stretch nor skip it.
     if (latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, latencyMs))
     if (answer instanceof ApiResponse) {
-      const { status, json } = answer
+      const { status, json, headers } = answer
       return route.fulfill({
         status,
         contentType: 'application/json',
+        headers,
         body: json === undefined ? '' : JSON.stringify(json),
       })
     }

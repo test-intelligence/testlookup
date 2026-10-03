@@ -70,7 +70,7 @@ const rollout = vi.hoisted(() => ({ status: false as boolean | undefined }))
 vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useCatalogueRollout: () => rollout.status ?? false,
   useCatalogueRolloutStatus: () => rollout.status,
-  useHeatmapRollout: () => false,
+  useAdvancedRollout: () => false,
 }))
 // With the flag on: the releases are the top bar's cached list, and the two
 // server-backed sections record what they were handed instead of fetching.

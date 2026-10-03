@@ -1,0 +1,14 @@
+{
+  // The production build's type check covers application code only. Test files
+  // may import repo-root fixtures (contracts/viz/fixtures/**), which are not in
+  // the frontend image's build context; `npm run type-check` (CI and the push
+  // gate) still type-checks every test against tsconfig.json.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/__fixtures__/**",
+    "src/**/*.fixtures.ts",
+    "src/test/**"
+  ]
+}

@@ -20,6 +20,7 @@ import {
   type Theme,
 } from './production-pages'
 import { textEscapes } from './chart-text-escapes'
+import { validateAnyChartSeries, validateEnvelopeMeta } from '../../src/lib/viz/contracts'
 import { NOW, PROJECT_ID, USER } from '../visual/production/fixtures'
 
 export { assertHermetic }
@@ -329,4 +330,266 @@ export async function expectNoHorizontalOverflow(page: Page, where: string) {
   expect(o.main.scrollWidth, `${where}: ${MAIN} scrolls sideways`).toBeLessThanOrEqual(o.main.clientWidth)
   expect(o.document.scrollWidth, `${where}: the document scrolls sideways`).toBeLessThanOrEqual(o.document.innerWidth)
   expect(o.framesOutside, `${where}: chart frames outside ${MAIN}`).toEqual([])
+}
+
+// ── Wave 3: the advanced sections (both flags) ─────────────────────────────
+
+/**
+ * The shell with BOTH flags on: `SHELL_ON` plus the second seam lookup,
+ * `viz_advanced_charts`, asked once the catalogue flag is on (plan 2.4).
+ */
+export const SHELL_ADVANCED = [...SHELL_ON, `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`]
+
+/** The sections' unfiltered "ever had a run?" probe (`useEverHadRun`): no `days`, no filter. */
+export const RUN_PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
+
+/**
+ * The console errors a DEV server may print for a Wave 3 page: React's
+ * development warning about mixed shorthand / longhand style properties,
+ * logged at error level by the dev build only. (ECharts' dev-only "Component
+ * toolbox is used but not imported" is no longer tolerated: the scatter engine
+ * drops the brush's synthetic toolbox, I-NOTE-4.) Anything else fails the spec.
+ */
+const DEV_ONLY_CONSOLE_ERRORS = [/^%s a style property during rerender/]
+
+/** The browser's own line for a response the harness answered with an error ON PURPOSE (a planted 4xx / 5xx). */
+const PLANTED_ERROR_STATUS = /^Failed to load resource: the server responded with a status of [45]\d\d/
+
+/** Console errors the page printed, except the dev-only ones above and planted error statuses. */
+export function watchConsoleErrors(page: Page): string[] {
+  const errors: string[] = []
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return
+    const text = message.text()
+    if (DEV_ONLY_CONSOLE_ERRORS.some((re) => re.test(text)) || PLANTED_ERROR_STATUS.test(text)) return
+    errors.push(text.slice(0, 500))
+  })
+  return errors
+}
+
+/**
+ * Bring every lazy section near (scrolling each placeholder into view until
+ * none is left), then wait for the network to go quiet: for a load whose
+ * inventory must include every section's requests.
+ */
+export async function mountEverySection(page: Page, api: MockedApi, { rounds = 16, stepTimeoutMs = 2_000 } = {}) {
+  await networkQuiet(page, api)
+  for (let round = 0; round < rounds; round++) {
+    // Re-read by ATTRIBUTE every round, and every scroll bounded (R2-B F-16). A
+    // section mounting replaces its placeholder (a composite's placeholder
+    // becomes the section's own, `failures-scatter` -> `scatter-project`), so
+    // a locator held from `.all()` (by position) can point at nothing, and
+    // Playwright then waits for it with no limit: at an 800 px viewport, where
+    // sections mount one at a time, the helper hung on Failures.
+    const labels = await page
+      .locator('[data-lazy-section]')
+      .evaluateAll((elements) => elements.map((element) => element.getAttribute('data-lazy-section') ?? ''))
+    if (labels.length === 0) break
+    for (const label of labels) {
+      const placeholder = page.locator(`[data-lazy-section="${label}"]`).first()
+      if ((await placeholder.count()) === 0) continue
+      await placeholder.scrollIntoViewIfNeeded({ timeout: stepTimeoutMs }).catch(() => undefined)
+    }
+    await networkQuiet(page, api)
+  }
+  await expect(page.locator('[data-lazy-section]'), 'a lazy section never mounted').toHaveCount(0)
+}
+
+/** Scroll a lazy section near: its placeholder if it is still one, then the section itself. */
+export async function bringNear(page: Page, id: string) {
+  const placeholder = page.locator(`[data-lazy-section="${id}"]`)
+  if ((await placeholder.count()) > 0) await placeholder.first().scrollIntoViewIfNeeded()
+  await section(page, id).first().scrollIntoViewIfNeeded()
+}
+
+/** The frame inside a Wave 3 section, drawn (scrolled near first). */
+export async function expectSectionDrawn(page: Page, id: string, title: string | RegExp) {
+  await section(page, id).first().scrollIntoViewIfNeeded()
+  await expectDrawn(sectionFrame(page, id, title), id)
+}
+
+/** The open rows panels (`RowsPanel` in a `SidePanel`). */
+export const rowsPanels = (page: Page): Locator =>
+  page.locator('[data-side-panel]').filter({ has: page.getByRole('heading', { name: /^Executions in / }) })
+
+/**
+ * Exactly one rows panel is open (several hosts share the page's one `rows`
+ * key: only the opener may answer it), titled for `title`, and its first
+ * page is drawn. Returns it.
+ */
+export async function expectOneRowsPanel(page: Page, title: string | RegExp): Promise<Locator> {
+  const panels = rowsPanels(page)
+  await expect(panels, 'one rows panel: never two hosts answering one rows= selection').toHaveCount(1)
+  const heading = typeof title === 'string' ? `Executions in ${title}` : title
+  await expect(panels.getByRole('heading', { name: heading })).toBeVisible()
+  await expect(panels.locator('[data-rows-state]')).toHaveAttribute('data-rows-state', /^(ready|empty)$/, { timeout: 15_000 })
+  return panels
+}
+
+/** The parsed queries of the requests to `path` (optionally only those `filter` keeps). */
+export function queryOf(api: MockedApi, path: string, filter: (q: URLSearchParams) => boolean = () => true): URLSearchParams[] {
+  return requestsTo(api, path)
+    .map((line) => new URLSearchParams(line.split('?')[1] ?? ''))
+    .filter(filter)
+}
+
+/**
+ * The hostile names reached the page as TEXT: no element was made from the
+ * markup one (`<img src=x onerror=...>`) and its handler never ran.
+ */
+export async function expectHostileAsText(page: Page, scope: Locator, where: string) {
+  await expect(scope.locator('img[src="x"]'), `${where}: an element made from a hostile name`).toHaveCount(0)
+  expect(await page.evaluate(() => (window as { __xss?: unknown }).__xss), `${where}: a hostile name ran`).toBeUndefined()
+}
+
+// ── Wave 3 live probes (`tests/probe-w3-*.spec.ts`) ────────────────────────
+
+/**
+ * The live probes' environment. They run by hand against a deployment after
+ * it is rolled out (`npx playwright test --config probe-live.config.ts
+ * probe-w3`), never in CI: without `PROBE_W3=1` every probe SKIPS (and says
+ * how to run it). Credentials come ONLY from the environment; a probe with
+ * `PROBE_W3=1` and no credentials FAILS with the instructions.
+ */
+export interface ProbeEnv {
+  base: string
+  user: string
+  pass: string
+  /** The project to probe (`PROBE_PROJECT_ID`); default: the session's active project after sign-in. */
+  projectId: string | null
+}
+
+export const PROBE_HOWTO =
+  'Set PROBE_W3=1, PROBE_BASE_URL (default http://testlookup.local), PROBE_USER and PROBE_PASS (a read-only ' +
+  'account), optionally PROBE_PROJECT_ID; turn viz_chart_data_api AND viz_advanced_charts on for that project; then ' +
+  '`npx playwright test --config probe-live.config.ts probe-w3`.'
+
+/** `null` when the probes are not asked for (the caller skips). */
+export function probeEnv(): ProbeEnv | null {
+  if (process.env.PROBE_W3 !== '1') return null
+  const user = process.env.PROBE_USER ?? ''
+  const pass = process.env.PROBE_PASS ?? ''
+  expect(user && pass, `PROBE_USER / PROBE_PASS are not set. ${PROBE_HOWTO}`).toBeTruthy()
+  return { base: process.env.PROBE_BASE_URL ?? 'http://testlookup.local', user, pass, projectId: process.env.PROBE_PROJECT_ID ?? null }
+}
+
+/** Sign in through the login form; returns the project the probes read (env, else the active one). */
+export async function probeSignIn(page: Page, env: ProbeEnv): Promise<string> {
+  await page.goto(`${env.base}/login`, { waitUntil: 'domcontentloaded' })
+  await page.locator('input').first().fill(env.user)
+  await page.locator('input[type="password"]').fill(env.pass)
+  await page.getByRole('button', { name: /sign in|log in|login/i }).first().click()
+  await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 30_000 })
+  if (env.projectId) {
+    await page.evaluate((id) => {
+      localStorage.setItem('testlookup-active-project', JSON.stringify({ state: { activeProjectId: id }, version: 0 }))
+    }, env.projectId)
+    return env.projectId
+  }
+  const stored = await page.evaluate(() => localStorage.getItem('testlookup-active-project'))
+  const id = stored ? (JSON.parse(stored) as { state?: { activeProjectId?: string } }).state?.activeProjectId : undefined
+  expect(id && id !== 'all', `pick one project (PROBE_PROJECT_ID). ${PROBE_HOWTO}`).toBeTruthy()
+  return id as string
+}
+
+/** A read-only GET through the signed-in session (the app's bearer token), as `{status, body}`. */
+export async function probeGet(page: Page, path: string): Promise<{ status: number; body: unknown }> {
+  return page.evaluate(async (url) => {
+    const raw = localStorage.getItem('auth-storage')
+    const token = raw ? (JSON.parse(raw) as { state?: { token?: string } }).state?.token : undefined
+    const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    const text = await response.text()
+    let body: unknown = text
+    try {
+      body = JSON.parse(text)
+    } catch {
+      // not JSON: kept as text for the message
+    }
+    return { status: response.status, body }
+  }, path)
+}
+
+/** Both Wave 3 flags are ON for the project, or the probe FAILS saying how to turn them on (never skips). */
+export async function expectProbeFlagsOn(page: Page, projectId: string) {
+  for (const key of ['viz_chart_data_api', 'viz_advanced_charts']) {
+    const { status, body } = await probeGet(page, `/api/v1/feature-flags/${key}/status?project_id=${projectId}`)
+    expect(status, `${key} status`).toBe(200)
+    expect((body as { enabled?: boolean }).enabled, `${key} is OFF for project ${projectId}: the probe tests nothing. ${PROBE_HOWTO}`).toBe(
+      true,
+    )
+  }
+}
+
+/**
+ * A live analytics body is the WIRE shape (`with_meta`: the C3 keys at the
+ * top level, `meta` beside them) of the one `kind` its route answers, and the
+ * client's own validators accept it (`validateAnyChartSeries` +
+ * `validateEnvelopeMeta`). FK0 finding 1 was exactly a hermetic fixture that
+ * did not look like this.
+ */
+export function expectWireChart(body: unknown, kind: string, where: string) {
+  expect(body && typeof body === 'object' && !Array.isArray(body), `${where}: a JSON object`).toBe(true)
+  const { meta, ...series } = body as Record<string, unknown>
+  expect(series.kind, `${where}: the series' kind at the top level`).toBe(kind)
+  const checkedMeta = validateEnvelopeMeta(meta)
+  expect(checkedMeta.ok ? [] : checkedMeta.errors, `${where}: meta is a C2 envelope`).toEqual([])
+  const checked = validateAnyChartSeries(series)
+  expect(checked.ok ? [] : checked.errors, `${where}: a C3 ${kind}`).toEqual([])
+}
+
+/**
+ * From a focused chart, press ArrowRight until the highlighted mark offers an
+ * action (live data has empty cells, which are not marks), at most `limit` times.
+ */
+export async function walkToMark(page: Page, sectionId: string, limit = 60) {
+  const actions = section(page, sectionId).locator('[data-mark-intent]')
+  for (let i = 0; i < limit; i++) {
+    await page.keyboard.press('ArrowRight')
+    if (await actions.first().isVisible()) return
+  }
+  throw new Error(`${sectionId}: no mark with an action in the first ${limit} steps`)
+}
+
+/** Every response of the page to an `/api` path matching `path`, captured with its JSON body. */
+export function captureResponses(page: Page, path: RegExp): { url: string; status: number; body: unknown }[] {
+  const seen: { url: string; status: number; body: unknown }[] = []
+  page.on('response', async (response) => {
+    const url = new URL(response.url())
+    if (!path.test(url.pathname)) return
+    const body: unknown = await response.json().catch(() => null)
+    seen.push({ url: `${url.pathname}${url.search}`, status: response.status(), body })
+  })
+  return seen
+}
+
+/** `Object.prototype`'s own properties in a clean page (Chromium). */
+const OBJECT_PROTOTYPE_KEYS = [
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+  '__proto__',
+  'constructor',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  'toString',
+  'valueOf',
+]
+
+/**
+ * No name reached a lookup that wrote through `__proto__`: `Object.prototype`
+ * has exactly its own keys. Found in Wave 3: a test NAMED `__proto__` drawn as
+ * canvas text goes through zrender's text-width LRU (`core/LRU.js`, a plain-
+ * object map), whose `get('__proto__')` relinks `Object.prototype` into its
+ * list and gives EVERY object `prev` / `next` (axe then throws
+ * "Getter must be a function").
+ */
+export async function expectNoPrototypePollution(page: Page, where: string) {
+  const extra = await page.evaluate(
+    (known) => Object.getOwnPropertyNames(Object.prototype).filter((key) => !known.includes(key)),
+    OBJECT_PROTOTYPE_KEYS,
+  )
+  expect(extra, `${where}: Object.prototype gained properties (prototype pollution from a hostile name)`).toEqual([])
 }

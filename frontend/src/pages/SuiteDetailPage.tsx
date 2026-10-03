@@ -27,6 +27,7 @@ import {
 } from '@/components/charts/stackedColumnModel'
 import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
 import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
+import SuiteDetailAdvanced from '@/components/reports/catalogue/SuiteDetailAdvanced'
 
 const PERIODS = [
   { label: '1d',  days: 1 },
@@ -445,6 +446,11 @@ export default function SuiteDetailPage() {
               height={SUITE_CHART_HEIGHT}
             />
           ))}
+
+          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): only with the
+              catalogue flag on; the composite reads the advanced flag and
+              lazy-loads each section when it is near. Flag off: nothing. */}
+          {catalogue && <SuiteDetailAdvanced days={days} suiteName={suiteName} />}
 
           {/* Test Cases Table */}
           <div className="card">

@@ -7,6 +7,11 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },
+  // Dev server only: the failure-group layouts' d3 modules are reached through
+  // a lazy section, and a cold dev server discovered them at runtime and
+  // reloaded the page mid-test (every request made twice; B0, Wave 3).
+  // Pre-bundling them up front keeps a first load a single load.
+  optimizeDeps: { include: ['d3-hierarchy', 'd3-force'] },
   server: {
     port: 3000,
     proxy: {

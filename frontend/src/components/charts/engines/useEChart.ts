@@ -18,10 +18,24 @@ import { loadChartEngine, type ChartEngineType, type ChartInstance } from './reg
 
 export type EChartStatus = 'loading' | 'ready' | 'stale-build' | 'error'
 
-export function useEChart(type: ChartEngineType, option: object) {
+/**
+ * Wave 3: ECharts events a chart listens to (`click` on a mark, `brushEnd`),
+ * by event name. The handlers are read through a ref, so a new object every
+ * render re-binds nothing; only a change in the SET of names does. Absent =
+ * no listener at all (every pre-Wave-3 chart).
+ */
+export type EChartEvents = Readonly<Record<string, (params: unknown) => void>>
+
+export function useEChart(type: ChartEngineType, option: object, events?: EChartEvents) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const instanceRef = useRef<ChartInstance | null>(null)
   const optionRef = useRef(option)
+  const eventsRef = useRef(events)
+  useEffect(() => {
+    eventsRef.current = events
+  })
+  // The names, sorted, as one string: the dependency that re-binds.
+  const eventNames = events ? Object.keys(events).sort().join('\n') : ''
   const [status, setStatus] = useState<EChartStatus>('loading')
   const [attempt, setAttempt] = useState(0)
 
@@ -99,10 +113,30 @@ export function useEChart(type: ChartEngineType, option: object) {
     }
   }, [option])
 
+  // Events (Wave 3): bound once the instance is ready, to THAT instance; a
+  // retry's new instance is bound again. Each listener reads the latest
+  // handler through the ref.
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (status !== 'ready' || !instance || !eventNames) return
+    const bound = eventNames.split('\n').map((name) => {
+      const listener = (params: unknown) => eventsRef.current?.[name]?.(params)
+      instance.on?.(name, listener)
+      return [name, listener] as const
+    })
+    return () => {
+      if (instance.isDisposed?.()) return
+      for (const [name, listener] of bound) instance.off?.(name, listener)
+    }
+  }, [status, eventNames, attempt])
+
   const retry = useCallback(() => {
     setStatus('loading')
     setAttempt((n) => n + 1)
   }, [])
 
-  return { containerRef, instanceRef, status, retry }
+  /** The live instance, or `null` before `ready` and after a failure (for `dispatchAction`, `convertToPixel`). */
+  const getInstance = useCallback((): ChartInstance | null => instanceRef.current, [])
+
+  return { containerRef, instanceRef, status, retry, getInstance }
 }

@@ -12,9 +12,10 @@ import type { RunAttributionResponse } from '@/types/attribution'
 import { getData, postData } from './http'
 
 export const runsService = {
-  list: (projectId: string | null, params?: Record<string, unknown>) =>
+  list: (projectId: string | null, params?: Record<string, unknown>, options?: { suppressToast?: boolean }) =>
     getData<TestRunListResponse>('/api/v1/runs', {
       params: { ...(projectId ? { project_id: projectId } : {}), ...params },
+      ...(options?.suppressToast ? { suppressToast: true } : {}),
     }),
 
   get: (runId: string) =>

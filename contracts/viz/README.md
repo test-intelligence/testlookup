@@ -303,7 +303,7 @@ fixture folder for it: a parsed URL IS a C5 drill path and is judged by the rule
 | Key | Form | Notes |
 |---|---|---|
 | `drill` | repeatable `drill=<dimension>~<value>`, in path order: `?drill=suite~payments&drill=status~failed` | The path, top level first. Split on the **first** `~` only: `drill=test~a~b` is dimension `test`, value `a~b`. `URLSearchParams` does all percent-encoding and decoding; nothing else escapes or unescapes a value. |
-| `rows` | repeatable `rows=<dimension>~<value>` | The selectors of the open rows panel (a heatmap cell: `rows=suite~payments&rows=day~2026-09-12`). Absent means the panel is closed. Same split, same rules as a drill path. |
+| `rows` | repeatable: first `rows=by~<owner>`, then `rows=<dimension>~<value>` | The open rows panel: its OWNER (the section that opened it, its section id: `heatmap-test_run`, `scatter-suite`, `coverage-map`, …; `[a-z][a-z0-9_-]{0,63}`) and its selectors (a heatmap cell: `rows=by~trends-heatmap&rows=suite~payments&rows=day~2026-09-12`). Absent means the panel is closed. The selectors follow the same split and rules as a drill path. The owner is there because one page can hold two rows hosts whose selectors look the same (Suite detail: a test x run heatmap cell and a scatter point are both a lone `test`); only the owner opens its panel, so one URL never opens two. A list without a valid owner entry first is not applied (read as an invalid level, with the notice). `by` is not a dimension. |
 | `drill.<id>` | reserved | One path per chart, for Wave 4. This wave has one drill host per page (Coverage: the treemap; Failure analysis: the ladder), so the plain key is enough. |
 
 Reading:

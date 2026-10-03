@@ -22,9 +22,10 @@
  *   ready           — drawn
  */
 import {
+  validateAnyChartSeries,
   validateChartSeries,
   validateEnvelopeMeta,
-  type ChartSeries,
+  type AnyChartSeries,
   type EnvelopeMeta,
   type ValidationResult,
 } from '@/lib/viz/contracts'
@@ -33,12 +34,12 @@ import { isStaleBuildError, STALE_BUILD_MESSAGE } from './engines/lazyChartEngin
 // importing it here placed it in whatever chunk this resolver lands in.
 import { headerValue, requestIdOf } from '@/services/chartHeaders'
 import { formatNumber } from '@/utils/formatters'
-import type { ChartError, ChartResponse, ChartState } from './chartStateCore'
+import type { AnyChartResponse, ChartError, ChartResponse, ChartState } from './chartStateCore'
 
 // The states and the checks on them live in a leaf (see chartStateCore.ts) so
 // the frame chunk can use them without the resolver below; re-exported here.
 export { CHART_STATUSES, hasChartData, readyState, seriesHasPoints } from './chartStateCore'
-export type { ChartError, ChartErrorKind, ChartResponse, ChartState, ChartStatus } from './chartStateCore'
+export type { AnyChartResponse, ChartError, ChartErrorKind, ChartResponse, ChartState, ChartStatus } from './chartStateCore'
 
 // ── Errors the hook throws itself ─────────────────────────────────────────────
 
@@ -61,11 +62,11 @@ export class ChartPayloadError extends Error {
   }
 }
 
-/**
- * The contract validator for a `ChartResponse`: `meta` is a C2 envelope (or
- * `null`), `series` is a C3 chart series. Errors are prefixed with the field.
- */
-export function validateChartResponse(input: unknown): ValidationResult<ChartResponse> {
+/** A `meta` + `series` check with the series validator of the caller's choosing. */
+function checkResponse<S extends AnyChartSeries>(
+  input: unknown,
+  validateSeries: (series: unknown) => ValidationResult<S>,
+): ValidationResult<ChartResponse<S>> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, errors: ['invalid_type: a chart response must be an object'] }
   }
@@ -77,10 +78,29 @@ export function validateChartResponse(input: unknown): ValidationResult<ChartRes
     if (checked.ok) metaValue = checked.value
     else errors.push(...checked.errors.map((e) => `meta: ${e}`))
   }
-  const checkedSeries = validateChartSeries(series)
+  const checkedSeries = validateSeries(series)
   if (!checkedSeries.ok) errors.push(...checkedSeries.errors.map((e) => `series: ${e}`))
   if (errors.length || !checkedSeries.ok) return { ok: false, errors }
   return { ok: true, value: { meta: metaValue, series: checkedSeries.value } }
+}
+
+/**
+ * The contract validator for a `ChartResponse`: `meta` is a C2 envelope (or
+ * `null`), `series` is a C3 chart series of the FOUR kinds every pre-Wave-3
+ * reader handles. A `points` series fails here (`kind_enum`), exactly as it did
+ * before Wave 3, so it can never reach a reader with no branch for it. Errors
+ * are prefixed with the field.
+ */
+export function validateChartResponse(input: unknown): ValidationResult<ChartResponse> {
+  return checkResponse(input, validateChartSeries)
+}
+
+/**
+ * The same, over ALL of C3 (`points` included): what a Wave-3 source, whose
+ * reader has a branch for every kind, validates with.
+ */
+export function validateAnyChartResponse(input: unknown): ValidationResult<AnyChartResponse> {
+  return checkResponse(input, validateAnyChartSeries)
 }
 
 /** Runs `validate` over `payload`; a failure throws `ChartPayloadError` naming the request. */
@@ -284,7 +304,7 @@ export function classifyChartError(error: unknown): ClassifiedError {
 // ── Payload accessors ─────────────────────────────────────────────────────────
 
 /** True when the series holds no measured value at all (`null` is "no data", not zero). */
-export function isChartSeriesEmpty(series: ChartSeries): boolean {
+export function isChartSeriesEmpty(series: AnyChartSeries): boolean {
   switch (series.kind) {
     case 'series':
       return !series.series.some((s) => s.points.some((p) => p.y !== null))
@@ -294,11 +314,15 @@ export function isChartSeriesEmpty(series: ChartSeries): boolean {
       return series.nodes.length === 0
     case 'graph':
       return series.nodes.length === 0
+    case 'points':
+      // A point always has a finite x and y (a test that cannot be placed is
+      // EXCLUDED and counted, never drawn at 0), so no points is no data.
+      return series.points.length === 0
   }
 }
 
 /** How many categories a truncated chart is SHOWING (the N of "top N of M"). */
-export function shownCount(series: ChartSeries): number {
+export function shownCount(series: AnyChartSeries): number {
   switch (series.kind) {
     case 'series': {
       if (series.x_type !== 'category') return series.series.length
@@ -313,6 +337,8 @@ export function shownCount(series: ChartSeries): number {
       return series.nodes.length
     case 'graph':
       return series.nodes.length
+    case 'points':
+      return series.points.length
   }
 }
 
@@ -322,8 +348,8 @@ export interface ChartAccessors<T> {
   shown: (value: T) => number
 }
 
-/** Accessors for the canonical `ChartResponse`. */
-export const CHART_RESPONSE_ACCESSORS: ChartAccessors<ChartResponse> = {
+/** Accessors for the canonical `ChartResponse`, of any C3 kind. */
+export const CHART_RESPONSE_ACCESSORS: ChartAccessors<AnyChartResponse> = {
   meta: (value) => value.meta,
   isEmpty: (value) => isChartSeriesEmpty(value.series),
   shown: (value) => shownCount(value.series),

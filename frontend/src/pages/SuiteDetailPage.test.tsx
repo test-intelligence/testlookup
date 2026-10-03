@@ -61,6 +61,16 @@ const rollout = vi.hoisted(() => ({ on: false, pending: false }))
 vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useCatalogueRollout: () => !rollout.pending && rollout.on,
   useCatalogueRolloutStatus: () => (rollout.pending ? undefined : rollout.on),
+  // Wave 3: the seam's advanced reader, OFF here (the composite that calls it is stubbed below).
+  useAdvancedRollout: () => false,
+}))
+
+// Wave 3: the page's one new mount, stubbed (its flag gate and sections have
+// their own tests): what the page passes it, and under which flag it mounts.
+vi.mock('@/components/reports/catalogue/SuiteDetailAdvanced', () => ({
+  default: ({ days, suiteName }: { days: number; suiteName: string }) => (
+    <div data-testid="suite-advanced" data-days={days} data-suite={suiteName} />
+  ),
 }))
 
 vi.mock('@/hooks/useSuites', () => ({
@@ -336,5 +346,46 @@ describe('SuiteDetailPage — Wave 2.6', () => {
     expect(value.textContent).toBe('12')
     expect(value.className).toContain('text-[length:var(--text-stat-lg)]')
     expect(value.className).not.toMatch(/\btext-2xl\b/)
+  })
+})
+
+// ── Wave 3 (VIZ-501 test x run, VIZ-506 scatter) ───────────────────────────
+//
+// The page's whole change is ONE import and ONE mount of the lazy composite,
+// under the catalogue flag it already reads: flag off (or not answered yet),
+// nothing is mounted and so nothing new is asked.
+
+describe('SuiteDetailPage — Wave 3 advanced sections', () => {
+  beforeEach(() => {
+    mockGetSuiteTrend.mockReset()
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
+  })
+  afterEach(() => {
+    rollout.on = false
+    rollout.pending = false
+  })
+
+  it('flag off: the composite is not mounted', async () => {
+    renderPage()
+    await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' })
+    expect(screen.queryByTestId('suite-advanced')).toBeNull()
+  })
+
+  it('while the flag lookup is in flight: not mounted', async () => {
+    rollout.pending = true
+    renderPage()
+    await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' })
+    expect(screen.queryByTestId('suite-advanced')).toBeNull()
+  })
+
+  it('flag on: mounted once, with the page window and its one suite, between the charts and the test table', async () => {
+    rollout.on = true
+    renderPage('/coverage/suite?name=Auth&days=14')
+    const advanced = await screen.findByTestId('suite-advanced')
+    expect(screen.getAllByTestId('suite-advanced')).toHaveLength(1)
+    expect(advanced).toHaveAttribute('data-days', '14')
+    expect(advanced).toHaveAttribute('data-suite', 'Auth')
+    const table = screen.getByRole('heading', { level: 3, name: /^Test Cases/ })
+    expect(advanced.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

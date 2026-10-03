@@ -1,17 +1,19 @@
 /**
- * The Trends catalogue sections (Wave 2.6, VIZ-408), with only the network,
- * the flag lookups, the existence probe and the canvas engine mocked: the
- * seam, the scope builder, the chart pipeline and the frames are the real
- * ones, so "one request feeds two views" and "the window is clamped on the
- * wire" are read off the requests themselves.
+ * The Trends catalogue sections (Wave 2.6, VIZ-408; the heatmap swapped to
+ * `/analytics/heatmap?kind=suite_day` in Wave 3, VIZ-501), with only the
+ * network, the flag lookups, the existence probe and the canvas engine
+ * mocked: the seam, the scope builder, the chart pipeline and the frames are
+ * the real ones, so "which request feeds which view" and "the window is
+ * clamped on the wire" are read off the requests themselves.
  */
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps, ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
+import type { AnyChartSeries, EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
+import { CHART_MESSAGES } from '@/components/charts/chartMessages'
 import type { CatalogParams } from '@/components/charts/chartCatalogSources'
 import type { ChartResponse, ChartState } from '@/components/charts/chartState'
 import type DurationChartFrame from '@/components/charts/DurationChartFrame'
@@ -22,6 +24,7 @@ import {
   heatmapFrameWorstFirst,
 } from '@/components/charts/__fixtures__/heatmapFrame'
 import { __resetChartConcurrency } from '@/services/chartApi'
+import { ONE_DAY_HEATMAP_REASON } from './HeatmapSection.model'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
@@ -81,11 +84,26 @@ import TrendsCatalogue, {
 } from './TrendsCatalogue'
 
 const CHART_DATA_URL = '/api/v1/analytics/chart-data'
+const HEATMAP_URL = '/api/v1/analytics/heatmap'
 const CATALOGUE = 'viz_chart_data_api'
 const ADVANCED = 'viz_advanced_charts'
 
 const META = { ...heatmapFrameMeta, definitions: { grain: 'execution_row' } } as EnvelopeMeta
-const DAYS = heatmapFrameWorstFirst.series.kind === 'series' ? heatmapFrameWorstFirst.series.series[0].points.map((p) => p.x) : []
+const DAYS = heatmapFrameWorstFirst.series.x_keys ?? []
+
+/** The multi-series' day x suite pass rate, in percentage points (chart-data's shape). */
+function suiteSeries(names: readonly string[]): SeriesChart {
+  return {
+    kind: 'series',
+    dimensions: ['day', 'suite'],
+    x_type: 'time',
+    series: names.map((name, s) => ({
+      key: name,
+      label: name,
+      points: DAYS.map((x, i) => ({ x, y: 90 - s * 5 + (i % 3), n: 40 + i })),
+    })),
+  }
+}
 /** The day whose p95 the server could not measure. */
 const P95_GAP_DAY = DAYS[4]
 
@@ -108,10 +126,13 @@ function durationSeries(metric: 'p50' | 'p95'): SeriesChart {
   }
 }
 
-let responses: Record<string, ChartResponse>
+let responses: Record<string, ChartResponse<AnyChartSeries>>
 
 function chartDataCalls(): CatalogParams[] {
   return get.mock.calls.filter(([url]) => url === CHART_DATA_URL).map(([, config]) => (config as { params: CatalogParams }).params)
+}
+function heatmapCalls(): CatalogParams[] {
+  return get.mock.calls.filter(([url]) => url === HEATMAP_URL).map(([, config]) => (config as { params: CatalogParams }).params)
 }
 const metricCalls = (metric: string) => chartDataCalls().filter((params) => params.metric === metric)
 
@@ -139,13 +160,14 @@ beforeEach(() => {
   probe.enabled = []
   durationFrames.length = 0
   responses = {
-    pass_rate: { meta: META, series: heatmapFrameWorstFirst.series },
+    pass_rate: { meta: META, series: suiteSeries(['checkout', 'search', 'billing']) },
     duration_p50: { meta: META, series: durationSeries('p50') },
     duration_p95: { meta: META, series: durationSeries('p95') },
+    suite_day: heatmapFrameWorstFirst,
   }
   get.mockReset()
-  get.mockImplementation((_url: string, config: { params: CatalogParams }) => {
-    const payload = responses[String(config.params.metric)]
+  get.mockImplementation((url: string, config: { params: CatalogParams }) => {
+    const payload = responses[String(url === HEATMAP_URL ? config.params.kind : config.params.metric)]
     return payload
       ? Promise.resolve({ data: payload, headers: { 'x-request-id': 'req-1' } })
       : Promise.reject(Object.assign(new Error('no fixture'), { response: { status: 500, data: {} } }))
@@ -161,20 +183,46 @@ afterEach(() => {
 })
 
 describe('TrendsCatalogue (VIZ-408, Trends)', () => {
-  it('ONE chart-data request feeds both the multi-series and the heatmap', async () => {
+  it('the heatmap asks /analytics/heatmap for suite x day; the suite series feeds the multi-series alone', async () => {
     renderCatalogue({ days: 14 })
     await waitFor(() => expect(within(section('trends-heatmap') as HTMLElement).getByText(/Rows: lowest pass rate first/)).toBeInTheDocument())
-    expect(section('trends-multi-series')).not.toBeNull()
+    expect(heatmapCalls()).toEqual([{ kind: 'suite_day', project_id: 'p1', days: 14 }])
     expect(metricCalls('pass_rate')).toEqual([
       { metric: 'pass_rate', group_by: ['day', 'suite'], top_n: 7, project_id: 'p1', days: 14 },
     ])
-    // Both views are drawn from it: the heatmap's footer reads the server's truncation,
-    // and the multi-series has its lines.
-    expect(within(section('trends-heatmap') as HTMLElement).getByText(/Top 7 of 12 suites/)).toBeInTheDocument()
+    // The heatmap's footer reads the SERVER's row cut (by failures); the multi-series has its lines.
+    expect(within(section('trends-heatmap') as HTMLElement).getByText(/Top 7 of 12 suites by failures/)).toBeInTheDocument()
+    expect(within(section('trends-heatmap') as HTMLElement).getByRole('heading', { name: HEATMAP_TITLE })).toBeInTheDocument()
     expect(within(section('trends-multi-series') as HTMLElement).getByRole('heading', { name: SUITE_SERIES_TITLE })).toBeInTheDocument()
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     await settle()
     expect(metricCalls('pass_rate')).toHaveLength(1)
+    expect(heatmapCalls()).toHaveLength(1)
+    // Trends offers one kind: no kind selector.
+    expect(section('trends-heatmap')?.querySelector('[data-heatmap-kinds]')).toBeNull()
+  })
+
+  it('the heatmap draws the endpoint’s matrix worst first, in 0..1 on the canvas', async () => {
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
+    const calls = engine.instance.setOption.mock.calls
+    const option = calls[calls.length - 1][0] as {
+      yAxis: { data: string[] }
+      series: { id: string; data: [number, number, number | string][] }[]
+    }
+    expect(option.yAxis.data[0]).toBe('legacy-import')
+    const cells = option.series.find((s) => s.id === 'cells')?.data ?? []
+    const values = cells.map((cell) => cell[2]).filter((v): v is number => typeof v === 'number')
+    expect(Math.max(...values)).toBeLessThanOrEqual(1)
+  })
+
+  it('a heatmap that fails leaves the other sections drawn', async () => {
+    delete responses.suite_day
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(section('trends-heatmap')?.querySelector('[data-chart-state="error"]')).not.toBeNull())
+    // Drawn (the shared META says the suites were truncated), not an error.
+    await waitFor(() => expect(section('trends-multi-series')?.querySelector('[data-chart-state="truncated"]')).not.toBeNull())
+    expect(section('trends-duration')?.querySelector('[data-chart-state="error"]')).toBeNull()
   })
 
   it('asks the duration percentiles once each, by day, in the same scope', async () => {
@@ -197,13 +245,26 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
     expect(section('trends-heatmap')).toBeNull()
     expect(screen.queryByRole('heading', { name: HEATMAP_TITLE })).toBeNull()
     expect(document.querySelector('[data-lazy-section="trends-heatmap"]')).toBeNull()
+    await settle()
+    expect(heatmapCalls()).toEqual([])
     expect(engine.load).not.toHaveBeenCalled()
   })
 
-  it('clamps the window on the wire: 365 days never reaches a request', async () => {
+  it('the advanced flag alone draws no heatmap either', async () => {
+    flags.values = { [CATALOGUE]: false, [ADVANCED]: true }
+    renderCatalogue({ days: 14 })
+    await settle()
+    expect(section('trends-heatmap')).toBeNull()
+    expect(document.querySelector('[data-lazy-section="trends-heatmap"]')).toBeNull()
+    expect(heatmapCalls()).toEqual([])
+    expect(engine.load).not.toHaveBeenCalled()
+  })
+
+  it('clamps the window on the wire: 365 days never reaches a request (the heatmap keeps 90)', async () => {
     renderCatalogue({ days: 365 })
     await waitFor(() => expect(chartDataCalls()).toHaveLength(3))
-    for (const params of chartDataCalls()) expect(params.days).toBe(90)
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
+    for (const params of [...chartDataCalls(), ...heatmapCalls()]) expect(params.days).toBe(90)
   })
 
   it('draws a p95 the server did not measure as a gap, never 0 ms', async () => {
@@ -226,17 +287,19 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
     renderCatalogue({ days: 1 })
     expect(await within(section('trends-multi-series') as HTMLElement).findByText(new RegExp(ONE_DAY_SUITES_REASON.slice(0, 40)))).toBeInTheDocument()
     expect(within(section('trends-duration') as HTMLElement).getByText(new RegExp(ONE_DAY_DURATION_REASON.slice(0, 40)))).toBeInTheDocument()
-    expect(within(section('trends-heatmap') as HTMLElement).getByText(new RegExp(ONE_DAY_SUITES_REASON.slice(0, 40)))).toBeInTheDocument()
+    expect(within(section('trends-heatmap') as HTMLElement).getByText(new RegExp(ONE_DAY_HEATMAP_REASON.slice(0, 40)))).toBeInTheDocument()
     await settle()
     expect(chartDataCalls()).toEqual([])
+    expect(heatmapCalls()).toEqual([])
     // Nothing to ask, so no existence probe either.
     expect(probe.enabled.every((enabled) => !enabled)).toBe(true)
   })
 
-  it('a 7-day window draws: the three frames ask for 7 days', async () => {
+  it('a 7-day window draws: the four frames ask for 7 days', async () => {
     renderCatalogue({ days: 7 })
     await waitFor(() => expect(chartDataCalls()).toHaveLength(3))
-    for (const params of chartDataCalls()) expect(params.days).toBe(7)
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
+    for (const params of [...chartDataCalls(), ...heatmapCalls()]) expect(params.days).toBe(7)
     await screen.findByRole('heading', { name: SUITE_SERIES_TITLE })
     expect(screen.queryByText(new RegExp(ONE_DAY_SUITES_REASON.slice(0, 40)))).toBeNull()
   })
@@ -256,14 +319,21 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
   })
 
   it('renders a hostile suite name as text', async () => {
-    responses.pass_rate = { meta: META, series: heatmapFrameHostile.series }
+    responses.pass_rate = { meta: META, series: suiteSeries(['payments', HEATMAP_FRAME_HOSTILE_NAME]) }
+    responses.suite_day = heatmapFrameHostile
     renderCatalogue({ days: 7 })
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     await screen.findByRole('heading', { name: SUITE_SERIES_TITLE })
+    const heatmap = section('trends-heatmap') as HTMLElement
+    await waitFor(() => expect(heatmap.querySelector('[data-chart-state="ready"]')).not.toBeNull())
+    fireEvent.click(within(heatmap).getByRole('button', { name: CHART_MESSAGES.viewTable }))
+    expect(within(heatmap).getByRole('rowheader', { name: HEATMAP_FRAME_HOSTILE_NAME })).toBeInTheDocument()
     expect(document.querySelector('[data-trends-catalogue] img')).toBeNull()
     expect((window as { __xss?: unknown }).__xss).toBeUndefined()
-    const option = engine.instance.setOption.mock.calls[engine.instance.setOption.mock.calls.length - 1][0] as { yAxis: { data: string[] } }
-    expect(option.yAxis.data).toContain(HEATMAP_FRAME_HOSTILE_NAME)
+    const calls = engine.instance.setOption.mock.calls
+    const option = calls[calls.length - 1][0] as { yAxis: { data: string[] } }
+    // The axis prints the name cut in the middle: still text, never markup.
+    expect(option.yAxis.data[0].startsWith('<img src')).toBe(true)
   })
 })
 
@@ -316,22 +386,26 @@ describe('TrendsCatalogue lazy mounting', () => {
     reveal('trends-duration')
     await waitFor(() => expect(metricCalls('duration_p95')).toHaveLength(1))
 
-    // The heatmap reuses the suite request: revealing it asks nothing more.
+    // The heatmap has its own request: none until it is near, one when it is.
+    expect(heatmapCalls()).toEqual([])
     reveal('trends-heatmap')
-    await waitFor(() => expect(section('trends-heatmap')).not.toBeNull())
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     await settle()
     expect(metricCalls('pass_rate')).toHaveLength(1)
   })
 
-  it('a reader who reaches the heatmap first still gets the suite request, once', async () => {
+  it('a reader who reaches the heatmap first asks only the heatmap', async () => {
     renderCatalogue({ days: 14 })
     reveal('trends-heatmap')
-    await waitFor(() => expect(metricCalls('pass_rate')).toHaveLength(1))
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
+    await settle()
+    expect(chartDataCalls()).toEqual([])
     reveal('trends-multi-series')
     await screen.findByRole('heading', { name: SUITE_SERIES_TITLE })
     await settle()
     expect(metricCalls('pass_rate')).toHaveLength(1)
+    expect(heatmapCalls()).toHaveLength(1)
   })
 })
 
