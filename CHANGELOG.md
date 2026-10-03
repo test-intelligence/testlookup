@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase B: "Not filtered by" badges on every chart (VIZ-307)
+
+A chart whose server could not apply one of the page's filters now says so in
+its header: "Not filtered by release", "Not filtered by suite" or "Not
+filtered by time window", with the server's reason on hover and focus. The
+badges come only from the response's `meta.ignored_filters` (contract C2),
+which a route fills when it received a filter it cannot honour, so a chart
+shows a badge exactly when the API declares one; there is no client-side list
+of "panels that ignore releases". Today that is value metrics (release and
+suite) and the windowless reads (flake clusters, open defects: the time
+window).
+
+`ScopeBadge` (`components/ui/ScopeBadge.tsx`) is the one look for these
+markers. `AllReleasesBadge`, for panels with no envelope, now renders through
+it and keeps its wording. A release that has been archived already shows as
+"(archived)" in the filter chips, and its data still loads. No flag: a chart
+with no ignored filter renders exactly as before (the frame's markup snapshot
+is unchanged).
+
 ## Unreleased - Visualization Upgrade, Wave 3 charts: heatmaps, coverage map, failure groups, test scatter, drill-down and cross-filtering, behind flags (VIZ-501, VIZ-502, VIZ-504, VIZ-506, VIZ-602, VIZ-603)
 
 The charts that read the Wave 3 endpoints arrive on four pages: Trends,
