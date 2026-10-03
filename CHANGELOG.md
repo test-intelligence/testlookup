@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase B: compare suites and releases on one chart (VIZ-605)
+
+Trends has a new **Compare** section (with `viz_chart_data_api` on, below
+"Pass rate by suite"). It draws the suites and releases chosen in the filter
+bar side by side, over the page's window:
+
+- **Compare by suite**: one line per chosen suite.
+- **Compare by release**: one line per chosen release.
+- **Compare by suite and release**: one line per pair, named "payments ·
+  R1". Colour is the suite and the dash is the release, so the pairs read as
+  a grid. This is the default whenever the selection allows it.
+
+**Metric** switches between pass rate, failures and executions. Colours and
+dashes come from the sorted suite and release names, so they are the same
+after a reload, whatever order the filters were picked in.
+
+With fewer than two lines the frame says "pick two or more suites or releases
+in the filter bar". With more than 8 it asks the reader to narrow the filter
+instead of folding the chosen pairs into "Other". If any slice is not
+comparable, the chart shows the server's comparability banner.
+
+`chart-data` takes at most two `group_by`, so "suite and release" is one `day
+× suite` request per release, issued together, validated slice by slice and
+merged into one chart state (one loading state, one error, one Retry). The
+shared multi-series model gained an optional per-series `styles` override
+(colour slot and dash slot). Without one, every existing chart is drawn as
+before.
+
 ## Unreleased - Visualization Upgrade, Wave 3 charts: heatmaps, coverage map, failure groups, test scatter, drill-down and cross-filtering, behind flags (VIZ-501, VIZ-502, VIZ-504, VIZ-506, VIZ-602, VIZ-603)
 
 The charts that read the Wave 3 endpoints arrive on four pages: Trends,

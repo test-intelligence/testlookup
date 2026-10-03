@@ -372,7 +372,7 @@ describe('TrendsCatalogue lazy mounting', () => {
   it('asks nothing, probe included, until a section is near; each section asks when it is', async () => {
     renderCatalogue({ days: 14 })
     await settle()
-    expect(document.querySelectorAll('[data-lazy-section]')).toHaveLength(3)
+    expect(document.querySelectorAll('[data-lazy-section]')).toHaveLength(4)
     expect(document.querySelector('[data-catalogue-section]')).toBeNull()
     expect(chartDataCalls()).toEqual([])
     expect(probe.enabled.every((enabled) => !enabled)).toBe(true)
@@ -385,6 +385,14 @@ describe('TrendsCatalogue lazy mounting', () => {
 
     reveal('trends-duration')
     await waitFor(() => expect(metricCalls('duration_p95')).toHaveLength(1))
+
+    // VIZ-605: with fewer than two suites or releases chosen, the comparison
+    // says so and asks nothing.
+    const before = chartDataCalls().length
+    reveal('trends-compare')
+    await screen.findByText(/pick two or more suites or releases/)
+    await settle()
+    expect(chartDataCalls()).toHaveLength(before)
 
     // The heatmap has its own request: none until it is near, one when it is.
     expect(heatmapCalls()).toEqual([])

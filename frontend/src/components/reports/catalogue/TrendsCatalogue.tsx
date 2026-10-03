@@ -10,6 +10,9 @@
  *      `chart-data` day series joined by `durationBandPoints`. A day whose p95
  *      the server did not measure is a GAP in the line and "—" in the table,
  *      never 0 ms.
+ *   2b. **Compare** (VIZ-605) — the suites and releases chosen in the filter
+ *      bar on one line chart: by suite, by release, or by suite and release
+ *      (colour by suite, dash by release), see `CompareSection`.
  *   3. **Suite pass rate by day** — the heatmap (VIZ-501, Wave 3), only with
  *      `viz_advanced_charts` on as well: the shared `HeatmapSection` over
  *      `/analytics/heatmap?kind=suite_day`, which reads the advanced seam
@@ -47,6 +50,7 @@ import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
 import { buildMultiSeriesModel, multiSeriesInputFromChartData } from '@/components/charts/multiSeriesModel'
 import type { ScopeValue } from '@/lib/scopeParams'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
+import CompareSection, { COMPARE_HEIGHT } from './CompareSection'
 import LazySection from './LazySection'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
 import { HeatmapSection } from './HeatmapSection'
@@ -253,6 +257,12 @@ function DurationSection({
   )
 }
 
+/** VIZ-605: the comparison, which asks the existence probe like its siblings. */
+function CompareNear({ onNear, ...props }: Parameters<typeof CompareSection>[0] & { onNear: () => void }) {
+  useReportNear(onNear)
+  return <CompareSection {...props} />
+}
+
 // ── The catalogue ───────────────────────────────────────────────────────────
 
 export interface TrendsCatalogueProps {
@@ -290,6 +300,9 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
     <div data-trends-catalogue="" className="mt-3.5 grid grid-cols-1 gap-3.5 min-w-0">
       <LazySection label="trends-multi-series" minHeight={SUITE_SERIES_HEIGHT + FRAME_CHROME}>
         <SuiteSeriesSection state={suiteState} windowDays={windowDays} onNear={onSuitesNear} />
+      </LazySection>
+      <LazySection label="trends-compare" minHeight={COMPARE_HEIGHT + FRAME_CHROME}>
+        <CompareNear days={days} suiteFilter={suiteFilter} everHadData={everHadData} onNear={onDurationNear} />
       </LazySection>
       <LazySection label="trends-duration" minHeight={DURATION_HEIGHT + FRAME_CHROME}>
         <DurationSection
