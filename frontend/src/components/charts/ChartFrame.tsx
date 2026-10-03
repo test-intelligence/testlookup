@@ -53,7 +53,7 @@ import {
   type Ref,
 } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
-import type { ChartSeries } from '@/lib/viz/contracts'
+import type { AnyChartSeries, ChartSeries } from '@/lib/viz/contracts'
 // `totalsLine` is shared with the export so the footer and an exported file
 // can never state the scope differently.
 import { provenanceFromMeta, totalsLine, WINDOW_TOTALS_LABEL, type ChartProvenance } from '@/lib/viz/chartExport'
@@ -93,12 +93,18 @@ export interface ChartFrameProps {
   truncationSuffix?: string
   /**
    * The renderer. A function receives `series` — pass the renderer that exact
-   * object so the plot, the summary and the table read the same data.
+   * object so the plot, the summary and the table read the same data. The
+   * function form is for the four pre-Wave-3 kinds; a `points` series (the
+   * test scatter) is drawn by element children.
    */
   children: ReactNode | ((series: ChartSeries) => ReactNode)
   'data-testid'?: string
-  /** The normalised series the renderer draws. Enables the summary and "View as table". */
-  series?: ChartSeries | null
+  /**
+   * The normalised series the renderer draws. Enables the summary and "View
+   * as table". Any C3 kind: every reader behind it (`summarizeChart`,
+   * `chartTableModel`, the CSV) handles `points` too.
+   */
+  series?: AnyChartSeries | null
   /** For the summary, e.g. "Heatmap", "Line chart". */
   chartType?: string
   /**
@@ -552,7 +558,7 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
 
   const body = drawn ? (
     <ChartErrorBoundary resetKey={state.data}>
-      {typeof children === 'function' ? (series ? children(series) : null) : children}
+      {typeof children === 'function' ? (series && series.kind !== 'points' ? children(series) : null) : children}
     </ChartErrorBoundary>
   ) : state.status === 'loading' ? (
     <>

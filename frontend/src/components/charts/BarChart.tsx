@@ -15,7 +15,7 @@
  * Everything the reader is told about the data comes from the model, so the
  * plot, the notes, the tooltip and the table view cannot disagree.
  */
-import { useCallback, useId, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useId, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -29,7 +29,7 @@ import {
   YAxis,
   useXAxisScale,
 } from 'recharts'
-import type { ChartSeries } from '@/lib/viz/contracts'
+import type { ChartSeries, VizStatus } from '@/lib/viz/contracts'
 import { formatNumber, formatPercent } from '@/utils/formatters'
 import ChartFrame, { type ChartHeadingLevel } from './ChartFrame'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
@@ -48,16 +48,21 @@ import {
   BAR_CATEGORY_GAP,
   GROUPED_BAR_GAP,
   GROUPED_BAR_THICKNESS,
+  barMarkDimensions,
   barPlotHeight,
+  barSampleSizes,
   breakdownCaption,
   barSeries,
   barsFromSeries,
   defaultValueAxisTitle,
   minRowHeight,
+  rankedBarMark,
   rankedModel,
+  statusBarMark,
   statusBarModel,
   statusBarSeries,
   statusRowsFromSeries,
+  statusSegmentMark,
   fitCategoryLabel,
   middleTruncate,
   PERCENT_MODE_NOTE,
@@ -81,6 +86,7 @@ import {
   type LegendEntry,
 } from './patterns'
 import { CHART_VARS, DIV_COUNT, RECHARTS_AXIS_TICK, STATUS_ENCODING } from './tokens'
+import type { ChartMark, MarkActivationProps, PointerModifiers } from './marks'
 
 const BAR_SIZE = 16
 /** Room for the middle-truncated category labels on the y axis. */
@@ -203,8 +209,48 @@ const RANKED_CHROME = PLOT_MARGIN_TOP + PLOT_MARGIN_BOTTOM + VALUE_AXIS_HEIGHT
 /** …and a status plot, which also draws its legend inside the chart: one line, measured at 28 px, plus 4 px to spare. */
 const STATUS_LEGEND_HEIGHT = 32
 const STATUS_CHROME = RANKED_CHROME + STATUS_LEGEND_HEIGHT
+/**
+ * The room right of the plot the value axis's LAST tick needs, px (F-20): it
+ * is drawn centred on the plot's end, so half the widest tick, measured in the
+ * chart's font (DejaVu on Linux is wider), plus 1 px for the glyph's edge.
+ * `null` before layout (jsdom, a hidden tab): the plot keeps its fixed margin.
+ */
+function valueAxisEndRoom(ticks: readonly number[], text: (value: number) => string, measure: TextMeasure | null): number | null {
+  if (!measure || ticks.length === 0) return null
+  return Math.ceil(Math.max(...ticks.map((tick) => measure(text(tick), RECHARTS_AXIS_TICK.fontSize))) / 2) + 1
+}
+
 /** Recharts takes the band gap as a percentage string. */
 const CATEGORY_GAP = `${BAR_CATEGORY_GAP * 100}%`
+
+// ── Mark activation (Wave 3, VIZ-602 / 603, `marks.ts`) ─────────────────────
+
+/**
+ * What a bar's click says about the reader's intent (OD-2): the modifier keys,
+ * and whether it was a finger. Recharts hands `<Bar onClick>` React's mouse
+ * event; a browser's `click` is a `PointerEvent`, which carries `pointerType`.
+ */
+function pointerModifiers(event: ReactMouseEvent | undefined): PointerModifiers {
+  if (!event) return {}
+  const pointerType = (event.nativeEvent as Partial<PointerEvent> | undefined)?.pointerType
+  return {
+    shiftKey: event.shiftKey,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    pointerType: typeof pointerType === 'string' ? pointerType : undefined,
+  }
+}
+
+/**
+ * The props a plot takes to make its bars activatable. All absent = the plot
+ * is exactly the pre-Wave-3 plot: no `onClick` and no pointer cursor reach
+ * `<Bar>` at all (spread only when activatable, so not even an `undefined`
+ * prop changes), no mark reaches the cursor, no button is drawn.
+ */
+interface PlotActivation<Bar> extends MarkActivationProps {
+  /** The mark each bar (each keyboard stop) stands for; `undefined` = that bar cannot be activated. */
+  markOf?: (bar: Bar) => ChartMark | undefined
+}
 
 /**
  * Same height as `ChartFrame`'s own buttons (`px-3 py-1 text-xs` → 26 px). The
@@ -366,7 +412,7 @@ export function StatusTooltip({ active, payload, coordinate, layout = 'stacked' 
   return <PinnedTip content={row ? statusTipContent(row.bar) : null} mark={mark} sweep={sweepOf(coordinate, 'y')} />
 }
 
-export interface RankedBarPlotProps {
+export interface RankedBarPlotProps extends PlotActivation<RankedBar> {
   model: RankedModel
   /** Names the focusable drawing surface (see `useChartCursor`). */
   title: string
@@ -382,6 +428,8 @@ export interface RankedBarPlotProps {
    * every page (`rankedWhole`). `null` (a change chart, or unknown) states no share.
    */
   whole?: number | null
+  /** Keep room right of the plot for the last value tick (`BarChartProps.fitValueAxisEnd`). */
+  fitValueAxisEnd?: boolean
 }
 
 /** Ranked (and, with negatives, diverging) horizontal bars. */
@@ -394,6 +442,11 @@ export function RankedBarPlot({
   animate: requested,
   emptyText = 'No data',
   whole = null,
+  fitValueAxisEnd = false,
+  onMarkActivate,
+  markIntents,
+  markKit,
+  markOf,
 }: RankedBarPlotProps) {
   // Full screen (VIZ-608): the plot takes the frame's body; the footer is the frame's, not ours.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
@@ -408,17 +461,41 @@ export function RankedBarPlot({
   const [measureRef, measure] = useTextMeasure<HTMLDivElement>()
   const wrapRef = useJoinedRef(widthRef, measureRef)
   const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
-  const rightMargin = compact ? 40 : 64
+  // Ranked ticks are Recharts' own text of the number (no formatter).
+  const endRoom = fitValueAxisEnd ? valueAxisEndRoom(model.ticks, String, measure) : null
+  const rightMargin = Math.max(compact ? 40 : 64, endRoom ?? 0)
   const axis = useCategoryAxis(model.bars, compact, width / scale, rightMargin, measure)
   // A diverging axis is a CHANGE: a share of a sum of rises and falls is meaningless.
   const shareOf = model.diverging ? null : whole
 
   // Built from the SAME content the pointer's tooltip shows (VIZ-601).
+  // With a handler, each stop also carries the mark it stands for (Wave 3).
+  const activating = Boolean(onMarkActivate && markOf)
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () => model.bars.map((drawn) => cursorPoint(drawn.key, rankedTipContent(drawn, valueTitle, shareOf))),
-    [model, valueTitle, shareOf],
+    () =>
+      model.bars.map((drawn) => {
+        const point = cursorPoint(drawn.key, rankedTipContent(drawn, valueTitle, shareOf))
+        const mark = activating ? markOf?.(drawn) : undefined
+        return mark ? { ...point, mark } : point
+      }),
+    [model, valueTitle, shareOf, activating, markOf],
   )
-  const cursor = useChartCursor({ title, chartType: 'ranked bar chart', points: cursorPoints, noun: 'bar' })
+  const cursor = useChartCursor({
+    title,
+    chartType: 'ranked bar chart',
+    points: cursorPoints,
+    noun: 'bar',
+    onMarkActivate,
+    markIntents,
+    markKit,
+  })
+  // Recharts calls `onClick(entry, index, event)`, `index` into this page's bars: the cursor's points.
+  const barEvents = cursor.activatable
+    ? {
+        onClick: (_entry: unknown, index: number, event: ReactMouseEvent) => cursor.activatePointer(index, pointerModifiers(event)),
+        cursor: 'pointer',
+      }
+    : {}
 
   if (model.bars.length === 0) {
     return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">{emptyText}</p>
@@ -434,6 +511,7 @@ export function RankedBarPlot({
       data-bar-axis-width={axis.width}
       data-bar-domain={`${model.domain[0]},${model.domain[1]}`}
       data-bar-diverging={model.diverging ? 'true' : 'false'}
+      data-bar-fit-end={fitValueAxisEnd ? 'true' : undefined}
       data-bar-page={model.page}
       data-bar-pages={model.pages}
       data-bar-total={model.total}
@@ -511,7 +589,7 @@ export function RankedBarPlot({
             {...cursor.tipProps}
           />
           {model.diverging && <ReferenceLine x={0} stroke={CHART_VARS.axis} strokeWidth={1.5} />}
-          <Bar dataKey="value" isAnimationActive={animate} maxBarSize={BAR_SIZE} fill={patternFill(risePattern)}>
+          <Bar dataKey="value" isAnimationActive={animate} maxBarSize={BAR_SIZE} fill={patternFill(risePattern)} {...barEvents}>
             <LabelList
               dataKey="valueLabel"
               position="right"
@@ -529,7 +607,12 @@ export function RankedBarPlot({
   )
 }
 
-export interface StatusBarPlotProps {
+export interface StatusBarPlotProps extends PlotActivation<StatusBar> {
+  /**
+   * The mark one SEGMENT stands for (the pointer's target: the bar's bucket and
+   * the segment's status). `undefined` = a click on it activates the whole bar.
+   */
+  segmentMarkOf?: (bar: StatusBar, status: VizStatus) => ChartMark | undefined
   model: StatusBarModel
   /** Names the focusable drawing surface (see `useChartCursor`). */
   title: string
@@ -540,6 +623,8 @@ export interface StatusBarPlotProps {
   height?: number
   animate?: boolean
   emptyText?: string
+  /** Keep room right of the plot for the last value tick (`BarChartProps.fitValueAxisEnd`). */
+  fitValueAxisEnd?: boolean
 }
 
 /** The value axis's title in 100% mode. The axis ticks carry the % sign too. */
@@ -554,6 +639,12 @@ export function StatusBarPlot({
   height: requestedHeight = 280,
   animate: requested,
   emptyText = 'No data',
+  onMarkActivate,
+  markIntents,
+  markKit,
+  markOf,
+  segmentMarkOf,
+  fitValueAxisEnd = false,
 }: StatusBarPlotProps) {
   // Full screen (VIZ-608): the plot takes the frame's body; its legend is inside the chart.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
@@ -565,9 +656,12 @@ export function StatusBarPlot({
   const [measureRef, measure] = useTextMeasure<HTMLDivElement>()
   const wrapRef = useJoinedRef(widthRef, measureRef)
   const compact = width > 0 && width / scale < COMPACT_CHART_WIDTH
-  const rightMargin = compact ? 12 : 16
-  const axis = useCategoryAxis(model.bars, compact, width / scale, rightMargin, measure)
   const percent = model.mode === 'percent'
+  // The ticks as the axis draws them (its `tickFormatter` below).
+  const tickText = (value: number) => (percent ? `${value}%` : formatNumber(value))
+  const endRoom = fitValueAxisEnd ? valueAxisEndRoom(model.ticks, tickText, measure) : null
+  const rightMargin = Math.max(compact ? 12 : 16, endRoom ?? 0)
+  const axis = useCategoryAxis(model.bars, compact, width / scale, rightMargin, measure)
 
   const rows: StatusRow[] = useMemo(
     () =>
@@ -589,16 +683,48 @@ export function StatusBarPlot({
   // One stop per BAR, reading every segment: a reader stepping through a
   // stacked chart wants the composition, not one rectangle at a time — in
   // the same words the pointer's tooltip uses (VIZ-601).
+  // With a handler, each stop also carries the mark of its whole bar (Wave 3).
+  const activating = Boolean(onMarkActivate && markOf)
   const cursorPoints = useMemo<ChartCursorPoint[]>(
-    () => model.bars.map((drawn) => cursorPoint(drawn.key, statusTipContent(drawn))),
-    [model],
+    () =>
+      model.bars.map((drawn) => {
+        const point = cursorPoint(drawn.key, statusTipContent(drawn))
+        const mark = activating ? markOf?.(drawn) : undefined
+        return mark ? { ...point, mark } : point
+      }),
+    [model, activating, markOf],
   )
   const cursor = useChartCursor({
     title,
     chartType: `${model.layout === 'stacked' ? 'stacked' : 'grouped'} bar chart`,
     points: cursorPoints,
     noun: 'bar',
+    onMarkActivate,
+    markIntents,
+    markKit,
   })
+  /**
+   * A click lands on ONE segment, so the pointer activates that segment (the
+   * bar's bucket and the status: the AC's "payments failed segment"); the
+   * keyboard's stop is the whole bar. A touch tap has no modifier to choose
+   * with: it selects the bar, whose readout offers the buttons.
+   */
+  const segmentEvents = (status: VizStatus) =>
+    cursor.activatable
+      ? {
+          onClick: (_entry: unknown, index: number, event: ReactMouseEvent) => {
+            const modifiers = pointerModifiers(event)
+            const drawn = model.bars[index]
+            const mark = drawn ? segmentMarkOf?.(drawn, status) : undefined
+            if (!mark || !onMarkActivate) {
+              cursor.activatePointer(index, modifiers)
+              return
+            }
+            if (!cursor.activateMark(mark, modifiers) && modifiers.pointerType === 'touch') cursor.activatePointer(index, modifiers)
+          },
+          cursor: 'pointer',
+        }
+      : {}
 
   if (model.bars.length === 0 || model.empty) {
     return <p className="text-[var(--color-text-muted)] text-sm text-center py-8">{emptyText}</p>
@@ -620,6 +746,7 @@ export function StatusBarPlot({
       data-bar-axis-width={axis.width}
       data-bar-domain={`${model.domain[0]},${model.domain[1]}`}
       data-bar-statuses={model.statuses.join(',')}
+      data-bar-fit-end={fitValueAxisEnd ? 'true' : undefined}
       data-bar-page={model.page}
       data-bar-pages={model.pages}
       data-bar-total={model.total}
@@ -652,7 +779,7 @@ export function StatusBarPlot({
             // The axis carries the UNIT in 100% mode. Without it the toggle
             // exists only in the drawing: "80" on the axis is 80 runs or 80%
             // of a bar, and nothing on the chart says which.
-            tickFormatter={(value: number) => (percent ? `${value}%` : formatNumber(value))}
+            tickFormatter={tickText}
             label={{
               value: percent ? PERCENT_AXIS_TITLE : valueAxisLabel,
               position: 'insideBottom',
@@ -696,6 +823,7 @@ export function StatusBarPlot({
               fill={patternFill(statusPatternId(prefix, status))}
               maxBarSize={BAR_SIZE}
               isAnimationActive={animate}
+              {...segmentEvents(status)}
             />
           ))}
         </RechartsBarChart>
@@ -707,7 +835,13 @@ export function StatusBarPlot({
 
 export type BarVariant = 'ranked' | 'grouped' | 'stacked'
 
-export interface BarChartProps {
+/**
+ * `onMarkActivate` / `markIntents` (Wave 3, `marks.ts`): make the bars
+ * activatable. A mark is a bar's KEY in the dimension the SERIES names
+ * (`dimensions[0]`; a segment adds `dimensions[1]`, its status), so the host
+ * gets back exactly the bucket the server drew. Absent: today's chart.
+ */
+export interface BarChartProps extends MarkActivationProps {
   title: string
   state: ChartState<ChartResponse>
   variant: BarVariant
@@ -728,6 +862,14 @@ export interface BarChartProps {
    * controls, e.g. a dated caption (Wave 2.6 R2-21). Kept in every state.
    */
   footer?: ReactNode
+  /** The frame's scope slot, under the title (a drill host's breadcrumb). Absent: none. */
+  scope?: ReactNode
+  /**
+   * Keep half the widest value tick, measured, right of the plot, so its last
+   * tick ("1,000", centred on the plot's end) is never cut on a narrow card
+   * (F-20: the drill ladder at 375 px). Absent: the plot is exactly as before.
+   */
+  fitValueAxisEnd?: boolean
   'data-testid'?: string
 }
 
@@ -819,11 +961,29 @@ export default function BarChart({
   valueAxisLabel,
   onClearFilters,
   footer,
+  scope,
+  fitValueAxisEnd,
+  onMarkActivate,
+  markIntents,
+  markKit,
   'data-testid': testId,
 }: BarChartProps) {
   const [page, setPage] = useState(0)
   const [mode, setMode] = useState<StackMode>(initialMode)
   const series: ChartSeries | null = hasChartData(state) ? state.data.series : null
+
+  // The marks the bars stand for, only when a host asked (Wave 3).
+  const activating = Boolean(onMarkActivate)
+  const marks = useMemo(() => {
+    if (!activating || !series) return null
+    const dimensions = barMarkDimensions(series)
+    const sizes = barSampleSizes(series)
+    return {
+      ranked: (bar: RankedBar) => rankedBarMark(bar, dimensions, sizes),
+      bar: (bar: StatusBar) => statusBarMark(bar, dimensions, sizes),
+      segment: (bar: StatusBar, status: VizStatus) => statusSegmentMark(bar, status, dimensions, sizes),
+    }
+  }, [activating, series])
 
   const ranked = useMemo(
     () => (series && variant === 'ranked' ? rankedModel(barsFromSeries(series), { topN, page }) : null),
@@ -901,6 +1061,7 @@ export default function BarChart({
       axes={{ x: dimension, y: percentMode ? PERCENT_AXIS_TITLE : valueTitle }}
       format={format}
       scopeLabel={scopeLabel}
+      scope={scope}
       height={height}
       onClearFilters={onClearFilters}
       toolbar={toolbar}
@@ -928,6 +1089,8 @@ export default function BarChart({
           height={height}
           animate={animate}
           whole={whole}
+          fitValueAxisEnd={fitValueAxisEnd}
+          {...(marks ? { onMarkActivate, markIntents, markKit, markOf: marks.ranked } : {})}
         />
       ) : null}
       {stacked && !empty ? (
@@ -938,6 +1101,8 @@ export default function BarChart({
           valueAxisLabel={valueTitle}
           height={height}
           animate={animate}
+          fitValueAxisEnd={fitValueAxisEnd}
+          {...(marks ? { onMarkActivate, markIntents, markKit, markOf: marks.bar, segmentMarkOf: marks.segment } : {})}
         />
       ) : null}
     </ChartFrame>

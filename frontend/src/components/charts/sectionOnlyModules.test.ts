@@ -111,6 +111,15 @@ const SECTION_ONLY = new Set([
   '/src/components/charts/durationBuckets.ts',
   // The gate section's model: its imports are the section's (chart states, adapters, scope).
   '/src/components/reports/catalogue/GateCatalogue.model.ts',
+  // Wave 3: mark activation, the drill URL and the rows panel run only in a
+  // flag-on section. The cursor and BarChart take the activation code from
+  // their host (`markKit`), so the bar and day-strip pages never load it.
+  '/src/components/charts/marks.ts',
+  '/src/components/charts/MarkActions.tsx',
+  '/src/components/charts/markKit.tsx',
+  '/src/hooks/useDrillPath.ts',
+  '/src/components/reports/catalogue/RowsPanel.tsx',
+  '/src/components/reports/catalogue/RowsPanel.model.ts',
 ])
 
 /**
@@ -120,7 +129,16 @@ const SECTION_ONLY = new Set([
  */
 const PENDING = new Set<string>([])
 
-const PAGES = ['OverviewPage', 'TrendsPage', 'SummaryReportPage', 'SuiteDetailPage', 'ReleaseGatePage']
+// Wave 3 (FK3-2): Coverage and Failure analysis gained lazy sections too.
+const PAGES = [
+  'OverviewPage',
+  'TrendsPage',
+  'SummaryReportPage',
+  'SuiteDetailPage',
+  'ReleaseGatePage',
+  'FailureAnalysisPage',
+  'CoveragePage',
+]
 
 const pageEdges = (page: string) => edgesInto(`/src/pages/${page}.tsx`, SECTION_ONLY)
 
@@ -141,6 +159,36 @@ describe('section-only kit modules stay out of the flag-off page closure', () =>
     expect(edges).toContain('components/reports/catalogue/OverviewCatalogue.tsx -> components/charts/BarChart.model.ts')
     expect(edgesInto('/src/components/charts/chartCatalogSources.ts', new Set(['/src/services/chartApi.ts']))).toEqual([
       'components/charts/chartCatalogSources.ts -> services/chartApi.ts',
+    ])
+  })
+
+  // Wave 3 (integrator): Suite detail's composite is in the page chunk; its
+  // sections, their boundaries and lazy imports sit behind ONE lazy import, so
+  // the flag-off first visit does not grow by the boundary's chunk.
+  it('Suite detail does not statically reach the section boundary or a Wave-3 section', () => {
+    const forbidden = new Set([
+      '/src/components/ui/SectionErrorBoundary.tsx',
+      '/src/components/reports/catalogue/HeatmapSection.tsx',
+      '/src/components/reports/catalogue/ScatterSection.tsx',
+      '/src/components/reports/catalogue/SuiteDetailAdvancedSections.tsx',
+    ])
+    expect(edgesInto('/src/pages/SuiteDetailPage.tsx', forbidden)).toEqual([])
+    // The control: the sections module does reach the boundary.
+    expect(edgesInto('/src/components/reports/catalogue/SuiteDetailAdvancedSections.tsx', forbidden)).toEqual([
+      'components/reports/catalogue/SuiteDetailAdvancedSections.tsx -> components/ui/SectionErrorBoundary.tsx',
+    ])
+  })
+
+  it('Coverage does not statically reach LazySection or a Wave-3 section (one lazy sections module)', () => {
+    const forbidden = new Set([
+      '/src/components/reports/catalogue/LazySection.tsx',
+      '/src/components/reports/catalogue/CoverageMapSection.tsx',
+      '/src/components/reports/catalogue/HeatmapSection.tsx',
+      '/src/components/reports/catalogue/CoverageAdvancedSections.tsx',
+    ])
+    expect(edgesInto('/src/pages/CoveragePage.tsx', forbidden)).toEqual([])
+    expect(edgesInto('/src/components/reports/catalogue/CoverageAdvancedSections.tsx', forbidden)).toEqual([
+      'components/reports/catalogue/CoverageAdvancedSections.tsx -> components/reports/catalogue/LazySection.tsx',
     ])
   })
 

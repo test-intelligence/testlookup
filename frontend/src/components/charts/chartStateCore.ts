@@ -11,13 +11,22 @@
  * frame chunk every flag-off chart page loads (Wave 2.6 R1-3). `chartState`
  * re-exports everything here, so no caller changes.
  */
-import type { ChartSeries, EnvelopeMeta } from '@/lib/viz/contracts'
+import type { AnyChartSeries, ChartSeries, EnvelopeMeta } from '@/lib/viz/contracts'
 
-/** The canonical analytics response a chart reads: the C2 envelope plus a C3 series. */
-export interface ChartResponse {
+/**
+ * The canonical analytics response a chart reads: the C2 envelope plus a C3
+ * series. `S` defaults to the four kinds every pre-Wave-3 reader handles
+ * (`ChartSeries`), so a reader whose `switch (series.kind)` has no `points`
+ * branch can never be handed one; a Wave-3 source names its own kind (a
+ * `ChartResponse<MatrixChart>`, a `ChartResponse<PointsChart>`).
+ */
+export interface ChartResponse<S extends AnyChartSeries = ChartSeries> {
   meta: EnvelopeMeta | null
-  series: ChartSeries
+  series: S
 }
+
+/** A response of ANY C3 kind, `points` included (what `validateAnyChartResponse` accepts). */
+export type AnyChartResponse = ChartResponse<AnyChartSeries>
 
 export type ChartErrorKind =
   /** 5xx or an unexpected status: a server fault, never the user's. */
@@ -99,7 +108,7 @@ export function readyState<T>(data: T): Extract<ChartState<T>, { status: 'ready'
  * A drawn state can still carry such a series: the duration histogram with
  * nothing timed is `ready` and says so inside its own body.
  */
-export function seriesHasPoints(series: ChartSeries): boolean {
+export function seriesHasPoints(series: AnyChartSeries): boolean {
   switch (series.kind) {
     case 'series':
       return series.series.some((line) => line.points.length > 0)
@@ -108,5 +117,7 @@ export function seriesHasPoints(series: ChartSeries): boolean {
     case 'tree':
     case 'graph':
       return series.nodes.length > 0
+    case 'points':
+      return series.points.length > 0
   }
 }

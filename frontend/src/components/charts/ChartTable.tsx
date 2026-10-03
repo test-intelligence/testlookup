@@ -15,7 +15,7 @@
  * rows past the cap: in a day-by-day table, the LATEST days.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { ChartSeries } from '@/lib/viz/contracts'
+import type { AnyChartSeries } from '@/lib/viz/contracts'
 import { chartTableModel, type ChartAxes, type SeriesFormat } from './chartText'
 
 export const PAGINATE_ABOVE = 500
@@ -23,7 +23,8 @@ export const PAGE_SIZE = 100
 
 interface Props {
   caption: string
-  series: ChartSeries
+  /** Any C3 kind (Wave 3: the scatter's `points` too); `chartTableModel` reads them all. */
+  series: AnyChartSeries
   axes?: ChartAxes
   /** One formatter, or one per series keyed on `series.key` (see `SeriesFormat`). */
   format?: SeriesFormat

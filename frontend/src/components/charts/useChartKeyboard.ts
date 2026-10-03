@@ -10,6 +10,9 @@
  *   Home / End  first / last point in the row; with Ctrl (or ⌘): the whole chart
  *   Escape      clears the highlight and keeps focus on the container (APG
  *               grid); it stops propagating only when it cleared something
+ *   Enter       only with `onEnter` (Wave 3 mark activation): hands the
+ *               highlighted index, and whether Shift was held, to the chart.
+ *               Without it Enter is not handled, as before
  *   Tab         leaves the chart (it is one tab stop)
  *
  * The highlighted point's tooltip text is exposed as `announcement` for a
@@ -87,9 +90,15 @@ export interface ChartKeyboardOptions {
   onClear: (index: number) => void
   /** The tooltip text for `index`, announced to assistive tech. */
   describe: (index: number) => string
+  /**
+   * Wave 3: Enter / Shift+Enter on the highlighted point (the chart maps it to
+   * a mark and `keyboardIntent`). Absent = Enter is not handled, and keys
+   * pressed inside the container are handled exactly as before.
+   */
+  onEnter?: (index: number, modifiers: { shiftKey: boolean }) => void
 }
 
-export function useChartKeyboard({ count, move, onActivate, onClear, describe }: ChartKeyboardOptions) {
+export function useChartKeyboard({ count, move, onActivate, onClear, describe, onEnter }: ChartKeyboardOptions) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [active, setActive] = useState<number | null>(null)
   // New data: the old index means nothing now (adjusted during render, not in an effect).
@@ -106,6 +115,15 @@ export function useChartKeyboard({ count, move, onActivate, onClear, describe }:
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {
+      // With activation on, the chart may render action buttons inside its
+      // container: a key pressed on one is the button's, except Escape.
+      if (onEnter && event.target !== event.currentTarget && event.key !== 'Escape') return
+      if (event.key === 'Enter') {
+        if (!onEnter || active === null || event.altKey || event.ctrlKey || event.metaKey) return
+        event.preventDefault()
+        onEnter(active, { shiftKey: event.shiftKey })
+        return
+      }
       if (event.key === 'Escape') {
         // Consumed ONLY when it cleared something: inside a SidePanel / dialog
         // the first Escape clears the highlight, the second reaches the panel.
@@ -125,7 +143,7 @@ export function useChartKeyboard({ count, move, onActivate, onClear, describe }:
       onActivate(next)
       setActive(next)
     },
-    [active, clear, count, move, onActivate, onClear],
+    [active, clear, count, move, onActivate, onClear, onEnter],
   )
 
   const onBlur = useCallback(

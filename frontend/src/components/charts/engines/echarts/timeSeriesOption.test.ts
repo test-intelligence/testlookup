@@ -71,6 +71,16 @@ describe('buildTimeSeriesOption', () => {
     expect(marked?.markLine?.data).toEqual([{ xAxis: '2026-03-02', name: '1.4.0' }])
   })
 
+  it('a release NAMED like an Object member is drawn joined (zrender text cache, canvasText.ts)', () => {
+    const named = buildTimeSeriesModel({
+      points: model.points,
+      releases: [{ id: 'r1', name: '__proto__', date: '2026-03-02T00:00:00Z' }],
+    })
+    const built = buildTimeSeriesOption({ model: named, tokens, description: 'd' }) as unknown as OptionShape
+    const joined = `${String.fromCharCode(0x2060)}__proto__`
+    expect(built.series.find((s) => s.markLine)?.markLine?.data).toEqual([{ xAxis: '2026-03-02', name: joined }])
+  })
+
   it('refuses nothing: every formatter in the option was built by domTooltipFormatter', () => {
     expect(findUnsafeFormatter(option)).toBeNull()
   })

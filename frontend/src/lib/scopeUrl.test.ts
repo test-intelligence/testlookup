@@ -126,6 +126,20 @@ describe('writeScopeParams', () => {
     for (const key of RESERVED_URL_KEYS) expect(next.getAll(key), key).toEqual(base.getAll(key))
   })
 
+  it('reserves the C5 drill and rows keys: a scope write keeps their values, order and repetition', () => {
+    expect(RESERVED_URL_KEYS as readonly string[]).toEqual(expect.arrayContaining(['drill', 'rows']))
+    const base = new URLSearchParams(
+      `drill=suite~payments&suites=x&drill=status~failed&rows=suite~payments&rows=day~2026-09-12&drill=test~a~b`,
+    )
+    const next = writeScopeParams(base, { releaseIds: [R1], suiteNames: ['y'], windowDays: 30 })
+    expect(next.getAll('drill')).toEqual(['suite~payments', 'status~failed', 'test~a~b'])
+    expect(next.getAll('rows')).toEqual(['suite~payments', 'day~2026-09-12'])
+    expect(next.getAll('suites')).toEqual(['y'])
+    // A drill value that LOOKS like a scope value is still never read as one.
+    expect(parseScopeParams('?drill=suites~payments&rows=release~unattributed').suiteNames).toBeNull()
+    expect(parseScopeParams('?drill=suites~payments&rows=release~unattributed').releaseIds).toBeNull()
+  })
+
   it('[] or null removes a key; undefined leaves it alone', () => {
     const base = new URLSearchParams(`release=${R1}&suites=a&window=7`)
     const next = writeScopeParams(base, { releaseIds: [], suiteNames: undefined, windowDays: null })

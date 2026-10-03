@@ -55,6 +55,17 @@ describe('HeatmapChart', () => {
     globalThis.ResizeObserver = realResizeObserver
   })
 
+  it('hands ECharts the printed row labels and the fitted range (VIZ-501)', async () => {
+    engine.load.mockResolvedValue({ init: engine.init })
+    render(<HeatmapChart data={data} description="Two cells." rowLabels={['s…']} domain={[1, 2]} />)
+    await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
+    const [option] = engine.instance.setOption.mock.calls[0] as unknown as [
+      { yAxis: { data: string[] }; visualMap: { id: string; min: number; max: number }[] },
+    ]
+    expect(option.yAxis.data).toEqual(['s…'])
+    expect(option.visualMap.find((v) => v.id === 'ramp')).toMatchObject({ min: 1, max: 2 })
+  })
+
   it('loads the heatmap engine lazily, inits on canvas and applies the option', async () => {
     engine.load.mockResolvedValue({ init: engine.init })
     const { container } = render(<HeatmapChart data={data} description="Two cells." />)

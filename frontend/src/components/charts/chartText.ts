@@ -10,14 +10,35 @@
  *
  * `null` is "no data" everywhere: it prints as "—" and is never counted as a
  * zero in a min or a max.
+ *
+ * Every C3 kind is read here, `points` included (`AnyChartSeries`), with the
+ * Wave-3 additions: a matrix cell's status `counts`, a tree node's `stats`,
+ * and a points chart's axes, medians and exclusions.
  */
-import type { ChartSeries, MatrixChart, SeriesChart } from '@/lib/viz/contracts'
+import {
+  VIZ_STATUSES,
+  type AnyChartSeries,
+  type MatrixChart,
+  type PointsChart,
+  type SeriesChart,
+  type StatusCounts,
+  type TreeChart,
+  type TreeNodeStats,
+  type VizAxisUnit,
+} from '@/lib/viz/contracts'
 import { formatNumber, formatPercent, NO_VALUE } from '@/utils/formatters'
 
 export { NO_VALUE }
 
 /** A matrix cell the server sent with no value: drawn hatched, read as this. */
 export const NO_DATA = 'No data'
+
+/**
+ * A rate cell that HAD executions, none of them evaluated (only skipped or
+ * unknown): `null` like an empty cell, but not the same fact, so not the same
+ * words. Known only when the cell carries its `counts`.
+ */
+export const NOTHING_EVALUATED = 'Nothing evaluated'
 
 /**
  * A UTC day key ("2026-03-04", or a full ISO timestamp) as the kit's one short
@@ -89,10 +110,62 @@ export const formatRateValue: ValueFormatter = (v) => formatPercent(v, { from: '
 /** Percentage POINTS (0..100), as the 100% mode and the donut's shares carry them. */
 export const formatPercentPoints: ValueFormatter = (v) => formatPercent(v)
 
-/** Rate matrices are 0..1 and read as a percentage; everything else is a plain number. */
-export function defaultFormatter(series: ChartSeries): ValueFormatter {
-  if (series.kind === 'matrix' && series.value_type === 'rate') return formatRateValue
+/**
+ * Rate matrices read as a percentage; everything else is a plain number.
+ *
+ * A matrix that SAYS `unit: "percent"` holds percentage points (0..100, the
+ * Wave-3 heatmap endpoint); `"ratio"` holds 0..1. A matrix with no `unit` is
+ * read as 0..1, as every matrix was before Wave 3: the kit's own adapters and
+ * fixtures still build 0..1 matrices without the key, and reading those as
+ * points would print "0.9%" for 90%. (The contract's default for an absent
+ * unit is percent, OD-7; this reader follows it once those producers say
+ * `unit: "ratio"` — request 6 of the contract pack.)
+ */
+export function defaultFormatter(series: AnyChartSeries): ValueFormatter {
+  if (series.kind === 'matrix' && series.value_type === 'rate') {
+    return series.unit === 'percent' ? formatPercentPoints : formatRateValue
+  }
   return formatPlainValue
+}
+
+/** Below this many ms a duration keeps a tenth (3.4 ms is not 3 ms); from it up, whole ms. */
+export const MILLIS_TENTHS_BELOW = 10
+
+/**
+ * Milliseconds in the raw unit (never "1.8 s": a log axis' value is not
+ * rounded into another unit), by ONE precision rule (F-08): whole ms from
+ * 10 ms up, so "2,884 ms" never sits beside "1,778.3 ms", and a tenth below.
+ */
+export const formatMillisValue: ValueFormatter = (v) =>
+  `${formatNumber(v, { maximumFractionDigits: Math.abs(v) < MILLIS_TENTHS_BELOW ? 1 : 0 })} ms`
+
+/** The formatter for a `points` axis, by its declared unit (the reader never guesses percent from ratio). */
+export function axisValueFormatter(unit: VizAxisUnit): ValueFormatter {
+  switch (unit) {
+    case 'ms':
+      return formatMillisValue
+    case 'percent':
+      return formatPercentPoints
+    case 'ratio':
+      return formatRateValue
+    case 'count':
+      return formatPlainValue
+  }
+}
+
+/** A cell's status counts as words, non-zero statuses only, in the vocabulary's order: "212 passed, 3 failed". */
+export function statusCountsText(counts: StatusCounts): string {
+  const parts = VIZ_STATUSES.filter((status) => counts[status] > 0).map((status) => `${formatNumber(counts[status])} ${status}`)
+  return parts.length ? parts.join(', ') : 'no executions'
+}
+
+/**
+ * The stable ids of a matrix's columns and rows: `x_keys` / `y_keys` when the
+ * server sent them, else the labels (a pre-Wave-3 matrix, whose labels were
+ * its only identity). What a drill, a cross-filter or a rows request sends back.
+ */
+export function matrixAxisKeys(chart: MatrixChart): { x: string[]; y: string[] } {
+  return { x: chart.x_keys ?? chart.x_labels, y: chart.y_keys ?? chart.y_labels }
 }
 
 export function formatChartValue(value: number | string | null | undefined, format: ValueFormatter): string {
@@ -109,7 +182,7 @@ export interface ChartAxes {
 export interface SummaryInput {
   /** Human chart type, e.g. "Heatmap", "Line chart". */
   chartType: string
-  series: ChartSeries
+  series: AnyChartSeries
   axes?: ChartAxes
   /** The scope the data covers, e.g. "Project payments, last 7 days". */
   scope?: string
@@ -197,6 +270,38 @@ function matrixSentences(chart: MatrixChart, format: ValueFormatter): string[] {
   return out
 }
 
+function treeSentences(chart: TreeChart): string[] {
+  const stats = chart.nodes.map((n) => n.stats).filter((s): s is TreeNodeStats => s !== undefined)
+  const out: string[] = []
+  const never = stats.filter((s) => s.recency === 'never').length
+  const unknown = stats.filter((s) => s.recency === 'unknown').length
+  if (never) out.push(`${plural(never, 'node')} never run.`)
+  // "unknown" is a lost last-run record, which must never read as "never run".
+  if (unknown) out.push(`${plural(unknown, 'node')} with an unknown last run.`)
+  return out
+}
+
+const UNIT_WORDS: Record<VizAxisUnit, string> = { ms: 'milliseconds', percent: 'percent', ratio: 'ratio', count: 'count' }
+
+function pointsSentences(chart: PointsChart): string[] {
+  const out: string[] = []
+  const x = axisValueFormatter(chart.x.unit)
+  const y = axisValueFormatter(chart.y.unit)
+  if (chart.medians) out.push(`Medians: ${chart.x.label} ${x(chart.medians.x)}, ${chart.y.label} ${y(chart.medians.y)}.`)
+  const excluded = chart.excluded
+  if (excluded) {
+    const parts = [
+      excluded.below_min_executions ? `${formatNumber(excluded.below_min_executions)} below the minimum executions` : '',
+      excluded.no_duration ? `${formatNumber(excluded.no_duration)} with no duration` : '',
+      excluded.no_evaluated ? `${formatNumber(excluded.no_evaluated)} with nothing evaluated` : '',
+    ].filter(Boolean)
+    if (parts.length) out.push(`Not shown: ${parts.join(', ')}.`)
+  }
+  return out
+}
+
+const axisWords = (axis: PointsChart['x']) => `${axis.label} (${UNIT_WORDS[axis.unit]}${axis.scale === 'log' ? ', log scale' : ''})`
+
 /** The generated description a chart's `aria-describedby` points at. */
 export function summarizeChart({ chartType, series, axes = {}, scope, format }: SummaryInput): string {
   // The chart-wide fallback; a keyed `format` picks per series below.
@@ -221,6 +326,10 @@ export function summarizeChart({ chartType, series, axes = {}, scope, format }: 
     case 'graph':
       parts.push(`${chartType} of ${plural(series.nodes.length, 'node')} and ${plural(series.edges.length, 'link')}.`)
       break
+    case 'points':
+      parts.push(`${chartType} of ${plural(series.points.length, 'point')}.`)
+      parts.push(`X axis: ${axes.x ?? axisWords(series.x)}. Y axis: ${axes.y ?? axisWords(series.y)}. Size: ${series.size.label}.`)
+      break
   }
   if (scope) parts.push(`Scope: ${scope}.`)
   if (series.kind === 'series') parts.push(...seriesSentences(series, format, defaultFormatter(series)))
@@ -228,7 +337,9 @@ export function summarizeChart({ chartType, series, axes = {}, scope, format }: 
   if (series.kind === 'tree') {
     const found = extremes(series.nodes.map((n) => ({ value: n.value, where: n.label })))
     if (found) parts.push(`Largest ${found.max.where} ${fmt(found.max.value)}, smallest ${found.min.where} ${fmt(found.min.value)}.`)
+    parts.push(...treeSentences(series))
   }
+  if (series.kind === 'points') parts.push(...pointsSentences(series))
   return parts.join(' ')
 }
 
@@ -317,23 +428,57 @@ function seriesTable(
   return { columns: [axes.x ?? chart.dimensions[0] ?? 'x', ...chart.series.map((s) => s.label)], rows, warnings }
 }
 
+/** A matrix cell's text: its value, and the status counts behind it when the server sent them. */
+function matrixCellText(value: number | string | null, counts: StatusCounts | undefined, n: number, format: ValueFormatter): string {
+  if (value === null) {
+    // n > 0 with nothing evaluated is not "no runs": it says what DID run.
+    if (counts && n > 0) return `${NOTHING_EVALUATED} (${statusCountsText(counts)})`
+    return NO_DATA
+  }
+  const text = formatChartValue(value, format)
+  return counts ? `${text} (${statusCountsText(counts)})` : text
+}
+
+const STATS_COLUMNS = ['Tests', 'Pass rate', 'Executions', 'Flaky tests', 'Flaky share', 'Last executed', 'Days since last run']
+
+/** A node's `stats` as table cells; a node without them (in a tree whose others have them) shows its size only. */
+function statsCells(value: number, stats: TreeNodeStats | undefined): string[] {
+  if (!stats) return [formatPlainValue(value), NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE]
+  const last =
+    stats.recency === 'seen' && stats.last_executed_at
+      ? stats.last_executed_at.slice(0, 10)
+      : stats.recency === 'never'
+        ? 'Never run'
+        : // The run that held the last execution was deleted: we do not know, which is not "never".
+          'Unknown'
+  return [
+    formatPlainValue(stats.test_count),
+    formatChartValue(stats.pass_rate, formatPercentPoints),
+    formatPlainValue(stats.executions),
+    formatPlainValue(stats.flaky_count),
+    formatChartValue(stats.flaky_share, formatRateValue),
+    last,
+    formatChartValue(stats.staleness_days, formatPlainValue),
+  ]
+}
+
 /** The table for "View as table": exactly the plotted values, formatted once. */
-export function chartTableModel(series: ChartSeries, axes: ChartAxes = {}, format?: SeriesFormat): ChartTableModel {
+export function chartTableModel(series: AnyChartSeries, axes: ChartAxes = {}, format?: SeriesFormat): ChartTableModel {
   const fallback = defaultFormatter(series)
   const fmt = formatterFor(format, undefined, fallback)
   switch (series.kind) {
     case 'series':
       return seriesTable(series, axes, format, fallback)
     case 'matrix': {
-      const byCell = new Map(series.cells.map((cell) => [`${cell.x}:${cell.y}`, cell.value]))
+      const byCell = new Map(series.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
       return {
         columns: [axes.y ?? 'Row', ...series.x_labels],
         rows: series.y_labels.map((label, y) => ({
           header: label,
           cells: series.x_labels.map((_, x) => {
-            const key = `${x}:${y}`
+            const cell = byCell.get(`${x}:${y}`)
             // A cell the server sent as null is "No data" (drawn hatched); a cell it never sent is "—".
-            return byCell.has(key) && byCell.get(key) === null ? NO_DATA : formatChartValue(byCell.get(key), fmt)
+            return cell ? matrixCellText(cell.value, cell.counts, cell.n, fmt) : NO_VALUE
           }),
         })),
         warnings: [],
@@ -341,6 +486,16 @@ export function chartTableModel(series: ChartSeries, axes: ChartAxes = {}, forma
     }
     case 'tree': {
       const labels = new Map(series.nodes.map((n) => [n.id, n.label]))
+      if (series.nodes.some((n) => n.stats !== undefined)) {
+        return {
+          columns: ['Node', 'Parent', ...STATS_COLUMNS],
+          rows: series.nodes.map((n) => ({
+            header: n.label,
+            cells: [n.parent_id === null ? NO_VALUE : (labels.get(n.parent_id) ?? n.parent_id), ...statsCells(n.value, n.stats)],
+          })),
+          warnings: [],
+        }
+      }
       return {
         columns: ['Node', 'Parent', 'Value', 'Measure'],
         rows: series.nodes.map((n) => ({
@@ -361,6 +516,18 @@ export function chartTableModel(series: ChartSeries, axes: ChartAxes = {}, forma
         rows: series.edges.map((e) => ({
           header: labels.get(e.source) ?? e.source,
           cells: [labels.get(e.target) ?? e.target, formatChartValue(e.weight, fmt)],
+        })),
+        warnings: [],
+      }
+    }
+    case 'points': {
+      const x = axisValueFormatter(series.x.unit)
+      const y = axisValueFormatter(series.y.unit)
+      return {
+        columns: ['Name', series.x.label, series.y.label, series.size.label, 'Evaluated'],
+        rows: series.points.map((p) => ({
+          header: p.label,
+          cells: [x(p.x), y(p.y), formatPlainValue(p.size), formatPlainValue(p.n)],
         })),
         warnings: [],
       }

@@ -40,6 +40,7 @@ const META: EnvelopeMeta = {
 const MATRIX: MatrixChart = {
   kind: 'matrix',
   value_type: 'rate',
+  unit: 'ratio',
   x_labels: ['d1', 'd2'],
   y_labels: ['auth', 'cart'],
   cells: [

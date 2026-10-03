@@ -37,6 +37,7 @@ import {
   type TimeSeriesModel,
   type TimeSeriesPoint,
 } from '../../timeSeriesModel'
+import { canvasSafeText } from './canvasText'
 
 export type TimeSeriesOption = ComposeOption<
   | LineSeriesOption
@@ -245,7 +246,8 @@ export function buildTimeSeriesOption({
     xAxis: [
       {
         type: 'category',
-        data: model.points.map((point) => point.x),
+        // Canvas-safe (`canvasText.ts`); a marker's `xAxis` below goes through the same function, so it still matches.
+        data: model.points.map((point) => canvasSafeText(point.x)),
         axisLabel,
         axisLine,
       },
@@ -324,7 +326,12 @@ export function buildTimeSeriesOption({
               // mark's own `name`, and any formatter would have to go through
               // `domTooltipFormatter`, which a markLine label cannot use.
               label: { color: tokens.axis, position: 'insideEndTop' },
-              data: model.markers.map((marker) => ({ xAxis: marker.x, name: marker.names.join(', ') })),
+              // Canvas-safe: a release named (or starting with) `__proto__` must not reach zrender's text cache
+              // as a member name, nor may any prefix of it (`canvasText.ts`).
+              data: model.markers.map((marker) => ({
+                xAxis: canvasSafeText(marker.x),
+                name: canvasSafeText(marker.names.join(', ')),
+              })),
             }
           : undefined,
       },

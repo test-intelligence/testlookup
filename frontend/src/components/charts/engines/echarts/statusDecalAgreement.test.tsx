@@ -263,6 +263,32 @@ describe('status decals: the heatmap cell, its legend swatch and STATUS_ENCODING
     expect(classify(await echartsTile(hatch)).name).toBe(DRAWN_SHAPE.diagonal)
   })
 
+  it('a STATUS matrix draws its no-data cells as no status is drawn (F-06), and keys them with the same shape', async () => {
+    engine.load.mockResolvedValue({ init: engine.init })
+    const withGap: StatusMatrix = {
+      ...EVERY_STATUS,
+      x_labels: [...EVERY_STATUS.x_labels, 'run gap'],
+      cells: [...EVERY_STATUS.cells, { x: EVERY_STATUS.cells.length, y: 0, value: null, n: 0 }],
+    }
+    const view = render(<HeatmapChart data={withGap} description="Every status and a gap." />)
+    await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
+    const calls = engine.instance.setOption.mock.calls
+    const option = calls[calls.length - 1]?.[0] as unknown as { series: { id?: string; itemStyle?: { decal?: ChartDecal } }[] }
+    const decal = option.series.find((s) => s.id === 'no-data')?.itemStyle?.decal
+    if (!decal) throw new Error('no no-data decal')
+    const cell = classify(await echartsTile(decal)).name
+    expect(cell).toBe('lines:|')
+    const statusShapes = Object.values(DRAWN_SHAPE)
+    expect(statusShapes).not.toContain(cell)
+    // The legend under the canvas: "No data" in the status row, drawn with the same lines.
+    const entry = Array.from(view.container.querySelectorAll('[data-chart-legend] li')).find((li) => li.textContent === 'No data')
+    const id = /^url\(#(.+)\)$/.exec(entry?.querySelector('[data-legend-swatch]')?.getAttribute('fill') ?? '')?.[1]
+    const pattern = id ? view.container.ownerDocument.getElementById(id) : null
+    if (!pattern) throw new Error('no No data swatch pattern')
+    expect(classify(svgTile(pattern)).name).toBe('lines:|')
+    expect(view.container.querySelectorAll('[data-chart-legend]')).toHaveLength(1)
+  })
+
   it('the text a cell is read as (tooltip, announcement, table) is its STATUS_ENCODING label', () => {
     for (const [index, cell] of EVERY_STATUS.cells.entries()) {
       const status = cell.value as VizStatus

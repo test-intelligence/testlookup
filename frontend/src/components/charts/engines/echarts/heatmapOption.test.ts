@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { echartsDecal, type ChartTokens } from '../../tokens'
+import { decalOf, echartsDecal, type ChartTokens } from '../../tokens'
 import { TOOLTIP_NODE_ATTRIBUTE } from '../../tooltip'
 import {
   buildHeatmapOption,
   defaultSalient,
   formatHeatmapValue,
+  HEATMAP_COUNTS_LABEL,
+  heatmapCellIndex,
+  heatmapTooltipContent,
+  usableDomain,
   HEATMAP_BORDERED_COLUMNS_MAX,
+  HEATMAP_AXIS_NAME_ROW,
   HEATMAP_GRID,
   HEATMAP_NO_DATA_KEY_ROW,
+  HEATMAP_STATUS_BOTTOM,
+  startTruncate,
+  statusNoDataDecal,
   heatmapTarget,
   type NumericMatrix,
   type StatusMatrix,
 } from './heatmapOption'
-import { NO_DATA } from '../../chartText'
+import { NO_DATA, NOTHING_EVALUATED } from '../../chartText'
 
 const HOSTILE = '<img src=x onerror="window.__xss=1">'
 
@@ -109,6 +117,19 @@ describe('buildHeatmapOption', () => {
     expect(formatter([{ value: [1, 0, '-'] }]).textContent).toContain('No data')
     expect(formatter({ value: 'nonsense' }).textContent).toBe('')
     expect(formatter(undefined).textContent).toBe('')
+  })
+})
+
+describe('buildHeatmapOption — Object-member names on the canvas (zrender text cache, canvasText.ts)', () => {
+  it('joins a row or column named like (or STARTING WITH) an Object member, on both axes and with printed labels too', () => {
+    const J = String.fromCharCode(0x2060)
+    const named = { ...matrix, x_labels: ['__proto__', 'prod'], y_labels: ['constructor_payment_tests'] }
+    const option = build({ data: named })
+    expect((option.xAxis as Loose).data).toEqual([`${J}__proto__`, 'prod'])
+    expect((option.yAxis as Loose).data).toEqual([`${J}constructor_payment_tests`])
+    const printed = build({ data: named, rowLabels: ['toString'], columnLabels: ['valueOf_x', 'prod'] })
+    expect((printed.yAxis as Loose).data).toEqual([`${J}toString`])
+    expect((printed.xAxis as Loose).data).toEqual([`${J}valueOf_x`, 'prod'])
   })
 })
 
@@ -307,7 +328,7 @@ describe('buildHeatmapOption — the "No data" key and dense columns (R2-18)', (
     expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom)
   })
 
-  it('a status matrix (no colour bar) keys its hatched cell in the bar\'s place too', () => {
+  it('a status matrix keys "No data" in its legend UNDER the canvas, not on it, and keeps room for its labels only (F-11)', () => {
     const status: StatusMatrix = {
       kind: 'matrix',
       value_type: 'status',
@@ -319,8 +340,17 @@ describe('buildHeatmapOption — the "No data" key and dense columns (R2-18)', (
       ],
     }
     const option = buildHeatmapOption({ data: status, tokens, description: 'd' }) as unknown as Loose
-    expect(legendOf(option)).toMatchObject({ data: [NO_DATA], bottom: 0 })
-    expect(gridOf(option).bottom).toBe(HEATMAP_GRID.bottom)
+    expect(legendOf(option)).toBeUndefined()
+    expect(gridOf(option).bottom).toBe(HEATMAP_STATUS_BOTTOM)
+    // Its no-data cells: vertical lines, not Failed's '/' (F-06).
+    const noData = (option.series as Loose[]).find((s) => s.id === 'no-data') as Loose
+    expect((noData.itemStyle as Loose).decal).toEqual(statusNoDataDecal('axis'))
+    // A rate matrix keeps its '/' hatch and its canvas key, as before.
+    const rate = build()
+    expect((((rate.series as Loose[]).find((s) => s.id === 'no-data') as Loose).itemStyle as Loose).decal).toEqual(
+      decalOf('diagonal', 'axis'),
+    )
+    expect(legendOf(rate)).toMatchObject({ data: [NO_DATA] })
   })
 
   it('the key\'s text and row grow with the canvas text (full screen, presentation)', () => {
@@ -356,5 +386,153 @@ describe('formatHeatmapValue', () => {
     expect(formatHeatmapValue('rate', 0.9234)).toBe('92.3%')
     expect(formatHeatmapValue('count', 7)).toBe('7')
     expect(formatHeatmapValue('count', 1234)).toBe('1,234')
+  })
+})
+
+describe('Wave 3 (VIZ-501): fit to data, printed row labels, status counts', () => {
+  const counts = { passed: 212, failed: 3, broken: 5, skipped: 0, unknown: 0 }
+  const counted: NumericMatrix = {
+    kind: 'matrix',
+    value_type: 'rate',
+    x_labels: ['2026-09-12', '2026-09-13'],
+    y_labels: ['payments'],
+    cells: [
+      { x: 0, y: 0, value: 0.964, n: 220, counts },
+      { x: 1, y: 0, value: null, n: 4, counts: { passed: 0, failed: 0, broken: 0, skipped: 4, unknown: 0 } },
+    ],
+  }
+  const rows = (content: ReturnType<typeof heatmapTooltipContent>) => content.rows.map((row) => [row.label, row.value])
+
+  it('fit to data: the ramp spans the given range, and its ends say so', () => {
+    const visualMap = ramp(build({ domain: [0.6, 0.9] }))
+    expect([visualMap.min, visualMap.max]).toEqual([0.6, 0.9])
+    expect(visualMap.text).toEqual(['90.0%', '60.0%'])
+  })
+
+  it('no domain, or an unusable one: exactly the default ramp (0..1)', () => {
+    for (const domain of [undefined, [0.9, 0.6], [0.5, 0.5], [Number.NaN, 1], [0, Infinity]] as const) {
+      const visualMap = ramp(build({ domain: domain as readonly [number, number] | undefined }))
+      expect([visualMap.min, visualMap.max, visualMap.text]).toEqual([0, 1, ['100.0%', '0.0%']])
+    }
+    expect(usableDomain([0.2, 0.4])).toEqual([0.2, 0.4])
+    expect(usableDomain(undefined)).toBeNull()
+  })
+
+  it('a status matrix ignores the domain (it has no ramp)', () => {
+    const status: StatusMatrix = {
+      kind: 'matrix',
+      value_type: 'status',
+      x_labels: ['r1'],
+      y_labels: ['t'],
+      cells: [{ x: 0, y: 0, value: 'failed', n: 1 }],
+    }
+    expect(build({ data: status, domain: [0.2, 0.4] }).visualMap).toEqual([expect.objectContaining({ id: 'self-coloured' })])
+  })
+
+  it('prints the caller’s row labels on the axis; the tooltip keeps the full name', () => {
+    const option = build({ rowLabels: ['<b>s…</b>'] })
+    expect((option.yAxis as Loose).data).toEqual(['<b>s…</b>'])
+    expect(heatmapTooltipContent(matrix, matrix.cells[0]).title).toBe('<b>suite</b>')
+  })
+
+  it('row labels of the wrong length are ignored (never a misaligned axis)', () => {
+    expect((build({ rowLabels: ['a', 'b'] }).yAxis as Loose).data).toEqual(['<b>suite</b>'])
+  })
+
+  it('a cell with counts says them; a skipped-only cell says "Nothing evaluated", never "No data"', () => {
+    expect(rows(heatmapTooltipContent(counted, counted.cells[0]))).toEqual([
+      ['2026-09-12', '96.4%'],
+      [HEATMAP_COUNTS_LABEL, '212 passed, 3 failed, 5 broken'],
+      ['Samples', '220'],
+    ])
+    expect(rows(heatmapTooltipContent(counted, counted.cells[1]))).toEqual([
+      ['2026-09-13', NOTHING_EVALUATED],
+      [HEATMAP_COUNTS_LABEL, '4 skipped'],
+      ['Samples', '4'],
+    ])
+  })
+
+  it('a cell nobody ran is "No data" even with all-zero counts, and lists no counts', () => {
+    const empty = { x: 0, y: 0, value: null, n: 0, counts: { passed: 0, failed: 0, broken: 0, skipped: 0, unknown: 0 } }
+    expect(rows(heatmapTooltipContent(counted, empty))).toEqual([
+      ['2026-09-12', NO_DATA],
+      ['Samples', '0'],
+    ])
+  })
+
+  it('heatmapCellIndex: the cell a click is on, from ECharts’ own value, measured or hatched', () => {
+    expect(heatmapCellIndex(counted, { value: [0, 0, 0.964] })).toBe(0)
+    // The no-data series' value is [x, y, 0]: the cell is still found by its position.
+    expect(heatmapCellIndex(counted, { value: [1, 0, 0] })).toBe(1)
+    expect(heatmapCellIndex(counted, [{ value: [1, 0, 0] }])).toBe(1)
+    expect(heatmapCellIndex(counted, { value: [5, 5, 0] })).toBeNull()
+    expect(heatmapCellIndex(counted, { value: 'x' })).toBeNull()
+    expect(heatmapCellIndex(counted, undefined)).toBeNull()
+  })
+})
+
+describe('buildHeatmapOption — a titled run axis (F-04, F-19)', () => {
+  const runs = (labels: string[]): StatusMatrix => ({
+    kind: 'matrix',
+    value_type: 'status',
+    x_labels: labels,
+    y_labels: ['logout clears session'],
+    cells: labels.map((_, x) => ({ x, y: 0, value: 'passed' as const, n: 1 })),
+  })
+  type Axis = { data: string[]; name?: string; nameLocation?: string; axisLabel: { interval: number | string; width: number } }
+  const xOf = (option: Loose) => option.xAxis as Axis
+  const gridOf = (option: Loose) => option.grid as { bottom: number }
+
+  it('no title: the axis is exactly as before (no name, labels as given)', () => {
+    const option = buildHeatmapOption({ data: runs(['218', '220']), tokens, description: 'd', chartWidth: 640 }) as unknown as Loose
+    expect(xOf(option).name).toBeUndefined()
+    expect(xOf(option).data).toEqual(['218', '220'])
+  })
+
+  it('a title is drawn under the labels, canvas-safe, with a row of its own', () => {
+    const option = buildHeatmapOption({
+      data: runs(['218', '220']),
+      tokens,
+      description: 'd',
+      chartWidth: 640,
+      columnAxisName: 'Build (oldest to newest)',
+    }) as unknown as Loose
+    expect(xOf(option)).toMatchObject({ name: 'Build (oldest to newest)', nameLocation: 'middle' })
+    expect(gridOf(option).bottom).toBe(HEATMAP_STATUS_BOTTOM + HEATMAP_AXIS_NAME_ROW)
+    const hostile = buildHeatmapOption({ data: runs(['1']), tokens, description: 'd', columnAxisName: '__proto__ runs' }) as unknown as Loose
+    expect(xOf(hostile).name).toBe(`${String.fromCharCode(0x2060)}__proto__ runs`)
+  })
+
+  it('a phone-width run axis labels every k-th column instead of printing nothing (F-19)', () => {
+    const labels = Array.from({ length: 12 }, (_, i) => String(218 + 2 * i))
+    const narrow = buildHeatmapOption({ data: runs(labels), tokens, description: 'd', chartWidth: 340, columnAxisName: 'Build' }) as unknown as Loose
+    const axis = xOf(narrow)
+    expect(axis.axisLabel.interval).toBeGreaterThan(0)
+    expect(axis.axisLabel.width).toBeGreaterThanOrEqual(3 * 12 * 0.65)
+    // Untitled (every heatmap before Wave 3's run axis): as before, every column labelled.
+    const before = buildHeatmapOption({ data: runs(labels), tokens, description: 'd', chartWidth: 340 }) as unknown as Loose
+    expect(xOf(before).axisLabel.interval).toBe(0)
+  })
+
+  it('a start cut keeps the distinguishing tail, and never cuts to save fewer than 3 characters (F-04, F-12)', () => {
+    const long = ['main-20260901.1', 'main-20260901.2']
+    const option = buildHeatmapOption({
+      data: runs(long),
+      tokens,
+      description: 'd',
+      chartWidth: 240,
+      columnAxisName: 'Build',
+      columnLabelCut: 'start',
+    }) as unknown as Loose
+    const printed = xOf(option).data
+    expect(printed.every((label) => label.startsWith('…'))).toBe(true)
+    expect(printed.map((label) => label.slice(-1))).toEqual(['1', '2'])
+    expect(startTruncate('main-20260901.1', 10)).toBe('…0260901.1')
+    expect(startTruncate('abcdefghijk', 10)).toBe('abcdefghijk')
+    expect(startTruncate('abcdefghijkl', 10)).toBe('abcdefghijkl')
+    expect(startTruncate('abcdefghijklm', 10)).toBe('…efghijklm')
+    // A repeat's place survives the cut; with no room for the label itself nothing is cut.
+    expect(startTruncate('main-20260901.3 (2)', 12)).toBe('…60901.3 (2)')
+    expect(startTruncate('1203 (1)', 4.5)).toBe('1203 (1)')
   })
 })

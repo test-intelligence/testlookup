@@ -30,7 +30,22 @@ interface UseRunsOptions {
    * answer another fetch already gives in the common case (OverviewPage, M22).
    */
   enabled?: boolean
+  /**
+   * The caller shows a failure itself (or does not need to): no global error
+   * toast for this read. The sections' existence probe (`useEverHadRun`) — a
+   * probe that fails falls back to "nothing matches", and a toast for it put a
+   * page-wide "Network Error" on Suite detail, Coverage and Failures (B0,
+   * Wave 3). PART of the cache key (R1B-7): one SWR entry has one fetcher,
+   * the first to fire, so a quiet and a loud caller of the same read (Overview's
+   * first-run probe beside the catalogue's) would let whichever mounted first
+   * decide whether the other's failure toasts. A quiet read is its own entry;
+   * every other caller's key is exactly what it was.
+   */
+  quiet?: boolean
 }
+
+/** The key part a quiet read adds (`UseRunsOptions.quiet`). */
+const QUIET_KEY = 'quiet'
 
 export function useRuns(
   params?: Record<string, unknown>,
@@ -49,15 +64,14 @@ export function useRuns(
     // `scopedFetch`: this read follows the report scope, so it opts into
     // superseded-scope aborting (services/scopeAbort.ts).
     (projectId) =>
-      scopedFetch(() =>
-        runsService.list(projectId, {
-          // Global filter first, caller's params second, so an EXPLICIT
-          // `release_id` from a page that is already about one release wins
-          // over the header picker rather than being silently overridden by it.
-          ...(release !== null ? { release_id: release } : {}),
-          ...effectiveParams,
-        }),
-      ),
+      scopedFetch(() => {
+        // Global filter first, caller's params second, so an EXPLICIT
+        // `release_id` from a page that is already about one release wins
+        // over the header picker rather than being silently overridden by it.
+        const query = { ...(release !== null ? { release_id: release } : {}), ...effectiveParams }
+        // A quiet read adds its option; every other call is exactly what it was.
+        return opts?.quiet ? runsService.list(projectId, query, { suppressToast: true }) : runsService.list(projectId, query)
+      }),
     { refreshInterval: REFRESH_INTERVALS.ACTIVE },
     // The EFFECTIVE release, in the deps and not just the params: without it,
     // switching releases would reuse the previous release's cached run list
@@ -65,7 +79,7 @@ export function useRuns(
     // cache entry with the filtered one and get whichever landed first. A
     // list reaches the key as its sorted, joined string (`keyPart`), never an
     // array rebuilt per render.
-    [keyedParams(effectiveParams), keyPart(release)],
+    [keyedParams(effectiveParams), keyPart(release), ...(opts?.quiet ? [QUIET_KEY] : [])],
     opts?.enabled ?? true,
   )
 }

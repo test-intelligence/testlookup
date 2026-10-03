@@ -28,11 +28,12 @@ import type {
   TooltipComponentOption,
   VisualMapComponentOption,
 } from 'echarts/components'
-import type { MatrixChart, VizStatus } from '@/lib/viz/contracts'
-import { decalOf, echartsDecal, STATUS_ENCODING, type ChartTokens } from '../../tokens'
+import type { MatrixChart, StatusCounts, VizStatus } from '@/lib/viz/contracts'
+import { DECAL_TILE, decalOf, echartsDecal, STATUS_ENCODING, type ChartDecal, type ChartTokens } from '../../tokens'
 import { domTooltipFormatter, sampleRow, tipContent, type TooltipContent } from '../../tooltip'
 import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
-import { NO_DATA, formatPlainValue, formatRateValue } from '../../chartText'
+import { canvasSafeLabels, canvasSafeText } from './canvasText'
+import { NO_DATA, NOTHING_EVALUATED, formatPlainValue, formatRateValue, statusCountsText } from '../../chartText'
 
 export type HeatmapOption = ComposeOption<
   | HeatmapSeriesOption
@@ -43,16 +44,19 @@ export type HeatmapOption = ComposeOption<
   | LegendComponentOption
 >
 
-/** A matrix whose cells are numbers (`rate` 0..1 or `count`), `null` = no data. */
+/**
+ * A matrix whose cells are numbers (`rate` 0..1 or `count`), `null` = no data.
+ * `counts` (Wave 3): the five status counts behind a cell, for the tooltip.
+ */
 export interface NumericMatrix extends Omit<MatrixChart, 'value_type' | 'cells'> {
   value_type: 'rate' | 'count'
-  cells: { x: number; y: number; value: number | null; n: number }[]
+  cells: { x: number; y: number; value: number | null; n: number; counts?: StatusCounts }[]
 }
 
 /** A matrix whose cells are statuses, `null` = no data. */
 export interface StatusMatrix extends Omit<MatrixChart, 'value_type' | 'cells'> {
   value_type: 'status'
-  cells: { x: number; y: number; value: VizStatus | null; n: number }[]
+  cells: { x: number; y: number; value: VizStatus | null; n: number; counts?: StatusCounts }[]
 }
 
 export type HeatmapMatrix = NumericMatrix | StatusMatrix
@@ -102,6 +106,50 @@ export const HEATMAP_ASSUMED_WIDTH = 480
 /** Space kept between two neighbouring labels, px. */
 const LABEL_GAP = 8
 
+/** The fewest characters a column must hold before a titled axis labels EVERY column (F-19). */
+const MIN_LABEL_CHARS = 3
+
+/** The fewest characters a start cut must save (F-12): else the whole label is handed to ECharts. */
+const MIN_CUT = 3
+
+/** The column axis title's row under the labels, px at text scale 1 (`columnAxisName`). */
+export const HEATMAP_AXIS_NAME_ROW = 20
+
+/**
+ * A status matrix's bottom inset, px at text scale 1: the column labels only.
+ * Its key is the patterned legend under the canvas (`HeatmapChart`), with the
+ * "No data" entry in the same row (F-11), so the canvas keeps no room for a
+ * colour bar or a key of its own.
+ */
+export const HEATMAP_STATUS_BOTTOM = 28
+
+/**
+ * The "No data" decal of a STATUS matrix (F-06): vertical stripes. The rate
+ * heatmaps' '/' hatch is Failed's decal too, so in a status matrix a hatched
+ * no-data cell and a failed one differed only by the ground's lightness.
+ * Vertical lines are no status' shape. Drawn like `decalOf`'s lines: a full
+ * row, 2 px of every 8, turned a quarter.
+ */
+export function statusNoDataDecal(color: string): ChartDecal {
+  const t = DECAL_TILE
+  return { symbol: 'rect', symbolSize: 1, color, rotation: Math.PI / 2, dashArrayX: [t, 0], dashArrayY: [2, t - 2] }
+}
+
+/**
+ * `label` cut from the START to about `chars` characters ("…" + its tail),
+ * when that saves at least `MIN_CUT` characters; else unchanged (ECharts
+ * still cuts the end of a label that does not fit). A repeat's place
+ * ("228 (2)", `disambiguatedLabels`) is kept whole and the cut made before
+ * it; with no room left for the label itself, nothing is cut.
+ */
+export function startTruncate(label: string, chars: number): string {
+  const place = / \(\d+\)$/.exec(label)?.[0] ?? ''
+  const points = [...label.slice(0, label.length - place.length)]
+  const keep = Math.floor(chars) - 1 - place.length
+  if (keep < 1 || points.length - keep - 1 < MIN_CUT) return label
+  return `…${points.slice(points.length - keep).join('')}${place}`
+}
+
 /**
  * A label's width per character, in em, for choosing how many columns one
  * printed label stands for. An OVER-estimate on purpose: DejaVu Sans (the CI
@@ -149,6 +197,32 @@ export interface HeatmapOptionInput {
    * full day). Default: `data.x_labels`.
    */
   columnLabels?: readonly string[]
+  /**
+   * What the row axis PRINTS, one per row (Wave 3: a long suite or test name
+   * middle-truncated, so two names that share a prefix stay apart). The
+   * tooltip, the announcement and the table keep `data.y_labels`. Default:
+   * `data.y_labels`, cut at the end by ECharts as before.
+   */
+  rowLabels?: readonly string[]
+  /**
+   * The column axis' title, drawn under the labels (F-19: a run axis prints
+   * bare build numbers). Default: none, so an option without it is exactly
+   * as before.
+   */
+  columnAxisName?: string
+  /**
+   * Where a column label too wide for its column is cut: `'end'` (ECharts'
+   * own cut, the default) or `'start'`, keeping the distinguishing TAIL
+   * ("…20260901.3"; F-04).
+   */
+  columnLabelCut?: 'end' | 'start'
+  /**
+   * The colour ramp's value range for a numeric matrix ("fit to data",
+   * VIZ-501): `[lo, hi]` in the matrix's own unit. Default: 0..1 for a rate,
+   * 0..largest for a count, so a heatmap without it is drawn exactly as before.
+   * Ignored for a status matrix, and when it is not a finite, ascending pair.
+   */
+  domain?: readonly [number, number]
 }
 
 /** ECharts' own default label size, px: what the heatmap's axis and ramp text draw at unscaled. */
@@ -210,15 +284,33 @@ type Cell = HeatmapMatrix['cells'][number]
  * previous" across two failure categories would be a number about nothing.
  */
 export function heatmapTooltipContent(data: HeatmapMatrix, cell: Cell): TooltipContent {
+  // Wave 3: a cell that ran but evaluated nothing (only skips) is not "no
+  // runs": it says what DID run, as the table view does.
+  const evaluatedNothing = cell.value === null && cell.counts !== undefined && cell.n > 0
   return tipContent(data.y_labels[cell.y] ?? '', [
     {
       kind: 'value',
       key: 'value',
       label: data.x_labels[cell.x] ?? '',
-      value: cell.value === null ? NO_DATA : formatHeatmapValue(data.value_type, cell.value),
+      value:
+        cell.value === null ? (evaluatedNothing ? NOTHING_EVALUATED : NO_DATA) : formatHeatmapValue(data.value_type, cell.value),
     },
     { ...sampleRow(cell.n), value: formatPlainValue(cell.n) },
+    // Only when the server sent them (Wave 3): a tooltip without counts is exactly as before.
+    cell.counts !== undefined && cell.n > 0
+      ? { kind: 'value', key: 'counts', label: HEATMAP_COUNTS_LABEL, value: statusCountsText(cell.counts) }
+      : null,
   ])
+}
+
+/** The tooltip row naming a cell's status counts: "Results: 212 passed, 3 failed". */
+export const HEATMAP_COUNTS_LABEL = 'Results'
+
+/** `domain` when it is usable as a ramp range (finite, ascending), else `null`. */
+export function usableDomain(domain: readonly [number, number] | undefined): readonly [number, number] | null {
+  if (!domain) return null
+  const [lo, hi] = domain
+  return Number.isFinite(lo) && Number.isFinite(hi) && lo < hi ? domain : null
 }
 
 /**
@@ -242,6 +334,18 @@ function cellOf(params: unknown): { x: number; y: number } | null {
   return typeof x === 'number' && typeof y === 'number' ? { x, y } : null
 }
 
+/**
+ * The index (in `data.cells`) of the cell an ECharts mouse event is on, from
+ * the event's own `value: [x, y, ...]` — the same for the measured series and
+ * the no-data one — or `null` when the params carry no cell.
+ */
+export function heatmapCellIndex(data: HeatmapMatrix, params: unknown): number | null {
+  const at = cellOf(params)
+  if (!at) return null
+  const index = data.cells.findIndex((cell) => cell.x === at.x && cell.y === at.y)
+  return index >= 0 ? index : null
+}
+
 /** A heatmap tooltip's mark: the cell ECharts hands the `position` callback, else the pointer. */
 export const heatmapCellMark: EchartsMarkOf = (point, rect) =>
   rect
@@ -262,6 +366,10 @@ export function buildHeatmapOption({
   textScale = 1,
   rowsTopDown = false,
   columnLabels,
+  rowLabels,
+  domain,
+  columnAxisName,
+  columnLabelCut = 'end',
 }: HeatmapOptionInput): HeatmapOption {
   const byCell = new Map<string, Cell>(data.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
   const empty = data.cells.filter((cell) => cell.value === null)
@@ -277,29 +385,44 @@ export function buildHeatmapOption({
         ? HEATMAP_NO_DATA_KEY_ROW
         : Math.round(HEATMAP_NO_DATA_KEY_ROW * textScale)
       : 0
+  const status = data.value_type === 'status'
+  const scaled = (px: number) => (fontSize === undefined ? px : Math.round(px * textScale))
   const insets = heatmapGrid(textScale)
-  const grid = keyRow === 0 ? insets : { ...insets, bottom: insets.bottom + keyRow }
+  // A status matrix keeps room for its labels only (its key is the legend under the canvas); a column title adds a row.
+  const bottom =
+    (status ? scaled(HEATMAP_STATUS_BOTTOM) : insets.bottom + keyRow) + (columnAxisName ? scaled(HEATMAP_AXIS_NAME_ROW) : 0)
+  const grid = bottom === insets.bottom ? insets : { ...insets, bottom }
   const cellBorder =
     data.x_labels.length > HEATMAP_BORDERED_COLUMNS_MAX ? { borderWidth: 0 } : { borderColor: tokens.card, borderWidth: 1 }
-  const noDataDecal = decalOf('diagonal', tokens.axis) ?? undefined
+  const noDataDecal = status ? statusNoDataDecal(tokens.axis) : (decalOf('diagonal', tokens.axis) ?? undefined)
 
   const plotWidth = chartWidth - grid.left - grid.right
   const columnWidth = plotWidth / Math.max(1, data.x_labels.length)
-  const printed = columnLabels && columnLabels.length === data.x_labels.length ? columnLabels : data.x_labels
+  const given = columnLabels && columnLabels.length === data.x_labels.length ? columnLabels : data.x_labels
+  const fontPx = fontSize ?? HEATMAP_FONT_SIZE
   // Past the limit (a 14- to 90-day axis), label every k-th column and give
   // each printed label the k columns it stands for. Cutting each to ONE
   // column's width, whatever ECharts then thinned, printed "S…" under every
-  // other day of a 14-day axis and nothing at all under 90.
+  // other day of a 14-day axis and nothing at all under 90. A titled axis
+  // does the same when a column cannot hold `MIN_LABEL_CHARS` (F-19: a
+  // phone-width test x run printed no label at all).
+  const tooNarrow =
+    columnAxisName !== undefined && columnWidth - LABEL_GAP < MIN_LABEL_CHARS * fontPx * LABEL_EM_PER_CHAR
   const step =
-    data.x_labels.length <= HEATMAP_ALL_LABELS_MAX
-      ? 0
-      : heatmapColumnLabelStep(printed, columnWidth, fontSize ?? HEATMAP_FONT_SIZE)
+    data.x_labels.length <= HEATMAP_ALL_LABELS_MAX && !tooNarrow ? 0 : heatmapColumnLabelStep(given, columnWidth, fontPx)
+  const labelWidth = (step === 0 ? columnWidth : step * columnWidth) - LABEL_GAP
+  const printed =
+    columnLabelCut === 'start'
+      ? given.map((label) => startTruncate(label, labelWidth / (fontPx * LABEL_EM_PER_CHAR)))
+      : given
   const xLabel =
     step === 0
-      ? categoryLabels(data.x_labels.length, columnWidth - LABEL_GAP, tokens.axis, fontSize)
-      : { ...categoryLabels(data.x_labels.length, step * columnWidth - LABEL_GAP, tokens.axis, fontSize), interval: step - 1 }
+      ? categoryLabels(data.x_labels.length, labelWidth, tokens.axis, fontSize)
+      : { ...categoryLabels(data.x_labels.length, labelWidth, tokens.axis, fontSize), interval: step - 1 }
   // The y labels share the left inset, whatever the row count.
   const yLabel = categoryLabels(data.y_labels.length, grid.left - LABEL_GAP, tokens.axis, fontSize)
+  // Canvas-safe: a row named `__proto__` must not reach zrender's text cache as a member name (`canvasText.ts`).
+  const yData = canvasSafeLabels(rowLabels && rowLabels.length === data.y_labels.length ? rowLabels : data.y_labels)
   const axisLine = { lineStyle: { color: tokens.grid } }
   // Active cell: 2px outline in the text colour + a halo in the card colour.
   const emphasis = {
@@ -358,11 +481,15 @@ export function buildHeatmapOption({
   const selfColoured: number[] = []
   if (data.value_type === 'status') selfColoured.push(0)
   else {
+    let min = 0
     let max = 1
     if (data.value_type === 'count') {
       // A loop, not Math.max(...spread): a spread past ~100k arguments overflows the stack.
       for (const cell of data.cells) if (cell.value !== null && cell.value > max) max = cell.value
     }
+    // Fit to data (VIZ-501): the caller's range; the ramp's ends say it in words.
+    const fitted = usableDomain(domain)
+    if (fitted) [min, max] = fitted
     const direction = salient ?? defaultSalient(data.value_type)
     visualMap.push({
       type: 'continuous',
@@ -373,7 +500,7 @@ export function buildHeatmapOption({
       // only its bar is hidden.
       show: rampShown,
       seriesIndex: 0,
-      min: 0,
+      min,
       max,
       calculable: false,
       orient: 'horizontal',
@@ -388,7 +515,7 @@ export function buildHeatmapOption({
       // salient end flips with the metric (a rate is reversed, a count is
       // not), the same end colour meant "lowest" on one heatmap and "highest" on
       // the next — the first Linux baselines showed both, unlabelled.
-      text: [rampEndLabel(data.value_type, max), rampEndLabel(data.value_type, 0)],
+      text: [rampEndLabel(data.value_type, max), rampEndLabel(data.value_type, min)],
       textStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
     })
   }
@@ -435,14 +562,23 @@ export function buildHeatmapOption({
     },
     xAxis: {
       type: 'category',
-      data: columnLabels && columnLabels.length === data.x_labels.length ? [...columnLabels] : data.x_labels,
+      data: canvasSafeLabels(printed),
       axisLabel: xLabel,
       axisLine,
       splitArea: { show: false },
+      // F-19: what the printed labels are. Only when asked for: every other heatmap's option is as before.
+      ...(columnAxisName
+        ? {
+            name: canvasSafeText(columnAxisName),
+            nameLocation: 'middle' as const,
+            nameGap: scaled(HEATMAP_STATUS_BOTTOM),
+            nameTextStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
+          }
+        : {}),
     },
     yAxis: rowsTopDown
-      ? { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false }, inverse: true }
-      : { type: 'category', data: data.y_labels, axisLabel: yLabel, axisLine, splitArea: { show: false } },
+      ? { type: 'category', data: yData, axisLabel: yLabel, axisLine, splitArea: { show: false }, inverse: true }
+      : { type: 'category', data: yData, axisLabel: yLabel, axisLine, splitArea: { show: false } },
     visualMap,
     series,
     // R2-18: the hatch, keyed. The swatch is drawn as the cell is (card fill,
@@ -450,7 +586,8 @@ export function buildHeatmapOption({
     // not a toggle — hiding the hatched cells would leave holes that read as
     // the card. Only when something is hatched: otherwise the option is
     // exactly as before.
-    ...(empty.length > 0
+    // A status matrix keys "No data" in its patterned legend under the canvas (F-11: one legend row).
+    ...(empty.length > 0 && !status
       ? {
           legend: {
             data: [NO_DATA],

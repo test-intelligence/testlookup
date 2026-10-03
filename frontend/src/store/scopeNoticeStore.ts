@@ -11,7 +11,12 @@
  */
 import { create } from 'zustand'
 
-export type ScopeDimension = 'release' | 'suite'
+/**
+ * `drill`: a drill-down level a shared link named that the page could not open
+ * (C5 URL encoding, `useDrillPath().dropped`); its values are the sentences
+ * that say so, ready to show as they are.
+ */
+export type ScopeDimension = 'release' | 'suite' | 'drill'
 
 export interface DroppedNotice {
   dimension: ScopeDimension

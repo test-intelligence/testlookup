@@ -23,7 +23,13 @@
  *             group.
  *   keys      ←/→ (and ↑/↓) move a point, Home/End jump to the ends, Escape
  *             dismisses. Every one of them is `preventDefault`ed only when it
- *             is handled, so Tab still leaves.
+ *             is handled, so Tab still leaves. A chart given `onMarkActivate`
+ *             AND `markKit` (Wave 3, `marks.ts` / `markKit.ts`) also takes
+ *             Enter / Shift+Enter on the focused point, and its readout grows
+ *             the point's intents as buttons (`MarkActions`) that Tab reaches;
+ *             without them, Enter is not handled and the readout is unchanged.
+ *             The kit comes from the host, so this module never imports the
+ *             activation code: it stays out of every page's first visit.
  *   speech    the focused point's text goes to the PAGE's one
  *             `ChartAnnouncer` — never a live region per chart (VIZ-105).
  *             It is the result of the reader's own keypress, so it is
@@ -65,12 +71,14 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { useChartAnnouncer } from './ChartAnnouncer'
 import { ChartTooltipBody, TIP_BOX_STYLE } from './ChartTooltipBody'
 import { tooltipText, type TooltipContent } from './tooltip'
+import type { ChartMark, MarkActivationProps, PointerModifiers } from './marks'
 
 /** One thing the cursor can stop on: a bar, a slice, a day. */
 export interface ChartCursorPoint {
@@ -84,6 +92,12 @@ export interface ChartCursorPoint {
    * `cursorPoint` builds both from the one content, so they cannot differ.
    */
   content?: TooltipContent
+  /**
+   * The mark this stop stands for (Wave 3, `marks.ts`). Only read when the
+   * chart was given `onMarkActivate`: then Enter activates it and the readout
+   * offers its intents as buttons. Absent = a stop that only reads.
+   */
+  mark?: ChartMark
 }
 
 /** A cursor stop whose spoken text and readout both come from ONE tooltip content. */
@@ -91,7 +105,7 @@ export function cursorPoint(key: string, content: TooltipContent): ChartCursorPo
   return { key, text: tooltipText(content), content }
 }
 
-export interface ChartCursorOptions {
+export interface ChartCursorOptions extends MarkActivationProps {
   /** The frame's title: the surface is named after the chart the reader sees. */
   title: string
   /** "Donut chart", "Stacked bar chart", … */
@@ -105,6 +119,9 @@ export interface ChartCursorOptions {
 /** The hint every chart's accessible name ends with. Exported for the specs. */
 export const CURSOR_HINT = 'Use the arrow keys to read each value.'
 
+/** Added to the hint only when the chart's marks can be activated (Wave 3). */
+export const CURSOR_ACTIVATE_HINT = 'Press Enter to open the focused value.'
+
 export interface ChartCursorSurfaceProps {
   tabIndex: 0
   role: 'group'
@@ -113,7 +130,7 @@ export interface ChartCursorSurfaceProps {
   'data-chart-cursor-index': number
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
   onFocus: () => void
-  onBlur: () => void
+  onBlur: (event: ReactFocusEvent<HTMLElement>) => void
   onPointerMove: () => void
 }
 
@@ -146,6 +163,22 @@ export interface ChartCursor {
   tipKey: string
   /** Render inside the chart body: the focused point, for a sighted keyboard user. */
   readout: ReactNode
+  /** Whether any point can be activated (a handler and a kit were given and a point carries a `mark`). */
+  activatable: boolean
+  /**
+   * For the chart's own pointer handler (a bar's `onClick`): activate point
+   * `index` with the intent the modifiers pick (`pointerIntent`). A touch tap
+   * only MOVES the cursor there, so the readout offers the intents as buttons.
+   * A no-op without a handler or a mark.
+   */
+  activatePointer: (index: number, modifiers?: PointerModifiers) => void
+  /**
+   * For a pointer that lands on something finer than a cursor stop (a stacked
+   * SEGMENT): activate `mark` with the intent the modifiers pick. Returns
+   * whether an intent was acted on (`false` for a touch tap, which only
+   * selects, and without a handler or a kit).
+   */
+  activateMark: (mark: ChartMark, modifiers?: PointerModifiers) => boolean
 }
 
 const NEXT = new Set(['ArrowRight', 'ArrowDown'])
@@ -156,7 +189,15 @@ const PREVIOUS = new Set(['ArrowLeft', 'ArrowUp'])
  * `surfaceProps` on the plot's wrapper, `tipProps` on the `<Tooltip>`, and
  * render `readout` somewhere inside the body.
  */
-export function useChartCursor({ title, chartType, points, noun = 'value' }: ChartCursorOptions): ChartCursor {
+export function useChartCursor({
+  title,
+  chartType,
+  points,
+  noun = 'value',
+  onMarkActivate,
+  markIntents,
+  markKit,
+}: ChartCursorOptions): ChartCursor {
   const announcer = useChartAnnouncer()
   const [index, setIndex] = useState(-1)
   const [dismissed, setDismissed] = useState(false)
@@ -167,6 +208,11 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
     dismissedRef.current = dismissed
   }, [dismissed])
   const count = points.length
+
+  // Mark activation (Wave 3) is the host's kit (`markKit.tsx`): this module
+  // only calls it. Without a handler, a kit and a marked point, nothing below
+  // changes: the pre-Wave-3 cursor exactly.
+  const activatable = Boolean(onMarkActivate && markKit) && points.some((p) => p.mark !== undefined)
 
   // The points changed under the cursor (a page turn, a filter): start over
   // rather than read out whatever now happens to sit at that index.
@@ -199,9 +245,19 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
     [count, speak],
   )
 
+  const dismiss = useCallback(() => {
+    setIndex(-1)
+    setDismissed(true)
+  }, [])
+  const activation =
+    activatable && markKit && onMarkActivate
+      ? markKit.cursor({ points, index, onMarkActivate, markIntents, move, dismiss })
+      : null
+
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>) => {
       if (count === 0) return
+      if (activation?.onKeyDown(event)) return
       // Never swallow a modified key: Ctrl+Home is the reader's, not ours.
       if (event.altKey || event.ctrlKey || event.metaKey) return
       const { key } = event
@@ -218,7 +274,7 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
       event.preventDefault()
       event.stopPropagation()
     },
-    [count, index, move],
+    [activation, count, index, move],
   )
 
   // Escape must dismiss a tooltip the POINTER opened too, and then focus is
@@ -232,7 +288,16 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
   }, [])
 
   const onFocus = useCallback(() => setDismissed(false), [])
-  const onBlur = useCallback(() => setIndex(-1), [])
+  const onBlur = useCallback(
+    (event: ReactFocusEvent<HTMLElement>) => {
+      // Tabbing from the chart onto its own readout buttons keeps the cursor
+      // (and so the buttons) where they are.
+      const to = event.relatedTarget as Node | null
+      if (activatable && to && event.currentTarget.contains(to)) return
+      setIndex(-1)
+    },
+    [activatable],
+  )
   // Moving the pointer again asks for the tooltip back — and does nothing else.
   const onPointerMove = useCallback(() => {
     if (dismissedRef.current) setDismissed(false)
@@ -240,7 +305,9 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
 
   const point = index >= 0 ? (points[index] ?? null) : null
 
-  const label = `${title}, ${chartType}, ${count} ${count === 1 ? noun : `${noun}s`}. ${CURSOR_HINT}`
+  const label = `${title}, ${chartType}, ${count} ${count === 1 ? noun : `${noun}s`}. ${CURSOR_HINT}${
+    activatable ? ` ${CURSOR_ACTIVATE_HINT}` : ''
+  }`
 
   const surfaceProps = useMemo<ChartCursorSurfaceProps>(
     () => ({
@@ -262,7 +329,7 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
     [dismissed],
   )
 
-  const readout = point?.content ? (
+  const body = point?.content ? (
     <div
       data-chart-readout=""
       // The tooltip's own box and rows. Wraps; placed by the chart, below its
@@ -286,5 +353,19 @@ export function useChartCursor({ title, chartType, points, noun = 'value' }: Cha
     </p>
   ) : null
 
-  return { index, point, surfaceProps, tipProps, tipKey: dismissed ? 'dismissed' : 'live', readout }
+  return {
+    index,
+    point,
+    surfaceProps,
+    tipProps,
+    tipKey: dismissed ? 'dismissed' : 'live',
+    // Without activation the readout is exactly the pre-Wave-3 element.
+    readout: activation && body && point?.mark ? activation.readout(body, index) : body,
+    activatable,
+    activatePointer: activation ? activation.activatePointer : noPointer,
+    activateMark: activation ? activation.activateMark : noMark,
+  }
 }
+
+const noPointer = () => {}
+const noMark = () => false

@@ -22,9 +22,19 @@
  *   pagination  at most `MAX_BARS_PER_PAGE` bars are drawn; past that the
  *               chart paginates and states the page and the total.
  */
-import { VIZ_STATUSES, type ChartSeries, type EnvelopeMeta, type SeriesChart, type VizStatus } from '@/lib/viz/contracts'
+import {
+  VIZ_DIMENSIONS,
+  VIZ_STATUSES,
+  type ChartSeries,
+  type EnvelopeMeta,
+  type SeriesChart,
+  type VizDimension,
+  type VizStatus,
+} from '@/lib/viz/contracts'
 import { formatNumber } from '@/utils/formatters'
 import type { ChartResponse } from './chartState'
+import type { ChartMark } from './marks'
+import { OTHER_KEY } from './multiSeriesModel'
 import { middleTruncate } from './labelTruncate'
 import { largestRemainderPercents } from './percents'
 import { ownLabel } from './chartText'
@@ -342,6 +352,102 @@ export function statusBarModel(
     pages,
     total: all.length,
     notes,
+  }
+}
+
+// ── Marks (Wave 3, VIZ-602 / 603) ────────────────────────────────────────────
+
+/**
+ * The C5 dimensions a bar chart's marks stand for: the axis (what a bar is)
+ * and, for grouped / stacked bars, the series (what a segment is). Read from
+ * the series the server sent (`dimensions`, chart-data's own `group_by`), so a
+ * mark names the dimension the KEY belongs to. A word the contract does not
+ * know (a caller's display word, an object key) is no dimension: no mark.
+ */
+export interface BarMarkDimensions {
+  axis: VizDimension | null
+  series: VizDimension | null
+}
+
+const DIMENSION_SET = new Set<string>(VIZ_DIMENSIONS)
+const asDimension = (value: unknown): VizDimension | null =>
+  typeof value === 'string' && DIMENSION_SET.has(value) ? (value as VizDimension) : null
+
+export function barMarkDimensions(series: ChartSeries | null): BarMarkDimensions {
+  if (!series || series.kind !== 'series') return { axis: null, series: null }
+  return { axis: asDimension(series.dimensions[0]), series: asDimension(series.dimensions[1]) }
+}
+
+/**
+ * The sample behind each bar and each segment, as the server sent it (`n`),
+ * so the rows panel can compare a RATE's rows with the mark's `n`. `null` for
+ * a bucket the series never drew: an absent sample is not a sample of 0.
+ */
+export interface BarSampleSizes {
+  bar: (key: string) => number | null
+  segment: (seriesKey: string, key: string) => number | null
+}
+
+export function barSampleSizes(series: ChartSeries): BarSampleSizes {
+  const bars = new Map<string, number>()
+  const segments = new Map<string, Map<string, number>>()
+  if (series.kind === 'series') {
+    for (const entry of series.series) {
+      const own = new Map<string, number>()
+      segments.set(entry.key, own)
+      for (const point of entry.points) {
+        own.set(point.x, (own.get(point.x) ?? 0) + point.n)
+        bars.set(point.x, (bars.get(point.x) ?? 0) + point.n)
+      }
+    }
+  }
+  return {
+    bar: (key) => bars.get(key) ?? null,
+    segment: (seriesKey, key) => segments.get(seriesKey)?.get(key) ?? null,
+  }
+}
+
+/**
+ * One ranked bar as a mark: the chart's KEY, its full label and the value it
+ * drew. The "Other" roll-up is no mark (it is many buckets, and the rows
+ * endpoint refuses `__other__`), and neither is a bar of no known dimension.
+ */
+export function rankedBarMark(
+  bar: Pick<RankedBar, 'key' | 'label' | 'value'>,
+  dimensions: BarMarkDimensions,
+  sizes: BarSampleSizes,
+): ChartMark | undefined {
+  if (!dimensions.axis || bar.key === OTHER_KEY) return undefined
+  return { dimension: dimensions.axis, value: bar.key, label: bar.label, y: bar.value, n: sizes.bar(bar.key) }
+}
+
+/** A whole grouped / stacked bar as a mark (the keyboard's stop): its total as `y`. */
+export function statusBarMark(bar: StatusBar, dimensions: BarMarkDimensions, sizes: BarSampleSizes): ChartMark | undefined {
+  if (!dimensions.axis || bar.key === OTHER_KEY) return undefined
+  return { dimension: dimensions.axis, value: bar.key, label: bar.label, y: bar.total, n: sizes.bar(bar.key) }
+}
+
+/**
+ * One segment of a grouped / stacked bar as a mark (the pointer's target): the
+ * bar's bucket with the segment's status as context, and the segment's TRUE
+ * count as `y` whichever mode is drawn (a 100% segment's length is a share,
+ * not the count its rows add up to).
+ */
+export function statusSegmentMark(
+  bar: StatusBar,
+  status: VizStatus,
+  dimensions: BarMarkDimensions,
+  sizes: BarSampleSizes,
+): ChartMark | undefined {
+  const segment = bar.segments.find((s) => s.status === status)
+  if (!dimensions.axis || !dimensions.series || !segment || bar.key === OTHER_KEY) return undefined
+  return {
+    dimension: dimensions.axis,
+    value: bar.key,
+    label: bar.label,
+    y: segment.value,
+    n: sizes.segment(status, bar.key),
+    context: [{ dimension: dimensions.series, value: status }],
   }
 }
 

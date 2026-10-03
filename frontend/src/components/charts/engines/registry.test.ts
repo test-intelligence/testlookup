@@ -13,19 +13,43 @@ vi.mock('./echarts/heatmap', () => ({
   },
 }))
 
+const wave3Modules = vi.hoisted(() => ({ loads: { treemap: 0, scatter: 0 } }))
+vi.mock('./echarts/treemap', () => ({
+  get echarts() {
+    wave3Modules.loads.treemap += 1
+    return { marker: 'treemap-engine' }
+  },
+}))
+vi.mock('./echarts/scatter', () => ({
+  get echarts() {
+    wave3Modules.loads.scatter += 1
+    return { marker: 'scatter-engine' }
+  },
+}))
+
 describe('loadChartEngine', () => {
   afterEach(async () => {
     const { resetChartEngineCache } = await import('./registry')
     resetChartEngineCache()
+    wave3Modules.loads = { treemap: 0, scatter: 0 }
     heatmapModule.fail = null
     vi.resetModules()
   })
 
   it('registers heatmap as a lazily loaded type', async () => {
     const { CHART_ENGINE_TYPES, loadChartEngine } = await import('./registry')
-    expect(CHART_ENGINE_TYPES).toEqual(['heatmap', 'timeSeries'])
+    expect(CHART_ENGINE_TYPES).toEqual(['heatmap', 'timeSeries', 'treemap', 'scatter'])
     const engine = await loadChartEngine('heatmap')
     expect((engine as unknown as { marker: string }).marker).toBe('heatmap-engine')
+  })
+
+  it('loads the Wave 3 types from their own modules, each on first use only', async () => {
+    const { loadChartEngine } = await import('./registry')
+    expect(wave3Modules.loads).toEqual({ treemap: 0, scatter: 0 })
+    expect((await loadChartEngine('treemap')) as unknown).toEqual({ marker: 'treemap-engine' })
+    expect(wave3Modules.loads).toEqual({ treemap: 1, scatter: 0 })
+    expect((await loadChartEngine('scatter')) as unknown).toEqual({ marker: 'scatter-engine' })
+    expect(wave3Modules.loads).toEqual({ treemap: 1, scatter: 1 })
   })
 
   it('loads a type once and hands every caller the same engine', async () => {

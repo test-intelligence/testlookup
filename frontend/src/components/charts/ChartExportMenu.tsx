@@ -27,7 +27,7 @@
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDown, Loader2 } from 'lucide-react'
-import type { ChartSeries } from '@/lib/viz/contracts'
+import type { AnyChartSeries } from '@/lib/viz/contracts'
 import { buildChartCsv, EXPORT_PIXEL_RATIO, exportFilename, type ChartProvenance } from '@/lib/viz/chartExport'
 import { csvBlob } from '@/lib/viz/csv'
 import { useAppVersion } from '@/lib/viz/useAppVersion'
@@ -42,7 +42,8 @@ export interface ChartExportMenuProps {
   chartSlug?: string
   /** The chart body element (holds the Recharts `<svg>` or the ECharts container). */
   getBody: () => HTMLElement | null
-  series: ChartSeries
+  /** Any C3 kind (Wave 3: the scatter's `points` too). */
+  series: AnyChartSeries
   /**
    * Accepted so a frame can hand over what it gives the table view. The CSV
    * deliberately writes RAW values, not formatted ones (see `chartExport.ts`),

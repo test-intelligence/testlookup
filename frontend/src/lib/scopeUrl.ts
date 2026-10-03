@@ -12,7 +12,8 @@
  * `suite` and `days` are page-local elsewhere (Run compare, Run detail, Test
  * management and the Intelligence hub read `?suite`; Suite detail reads
  * `?days`), and `page, status, mode, tab, scope, q, name, left, right, event,
- * upload, report_version` belong to individual pages. This module never reads
+ * upload, report_version` belong to individual pages, and `drill, rows` to the
+ * drill-down (C5 URL encoding, `useDrillPath`). This module never reads
  * or writes any of them; `writeScopeParams` touches only its own three keys
  * and leaves every other parameter — value, order and repetition — exactly as
  * it found it.
@@ -49,6 +50,11 @@ export const RESERVED_URL_KEYS = [
   'event',
   'upload',
   'report_version',
+  // Wave 3 (C5 URL encoding, VIZ-602): the drill path and the open rows panel,
+  // repeatable `drill=<dimension>~<value>` / `rows=<dimension>~<value>`. Read
+  // and written by `useDrillPath` only.
+  'drill',
+  'rows',
 ] as const
 
 /** Must equal `UNATTRIBUTED` in `backend/app/core/release_filter.py` and
