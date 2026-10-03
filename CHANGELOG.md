@@ -144,6 +144,117 @@ First visit with the flags off: Coverage +2.5 kB, Failure analysis +2.3 kB
 Suite detail +6.0 kB, Trends +5.5 kB (mostly the chart-chunk split). The eager growth and
 these first-visit numbers were accepted by the owner; follow-up: deliberate
 chunk grouping before Wave 4.
+## Unreleased - the shared pager's chevron buttons have accessible names
+
+The shared `Pagination` component (`components/ui/Pagination.tsx`, used on
+Runs, Run detail, Search, Releases, Reviews, My failures, Live execution,
+Intelligence hub and Test management) drew its previous and next controls as
+icon-only chevrons with no accessible name. A screen reader announced each as
+just "button", and axe flagged `button-name` (found during Visualization
+Wave 3). It has no first or last buttons.
+
+- The buttons are now named "Previous page" and "Next page" with
+  `aria-label`. Only the labels change: no classes or markup, so nothing
+  looks different.
+- `Pagination.test.tsx` finds each button by its name, including when it is
+  disabled on the first or last page, and checks that no pager button has an
+  empty name. Removing or renaming either label fails it.
+- `RunsPage.signaturePagination.test.tsx` and `tests/e2e/runs-table.spec.ts`
+  click "Next page" by name. Before, they used "the last button" and an XPath
+  sibling selector.
+## Unreleased - API workers freeze their start-up heap out of the garbage collector
+
+Every API worker now ends start-up with `gc.collect()` then `gc.freeze()`
+(`app/core/startup_gc.py`, called as the last step of the FastAPI lifespan,
+once per process). An API worker holds ~700,000 GC-tracked objects after
+start-up (modules, classes, schemas, the route table) that live as long as the
+process. Each full (generation-2) collection walked all of them again: 180-260
+ms, about every 7-12 requests of a 3,520-row heatmap, which was the whole p95
+tail of large analytics responses (Wave 3 perf work). Frozen objects are no
+longer examined, so a full collection now walks only what was allocated after
+start-up.
+
+Measured in-process (httpx ASGITransport, `GET /analytics/heatmap
+kind=suite_day days=90`, 1M-row seed, 120 requests per arm over two processes,
+Windows, CPython 3.12): p95 406.7 -> 221.4 ms (`rows=60`: 429.6 -> 233.2 ms);
+gen-2 pause p50 200.7 -> 1.2 ms; GC time 2,623 -> 224 ms per 120 requests;
+p50 unchanged (201.5 -> 202.6 ms). Every request over 300 ms that remains is
+not GC. The freeze costs 210-310 ms once per worker at start-up.
+
+- The thresholds stay CPython's defaults (700, 10, 10). With the freeze, a
+  generation-0 threshold of 10,000 saved ~1 ms of GC per 200 ms request and
+  left p50/p95 within noise.
+- Celery workers are unchanged: a worker parent forks with ~56,500 tracked
+  objects (task modules import their services lazily) and a full collection
+  there takes ~4-5 ms; tasks have no latency budget.
+- gunicorn needs no hook: `preload_app` is off, so each `UvicornWorker` imports
+  the app and runs the lifespan after the fork.
+- Reference counting still frees frozen objects; only a cycle among them is
+  never reclaimed, which for import-time objects is the life of the worker
+  anyway.
+
+Tests: `tests/regression/test_startup_heap_freeze.py` runs the real lifespan
+(network steps stubbed) and reads CPython's freeze count: the heap is frozen
+before the app serves, a second start-up in the same process does not freeze
+again, garbage is collected rather than frozen, and the thresholds stay put.
+Mutation-checked: dropping the call, moving it to shutdown, removing the
+once-guard, removing the collect, or adding a threshold each fail a test.
+## Unreleased - homelab deploy: image-authority check tolerates finished and briefly un-Ready pods; the fan-out cutover stops repeating
+
+The 2026-10-02 homelab deploy of main 03983f12 stopped at Step 5b with
+`Image authority mismatch for testlookup-backend`. Steps 6-11 never ran. By the
+time anyone looked, both backend pods were Ready on exactly the pushed digest.
+The completed migration Job pod was blamed, but the check's selector
+(`app.kubernetes.io/component=api`) already excludes it: the Job is labelled
+`component: migration`. So the pod that failed was gone by then. The error
+did not say which pod it was, which is why the cause was guessed.
+
+- `verify_deployment_image` skips pods in phase `Succeeded` or `Failed` (a
+  completed Job pod, or an evicted or node-shutdown replica). It does not rely
+  on labels for this. Every live pod with the Deployment's labels still has to
+  be Ready on the expected image and digest, whatever owns it: the Service
+  routes to it. Pending pods count.
+- Step 5b calls the new `wait_for_deployment_image`. It re-runs the check for
+  up to `IMAGE_AUTHORITY_TIMEOUT_SECONDS` (default 120), every 5 s. After the
+  rollouts a correct pod can be un-Ready for a moment: an HPA scale-up, or a
+  readiness probe that flaps while nine Deployments restart. A pod that stays
+  wrong still fails.
+- On failure the error names the pod, with its phase, readiness, image and
+  imageID (`IMAGE_AUTHORITY_FAILURE`).
+- Separate bug in the same log. `scripts/prepare-live-fanout-cutover.sh` read
+  pod protocols with a bare `app=testlookup-backend` selector, so it also saw
+  the migration Job's pod, which has no `live-fanout-protocol` label. Every
+  deploy runs that Job just before the cutover, so the "one-time" cutover ran on
+  every deploy since 2026-09-09: it deleted the HPA and scaled the API to zero.
+  The probe now uses the same serving-pods selector as its wait.
+- Tests: `test_homelab_build_authority.py` adds cases for finished pods,
+  running strays, Pending pods, malformed rows and the retry window (`sleep` is
+  stubbed to move bash's `SECONDS` forward). `test_live_fanout_cutover.py` runs
+  the cutover against a fake kubectl that returns the migration pod for a bare
+  selector. Eight hand mutations were all killed. Four of them are now in
+  `scripts/mutation_check_exploratory_m26_provenance.py`.
+
+## Unreleased - chart-data tie-breaks are code-point ordered
+
+`GET /analytics/chart-data` broke ranking ties by the database's default
+collation, while `assemble` (Python `str` order) and the heatmap, coverage map
+and failure groups break them by code point. On an ICU or glibc server `épée`
+sorts before `fence`; by code point it sorts after `zebra`. So when keys tied
+on the ranked total, the same data could keep different series (or category
+buckets) under `top_n`, and the C3 caps, on different servers.
+
+- The ranking tie-break is now `rank_key COLLATE "C"` on both axes.
+- The final projection emits `bucket_key` and `series_key` with
+  `COLLATE "C"`, so `ORDER BY 1, 3` is code-point ordered too. That order
+  decides which rows the row cap keeps and which spelling of a key's label
+  wins. Grouping does not change.
+- The comparability statement orders its series the same way.
+- New Postgres tests shadow `test_runs`/`test_cases` with ICU-collated key
+  columns, because this container's `en_US` already sorts by byte. Removing any
+  of the three main `COLLATE`s fails one of them.
+
+Not changed: the `MIN(...)` label aggregates still use the column collation.
+That is a separate follow-up.
 
 ## Unreleased - Visualization Upgrade, Wave 3 data layer: heatmap, coverage map, failure groups, chart rows and test scatter endpoints (VIZ-205, VIZ-206, VIZ-207, VIZ-208, VIZ-506)
 

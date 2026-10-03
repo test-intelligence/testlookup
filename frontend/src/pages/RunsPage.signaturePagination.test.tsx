@@ -80,9 +80,7 @@ describe('failure-signature table pagination', () => {
     renderCard(SIGNATURE_ROWS_PER_PAGE * 2)
     const firstPage = visibleBuildNumbers()
 
-    const buttons = screen.getAllByRole('button')
-    const next = buttons[buttons.length - 1]
-    fireEvent.click(next)
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
 
     expect(screen.getByText(/Page 2 of 2/)).toBeTruthy()
     expect(visibleBuildNumbers()).not.toEqual(firstPage)
@@ -105,8 +103,7 @@ describe('failure-signature table pagination', () => {
         />
       </MemoryRouter>,
     )
-    const buttons = screen.getAllByRole('button')
-    fireEvent.click(buttons[buttons.length - 1])
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
     expect(screen.getByText(/Page 2 of 3/)).toBeTruthy()
 
     // Project switch / time-window change → a smaller cluster.

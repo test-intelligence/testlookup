@@ -22,6 +22,7 @@ from app.bootstrap import (
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
+from app.core.startup_gc import freeze_startup_heap
 from app.core.analytics_errors import (
     AnalyticsQueryError,
     analytics_query_error_handler,
@@ -133,6 +134,11 @@ async def lifespan(app: FastAPI):
         _warn_about_refused_notification_destinations(), name="offline-destination-check"
     )
     logger.info("Live event stream consumer started")
+
+    # Last start-up step: freeze the import-time heap so full GC collections
+    # stop re-walking ~700k long-lived objects (180-260 ms each, the p95 tail
+    # of large analytics responses). Once per worker; see app/core/startup_gc.py.
+    freeze_startup_heap()
 
     yield  # Application runs here
 

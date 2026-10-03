@@ -32,6 +32,9 @@ NODES=("192.168.0.101" "192.168.0.102" "192.168.0.103")
 NODE_USER="labadmin"
 CONTROL_NODE="${NODES[0]}"
 MINIO_ACCESS="testlookup_minio"
+# Step 5b re-checks the image authority this long before failing the deploy.
+IMAGE_AUTHORITY_TIMEOUT_SECONDS="${IMAGE_AUTHORITY_TIMEOUT_SECONDS:-120}"
+IMAGE_AUTHORITY_POLL_SECONDS="${IMAGE_AUTHORITY_POLL_SECONDS:-5}"
 
 # Colors
 RED='\033[0;31m'
@@ -121,28 +124,54 @@ registry_manifest_digest() {
   printf '%s\n' "$digest"
 }
 
+# Every LIVE pod carrying the Deployment's labels must be Ready on the exact
+# pushed digest. Two kinds of pod are skipped because they serve nothing:
+#   - terminating pods (deletionTimestamp set): the old ReplicaSet going away;
+#   - finished pods (phase Succeeded or Failed): a completed Job pod built from
+#     the backend image, or an evicted / node-shutdown pod. These stay listed,
+#     READY=false, until garbage-collected and are never Service endpoints.
+# Anything else, whatever owns it, receives traffic through the Service
+# selector, so it must match. On failure IMAGE_AUTHORITY_FAILURE names the pod.
 verify_deployment_image() {
   local deployment=$1 expected_image=$2 expected_digest=$3 component pod_rows
-  local image ready image_id deleting extra actual_digest active_pods=0
+  local name phase image ready image_id deleting extra actual_digest active_pods=0
+  IMAGE_AUTHORITY_FAILURE="cannot read the app.kubernetes.io/component label of deployment ${deployment}"
   component=$(kubectl -n "$NAMESPACE" get deployment "$deployment" \
     -o jsonpath='{.spec.template.metadata.labels.app\.kubernetes\.io/component}' \
     2>/dev/null) || return 1
   [ -n "$component" ] || return 1
+  IMAGE_AUTHORITY_FAILURE="no live pod matches app=${deployment},app.kubernetes.io/component=${component}"
   pod_rows=$(kubectl -n "$NAMESPACE" get pod \
     -l "app=${deployment},app.kubernetes.io/component=${component}" \
-    -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID,DELETING:.metadata.deletionTimestamp' \
+    -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID,DELETING:.metadata.deletionTimestamp' \
     --no-headers 2>/dev/null) || return 1
   [ -n "$pod_rows" ] || return 1
-  while read -r image ready image_id deleting extra; do
+  while read -r name phase image ready image_id deleting extra; do
+    IMAGE_AUTHORITY_FAILURE="unparseable pod row for ${name:-<empty>}"
     [ -z "${extra:-}" ] || return 1
     [ "$deleting" = "<none>" ] || continue
+    case "$phase" in Succeeded|Failed) continue ;; esac
     active_pods=$((active_pods + 1))
+    IMAGE_AUTHORITY_FAILURE="pod ${name} phase=${phase} ready=${ready} image=${image} imageID=${image_id}"
     [ "$image" = "$expected_image" ] || return 1
     [ "$ready" = "true" ] || return 1
     actual_digest="${image_id##*@}"
     [ "$actual_digest" = "$expected_digest" ] || return 1
   done <<< "$pod_rows"
+  IMAGE_AUTHORITY_FAILURE="no live pod matches app=${deployment},app.kubernetes.io/component=${component}"
   [ "$active_pods" -gt 0 ]
+}
+
+# Re-run verify_deployment_image for a bounded window. Right after the nine
+# rollouts a correct pod can still be briefly un-Ready: the HPA (re-created by
+# the apply) adds a replica, or a readiness probe flaps while every Deployment
+# restarts at once. A pod that stays wrong still fails once the window closes.
+wait_for_deployment_image() {
+  local deadline=$((SECONDS + IMAGE_AUTHORITY_TIMEOUT_SECONDS))
+  until verify_deployment_image "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep "$IMAGE_AUTHORITY_POLL_SECONDS"
+  done
 }
 
 verify_serving_revision() {
@@ -961,8 +990,8 @@ if [ "$SKIP_BUILD" = false ]; then
   for authority in "${APP_IMAGE_AUTHORITIES[@]}"; do
     IFS='|' read -r deployment image digest <<< "$authority"
     expected_image="${REGISTRY}/testlookup/${image}:${BUILD_TAG}"
-    verify_deployment_image "$deployment" "$expected_image" "$digest" \
-      || error "Image authority mismatch for ${deployment}: expected ${expected_image}@${digest}."
+    wait_for_deployment_image "$deployment" "$expected_image" "$digest" \
+      || error "Image authority mismatch for ${deployment}: expected ${expected_image}@${digest}; ${IMAGE_AUTHORITY_FAILURE} (after ${IMAGE_AUTHORITY_TIMEOUT_SECONDS}s)."
   done
 
   TRAEFIK_IP=$(kubectl -n kube-system get svc traefik \
