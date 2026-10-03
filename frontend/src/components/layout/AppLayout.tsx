@@ -102,7 +102,11 @@ export default function AppLayout() {
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <TopBar navToggle={narrow ? { open: drawerOpen, onToggle: toggleNav, controls: SHELL_NAV_ID } : null} />
           <DegradedBanner />
-          <main id="main-content" ref={mainRef} tabIndex={-1} className="flex-1 overflow-auto">
+          {/* `relative`: the scroll box is the containing block of the page's
+              absolutely positioned descendants (every `sr-only` label, the chart
+              announcer's live regions). Without it they are positioned against
+              the document, which then scrolls past the shell into blank space. */}
+          <main id="main-content" ref={mainRef} tabIndex={-1} className="relative flex-1 overflow-auto">
             {/* Single source of truth for page width: a centered, capped column
                 with responsive side gutters. Every routed page inherits this via
                 <Outlet />, so pages stay w-full and must NOT re-cap or re-center

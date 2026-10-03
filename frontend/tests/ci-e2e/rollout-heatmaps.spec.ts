@@ -100,7 +100,9 @@ test.describe('heatmaps, both flags, everything on screen (1280 x 4000)', () => 
     await expect(page).toHaveURL(/[?&]rows=/)
     const [q] = queryOf(api, CHART_ROWS_PATH)
     expect(q.get('metric'), 'every execution in the cell (reconciles with its n)').toBe('executions')
-    expect(q.getAll('group_by')).toEqual(['suite', 'day'])
+    // The time dimension first: /chart-data/rows answers 422
+    // time_dimension_position for suite,day (found on the homelab, PR #177).
+    expect(q.getAll('group_by')).toEqual(['day', 'suite'])
     // Selectors are KEYS (lower-cased suite, UTC day), never labels.
     expect(q.get('bucket_suite')).toMatch(/^[^A-Z]+$/)
     expect(q.get('bucket_day')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
