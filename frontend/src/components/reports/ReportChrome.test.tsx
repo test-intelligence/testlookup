@@ -53,6 +53,7 @@ vi.mock('@/services/http', () => ({
 
 import { getData } from '@/services/http'
 import ReportChrome from './ReportChrome'
+import { CHROME_EXPANDED_KEY, HIDE_DETAILS_TEXT, SHOW_DETAILS_TEXT } from './ReportChromeView'
 
 const get = vi.mocked(getData)
 const base = GALLERY_CASES.find((c) => c.id === 'unfiltered')?.meta
@@ -77,6 +78,8 @@ const summaryParams = () => {
 
 describe('ReportChrome (connected)', () => {
   beforeEach(() => {
+    // These tests read the full header and strip: the reader has expanded it.
+    window.localStorage.setItem(CHROME_EXPANDED_KEY, '1')
     get.mockReset()
     get.mockResolvedValue({
       total_executions_7d: { value: 412 },
@@ -200,5 +203,49 @@ describe('ReportChrome (connected)', () => {
     )
     expect(screen.getByText(/did not describe its scope/)).toBeInTheDocument()
     expect(document.querySelector('[data-filtered-summary]')).toBeNull()
+  })
+})
+
+describe('ReportChrome opens collapsed (OD-16)', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(CHROME_EXPANDED_KEY)
+    get.mockReset()
+    get.mockResolvedValue({
+      total_executions_7d: { value: 412 },
+      avg_pass_rate_7d: { value: 91.2, basis: 'executions' },
+      flaky_test_count: { value: 5 },
+      avg_duration_ms: { value: 1200 },
+      meta: SERVER_META,
+    })
+    scopeState.windowDays = 30
+    scopeState.releaseIds = []
+    scopeState.suiteNames = []
+    settled.releases = []
+    settled.suites = []
+  })
+
+  it('shows the context on one line and no metrics strip, until the reader expands it; the choice is kept', async () => {
+    const { unmount } = renderChrome()
+    await waitFor(() => expect(document.querySelector('[data-report-context-compact]')).toHaveAttribute('data-state', 'ready'))
+    expect(document.querySelector('[data-report-context-header]')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Report metrics' })).toBeNull()
+    // No release or suite chosen: no "No filters applied" chip row beside the line that says "All releases".
+    expect(screen.queryByText(/No filters applied/)).toBeNull()
+    const line = document.querySelector('[data-report-context-compact]') as HTMLElement
+    expect(line.textContent).toContain('All releases')
+    expect(line.textContent).toContain('payments')
+    expect(screen.getByTestId('report-filter-window')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_DETAILS_TEXT }))
+    expect(document.querySelector('[data-report-context-header]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: HIDE_DETAILS_TEXT })).toHaveAttribute('aria-expanded', 'true')
+    expect(window.localStorage.getItem(CHROME_EXPANDED_KEY)).toBe('1')
+
+    unmount()
+    renderChrome()
+    await waitFor(() => expect(document.querySelector('[data-report-context-header]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: HIDE_DETAILS_TEXT }))
+    expect(document.querySelector('[data-report-context-header]')).toBeNull()
+    expect(window.localStorage.getItem(CHROME_EXPANDED_KEY)).toBe('0')
   })
 })

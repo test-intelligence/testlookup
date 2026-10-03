@@ -17,6 +17,9 @@
  * strip answers for the scope the page's panels answer for, a burst of ticks
  * is one request, and a stored "All time" or "1 year" is never a 422.
  *
+ * It opens collapsed (OD-16, `collapsible`): the context on one line beside
+ * the filter bar, the full header and metrics strip behind a toggle.
+ *
  * A failed request never toasts (`suppressToast` in the hook): the header
  * states the reason and every tile is "—" with it.
  */
@@ -75,6 +78,9 @@ export default function ReportChrome({ route }: { route: ReportRoute }) {
   return (
     <ReportChromeView
       data-testid={`report-chrome-${route}`}
+      // OD-16: the pages have their own headers and KPI rows; the chrome opens
+      // as one line and the full header and strip are a click away.
+      collapsible
       meta={meta}
       allProjects={scope.allProjects}
       loading={isLoading && !summary}
