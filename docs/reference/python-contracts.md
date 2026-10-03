@@ -13340,7 +13340,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — SavedViewCreate
 
-[backend/app/models/schemas.py:4410](../../backend/app/models/schemas.py#L4410)
+[backend/app/models/schemas.py:4455](../../backend/app/models/schemas.py#L4455)
 
 Bases: `BaseModel`.
 
@@ -13356,10 +13356,10 @@ is_shared: bool = False
 is_default: bool = False
 ```
 
-- Validator/serializer `validate_filters`: [backend/app/models/schemas.py:4421](../../backend/app/models/schemas.py#L4421). Read source for the cross-field or conversion rule.
+- Validator/serializer `validate_filters`: [backend/app/models/schemas.py:4466](../../backend/app/models/schemas.py#L4466). Read source for the cross-field or conversion rule.
 ## backend/app/models/schemas.py — SavedViewUpdate
 
-[backend/app/models/schemas.py:4425](../../backend/app/models/schemas.py#L4425)
+[backend/app/models/schemas.py:4470](../../backend/app/models/schemas.py#L4470)
 
 Bases: `BaseModel`.
 
@@ -13374,10 +13374,10 @@ is_shared: Optional[bool] = None
 is_default: Optional[bool] = None
 ```
 
-- Validator/serializer `validate_filters`: [backend/app/models/schemas.py:4435](../../backend/app/models/schemas.py#L4435). Read source for the cross-field or conversion rule.
+- Validator/serializer `validate_filters`: [backend/app/models/schemas.py:4480](../../backend/app/models/schemas.py#L4480). Read source for the cross-field or conversion rule.
 ## backend/app/models/schemas.py — SavedViewRelease
 
-[backend/app/models/schemas.py:4439](../../backend/app/models/schemas.py#L4439)
+[backend/app/models/schemas.py:4484](../../backend/app/models/schemas.py#L4484)
 
 Bases: `BaseModel`.
 
@@ -13398,7 +13398,7 @@ reason: Optional[str] = None
 
 ## backend/app/models/schemas.py — SavedViewResponse
 
-[backend/app/models/schemas.py:4455](../../backend/app/models/schemas.py#L4455)
+[backend/app/models/schemas.py:4500](../../backend/app/models/schemas.py#L4500)
 
 Bases: `BaseModel`.
 
@@ -13422,7 +13422,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — DigestSubscriptionCreate
 
-[backend/app/models/schemas.py:4473](../../backend/app/models/schemas.py#L4473)
+[backend/app/models/schemas.py:4518](../../backend/app/models/schemas.py#L4518)
 
 Bases: `BaseModel`.
 
@@ -13443,7 +13443,7 @@ report_attachment: bool = False
 
 ## backend/app/models/schemas.py — DigestSubscriptionUpdate
 
-[backend/app/models/schemas.py:4496](../../backend/app/models/schemas.py#L4496)
+[backend/app/models/schemas.py:4541](../../backend/app/models/schemas.py#L4541)
 
 Bases: `BaseModel`.
 
@@ -13465,7 +13465,7 @@ report_attachment: Optional[bool] = None
 
 ## backend/app/models/schemas.py — DigestSubscriptionResponse
 
-[backend/app/models/schemas.py:4533](../../backend/app/models/schemas.py#L4533)
+[backend/app/models/schemas.py:4578](../../backend/app/models/schemas.py#L4578)
 
 Bases: `BaseModel`.
 
@@ -13496,7 +13496,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — DigestContentResponse
 
-[backend/app/models/schemas.py:4556](../../backend/app/models/schemas.py#L4556)
+[backend/app/models/schemas.py:4601](../../backend/app/models/schemas.py#L4601)
 
 Bases: `BaseModel`.
 
@@ -13523,7 +13523,7 @@ latest_run_total_tests: Optional[int] = None
 
 ## backend/app/models/schemas.py — AIEvalDatasetCreate
 
-[backend/app/models/schemas.py:4584](../../backend/app/models/schemas.py#L4584)
+[backend/app/models/schemas.py:4629](../../backend/app/models/schemas.py#L4629)
 
 Bases: `BaseModel`.
 
@@ -13538,7 +13538,7 @@ items: List[dict] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — AIEvalDatasetResponse
 
-[backend/app/models/schemas.py:4591](../../backend/app/models/schemas.py#L4591)
+[backend/app/models/schemas.py:4636](../../backend/app/models/schemas.py#L4636)
 
 Bases: `BaseModel`.
 
@@ -13559,7 +13559,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — AIEvalRunResponse
 
-[backend/app/models/schemas.py:4604](../../backend/app/models/schemas.py#L4604)
+[backend/app/models/schemas.py:4649](../../backend/app/models/schemas.py#L4649)
 
 Bases: `BaseModel`.
 
@@ -13586,7 +13586,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — AIEvalGateRunResponse
 
-[backend/app/models/schemas.py:4623](../../backend/app/models/schemas.py#L4623)
+[backend/app/models/schemas.py:4668](../../backend/app/models/schemas.py#L4668)
 
 Bases: `BaseModel`.
 
@@ -13614,7 +13614,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — AIEvalManifestResponse
 
-[backend/app/models/schemas.py:4643](../../backend/app/models/schemas.py#L4643)
+[backend/app/models/schemas.py:4688](../../backend/app/models/schemas.py#L4688)
 
 Bases: `BaseModel`.
 
@@ -13631,7 +13631,7 @@ evaluated_at: Optional[datetime] = None
 
 ## backend/app/models/schemas.py — EvalProvenanceHealthResponse
 
-[backend/app/models/schemas.py:4652](../../backend/app/models/schemas.py#L4652)
+[backend/app/models/schemas.py:4697](../../backend/app/models/schemas.py#L4697)
 
 Bases: `BaseModel`.
 
@@ -13652,7 +13652,7 @@ has_unresolvable_checksums: bool
 
 ## backend/app/models/schemas.py — AIQualityDashboardResponse
 
-[backend/app/models/schemas.py:4665](../../backend/app/models/schemas.py#L4665)
+[backend/app/models/schemas.py:4710](../../backend/app/models/schemas.py#L4710)
 
 Bases: `BaseModel`.
 
@@ -13670,7 +13670,7 @@ eval_provenance: Optional[EvalProvenanceHealthResponse] = None
 
 ## backend/app/models/schemas.py — AgentMemoryEntryResponse
 
-[backend/app/models/schemas.py:4681](../../backend/app/models/schemas.py#L4681)
+[backend/app/models/schemas.py:4726](../../backend/app/models/schemas.py#L4726)
 
 Bases: `BaseModel`.
 
@@ -13703,7 +13703,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — AgentMemoryListResponse
 
-[backend/app/models/schemas.py:4707](../../backend/app/models/schemas.py#L4707)
+[backend/app/models/schemas.py:4752](../../backend/app/models/schemas.py#L4752)
 
 Bases: `BaseModel`.
 
@@ -13718,7 +13718,7 @@ size: int
 
 ## backend/app/models/schemas.py — SimilarMemoryResponse
 
-[backend/app/models/schemas.py:4715](../../backend/app/models/schemas.py#L4715)
+[backend/app/models/schemas.py:4760](../../backend/app/models/schemas.py#L4760)
 
 Bases: `BaseModel`.
 
@@ -13733,7 +13733,7 @@ memory_reference: Optional[MemoryReference] = None
 
 ## backend/app/models/schemas.py — SimilarMemoryRecallRequest
 
-[backend/app/models/schemas.py:4723](../../backend/app/models/schemas.py#L4723)
+[backend/app/models/schemas.py:4768](../../backend/app/models/schemas.py#L4768)
 
 Bases: `BaseModel`.
 
@@ -13747,7 +13747,7 @@ limit: int = Field(default=10, ge=1, le=50)
 
 ## backend/app/models/schemas.py — SimilarMemoryRecallResponse
 
-[backend/app/models/schemas.py:4730](../../backend/app/models/schemas.py#L4730)
+[backend/app/models/schemas.py:4775](../../backend/app/models/schemas.py#L4775)
 
 Bases: `BaseModel`.
 
@@ -13762,7 +13762,7 @@ retrieval_audit: Optional[Dict[str, Any]] = None
 
 ## backend/app/models/schemas.py — MemoryTimelineResponse
 
-[backend/app/models/schemas.py:4738](../../backend/app/models/schemas.py#L4738)
+[backend/app/models/schemas.py:4783](../../backend/app/models/schemas.py#L4783)
 
 Bases: `BaseModel`.
 
@@ -13777,7 +13777,7 @@ total_entries: int
 
 ## backend/app/models/schemas.py — KnowledgeSourceCreate
 
-[backend/app/models/schemas.py:4749](../../backend/app/models/schemas.py#L4749)
+[backend/app/models/schemas.py:4794](../../backend/app/models/schemas.py#L4794)
 
 Bases: `BaseModel`.
 
@@ -13793,7 +13793,7 @@ classification: str = Field('internal', max_length=20)
 
 ## backend/app/models/schemas.py — KnowledgeSourceUpdate
 
-[backend/app/models/schemas.py:4757](../../backend/app/models/schemas.py#L4757)
+[backend/app/models/schemas.py:4802](../../backend/app/models/schemas.py#L4802)
 
 Bases: `BaseModel`.
 
@@ -13807,7 +13807,7 @@ is_archived: Optional[bool] = None
 
 ## backend/app/models/schemas.py — KnowledgeSourceResponse
 
-[backend/app/models/schemas.py:4763](../../backend/app/models/schemas.py#L4763)
+[backend/app/models/schemas.py:4808](../../backend/app/models/schemas.py#L4808)
 
 Bases: `BaseModel`.
 
@@ -13835,7 +13835,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — KnowledgeSourceListResponse
 
-[backend/app/models/schemas.py:4784](../../backend/app/models/schemas.py#L4784)
+[backend/app/models/schemas.py:4829](../../backend/app/models/schemas.py#L4829)
 
 Bases: `BaseModel`.
 
@@ -13850,7 +13850,7 @@ page_size: int
 
 ## backend/app/models/schemas.py — KnowledgeSourceSyncResponse
 
-[backend/app/models/schemas.py:4791](../../backend/app/models/schemas.py#L4791)
+[backend/app/models/schemas.py:4836](../../backend/app/models/schemas.py#L4836)
 
 Bases: `BaseModel`.
 
@@ -13864,7 +13864,7 @@ sync_status: str
 
 ## backend/app/models/schemas.py — ConnectorTestResult
 
-[backend/app/models/schemas.py:4797](../../backend/app/models/schemas.py#L4797)
+[backend/app/models/schemas.py:4842](../../backend/app/models/schemas.py#L4842)
 
 Bases: `BaseModel`.
 
@@ -13879,7 +13879,7 @@ detail: Optional[str] = None
 
 ## backend/app/models/schemas.py — ConnectorConfigTestRequest
 
-[backend/app/models/schemas.py:4804](../../backend/app/models/schemas.py#L4804)
+[backend/app/models/schemas.py:4849](../../backend/app/models/schemas.py#L4849)
 
 Bases: `BaseModel`.
 
@@ -13892,7 +13892,7 @@ params: dict = Field(default_factory=dict)
 
 ## backend/app/models/schemas.py — KnowledgeDomainAllowlistUpdate
 
-[backend/app/models/schemas.py:4809](../../backend/app/models/schemas.py#L4809)
+[backend/app/models/schemas.py:4854](../../backend/app/models/schemas.py#L4854)
 
 Bases: `BaseModel`.
 
@@ -13902,7 +13902,7 @@ Bases: `BaseModel`.
 domains: List[str] = Field(..., description="FQDN list, e.g. ['confluence.corp.com', 'jira.corp.com']")
 ```
 
-- Validator/serializer `_validate_domains`: [backend/app/models/schemas.py:4817](../../backend/app/models/schemas.py#L4817). S4-audit S8: the allowlist is the domain gate that complements the
+- Validator/serializer `_validate_domains`: [backend/app/models/schemas.py:4862](../../backend/app/models/schemas.py#L4862). S4-audit S8: the allowlist is the domain gate that complements the
 url_connector SSRF guard, so each entry must be a real FQDN. Reject
 wildcards / schemes / ports / paths / IP addresses — none of which the
 ``hostname == d or hostname.endswith('.'+d)`` matcher honours anyway, so
@@ -13910,7 +13910,7 @@ rejecting them is behaviour-preserving. An empty list is allowed (it
 clears the allowlist → permissive, the existing semantics).
 ## backend/app/models/schemas.py — KnowledgeSyncEventResponse
 
-[backend/app/models/schemas.py:4862](../../backend/app/models/schemas.py#L4862)
+[backend/app/models/schemas.py:4907](../../backend/app/models/schemas.py#L4907)
 
 Bases: `BaseModel`.
 
@@ -13934,7 +13934,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — KnowledgeChunkResponse
 
-[backend/app/models/schemas.py:4882](../../backend/app/models/schemas.py#L4882)
+[backend/app/models/schemas.py:4927](../../backend/app/models/schemas.py#L4927)
 
 Bases: `BaseModel`.
 
@@ -13958,7 +13958,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — KnowledgeSourceFreshnessResponse
 
-[backend/app/models/schemas.py:4902](../../backend/app/models/schemas.py#L4902)
+[backend/app/models/schemas.py:4947](../../backend/app/models/schemas.py#L4947)
 
 Bases: `BaseModel`.
 
@@ -13978,7 +13978,7 @@ sync_event_count: int
 
 ## backend/app/models/schemas.py — RagRetrieveRequest
 
-[backend/app/models/schemas.py:4917](../../backend/app/models/schemas.py#L4917)
+[backend/app/models/schemas.py:4962](../../backend/app/models/schemas.py#L4962)
 
 Bases: `BaseModel`.
 
@@ -13994,7 +13994,7 @@ min_score: float = Field(0.0, ge=0.0, le=1.0)
 
 ## backend/app/models/schemas.py — RetrievedChunkSchema
 
-[backend/app/models/schemas.py:4925](../../backend/app/models/schemas.py#L4925)
+[backend/app/models/schemas.py:4970](../../backend/app/models/schemas.py#L4970)
 
 Bases: `BaseModel`.
 
@@ -14013,7 +14013,7 @@ canonical_url: Optional[str] = None
 
 ## backend/app/models/schemas.py — RagRetrieveResponse
 
-[backend/app/models/schemas.py:4936](../../backend/app/models/schemas.py#L4936)
+[backend/app/models/schemas.py:4981](../../backend/app/models/schemas.py#L4981)
 
 Bases: `BaseModel`.
 
@@ -14026,7 +14026,7 @@ total: int
 
 ## backend/app/models/schemas.py — RagGenerateRequest
 
-[backend/app/models/schemas.py:4944](../../backend/app/models/schemas.py#L4944)
+[backend/app/models/schemas.py:4989](../../backend/app/models/schemas.py#L4989)
 
 Bases: `BaseModel`.
 
@@ -14042,7 +14042,7 @@ generation_config: Optional[dict] = None
 
 ## backend/app/models/schemas.py — CitationSchema
 
-[backend/app/models/schemas.py:4952](../../backend/app/models/schemas.py#L4952)
+[backend/app/models/schemas.py:4997](../../backend/app/models/schemas.py#L4997)
 
 Bases: `BaseModel`.
 
@@ -14061,7 +14061,7 @@ canonical_url: Optional[str] = None
 
 ## backend/app/models/schemas.py — RagGenerateResponse
 
-[backend/app/models/schemas.py:4963](../../backend/app/models/schemas.py#L4963)
+[backend/app/models/schemas.py:5008](../../backend/app/models/schemas.py#L5008)
 
 Bases: `BaseModel`.
 
@@ -14079,7 +14079,7 @@ created_ids: List[str] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — RequirementCoverageSchema
 
-[backend/app/models/schemas.py:4976](../../backend/app/models/schemas.py#L4976)
+[backend/app/models/schemas.py:5021](../../backend/app/models/schemas.py#L5021)
 
 Bases: `BaseModel`.
 
@@ -14099,7 +14099,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — GenerationBatchResponse
 
-[backend/app/models/schemas.py:4992](../../backend/app/models/schemas.py#L4992)
+[backend/app/models/schemas.py:5037](../../backend/app/models/schemas.py#L5037)
 
 Bases: `BaseModel`.
 
@@ -14123,7 +14123,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — RagCaseAcceptEdits
 
-[backend/app/models/schemas.py:5009](../../backend/app/models/schemas.py#L5009)
+[backend/app/models/schemas.py:5054](../../backend/app/models/schemas.py#L5054)
 
 Bases: `BaseModel`.
 
@@ -14151,7 +14151,7 @@ model_config = ConfigDict(extra='forbid')
 
 ## backend/app/models/schemas.py — BatchAcceptRequest
 
-[backend/app/models/schemas.py:5032](../../backend/app/models/schemas.py#L5032)
+[backend/app/models/schemas.py:5077](../../backend/app/models/schemas.py#L5077)
 
 Bases: `BaseModel`.
 
@@ -14164,7 +14164,7 @@ edits: Optional[Dict[uuid.UUID, RagCaseAcceptEdits]] = None
 
 ## backend/app/models/schemas.py — RejectCaseRequest
 
-[backend/app/models/schemas.py:5037](../../backend/app/models/schemas.py#L5037)
+[backend/app/models/schemas.py:5082](../../backend/app/models/schemas.py#L5082)
 
 Bases: `BaseModel`.
 
@@ -14176,7 +14176,7 @@ reason: Optional[str] = Field(None, max_length=500)
 
 ## backend/app/models/schemas.py — AcceptCaseRequest
 
-[backend/app/models/schemas.py:5041](../../backend/app/models/schemas.py#L5041)
+[backend/app/models/schemas.py:5086](../../backend/app/models/schemas.py#L5086)
 
 Bases: `BaseModel`.
 
@@ -14188,7 +14188,7 @@ edits: Optional[RagCaseAcceptEdits] = None
 
 ## backend/app/models/schemas.py — RagStatusResponse
 
-[backend/app/models/schemas.py:5055](../../backend/app/models/schemas.py#L5055)
+[backend/app/models/schemas.py:5100](../../backend/app/models/schemas.py#L5100)
 
 Bases: `BaseModel`.
 
@@ -14204,7 +14204,7 @@ total_chunks: int = 0
 
 ## backend/app/models/schemas.py — FeatureFlagCreate
 
-[backend/app/models/schemas.py:5066](../../backend/app/models/schemas.py#L5066)
+[backend/app/models/schemas.py:5111](../../backend/app/models/schemas.py#L5111)
 
 Bases: `BaseModel`.
 
@@ -14221,7 +14221,7 @@ rollout_percent: int = Field(100, ge=0, le=100)
 
 ## backend/app/models/schemas.py — FeatureFlagUpdate
 
-[backend/app/models/schemas.py:5075](../../backend/app/models/schemas.py#L5075)
+[backend/app/models/schemas.py:5120](../../backend/app/models/schemas.py#L5120)
 
 Bases: `BaseModel`.
 
@@ -14240,7 +14240,7 @@ rollout_percent: Optional[int] = Field(None, ge=0, le=100)
 
 ## backend/app/models/schemas.py — FeatureFlagResponse
 
-[backend/app/models/schemas.py:5088](../../backend/app/models/schemas.py#L5088)
+[backend/app/models/schemas.py:5133](../../backend/app/models/schemas.py#L5133)
 
 Bases: `BaseModel`.
 
@@ -14262,7 +14262,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — DecisionLogEntry
 
-[backend/app/models/schemas.py:5105](../../backend/app/models/schemas.py#L5105)
+[backend/app/models/schemas.py:5150](../../backend/app/models/schemas.py#L5150)
 
 Bases: `BaseModel`.
 
@@ -14281,7 +14281,7 @@ context: Optional[Dict[str, Any]] = None
 
 ## backend/app/models/schemas.py — StageDecisionSummary
 
-[backend/app/models/schemas.py:5117](../../backend/app/models/schemas.py#L5117)
+[backend/app/models/schemas.py:5162](../../backend/app/models/schemas.py#L5162)
 
 Bases: `BaseModel`.
 
@@ -14310,7 +14310,7 @@ decision_log: List[DecisionLogEntry] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — PerTestRouting
 
-[backend/app/models/schemas.py:5138](../../backend/app/models/schemas.py#L5138)
+[backend/app/models/schemas.py:5183](../../backend/app/models/schemas.py#L5183)
 
 Bases: `BaseModel`.
 
@@ -14331,7 +14331,7 @@ threshold_check: Optional[ThresholdCheck] = None
 
 ## backend/app/models/schemas.py — WorkflowDecisionEvent
 
-[backend/app/models/schemas.py:5153](../../backend/app/models/schemas.py#L5153)
+[backend/app/models/schemas.py:5198](../../backend/app/models/schemas.py#L5198)
 
 Bases: `BaseModel`.
 
@@ -14348,7 +14348,7 @@ context: Optional[Dict[str, Any]] = None
 
 ## backend/app/models/schemas.py — DecisionTrailResponse
 
-[backend/app/models/schemas.py:5162](../../backend/app/models/schemas.py#L5162)
+[backend/app/models/schemas.py:5207](../../backend/app/models/schemas.py#L5207)
 
 Bases: `BaseModel`.
 
@@ -14373,7 +14373,7 @@ below_threshold_count: int = 0
 
 ## backend/app/models/schemas.py — LlmQuotaWrite
 
-[backend/app/models/schemas.py:5189](../../backend/app/models/schemas.py#L5189)
+[backend/app/models/schemas.py:5234](../../backend/app/models/schemas.py#L5234)
 
 Bases: `BaseModel`.
 
@@ -14391,7 +14391,7 @@ at_cap_action: str = Field('AUTO_DOWNGRADE_TO_ML', pattern='^(SOFT_WARN|AUTO_DOW
 
 ## backend/app/models/schemas.py — LlmQuotaRead
 
-[backend/app/models/schemas.py:5203](../../backend/app/models/schemas.py#L5203)
+[backend/app/models/schemas.py:5248](../../backend/app/models/schemas.py#L5248)
 
 Bases: `LlmQuotaWrite`.
 
@@ -14408,7 +14408,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — LlmUsageRead
 
-[backend/app/models/schemas.py:5212](../../backend/app/models/schemas.py#L5212)
+[backend/app/models/schemas.py:5257](../../backend/app/models/schemas.py#L5257)
 
 Bases: `BaseModel`.
 
@@ -14432,7 +14432,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — LlmUsageHistoryEntry
 
-[backend/app/models/schemas.py:5229](../../backend/app/models/schemas.py#L5229)
+[backend/app/models/schemas.py:5274](../../backend/app/models/schemas.py#L5274)
 
 Bases: `BaseModel`.
 
@@ -14448,7 +14448,7 @@ cap_hits: int
 
 ## backend/app/models/schemas.py — BillingOverviewProject
 
-[backend/app/models/schemas.py:5237](../../backend/app/models/schemas.py#L5237)
+[backend/app/models/schemas.py:5282](../../backend/app/models/schemas.py#L5282)
 
 Bases: `BaseModel`.
 
@@ -14466,7 +14466,7 @@ cap_hits: int
 
 ## backend/app/models/schemas.py — BillingOverviewResponse
 
-[backend/app/models/schemas.py:5247](../../backend/app/models/schemas.py#L5247)
+[backend/app/models/schemas.py:5292](../../backend/app/models/schemas.py#L5292)
 
 Bases: `BaseModel`.
 
@@ -14484,7 +14484,7 @@ pricing_is_estimated: bool = True
 
 ## backend/app/models/schemas.py — FlakyQuarantineRead
 
-[backend/app/models/schemas.py:5264](../../backend/app/models/schemas.py#L5264)
+[backend/app/models/schemas.py:5309](../../backend/app/models/schemas.py#L5309)
 
 Bases: `BaseModel`.
 
@@ -14534,7 +14534,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — QuarantineDecisionRequest
 
-[backend/app/models/schemas.py:5311](../../backend/app/models/schemas.py#L5311)
+[backend/app/models/schemas.py:5356](../../backend/app/models/schemas.py#L5356)
 
 Bases: `BaseModel`.
 
@@ -14547,7 +14547,7 @@ quarantine_duration_days: Optional[int] = Field(None, ge=1, le=90)
 
 ## backend/app/models/schemas.py — QuarantineProposeRequest
 
-[backend/app/models/schemas.py:5317](../../backend/app/models/schemas.py#L5317)
+[backend/app/models/schemas.py:5362](../../backend/app/models/schemas.py#L5362)
 
 Bases: `BaseModel`.
 
@@ -14569,7 +14569,7 @@ quarantine_duration_days: int = Field(14, ge=1, le=90)
 
 ## backend/app/models/schemas.py — QuarantineManifestEntry
 
-[backend/app/models/schemas.py:5332](../../backend/app/models/schemas.py#L5332)
+[backend/app/models/schemas.py:5377](../../backend/app/models/schemas.py#L5377)
 
 Bases: `BaseModel`.
 
@@ -14595,7 +14595,7 @@ ready_to_promote: bool = False
 
 ## backend/app/models/schemas.py — QuarantineManifestResponse
 
-[backend/app/models/schemas.py:5354](../../backend/app/models/schemas.py#L5354)
+[backend/app/models/schemas.py:5399](../../backend/app/models/schemas.py#L5399)
 
 Bases: `BaseModel`.
 
@@ -14616,7 +14616,7 @@ entries: List[QuarantineManifestEntry]
 
 ## backend/app/models/schemas.py — QuarantineLifecyclePolicyUpdate
 
-[backend/app/models/schemas.py:5369](../../backend/app/models/schemas.py#L5369)
+[backend/app/models/schemas.py:5414](../../backend/app/models/schemas.py#L5414)
 
 Bases: `BaseModel`.
 
@@ -14633,7 +14633,7 @@ detection_min_runs: int = Field(10, ge=1, le=1000)
 
 ## backend/app/models/schemas.py — QuarantineLifecyclePolicyResponse
 
-[backend/app/models/schemas.py:5379](../../backend/app/models/schemas.py#L5379)
+[backend/app/models/schemas.py:5424](../../backend/app/models/schemas.py#L5424)
 
 Bases: `BaseModel`.
 
@@ -14653,7 +14653,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — QuarantineStatsResponse
 
-[backend/app/models/schemas.py:5393](../../backend/app/models/schemas.py#L5393)
+[backend/app/models/schemas.py:5438](../../backend/app/models/schemas.py#L5438)
 
 Bases: `BaseModel`.
 
@@ -14675,7 +14675,7 @@ meta: Optional[Dict[str, Any]] = None
 
 ## backend/app/models/schemas.py — CompliancePackGenerateRequest
 
-[backend/app/models/schemas.py:5413](../../backend/app/models/schemas.py#L5413)
+[backend/app/models/schemas.py:5458](../../backend/app/models/schemas.py#L5458)
 
 Bases: `BaseModel`.
 
@@ -14688,7 +14688,7 @@ retention_days: Optional[int] = Field(None, ge=1, le=3650, description='Override
 
 ## backend/app/models/schemas.py — CompliancePackRead
 
-[backend/app/models/schemas.py:5424](../../backend/app/models/schemas.py#L5424)
+[backend/app/models/schemas.py:5469](../../backend/app/models/schemas.py#L5469)
 
 Bases: `BaseModel`.
 
@@ -14713,7 +14713,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — CompliancePackDownloadResponse
 
-[backend/app/models/schemas.py:5441](../../backend/app/models/schemas.py#L5441)
+[backend/app/models/schemas.py:5486](../../backend/app/models/schemas.py#L5486)
 
 Bases: `BaseModel`.
 
@@ -14730,7 +14730,7 @@ manifest_sha256: str
 
 ## backend/app/models/schemas.py — GitHubIntegrationWrite
 
-[backend/app/models/schemas.py:5454](../../backend/app/models/schemas.py#L5454)
+[backend/app/models/schemas.py:5499](../../backend/app/models/schemas.py#L5499)
 
 Bases: `BaseModel`.
 
@@ -14747,7 +14747,7 @@ pr_comment_mode: Literal['off', 'failures_only', 'always'] = 'failures_only'
 
 ## backend/app/models/schemas.py — GitHubIntegrationRead
 
-[backend/app/models/schemas.py:5469](../../backend/app/models/schemas.py#L5469)
+[backend/app/models/schemas.py:5514](../../backend/app/models/schemas.py#L5514)
 
 Bases: `BaseModel`.
 
@@ -14772,7 +14772,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — GitHubConnectionTestResponse
 
-[backend/app/models/schemas.py:5486](../../backend/app/models/schemas.py#L5486)
+[backend/app/models/schemas.py:5531](../../backend/app/models/schemas.py#L5531)
 
 Bases: `BaseModel`.
 
@@ -14787,7 +14787,7 @@ repo_html_url: Optional[str] = None
 
 ## backend/app/models/schemas.py — ValueMetricAssumptionsWrite
 
-[backend/app/models/schemas.py:5500](../../backend/app/models/schemas.py#L5500)
+[backend/app/models/schemas.py:5545](../../backend/app/models/schemas.py#L5545)
 
 Bases: `BaseModel`.
 
@@ -14804,7 +14804,7 @@ defect_filing_minutes: Optional[float] = Field(None, gt=0, le=480)
 
 ## backend/app/models/schemas.py — ValueMetricAssumptionsRead
 
-[backend/app/models/schemas.py:5511](../../backend/app/models/schemas.py#L5511)
+[backend/app/models/schemas.py:5556](../../backend/app/models/schemas.py#L5556)
 
 Bases: `BaseModel`.
 
@@ -14820,7 +14820,7 @@ source: str = 'default'
 
 ## backend/app/models/schemas.py — GitLabConfigWrite
 
-[backend/app/models/schemas.py:5520](../../backend/app/models/schemas.py#L5520)
+[backend/app/models/schemas.py:5565](../../backend/app/models/schemas.py#L5565)
 
 Bases: `BaseModel`.
 
@@ -14841,7 +14841,7 @@ token: Optional[str] = Field(None, max_length=200)
 
 ## backend/app/models/schemas.py — GitLabConfigRead
 
-[backend/app/models/schemas.py:5537](../../backend/app/models/schemas.py#L5537)
+[backend/app/models/schemas.py:5582](../../backend/app/models/schemas.py#L5582)
 
 Bases: `BaseModel`.
 
@@ -14866,7 +14866,7 @@ last_error_at: Optional[datetime] = None
 
 ## backend/app/models/schemas.py — GitLabConnectionTestResponse
 
-[backend/app/models/schemas.py:5556](../../backend/app/models/schemas.py#L5556)
+[backend/app/models/schemas.py:5601](../../backend/app/models/schemas.py#L5601)
 
 Bases: `BaseModel`.
 
@@ -14880,7 +14880,7 @@ project_id_resolved: Optional[str] = None
 
 ## backend/app/models/schemas.py — WebhookSubscriptionWrite
 
-[backend/app/models/schemas.py:5565](../../backend/app/models/schemas.py#L5565)
+[backend/app/models/schemas.py:5610](../../backend/app/models/schemas.py#L5610)
 
 Bases: `BaseModel`.
 
@@ -14897,7 +14897,7 @@ secret: Optional[str] = Field(None, max_length=200)
 
 ## backend/app/models/schemas.py — WebhookSubscriptionRead
 
-[backend/app/models/schemas.py:5575](../../backend/app/models/schemas.py#L5575)
+[backend/app/models/schemas.py:5620](../../backend/app/models/schemas.py#L5620)
 
 Bases: `BaseModel`.
 
@@ -14924,7 +14924,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — WebhookDeliveryRead
 
-[backend/app/models/schemas.py:5594](../../backend/app/models/schemas.py#L5594)
+[backend/app/models/schemas.py:5639](../../backend/app/models/schemas.py#L5639)
 
 Bases: `BaseModel`.
 
@@ -14947,7 +14947,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — WebhookTestResponse
 
-[backend/app/models/schemas.py:5609](../../backend/app/models/schemas.py#L5609)
+[backend/app/models/schemas.py:5654](../../backend/app/models/schemas.py#L5654)
 
 Bases: `BaseModel`.
 
@@ -14962,7 +14962,7 @@ latency_ms: Optional[int] = None
 
 ## backend/app/models/schemas.py — WebhookDeliveryReplayResponse
 
-[backend/app/models/schemas.py:5616](../../backend/app/models/schemas.py#L5616)
+[backend/app/models/schemas.py:5661](../../backend/app/models/schemas.py#L5661)
 
 Bases: `BaseModel`.
 
@@ -14975,7 +14975,7 @@ status: str = 'PENDING'
 
 ## backend/app/models/schemas.py — WebhookEventCatalogEntry
 
-[backend/app/models/schemas.py:5625](../../backend/app/models/schemas.py#L5625)
+[backend/app/models/schemas.py:5670](../../backend/app/models/schemas.py#L5670)
 
 Bases: `BaseModel`.
 
@@ -14988,7 +14988,7 @@ description: str
 
 ## backend/app/models/schemas.py — WebhookEventCatalogResponse
 
-[backend/app/models/schemas.py:5630](../../backend/app/models/schemas.py#L5630)
+[backend/app/models/schemas.py:5675](../../backend/app/models/schemas.py#L5675)
 
 Bases: `BaseModel`.
 
@@ -15000,7 +15000,7 @@ events: List[WebhookEventCatalogEntry]
 
 ## backend/app/models/schemas.py — RunCompareSummary
 
-[backend/app/models/schemas.py:5637](../../backend/app/models/schemas.py#L5637)
+[backend/app/models/schemas.py:5682](../../backend/app/models/schemas.py#L5682)
 
 Bases: `BaseModel`.
 
@@ -15030,7 +15030,7 @@ suite_names: Optional[List[str]] = None
 
 ## backend/app/models/schemas.py — RunCompareSelection
 
-[backend/app/models/schemas.py:5660](../../backend/app/models/schemas.py#L5660)
+[backend/app/models/schemas.py:5705](../../backend/app/models/schemas.py#L5705)
 
 Bases: `BaseModel`.
 
@@ -15049,7 +15049,7 @@ release_name: Optional[str] = None
 
 ## backend/app/models/schemas.py — RunCompareAIReport
 
-[backend/app/models/schemas.py:5671](../../backend/app/models/schemas.py#L5671)
+[backend/app/models/schemas.py:5716](../../backend/app/models/schemas.py#L5716)
 
 Bases: `BaseModel`.
 
@@ -15073,7 +15073,7 @@ message: Optional[str] = None
 
 ## backend/app/models/schemas.py — RunCompareTestDelta
 
-[backend/app/models/schemas.py:5687](../../backend/app/models/schemas.py#L5687)
+[backend/app/models/schemas.py:5732](../../backend/app/models/schemas.py#L5732)
 
 Bases: `BaseModel`.
 
@@ -15096,7 +15096,7 @@ previous_test_fingerprint: Optional[str] = None
 
 ## backend/app/models/schemas.py — RunCompareResponse
 
-[backend/app/models/schemas.py:5712](../../backend/app/models/schemas.py#L5712)
+[backend/app/models/schemas.py:5757](../../backend/app/models/schemas.py#L5757)
 
 Bases: `BaseModel`.
 
@@ -15131,7 +15131,7 @@ truncated: bool = False
 
 ## backend/app/models/schemas.py — SuiteOwnerUpdate
 
-[backend/app/models/schemas.py:5751](../../backend/app/models/schemas.py#L5751)
+[backend/app/models/schemas.py:5796](../../backend/app/models/schemas.py#L5796)
 
 Bases: `BaseModel`.
 
@@ -15143,7 +15143,7 @@ owner_user_id: Optional[uuid.UUID] = None
 
 ## backend/app/models/schemas.py — SuiteOwnerResponse
 
-[backend/app/models/schemas.py:5756](../../backend/app/models/schemas.py#L5756)
+[backend/app/models/schemas.py:5801](../../backend/app/models/schemas.py#L5801)
 
 Bases: `BaseModel`.
 
@@ -15161,7 +15161,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — SuiteReviewUpdate
 
-[backend/app/models/schemas.py:5766](../../backend/app/models/schemas.py#L5766)
+[backend/app/models/schemas.py:5811](../../backend/app/models/schemas.py#L5811)
 
 Bases: `BaseModel`.
 
@@ -15174,7 +15174,7 @@ note: Optional[str] = Field(None, max_length=4000)
 
 ## backend/app/models/schemas.py — SuiteReviewResponse
 
-[backend/app/models/schemas.py:5771](../../backend/app/models/schemas.py#L5771)
+[backend/app/models/schemas.py:5816](../../backend/app/models/schemas.py#L5816)
 
 Bases: `BaseModel`.
 
@@ -15197,7 +15197,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerRequest
 
-[backend/app/models/schemas.py:5786](../../backend/app/models/schemas.py#L5786)
+[backend/app/models/schemas.py:5831](../../backend/app/models/schemas.py#L5831)
 
 Bases: `BaseModel`.
 
@@ -15213,7 +15213,7 @@ fail_count: Optional[int] = Field(None, ge=0, le=10000)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerResponse
 
-[backend/app/models/schemas.py:5795](../../backend/app/models/schemas.py#L5795)
+[backend/app/models/schemas.py:5840](../../backend/app/models/schemas.py#L5840)
 
 Bases: `BaseModel`.
 
@@ -15230,7 +15230,7 @@ reason: Optional[str] = None
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedRequest
 
-[backend/app/models/schemas.py:5806](../../backend/app/models/schemas.py#L5806)
+[backend/app/models/schemas.py:5851](../../backend/app/models/schemas.py#L5851)
 
 Bases: `BaseModel`.
 
@@ -15247,7 +15247,7 @@ suite_name: Optional[str] = Field(None, max_length=500)
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedResponse
 
-[backend/app/models/schemas.py:5818](../../backend/app/models/schemas.py#L5818)
+[backend/app/models/schemas.py:5863](../../backend/app/models/schemas.py#L5863)
 
 Bases: `BaseModel`.
 
@@ -15263,7 +15263,7 @@ suite_name: Optional[str] = None
 
 ## backend/app/models/schemas.py — DefectIntakeRequest
 
-[backend/app/models/schemas.py:5826](../../backend/app/models/schemas.py#L5826)
+[backend/app/models/schemas.py:5871](../../backend/app/models/schemas.py#L5871)
 
 Bases: `BaseModel`.
 
@@ -15290,7 +15290,7 @@ affects_releases: Optional[list[str]] = Field(None, max_length=100)
 
 ## backend/app/models/schemas.py — DefectIntakeResponse
 
-[backend/app/models/schemas.py:5853](../../backend/app/models/schemas.py#L5853)
+[backend/app/models/schemas.py:5898](../../backend/app/models/schemas.py#L5898)
 
 Bases: `BaseModel`.
 
@@ -15315,7 +15315,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — RetentionPolicyWrite
 
-[backend/app/models/schemas.py:5873](../../backend/app/models/schemas.py#L5873)
+[backend/app/models/schemas.py:5918](../../backend/app/models/schemas.py#L5918)
 
 Bases: `BaseModel`.
 
@@ -15336,7 +15336,7 @@ audit_days: Optional[int] = Field(None, ge=365, le=3650)
 
 ## backend/app/models/schemas.py — RetentionLastPurge
 
-[backend/app/models/schemas.py:5888](../../backend/app/models/schemas.py#L5888)
+[backend/app/models/schemas.py:5933](../../backend/app/models/schemas.py#L5933)
 
 Bases: `BaseModel`.
 
@@ -15351,7 +15351,7 @@ counts: dict = Field(default_factory=dict)
 
 ## backend/app/models/schemas.py — RetentionPolicyRead
 
-[backend/app/models/schemas.py:5896](../../backend/app/models/schemas.py#L5896)
+[backend/app/models/schemas.py:5941](../../backend/app/models/schemas.py#L5941)
 
 Bases: `BaseModel`.
 
@@ -15370,7 +15370,7 @@ last_purge: Optional[RetentionLastPurge] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewCandidates
 
-[backend/app/models/schemas.py:5908](../../backend/app/models/schemas.py#L5908)
+[backend/app/models/schemas.py:5953](../../backend/app/models/schemas.py#L5953)
 
 Bases: `BaseModel`.
 
@@ -15407,7 +15407,7 @@ search_index_documents: Optional[int] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewResponse
 
-[backend/app/models/schemas.py:5947](../../backend/app/models/schemas.py#L5947)
+[backend/app/models/schemas.py:5992](../../backend/app/models/schemas.py#L5992)
 
 Bases: `BaseModel`.
 
@@ -15421,7 +15421,7 @@ unmeasured: List[str] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — RetentionPurgeRequest
 
-[backend/app/models/schemas.py:5957](../../backend/app/models/schemas.py#L5957)
+[backend/app/models/schemas.py:6002](../../backend/app/models/schemas.py#L6002)
 
 Bases: `BaseModel`.
 
@@ -15434,7 +15434,7 @@ confirmation_name: str = Field(..., min_length=1, max_length=255)
 
 ## backend/app/models/schemas.py — RetentionPurgeQueued
 
-[backend/app/models/schemas.py:5963](../../backend/app/models/schemas.py#L5963)
+[backend/app/models/schemas.py:6008](../../backend/app/models/schemas.py#L6008)
 
 Bases: `BaseModel`.
 

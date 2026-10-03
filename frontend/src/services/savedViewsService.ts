@@ -14,13 +14,17 @@ export interface SavedViewRelease {
   reason: string | null;
 }
 
+/** The backend's `SAVED_VIEW_PAGES` (VIZ-609 added summary_report and explore). */
+export type SavedViewPageName =
+  | 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | 'summary_report' | 'explore';
+
 export interface SavedView {
   id: string;
   user_id: string;
   project_id: string | null;
   name: string;
   description: string | null;
-  page: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | null;
+  page: SavedViewPageName | null;
   filters: Record<string, unknown>;
   is_shared: boolean;
   is_default: boolean;
@@ -54,9 +58,10 @@ export function withRelease(
   return next;
 }
 
-export async function listSavedViews(projectId?: string): Promise<SavedView[]> {
+export async function listSavedViews(projectId?: string, page?: SavedViewPageName): Promise<SavedView[]> {
+  const params = { ...(projectId ? { project_id: projectId } : {}), ...(page ? { page } : {}) };
   const { data } = await api.get<SavedView[]>('/api/v1/saved-views', {
-    params: projectId ? { project_id: projectId } : undefined,
+    params: Object.keys(params).length ? params : undefined,
   });
   return data;
 }
@@ -65,7 +70,7 @@ export async function createSavedView(payload: {
   project_id?: string | null;
   name: string;
   description?: string;
-  page?: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures';
+  page?: SavedViewPageName;
   filters: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;
@@ -77,7 +82,7 @@ export async function createSavedView(payload: {
 export async function updateSavedView(id: string, payload: {
   name?: string;
   description?: string;
-  page?: 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures';
+  page?: SavedViewPageName;
   filters?: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;

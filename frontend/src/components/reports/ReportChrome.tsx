@@ -36,6 +36,8 @@ import { DEFAULT_WINDOW_DAYS, RELEASE_CAP, SUITE_CAP, useReportScope } from '@/s
 import { metricsFromSummary, metricsUnavailable } from './metricsModel'
 import { releaseOptionsFrom } from './releaseOptions'
 import ReportChromeView from './ReportChromeView'
+import SavedViewsMenu from './SavedViewsMenu'
+import { ROUTE_VIEW_PAGES } from './savedViewsModel'
 import { windowOptionsFor, type ReportRoute } from './reportRoutes'
 
 /**
@@ -53,6 +55,7 @@ function usePageSuite(route: ReportRoute): string | null {
 export default function ReportChrome({ route }: { route: ReportRoute }) {
   const scope = useReportScope()
   const pageSuite = usePageSuite(route)
+  const viewPage = pageSuite === null ? ROUTE_VIEW_PAGES[route] : undefined
   // The page's window (its own snap of the stored value) and what the summary
   // endpoint is asked for (capped at 90).
   const windowOptions = windowOptionsFor(route)
@@ -99,6 +102,22 @@ export default function ReportChrome({ route }: { route: ReportRoute }) {
       collapsible
       // A one-suite page has its own window buttons and no suite choice to make.
       showFilterBar={pageSuite === null}
+      actions={
+        // VIZ-609: named views of this page, for one project (a view's
+        // releases belong to one project).
+        viewPage && scope.projectId && !scope.allProjects ? (
+          <SavedViewsMenu
+            page={viewPage}
+            projectId={scope.projectId}
+            current={{ releaseIds: scope.releaseIds, suiteNames: scope.suiteNames, windowDays: win.pageDays }}
+            onApply={(view) => {
+              scope.setReleaseIds(view.releaseIds)
+              scope.setSuiteNames(view.suiteNames)
+              scope.setWindowDays(view.windowDays)
+            }}
+          />
+        ) : undefined
+      }
       meta={meta}
       allProjects={scope.allProjects}
       loading={isLoading && !summary}

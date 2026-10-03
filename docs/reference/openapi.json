@@ -23581,7 +23581,9 @@
                   "trends",
                   "coverage",
                   "defects",
-                  "failures"
+                  "failures",
+                  "summary_report",
+                  "explore"
                 ],
                 "type": "string"
               },
@@ -23816,7 +23818,9 @@
                   "trends",
                   "coverage",
                   "defects",
-                  "failures"
+                  "failures",
+                  "summary_report",
+                  "explore"
                 ],
                 "type": "string"
               },
@@ -60733,7 +60737,9 @@
                     "trends",
                     "coverage",
                     "defects",
-                    "failures"
+                    "failures",
+                    "summary_report",
+                    "explore"
                   ],
                   "type": "string"
                 },

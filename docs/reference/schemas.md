@@ -25309,7 +25309,9 @@ These are the full generated JSON Schema definitions, including required fields,
             "trends",
             "coverage",
             "defects",
-            "failures"
+            "failures",
+            "summary_report",
+            "explore"
           ],
           "type": "string"
         },
@@ -25559,7 +25561,9 @@ These are the full generated JSON Schema definitions, including required fields,
             "trends",
             "coverage",
             "defects",
-            "failures"
+            "failures",
+            "summary_report",
+            "explore"
           ],
           "type": "string"
         },
