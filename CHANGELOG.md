@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased - API workers freeze their start-up heap out of the garbage collector
+
+Every API worker now ends start-up with `gc.collect()` then `gc.freeze()`
+(`app/core/startup_gc.py`, called as the last step of the FastAPI lifespan,
+once per process). An API worker holds ~700,000 GC-tracked objects after
+start-up (modules, classes, schemas, the route table) that live as long as the
+process. Each full (generation-2) collection walked all of them again: 180-260
+ms, about every 7-12 requests of a 3,520-row heatmap, which was the whole p95
+tail of large analytics responses (Wave 3 perf work). Frozen objects are no
+longer examined, so a full collection now walks only what was allocated after
+start-up.
+
+Measured in-process (httpx ASGITransport, `GET /analytics/heatmap
+kind=suite_day days=90`, 1M-row seed, 120 requests per arm over two processes,
+Windows, CPython 3.12): p95 406.7 -> 221.4 ms (`rows=60`: 429.6 -> 233.2 ms);
+gen-2 pause p50 200.7 -> 1.2 ms; GC time 2,623 -> 224 ms per 120 requests;
+p50 unchanged (201.5 -> 202.6 ms). Every request over 300 ms that remains is
+not GC. The freeze costs 210-310 ms once per worker at start-up.
+
+- The thresholds stay CPython's defaults (700, 10, 10). With the freeze, a
+  generation-0 threshold of 10,000 saved ~1 ms of GC per 200 ms request and
+  left p50/p95 within noise.
+- Celery workers are unchanged: a worker parent forks with ~56,500 tracked
+  objects (task modules import their services lazily) and a full collection
+  there takes ~4-5 ms; tasks have no latency budget.
+- gunicorn needs no hook: `preload_app` is off, so each `UvicornWorker` imports
+  the app and runs the lifespan after the fork.
+- Reference counting still frees frozen objects; only a cycle among them is
+  never reclaimed, which for import-time objects is the life of the worker
+  anyway.
+
+Tests: `tests/regression/test_startup_heap_freeze.py` runs the real lifespan
+(network steps stubbed) and reads CPython's freeze count: the heap is frozen
+before the app serves, a second start-up in the same process does not freeze
+again, garbage is collected rather than frozen, and the thresholds stay put.
+Mutation-checked: dropping the call, moving it to shutdown, removing the
+once-guard, removing the collect, or adding a threshold each fail a test.
 ## Unreleased - homelab deploy: image-authority check tolerates finished and briefly un-Ready pods; the fan-out cutover stops repeating
 
 The 2026-10-02 homelab deploy of main 03983f12 stopped at Step 5b with
