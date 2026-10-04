@@ -90,7 +90,12 @@ async function holdSectionChunk(page: Page) {
 }
 
 /** The trend below the screen has not asked yet: the shell, the seam's lookup and the report. */
-const inventoryOff = [...SHELL_ON, `GET /api/v1/reports/summary?project_id=${PROJECT_ID}&days=30&mode=latest`]
+const inventoryOff = [
+  ...SHELL_ON,
+  `GET /api/v1/reports/summary?project_id=${PROJECT_ID}&days=30&mode=latest`,
+  // VIZ-607: the reader's background exports.
+  `GET /api/v1/reports/summary/exports?project_id=${PROJECT_ID}`,
+]
 
 for (const width of [1024, 1280, 1440, 1920]) {
   test.describe(`Summary, catalogue on, the swap at ${width} px`, () => {
