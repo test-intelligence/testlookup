@@ -42,6 +42,17 @@
  * when a run's per-test rows never landed.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import toast from 'react-hot-toast'
+import { SlidersHorizontal } from 'lucide-react'
+import ChartCustomisePanel from '@/components/charts/ChartCustomisePanel'
+import {
+  SERIES_DIMENSIONS,
+  SERIES_METRICS,
+  seriesParams,
+  titleOf,
+  type SeriesChartConfig,
+} from '@/components/charts/chartCustomiseModel'
+import { useSeriesChartConfig } from '@/components/charts/useSeriesChartConfig'
 import { useCatalogChartData, type CatalogParams } from '@/components/charts/chartCatalogSources'
 import { hasChartData, type ChartResponse, type ChartState } from '@/components/charts/chartState'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
@@ -170,40 +181,64 @@ function useReportNear(onNear: () => void) {
   }, [onNear])
 }
 
+/** VIZ-604: the toolbar button that opens the customise panel. */
+export const CUSTOMISE_BUTTON_TEXT = 'Customise'
+
 function SuiteSeriesSection({
   state,
   windowDays,
   onNear,
+  config,
+  customising,
+  onCustomise,
 }: {
   state: ChartState<ChartResponse>
   windowDays: number
   onNear: () => void
+  /** The applied customisation (VIZ-604); the default draws the chart as shipped. */
+  config: SeriesChartConfig
+  customising: boolean
+  onCustomise: () => void
 }) {
   useReportNear(onNear)
   const chart = seriesChartOf(state)
   const meta = metaOf(state)
+  const metric = SERIES_METRICS[config.metric]
   const model = useMemo(
     () =>
       chart
         ? buildMultiSeriesModel({
             series: multiSeriesInputFromChartData(chart),
-            metric: PASS_RATE_METRIC,
+            metric: config.metric === 'pass_rate' ? PASS_RATE_METRIC : { kind: metric.kind, title: metric.title },
             meta,
-            seriesNoun: 'suites',
+            seriesNoun: SERIES_DIMENSIONS[config.seriesBy].plural,
+            bucket: config.bucket,
           })
         : null,
-    [chart, meta],
+    [chart, meta, config.metric, config.seriesBy, config.bucket, metric.kind, metric.title],
   )
   return (
     <div data-catalogue-section="trends-multi-series" className="min-w-0">
       <MultiSeriesChartFrame
-        title={SUITE_SERIES_TITLE}
+        title={titleOf(config)}
         headingLevel={3}
         height={SUITE_SERIES_HEIGHT}
         state={withSeriesShape(state)}
         model={model}
         scopeLabel={`last ${windowDays} days`}
         footer={<GrainNote meta={meta} />}
+        toolbar={
+          <button
+            type="button"
+            data-chart-customise=""
+            aria-pressed={customising}
+            onClick={onCustomise}
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]"
+          >
+            <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+            {CUSTOMISE_BUTTON_TEXT}
+          </button>
+        }
         zoom
       />
     </div>
@@ -287,7 +322,13 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
   const onDurationNear = useCallback(() => setAnyNear(true), [])
 
   const everHadData = useEverHadRun(anyNear && !singleDay)
-  const suiteParams = useCatalogueParams(days, suiteFilter, SUITE_SERIES_PARAMS, ROW_GRAIN)
+  // VIZ-604: the suite series is customisable; the default config asks exactly SUITE_SERIES_PARAMS.
+  const custom = useSeriesChartConfig('trends.suite-series')
+  const [customising, setCustomising] = useState(false)
+  useEffect(() => {
+    if (custom.notice) toast(custom.notice)
+  }, [custom.notice])
+  const suiteParams = useCatalogueParams(days, suiteFilter, seriesParams(custom.applied), ROW_GRAIN)
   const suites = useCatalogChartData('chart-data', {
     params: suitesNear && !singleDay ? suiteParams : null,
     everHadData,
@@ -299,7 +340,14 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
   return (
     <div data-trends-catalogue="" className="mt-3.5 grid grid-cols-1 gap-3.5 min-w-0">
       <LazySection label="trends-multi-series" minHeight={SUITE_SERIES_HEIGHT + FRAME_CHROME}>
-        <SuiteSeriesSection state={suiteState} windowDays={windowDays} onNear={onSuitesNear} />
+        <SuiteSeriesSection
+          state={suiteState}
+          windowDays={windowDays}
+          onNear={onSuitesNear}
+          config={custom.applied}
+          customising={customising}
+          onCustomise={() => setCustomising((open) => !open)}
+        />
       </LazySection>
       <LazySection label="trends-compare" minHeight={COMPARE_HEIGHT + FRAME_CHROME}>
         <CompareNear days={days} suiteFilter={suiteFilter} everHadData={everHadData} onNear={onDurationNear} />
@@ -314,6 +362,15 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
           onNear={onDurationNear}
         />
       </LazySection>
+      {customising ? (
+        <ChartCustomisePanel
+          chartTitle={titleOf(custom.config)}
+          config={custom.config}
+          onChange={custom.setConfig}
+          onReset={custom.reset}
+          onClose={() => setCustomising(false)}
+        />
+      ) : null}
       {/* Its own seam read, lazy placeholder and request: nothing at all with either flag off. */}
       <HeatmapSection
         days={days}
