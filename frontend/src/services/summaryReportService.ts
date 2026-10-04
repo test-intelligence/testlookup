@@ -80,6 +80,19 @@ export const summaryReportService = {
   },
 
   /**
+   * VIZ-607: the same report as an Excel workbook (a context sheet, then one
+   * sheet per part, each with a native chart). The same query string as the
+   * screen and the PDF, so all three cover the same scope.
+   */
+  downloadXlsx: async (params: SummaryReportParams & { project_id: string }): Promise<Blob> => {
+    const response = await api.get('/api/v1/reports/summary/xlsx', {
+      params: summaryReportQueryParams(params),
+      responseType: 'blob',
+    })
+    return response.data as Blob
+  },
+
+  /**
    * US-7.5: the self-contained HTML analysis report — the same document
    * the digest dispatcher attaches to daily/weekly digest emails.
    * ``GET /api/v1/projects/{id}/reports/analysis?window=1d|7d``.

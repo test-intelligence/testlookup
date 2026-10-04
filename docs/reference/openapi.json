@@ -57970,7 +57970,7 @@
     },
     "/api/v1/reports/summary/pdf": {
       "get": {
-        "description": "Return the summary report as a downloadable PDF.",
+        "description": "Return the summary report as a downloadable PDF, charts included (VIZ-607).",
         "operationId": "export_summary_report_pdf_api_v1_reports_summary_pdf_get",
         "parameters": [
           {
@@ -58095,6 +58095,138 @@
           }
         ],
         "summary": "Export Summary Report Pdf",
+        "tags": [
+          "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/xlsx": {
+      "get": {
+        "description": "VIZ-607: the summary report as an Excel workbook: a context sheet, then\none sheet per part of the report, each with a native chart over its data.",
+        "operationId": "export_summary_report_xlsx_api_v1_reports_summary_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "window",
+              "enum": [
+                "window",
+                "latest"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Export Summary Report Xlsx",
         "tags": [
           "Summary Report"
         ]

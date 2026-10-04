@@ -338,6 +338,27 @@ def render_summary_report_pdf(payload: dict) -> bytes:
         velocity_text += f" &nbsp;|&nbsp; Latest run: {_safe(payload['latest_run_at'])}"
     story.append(Paragraph(velocity_text, body))
 
+    # ── Charts (VIZ-607) ────────────────────────────────────────────────
+    # Drawn here from the same payload as the numbers (reportlab.graphics,
+    # offline); a chart with nothing to show is left out, not drawn empty.
+    from app.services import summary_report_charts as report_charts
+
+    drawn = [
+        (title, drawing)
+        for title, drawing in (
+            ("Status breakdown", report_charts.status_breakdown(totals)),
+            ("Pass rate by suite, worst first", report_charts.suite_pass_rates(payload.get("suites") or [])),
+            ("Top failing tests", report_charts.top_failing(payload.get("top_failing_tests") or [])),
+        )
+        if drawing is not None
+    ]
+    if drawn:
+        story.append(Paragraph("Charts", h2))
+        for title, drawing in drawn:
+            story.append(Paragraph(f"<b>{_safe(title)}</b>", body))
+            story.append(drawing)
+            story.append(Spacer(1, 3 * mm))
+
     # ── Per-suite breakdown ─────────────────────────────────────────────
     story.append(Paragraph("Per-suite breakdown", h2))
     suites = payload.get("suites") or []

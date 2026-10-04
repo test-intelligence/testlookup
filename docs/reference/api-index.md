@@ -360,6 +360,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | DELETE | `/api/v1/reports/share-links/{link_id}` | Revoke Share Link Endpoint | [Reports](api/reports.md) |
 | GET | `/api/v1/reports/summary` | Get Summary Report | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reports/summary/pdf` | Export Summary Report Pdf | [Summary Report](api/summary-report.md) |
+| GET | `/api/v1/reports/summary/xlsx` | Export Summary Report Xlsx | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reviews/{review_id}` | Get Review | [Reviews](api/reviews.md) |
 | POST | `/api/v1/reviews/{review_id}/accept` | Accept Review | [Reviews](api/reviews.md) |
 | POST | `/api/v1/reviews/{review_id}/reject` | Reject Review | [Reviews](api/reviews.md) |
@@ -565,4 +566,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **556 HTTP operations**, **466 paths**, **81 domain pages**.
+Total: **557 HTTP operations**, **467 paths**, **81 domain pages**.
