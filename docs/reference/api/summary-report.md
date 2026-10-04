@@ -169,7 +169,7 @@ Export Summary Report Pdf
 
 Return the summary report as a downloadable PDF, charts included (VIZ-607).
 
-Source: [backend/app/routers/summary_report.py:143](../../../backend/app/routers/summary_report.py#L143).
+Source: [backend/app/routers/summary_report.py:144](../../../backend/app/routers/summary_report.py#L144).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -326,7 +326,7 @@ Export Summary Report Xlsx
 VIZ-607: the summary report as an Excel workbook: a context sheet, then
 one sheet per part of the report, each with a native chart over its data.
 
-Source: [backend/app/routers/summary_report.py:159](../../../backend/app/routers/summary_report.py#L159).
+Source: [backend/app/routers/summary_report.py:160](../../../backend/app/routers/summary_report.py#L160).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

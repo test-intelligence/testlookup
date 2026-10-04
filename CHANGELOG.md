@@ -32,7 +32,7 @@ starting with `=` `+` `-` `@` is kept as text, the same rule as the
 test-management workbook.
 
 **Audit rows.** Both Summary exports now write an `AccessAuditLog` row
-(`summary_report_export_pdf` / `_xlsx`) recording who exported, which
+(`report_summary_export_pdf` / `_xlsx`, so the audit dashboard's report-export list shows them) recording who exported, which
 project, and which window, releases and suites. `reports.py` exports always
 did this; this route did not. The download file name is now reduced to
 `[a-z0-9_-]`.

@@ -113,7 +113,8 @@ async def _export(
         actor_user_id=current_user.id,
         actor_name=current_user.username,
         project_id=project_id,
-        action=f"summary_report_export_{fmt}",
+        # "report_" first: the audit dashboard lists report exports by that prefix.
+        action=f"report_summary_export_{fmt}",
         after_value={
             "days": days,
             "mode": mode,

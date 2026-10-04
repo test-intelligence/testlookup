@@ -158,6 +158,6 @@ async def test_every_export_leaves_an_audit_row(monkeypatch, fmt):
     assert f'filename="summary-payment_service-30d-window.{fmt}"' in response.headers["content-disposition"]
     rows = [obj for obj in db.added if type(obj).__name__ == "AccessAuditLog"]
     assert len(rows) == 1 and db.commits == 1
-    assert rows[0].action == f"summary_report_export_{fmt}"
+    assert rows[0].action == f"report_summary_export_{fmt}"
     assert rows[0].actor_user_id == user.id and rows[0].project_id == scope.project_id
     assert rows[0].after_value["suite_names"] == ["payments"]
