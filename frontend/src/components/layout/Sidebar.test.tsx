@@ -93,6 +93,18 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: /Ask AI/ })).toBeInTheDocument()
   })
 
+  it('lists the Explorer (VIZ-505) after Trends, whatever the flags: no flag lookup on every page', () => {
+    render(<MemoryRouter initialEntries={['/trends']}><Sidebar /></MemoryRouter>)
+    const links = screen.getAllByRole('link').map(a => a.getAttribute('href'))
+    expect(screen.getByRole('link', { name: /Explorer/ })).toHaveAttribute('href', '/explore')
+    expect(links.indexOf('/explore')).toBe(links.indexOf('/trends') + 1)
+  })
+
+  it('opens the Testing group on /explore itself', () => {
+    render(<MemoryRouter initialEntries={['/explore']}><Sidebar /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: /Explorer/ })).toBeInTheDocument()
+  })
+
   it('renders branding and top-level group links', () => {
     render(
       <MemoryRouter>

@@ -53,7 +53,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/login': 'Login', '/reset-password': 'Reset Password', '/overview': 'Dashboard',
   '/getting-started': 'Getting Started', '/docs': 'Documentation', '/value-metrics': 'Value Metrics',
   '/intelligence': 'Intelligence', '/runs': 'Runs', '/coverage': 'Coverage', '/coverage/suite': 'Suite Coverage',
-  '/suites': 'Suites', '/failures': 'Failure Analysis', '/trends': 'Trends', '/defects': 'Defects',
+  '/suites': 'Suites', '/failures': 'Failure Analysis', '/trends': 'Trends', '/explore': 'Explorer', '/defects': 'Defects',
   '/search': 'Search', '/chat': 'Ask AI', '/agents': 'Agents', '/deep-investigate': 'Deep Investigation',
   '/release-gate': 'Release Gate', '/flaky-coach': 'Flaky Coach', '/quarantine': 'Quarantine', '/reviews': 'Review Queue',
   '/test-management': 'Test Management', '/live': 'Live Execution', '/my-failures': 'My Failures',

@@ -82,6 +82,7 @@ const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
 const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
+const ExplorePage = lazy(() => import('@/pages/ExplorePage'))
 
 // The chart gallery (`/__charts`) is the visual-regression harness's subject
 // and exists in DEVELOPMENT builds only. `import.meta.env.DEV` is a build-time
@@ -135,6 +136,9 @@ const appRoutes: AppRoute[] = [
   { path: 'canonical-test-cases/:canonicalId', component: CanonicalDetailPage },
   { path: 'failures', component: FailureAnalysisPage },
   { path: 'trends', component: TrendsPage },
+  // VIZ-505: small multiples over chart-data. The Sidebar entry is gated on
+  // the advanced-charts rollout; a direct URL with it off says so.
+  { path: 'explore', component: ExplorePage },
   { path: 'defects', component: DefectsPage },
   { path: 'search', component: SearchPage },
   // Ask-AI chat (US-2.1). The Sidebar entry is gated on the ask_ai_chat

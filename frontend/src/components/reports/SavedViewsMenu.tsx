@@ -43,8 +43,21 @@ export interface SavedViewsMenuProps {
   projectId: string
   /** The scope as the filter bar shows it now: what "Save current view" stores. */
   current: ReportViewScope
-  /** Apply a view's scope (the report-scope store's setters). */
-  onApply: (scope: ReportViewScope) => void
+  /**
+   * Apply a view's scope (the report-scope store's setters). The view itself
+   * comes second, for a page that stores more than the scope (`extraFilters`).
+   */
+  onApply: (scope: ReportViewScope, view: SavedView) => void
+  /**
+   * More keys saved beside the scope in `filters` (VIZ-505: the Explorer's
+   * configuration under `explore`). They never replace a scope key.
+   */
+  extraFilters?: Record<string, unknown>
+  /**
+   * Whether the URL already describes the page, so my default view must not
+   * open over it. Default: the URL names releases or suites.
+   */
+  linked?: boolean
 }
 
 const BUTTON =
@@ -71,7 +84,7 @@ function markApplied(key: string) {
   }
 }
 
-export default function SavedViewsMenu({ page, projectId, current, onApply }: SavedViewsMenuProps) {
+export default function SavedViewsMenu({ page, projectId, current, onApply, extraFilters, linked: linkedProp }: SavedViewsMenuProps) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const nameId = useId()
@@ -89,14 +102,14 @@ export default function SavedViewsMenu({ page, projectId, current, onApply }: Sa
   // My default view for this page opens on the first visit in this tab,
   // unless the URL already names releases or suites (a shared link wins).
   const [params] = useSearchParams()
-  const linked = params.has(SCOPE_URL_KEYS.release) || params.has(SCOPE_URL_KEYS.suites)
+  const linked = linkedProp ?? (params.has(SCOPE_URL_KEYS.release) || params.has(SCOPE_URL_KEYS.suites))
   const myDefault = views.find((view) => view.is_default && view.user_id === userId) ?? null
   useEffect(() => {
     const key = defaultAppliedKey(projectId, page)
     if (!myDefault || linked || alreadyApplied(key)) return
     markApplied(key)
     const scope = readReportView(myDefault, current.windowDays)
-    onApply(scope)
+    onApply(scope, myDefault)
     toast.success(`Opened your default view "${myDefault.name}"`)
     // Once per project and page: the view's identity is what matters, not every render's scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,7 +139,7 @@ export default function SavedViewsMenu({ page, projectId, current, onApply }: Sa
           project_id: projectId,
           name: trimmed,
           page,
-          filters: reportViewFilters(page, current),
+          filters: { ...extraFilters, ...reportViewFilters(page, current) },
           is_shared: shared,
           is_default: makeDefault,
         }),
@@ -140,7 +153,7 @@ export default function SavedViewsMenu({ page, projectId, current, onApply }: Sa
 
   function openView(view: SavedView) {
     const scope = readReportView(view, current.windowDays)
-    onApply(scope)
+    onApply(scope, view)
     setOpen(false)
     toast.success(scope.releaseNote ? `Opened "${view.name}". ${scope.releaseNote}` : `Opened "${view.name}"`)
   }

@@ -157,6 +157,7 @@ path: string
 { path: 'canonical-test-cases/:canonicalId', component: CanonicalDetailPage },
 { path: 'failures', component: FailureAnalysisPage },
 { path: 'trends', component: TrendsPage },
+{ path: 'explore', component: ExplorePage },
 { path: 'defects', component: DefectsPage },
 { path: 'search', component: SearchPage },
 { path: 'chat', component: ChatPage },

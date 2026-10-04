@@ -72,6 +72,9 @@ const REVIEWED: Record<string, ErrorState> = {
   IntelligenceHubPage: 'data-unavailable',
   ReleasesPage: 'data-unavailable',
   SummaryReportPage: 'data-unavailable',
+  // VIZ-505: the discovery request that names the panels; each panel's own
+  // failure is its chart frame's error with Retry.
+  ExplorePage: 'data-unavailable',
 
   ActivityPage: 'own-error-ui',
   SuitesPage: 'own-error-ui',
