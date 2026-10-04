@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase B: customise a chart (VIZ-604, first chart)
+
+Trends' "Pass rate by suite" has a **Customise** button. It opens a side
+panel, not a modal, so the chart stays in view and redraws as each setting
+changes; the request goes out 300 ms after the last change. The settings:
+
+- **Title**: empty means the title the settings imply, such as "Failures by
+  environment, weekly".
+- **Metric**: pass rate, failures, failed tests or executions.
+- **One line per**: suite, environment, branch or release.
+- **Time bucket**: day or week.
+- **Lines**: 3, 5 or 7, busiest first, with the rest as "Other".
+
+**Reset to default** restores the chart as shipped. The default config sends
+exactly the request the chart always sent.
+
+**Guard rails.** Options that would mislead are listed as unavailable, with
+the reason:
+
+- a pie for series over time;
+- stacked rates ("40% on top of 60% is not 100% of anything");
+- a log scale for rates or for counts that can be 0;
+- more than 7 lines.
+
+**Storage.** The customisation is kept per chart in this browser, versioned
+and validated on read. A stored config this build no longer offers falls
+back to the default, and the reader is told once.
+
+The multi-series model gains a `bucket: 'week'` input. A week arrives as its
+Monday's date, so the axis steps a week at a time and is labelled "Week
+starting (UTC)". Before, the axis would have filled every day and shown six
+gaps a week.
+
+The other catalogue charts keep their fixed settings. Saving a customisation
+inside a named view (VIZ-609) is not part of this change.
+
 ## Unreleased - Visualization Upgrade, Phase B: compare suites and releases on one chart (VIZ-605)
 
 Trends has a new **Compare** section (with `viz_chart_data_api` on, below

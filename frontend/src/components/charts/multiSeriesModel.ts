@@ -66,6 +66,9 @@ export { ALIGNED_X_TITLE }
 
 /** Shown under a calendar-axis comparison. */
 export const ABSOLUTE_CAPTION = 'Days are UTC buckets.'
+/** VIZ-604: a weekly bucket's x is its Monday (UTC), as `chart-data` sends it. */
+export const WEEKLY_X_TITLE = 'Week starting (UTC)'
+export const WEEKLY_CAPTION = 'Weeks are UTC, starting Monday.'
 const ALIGNED_CAPTION_TAIL = 'the table and the tooltip give the date each day stands for.'
 /** Shown under an aligned comparison where every release's start date was given. */
 export const ALIGNED_CAPTION_NAMED = `Day 0 is each release's start date; ${ALIGNED_CAPTION_TAIL}`
@@ -293,6 +296,8 @@ export interface BuildMultiSeriesInput {
    * A line without an entry keeps its rank's slot for both.
    */
   styles?: Readonly<Record<string, { colour: number; dash: number }>>
+  /** VIZ-604: the x buckets are days (default) or weeks (each x is its Monday). Absolute axis only. */
+  bucket?: 'day' | 'week'
 }
 
 // ── Comparability ────────────────────────────────────────────────────────────
@@ -366,11 +371,16 @@ const pointOf = (x: string, source: SeriesPoint | undefined, date: string | null
 }
 
 /** The calendar axis: every UTC day from first to last when every x is a day, else the sorted union. */
-function absoluteAxis(series: readonly MultiSeriesInputSeries[]): string[] {
+function absoluteAxis(series: readonly MultiSeriesInputSeries[], bucket: 'day' | 'week' = 'day'): string[] {
   const seen = new Set<string>()
   for (const s of series) for (const p of s.points) seen.add(p.x)
   const xs = [...seen].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  if (xs.length > 1 && xs.every((x) => DAY_PATTERN.test(x))) return utcDayRange(xs[0], xs[xs.length - 1])
+  if (xs.length > 1 && xs.every((x) => DAY_PATTERN.test(x))) {
+    const days = utcDayRange(xs[0], xs[xs.length - 1])
+    // A week is its Monday: every 7th day from the first, so a week with no
+    // runs is a gap and the six days between Mondays are not.
+    return bucket === 'week' ? days.filter((_, i) => i % 7 === 0) : days
+  }
   return xs
 }
 
@@ -577,6 +587,7 @@ export function buildMultiSeriesModel({
   comparability: comparabilityInput = null,
   seriesNoun = 'series',
   styles,
+  bucket = 'day',
 }: BuildMultiSeriesInput): MultiSeriesModel {
   let xs: string[]
   let working: WorkingLine[]
@@ -614,7 +625,8 @@ export function buildMultiSeriesModel({
     rowHeaders = Object.fromEntries(xs.map((x, day) => [x, alignedRowLabel(day, aligned.series)]))
     caption = alignedCaptionOf(aligned.series.map((s) => s.startSource))
   } else {
-    const axis = absoluteAxis(series)
+    const axis = absoluteAxis(series, bucket)
+    if (bucket === 'week') caption = WEEKLY_CAPTION
     xs = axis.length > SVG_POINT_LIMIT ? axis.slice(axis.length - SVG_POINT_LIMIT) : axis
     if (axis.length > SVG_POINT_LIMIT) capped = { shown: xs.length, total: axis.length }
     working = series.map((s) => {
@@ -665,7 +677,7 @@ export function buildMultiSeriesModel({
     lines,
     metric,
     alignment,
-    xTitle: alignment === 'release-start' ? ALIGNED_X_TITLE : ABSOLUTE_X_TITLE,
+    xTitle: alignment === 'release-start' ? ALIGNED_X_TITLE : bucket === 'week' ? WEEKLY_X_TITLE : ABSOLUTE_X_TITLE,
     yAxis: yAxisFor(metric.kind, lines),
     fold,
     foldNotice: foldNoticeOf(fold, keptCount, seriesNoun),
