@@ -186,6 +186,15 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list reads (lightweight, limit-based) |
 | `create_defect` | `project_id`, `fingerprint?/cluster_id?`, `target?`, `issue_type?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview; dedup-first (QA_ENGINEER+) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
+| `get_chart_data` | `group_by`, `metric?`, `project_id?`, `release_id?`, `suite_name?`, `days?`, `top_n?` | A metric over 1-2 dimensions, the same series the REST API and UI charts draw, returned verbatim with `meta`. The only analytics tool that is release- and suite-scoped; without `project_id` it covers every project you can read. Errors carry `code`/`param`/`allowed` |
+
+The other analytics tools answer project-wide: the UI can narrow them to a
+release and they cannot, so their numbers and a release-filtered dashboard's
+legitimately differ. Use `get_chart_data` for a release- or suite-scoped number.
+With the UI's `viz_chart_data_api` flag off, the legacy trend chart reads
+`/api/v1/metrics/trends`, which counts every run that touched a suite whole, so
+under a suite filter it differs from `get_chart_data` (which counts only the
+suite's own tests).
 
 ### AI root-cause analysis
 

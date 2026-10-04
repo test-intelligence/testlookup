@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase C: chart data from MCP and the CLI (VIZ-211)
+
+**This reverses a decision, for chart data only.** Since 2026-09-03 (below),
+release scoping was "a UI/REST capability and an explicit MCP non-goal": the
+MCP analytics tools answered project-wide and said so, and the CLI had no
+analytics command at all. The product owner approved VIZ-211 in the Phase C
+plan, so chart data is now release- and suite-scoped on every surface. The four
+leaderboard tools (`get_flaky_tests`, `get_failure_categories`,
+`get_top_failing_tests`, `get_coverage_report`) and the flaky-tests resource
+stay project-wide; their descriptions now point at `get_chart_data` instead of
+calling release scoping a non-goal.
+
+**MCP: `get_chart_data`.** One metric over one or two dimensions, read from
+`GET /api/v1/analytics/chart-data` with the REST parameter names (`group_by`,
+`metric`, `project_id`, `release_id`, `suite_name`, `days`, `top_n`) and
+returned verbatim, `meta` included. So an agent, the CLI and the UI's charts
+get the same series for the same scope. Without `project_id` it covers every
+project the caller can read. A refusal comes back as `{ok: false,
+status_code, detail}` plus the analytics error contract's `code`, `param` and
+`allowed`, and `retry_after` on a 429. Any release the caller cannot read
+refuses the whole request (403); there are never partial results.
+
+**CLI: `testlookup analytics trends` and `analytics chart`.** `trends` is the
+pass rate per UTC day (`--metric`, and `--by <dimension>` for one series per
+value, top 7 plus "other" by default); `chart` takes any metric over one or two
+`--group-by` dimensions. Both take `--project`, repeatable `--release` and
+`--suite`, `--days`, `--top-n` and `--format table|csv|json`:
+
+- `json` is the REST body.
+- `csv` is the UI export's layout: the applied scope as `# Label,value` lines,
+  warnings (ignored filters, truncation, runs outside the window, not
+  measured), then one row per x with a column per series. A gap is an empty
+  cell, never 0. Names are neutralised against formula injection exactly as the
+  UI's writer does. Unlike the UI's file it has `\n` line ends and no BOM, and
+  it is written as UTF-8 bytes whatever the console's code page.
+- `table` is one row per series with a sparkline (block glyphs, or an ASCII
+  ramp on a console that cannot encode them), first/last/min/max and how many
+  points were measured. Warnings go to stderr.
+
+Exit codes are the CLI's usual ones (422 is 2, 403 is 4); an unknown format
+exits 2 without a request, and a 429 says it is rate limited (120 requests a
+minute per user).
+
+**Known differences.** The UI clamps a row-grain window to 90 days; the CLI
+passes `--days` through to the server's 365-day limit. With the
+`viz_chart_data_api` flag off, the UI's legacy trend reads `/metrics/trends`,
+which counts every run that touched a suite whole, so under a suite filter it
+differs from chart-data. Releases are UUIDs or `unattributed`; resolving them
+by name is a follow-up.
+
+**Tests.** `mcp/tests/test_mcp_chart_data.py` (published tool contract
+snapshot, wire encoding, verbatim body, error fields);
+`cli/tests/test_analytics_commands.py` (request shape, wire, CSV and table
+goldens, injection, cp1252 console, exit codes); in the backend,
+`test_cli_and_mcp_wire_contract.py` now checks that `get_chart_data`'s
+arguments are the route's query parameters, that the CLI sends only those, and
+that the tool's metric and dimension lists match `chart_data_service`, and
+`test_mcp_release_scope_documented.py` replaces "the CLI calls no analytics
+endpoint" with "every CLI analytics call is release-scoped".
+`test_mcp_chart_data_parity_postgres.py` (added to the CI Postgres list) checks
+MCP against REST on real data, and the 403s.
 ## Unreleased - Visualization Upgrade, Phase C: the Explorer (VIZ-505)
 
 **A new page, Testing → Explorer (`/explore`).** One metric over time as small
