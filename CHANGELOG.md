@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase C: report exports with charts, and an Excel workbook (VIZ-607, part 1)
+
+**Summary PDF charts.** The Summary PDF now has a **Charts** section after
+its headline figures:
+
+- **Status breakdown**: a pie, with each status's count and share in the legend.
+- **Pass rate by suite**: horizontal bars from 0 to 100%, worst first, at most 12.
+- **Top failing tests**: bars of failures, most first, at most 12.
+
+The server draws them from the same payload as the numbers, using
+ReportLab's own `reportlab.graphics`, so they work offline and need no new
+dependency. A chart with nothing to show is left out rather than drawn
+empty. Bar labels are rounded (68.9% reads "69%"); the bars themselves are
+exact. A long name is cut with "…" on the bar only, because the full name
+is in the table that follows.
+
+**Export Excel** sits beside **Export PDF** on the Summary page
+(`GET /api/v1/reports/summary/xlsx`). It uses the same scope as the screen
+and the PDF. The workbook has:
+
+- a **Report context** sheet with the VIZ-308 context block and the "N of
+  M" line;
+- **Totals** with a status pie;
+- **Suites** with a pass-rate bar chart;
+- **Top failing tests** with a failures bar chart.
+
+The charts are native Excel charts over the sheet's own data, so they stay
+inspectable and re-chartable. Stored names cannot become formulas: text
+starting with `=` `+` `-` `@` is kept as text, the same rule as the
+test-management workbook.
+
+**Audit rows.** Both Summary exports now write an `AccessAuditLog` row
+(`report_summary_export_pdf` / `_xlsx`, so the audit dashboard's report-export list shows them) recording who exported, which
+project, and which window, releases and suites. `reports.py` exports always
+did this; this route did not. The download file name is now reduced to
+`[a-z0-9_-]`.
+
+Asynchronous export jobs for very large reports (a queued job, progress, an
+expiring authorised link, a 7-day artefact sweep) are part 2.
+
 ## Unreleased - Visualization Upgrade, Phase C: status-flow Sankey on run compare (VIZ-507)
 
 **Run compare** has a new **Status changes** chart, shown when

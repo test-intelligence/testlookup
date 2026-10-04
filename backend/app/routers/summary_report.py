@@ -11,7 +11,9 @@ suite). See ``services/summary_report_service`` for the math.
 """
 from __future__ import annotations
 
+import importlib
 import io
+import re
 from typing import Literal
 
 import structlog
@@ -21,7 +23,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.analytics_errors import analytics_error_contract
+from app.core.deps import get_current_active_user
 from app.db.postgres import get_db
+from app.models.postgres import AccessAuditLog, User
 from app.models.schemas import SummaryReportResponse
 from app.services import summary_report_service as svc
 from app.services.analytics_meta import build_meta, nothing_applied, with_meta
@@ -72,6 +76,71 @@ async def get_summary_report(
     return SummaryReportResponse(**with_meta(payload, meta))
 
 
+#: VIZ-607: the formats the report exports, with their renderer and media
+#: type. Both render from the same payload and envelope.
+_EXPORTS = {
+    "pdf": ("app.services.summary_report_pdf", "render_summary_report_pdf", "application/pdf"),
+    "xlsx": (
+        "app.services.summary_report_xlsx",
+        "render_summary_report_xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ),
+}
+
+
+async def _export(
+    fmt: str, mode: SummaryMode, scope: AnalyticsScope, db: AsyncSession, current_user: User,
+) -> StreamingResponse:
+    project_id, days = scope.project_id, scope.window_days
+    # The same builder and scope as the JSON report, so the export prints the
+    # numbers the screen shows.
+    payload = await svc.build_summary_report(
+        db, project_id, days=days, mode=mode,
+        release_id=scope.release_arg, suite_name=scope.suite_arg,
+    )
+    # VIZ-308: the same context block as the screen's report chrome, from the
+    # same envelope the JSON report carries.
+    meta = await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_UNIQUE_TESTS)
+
+    module_name, function_name, media_type = _EXPORTS[fmt]
+    renderer = getattr(importlib.import_module(module_name), function_name)
+    # ReportLab and openpyxl are sync + CPU-bound -- keep the event loop free.
+    content = await run_in_threadpool(renderer, {**payload, "meta": meta})
+
+    # VIZ-607: every server export leaves an audit row (reports.py always did;
+    # this route did not): who, which project, which scope and format.
+    db.add(AccessAuditLog(
+        actor_user_id=current_user.id,
+        actor_name=current_user.username,
+        project_id=project_id,
+        # "report_" first: the audit dashboard lists report exports by that prefix.
+        action=f"report_summary_export_{fmt}",
+        after_value={
+            "days": days,
+            "mode": mode,
+            "release_ids": list(scope.release_ids),
+            "suite_names": list(scope.suite_names),
+            "size_bytes": len(content),
+        },
+    ))
+    await db.commit()
+
+    slug = re.sub(r"[^a-z0-9_-]+", "_", (payload.get("project_name") or "project").lower()).strip("_")
+    filename = f"summary-{slug or 'project'}-{days}d-{mode}.{fmt}"
+    logger.info(
+        f"summary_report_{fmt}_exported",
+        project_id=str(project_id),
+        days=days,
+        mode=mode,
+        size_bytes=len(content),
+    )
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/pdf")
 @analytics_error_contract
 async def export_summary_report_pdf(
@@ -82,38 +151,20 @@ async def export_summary_report_pdf(
     # somebody attaches to a sign-off.
     scope: AnalyticsScope = Depends(analytics_scope(_PDF_SCOPE)),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """Return the summary report as a downloadable PDF."""
-    project_id, days = scope.project_id, scope.window_days
-    # The same builder and scope as the JSON report, so the PDF prints the
-    # numbers the screen shows.
-    payload = await svc.build_summary_report(
-        db, project_id, days=days, mode=mode,
-        release_id=scope.release_arg, suite_name=scope.suite_arg,
-    )
+    """Return the summary report as a downloadable PDF, charts included (VIZ-607)."""
+    return await _export("pdf", mode, scope, db, current_user)
 
-    # VIZ-308: the PDF prints the same context block as the screen's report
-    # chrome, from the same envelope the JSON report carries.
-    meta = await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_UNIQUE_TESTS)
 
-    # ReportLab is sync + CPU-bound — keep the event loop free.
-    from app.services.summary_report_pdf import render_summary_report_pdf
-
-    pdf_bytes = await run_in_threadpool(render_summary_report_pdf, {**payload, "meta": meta})
-
-    project_slug = (payload.get("project_name") or "project").replace(" ", "_").lower()
-    filename = f"summary-{project_slug}-{days}d-{mode}.pdf"
-
-    logger.info(
-        "summary_report_pdf_exported",
-        project_id=str(project_id),
-        days=days,
-        mode=mode,
-        size_bytes=len(pdf_bytes),
-    )
-
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+@router.get("/xlsx")
+@analytics_error_contract
+async def export_summary_report_xlsx(
+    mode: SummaryMode = Query("window"),
+    scope: AnalyticsScope = Depends(analytics_scope(_PDF_SCOPE)),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """VIZ-607: the summary report as an Excel workbook: a context sheet, then
+    one sheet per part of the report, each with a native chart over its data."""
+    return await _export("xlsx", mode, scope, db, current_user)

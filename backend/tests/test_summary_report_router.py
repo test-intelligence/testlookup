@@ -10,6 +10,7 @@ The router is thin (one service call per endpoint). These tests pin:
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -212,6 +213,8 @@ async def test_pdf_endpoint_streams_pdf_bytes():
 
     project_id = uuid.uuid4()
     db = AsyncMock()
+    db.add = MagicMock()  # Session.add is synchronous
+    user = SimpleNamespace(id=uuid.uuid4(), username="reader")
     fake_pdf = b"%PDF-1.4 ...fake bytes..."
 
     with patch(
@@ -225,10 +228,16 @@ async def test_pdf_endpoint_streams_pdf_bytes():
             # Called DIRECTLY, so the scope FastAPI would resolve (VIZ-201's
             # shared dependency) is passed in already authorised, and ``mode``
             # explicitly: a direct call would otherwise get the Query OBJECT.
-            mode="window", scope=_scope(project_id), db=db,
+            mode="window", scope=_scope(project_id), db=db, current_user=user,
         )
 
     assert response.media_type == "application/pdf"
     disposition = response.headers["content-disposition"]
     assert disposition.startswith("attachment;")
     assert "summary-googleproject-7d-window.pdf" in disposition
+    # VIZ-607: the export leaves an audit row, named so the audit dashboard
+    # (actions LIKE 'report_%') lists it.
+    (audit,), _ = db.add.call_args
+    assert audit.action == "report_summary_export_pdf"
+    assert audit.actor_user_id == user.id and audit.project_id == project_id
+    db.commit.assert_awaited_once()

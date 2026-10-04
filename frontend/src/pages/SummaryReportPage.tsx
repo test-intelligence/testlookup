@@ -109,7 +109,7 @@ export default function SummaryReportPage() {
 
   // Aggregation mode is page-local (no other page has the concept).
   const [mode, setMode] = useState<SummaryReportMode>(() => loadStoredMode())
-  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null)
   // US-7.5: on-demand download of the self-contained HTML analysis report
   // (the same document daily/weekly digest emails attach).
   const [downloadingReport, setDownloadingReport] = useState<'1d' | '7d' | null>(null)
@@ -137,31 +137,33 @@ export default function SummaryReportPage() {
 
   const windowLabel = days === 1 ? '24h' : `${days}d`
 
-  const handleDownloadPdf = async () => {
+  // VIZ-607: PDF (charts drawn by the server) or Excel (a sheet per part, native charts).
+  const handleDownload = async (format: 'pdf' | 'xlsx') => {
     if (!project?.id) {
       toast.error('Select a single project before exporting.')
       return
     }
-    setIsDownloading(true)
+    const label = format === 'pdf' ? 'PDF' : 'Excel workbook'
+    setDownloading(format)
     try {
-      const blob = await summaryReportService.downloadPdf({
-        project_id: project.id,
-        ...scope,
-      })
+      const params = { project_id: project.id, ...scope }
+      const blob = format === 'pdf'
+        ? await summaryReportService.downloadPdf(params)
+        : await summaryReportService.downloadXlsx(params)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       const slug = (project.name || 'project').toLowerCase().replace(/\s+/g, '_')
-      a.download = `summary-${slug}-${windowLabel}-${mode}.pdf`
+      a.download = `summary-${slug}-${windowLabel}-${mode}.${format}`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      toast.success('Summary PDF downloaded')
+      toast.success(`Summary ${label} downloaded`)
     } catch (err: unknown) {
-      toast.error((err as Error).message || 'Failed to download PDF')
+      toast.error((err as Error).message || `Failed to download the ${label}`)
     } finally {
-      setIsDownloading(false)
+      setDownloading(null)
     }
   }
 
@@ -271,20 +273,24 @@ export default function SummaryReportPage() {
                 {downloadingReport === w ? 'Generating…' : `Analysis report (${w})`}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={isDownloading || !hasData}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: hasData ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
-                borderColor: hasData ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-                color: hasData ? 'var(--color-accent)' : 'var(--color-text-muted)',
-              }}
-            >
-              <Download className="h-3.5 w-3.5" />
-              {isDownloading ? 'Generating…' : 'Export PDF'}
-            </button>
+            {(['pdf', 'xlsx'] as const).map((format) => (
+              <button
+                key={format}
+                type="button"
+                data-summary-export={format}
+                onClick={() => void handleDownload(format)}
+                disabled={downloading !== null || !hasData}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: hasData ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                  borderColor: hasData ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                  color: hasData ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                }}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {downloading === format ? 'Generating…' : format === 'pdf' ? 'Export PDF' : 'Export Excel'}
+              </button>
+            ))}
           </div>
         }
       />

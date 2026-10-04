@@ -140,6 +140,7 @@ This is a documentation/typing limitation observed in source, not evidence that 
 - `GET /api/v1/reports/runs/{run_id}/evidence-bundle`
 - `GET /api/v1/reports/runs/{run_id}/pdf`
 - `GET /api/v1/reports/summary/pdf`
+- `GET /api/v1/reports/summary/xlsx`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/failed-ids`
 - `GET /api/v1/runs/{run_id}`

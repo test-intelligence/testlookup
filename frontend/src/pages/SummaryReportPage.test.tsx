@@ -25,11 +25,13 @@ import type { EnvelopeMeta } from '@/lib/viz/contracts'
 
 const mockGet = vi.fn()
 const mockDownloadPdf = vi.fn()
+const mockDownloadXlsx = vi.fn()
 
 vi.mock('@/services/summaryReportService', () => ({
   summaryReportService: {
     get: (...args: unknown[]) => mockGet(...args),
     downloadPdf: (...args: unknown[]) => mockDownloadPdf(...args),
+    downloadXlsx: (...args: unknown[]) => mockDownloadXlsx(...args),
   },
 }))
 
@@ -380,6 +382,36 @@ describe('SummaryReportPage', () => {
       })
     })
 
+    URL.createObjectURL = origCreateUrl
+    URL.revokeObjectURL = origRevoke
+  })
+})
+
+describe('SummaryReportPage — Export Excel (VIZ-607)', () => {
+  it('downloads the workbook with exactly the scope the PDF uses, named .xlsx', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    mockDownloadPdf.mockClear()
+    mockDownloadXlsx.mockResolvedValue(new Blob(['PK']))
+    const origCreateUrl = URL.createObjectURL
+    const origRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn(() => 'blob:fake')
+    URL.revokeObjectURL = vi.fn()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toMatch(/\.xlsx$/)
+    })
+
+    renderPage()
+    const button = await screen.findByRole('button', { name: /Export Excel/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() =>
+      expect(mockDownloadXlsx).toHaveBeenCalledWith({ project_id: 'p1', days: DEFAULT_TIME_WINDOW_DAYS, mode: 'latest' }),
+    )
+    expect(mockDownloadPdf).not.toHaveBeenCalled()
+    await waitFor(() => expect(click).toHaveBeenCalled())
+
+    click.mockRestore()
     URL.createObjectURL = origCreateUrl
     URL.revokeObjectURL = origRevoke
   })
