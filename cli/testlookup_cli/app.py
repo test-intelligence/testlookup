@@ -4,6 +4,7 @@ import sys
 import typer
 
 from testlookup_cli import __version__
+from testlookup_cli.commands.analytics import analytics_app
 from testlookup_cli.commands.auth import auth_app
 from testlookup_cli.commands.doctor import doctor_app
 from testlookup_cli.commands.health import health_app
@@ -65,6 +66,7 @@ app.add_typer(intelligence_app, name="intelligence")
 app.add_typer(deep_app, name="deep")
 app.add_typer(reports_app, name="reports")
 app.add_typer(reviews_app, name="reviews")
+app.add_typer(analytics_app, name="analytics")
 app.add_typer(keys_app, name="keys")
 app.add_typer(upload_app, name="upload")
 

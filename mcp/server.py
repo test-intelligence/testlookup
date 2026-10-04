@@ -13,7 +13,7 @@ Tool Domains:
   - Deep Investigation (trigger, status, clusters, findings)
   - Global Search (keyword + entity-type filtering)
   - Reports (release readiness, share links)
-  - Metrics & Analytics (dashboard, trends, flaky, categories)
+  - Metrics & Analytics (dashboard, trends, flaky, categories, chart data)
   - AI Analysis (trigger root-cause analysis)
   # Tier 2 item 7 additions — enterprise surface parity
   - Decision Trail (explain why the AI made every stage + per-test decision)
@@ -153,7 +153,12 @@ mcp = FastMCP(
         "Report tools end with `review_state` and the AI disclaimer; pass both on to "
         "the user and never present a `pending_review` or `unknown` report as settled. "
         "`list_pending_reviews` shows a project's open queue. Accepting or rejecting "
-        "a review is deliberately not available through MCP."
+        "a review is deliberately not available through MCP.\n\n"
+        "Charts (VIZ-211): `get_chart_data` returns a metric over one or two dimensions "
+        "exactly as the REST API and the UI's charts draw it, `meta` included. Unlike "
+        "the other analytics tools it takes `release_id` and `suite_name`, so use it "
+        "for any release- or suite-scoped number; for a long window group by `week` or "
+        "pass `top_n`."
     ),
 )
 

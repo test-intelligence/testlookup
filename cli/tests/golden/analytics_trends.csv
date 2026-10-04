@@ -1,0 +1,21 @@
+# TestLookup chart export,"pass_rate by day, suite"
+# Project,Checkout
+# Release,2026.09
+# Test Suite,"payments, cart"
+# Window,2026-08-20 – 2026-09-19 UTC (30 days)
+# Totals,"18 of 143 runs · 412 of 3,960 executions"
+# Generated,2026-09-19 10:42 UTC
+# Warning,"1 bucket(s) after the window (2026-09-20 to 2026-09-20, 12 executions) are not shown."
+day,payments,cart
+2026-09-08,96.4,88
+2026-09-09,97,90
+2026-09-10,95.5,0
+2026-09-11,,85.5
+2026-09-12,98.2,91
+2026-09-13,99,93
+2026-09-14,100,89
+2026-09-15,92.3,90.5
+2026-09-16,94.1,92
+2026-09-17,96,94
+2026-09-18,97.5,95
+2026-09-19,98.8,96.5

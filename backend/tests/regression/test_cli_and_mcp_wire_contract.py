@@ -315,3 +315,108 @@ def test_defect_renderers_only_read_fields_the_endpoint_returns(rel: str):
         f"never returns (it selects {sorted(returned)}). Those render as "
         "placeholders that look like real, empty data."
     )
+
+
+# ── VIZ-211: chart data is one parameter set on all three clients ───────────
+#
+# ``get_chart_data`` and ``testlookup analytics`` promise "the same series as
+# REST and the UI". That holds only while they send the route's own parameter
+# names: a renamed argument (``release`` for ``release_id``) is dropped by
+# FastAPI without a word and the caller gets the unfiltered chart.
+
+CHART_DATA_PATH = "/api/v1/analytics/chart-data"
+#: Declared by the scope dependency so a stray ``from``/``to`` is refused
+#: loudly, never offered: the route always answers them with a 422.
+_REFUSED_WINDOW_PARAMS = {"from", "to"}
+
+
+def _chart_data_query_names() -> set[str]:
+    from fastapi.dependencies.utils import get_flat_dependant
+
+    from app.main import app
+
+    for route in app.routes:
+        if getattr(route, "path", None) == CHART_DATA_PATH and getattr(route, "dependant", None):
+            return {p.alias for p in get_flat_dependant(route.dependant).query_params}
+    raise AssertionError(f"no route serves {CHART_DATA_PATH}")
+
+
+def _mcp_analytics_tree() -> ast.Module:
+    return ast.parse((MCP_TOOLS_DIR / "analytics.py").read_text(encoding="utf-8"))
+
+
+def _get_chart_data_arguments() -> list[str]:
+    for node in ast.walk(_mcp_analytics_tree()):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_chart_data":
+            return [a.arg for a in node.args.args + node.args.kwonlyargs]
+    raise AssertionError("mcp/tools/analytics.py has no get_chart_data tool")
+
+
+def _mcp_constant(name: str) -> tuple[str, ...]:
+    for node in _mcp_analytics_tree().body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (
+            node.targets[0] if isinstance(node, ast.Assign) else None
+        )
+        if isinstance(target, ast.Name) and target.id == name and node.value is not None:
+            return tuple(ast.literal_eval(node.value))
+    raise AssertionError(f"mcp/tools/analytics.py has no {name}")
+
+
+def _cli_chart_param_keys() -> set[str]:
+    """Every key ``chart_params`` can put in the query string."""
+    tree = ast.parse((CLI_DIR / "commands" / "analytics.py").read_text(encoding="utf-8"))
+    func = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "chart_params"
+    )
+    keys: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Dict):
+            keys |= {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.slice, ast.Constant)
+        ):
+            keys.add(node.slice.value)
+    return keys
+
+
+def test_the_route_declares_what_the_parity_tests_assume():
+    """Fail loudly if the route's parameters cannot be read, rather than
+    comparing two clients against an empty set."""
+    names = _chart_data_query_names()
+    assert {"metric", "group_by", "release_id", "suite_name", "days"} <= names, sorted(names)
+
+
+def test_get_chart_data_takes_exactly_the_routes_query_parameters():
+    route = _chart_data_query_names() - _REFUSED_WINDOW_PARAMS
+    args = _get_chart_data_arguments()
+    assert set(args) == route, (
+        f"get_chart_data takes {sorted(args)} but the route reads {sorted(route)}: "
+        "an argument the route does not declare is dropped silently, and a "
+        "parameter the tool does not offer is one an agent cannot use"
+    )
+
+
+def test_the_cli_sends_only_parameters_the_route_declares():
+    route = _chart_data_query_names() - _REFUSED_WINDOW_PARAMS
+    sent = _cli_chart_param_keys()
+    assert {"metric", "group_by", "release_id", "suite_name"} <= sent, (
+        f"could not read the CLI's chart-data params, or a filter was dropped: {sorted(sent)}"
+    )
+    assert sent <= route, (
+        f"testlookup analytics sends {sorted(sent - route)}, which the route "
+        "never reads -- the filter is ignored and the command still exits 0"
+    )
+
+
+def test_the_mcp_allow_lists_match_the_service():
+    """``CHART_METRICS``/``CHART_DIMENSIONS`` are what the tool tells an agent
+    it may ask for. They are compared with ``chart_data_service`` -- what the
+    route accepts -- and not ``viz_contracts.GROUP_BY_DIMENSIONS``, which also
+    names ``error_signature``: a widget dimension chart-data refuses."""
+    from app.services import chart_data_service
+
+    assert set(_mcp_constant("CHART_METRICS")) == set(chart_data_service.METRICS)
+    assert set(_mcp_constant("CHART_DIMENSIONS")) == set(chart_data_service.DIMENSIONS)

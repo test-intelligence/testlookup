@@ -1,0 +1,84 @@
+{
+  "description": "\n        Return one metric grouped by one or two dimensions: the same series the\n        REST API (GET /api/v1/analytics/chart-data) and the web UI's charts\n        draw, returned verbatim with its `meta` envelope.\n\n        This tool is release- and suite-scoped: pass `release_id` and/or\n        `suite_name` to narrow it exactly as a release-filtered dashboard\n        does. Without `project_id` it is project-wide over every project you\n        can read. Any release or project you cannot read refuses the whole\n        request with 403; there are never partial results.\n\n        Args:\n            group_by: 1-2 dimensions, the time dimension first, e.g. [\"day\"]\n                or [\"day\", \"suite\"] (the second keys the series). One of:\n                branch, day, environment, failure_category, ingestion_source,\n                project, release, status, suite, test, week.\n            metric: What to measure (default executions). One of: broken,\n                duration_p50, duration_p95, duration_total, executions, failed,\n                failure_rate, failures, flaky_tests, pass_rate, passed,\n                retried_tests, run_count, skipped, unique_tests, unknown.\n            project_id: Project UUID. Omit for every project you can read.\n            release_id: Release UUIDs, or \"unattributed\" for runs no release\n                claims (OR, at most 20).\n            suite_name: Suite names, matched case-insensitively (OR, at most 50).\n            days: Window in days ending today, UTC (1-365, default 30).\n            top_n: Keep the N largest keys and merge the rest into \"other\".\n                Required for group_by test outside a single suite.\n\n        Reading it: every point has `y` and `n` (the sample behind it). A\n        `y` of null with `measured: false` means no data, never 0. Rates are\n        percentages (0-100) and durations are milliseconds. `meta.scope` is\n        what the server applied, `meta.totals` how much the filters kept and\n        `meta.definitions` what the numbers mean.\n\n        Size: 365 days by eight series is about 200 KB. For a long window,\n        group by `week` or pass `top_n`.\n\n        Errors come back as {ok: false, status_code, detail} plus `code`,\n        `param` and `allowed` from the server (a 422 names the parameter and\n        what it accepts), and `retry_after` on a 429 (120 requests a minute).\n        ",
+  "inputSchema": {
+    "properties": {
+      "days": {
+        "default": 30,
+        "title": "Days",
+        "type": "integer"
+      },
+      "group_by": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Group By",
+        "type": "array"
+      },
+      "metric": {
+        "default": "executions",
+        "title": "Metric",
+        "type": "string"
+      },
+      "project_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Project Id"
+      },
+      "release_id": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Release Id"
+      },
+      "suite_name": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Suite Name"
+      },
+      "top_n": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Top N"
+      }
+    },
+    "required": [
+      "group_by"
+    ],
+    "title": "get_chart_dataArguments",
+    "type": "object"
+  },
+  "name": "get_chart_data"
+}

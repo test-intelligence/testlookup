@@ -12,10 +12,15 @@ EXIT_TIMEOUT = 6
 
 
 class CLIError(Exception):
-    """Base CLI error with exit code."""
-    def __init__(self, message: str, exit_code: int = EXIT_ERROR):
+    """Base CLI error with exit code.
+
+    ``status_code`` is the HTTP status behind it, when there was one, so a
+    command can word a specific answer (a 429) without parsing the message.
+    """
+    def __init__(self, message: str, exit_code: int = EXIT_ERROR, status_code: int | None = None):
         super().__init__(message)
         self.exit_code = exit_code
+        self.status_code = status_code
 
 
 def exit_code_for(exc: Exception) -> int:
@@ -25,6 +30,12 @@ def exit_code_for(exc: Exception) -> int:
 
 def map_http_error(status_code: int, detail: str = "") -> CLIError:
     """Map an HTTP status code to a CLIError with appropriate exit code."""
+    error = _http_error(status_code, detail)
+    error.status_code = status_code
+    return error
+
+
+def _http_error(status_code: int, detail: str) -> CLIError:
     if status_code == 401:
         return CLIError(f"Authentication failed. Run 'testlookup auth login' first. {detail}".strip(), EXIT_AUTH)
     if status_code == 403:

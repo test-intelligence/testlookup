@@ -694,6 +694,7 @@ jobs:
           tests/integration/test_analytics_envelope_postgres.py
           tests/integration/test_chart_data_postgres.py
           tests/integration/test_chart_data_comparability_postgres.py
+          tests/integration/test_mcp_chart_data_parity_postgres.py
           tests/integration/test_analytics_read_layer_postgres.py
           tests/integration/test_heatmap_postgres.py
           tests/integration/test_coverage_map_postgres.py

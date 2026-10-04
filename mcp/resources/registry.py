@@ -76,8 +76,8 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Project-wide. The web UI can narrow the same data to one release; this
         resource cannot, so it and a release-filtered dashboard answer
-        different questions. Release scoping is a UI/REST capability and an
-        explicit MCP non-goal.
+        different questions. For a release- or suite-scoped series, call the
+        `get_chart_data` tool.
         """
         data = await api.get(
             "/api/v1/analytics/flaky-tests",
