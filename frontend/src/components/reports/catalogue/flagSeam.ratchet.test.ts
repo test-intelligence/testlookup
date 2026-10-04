@@ -19,7 +19,9 @@ const SOURCES = import.meta.glob(['/src/**/*.ts', '/src/**/*.tsx', '!/src/**/*.t
 /** The definition and the seam: the only files allowed to name the two flags. */
 const ALLOWED = new Set(['/src/config/vizFlags.ts', '/src/components/reports/catalogue/useCatalogueRollout.ts'])
 
-const FLAG_REFERENCE = /VIZ_FLAGS\s*(?:\.\s*(?:chartDataApi|advancedCharts)\b|\[\s*['"`](?:chartDataApi|advancedCharts)['"`]\s*\])|['"`]viz_(?:chart_data_api|advanced_charts)['"`]/
+// VIZ-508: `viz_three_d` (the scatter's 3D view) goes through the seam too.
+const FLAG_REFERENCE =
+  /VIZ_FLAGS\s*(?:\.\s*(?:chartDataApi|advancedCharts|threeD)\b|\[\s*['"`](?:chartDataApi|advancedCharts|threeD)['"`]\s*\])|['"`]viz_(?:chart_data_api|advanced_charts|three_d)['"`]/
 
 /**
  * The source with its comments blanked out: a comment that NAMES a flag (to
@@ -44,7 +46,7 @@ describe('catalogue flag seam (K1 ratchet)', () => {
     expect(FLAG_REFERENCE.test(SOURCES['/src/components/reports/catalogue/useCatalogueRollout.ts'])).toBe(true)
   })
 
-  it('no other source file reads viz_chart_data_api or viz_advanced_charts', () => {
+  it('no other source file reads viz_chart_data_api, viz_advanced_charts or viz_three_d', () => {
     expect(flagReaders(SOURCES)).toEqual([])
   })
 
@@ -57,6 +59,15 @@ describe('catalogue flag seam (K1 ratchet)', () => {
       '/src/pages/E.tsx': 'useFeatureEnabled(VIZ_FLAGS.multiFilters)',
     }
     expect(flagReaders(planted)).toEqual(['/src/pages/A.tsx', '/src/pages/B.tsx', '/src/pages/C.tsx', '/src/pages/D.tsx'])
+  })
+
+  it('catches a scatter that reads viz_three_d by itself (VIZ-508)', () => {
+    const planted = {
+      '/src/components/charts/F.tsx': 'useFeatureEnabled(VIZ_FLAGS.threeD)',
+      '/src/components/charts/G.tsx': "useFeatureFlagStatus('viz_three_d')",
+      '/src/components/charts/H.tsx': 'useFeatureEnabled(VIZ_FLAGS.threeDee)',
+    }
+    expect(flagReaders(planted)).toEqual(['/src/components/charts/F.tsx', '/src/components/charts/G.tsx'])
   })
 
   it('a comment that names a flag is not a reader; code after a comment still is', () => {

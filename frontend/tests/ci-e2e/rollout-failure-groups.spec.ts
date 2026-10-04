@@ -77,13 +77,18 @@ const FAILURES_PAGE_READS = [
   `GET /api/v1/projects/${P}/defects/jira/metadata`,
 ]
 
-/** Both flags, every section near: groups (with edges), the ladder's level 0, the project scatter, the probe. */
+/**
+ * Both flags, every section near: groups (with edges), the ladder's level 0,
+ * the project scatter and its 3D-view lookup (VIZ-508, made inside the drawn
+ * scatter only; the harness answers it off), the probe.
+ */
 const INVENTORY_BOTH = [
   ...SHELL_ADVANCED,
   ...FAILURES_PAGE_READS,
   `GET ${FAILURE_GROUPS_PATH}?include=edges&project_id=${P}&days=30`,
   `GET ${CHART_DATA_PATH}?metric=executions&group_by=suite&group_by=status&project_id=${P}&days=30`,
   `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30`,
+  `GET /api/v1/feature-flags/viz_three_d/status?project_id=${P}`,
   RUN_PROBE,
 ]
 

@@ -65,11 +65,16 @@ const MUST_BE_LAZY = ['recharts', 'echarts', 'zrender', 'three']
 //                                    `THREE.` prefix on purpose: older releases log the
 //                                    literal 'THREE.WebGLRenderer: Context Lost.', and a
 //                                    newer logging helper may prepend 'THREE.' at runtime;
-//                                    the suffix is in both. UNVERIFIED (from memory of
-//                                    three's source; three is not installed here).
-// VIZ-508 must PROVE both three markers with an eager-import build (import
-// WebGLRenderer from main.tsx, build, grep the entry chunk) before anyone relies
-// on this rule to keep three off the critical path.
+//                                    the suffix is in both.
+// VERIFIED 2026-10-04 (VIZ-508, three 0.186.0, vite 8 / rolldown): a throwaway
+// build with `import { WebGLRenderer } from 'three'` added to main.tsx put three
+// in the entry chunk, and that chunk held BOTH markers — `__THREE__` (the
+// top-level `window.__THREE__` check survived tree-shaking) and
+// `WebGLRenderer: Context Lost.` (r186 logs it through its `log` helper, which
+// adds the `THREE.` prefix at run time, so the literal has none). This script
+// failed that build ("three is in an eagerly-preloaded chunk"; eager gzip
+// 309,125). Reverted; the real build carries both markers only in the lazy
+// `scatter3d-*.js` chunk (~138 kB gzip).
 const SIGNATURES = {
   echarts: ['_echarts_instance_'],
   zrender: ['__zr_normal__'],

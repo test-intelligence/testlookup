@@ -90,9 +90,11 @@ const ALLOWED_ADDITIONS = [`GET /api/v1/feature-flags/viz_chart_data_api/status?
 
 /**
  * The Wave 3 reads (PR-A's routes): with every flag off no page may ask one,
- * and the second seam lookup is made only once the catalogue flag is on.
+ * and the second seam lookup is made only once the catalogue flag is on (the
+ * scatter's `viz_three_d` lookup, VIZ-508, only inside a drawn scatter).
  */
-const WAVE3_READ = /^GET \/api\/v1\/(analytics\/(heatmap|coverage-map|failure-groups|systemic-clusters|test-scatter|chart-data\/rows)|feature-flags\/viz_advanced_charts\/status)(\?|$)/
+const WAVE3_READ =
+  /^GET \/api\/v1\/(analytics\/(heatmap|coverage-map|failure-groups|systemic-clusters|test-scatter|chart-data\/rows)|feature-flags\/viz_(advanced_charts|three_d)\/status)(\?|$)/
 
 /** How long no new request may arrive before the page's load counts as over. */
 const NETWORK_QUIET_MS = 1_500

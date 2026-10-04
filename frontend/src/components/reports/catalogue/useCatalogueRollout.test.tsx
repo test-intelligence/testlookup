@@ -26,7 +26,7 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (sel: (s: { activeProjectId: string | null }) => unknown) => sel({ activeProjectId }),
 }))
 
-import { useAdvancedRollout, useCatalogueRollout, useCatalogueRolloutStatus } from './useCatalogueRollout'
+import { useAdvancedRollout, useCatalogueRollout, useCatalogueRolloutStatus, useThreeDRollout } from './useCatalogueRollout'
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>{children}</SWRConfig>
@@ -112,6 +112,39 @@ describe('useAdvancedRollout (Wave 3 sections)', () => {
     })
     const { result } = renderHook(() => ({ on: useAdvancedRollout(), cat: useCatalogueRollout() }), { wrapper })
     await waitFor(() => expect(result.current.cat).toBe(true))
+    expect(result.current.on).toBe(false)
+  })
+})
+
+describe('useThreeDRollout (VIZ-508: the scatter 3D view)', () => {
+  beforeEach(() => status.mockReset())
+
+  it.each([
+    [false, false, false, false],
+    [true, true, false, false],
+    [true, false, true, false],
+    [false, true, true, false],
+    [true, true, true, true],
+  ])('catalogue %s, advanced %s, three_d %s -> %s', async (catalogue, advanced, threeD, expected) => {
+    answer({
+      [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: catalogue }),
+      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: advanced }),
+      [VIZ_FLAGS.threeD]: async () => ({ enabled: threeD }),
+    })
+    const { result } = renderHook(() => useThreeDRollout(), { wrapper })
+    await waitFor(() => expect(status).toHaveBeenCalledWith('viz_three_d', 'proj-1'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await waitFor(() => expect(result.current).toBe(expected))
+  })
+
+  it('is false while the viz_three_d lookup is pending, with both other flags on', async () => {
+    answer({
+      [VIZ_FLAGS.chartDataApi]: async () => ({ enabled: true }),
+      [VIZ_FLAGS.advancedCharts]: async () => ({ enabled: true }),
+      [VIZ_FLAGS.threeD]: () => new Promise(() => {}),
+    })
+    const { result } = renderHook(() => ({ on: useThreeDRollout(), advanced: useAdvancedRollout() }), { wrapper })
+    await waitFor(() => expect(result.current.advanced).toBe(true))
     expect(result.current.on).toBe(false)
   })
 })

@@ -85,8 +85,11 @@ const INVENTORY_ADVANCED_ONLY = [...SHELL_ON, ...PAGE_READS]
 const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
 const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
 
-/** Both flags, every section near: + the test x run heatmap, the scatter and the run probe. */
-const INVENTORY_BOTH = [...INVENTORY_ON, HEATMAP_LINE, SCATTER_LINE, RUN_PROBE]
+/** The drawn scatter asks whether it may offer its 3D view (VIZ-508; answered off by the harness). */
+const THREE_D_LOOKUP = `GET /api/v1/feature-flags/viz_three_d/status?project_id=${P}`
+
+/** Both flags, every section near: + the test x run heatmap, the scatter (and its 3D lookup) and the run probe. */
+const INVENTORY_BOTH = [...INVENTORY_ON, HEATMAP_LINE, SCATTER_LINE, THREE_D_LOOKUP, RUN_PROBE]
 
 const HEATMAP = { id: 'heatmap-test_run', title: 'Test results by run' } as const
 const SCATTER = { id: 'scatter-suite', title: 'Test duration vs failure rate' } as const
