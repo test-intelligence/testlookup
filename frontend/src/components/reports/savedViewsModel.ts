@@ -17,6 +17,16 @@ import type { ReportRoute } from './reportRoutes'
 
 export const REPORT_VIEW_KIND = 'report_view'
 
+/**
+ * The one SWR key for a page's `saved_views` rows. The widget layout
+ * (`useAnalyticsView`) and the Views menu read the same rows, so they share
+ * the entry and a page that has both asks once; each keeps its own rows
+ * (`isReportView` here, `kind !== 'report_view'` there).
+ */
+export function savedViewsKey(projectId: string | null, page: string): readonly ['saved-views', string | null, string] {
+  return ['saved-views', projectId, page]
+}
+
 export type SavedViewPage = NonNullable<SavedView['page']>
 
 /** The saved-views `page` of each report route that offers views. */

@@ -11,6 +11,13 @@ import type { TrendPoint } from '@/types/metrics'
 // may pull in more hooks than the test exercises, and vitest errors out if
 // an imported export isn't defined on the mock module. Defaults to an
 // empty SWR shape; individual tests can ``mockReturnValue`` to override.
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/hooks/useMetrics', () => {
   const d = () => ({ data: undefined, isLoading: false })
   return {

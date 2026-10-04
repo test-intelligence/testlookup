@@ -93,6 +93,8 @@ async function holdSectionChunk(page: Page) {
 const inventoryOff = [
   ...SHELL_ON,
   `GET /api/v1/reports/summary?project_id=${PROJECT_ID}&days=30&mode=latest`,
+  // P1: the header's Views menu.
+  `GET /api/v1/saved-views?project_id=${PROJECT_ID}&page=summary_report`,
   // VIZ-607: the reader's background exports.
   `GET /api/v1/reports/summary/exports?project_id=${PROJECT_ID}`,
 ]

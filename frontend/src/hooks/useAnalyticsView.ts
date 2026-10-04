@@ -14,6 +14,7 @@ import {
   normalizeInstances,
 } from '@/components/analytics/widgetRegistry'
 import type { VisualizationInstance } from '@/components/analytics/widgetRegistry'
+import { savedViewsKey } from '@/components/reports/savedViewsModel'
 
 interface SavedViewData {
   id: string
@@ -73,7 +74,8 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
   const widgetIds = useMemo(() => instances.map(i => i.templateId), [instances])
 
   const { data: savedViews, error, isLoading, mutate } = useSWR<SavedViewData[]>(
-    projectId !== undefined ? ['saved-views', projectId, page] : null,
+    // Shared with the Views menu (`savedViewsKey`): one request for both.
+    projectId !== undefined ? savedViewsKey(projectId, page) : null,
     async () => {
       const { getData } = await import('@/services/http')
       return getData<SavedViewData[]>('/api/v1/saved-views', {

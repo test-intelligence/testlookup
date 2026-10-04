@@ -237,6 +237,8 @@ const INVENTORY: Record<string, string[]> = {
   Summary: [
     ...SHELL,
     `GET /api/v1/reports/summary?project_id=${P}&days=30&mode=latest`,
+    // P1: the header's Views menu (the page has no widget layout to share it with).
+    `GET /api/v1/saved-views?project_id=${P}&page=summary_report`,
     `GET /api/v1/reports/summary/exports?project_id=${P}`,
   ],
   'Suite detail': [

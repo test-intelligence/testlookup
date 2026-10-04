@@ -6,7 +6,7 @@
  * Data: ``/api/v1/reports/summary`` via ``useSummaryReport``.
  * Export: ``/api/v1/reports/summary/pdf`` via ``summaryReportService.downloadPdf``.
  */
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
@@ -31,6 +31,9 @@ import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
 import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
 import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
+import type { SavedView } from '@/services/savedViewsService'
 
 // Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk, mounted only
 // when `useCatalogueRollout` reads on: with the flag off this page is the
@@ -125,6 +128,23 @@ export default function SummaryReportPage() {
   useEffect(() => {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
   }, [mode])
+
+  // P1: this page's saved views (the top-bar release, the window, the mode).
+  // Before any early return; the menu itself shows in the report's header only.
+  const viewExtra = useMemo(() => ({ summary: { mode } }), [mode])
+  const applyViewExtra = useCallback((view: SavedView) => {
+    const saved = view.filters?.summary
+    const savedMode = saved && typeof saved === 'object' ? (saved as { mode?: unknown }).mode : undefined
+    if (savedMode === 'latest' || savedMode === 'window') setMode(savedMode)
+  }, [])
+  const viewsMenu = useReportViewsMenu({
+    route: '/reports/summary',
+    windowDays: days,
+    windowOptions: DAYS_OPTIONS,
+    release: true,
+    extraFilters: viewExtra,
+    applyExtra: applyViewExtra,
+  })
 
   // Flag on: start the sections' chunk (the page's first chart code) as soon
   // as the flag answers, which is usually before the report does, instead of
@@ -267,8 +287,9 @@ export default function SummaryReportPage() {
           // `flex-wrap`: on Linux fonts (DejaVu) the plain one re-laid this row
           // at 1280 and moved everything under the header by a fraction of a
           // pixel, which changed all four flag-off Summary baselines. At and
-          // above 1024 px the row is exactly the Wave 2.5 row.
+          // above 1024 px the row is the Wave 2.5 row, led by the P1 Views button.
           <div className="flex max-lg:flex-wrap items-center gap-2">
+            {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
             {/* The report's output LEAVES the tool (a PDF attached to a go/no-go
                 thread), so the badge states the release scope the SERVER
                 applied — `meta.scope.releases` — rather than what the client

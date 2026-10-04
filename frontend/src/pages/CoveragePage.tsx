@@ -72,6 +72,8 @@ import { countTones, dayWindow, intensityLevel, type DayStripCell } from '@/comp
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
 import CoverageAdvanced from '@/components/reports/catalogue/CoverageAdvanced'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -1596,7 +1598,15 @@ export default function CoveragePage() {
   const [showPicker, setShowPicker] = useState(false)
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // P1: this page's saved views (the top-bar release, the window, the suite).
+  const viewsMenu = useReportViewsMenu({
+    route: '/coverage',
+    windowDays: days,
+    windowOptions: WINDOWS,
+    suite: { names: suiteNames, set: setSelectedSuite },
+    release: true,
+  })
   const analyticsView = useAnalyticsView('coverage')
   const { options: suiteOptions } = useSuiteOptions(days)
 
@@ -1747,6 +1757,7 @@ export default function CoveragePage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
             <LayoutGrid className="h-3.5 w-3.5" />
             Customize

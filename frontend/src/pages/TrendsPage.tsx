@@ -101,6 +101,8 @@ import { readyState, type ChartState } from '@/components/charts/chartStateCore'
 import type { ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
 import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import { useReleases } from '@/hooks/useReleases'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
@@ -1449,7 +1451,15 @@ export default function TrendsPage() {
   const [showPicker, setShowPicker] = useState(false)
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // P1: this page's saved views (the top-bar release, the window, the suite).
+  const viewsMenu = useReportViewsMenu({
+    route: '/trends',
+    windowDays: days,
+    windowOptions: WINDOWS,
+    suite: { names: suiteNames, set: setSelectedSuite },
+    release: true,
+  })
   // Whether a filter narrowed the trend (a suite, or a release): an all-zero
   // window then keeps the frame's filter words; without one the frame states
   // the window neutrally, "No executions in this window" (R1 F3).
@@ -1664,6 +1674,7 @@ export default function TrendsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
             <LayoutGrid className="h-3.5 w-3.5" />
             Customize
