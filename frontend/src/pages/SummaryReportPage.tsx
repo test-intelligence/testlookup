@@ -30,6 +30,7 @@ import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
 import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
+import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
 
 // Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk, mounted only
 // when `useCatalogueRollout` reads on: with the flag off this page is the
@@ -110,6 +111,10 @@ export default function SummaryReportPage() {
   // Aggregation mode is page-local (no other page has the concept).
   const [mode, setMode] = useState<SummaryReportMode>(() => loadStoredMode())
   const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null)
+  // VIZ-607: send the export to the background even when it is small.
+  const [inBackground, setInBackground] = useState(false)
+  // Bumped when an export is queued, so the exports panel re-reads at once.
+  const [exportsToken, setExportsToken] = useState(0)
   // US-7.5: on-demand download of the self-contained HTML analysis report
   // (the same document daily/weekly digest emails attach).
   const [downloadingReport, setDownloadingReport] = useState<'1d' | '7d' | null>(null)
@@ -147,6 +152,20 @@ export default function SummaryReportPage() {
     setDownloading(format)
     try {
       const params = { project_id: project.id, ...scope }
+      // VIZ-607: a large report (or one sent to the background) is rendered by
+      // a worker; the exports panel below says when it is ready.
+      const decision = await summaryReportService.requestExport({ ...params, format, background: inBackground })
+      if (decision.delivery === 'background') {
+        setExportsToken(t => t + 1)
+        if (decision.dispatched === false) {
+          toast.error('The export is queued, but the worker could not be reached. Retry it from Background exports.')
+        } else {
+          toast.success(
+            `The ${label} is being generated in the background. It will appear under Background exports when it is ready.`,
+          )
+        }
+        return
+      }
       const blob = format === 'pdf'
         ? await summaryReportService.downloadPdf(params)
         : await summaryReportService.downloadXlsx(params)
@@ -291,9 +310,24 @@ export default function SummaryReportPage() {
                 {downloading === format ? 'Generating…' : format === 'pdf' ? 'Export PDF' : 'Export Excel'}
               </button>
             ))}
+            <label
+              className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)] cursor-pointer select-none"
+              title="Generate the file on the server and tell me when it is ready. Large reports always do."
+            >
+              <input
+                type="checkbox"
+                data-summary-export-background=""
+                checked={inBackground}
+                onChange={e => setInBackground(e.target.checked)}
+              />
+              In background
+            </label>
           </div>
         }
       />
+
+      {/* VIZ-607: the reader's background exports (hidden while there are none). */}
+      <ReportExportsPanel projectId={project.id} refreshToken={exportsToken} />
 
       {/* Filter row: window chips + mode toggle */}
       <div className="flex items-center gap-3 flex-wrap mb-4">

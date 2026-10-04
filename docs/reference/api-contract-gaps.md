@@ -139,6 +139,7 @@ This is a documentation/typing limitation observed in source, not evidence that 
 - `POST /api/v1/reports/email-trends`
 - `GET /api/v1/reports/runs/{run_id}/evidence-bundle`
 - `GET /api/v1/reports/runs/{run_id}/pdf`
+- `GET /api/v1/reports/summary/exports/{export_id}/download`
 - `GET /api/v1/reports/summary/pdf`
 - `GET /api/v1/reports/summary/xlsx`
 - `GET /api/v1/runs`

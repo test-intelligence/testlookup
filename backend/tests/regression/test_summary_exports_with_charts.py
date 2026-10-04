@@ -23,6 +23,7 @@ pytest.importorskip("reportlab")
 openpyxl = pytest.importorskip("openpyxl")
 
 from app.routers import summary_report as router  # noqa: E402
+from app.services import report_export_service as export_svc  # noqa: E402
 from app.services.summary_report_pdf import render_summary_report_pdf  # noqa: E402
 from app.services.summary_report_xlsx import render_summary_report_xlsx  # noqa: E402
 
@@ -146,7 +147,8 @@ async def test_every_export_leaves_an_audit_row(monkeypatch, fmt):
         return META
 
     monkeypatch.setattr(router.svc, "build_summary_report", build)
-    monkeypatch.setattr(router, "build_meta", meta)
+    # VIZ-607 part 2: the export renders through the service the background job shares.
+    monkeypatch.setattr(export_svc, "build_meta", meta)
     scope = SimpleNamespace(
         project_id=uuid.uuid4(), window_days=30, release_arg=None, suite_arg="payments",
         release_ids=(), suite_names=("payments",),
@@ -154,7 +156,7 @@ async def test_every_export_leaves_an_audit_row(monkeypatch, fmt):
     user = SimpleNamespace(id=uuid.uuid4(), username="lead")
     db = _Db()
     response = await router._export(fmt, "window", scope, db, user)
-    assert response.media_type == router._EXPORTS[fmt][2]
+    assert response.media_type == export_svc.EXPORTS[fmt][2]
     assert f'filename="summary-payment_service-30d-window.{fmt}"' in response.headers["content-disposition"]
     rows = [obj for obj in db.added if type(obj).__name__ == "AccessAuditLog"]
     assert len(rows) == 1 and db.commits == 1

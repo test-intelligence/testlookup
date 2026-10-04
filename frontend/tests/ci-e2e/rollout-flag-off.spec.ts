@@ -230,7 +230,13 @@ const INVENTORY: Record<string, string[]> = {
     `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
     `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
   ],
-  Summary: [...SHELL, `GET /api/v1/reports/summary?project_id=${P}&days=30&mode=latest`],
+  // VIZ-607: + the reader's background exports (not a flagged read: the
+  // export buttons and their panel ship with the flags off too).
+  Summary: [
+    ...SHELL,
+    `GET /api/v1/reports/summary?project_id=${P}&days=30&mode=latest`,
+    `GET /api/v1/reports/summary/exports?project_id=${P}`,
+  ],
   'Suite detail': [
     ...SHELL,
     `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,

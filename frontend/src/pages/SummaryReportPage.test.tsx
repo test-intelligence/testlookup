@@ -26,12 +26,18 @@ import type { EnvelopeMeta } from '@/lib/viz/contracts'
 const mockGet = vi.fn()
 const mockDownloadPdf = vi.fn()
 const mockDownloadXlsx = vi.fn()
+// VIZ-607: the export buttons ask first; by default the report is small and downloads now.
+const SMALL = { delivery: 'download', estimated_tests: 10, export: null, dispatched: null }
+const mockRequestExport = vi.fn(async (..._args: unknown[]) => SMALL)
+const mockListExports = vi.fn(async (..._args: unknown[]) => [] as unknown[])
 
 vi.mock('@/services/summaryReportService', () => ({
   summaryReportService: {
     get: (...args: unknown[]) => mockGet(...args),
     downloadPdf: (...args: unknown[]) => mockDownloadPdf(...args),
     downloadXlsx: (...args: unknown[]) => mockDownloadXlsx(...args),
+    requestExport: (...args: unknown[]) => mockRequestExport(...args),
+    listExports: (...args: unknown[]) => mockListExports(...args),
   },
 }))
 
@@ -414,6 +420,43 @@ describe('SummaryReportPage — Export Excel (VIZ-607)', () => {
     click.mockRestore()
     URL.createObjectURL = origCreateUrl
     URL.revokeObjectURL = origRevoke
+  })
+})
+
+describe('SummaryReportPage — background export (VIZ-607)', () => {
+  it('sends a large report to the background instead of downloading it', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    mockDownloadPdf.mockClear()
+    mockRequestExport.mockClear()
+    mockRequestExport.mockResolvedValueOnce({
+      delivery: 'background', estimated_tests: 900_000, dispatched: true, export: null,
+    } as never)
+
+    renderPage()
+    const button = await screen.findByRole('button', { name: /Export PDF/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() => expect(mockRequestExport).toHaveBeenCalledTimes(1))
+    expect(mockRequestExport.mock.calls[0][0]).toMatchObject({ project_id: 'p1', format: 'pdf', background: false })
+    expect(mockDownloadPdf).not.toHaveBeenCalled()
+    // The panel re-reads the reader's exports when one is queued.
+    await waitFor(() => expect(mockListExports).toHaveBeenCalledWith('p1'))
+  })
+
+  it('"In background" asks for the background even for a small report', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    mockRequestExport.mockClear()
+
+    renderPage()
+    const box = await screen.findByRole('checkbox', { name: /In background/i })
+    fireEvent.click(box)
+    const button = screen.getByRole('button', { name: /Export Excel/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() => expect(mockRequestExport).toHaveBeenCalledTimes(1))
+    expect(mockRequestExport.mock.calls[0][0]).toMatchObject({ format: 'xlsx', background: true })
   })
 })
 

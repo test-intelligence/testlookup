@@ -1086,8 +1086,13 @@ export function summaryReport(request: ApiRequest) {
   }
 }
 
-/** `/reports/summary`: the report is the page's only page-owned request. */
-export const SUMMARY_REPORT: ApiHandlers = [...LAYOUT, ['/api/v1/reports/summary', summaryReport]]
+/** `/reports/summary`: the report, and (VIZ-607) the reader's background
+ *  exports, none here, so the Background exports panel stays hidden. */
+export const SUMMARY_REPORT: ApiHandlers = [
+  ...LAYOUT,
+  ['/api/v1/reports/summary', summaryReport],
+  ['/api/v1/reports/summary/exports', () => []],
+]
 
 // ── Intelligence hub (/intelligence) ───────────────────────────────────────
 

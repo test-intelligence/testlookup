@@ -218,6 +218,8 @@ async function installSpineApi(page: Page) {
     // Shaped against `SummaryReport` in types/summaryReport.ts. The failure's
     // name travels in `top_failing_tests`, which is the only field on this
     // payload that names a test at all.
+    // VIZ-607: the reader's background exports (none on this journey).
+    if (path === '/api/v1/reports/summary/exports') return json(route, [])
     if (path === '/api/v1/reports/summary') {
       return json(route, {
         project_id: PROJECT_ID,

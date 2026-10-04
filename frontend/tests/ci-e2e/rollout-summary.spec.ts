@@ -42,6 +42,8 @@ const inventoryOn = (days: number, mode = 'latest') => [
   ...SHELL_ON,
   `GET /api/v1/reports/summary?project_id=${P}&days=${days}&mode=${mode}`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=${days}`,
+  // VIZ-607: the reader's background exports.
+  `GET /api/v1/reports/summary/exports?project_id=${P}`,
 ]
 
 test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)', () => {

@@ -33,6 +33,7 @@ from app.core.deps import (
     require_live_session_access,
     require_project_access,
     require_release_access,
+    require_report_export_access,
     require_run_access,
     require_session_access,
 )
@@ -178,6 +179,7 @@ class TestFactoryProjectScopedGuards:
             (require_knowledge_source_access, "source_id"),
             (require_generation_batch_access, "batch_id"),
             (require_live_session_access, "session_id"),
+            (require_report_export_access, "export_id"),
         ],
     )
     async def test_non_member_gets_403(self, guard_factory, path_param):
@@ -199,6 +201,7 @@ class TestFactoryProjectScopedGuards:
             (require_knowledge_source_access, "source_id"),
             (require_generation_batch_access, "batch_id"),
             (require_live_session_access, "session_id"),
+            (require_report_export_access, "export_id"),
         ],
     )
     async def test_resource_not_found_returns_404(self, guard_factory, path_param):

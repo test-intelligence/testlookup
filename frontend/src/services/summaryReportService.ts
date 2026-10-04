@@ -39,6 +39,35 @@ function releaseParam(releaseId: ScopeValue): Record<string, string | string[]> 
  * attached to a sign-off thread — silently covered every release. Routing both
  * requests through this function makes that disagreement impossible to write.
  */
+/** VIZ-607: one background export (``GET /api/v1/reports/summary/exports``). */
+export interface ReportExport {
+  id: string
+  project_id: string
+  format: 'pdf' | 'xlsx'
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  attempts: number
+  params: { mode?: string; days?: number; release_ids?: string[]; suite_names?: string[] }
+  filename: string | null
+  size_bytes: number | null
+  error: string | null
+  requested_at: string
+  started_at: string | null
+  finished_at: string | null
+  expires_at: string
+  retryable: boolean
+  download_url: string | null
+}
+
+/** VIZ-607: what ``POST /exports`` decided. */
+export interface ReportExportRequest {
+  /** ``download``: small enough, fetch the file now. ``background``: queued. */
+  delivery: 'download' | 'background'
+  estimated_tests: number
+  export: ReportExport | null
+  /** ``false``: the worker could not be reached; the job stays queued. */
+  dispatched: boolean | null
+}
+
 export function summaryReportQueryParams(
   params: SummaryReportParams,
 ): Record<string, string | number | string[]> {
@@ -87,6 +116,38 @@ export const summaryReportService = {
   downloadXlsx: async (params: SummaryReportParams & { project_id: string }): Promise<Blob> => {
     const response = await api.get('/api/v1/reports/summary/xlsx', {
       params: summaryReportQueryParams(params),
+      responseType: 'blob',
+    })
+    return response.data as Blob
+  },
+
+  /**
+   * VIZ-607: ask the server whether to download now or render in the
+   * background (a large report, or ``background``). Same scope as the screen.
+   */
+  requestExport: async (
+    params: SummaryReportParams & { project_id: string; format: 'pdf' | 'xlsx'; background: boolean },
+  ): Promise<ReportExportRequest> => {
+    const { format, background, ...scope } = params
+    const response = await api.post('/api/v1/reports/summary/exports', null, {
+      params: { ...summaryReportQueryParams(scope), format, background },
+    })
+    return response.data as ReportExportRequest
+  },
+
+  /** VIZ-607: the reader's background exports for the project, newest first. */
+  listExports: async (projectId: string): Promise<ReportExport[]> => {
+    const response = await api.get('/api/v1/reports/summary/exports', { params: { project_id: projectId } })
+    return response.data as ReportExport[]
+  },
+
+  retryExport: async (exportId: string): Promise<ReportExport> => {
+    const response = await api.post(`/api/v1/reports/summary/exports/${encodeURIComponent(exportId)}/retry`)
+    return response.data as ReportExport
+  },
+
+  downloadExport: async (exportId: string): Promise<Blob> => {
+    const response = await api.get(`/api/v1/reports/summary/exports/${encodeURIComponent(exportId)}/download`, {
       responseType: 'blob',
     })
     return response.data as Blob

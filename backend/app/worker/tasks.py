@@ -5720,6 +5720,41 @@ def run_weekly_agent_quality_drift(self) -> dict:
     return cast(dict, _run_async(_run()))
 
 @celery_app.task(
+    name="app.worker.tasks.generate_report_export",
+    queue="default",
+    max_retries=0,
+)
+def generate_report_export(export_id: str) -> str:
+    """VIZ-607: render one background report export and store the file.
+
+    One argument, the ``report_exports`` id: everything else is read from the
+    row, so a redelivered or retried message carries nothing stale. The
+    service claims the row with a guarded UPDATE (a duplicate delivery is a
+    no-op), re-checks the requester's access, renders, stores, and records the
+    outcome fenced by attempt number. No Celery retry: a failure is recorded
+    on the row and the reader retries it from the page.
+    """
+    from app.worker import report_export_runner
+
+    return cast(str, _run_async(report_export_runner.run_export_job(uuid.UUID(export_id))))
+
+
+@celery_app.task(name="app.worker.tasks.sweep_report_exports", queue="default", max_retries=0)
+def sweep_report_exports() -> dict:
+    """VIZ-607: delete report export files and rows past their 7 days.
+
+    Object storage has no lifecycle rules, so nothing else ever deletes them.
+    """
+    async def _run():
+        from app.worker import report_export_runner
+
+        with _beat_span("sweep_report_exports"):
+            return await report_export_runner.sweep()
+
+    return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(
     name="app.worker.tasks.run_retention_purges",
     queue="default",
     bind=True,

@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    # VIZ-607: a Summary Report export whose window holds more tests than this
+    # (summed over the window's runs, an upper bound) renders in the background
+    # instead of in the request. ~5 s of rendering on the reference hardware.
+    REPORT_EXPORT_SYNC_MAX_TESTS: int = Field(default=200_000, ge=0)
     CELERY_WORKER_CONCURRENCY: int = 4          # Set to 16-32 in production for 100+ concurrent users
 
     # ── Performance / Scalability tunables ────────────────────

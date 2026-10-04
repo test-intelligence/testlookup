@@ -866,6 +866,7 @@ REDIS_PASSWORD: str = ''
 REDIS_URL: str = 'redis://localhost:6379/0'
 CELERY_BROKER_URL: str = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND: str = 'redis://localhost:6379/1'
+REPORT_EXPORT_SYNC_MAX_TESTS: int = Field(default=200000, ge=0)
 CELERY_WORKER_CONCURRENCY: int = 4
 PG_POOL_SIZE: Optional[int] = Field(default=None, ge=1)
 PG_MAX_OVERFLOW: Optional[int] = Field(default=None, ge=0)
@@ -1087,8 +1088,8 @@ LOG_FORMAT: Literal['json', 'text'] = 'json'
 model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', case_sensitive=True, extra='ignore', env_ignore_empty=True, populate_by_name=True)
 ```
 
-- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:614](../../backend/app/core/config.py#L614). Read source for the cross-field or conversion rule.
-- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:629](../../backend/app/core/config.py#L629). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:618](../../backend/app/core/config.py#L618). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:633](../../backend/app/core/config.py#L633). Read source for the cross-field or conversion rule.
 ## backend/app/core/deps.py — AuthorizedTestCaseContext
 
 [backend/app/core/deps.py:45](../../backend/app/core/deps.py#L45)
@@ -7532,9 +7533,61 @@ started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 ```
 
-## backend/app/models/postgres.py — ProjectRetentionPolicy
+## backend/app/models/postgres.py — ReportExportStatus
 
 [backend/app/models/postgres.py:6725](../../backend/app/models/postgres.py#L6725)
+
+Bases: `str, PyEnum`.
+
+VIZ-607: a background report export's life. No ``cancelled``: nothing
+can produce it, and a state nothing writes is a filter that matches
+nothing forever.
+
+```python
+QUEUED = 'queued'
+RUNNING = 'running'
+COMPLETED = 'completed'
+FAILED = 'failed'
+```
+
+## backend/app/models/postgres.py — ReportExport
+
+[backend/app/models/postgres.py:6736](../../backend/app/models/postgres.py#L6736)
+
+Bases: `Base`.
+
+VIZ-607: one background export of a report (migration 0194).
+
+Rendered by ``generate_report_export`` on the ``default`` queue; the file
+lives in object storage at ``storage_key`` until ``expires_at`` (requested
++ 7 days), when the nightly sweep deletes it and this row. The life cycle
+and its guarantees (claim, fencing by ``attempts``, failures written on
+their own session, retry) are in ``services/report_export_service``.
+
+```python
+__tablename__ = 'report_exports'
+__table_args__ = (Index('ix_report_exports_project_user_requested', 'project_id', 'requested_by_id', 'requested_at'), Index('ix_report_exports_expires_at', 'expires_at'), CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name='ck_report_exports_status'), CheckConstraint("format IN ('pdf', 'xlsx')", name='ck_report_exports_format'))
+id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+report: Mapped[str] = mapped_column(String(40), nullable=False)
+format: Mapped[str] = mapped_column(String(10), nullable=False)
+params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+status: Mapped[str] = mapped_column(String(20), nullable=False, default=ReportExportStatus.QUEUED.value)
+attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+storage_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+```
+
+## backend/app/models/postgres.py — ProjectRetentionPolicy
+
+[backend/app/models/postgres.py:6787](../../backend/app/models/postgres.py#L6787)
 
 Bases: `Base`.
 
@@ -7577,7 +7630,7 @@ updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey('user
 
 ## backend/app/models/postgres.py — ProjectLlmUsage
 
-[backend/app/models/postgres.py:6781](../../backend/app/models/postgres.py#L6781)
+[backend/app/models/postgres.py:6843](../../backend/app/models/postgres.py#L6843)
 
 Bases: `Base`.
 
@@ -7605,7 +7658,7 @@ last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), serve
 
 ## backend/app/models/postgres.py — ProjectActivityEvent
 
-[backend/app/models/postgres.py:6821](../../backend/app/models/postgres.py#L6821)
+[backend/app/models/postgres.py:6883](../../backend/app/models/postgres.py#L6883)
 
 Bases: `Base`.
 
@@ -15094,9 +15147,50 @@ previous_test_name: Optional[str] = None
 previous_test_fingerprint: Optional[str] = None
 ```
 
-## backend/app/models/schemas.py — RunCompareTransition
+## backend/app/models/schemas.py — ReportExportOut
 
 [backend/app/models/schemas.py:5757](../../backend/app/models/schemas.py#L5757)
+
+Bases: `BaseModel`.
+
+VIZ-607: one background report export.
+
+```python
+id: uuid.UUID
+project_id: uuid.UUID
+format: Literal['pdf', 'xlsx']
+status: Literal['queued', 'running', 'completed', 'failed']
+attempts: int
+params: dict[str, Any]
+filename: Optional[str] = None
+size_bytes: Optional[int] = None
+error: Optional[str] = None
+requested_at: datetime
+started_at: Optional[datetime] = None
+finished_at: Optional[datetime] = None
+expires_at: datetime
+retryable: bool
+download_url: Optional[str] = None
+```
+
+## backend/app/models/schemas.py — ReportExportRequestOut
+
+[backend/app/models/schemas.py:5782](../../backend/app/models/schemas.py#L5782)
+
+Bases: `BaseModel`.
+
+VIZ-607: what ``POST /exports`` decided.
+
+```python
+delivery: Literal['download', 'background']
+estimated_tests: int
+export: Optional[ReportExportOut] = None
+dispatched: Optional[bool] = None
+```
+
+## backend/app/models/schemas.py — RunCompareTransition
+
+[backend/app/models/schemas.py:5796](../../backend/app/models/schemas.py#L5796)
 
 Bases: `BaseModel`.
 
@@ -15114,7 +15208,7 @@ count: int = Field(ge=1)
 
 ## backend/app/models/schemas.py — RunCompareResponse
 
-[backend/app/models/schemas.py:5770](../../backend/app/models/schemas.py#L5770)
+[backend/app/models/schemas.py:5809](../../backend/app/models/schemas.py#L5809)
 
 Bases: `BaseModel`.
 
@@ -15150,7 +15244,7 @@ truncated: bool = False
 
 ## backend/app/models/schemas.py — SuiteOwnerUpdate
 
-[backend/app/models/schemas.py:5811](../../backend/app/models/schemas.py#L5811)
+[backend/app/models/schemas.py:5850](../../backend/app/models/schemas.py#L5850)
 
 Bases: `BaseModel`.
 
@@ -15162,7 +15256,7 @@ owner_user_id: Optional[uuid.UUID] = None
 
 ## backend/app/models/schemas.py — SuiteOwnerResponse
 
-[backend/app/models/schemas.py:5816](../../backend/app/models/schemas.py#L5816)
+[backend/app/models/schemas.py:5855](../../backend/app/models/schemas.py#L5855)
 
 Bases: `BaseModel`.
 
@@ -15180,7 +15274,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — SuiteReviewUpdate
 
-[backend/app/models/schemas.py:5826](../../backend/app/models/schemas.py#L5826)
+[backend/app/models/schemas.py:5865](../../backend/app/models/schemas.py#L5865)
 
 Bases: `BaseModel`.
 
@@ -15193,7 +15287,7 @@ note: Optional[str] = Field(None, max_length=4000)
 
 ## backend/app/models/schemas.py — SuiteReviewResponse
 
-[backend/app/models/schemas.py:5831](../../backend/app/models/schemas.py#L5831)
+[backend/app/models/schemas.py:5870](../../backend/app/models/schemas.py#L5870)
 
 Bases: `BaseModel`.
 
@@ -15216,7 +15310,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerRequest
 
-[backend/app/models/schemas.py:5846](../../backend/app/models/schemas.py#L5846)
+[backend/app/models/schemas.py:5885](../../backend/app/models/schemas.py#L5885)
 
 Bases: `BaseModel`.
 
@@ -15232,7 +15326,7 @@ fail_count: Optional[int] = Field(None, ge=0, le=10000)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerResponse
 
-[backend/app/models/schemas.py:5855](../../backend/app/models/schemas.py#L5855)
+[backend/app/models/schemas.py:5894](../../backend/app/models/schemas.py#L5894)
 
 Bases: `BaseModel`.
 
@@ -15249,7 +15343,7 @@ reason: Optional[str] = None
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedRequest
 
-[backend/app/models/schemas.py:5866](../../backend/app/models/schemas.py#L5866)
+[backend/app/models/schemas.py:5905](../../backend/app/models/schemas.py#L5905)
 
 Bases: `BaseModel`.
 
@@ -15266,7 +15360,7 @@ suite_name: Optional[str] = Field(None, max_length=500)
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedResponse
 
-[backend/app/models/schemas.py:5878](../../backend/app/models/schemas.py#L5878)
+[backend/app/models/schemas.py:5917](../../backend/app/models/schemas.py#L5917)
 
 Bases: `BaseModel`.
 
@@ -15282,7 +15376,7 @@ suite_name: Optional[str] = None
 
 ## backend/app/models/schemas.py — DefectIntakeRequest
 
-[backend/app/models/schemas.py:5886](../../backend/app/models/schemas.py#L5886)
+[backend/app/models/schemas.py:5925](../../backend/app/models/schemas.py#L5925)
 
 Bases: `BaseModel`.
 
@@ -15309,7 +15403,7 @@ affects_releases: Optional[list[str]] = Field(None, max_length=100)
 
 ## backend/app/models/schemas.py — DefectIntakeResponse
 
-[backend/app/models/schemas.py:5913](../../backend/app/models/schemas.py#L5913)
+[backend/app/models/schemas.py:5952](../../backend/app/models/schemas.py#L5952)
 
 Bases: `BaseModel`.
 
@@ -15334,7 +15428,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — RetentionPolicyWrite
 
-[backend/app/models/schemas.py:5933](../../backend/app/models/schemas.py#L5933)
+[backend/app/models/schemas.py:5972](../../backend/app/models/schemas.py#L5972)
 
 Bases: `BaseModel`.
 
@@ -15355,7 +15449,7 @@ audit_days: Optional[int] = Field(None, ge=365, le=3650)
 
 ## backend/app/models/schemas.py — RetentionLastPurge
 
-[backend/app/models/schemas.py:5948](../../backend/app/models/schemas.py#L5948)
+[backend/app/models/schemas.py:5987](../../backend/app/models/schemas.py#L5987)
 
 Bases: `BaseModel`.
 
@@ -15370,7 +15464,7 @@ counts: dict = Field(default_factory=dict)
 
 ## backend/app/models/schemas.py — RetentionPolicyRead
 
-[backend/app/models/schemas.py:5956](../../backend/app/models/schemas.py#L5956)
+[backend/app/models/schemas.py:5995](../../backend/app/models/schemas.py#L5995)
 
 Bases: `BaseModel`.
 
@@ -15389,7 +15483,7 @@ last_purge: Optional[RetentionLastPurge] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewCandidates
 
-[backend/app/models/schemas.py:5968](../../backend/app/models/schemas.py#L5968)
+[backend/app/models/schemas.py:6007](../../backend/app/models/schemas.py#L6007)
 
 Bases: `BaseModel`.
 
@@ -15426,7 +15520,7 @@ search_index_documents: Optional[int] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewResponse
 
-[backend/app/models/schemas.py:6007](../../backend/app/models/schemas.py#L6007)
+[backend/app/models/schemas.py:6046](../../backend/app/models/schemas.py#L6046)
 
 Bases: `BaseModel`.
 
@@ -15440,7 +15534,7 @@ unmeasured: List[str] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — RetentionPurgeRequest
 
-[backend/app/models/schemas.py:6017](../../backend/app/models/schemas.py#L6017)
+[backend/app/models/schemas.py:6056](../../backend/app/models/schemas.py#L6056)
 
 Bases: `BaseModel`.
 
@@ -15453,7 +15547,7 @@ confirmation_name: str = Field(..., min_length=1, max_length=255)
 
 ## backend/app/models/schemas.py — RetentionPurgeQueued
 
-[backend/app/models/schemas.py:6023](../../backend/app/models/schemas.py#L6023)
+[backend/app/models/schemas.py:6062](../../backend/app/models/schemas.py#L6062)
 
 Bases: `BaseModel`.
 
@@ -19840,6 +19934,20 @@ reason: str
 envelope: ReviewEnvelope
 watermark: Optional[str] = None
 enforced: bool = False
+```
+
+## backend/app/services/report_export_service.py — RenderedExport
+
+[backend/app/services/report_export_service.py:113](../../backend/app/services/report_export_service.py#L113)
+
+Bases: ``.
+
+
+
+```python
+content: bytes
+filename: str
+media_type: str
 ```
 
 ## backend/app/services/resilience.py — TruncationReport

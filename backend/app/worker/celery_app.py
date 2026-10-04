@@ -133,6 +133,11 @@ celery_app.conf.update(
             "task": "app.worker.tasks.run_retention_purges",
             "schedule": crontab(hour=2, minute=0),
         },
+        # VIZ-607: report export files older than 7 days, and their rows.
+        "nightly-report-export-sweep": {
+            "task": "app.worker.tasks.sweep_report_exports",
+            "schedule": crontab(hour=1, minute=15),
+        },
         # Continuous learning pipeline
         "weekly-training-export": {
             "task": "app.worker.training_tasks.export_training_data",

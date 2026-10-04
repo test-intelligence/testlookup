@@ -67,6 +67,8 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "batch_id",
     # E3.1: nested under project_id; service queries always include that project.
     "workflow_id",
+    # VIZ-607: a background report export, reached by id alone.
+    "export_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
@@ -179,6 +181,9 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True
     # Release → project.
     if "{release_id}" in path and any("require_release_access" in n for n in dep_names):
+        return True
+    # VIZ-607: report export → project.
+    if "{export_id}" in path and any("require_report_export_access" in n for n in dep_names):
         return True
     # Knowledge source → project.
     if "{source_id}" in path and any("require_knowledge_source_access" in n for n in dep_names):
@@ -418,7 +423,7 @@ _SCOPE_EVIDENCE: tuple[str, ...] = (
     "require_session_access", "require_live_session_access", "require_link_access",
     "require_api_key_owner", "require_knowledge_source_access",
     "require_generation_batch_access", "require_plan_access", "require_case_access",
-    "require_canonical_case_access",
+    "require_canonical_case_access", "require_report_export_access",
     "require_attempt_access", "require_investigation_access",
     # local helpers defined in routers/services
     "_assert_project_access", "_check_project_access", "_enforce_project_access",
