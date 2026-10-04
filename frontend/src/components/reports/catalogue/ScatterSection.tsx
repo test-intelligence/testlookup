@@ -24,6 +24,12 @@
  * All Projects: the endpoint needs one project (a fingerprint is per
  * project), so the frame says so and nothing is requested.
  *
+ * The 3D view (VIZ-508, `viz_three_d` through `useThreeDRollout`, asked HERE
+ * and nowhere else): "View in 3D" in the frame's toolbar lays the three.js
+ * view OVER the 2D scatter, which stays mounted (and `inert`) underneath, so
+ * export, print and the table keep reading the 2D chart. A browser that cannot
+ * draw it, or that takes its context back, returns to 2D with a notice.
+ *
  * The data hook: `useChartData` with the catalogue's own key, fetcher and
  * validator (`catalogKey` / `catalogFetcher` / `catalogValidator`, exactly
  * what `useCatalogChartData('test-scatter')` uses) and ONE different
@@ -31,12 +37,14 @@
  * kit's emptiness rule turns no points into `filtered-empty` and drops the
  * series, and with it the exclusion counts that are the whole answer.
  */
-import { useCallback, useMemo, useState, type ReactElement } from 'react'
+import { Suspense, useCallback, useMemo, useState, type ReactElement } from 'react'
 import type { PointsChart } from '@/lib/viz/contracts'
 import { useChartData, type ChartKey } from '@/hooks/useChartData'
 import { ownedRows, useDrillPath } from '@/hooks/useDrillPath'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import ChartFrame from '@/components/charts/ChartFrame'
+import SwapLabel from '@/components/charts/SwapLabel'
+import Skeleton from '@/components/ui/Skeleton'
 import TestScatter, { type ScatterSelectionOrigin } from '@/components/charts/TestScatter'
 import ScatterSelectionList from '@/components/charts/ScatterSelectionList'
 import { hasChartData, type ChartState } from '@/components/charts/chartStateCore'
@@ -50,11 +58,19 @@ import {
   scatterTakeaway,
 } from '@/components/charts/testScatter.model'
 import type { MarkActivateHandler } from '@/components/charts/marks'
+import {
+  VIEW_2D_LABEL,
+  VIEW_3D_LABEL,
+  VIEW_LABELS,
+  unavailableNotice,
+  type Scatter3DUnavailable,
+} from '@/components/charts/scatter3d.model'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { formatNumber } from '@/utils/formatters'
 import LazySection from './LazySection'
 import RowsPanel from './RowsPanel'
 import { clampCatalogueDays, useCatalogueParams } from './catalogueScope'
-import { useAdvancedRollout } from './useCatalogueRollout'
+import { useAdvancedRollout, useThreeDRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 import type { ScatterSectionProps } from './sectionContracts'
 import {
@@ -70,6 +86,12 @@ import {
   scatterRowsChart,
   scatterRowsSelectors,
 } from './ScatterSection.model'
+
+// Its own chunk, with three behind it in another (`engines/three/load.ts`): fetched on the first "View in 3D".
+const Scatter3DView = lazyWithRetry(() => import('@/components/charts/Scatter3DView'))
+
+const TOGGLE =
+  'rounded border border-[var(--color-border-light)] px-3 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]'
 
 /** The frame's footer: what is not on the plot, the 1 ms floor, and "Dense" past the threshold (the gallery draws it too). */
 export function ScatterFooter({ chart }: { chart: PointsChart }) {
@@ -128,6 +150,27 @@ function ScatterBody({ days, suiteFilter, placement }: ScatterSectionProps) {
   const rowsPoint = rowsSelectors.length && chart ? chart.points.find((p) => p.id === rowsSelectors[0].value) : undefined
   const rowsTitle = rowsPoint?.label ?? rowsSelectors[0]?.value ?? ''
 
+  // VIZ-508: the 3D view, offered only over a drawn scatter.
+  const threeD = useThreeDRollout()
+  const [view, setView] = useState<'2d' | '3d'>('2d')
+  const [notice, setNotice] = useState<string | null>(null)
+  const drawn = chart !== null && chart.points.length > 0
+  const showing3D = threeD && drawn && view === '3d'
+  const toggleView = useCallback(() => {
+    setNotice(null)
+    setView((current) => (current === '3d' ? '2d' : '3d'))
+  }, [])
+  const onUnavailable = useCallback((reason: Scatter3DUnavailable) => {
+    setView('2d')
+    setNotice(unavailableNotice(reason))
+  }, [])
+  const viewToggle =
+    threeD && drawn ? (
+      <button type="button" data-scatter-view-toggle="" aria-pressed={showing3D} onClick={toggleView} className={TOGGLE}>
+        <SwapLabel labels={VIEW_LABELS} current={showing3D ? VIEW_2D_LABEL : VIEW_3D_LABEL} />
+      </button>
+    ) : undefined
+
   return (
     <div data-catalogue-section={`scatter-${placement}`} className="min-w-0">
       <ChartFrame
@@ -142,20 +185,46 @@ function ScatterBody({ days, suiteFilter, placement }: ScatterSectionProps) {
         scopeLabel={`last ${windowDays} days`}
         emptyMessage={NO_TESTS_MESSAGE}
         footer={chart ? <ScatterFooter chart={chart} /> : undefined}
+        toolbar={viewToggle}
       >
         {chart === null ? null : chart.points.length === 0 ? (
           <p data-scatter-nothing="" className="py-8 text-center text-sm text-[var(--color-text-secondary)]">
             {nothingPlacedSentence(chart.excluded, SCATTER_MIN_EXECUTIONS)}
           </p>
         ) : (
-          <TestScatter
-            data={chart}
-            description={scatterDescription(SCATTER_TITLE, chart)}
-            height={SCATTER_HEIGHT}
-            onSelectionChange={onSelectionChange}
-            onMarkActivate={onMarkActivate}
-            markIntents={markIntents}
-          />
+          <>
+            {notice ? (
+              <p data-scatter-3d-notice="" className="mb-2 text-xs text-[var(--color-text-secondary)]">
+                {notice}
+              </p>
+            ) : null}
+            {/* The 2D chart is NEVER unmounted: the 3D view covers it, and export and print keep using it. */}
+            <div style={{ position: 'relative' }}>
+              <div inert={showing3D}>
+                <TestScatter
+                  data={chart}
+                  description={scatterDescription(SCATTER_TITLE, chart)}
+                  height={SCATTER_HEIGHT}
+                  onSelectionChange={onSelectionChange}
+                  onMarkActivate={onMarkActivate}
+                  markIntents={markIntents}
+                />
+              </div>
+              {showing3D ? (
+                <div className="print:hidden" style={{ position: 'absolute', inset: 0, background: 'var(--color-bg-card)' }}>
+                  <Suspense fallback={<Skeleton variant="chart" height="100%" />}>
+                    <Scatter3DView
+                      data={chart}
+                      height={SCATTER_HEIGHT}
+                      onUnavailable={onUnavailable}
+                      onMarkActivate={onMarkActivate}
+                      markIntents={markIntents}
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+            </div>
+          </>
         )}
         {/* In the card, on its padding (F-08): the selection is read where it was made. */}
         {chart && selected !== null ? (

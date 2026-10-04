@@ -12,7 +12,7 @@
  * these flags on by default and deletes this file. While every page goes
  * through here, that is one deletion and five un-branched mounts; once a page
  * reads a flag by itself, it is a hunt. `flagSeam.ratchet.test.ts` fails on any
- * other reader of the two keys.
+ * other reader of these keys (and of `viz_three_d`, VIZ-508's third).
  *
  * The answer is `false` until the status request answers and `false` if it
  * fails (`useFeatureEnabled`'s rule: a gate that cannot be read stays closed),
@@ -66,4 +66,16 @@ export function useAdvancedRolloutStatus(): boolean | undefined {
   if (catalogue === false || advanced === false) return false
   if (catalogue === undefined || advanced === undefined) return undefined
   return true
+}
+
+/**
+ * Whether the test scatter offers its opt-in 3D view (VIZ-508): the advanced
+ * sections AND `viz_three_d`. Called from inside the scatter's lazy body only,
+ * so the third lookup is made where a scatter is mounted and nowhere else (a
+ * lookup outside a drawn section adds a request to every page's inventory).
+ */
+export function useThreeDRollout(): boolean {
+  const advanced = useAdvancedRollout()
+  const threeD = useFeatureEnabled(VIZ_FLAGS.threeD)
+  return advanced && threeD
 }

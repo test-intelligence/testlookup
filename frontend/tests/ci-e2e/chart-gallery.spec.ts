@@ -19,6 +19,8 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 // The axe gate (tags, themes, ratcheted allowlist) is shared with the VIZ-405 spec.
 import { ALL_THEMES, expectNoBlockingViolations, type KnownViolation } from '../lib/axe-gate'
 import { isTelemetryBeaconFailure } from '../lib/chart-gallery-page'
+// The production-CSP watch, shared with the 3D scatter spec (VIZ-508).
+import { cspViolations, watchCsp } from '../lib/csp'
 import { textEscapes } from '../lib/chart-text-escapes'
 import {
   GALLERY_CANVAS,
@@ -70,25 +72,6 @@ const VALUE_TICKS = '.recharts-xAxis-tick-labels'
 const ECHARTS_CANVAS = '[data-chart-engine="echarts"] canvas'
 /** Any request for ECharts or zrender code — a dev-server dep or a built chunk. */
 const ENGINE_REQUEST = /echarts|zrender/i
-
-/**
- * Collect `securitypolicyviolation` events from before any page script runs.
- * The dev server serves the same index.html as production, CSP <meta> and all,
- * so a chart engine that needs `eval`, a `blob:` worker or a remote resource
- * shows up here.
- */
-async function watchCsp(page: Page) {
-  await page.addInitScript(() => {
-    const seen: string[] = []
-    ;(window as unknown as { __cspViolations: string[] }).__cspViolations = seen
-    document.addEventListener('securitypolicyviolation', (event) => {
-      seen.push(`${event.violatedDirective} <- ${event.blockedURI || 'inline'}`)
-    })
-  })
-}
-
-const cspViolations = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? null)
 
 /**
  * Distinct opaque colours (sampled) in the most-painted canvas of a chart: a
