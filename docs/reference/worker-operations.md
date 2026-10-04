@@ -1009,7 +1009,7 @@ sweep_report_exports()
 
 ## run_retention_purges
 
-[backend/app/worker/tasks.py:5765](../../backend/app/worker/tasks.py#L5765)
+[backend/app/worker/tasks.py:5763](../../backend/app/worker/tasks.py#L5763)
 
 Nightly retention purge sweep (02:00 UTC beat), or a single-project
 execute-mode purge when enqueued from the router with ``project_id``.
@@ -1025,7 +1025,7 @@ run_retention_purges(self, project_id: str | None=None)
 
 ## calibrate_flaky_classifiers
 
-[backend/app/worker/tasks.py:5789](../../backend/app/worker/tasks.py#L5789)
+[backend/app/worker/tasks.py:5787](../../backend/app/worker/tasks.py#L5787)
 
 Measure how well the flaky classifier actually works, per project.
 
@@ -1044,7 +1044,7 @@ calibrate_flaky_classifiers(self, project_id: str | None=None)
 
 ## recompute_flaky_scores
 
-[backend/app/worker/tasks.py:5863](../../backend/app/worker/tasks.py#L5863)
+[backend/app/worker/tasks.py:5861](../../backend/app/worker/tasks.py#L5861)
 
 Recompute the continuous flakiness score per project (roadmap Phase 2).
 
@@ -1062,7 +1062,7 @@ recompute_flaky_scores(self, project_id: str | None=None)
 
 ## recompute_systemic_clusters
 
-[backend/app/worker/tasks.py:5928](../../backend/app/worker/tasks.py#L5928)
+[backend/app/worker/tasks.py:5926](../../backend/app/worker/tasks.py#L5926)
 
 Rebuild systemic co-failure clusters per project (roadmap Phase 3).
 
@@ -1079,7 +1079,7 @@ recompute_systemic_clusters(self, project_id: str | None=None)
 
 ## screen_new_test_fingerprints
 
-[backend/app/worker/tasks.py:6009](../../backend/app/worker/tasks.py#L6009)
+[backend/app/worker/tasks.py:6007](../../backend/app/worker/tasks.py#L6007)
 
 Tier 1 of roadmap Phase 6: screen the new and directly-modified.
 
@@ -1101,7 +1101,7 @@ screen_new_test_fingerprints(self, project_id: str | None=None)
 
 ## sweep_flaky_detection
 
-[backend/app/worker/tasks.py:6092](../../backend/app/worker/tasks.py#L6092)
+[backend/app/worker/tasks.py:6090](../../backend/app/worker/tasks.py#L6090)
 
 Tier 2 of roadmap Phase 6: the continuous whole-corpus pass.
 
@@ -1124,7 +1124,7 @@ sweep_flaky_detection(self, project_id: str | None=None)
 
 ## delete_run_everywhere
 
-[backend/app/worker/tasks.py:6173](../../backend/app/worker/tasks.py#L6173)
+[backend/app/worker/tasks.py:6171](../../backend/app/worker/tasks.py#L6171)
 
 Delete ONE run across all five stores. Irreversible.
 
@@ -1154,7 +1154,7 @@ delete_run_everywhere(self, run_id: str, job_id: str | None=None, reason: str=''
 
 ## execute_criteria_deletion_task
 
-[backend/app/worker/tasks.py:6295](../../backend/app/worker/tasks.py#L6295)
+[backend/app/worker/tasks.py:6293](../../backend/app/worker/tasks.py#L6293)
 
 Replay a frozen candidate set, one run at a time.
 
@@ -1176,7 +1176,7 @@ execute_criteria_deletion_task(self, job_id: str, project_id: str, requested_by_
 
 ## reconcile_active_releases
 
-[backend/app/worker/tasks.py:6438](../../backend/app/worker/tasks.py#L6438)
+[backend/app/worker/tasks.py:6436](../../backend/app/worker/tasks.py#L6436)
 
 Sweep for projects with no active release, repair them, and REPORT.
 
@@ -1204,7 +1204,7 @@ reconcile_active_releases(self)
 
 ## reconcile_primary_releases
 
-[backend/app/worker/tasks.py:6530](../../backend/app/worker/tasks.py#L6530)
+[backend/app/worker/tasks.py:6528](../../backend/app/worker/tasks.py#L6528)
 
 Repair drift between ``test_runs.primary_release_id`` and the link table.
 
@@ -1226,7 +1226,7 @@ reconcile_primary_releases(self)
 
 ## reconcile_release_sort_keys
 
-[backend/app/worker/tasks.py:6617](../../backend/app/worker/tasks.py#L6617)
+[backend/app/worker/tasks.py:6615](../../backend/app/worker/tasks.py#L6615)
 
 Fill in ``releases.sort_key`` for rows that have none.
 
@@ -1249,7 +1249,7 @@ reconcile_release_sort_keys(self)
 
 ## run_agent_invocation
 
-[backend/app/worker/tasks.py:6686](../../backend/app/worker/tasks.py#L6686)
+[backend/app/worker/tasks.py:6684](../../backend/app/worker/tasks.py#L6684)
 
 Run one agent invoked through ``POST /api/v1/agents/{agent_id}/invoke`` (E1.2).
 

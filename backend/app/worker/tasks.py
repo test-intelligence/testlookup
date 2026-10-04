@@ -5734,9 +5734,9 @@ def generate_report_export(export_id: str) -> str:
     outcome fenced by attempt number. No Celery retry: a failure is recorded
     on the row and the reader retries it from the page.
     """
-    from app.services import report_export_service
+    from app.worker import report_export_runner
 
-    return cast(str, _run_async(report_export_service.run_export_job(uuid.UUID(export_id))))
+    return cast(str, _run_async(report_export_runner.run_export_job(uuid.UUID(export_id))))
 
 
 @celery_app.task(name="app.worker.tasks.sweep_report_exports", queue="default", max_retries=0)
@@ -5746,12 +5746,10 @@ def sweep_report_exports() -> dict:
     Object storage has no lifecycle rules, so nothing else ever deletes them.
     """
     async def _run():
-        from app.db.postgres import AsyncSessionLocal
-        from app.services import report_export_service
+        from app.worker import report_export_runner
 
         with _beat_span("sweep_report_exports"):
-            async with AsyncSessionLocal() as db:
-                return await report_export_service.sweep_expired(db)
+            return await report_export_runner.sweep()
 
     return cast(dict, _run_async(_run()))
 

@@ -20,6 +20,9 @@ row is queued and :func:`run_export_job` renders it on the ``default`` queue.
   redelivered message is a no-op. A ``running`` row whose worker died is
   claimable again once Celery's hard time limit has passed: past that, the
   worker that held it is certainly gone.
+* The service only stages; ``app/worker/report_export_runner`` owns every
+  commit (the repo's transaction-boundary rule): the claim is committed before
+  the render, the outcome after it.
 * Success and failure are written fenced by ``attempts``: an older attempt
   that wakes up late cannot overwrite a newer one's result.
 * A failure is written after the job's rollback, on a FRESH session: when
@@ -237,7 +240,8 @@ def dispatch(export_id: uuid.UUID) -> bool:
 async def claim(db: AsyncSession, export_id: uuid.UUID) -> Optional[int]:
     """``queued`` (or abandoned ``running``) → ``running``. Returns the
     attempt number this worker now owns, or ``None`` when there is nothing to
-    do: already running elsewhere, finished, or gone."""
+    do: already running elsewhere, finished, or gone. Stage-only: the worker
+    commits the claim before it renders, so another delivery sees it."""
     now = _now()
     result = await db.execute(
         update(ReportExport)
@@ -260,9 +264,7 @@ async def claim(db: AsyncSession, export_id: uuid.UUID) -> Optional[int]:
         )
         .returning(ReportExport.attempts)
     )
-    attempt = result.scalar_one_or_none()
-    await db.commit()
-    return attempt
+    return result.scalar_one_or_none()
 
 
 async def complete(
@@ -288,7 +290,8 @@ async def complete(
 
 
 async def fail(db: AsyncSession, export_id: uuid.UUID, attempt: int, reason: str) -> None:
-    """Record a failure -- on a fresh session (see the module notes)."""
+    """Stage a failure. The worker stages it on a fresh session and commits it
+    (see the module notes)."""
     await db.execute(
         update(ReportExport)
         .where(
@@ -302,7 +305,6 @@ async def fail(db: AsyncSession, export_id: uuid.UUID, attempt: int, reason: str
             finished_at=_now(),
         )
     )
-    await db.commit()
 
 
 class ExportRefused(Exception):
@@ -334,48 +336,6 @@ async def _requester_scope(db: AsyncSession, export: ReportExport) -> tuple[Any,
     if scope.denied or scope.project_id is None:
         raise ExportRefused("Access to this report was refused when the export ran.")
     return user, scope
-
-
-async def run_export_job(export_id: uuid.UUID) -> str:
-    """The worker's whole job. Returns the final status for the task result."""
-    from app.db.postgres import AsyncSessionLocal
-    from app.db.storage import get_storage_provider
-
-    async with AsyncSessionLocal() as db:
-        attempt = await claim(db, export_id)
-        if attempt is None:
-            logger.info("report_export_nothing_to_claim", export_id=str(export_id))
-            return "skipped"
-        try:
-            export = await db.get(ReportExport, export_id)
-            if export is None:
-                return "skipped"
-            user, scope = await _requester_scope(db, export)
-            mode: SummaryMode = "latest" if (export.params or {}).get("mode") == "latest" else "window"
-            rendered = await render_summary_export(db, scope, mode, export.format)
-            key = object_key(export, rendered.filename)
-            await get_storage_provider().put_object(key, rendered.content, content_type=rendered.media_type)
-            if not await complete(db, export_id, attempt, key=key, rendered=rendered):
-                # A newer attempt owns the row; its result stands.
-                await db.rollback()
-                return "superseded"
-            db.add(audit_row(
-                user=user, scope=scope, mode=mode, fmt=export.format,
-                size_bytes=len(rendered.content), export_id=export_id,
-            ))
-            await db.commit()
-            logger.info(
-                "report_export_completed", export_id=str(export_id),
-                fmt=export.format, size_bytes=len(rendered.content),
-            )
-            return ReportExportStatus.COMPLETED.value
-        except Exception as exc:
-            await db.rollback()
-            reason = str(exc) if isinstance(exc, ExportRefused) else f"The export could not be generated: {type(exc).__name__}: {exc}"
-            async with AsyncSessionLocal() as failure_db:
-                await fail(failure_db, export_id, attempt, reason)
-            logger.warning("report_export_failed", export_id=str(export_id), error=reason)
-            return ReportExportStatus.FAILED.value
 
 
 def retryable(export: ReportExport, now: Optional[datetime] = None) -> bool:
@@ -421,7 +381,8 @@ async def list_recent(db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUI
 
 
 async def sweep_expired(db: AsyncSession, now: Optional[datetime] = None) -> dict[str, int]:
-    """Delete export files older than ``RETENTION``, then their rows."""
+    """Delete export files older than ``RETENTION``, then stage the rows'
+    deletion (the worker commits)."""
     from app.db.storage import get_storage_provider
 
     now = now or _now()
@@ -437,6 +398,5 @@ async def sweep_expired(db: AsyncSession, now: Optional[datetime] = None) -> dic
         .returning(ReportExport.id)
     )
     rows = len(result.all())
-    await db.commit()
     logger.info("report_exports_swept", objects=objects, rows=rows)
     return {"objects": objects, "rows": rows}

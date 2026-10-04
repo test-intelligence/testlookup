@@ -42,6 +42,7 @@ from app.models.postgres import (
 )
 from app.services import report_export_service as export_svc
 from app.services.analytics_scope import AnalyticsScope
+from app.worker import report_export_runner as runner
 
 @compiles(JSONB, "sqlite")
 def _jsonb_on_sqlite(type_, compiler, **kw):  # noqa: D103 -- JSONB columns as SQLite JSON
@@ -165,7 +166,7 @@ async def test_a_job_renders_stores_and_completes_with_an_audit_row(session_fact
     export = await _queued(session_factory, world)
     _render_ok(monkeypatch, world)
 
-    assert await export_svc.run_export_job(export.id) == "completed"
+    assert await runner.run_export_job(export.id) == "completed"
 
     row = await _row(session_factory, export.id)
     assert row.status == ReportExportStatus.COMPLETED.value and row.attempts == 1
@@ -185,9 +186,9 @@ async def test_a_job_renders_stores_and_completes_with_an_audit_row(session_fact
 async def test_a_redelivered_message_is_a_no_op(session_factory, storage, world, monkeypatch):
     export = await _queued(session_factory, world)
     _render_ok(monkeypatch, world)
-    assert await export_svc.run_export_job(export.id) == "completed"
+    assert await runner.run_export_job(export.id) == "completed"
 
-    assert await export_svc.run_export_job(export.id) == "skipped"
+    assert await runner.run_export_job(export.id) == "skipped"
     row = await _row(session_factory, export.id)
     assert row.status == "completed" and row.attempts == 1
 
@@ -196,8 +197,10 @@ async def test_a_running_row_is_reclaimable_only_past_the_hard_limit(session_fac
     export = await _queued(session_factory, world)
     async with session_factory() as db:
         assert await export_svc.claim(db, export.id) == 1
+        await db.commit()
     async with session_factory() as db:
         assert await export_svc.claim(db, export.id) is None, "a live worker still owns it"
+        await db.commit()
 
     async with session_factory() as db:
         row = await db.get(ReportExport, export.id)
@@ -205,18 +208,21 @@ async def test_a_running_row_is_reclaimable_only_past_the_hard_limit(session_fac
         await db.commit()
     async with session_factory() as db:
         assert await export_svc.claim(db, export.id) == 2, "its worker is certainly gone"
+        await db.commit()
 
 
 async def test_an_older_attempt_cannot_overwrite_a_newer_one(session_factory, world):
     export = await _queued(session_factory, world)
     async with session_factory() as db:
         await export_svc.claim(db, export.id)
+        await db.commit()
     async with session_factory() as db:
         row = await db.get(ReportExport, export.id)
         row.started_at = datetime.now(timezone.utc) - export_svc._hard_time_limit() - timedelta(seconds=5)
         await db.commit()
     async with session_factory() as db:
         assert await export_svc.claim(db, export.id) == 2
+        await db.commit()
 
     rendered = export_svc.RenderedExport(content=b"late", filename="late.pdf", media_type="application/pdf")
     async with session_factory() as db:
@@ -224,6 +230,7 @@ async def test_an_older_attempt_cannot_overwrite_a_newer_one(session_factory, wo
         await db.commit()
     async with session_factory() as db:
         await export_svc.fail(db, export.id, 1, "late failure")
+        await db.commit()
     row = await _row(session_factory, export.id)
     assert (row.status, row.attempts, row.storage_key, row.error) == ("running", 2, None, None)
 
@@ -240,7 +247,7 @@ async def test_a_render_error_is_recorded_failed_with_a_reason_and_no_file(sessi
 
     monkeypatch.setattr(export_svc, "render_summary_export", broken)
 
-    assert await export_svc.run_export_job(export.id) == "failed"
+    assert await runner.run_export_job(export.id) == "failed"
     row = await _row(session_factory, export.id)
     assert row.status == "failed" and row.finished_at is not None
     assert "ValueError: chart data was malformed" in row.error
@@ -260,7 +267,7 @@ async def test_access_removed_before_the_render_is_a_refusal_not_a_file(session_
     monkeypatch.setattr("app.services.analytics_scope.resolve_analytics_scope", deny)
     monkeypatch.setattr(export_svc, "render_summary_export", render)
 
-    assert await export_svc.run_export_job(export.id) == "failed"
+    assert await runner.run_export_job(export.id) == "failed"
     row = await _row(session_factory, export.id)
     assert row.error == "Access to this report was refused when the export ran (403)."
     assert rendered == [] and storage.objects == {}
@@ -273,7 +280,7 @@ async def test_a_deactivated_requester_is_refused(session_factory, storage, worl
         user.is_active = False
         await db.commit()
 
-    assert await export_svc.run_export_job(export.id) == "failed"
+    assert await runner.run_export_job(export.id) == "failed"
     row = await _row(session_factory, export.id)
     assert "no longer has an active account" in row.error
 
@@ -305,7 +312,7 @@ async def test_retry_requeues_a_failed_export_and_it_then_completes(session_fact
         raise RuntimeError("storage was down")
 
     monkeypatch.setattr(export_svc, "render_summary_export", broken)
-    assert await export_svc.run_export_job(export.id) == "failed"
+    assert await runner.run_export_job(export.id) == "failed"
 
     async with session_factory() as db:
         row = await db.get(ReportExport, export.id)
@@ -315,7 +322,7 @@ async def test_retry_requeues_a_failed_export_and_it_then_completes(session_fact
     assert (row.status, row.error, row.finished_at) == ("queued", None, None)
 
     _render_ok(monkeypatch, world)
-    assert await export_svc.run_export_job(export.id) == "completed"
+    assert await runner.run_export_job(export.id) == "completed"
     row = await _row(session_factory, export.id)
     assert (row.status, row.attempts) == ("completed", 2)
 
@@ -374,6 +381,7 @@ async def test_the_sweep_deletes_old_day_folders_and_expired_rows_only(session_f
 
     async with session_factory() as db:
         out = await export_svc.sweep_expired(db, now=now)
+        await db.commit()
 
     assert out == {"objects": 1, "rows": 1}
     assert list(storage.objects) == ["report-exports/2026/10/19/p/fresh/b.pdf"]
@@ -443,7 +451,7 @@ async def test_download_is_409_until_complete_410_after_expiry_and_audited(sessi
     assert exc.value.status_code == 409
 
     _render_ok(monkeypatch, world, content=b"%PDF-1.4 the file")
-    await export_svc.run_export_job(export.id)
+    await runner.run_export_job(export.id)
     async with session_factory() as db:
         response = await router.download_summary_report_export(export.id, db=db, current_user=world.user)
     chunks = [chunk async for chunk in response.body_iterator]
