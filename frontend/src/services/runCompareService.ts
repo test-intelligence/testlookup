@@ -83,6 +83,8 @@ export interface RunCompareTestDelta {
 export interface RunCompareResponse {
   left: RunCompareSummary
   right: RunCompareSummary
+  /** VIZ-507: every test's status flow, unchanged included (absent from older servers). */
+  transitions?: { before: import('@/components/charts/statusSankeyModel').FlowStatus; after: import('@/components/charts/statusSankeyModel').FlowStatus; count: number }[]
   scope: 'run' | 'suite'
   suite_name?: string | null
   selection?: RunCompareSelection | null

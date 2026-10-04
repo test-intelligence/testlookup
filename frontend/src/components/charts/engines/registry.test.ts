@@ -38,7 +38,7 @@ describe('loadChartEngine', () => {
 
   it('registers heatmap as a lazily loaded type', async () => {
     const { CHART_ENGINE_TYPES, loadChartEngine } = await import('./registry')
-    expect(CHART_ENGINE_TYPES).toEqual(['heatmap', 'timeSeries', 'treemap', 'scatter'])
+    expect(CHART_ENGINE_TYPES).toEqual(['heatmap', 'timeSeries', 'treemap', 'scatter', 'sankey'])
     const engine = await loadChartEngine('heatmap')
     expect((engine as unknown as { marker: string }).marker).toBe('heatmap-engine')
   })

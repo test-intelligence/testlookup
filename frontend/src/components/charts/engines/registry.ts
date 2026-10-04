@@ -37,6 +37,8 @@ const LOADERS = {
   // Wave 3: the coverage map (VIZ-502) and the test scatter (VIZ-506).
   treemap: () => import('./echarts/treemap').then((m): ChartEngine => m.echarts),
   scatter: () => import('./echarts/scatter').then((m): ChartEngine => m.echarts),
+  // VIZ-507: the run-compare status flows.
+  sankey: () => import('./echarts/sankey').then((m): ChartEngine => m.echarts),
 } satisfies Record<string, () => Promise<ChartEngine>>
 
 export type ChartEngineType = keyof typeof LOADERS
