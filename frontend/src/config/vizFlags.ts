@@ -5,7 +5,9 @@
  * `vizFlags.test.ts` holds this object to that file — same keys, same order —
  * and the backend's `app/core/viz_flags.py` is held to it the same way, so a
  * key cannot be renamed on one side only. Migration `0192` seeds every flag
- * DISABLED; nothing here turns one on.
+ * DISABLED; `0195` turns on `chartDataApi`, `advancedCharts` and `threeD`
+ * (`reportContext` and `multiFilters` stay off: the panel was removed).
+ * Nothing here turns one on.
  *
  * Keys use underscores, not dots: the flag API only accepts
  * `^[a-z][a-z0-9_]*$`, so a dotted key could never be recreated through it.

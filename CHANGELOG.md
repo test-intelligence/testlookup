@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase D: the shipped chart flags are on by default
+
+Migration `0195_enable_viz_flags_by_default` turns on, for every install (fresh
+ones and existing ones on their next migrate):
+
+- `viz_chart_data_api` (the report catalogues),
+- `viz_advanced_charts` (heatmaps, coverage map, failure groups, scatter,
+  Sankey, Explorer),
+- `viz_three_d` (the opt-in 3D scatter).
+
+It also clears each one's project and role allow-lists and sets the rollout to
+100 %: `enabled_global` is only the kill switch in front of those, so a flag
+allow-listed to one project would otherwise still be off elsewhere.
+`viz_report_context` and `viz_multi_filters` stay **off** (the report-context
+panel was removed on 2026-10-04), and `viz_customize` is untouched.
+
+**Upgrade note:** an admin who deliberately switched one of the three off has
+to switch it off again once (Settings > Feature flags), as with 0099. The
+downgrade switches them off; earlier allow-lists are not restored. Removing the
+flags and their code paths entirely is the rest of Phase D.
 ## Unreleased - Visualization Upgrade, Phase C: the opt-in 3D test scatter (VIZ-508)
 
 **"View in 3D" on the test scatter** (Failures and Suite detail), behind

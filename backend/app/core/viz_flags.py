@@ -1,7 +1,8 @@
 """Feature-flag keys for the Visualization Upgrade.
 
 The list of record is ``contracts/viz/flags.json``. Migration 0192 seeds these
-six keys disabled, ``frontend/src/config/vizFlags.ts`` mirrors them, and
+six keys disabled (0195 turns the shipped three on: chart-data API, advanced
+charts, 3D; the report-context panel's two stay off), ``frontend/src/config/vizFlags.ts`` mirrors them, and
 ``tests/test_viz_contracts.py`` holds this module and the migration to that
 file -- same keys, same order -- so a flag cannot be renamed on one side only.
 """
