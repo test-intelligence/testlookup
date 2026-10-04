@@ -20,8 +20,8 @@ const FLOWS: StatusTransition[] = [
 ]
 
 const TOKENS = {
-  theme: '', series: [], seq: [], div: [], grid: '#eee', axis: '#999', card: '#fff', border: '#ddd', text: '#111', textMuted: '#777', flaky: '#a0a',
-  status: { passed: '#0a0', failed: '#c00', broken: '#f80', skipped: '#aa0', unknown: '#888' },
+  theme: '', series: [], seq: [], div: [], grid: 'tok-grid', axis: 'tok-axis', card: 'tok-card', border: 'tok-border', text: 'tok-text', textMuted: 'tok-muted', flaky: 'tok-flaky',
+  status: { passed: 'tok-passed', failed: 'tok-failed', broken: 'tok-broken', skipped: 'tok-skipped', unknown: 'tok-unknown' },
 } as ChartTokens
 
 /** The model for FLOWS; a null here is a test failure, not a crash. */
@@ -94,9 +94,9 @@ describe('statusSankeyModel (VIZ-507)', () => {
     const model = built()
     const series = (sankeyOption(model, TOKENS) as { series: { links: { value: number; lineStyle: { color: string; opacity: number } }[] }[] }).series[0]
     const regression = series.links[model.links.findIndex((l) => l.regression)]
-    expect(regression.lineStyle).toEqual({ color: '#c00', opacity: 0.85 })
+    expect(regression.lineStyle).toEqual({ color: 'tok-failed', opacity: 0.85 })
     const unchanged = series.links[model.links.findIndex((l) => l.before === 'passed' && l.after === 'passed')]
-    expect(unchanged.lineStyle).toEqual({ color: '#0a0', opacity: 0.28 })
+    expect(unchanged.lineStyle).toEqual({ color: 'tok-passed', opacity: 0.28 })
     // A click on a flow resolves to its pair; a node click does not.
     expect(clickedFlow({ dataType: 'edge', dataIndex: 1 }, model)).toEqual({ before: 'passed', after: 'failed' })
     expect(clickedFlow({ dataType: 'node', dataIndex: 1 }, model)).toBeNull()
