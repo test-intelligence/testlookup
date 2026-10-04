@@ -1,5 +1,92 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase D: viz load-test scenarios (L1)
+
+**`bench --suite viz` in `backend/scripts/load_test_concurrent.py`.** A new
+`VIZ_SCENARIOS` list, kept apart from `SCENARIOS`. `SCENARIOS` is what
+`test_performance_budgets_live.py` runs against localhost:8000, and that test
+is unchanged. The viz list is meant for the homelab with the 1M-row dataset
+from `seed_large_dataset.py --scale large`. Nothing has been run against a
+server yet; that is L2.
+
+- **What it calls:**
+  - chart-data:
+    - pass rate by day over 30 and 90 days;
+    - day × suite with `top_n=7` over 90 days;
+    - two releases and two suites, sent as repeated `release_id=a&release_id=b`, never `[]`;
+    - `duration_p95` over 90 days;
+    - failures by suite.
+  - The four heatmap kinds. `test_run` is scoped to one suite, and `suite_day` stays within its 90-day cap.
+  - The coverage-map root, plus one suite opened from the root's first node.
+  - failure-groups with `include=edges`, and test-scatter.
+  - Page 1 of the rows for one day's failures.
+  - The Explorer's discovery request (executions by `[suite, environment]`).
+  - The legacy `/analytics/coverage` (90 days) and `/metrics/summary`.
+  - The summary export, both ways:
+    - sync: `POST /exports`, then `GET /pdf` with the same scope;
+    - `background=true`: polled until `completed`, recording the server's own job time.
+- **Every path is checked against the routers.** The parameters are
+  allow-listed per route (`VIZ_ALLOWED_PARAMS`). A parameter the route does not
+  declare raises an error; otherwise FastAPI would drop it silently and the run
+  would measure the default chart.
+- **Fixtures come from the API.** `--project-slug` (default
+  `synthetic-perf-dataset`, the seed's slug) finds the project. Releases (most
+  runs first) come from `/api/v1/releases`, and suites from `/api/v1/suites`.
+  When the dataset lacks something, such as two releases, the scenario is
+  reported as skipped, not passed.
+- **Cache modes:**
+  - **cold:** every request uses a new key. The window moves within its last third, then a suite filter rotates in. One counter per scenario runs across the whole matrix, so concurrency 4 never repeats a key from concurrency 1. `--cold-start` offsets a second run.
+  - **warm:** one key, primed by the warmup.
+  - `--cache both` runs cold first.
+- **Budgets (epic §5.5),** under the names L3 will codify:
+  - `analytics_cached` 50 ms, for warm cells;
+  - `chart_data_rate` 500;
+  - `chart_data` 1,500, for percentiles;
+  - `analytics_heatmap` 800;
+  - `chart_rows` 300.
+
+  `performance_budgets` is read first, so once L3 lands the two cannot drift.
+  Any non-2xx response fails a budgeted cell, a 429 included.
+- **Server-side numbers:** `--metrics-url` scrapes `/metrics` before and after
+  each cell. From the bucket deltas of
+  `testlookup_analytics_query_duration_seconds` it computes, the way
+  Prometheus' `histogram_quantile` does:
+  - p95 for each route and outcome;
+  - the hit ratio;
+  - timeouts and errors;
+  - `testlookup_analytics_read_degraded_total` by reason.
+
+  There is no rate-limit counter yet, so HTTP status counts (429 included)
+  are recorded on the client.
+- **Principals:** `--tokens-file` holds one token per line. Requests take
+  the tokens in turn, so N load users are N principals. The env token and
+  dev-login are still the fallback for a single user.
+- **`rate_limit_burst`:** one token sends 150 chart-data requests within
+  60 s over a single keep-alive connection. It reports the 429 count, whether
+  every 429 carried `Retry-After`, and the body `code`. The limiter counts per
+  process, so through a load balancer fewer 429s than 30 is by design.
+- **Safety:**
+  - localhost, 127.0.0.1, [::1] and 0.0.0.0 on port 8000 are refused unless `--i-know-this-is-not-the-shared-dev-stack` is passed.
+  - Only HTTP(S) URLs are accepted, and the database and Redis ports (5432, 6379) are refused even with that flag.
+  - The target and the resolved project are printed before anything runs.
+- **Output:** `--output` writes JSON and `--markdown` writes a table. There is
+  one row per scenario × concurrency (`--concurrency-levels 1,4,8,16`) × cache
+  mode, giving n, p50/p95/p99/max, server p95, hit ratio, rps, status counts
+  and the verdict. The export flows and the burst get their own sections.
+
+**Tests.** `backend/tests/test_load_test_viz_scenarios.py` uses no network
+(httpx `MockTransport`). It covers:
+- only allow-listed parameters, warm and cold, and the repeated-parameter encoding;
+- distinct cold keys;
+- `VIZ_SCENARIOS` disjoint from `SCENARIOS`;
+- the localhost:8000 guard, with and without the flag, refusing through the CLI before any request;
+- the p95, hit ratio, degraded count and counter reset from two synthetic scrapes;
+- tokens taken in turn;
+- burst parsing;
+- the export polling;
+- the Markdown table.
+
+Each guard was mutation-checked by breaking it on purpose: the test caught every break.
 ## Unreleased - Visualization Upgrade, Phase D: the shipped chart flags are on by default
 
 Migration `0195_enable_viz_flags_by_default` turns on, for every install (fresh
