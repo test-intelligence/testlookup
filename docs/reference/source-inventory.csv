@@ -3310,7 +3310,7 @@ frontend/tests/ci-e2e/chart-touch.spec.ts,test,90,,@playwright/test; ../lib/char
 frontend/tests/ci-e2e/chart-zoom.spec.ts,test,525,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; press; Alignment; alignment; expectAligned
 frontend/tests/ci-e2e/critical-journeys.spec.ts,test,93,,@playwright/test,Page; Route; json; installHermeticApi
 frontend/tests/ci-e2e/intelligence-table-geometry.spec.ts,test,220,,@playwright/test,Page; Route; json; installApi; seedAuth; Geometry; measure
-frontend/tests/ci-e2e/journey-spine.spec.ts,test,398,,@playwright/test,Page; Route; json; installSpineApi; signIn; expectFailureSurfaced
+frontend/tests/ci-e2e/journey-spine.spec.ts,test,400,,@playwright/test,Page; Route; json; installSpineApi; signIn; expectFailureSurfaced
 frontend/tests/ci-e2e/primitives.spec.ts,test,545,,@playwright/test; @axe-core/playwright; ../../src/pages/dev/primitivesFixtures,name; Locator; Page; watchErrors; openPrimitives; activeOption; expectFocusInside; boxOf; expectTarget24
 frontend/tests/ci-e2e/project-isolation-outage.spec.ts,test,131,,@playwright/test,Route; run; json
 frontend/tests/ci-e2e/report-context.spec.ts,test,576,,node:fs; node:url; @playwright/test; @axe-core/playwright,name; can; Locator; Page; Route; watchErrors; openGallery; boxOf; tokenPx; expectNoBlockingViolations; RealOptions; SummaryCall; openReportRoute
@@ -3324,7 +3324,7 @@ frontend/tests/ci-e2e/rollout-fixtures.spec.ts,test,162,,"@playwright/test; ../.
     expect(matrix.y_labels).toContain(; )
     expect(matrix.meta.truncated_axes).toEqual({ series: { dimension: ; )
     expect(never?.stats).toMatchObject({ recency: ",reshape
-frontend/tests/ci-e2e/rollout-flag-off.spec.ts,test,349,,@playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; MockedApi; ReportPage; networkQuiet; withoutAllowedAdditions
+frontend/tests/ci-e2e/rollout-flag-off.spec.ts,test,355,,@playwright/test; ../lib/production-pages; ../visual/production/fixtures,Locator; Page; ApiHandlers; MockedApi; ReportPage; networkQuiet; withoutAllowedAdditions
 frontend/tests/ci-e2e/rollout-heatmaps.spec.ts,test,265,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../lib/axe-gate; ../visual/production/fixtures,Page; ApiHandlers; ApiRequest; heatmapFixture
 frontend/tests/ci-e2e/rollout-overview-presentation.spec.ts,test,99,,@playwright/test; ../lib/rollout; ../visual/production/fixtures,Page; seedPresentation; measure
 frontend/tests/ci-e2e/rollout-overview.spec.ts,test,173,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Page
@@ -3333,8 +3333,8 @@ frontend/tests/ci-e2e/rollout-release-gate.spec.ts,test,264,,@playwright/test; .
 frontend/tests/ci-e2e/rollout-responsive.spec.ts,test,255,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page; ApiHandlers; FlagMap; RoutePage; mountEverySection
 frontend/tests/ci-e2e/rollout-scatter.spec.ts,test,192,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../lib/axe-gate; ../visual/production/fixtures,Page; ApiHandlers; drawn
 frontend/tests/ci-e2e/rollout-suite-detail.spec.ts,test,328,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Locator; Page; bodyHeight; medianOf
-frontend/tests/ci-e2e/rollout-summary-layout.spec.ts,test,156,,@axe-core/playwright; @playwright/test; ../lib/rollout; ../visual/production/fixtures,Page; Box; layout; holdSectionChunk
-frontend/tests/ci-e2e/rollout-summary.spec.ts,test,157,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Page
+frontend/tests/ci-e2e/rollout-summary-layout.spec.ts,test,161,,@axe-core/playwright; @playwright/test; ../lib/rollout; ../visual/production/fixtures,Page; Box; layout; holdSectionChunk
+frontend/tests/ci-e2e/rollout-summary.spec.ts,test,159,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Page
 frontend/tests/ci-e2e/rollout-trends.spec.ts,test,233,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../lib/production-pages; ../visual/production/fixtures; ../lib/axe-gate,Page; FlagMap; watchEcharts; openTrends
 frontend/tests/ci-e2e/trend-overlays.spec.ts,test,612,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures; ../lib/axe-gate; ../lib/chart-text-escapes; ../lib/chart-gallery-page,Locator; Page; watchErrors; openGallery; drawnMarks; expectNoTextEscapes; pointAtFlaggedDay; Rect
 frontend/tests/diagram-harness/harness.tsx,test,106,,react; react-dom/client; react-router-dom; ../../src/index.css; ../../src/pages/DocsPage; ../../src/components/guide/MermaidDiagram; ../../src/components/guide/mermaidConfig,pagesWithDiagrams; Harness; Window
@@ -3459,7 +3459,7 @@ frontend/tests/visual/prod-summary.visual.spec.ts,test,66,,@playwright/test; ../
 frontend/tests/visual/prod-trends-on.visual.spec.ts,test,71,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
 frontend/tests/visual/prod-trends.visual.spec.ts,test,57,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-value-metrics.visual.spec.ts,test,39,,@playwright/test; ../lib/production-pages; ./production/fixtures,
-frontend/tests/visual/production/fixtures.ts,test,2951,,"../../lib/production-pages; , passed: 0, failed: 6, skipped: 2, broken: 1, lastRun: [12, 5] },
+frontend/tests/visual/production/fixtures.ts,test,2956,,"../../lib/production-pages; , passed: 0, failed: 6, skipped: 2, broken: 1, lastRun: [12, 5] },
 ]
 
 /**
