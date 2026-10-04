@@ -14,6 +14,13 @@ import FailureAnalysisPage, {
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/hooks/useMetrics', () => ({
   useFlakyTests: vi.fn(),
   useFailureCategories: vi.fn(),

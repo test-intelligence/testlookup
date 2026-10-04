@@ -46,7 +46,7 @@
  * When the backend grows real defect-management endpoints these synth paths
  * collapse to single field reads.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Bug, Check, ChevronRight,
@@ -68,6 +68,10 @@ import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { refreshDefects, useDefects } from '@/hooks/useMetrics'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useTimeWindowStore } from '@/store/timeWindowStore'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
+import type { SavedView } from '@/services/savedViewsService'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import type { DefectItem } from '@/types/analytics'
 
@@ -1565,6 +1569,24 @@ export default function DefectsPage() {
   })
   useEffect(() => { localStorage.setItem(TAB_KEY, activeTab) }, [activeTab])
 
+  // P1: this page's saved views. Defects are project-wide (no release, no
+  // window, no suite): a view keeps the status tab.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const viewExtra = useMemo(() => ({ defects: { tab: activeTab } }), [activeTab])
+  const applyViewExtra = useCallback((view: SavedView) => {
+    const saved = view.filters?.defects
+    const tab = saved && typeof saved === 'object' ? (saved as { tab?: unknown }).tab : undefined
+    if (STATUS_TABS.some(t => t.id === tab)) setActiveTab(tab as StatusKey)
+  }, [])
+  const viewsMenu = useReportViewsMenu({
+    route: '/defects',
+    windowDays: storedDays,
+    windowOptions: null,
+    release: false,
+    extraFilters: viewExtra,
+    applyExtra: applyViewExtra,
+  })
+
   const [showPicker, setShowPicker] = useState(false)
   const [intakeOpen, setIntakeOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -1757,6 +1779,7 @@ export default function DefectsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
             <LayoutGrid className="h-3.5 w-3.5" />
             Customize

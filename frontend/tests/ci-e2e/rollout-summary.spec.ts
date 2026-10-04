@@ -41,6 +41,8 @@ const SECTIONS: [string, string][] = [
 const inventoryOn = (days: number, mode = 'latest') => [
   ...SHELL_ON,
   `GET /api/v1/reports/summary?project_id=${P}&days=${days}&mode=${mode}`,
+  // P1: the header's Views menu.
+  `GET /api/v1/saved-views?project_id=${P}&page=summary_report`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=${days}`,
   // VIZ-607: the reader's background exports.
   `GET /api/v1/reports/summary/exports?project_id=${P}`,

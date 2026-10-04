@@ -4,8 +4,8 @@
  * this reader may not apply); my default opens once per tab unless the URL
  * already names a scope; only my own views can be changed.
  */
-import type { ComponentProps, ReactNode } from 'react'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,7 +22,15 @@ vi.mock('@/store/authStore', () => ({
   useAuthStore: (select: (s: { user: { id: string } }) => unknown) => select({ user: { id: 'me' } }),
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
+// P1: the widget-layout hook, which reads the same rows through its own fetcher.
+const http = vi.hoisted(() => ({ getData: vi.fn(), postData: vi.fn(), patchData: vi.fn() }))
+vi.mock('@/services/http', () => http)
+vi.mock('@/store/projectStore', () => ({
+  ALL_PROJECTS_ID: 'all',
+  useProjectStore: (select: (s: { activeProjectId: string }) => unknown) => select({ activeProjectId: 'p1' }),
+}))
 
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import SavedViewsMenu from './SavedViewsMenu'
 import {
   defaultAppliedKey,
@@ -65,6 +73,7 @@ function renderMenu(
 
 beforeEach(() => {
   for (const fn of Object.values(service)) fn.mockReset()
+  for (const fn of Object.values(http)) fn.mockReset()
   service.createSavedView.mockResolvedValue(view({ id: 'new' }))
   service.updateSavedView.mockResolvedValue(view({}))
   window.sessionStorage.clear()
@@ -198,5 +207,64 @@ describe('SavedViewsMenu', () => {
     window.sessionStorage.clear()
     const unlinked = renderMenu(vi.fn(), '/explore?release=r9', { linked: false })
     await waitFor(() => expect(unlinked).toHaveBeenCalledTimes(1))
+  })
+
+  it("P1: shares the widget layout's request — one GET when both read the page's saved views", async () => {
+    const layout = view({ id: 'layout', name: 'trends view', filters: { page: 'trends', instances: [] } })
+    const rows = [view({}), layout]
+    http.getData.mockResolvedValue(rows)
+    service.listSavedViews.mockResolvedValue(rows)
+    // As on the pages: the layout hook asks first, and the header (with the
+    // menu) renders once the page's own data has loaded, here well after the
+    // layout's rows arrived (and after SWR's dedupe window, 0 ms below).
+    function Page() {
+      const { loading } = useAnalyticsView('trends')
+      const [header, setHeader] = useState(false)
+      useEffect(() => {
+        if (loading) return
+        const timer = setTimeout(() => setHeader(true), 30)
+        return () => clearTimeout(timer)
+      }, [loading])
+      return header ? <SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} variant="ghost" /> : null
+    }
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        {/* No dedupe window: only the shared entry keeps the menu from asking again. */}
+        <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+          <Page />
+        </SWRConfig>
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Views/ }))
+    await screen.findByText('Payments release watch')
+    expect(screen.queryByText('trends view')).toBeNull()
+    // SWR revalidates rows it already holds on the next animation frame: let
+    // that frame (and a fetch it would start) pass before counting.
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20))))
+    expect(http.getData).toHaveBeenCalledTimes(1)
+    expect(http.getData).toHaveBeenCalledWith('/api/v1/saved-views', { params: { project_id: 'p1', page: 'trends' } })
+    expect(service.listSavedViews).not.toHaveBeenCalled()
+  })
+
+  it("P1: the ghost variant is the report pages' GhostBtn, class for class", async () => {
+    service.listSavedViews.mockResolvedValue([])
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={['/trends']}>
+        <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
+      </MemoryRouter>
+    )
+    render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} variant="ghost" />, { wrapper })
+    const trigger = screen.getByRole('button', { name: /Views/ })
+    expect(trigger.className).toBe(
+      'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50',
+    )
+    expect(trigger.style.borderColor).toBe('var(--color-border)')
+    expect(trigger.querySelector('svg')?.getAttribute('class')).toContain('h-3.5 w-3.5')
+  })
+
+  it('the accent variant stays the default (the Explorer)', () => {
+    service.listSavedViews.mockResolvedValue([])
+    renderMenu()
+    expect(screen.getByRole('button', { name: /Views/ }).className).toContain('min-h-8')
   })
 })

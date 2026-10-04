@@ -41,6 +41,8 @@ import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
 import { formatDuration, dayTimeAgo } from '@/utils/formatters'
 import { utcDayIso } from '@/utils/calendarDay'
 import { clsx } from 'clsx'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
 import type { TestRun } from '@/types/runs'
@@ -1046,6 +1048,14 @@ export default function OverviewPage() {
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // P1: this page's saved views (the top-bar release, the window, the suite).
+  const viewsMenu = useReportViewsMenu({
+    route: '/overview',
+    windowDays: days,
+    windowOptions: TIME_OPTIONS,
+    suite: { names: suiteNames, set: setSelectedSuite },
+    release: true,
+  })
   // Whether a filter narrowed the trend (a suite, or a release): an all-zero
   // window then keeps the frame's filter words; without one the frame states
   // the window neutrally, "No executions in this window" (R1 F3).
@@ -1310,6 +1320,7 @@ export default function OverviewPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           {multiLabel ? (
             // Several suites (VIZ-303): a read-only summary, never a native
             // select — one ArrowDown there collapsed them into one (a11y M5).

@@ -17,6 +17,13 @@ import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/hooks/useMetrics', () => {
   const d = () => ({ data: undefined, isLoading: false })
   return {

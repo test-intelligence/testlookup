@@ -31,6 +31,13 @@ const SMALL = { delivery: 'download', estimated_tests: 10, export: null, dispatc
 const mockRequestExport = vi.fn(async (..._args: unknown[]) => SMALL)
 const mockListExports = vi.fn(async (..._args: unknown[]) => [] as unknown[])
 
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/services/summaryReportService', () => ({
   summaryReportService: {
     get: (...args: unknown[]) => mockGet(...args),

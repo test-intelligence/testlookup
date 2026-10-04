@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: "Views" on the report pages (P1)
+
+**Overview, Trends, Coverage, Failures, Defects and Summary get their own
+"Views" (saved views) button back.** The report-context panel that hosted it
+is removed for good (`viz_report_context` and `viz_multi_filters` stay off).
+The button opens each page's header actions, styled as the page's other ghost
+buttons. Design: `docs/viz-work/views-crossfilter-design.md`, P1.
+
+- **What a view saves and applies is the scope the page shows:**
+  - the top-bar release (one; Defects is project-wide and leaves it alone);
+  - the window, snapped to the page's own options;
+  - the page's suite filter (Overview, Trends, Coverage, Failures);
+  - the page's extras: the Defects status tab, the Summary aggregation mode.
+
+  A view is the whole scope: one with no release or suite clears it. A view
+  saved in the old multi-select panel opens with its first release and suite,
+  and a toast names what was left out.
+- **My default view** opens on the first visit in a tab, unless the URL names
+  a release or a release is already in effect for the project (a shared link
+  wins).
+- **No new request on five pages.** The menu reads the rows the widget layout
+  (`useAnalyticsView`) already asks for, through one SWR key
+  (`savedViewsKey`), and does not revalidate them when it mounts. Summary has
+  no widget layout, so it asks once: `GET /saved-views?page=summary_report`,
+  now in its three request inventories.
+- **Code:** `components/reports/useReportViewsMenu.ts` (new),
+  `SavedViewsMenu` (`variant: 'ghost'`, shared key), `savedViewsModel`
+  (`savedViewsKey`), the six pages.
+- **Tests:** `useReportViewsMenu.test.tsx` (new), `SavedViewsMenu.test.tsx`
+  (one GET when shared, ghost classes), the page unit tests mock the
+  saved-views service, and `tests/ci-e2e/report-views.spec.ts` (new: save and
+  open on Trends, the Summary mode round trip, the default view on a first
+  visit and not over `?release=`).
+
 ## Unreleased - Visualization Upgrade, Phase D: viz load-test scenarios (L1)
 
 **`bench --suite viz` in `backend/scripts/load_test_concurrent.py`.** A new

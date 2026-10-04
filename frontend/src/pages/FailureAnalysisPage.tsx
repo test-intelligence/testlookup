@@ -103,6 +103,8 @@ import { countTones, dayWindow, type DayStripCell } from '@/components/charts/da
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
 import FailuresAdvanced from '@/components/reports/catalogue/FailuresAdvanced'
+import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
+import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import { BODY_GRID_MIN_WIDTH, BODY_GRID_ONE_COLUMN, BODY_GRID_TWO_COLUMNS, useMinWidth } from '@/hooks/useMinWidth'
 
 // ── Window picker ──────────────────────────────────────────────────────────
@@ -2257,6 +2259,14 @@ export default function FailureAnalysisPage() {
   // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
   // suite store with it on — see usePageSuiteFilter.
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // P1: this page's saved views (the top-bar release, the window, the suite).
+  const viewsMenu = useReportViewsMenu({
+    route: '/failures',
+    windowDays: days,
+    windowOptions: WINDOWS,
+    suite: { names: suiteNames, set: setSelectedSuite },
+    release: true,
+  })
   const analyticsView = useAnalyticsView('failures')
   const { options: suiteOptions } = useSuiteOptions(days)
 
@@ -2728,6 +2738,7 @@ export default function FailureAnalysisPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
             <LayoutGrid className="h-3.5 w-3.5" />
             Customize

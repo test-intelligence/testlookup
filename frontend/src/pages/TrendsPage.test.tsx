@@ -17,6 +17,13 @@ const frames = vi.hoisted(() => ({
   timeSeriesMounts: 0,
 }))
 
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/components/charts/StackedColumnChartFrame', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/charts/StackedColumnChartFrame')>()
   const Real = actual.default
@@ -867,6 +874,9 @@ describe('TrendsPage flag-off DOM (Wave 2.6)', () => {
     for (const el of [...clone.querySelectorAll('div')]) {
       if (el.children.length === 0 && /^Wider screen needed/.test(el.textContent ?? '')) el.remove()
     }
+    // P1 (2026-10-04): the header's own Views button, the one intended addition
+    // to the Wave 2.5 header; asserted on its own below.
+    for (const el of [...clone.querySelectorAll('[data-saved-views-trigger]')]) el.remove()
     const ids = new Map<string, string>()
     for (const el of [clone, ...clone.querySelectorAll('*')]) {
       if (el.id && !ids.has(el.id)) ids.set(el.id, `id-${ids.size + 1}`)
@@ -925,5 +935,9 @@ describe('TrendsPage flag-off DOM (Wave 2.6)', () => {
     )
     await screen.findByRole('heading', { name: 'Pass rate trend' })
     expect(normalisedDom(container)).toMatchSnapshot()
+    // The Views button opens the header's actions, before Customize.
+    const trigger = container.querySelector('[data-saved-views-trigger]')
+    expect(trigger?.textContent).toBe('Views')
+    expect(trigger?.nextElementSibling?.textContent).toContain('Customize')
   })
 })

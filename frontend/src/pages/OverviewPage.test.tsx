@@ -7,6 +7,13 @@ import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboardi
 import type { ValueMetrics } from '@/types/valueMetrics'
 import OverviewPage from './OverviewPage'
 
+// P1: the header's Views menu reads this page's saved views (none here).
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: vi.fn(async () => []),
+  createSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}))
 vi.mock('@/hooks/useMetrics', () => {
   const d = () => ({ data: undefined, isLoading: false })
   return {
