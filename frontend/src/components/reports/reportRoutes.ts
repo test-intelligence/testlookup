@@ -67,6 +67,8 @@ export const NOT_REPORT_ROUTES: Record<string, string> = {
   '/policies': 'management',
   '/policies/:policyId': 'management',
   '/ownership': 'management',
+  '/explore':
+    'an ad-hoc explorer: owns its scope controls (metric, axes, facet, window) and its own Saved Views; not a fixed report',
 }
 
 /** Every `/settings/...` management route is settings, not a report. */

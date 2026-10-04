@@ -30,6 +30,20 @@ If a page looks wrong, check these three before anything else. Together they exp
 
 > **Tip.** On **My failures**, most auto-assignments go to a synthetic project QA-lead account. If the page looks empty for an administrator, switch the scope toggle to **team**.
 
+## Explorer
+
+**Testing → Explorer** (`/explore`) draws one metric over time as small multiples. It appears when the advanced charts are turned on for the project.
+
+- **Metric** — any of the sixteen the chart API serves: counts, rates and durations.
+- **X axis** — day or week. Every panel shares the same time axis.
+- **Lines** — one line, or one per environment, branch, status, test and so on. With one panel per suite, a test split shows that suite's tests; otherwise the 7 tests with the most executions are drawn and the rest fold into "Other".
+- **Panels** — one panel, one per suite, or one per release. Release panels need one project selected: a release belongs to one project. The pickers only offer combinations the API accepts; a refused option says why.
+- **At most 12 panels**, the suites or releases with the most executions in the window. When there are more, the page says how many; runs with no suite are not shown as a panel.
+- **Y-scale** — *Shared* puts every panel on one scale, so heights compare across panels; *Own* fits each panel to its own values, which shows shape but not size. Rates always share 0–100%. Each panel states which scale it is on.
+- A shared **count** scale is the largest value of the panels loaded so far. Panels load as you scroll to them, so the scale can widen when a lower panel is larger, and the panel says so ("from 5 of 12 panels").
+
+The configuration is in the URL, so a link opens the same view. Inside one project, **Views** saves it, with the window and the top-bar release, as a named view.
+
 ## Reading a metric honestly
 
 For any number on any dashboard, ask:

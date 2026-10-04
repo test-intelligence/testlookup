@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase C: the Explorer (VIZ-505)
+
+**A new page, Testing → Explorer (`/explore`).** One metric over time as small
+multiples, all from `chart-data`. It works when the advanced charts are on
+(`viz_chart_data_api` and `viz_advanced_charts`, read through
+`useAdvancedRollout()`); with them off the page says the explorer is not
+enabled. The sidebar lists it either way: a flag lookup there would be a
+request on every page.
+
+- **Pickers:** any of the 16 metrics; x by day or week; lines by any
+  non-time dimension (or one line); panels by suite or release (or one
+  panel); a shared or own y-scale; a 7, 14, 30 or 90 day window. Release
+  scope is the top bar's release.
+- **Only valid combinations are offered.** `exploreModel.apiRefusal` mirrors
+  `parse_chart_spec` exactly; the Explorer's own rules sit on top (a time
+  x, a facet the API can also filter by, a facet that is not the series, a
+  release facet only inside one project). A refused panel option stays in
+  the list, disabled, with the reason. Inside one project 28 configurations
+  are allowed per metric and x; in All Projects, 19.
+- **At most 12 panels:** one discovery request (`executions` by the facet,
+  and by the series when the two may be paired) ranks them and gives the
+  series one set of colours for every panel. Each panel asks for itself as
+  it scrolls near (`LazySection`), so a grid costs one request per panel the
+  reader reaches. Runs with no suite are never a panel, and the page says so.
+- **Y-scale:** a shared rate scale is 0-100%. A shared count scale is the
+  largest panel loaded so far, and each panel states its scale ("from 5 of
+  12 panels; widens if a panel below is larger"). Toggling asks nothing.
+- **Links and saved views:** the configuration is in the URL (`metric`, `x`,
+  `series`, `facet`, `y`, `days`); an invalid value falls back with a notice.
+  Inside one project, **Views** saves it under `filters.explore` (the report
+  chrome is off, so the page mounts its own `SavedViewsMenu`). The menu gained
+  three optional props: `extraFilters`, `linked`, and the view as
+  `onApply`'s second argument.
+
+**The rules cannot drift.** `contracts/viz/chart_data_combinations.json` holds
+what the server accepts for every `group_by` of one or two dimensions x 0/1/2
+suite names x `top_n` none/7/20 (1,188 cases).
+`backend/tests/test_chart_data_combinations.py` generates it
+(`python -m tests.test_chart_data_combinations`) and checks it against
+`parse_chart_spec` for every metric; `exploreModel.test.ts` checks
+`apiRefusal` against the same file. It sits beside `flags.json`, not under
+`fixtures/`, which holds only contract fixtures.
+
+No backend production change, no migration. `config/routeScope.ts` is
+unchanged: the Explorer works in All Projects.
+
 ## Unreleased - Visualization Upgrade, Phase C: background report exports (VIZ-607, part 2)
 
 **Large Summary exports render in the background.** Export PDF and Export

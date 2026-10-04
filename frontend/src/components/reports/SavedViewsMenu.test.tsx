@@ -4,7 +4,7 @@
  * this reader may not apply); my default opens once per tab unless the URL
  * already names a scope; only my own views can be changed.
  */
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
@@ -49,13 +49,17 @@ const view = (over: Partial<SavedView>): SavedView => ({
 
 const CURRENT = { releaseIds: ['r2'], suiteNames: ['cart', 'payments'], windowDays: 30 }
 
-function renderMenu(onApply = vi.fn(), url = '/trends') {
+function renderMenu(
+  onApply = vi.fn(),
+  url = '/trends',
+  extra: Pick<ComponentProps<typeof SavedViewsMenu>, 'extraFilters' | 'linked'> = {},
+) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[url]}>
       <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
     </MemoryRouter>
   )
-  render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={onApply} />, { wrapper })
+  render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={onApply} {...extra} />, { wrapper })
   return onApply
 }
 
@@ -127,7 +131,11 @@ describe('SavedViewsMenu', () => {
     await screen.findByText('Payments release watch')
     expect(screen.queryByText('trends view')).toBeNull()
     fireEvent.click(screen.getByText('Payments release watch'))
-    expect(onApply).toHaveBeenCalledWith({ releaseIds: ['r1'], suiteNames: ['payments'], windowDays: 14, releaseNote: null })
+    // The view comes second, for a page that stores more than the scope (VIZ-505).
+    expect(onApply).toHaveBeenCalledWith(
+      { releaseIds: ['r1'], suiteNames: ['payments'], windowDays: 14, releaseNote: null },
+      expect.objectContaining({ id: 'v1', name: 'Payments release watch' }),
+    )
   })
 
   it('only my views can be made default, shared or deleted', async () => {
@@ -157,5 +165,38 @@ describe('SavedViewsMenu', () => {
     const linked = renderMenu(vi.fn(), '/trends?release=r9')
     await waitFor(() => expect(service.listSavedViews).toHaveBeenCalledTimes(3))
     expect(linked).not.toHaveBeenCalled()
+  })
+
+  it('VIZ-505: extraFilters are saved beside the scope, which they never replace', async () => {
+    service.listSavedViews.mockResolvedValue([])
+    renderMenu(vi.fn(), '/explore', { extraFilters: { explore: { metric: 'pass_rate' }, window: 999 } })
+    fireEvent.click(screen.getByRole('button', { name: /Views/ }))
+    await screen.findByText(/No saved views for this page yet/)
+    fireEvent.change(screen.getByPlaceholderText(/Payments release watch/), { target: { value: 'Pass rate by suite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save view' }))
+    await waitFor(() => expect(service.createSavedView).toHaveBeenCalledTimes(1))
+    expect(service.createSavedView.mock.calls[0][0].filters).toEqual({
+      ...reportViewFilters('trends', CURRENT),
+      explore: { metric: 'pass_rate' },
+    })
+  })
+
+  it('VIZ-505: my default hands onApply the view, and `linked` overrides the URL rule both ways', async () => {
+    const mine = view({ is_default: true, filters: { kind: 'report_view', page: 'trends', window: 14, explore: { metric: 'pass_rate' } } })
+    service.listSavedViews.mockResolvedValue([mine])
+    const onApply = renderMenu()
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1))
+    expect(onApply.mock.calls[0][1]).toMatchObject({ id: 'v1', filters: { explore: { metric: 'pass_rate' } } })
+
+    // The page says its own URL keys describe it: no default over them.
+    window.sessionStorage.clear()
+    const linked = renderMenu(vi.fn(), '/explore?metric=executions', { linked: true })
+    await waitFor(() => expect(service.listSavedViews).toHaveBeenCalledTimes(2))
+    expect(linked).not.toHaveBeenCalled()
+
+    // And a release in the URL no longer blocks it when the page says it is not linked.
+    window.sessionStorage.clear()
+    const unlinked = renderMenu(vi.fn(), '/explore?release=r9', { linked: false })
+    await waitFor(() => expect(unlinked).toHaveBeenCalledTimes(1))
   })
 })

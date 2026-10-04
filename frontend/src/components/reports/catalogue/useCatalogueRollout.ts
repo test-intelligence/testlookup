@@ -52,3 +52,18 @@ export function useAdvancedRollout(): boolean {
   const advanced = useFeatureEnabled(VIZ_FLAGS.advancedCharts)
   return catalogue && advanced
 }
+
+/**
+ * `useAdvancedRollout` with "not known yet" kept apart from "off" (VIZ-505):
+ * `undefined` while either lookup is in flight, `false` as soon as either is
+ * off (or failed), `true` when both are on. For a PAGE that exists only with
+ * the advanced charts (the Explorer): it holds a placeholder while this is
+ * `undefined` instead of flashing "not enabled" on every first visit.
+ */
+export function useAdvancedRolloutStatus(): boolean | undefined {
+  const catalogue = useFeatureFlagStatus(VIZ_FLAGS.chartDataApi)
+  const advanced = useFeatureFlagStatus(VIZ_FLAGS.advancedCharts)
+  if (catalogue === false || advanced === false) return false
+  if (catalogue === undefined || advanced === undefined) return undefined
+  return true
+}
