@@ -54,7 +54,7 @@ def render_summary_report_xlsx(payload: dict) -> bytes:
     ctx.title = "Report context"
     ctx.append(["TestLookup — Summary Report"])
     ctx["A1"].font = Font(bold=True, size=14)
-    meta = payload.get("meta")
+    meta: dict = payload.get("meta") or {}
     mode = "All runs in window" if payload.get("mode", "window") == "window" else "Latest run per suite"
     if has_context(meta):
         for field in context_fields(meta, aggregation=mode):
