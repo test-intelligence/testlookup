@@ -2,7 +2,7 @@ import { useCallback, useState, type MouseEvent } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Activity, BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardCheck, ClipboardList, FileText,
-  FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
+  FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard, LayoutGrid,
   BookOpen, MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2, X,
 } from 'lucide-react'
@@ -57,7 +57,7 @@ const GROUPS: NavGroup[] = [
     label: 'Testing',
     icon: GitBranch,
     to: '/runs',
-    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites', '/activity'],
+    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/explore', '/defects', '/search', '/test-management', '/suite/', '/suites', '/activity'],
     children: [
       { to: '/live',            icon: Radio,       label: 'Live'          },
       { to: '/runs?upload=1',   icon: Upload,      label: 'Upload Report' },
@@ -65,6 +65,9 @@ const GROUPS: NavGroup[] = [
       { to: '/suites',          icon: FolderTree,  label: 'Suites'     },
       { to: '/failures',        icon: Bug,         label: 'Failures'   },
       { to: '/trends',          icon: TrendingUp,  label: 'Trends'     },
+      // VIZ-505. Not flag-gated here: a flag lookup in the sidebar would be
+      // a request on EVERY page; the page itself says when it is off.
+      { to: '/explore',         icon: LayoutGrid,  label: 'Explorer'   },
       { to: '/defects',         icon: Gauge,       label: 'Defects'    },
       { to: '/search',          icon: Search,      label: 'Search'     },
       { to: '/activity',        icon: Activity,    label: 'Activity'   },
