@@ -23811,6 +23811,13 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Test Deltas",
       "type": "array"
     },
+    "transitions": {
+      "items": {
+        "$ref": "#/components/schemas/RunCompareTransition"
+      },
+      "title": "Transitions",
+      "type": "array"
+    },
     "truncated": {
       "default": false,
       "title": "Truncated",
@@ -24207,6 +24214,52 @@ These are the full generated JSON Schema definitions, including required fields,
     "classification"
   ],
   "title": "RunCompareTestDelta",
+  "type": "object"
+}
+```
+
+## RunCompareTransition
+
+```json
+{
+  "description": "VIZ-507: how many tests went from one status to another between the runs.\n\n``absent`` on a side means the test is not in that run (new / removed).\nEvery test is in exactly one transition: the counts add up to each run's\ntest count, which is what makes the Sankey's flows conserve.",
+  "properties": {
+    "after": {
+      "enum": [
+        "passed",
+        "failed",
+        "broken",
+        "skipped",
+        "unknown",
+        "absent"
+      ],
+      "title": "After",
+      "type": "string"
+    },
+    "before": {
+      "enum": [
+        "passed",
+        "failed",
+        "broken",
+        "skipped",
+        "unknown",
+        "absent"
+      ],
+      "title": "Before",
+      "type": "string"
+    },
+    "count": {
+      "minimum": 1.0,
+      "title": "Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "before",
+    "after",
+    "count"
+  ],
+  "title": "RunCompareTransition",
   "type": "object"
 }
 ```

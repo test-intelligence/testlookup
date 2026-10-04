@@ -5754,9 +5754,24 @@ class RunCompareTestDelta(BaseModel):
     # label next to the current name.
 
 
+class RunCompareTransition(BaseModel):
+    """VIZ-507: how many tests went from one status to another between the runs.
+
+    ``absent`` on a side means the test is not in that run (new / removed).
+    Every test is in exactly one transition: the counts add up to each run's
+    test count, which is what makes the Sankey's flows conserve.
+    """
+
+    before: Literal["passed", "failed", "broken", "skipped", "unknown", "absent"]
+    after: Literal["passed", "failed", "broken", "skipped", "unknown", "absent"]
+    count: int = Field(ge=1)
+
+
 class RunCompareResponse(BaseModel):
     left: RunCompareSummary
     right: RunCompareSummary
+    # VIZ-507: every test's status flow, unchanged tests included (additive).
+    transitions: list[RunCompareTransition] = Field(default_factory=list)
     scope: Literal["run", "suite"] = "run"
     suite_name: Optional[str] = None
     selection: Optional[RunCompareSelection] = None

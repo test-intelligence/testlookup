@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase C: status-flow Sankey on run compare (VIZ-507)
+
+**Run compare** has a new **Status changes** chart, shown when
+`viz_chart_data_api` and `viz_advanced_charts` are both on. It is a Sankey
+from the earlier run's statuses to the later run's, with one flow per
+(before, after) pair. Unchanged tests are included, and tests missing from
+one run appear as **New** or **Removed**.
+
+- **Emphasis:** regressions (passed → failed or broken) are drawn in the
+  failed colour at full strength. Every other flow is faint, in its source
+  status's colour.
+- **Takeaway:** "N tests went from passed to failing; M tests fixed".
+- **Click a flow** to filter the per-test table below to those tests. An
+  unchanged flow has no per-test rows, so clicking it shows them all.
+- **View as table** lists every transition with its count. It also feeds the
+  CSV/PNG export.
+- **Flags off:** nothing renders and the new `sankey` chart engine (its own
+  lazy chunk) is never fetched.
+
+`GET /api/v1/runs/compare` gains an additive `transitions` field, a list of
+`{before, after, count}`. Every test is counted exactly once, unchanged tests
+included, so the flows conserve: what leaves the earlier run adds up to its
+test count, and what reaches the later run to its. A renamed (fuzzy-paired)
+test is one flow, not a removal plus an addition.
+
 ## Unreleased - Visualization Upgrade, Phase B: compare suites and releases on one chart (VIZ-605)
 
 Trends has a new **Compare** section (with `viz_chart_data_api` on, below
