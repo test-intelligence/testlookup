@@ -86,6 +86,7 @@ import {
 } from '@/utils/calendarDay'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { scopeArg } from '@/lib/scopeParams'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -1467,6 +1468,8 @@ export default function TrendsPage() {
   const trendFiltered = scopeArg(suiteFilter) !== null || scopeArg(releaseScope) !== null
   const analyticsView = useAnalyticsView('trends')
   const { options: suiteOptions } = useSuiteOptions(days)
+  // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
+  const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
   // VIZ-408: the catalogue seam. `undefined` until the flag answers, `false`
   // on failure. The page stays in its loading state until the answer is in
   // (below): the pass-rate card is taller with the flag on (overlay row and
@@ -1828,7 +1831,9 @@ export default function TrendsPage() {
       {catalogueOn && (
         <SectionErrorBoundary message="Failed to load charts">
           <Suspense fallback={null}>
-            <TrendsCatalogue days={days} suiteFilter={suiteFilter} />
+            <PageSuiteTargetContext.Provider value={suiteTarget}>
+              <TrendsCatalogue days={days} suiteFilter={suiteFilter} />
+            </PageSuiteTargetContext.Provider>
           </Suspense>
         </SectionErrorBoundary>
       )}

@@ -1,152 +1,188 @@
 /**
- * "Filter page by this" (VIZ-603): promote a chart mark to a PAGE filter.
+ * "Filter page by this" (VIZ-603, P2): promote a chart mark to a PAGE filter,
+ * on the legacy scope every page already has.
  *
- * No mechanism of its own (EPIC "Writes to the same scope stores as VIZ-303"):
- * the mark's value is APPENDED to the global multi-selection in the existing
- * stores (`suiteStore`, `releaseStore`). Every catalogue chart already reads
- * those through the 250 ms settled scope, the report chrome draws the chip
- * ("Suite: payments") and `useScopeUrlSync` puts it in the address bar. So
- * removing that chip IS the undo: the selection is back to what it was.
+ * No mechanism of its own: the mark's value is written to the filter the page
+ * already draws, so the control the reader would have used IS the undo.
  *
- * Rules (OD-2, plan 3.4.2):
- *   - only `suite` and `release` marks can filter: they are the only global
- *     dimensions. Any other mark (status, failure category, test, ...) is
- *     never offered; the EPIC's page-local chip is not built this wave;
- *   - only with `viz_multi_filters` ON: with it off the stores are not the
- *     page's filter (each page keeps its own local suite state), so the action
- *     is ABSENT, never disabled;
- *   - the caps (`SUITE_CAP`, `RELEASE_CAP`) are honoured by refusing, not by
- *     replacing: a full selection is left as it is, the notice store names
- *     the value that was not added, and the reader hears "Filter limit reached";
- *   - a release belongs to one project: in All Projects mode it is refused
- *     with the store's own reason; a selection made in another project is not
- *     appended to (it would filter this project by foreign ids);
- *   - the result of the reader's own action is spoken at once, through the
- *     page's one announcer.
+ *   - a suite goes to the page's own "Test suite" select (`usePageSuiteFilter`,
+ *     reached through `PageSuiteTargetContext`, provided by Trends, Coverage
+ *     and Failures around their catalogue composites); "All suites" clears it;
+ *   - a release goes to the top bar's release picker
+ *     (`releaseStore.setActiveRelease`); the picker mirrors it to `?release=`
+ *     and drops an id its list does not hold; "All releases" clears it.
+ *
+ * Rules (owner decision 2026-10-04: the multi-filter runtime is off for good,
+ * so nothing here reads `viz_multi_filters` or its stores):
+ *   - only a mark that IS a suite or a release can filter, and with it the
+ *     suite or release it sits in (a suite x release heatmap cell writes
+ *     both). Any other mark (status, failure category, test, class, ...) is
+ *     never offered: the page has no filter to write it to;
+ *   - a suite needs the page's provider (no provider, no suite filter: Suite
+ *     detail, Overview, Summary); a release needs one pinned project (a release
+ *     belongs to one project, and the picker is disabled in All Projects);
+ *   - a write REPLACES the filter: the legacy scope is single-select;
+ *   - a suite is written as the select spells it (its options are keyed by
+ *     lower case: the chart's lower-cased key beside the option's own spelling
+ *     would be a second option for the same suite);
+ *   - what was applied, and how to clear it, is said through the page's one
+ *     announcer and shown as a toast.
+ *
+ * Project is not a target: no chart in the kit draws project marks (it would
+ * need an All Projects per-project chart first).
  */
-import { useCallback, useMemo } from 'react'
+import { useCallback, useContext, useMemo } from 'react'
+import toast from 'react-hot-toast'
 import { useChartAnnouncer } from '@/components/charts/ChartAnnouncer'
 import type { ChartMark } from '@/components/charts/marks'
-import { useMultiFiltersEnabled } from '@/store/multiFiltersFlag'
+import { isValidSuiteName } from '@/lib/suiteName'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { isRestorableReleaseId, RELEASE_CAP, selectReleaseIds, useReleaseStore } from '@/store/releaseStore'
-import { DROP_REASONS, useScopeNoticeStore } from '@/store/scopeNoticeStore'
-import { isValidSuiteName, SUITE_CAP, useSuiteStore } from '@/store/suiteStore'
+import { isRestorableReleaseId, useReleaseStore } from '@/store/releaseStore'
+import { PageSuiteTargetContext, type PageSuiteTarget } from './pageSuiteTarget'
+import { useReleases } from './useReleases'
 
 /** chart-data's key for "no suite" and the roll-up of the rest: neither is one suite a page can be filtered by. */
 const NOT_A_SUITE = new Set(['(none)', '__other__'])
+/** The release key of the runs no release claims (`lib/scopeUrl` `UNATTRIBUTED`, the backend's sentinel). */
+const UNATTRIBUTED = 'unattributed'
+/** One toast, replaced by the next: a second filter does not stack a second toast. */
+const TOAST_ID = 'cross-filter'
 
 export type CrossFilterDimension = 'suite' | 'release'
 
+/** One filter a mark can write. */
+export interface CrossFilterTarget {
+  dimension: CrossFilterDimension
+  /** A suite: the spelling to fall back to when the page's select does not list it. A release: its id (or `unattributed`). */
+  value: string
+  /** What the chart called it, when the mark itself is this target; `null` for a context dimension. */
+  label: string | null
+}
+
 export type CrossFilterResult =
-  /** Appended to the page's selection. */
-  | 'added'
-  /** Already in the selection: nothing written. */
+  /** At least one filter was written. */
+  | 'applied'
+  /** The page is already filtered by every target: nothing written. */
   | 'already'
-  /** The selection is full: nothing written, the notice names the value. */
-  | 'limit'
-  /** A release in All Projects mode: nothing written, the notice says why. */
-  | 'needs-project'
-  /** Not a mark that can filter the page. */
+  /** Not a mark that can filter this page. */
   | 'invalid'
-  /** `viz_multi_filters` is off: there is no page filter to write to. */
-  | 'unavailable'
 
-const NOUN: Record<CrossFilterDimension, string> = { suite: 'suite', release: 'release' }
+/** "suite "Payments"", "release "2026.09"": how a filter is named to the reader. */
+export const filterPhrase = (dimension: CrossFilterDimension, name: string) => `${dimension} "${name}"`
 
-/** What the reader hears. Exported so the specs assert the words rather than retype them. */
+/** The control that clears each filter. */
+const CLEAR_CONTROL: Record<CrossFilterDimension, string> = { suite: '"All suites"', release: '"All releases"' }
+
+/** What the reader hears and sees. Exported so the specs assert the words rather than retype them. */
 export const CROSS_FILTER_WORDS = {
-  added: (noun: string, label: string) => `Page filtered by ${noun} ${label}.`,
-  already: (noun: string, label: string) => `The page is already filtered by ${noun} ${label}.`,
-  limit: (cap: number) => `Filter limit reached (${cap}): the page filter was not changed.`,
-  needsProject: 'Pick one project to filter by release: a release belongs to one project.',
+  applied: (phrases: readonly string[], clears: readonly string[]) =>
+    `Page filtered by ${phrases.join(' and ')} (clear: ${clears.join(', ')}).`,
+  already: (phrases: readonly string[]) => `The page is already filtered by ${phrases.join(' and ')}.`,
 } as const
 
-/**
- * The page-filter value a mark stands for, or `null` when it cannot filter the
- * page. A suite is written as the chart DREW it when that is the same suite as
- * its key (the key is lower-cased; the picker and the chip show the suite as
- * spelled, and the server matches suites without regard to case), else as the
- * key. A release is always its id (or `unattributed`), never its name.
- */
-export function crossFilterValue(mark: ChartMark): { dimension: CrossFilterDimension; value: string } | null {
-  if (mark.dimension === 'suite') {
-    const key = mark.value.trim().toLowerCase()
+const fold = (text: string) => text.trim().toLowerCase()
+
+/** One selector as a target, or `null` when it is not a suite or release the page can be filtered by. */
+function asTarget(dimension: string, value: string, label: string | null): CrossFilterTarget | null {
+  if (dimension === 'suite') {
+    const key = fold(value)
     if (NOT_A_SUITE.has(key)) return null
-    const value = mark.label.trim().toLowerCase() === key ? mark.label : mark.value
-    return isValidSuiteName(value) ? { dimension: 'suite', value } : null
+    // The chart's key is lower-cased; the label is the suite as spelled when it is the same suite.
+    const spelled = label !== null && fold(label) === key ? label : value
+    return isValidSuiteName(spelled) ? { dimension: 'suite', value: spelled, label } : null
   }
-  if (mark.dimension === 'release') {
-    return isRestorableReleaseId(mark.value) ? { dimension: 'release', value: mark.value } : null
-  }
+  if (dimension === 'release') return isRestorableReleaseId(value) ? { dimension: 'release', value, label } : null
   return null
 }
 
+/**
+ * The filters `mark` can write, at most one per dimension: the mark's own
+ * (it must itself be a suite or a release), then the suite or release it sits
+ * in (`context`). A suite x release cell is both; a suite x day or suite x
+ * environment cell, a ladder bar or a depth-1 treemap node is its suite.
+ */
+export function crossFilterTargets(mark: ChartMark): CrossFilterTarget[] {
+  const own = asTarget(mark.dimension, mark.value, mark.label)
+  if (!own) return []
+  const out = [own]
+  for (const selector of mark.context ?? []) {
+    if (out.some((t) => t.dimension === selector.dimension)) continue
+    const target = asTarget(selector.dimension, selector.value, null)
+    if (target) out.push(target)
+  }
+  return out
+}
+
+/** The select's own spelling of the suite (mandatory: see the header), else the target's. */
+export function suiteSpelling(options: readonly string[], target: CrossFilterTarget): string {
+  const key = fold(target.value)
+  return options.find((option) => fold(option) === key) ?? target.value
+}
+
 export interface CrossFilter {
-  /** `viz_multi_filters` is on: the page has a global filter to write to. */
-  enabled: boolean
-  /** Whether "Filter page by this" is offered for `mark`. */
+  /** Whether "Filter page by this" is offered for `mark` on this page. */
   offers: (mark: ChartMark) => boolean
-  /** Append `mark`'s value to the page filter (and say what happened). */
+  /** Write `mark`'s filters to the page (replacing), and say what happened. */
   apply: (mark: ChartMark) => CrossFilterResult
 }
 
 export function useCrossFilter(): CrossFilter {
-  const enabled = useMultiFiltersEnabled()
+  const suites: PageSuiteTarget | null = useContext(PageSuiteTargetContext)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  // The top bar's list, read from its cache entry (no request of its own): only for the release's name.
+  const { data: releaseList } = useReleases(undefined, { cached: true })
   const announcer = useChartAnnouncer()
+  const pinned = activeProjectId !== null && activeProjectId !== ALL_PROJECTS_ID
 
-  const offers = useCallback((mark: ChartMark) => enabled && crossFilterValue(mark) !== null, [enabled])
+  const usable = useCallback(
+    (mark: ChartMark) => crossFilterTargets(mark).filter((t) => (t.dimension === 'suite' ? suites !== null : pinned)),
+    [pinned, suites],
+  )
+
+  const offers = useCallback((mark: ChartMark) => usable(mark).length > 0, [usable])
+
+  const releaseName = useCallback(
+    (target: CrossFilterTarget) => {
+      if (target.value === UNATTRIBUTED) return 'Unattributed'
+      const listed = releaseList?.items?.find((r) => r.id === target.value)
+      return listed?.name ?? target.label ?? target.value
+    },
+    [releaseList],
+  )
 
   const apply = useCallback(
     (mark: ChartMark): CrossFilterResult => {
-      if (!enabled) return 'unavailable'
-      const target = crossFilterValue(mark)
-      if (!target) return 'invalid'
-      const say = (text: string) => announcer?.assertive(text)
-      const { pushNotice } = useScopeNoticeStore.getState()
-      const noun = NOUN[target.dimension]
-
-      if (target.dimension === 'suite') {
-        const store = useSuiteStore.getState()
-        const current = store.activeSuiteNames
-        const wanted = target.value.trim().toLowerCase()
-        if (current.some((name) => name.trim().toLowerCase() === wanted)) {
-          say(CROSS_FILTER_WORDS.already(noun, mark.label))
-          return 'already'
+      const targets = usable(mark)
+      if (targets.length === 0) return 'invalid'
+      const phrases: string[] = []
+      const clears: string[] = []
+      let wrote = false
+      for (const target of targets) {
+        if (target.dimension === 'suite' && suites) {
+          const name = suiteSpelling(suites.options, target)
+          phrases.push(filterPhrase('suite', name))
+          if (fold(suites.selected) !== fold(name)) {
+            suites.set(name)
+            wrote = true
+          }
+        } else if (target.dimension === 'release' && pinned) {
+          phrases.push(filterPhrase('release', releaseName(target)))
+          const store = useReleaseStore.getState()
+          if (store.activeReleaseId !== target.value || store.scopedProjectId !== activeProjectId) {
+            store.setActiveRelease(target.value, activeProjectId)
+            wrote = true
+          }
         }
-        if (current.length >= SUITE_CAP) {
-          pushNotice({ dimension: 'suite', values: [target.value], reason: DROP_REASONS.overCap(SUITE_CAP) })
-          say(CROSS_FILTER_WORDS.limit(SUITE_CAP))
-          return 'limit'
-        }
-        store.setActiveSuites([...current, target.value], activeProjectId)
-        say(CROSS_FILTER_WORDS.added(noun, mark.label))
-        return 'added'
+        clears.push(CLEAR_CONTROL[target.dimension])
       }
-
-      if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) {
-        pushNotice({ dimension: 'release', values: [target.value], reason: DROP_REASONS.needsProject })
-        say(CROSS_FILTER_WORDS.needsProject)
-        return 'needs-project'
-      }
-      const store = useReleaseStore.getState()
-      const current = store.scopedProjectId === activeProjectId ? selectReleaseIds(store) : []
-      if (current.includes(target.value)) {
-        say(CROSS_FILTER_WORDS.already(noun, mark.label))
-        return 'already'
-      }
-      if (current.length >= RELEASE_CAP) {
-        pushNotice({ dimension: 'release', values: [target.value], reason: DROP_REASONS.overCap(RELEASE_CAP) })
-        say(CROSS_FILTER_WORDS.limit(RELEASE_CAP))
-        return 'limit'
-      }
-      store.setActiveReleases([...current, target.value], activeProjectId)
-      say(CROSS_FILTER_WORDS.added(noun, mark.label))
-      return 'added'
+      const words = wrote ? CROSS_FILTER_WORDS.applied(phrases, clears) : CROSS_FILTER_WORDS.already(phrases)
+      // The reader's own action: spoken at once, and shown.
+      announcer?.assertive(words)
+      toast(words, { id: TOAST_ID })
+      return wrote ? 'applied' : 'already'
     },
-    [activeProjectId, announcer, enabled],
+    [activeProjectId, announcer, pinned, releaseName, suites, usable],
   )
 
-  return useMemo(() => ({ enabled, offers, apply }), [apply, enabled, offers])
+  return useMemo(() => ({ offers, apply }), [apply, offers])
 }

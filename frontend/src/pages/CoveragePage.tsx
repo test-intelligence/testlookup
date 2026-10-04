@@ -60,6 +60,7 @@ import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
@@ -1609,6 +1610,8 @@ export default function CoveragePage() {
   })
   const analyticsView = useAnalyticsView('coverage')
   const { options: suiteOptions } = useSuiteOptions(days)
+  // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
+  const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
 
   // `error` is read alongside `data`: without it a failed fetch renders the
   // "No coverage data yet" empty state, which tells an operator mid-outage to
@@ -1928,7 +1931,9 @@ export default function CoveragePage() {
             </div>
           </div>
 
-          <CoverageAdvanced days={days} suiteFilter={suiteFilter} />
+          <PageSuiteTargetContext.Provider value={suiteTarget}>
+            <CoverageAdvanced days={days} suiteFilter={suiteFilter} />
+          </PageSuiteTargetContext.Provider>
 
           <ProvenanceFooter evidenceCount={totalEvidence} refreshedAt={refreshedAt} />
         </>

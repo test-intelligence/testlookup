@@ -25,6 +25,8 @@ import {
   heatmapFrameWorstFirst,
 } from '@/components/charts/__fixtures__/heatmapFrame'
 import { __resetChartConcurrency } from '@/services/chartApi'
+import { PageSuiteTargetContext, type PageSuiteTarget } from '@/hooks/pageSuiteTarget'
+import { useReleaseStore } from '@/store/releaseStore'
 import type { HeatmapKind } from './sectionContracts'
 
 const get = vi.hoisted(() => vi.fn())
@@ -50,6 +52,9 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (selector: (state: { activeProjectId: string }) => unknown) => selector({ activeProjectId: project.id }),
 }))
 vi.mock('@/hooks/useReleaseScope', () => ({ useReleaseScope: () => null }))
+// The top bar's release list, for the cross-filter's words (it reads the picker's cache entry).
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [{ id: RELEASE_1, name: '2026.09' }] } }) }))
+const RELEASE_1 = vi.hoisted(() => 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001')
 
 const engine = vi.hoisted(() => {
   const listeners = new Map<string, (params: unknown) => void>()
@@ -100,12 +105,15 @@ function LocationProbe() {
   return null
 }
 
-function renderSection(props: Partial<HeatmapSectionOwnProps> = {}, url = '/trends') {
+/** `suites`: the page's suite select (`PageSuiteTargetContext`, P2); the page filter is offered only with one. */
+function renderSection(props: Partial<HeatmapSectionOwnProps> = {}, url = '/trends', suites: PageSuiteTarget | null = null) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[url]}>
       <LocationProbe />
       <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000, revalidateOnFocus: false }}>
-        <ChartAnnouncerProvider>{children}</ChartAnnouncerProvider>
+        <ChartAnnouncerProvider>
+          <PageSuiteTargetContext.Provider value={suites}>{children}</PageSuiteTargetContext.Provider>
+        </ChartAnnouncerProvider>
       </SWRConfig>
     </MemoryRouter>
   )
@@ -366,6 +374,74 @@ describe('HeatmapSection: row order and fit', () => {
     expect(screen.getByRole('rowheader', { name: HEATMAP_FRAME_HOSTILE_NAME })).toBeInTheDocument()
     expect(section()?.querySelector('img')).toBeNull()
     expect((window as { __xss?: unknown }).__xss).toBeUndefined()
+  })
+})
+
+describe('HeatmapSection: filter the page by a cell (VIZ-603, P2)', () => {
+  /** The hostile week as suite x release: column 0 is the unattributed runs, the rest release ids. */
+  const releaseKeys = heatmapFrameHostile.series.x_labels.map((_, i) => (i === 0 ? 'unattributed' : `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${i}`))
+  const suiteRelease: ChartResponse<AnyChartSeries> = { ...heatmapFrameHostile, series: { ...heatmapFrameHostile.series, x_keys: releaseKeys } }
+  const setSuite = vi.fn()
+  const suites = (options: string[], selected = ''): PageSuiteTarget => ({ selected, options, set: setSuite })
+  const intents = () => [...(section()?.querySelectorAll('[data-mark-intent]') ?? [])].map((b) => b.getAttribute('data-mark-intent'))
+
+  async function shiftClick(x: number, y: number) {
+    await lastOption()
+    await waitFor(() => expect(engine.listeners.get('click')).toBeDefined())
+    act(() => engine.listeners.get('click')?.({ value: [x, y, 0.5], event: { event: { shiftKey: true } } }))
+  }
+
+  beforeEach(() => {
+    setSuite.mockReset()
+    useReleaseStore.getState().clearRelease()
+    responses.suite_release = suiteRelease
+  })
+
+  it('no page suite select: a suite x day cell offers its rows only; a Shift-click opens them', async () => {
+    renderSection()
+    await shiftClick(0, 0)
+    await waitFor(() => expect(rowsCalls()).toHaveLength(1))
+    expect(setSuite).not.toHaveBeenCalled()
+  })
+
+  it('with one: a suite x day cell sets the page’s suite as the select spells it; no rows are opened', async () => {
+    renderSection({}, '/trends', suites(['Checkout', 'Legacy-Import']))
+    // Drawn worst first: row 0 is legacy-import.
+    await shiftClick(0, 0)
+    expect(setSuite.mock.calls).toEqual([['Legacy-Import']])
+    await settle()
+    expect(rowsCalls()).toEqual([])
+    expect(new URLSearchParams(location.search).getAll('rows')).toEqual([])
+    expect(useReleaseStore.getState().activeReleaseId).toBeNull()
+  })
+
+  it('the readout offers its rows, then "Filter page by this"', async () => {
+    renderSection({}, '/trends', suites([]))
+    await lastOption()
+    const grid = section()?.querySelector('[data-chart-keyboard="heatmap"]') as HTMLElement
+    grid.focus()
+    fireEvent.keyDown(grid, { key: 'ArrowRight' })
+    await waitFor(() => expect(intents()).toEqual(['rows', 'filter']))
+    fireEvent.keyDown(grid, { key: 'Enter', shiftKey: true })
+    expect(setSuite).toHaveBeenCalledTimes(1)
+  })
+
+  it('a suite x release cell sets BOTH: the page’s suite and the top bar’s release', async () => {
+    renderSection({ kinds: ['suite_release'] }, '/coverage', suites([HEATMAP_FRAME_HOSTILE_NAME, 'payments']))
+    // Worst first: row 0 is the hostile-named suite; column 1 is the first release.
+    await shiftClick(1, 0)
+    expect(setSuite.mock.calls).toEqual([[HEATMAP_FRAME_HOSTILE_NAME]])
+    expect(useReleaseStore.getState().activeReleaseId).toBe(RELEASE_1)
+    expect(useReleaseStore.getState().scopedProjectId).toBe('p1')
+    await settle()
+    expect(rowsCalls()).toEqual([])
+  })
+
+  it('a test x run cell (Suite detail) never offers the page filter', async () => {
+    renderSection({ kinds: ['test_run'] }, '/s', suites(['Checkout']))
+    await shiftClick(0, 0)
+    await waitFor(() => expect(rowsCalls()).toHaveLength(1))
+    expect(setSuite).not.toHaveBeenCalled()
   })
 })
 
