@@ -52,7 +52,24 @@ testlookup search "connection reset"
 testlookup reviews list <project-id>
 testlookup reviews accept <review-id> --notes "checked against the logs"
 testlookup reviews reject <review-id> --reason unsupported_claim
+
+# Chart data: the same series the UI's charts draw (release- and suite-scoped)
+testlookup analytics trends --project <project-id> --release <release-id> --suite checkout --days 90
+testlookup analytics trends --project <project-id> --by suite --format csv > pass-rate-by-suite.csv
+testlookup analytics chart --metric duration_p95 --group-by week --group-by environment -o json
 ```
+
+`analytics trends` is `--metric pass_rate` per UTC day; `--by <dimension>` adds one
+series per value (the 7 largest plus "other", unless `--top-n` says otherwise).
+`analytics chart` takes any metric over one or two `--group-by` dimensions.
+`--release` and `--suite` repeat (OR within each, AND across); a release is a
+UUID or `unattributed`. Both read `GET /api/v1/analytics/chart-data`, the endpoint
+MCP's `get_chart_data` reads too. `--format csv` writes the UI export's layout
+(scope as `# Label,value` lines, a gap as an empty cell, never 0) as UTF-8 with
+`\n` line ends and no BOM; `table` draws a sparkline per series. With the UI's
+`viz_chart_data_api` flag off, its legacy trend chart reads `/metrics/trends`,
+which counts every run that touched a suite whole, so under `--suite` the two
+differ. The server allows 120 chart-data requests a minute per user.
 
 Every command supports `--output json` for piping. JSON mode keeps stdout
 clean — diagnostics go to stderr — so `| jq` works without filtering.
@@ -64,7 +81,7 @@ no review status: treat the report as an unreviewed draft.
 ## Command groups
 
 `auth` · `doctor` · `health` · `projects` · `runs` · `tests` · `search` ·
-`intelligence` · `deep` · `reports` · `reviews` · `keys` · `upload`, plus the top-level
+`intelligence` · `deep` · `reports` · `reviews` · `analytics` · `keys` · `upload`, plus the top-level
 `ci-verdict`.
 
 Run `testlookup <group> --help` for details on any of them.
