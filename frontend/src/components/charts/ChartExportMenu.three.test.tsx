@@ -57,6 +57,10 @@ function bodyIn3D(): { body: HTMLElement; echarts: HTMLElement } {
   return { body, echarts }
 }
 
+// The export path loads its drawing code lazily; under the full suite's load the
+// first import can take longer than waitFor's 1 s default (the catalogue tests' 5 s).
+const LAZY_TIMEOUT = 5_000
+
 beforeEach(() => {
   downloadBlob.mockReset()
   drawn.bodies = []
@@ -74,7 +78,7 @@ describe('ChartExportMenu with the 3D scatter showing (VIZ-508)', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: EXPORT_LABELS.trigger }))
     fireEvent.click(screen.getByRole('menuitem', { name: EXPORT_LABELS.png }))
-    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1), { timeout: LAZY_TIMEOUT })
     expect(drawn.bodies).toEqual([body])
     expect(images.sources).toEqual([{ kind: 'raster', dataUrl: 'data:image/png;base64,AAAA', width: 640, height: 320 }])
     expect(String(downloadBlob.mock.calls[0][1])).toMatch(/\.png$/)
