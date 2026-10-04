@@ -39,6 +39,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `REDIS_URL` | `str` | `'redis://localhost:6379/0'` |
 | `CELERY_BROKER_URL` | `str` | `'redis://localhost:6379/0'` |
 | `CELERY_RESULT_BACKEND` | `str` | `'redis://localhost:6379/1'` |
+| `REPORT_EXPORT_SYNC_MAX_TESTS` | `int` | `Field(default=200000, ge=0)` |
 | `CELERY_WORKER_CONCURRENCY` | `int` | `4` |
 | `PG_POOL_SIZE` | `Optional[int]` | `Field(default=None, ge=1)` |
 | `PG_MAX_OVERFLOW` | `Optional[int]` | `Field(default=None, ge=0)` |

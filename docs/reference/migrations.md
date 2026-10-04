@@ -201,3 +201,4 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0191_agent_invocation_cancel_intent.py](../../backend/migrations/versions/0191_agent_invocation_cancel_intent.py) | `'0191'` | `'0190'` | Persist cancellation before an invocation pipeline exists. |
 | [backend/migrations/versions/0192_seed_viz_feature_flags.py](../../backend/migrations/versions/0192_seed_viz_feature_flags.py) | `'0192'` | `'0191'` | Seed the six Visualization Upgrade rollout flags, disabled. |
 | [backend/migrations/versions/0193_systemic_cluster_membership_key.py](../../backend/migrations/versions/0193_systemic_cluster_membership_key.py) | `'0193'` | `'0192'` | Systemic flake clusters get a membership key (VIZ-207). |
+| [backend/migrations/versions/0194_report_exports.py](../../backend/migrations/versions/0194_report_exports.py) | `'0194'` | `'0193'` | VIZ-607 — background report exports. |

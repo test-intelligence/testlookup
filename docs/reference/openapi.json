@@ -20784,6 +20784,187 @@
         "title": "ReportEvalCycleRequest",
         "type": "object"
       },
+      "ReportExportOut": {
+        "description": "VIZ-607: one background report export.",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "format": {
+            "enum": [
+              "pdf",
+              "xlsx"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "format",
+          "status",
+          "attempts",
+          "params",
+          "requested_at",
+          "expires_at",
+          "retryable"
+        ],
+        "title": "ReportExportOut",
+        "type": "object"
+      },
+      "ReportExportRequestOut": {
+        "description": "VIZ-607: what ``POST /exports`` decided.",
+        "properties": {
+          "delivery": {
+            "enum": [
+              "download",
+              "background"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "dispatched": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatched"
+          },
+          "estimated_tests": {
+            "title": "Estimated Tests",
+            "type": "integer"
+          },
+          "export": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportExportOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "delivery",
+          "estimated_tests"
+        ],
+        "title": "ReportExportRequestOut",
+        "type": "object"
+      },
       "RequiredModel": {
         "description": "One model the effective configuration depends on.",
         "properties": {
@@ -58011,6 +58192,482 @@
           }
         ],
         "summary": "Get Summary Report",
+        "tags": [
+          "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/exports": {
+      "get": {
+        "description": "The reader's own background exports for the project that have not expired, newest first.",
+        "operationId": "list_summary_report_exports_api_v1_reports_summary_exports_get",
+        "parameters": [
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportExportOut"
+                  },
+                  "title": "Response List Summary Report Exports Api V1 Reports Summary Exports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Summary Report Exports",
+        "tags": [
+          "Summary Report"
+        ]
+      },
+      "post": {
+        "description": "VIZ-607: download now, or queue a background export.\n\n``delivery: \"download\"`` -- the report is small: fetch ``GET /pdf`` or\n``/xlsx`` with the same query. ``delivery: \"background\"`` (202) -- a job\nwas queued; poll ``GET /exports/{id}`` and download from ``download_url``\nwhen it completes. ``dispatched: false`` means the worker could not be\nreached: the job stays queued (it is not failed) and can be retried.",
+        "operationId": "request_summary_report_export_api_v1_reports_summary_exports_post",
+        "parameters": [
+          {
+            "description": "``pdf`` or ``xlsx``.",
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "description": "``pdf`` or ``xlsx``.",
+              "enum": [
+                "pdf",
+                "xlsx"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "window",
+              "enum": [
+                "window",
+                "latest"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Queue a background export even when the report is small.",
+            "in": "query",
+            "name": "background",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Queue a background export even when the report is small.",
+              "title": "Background",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExportRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Request Summary Report Export",
+        "tags": [
+          "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/exports/{export_id}": {
+      "get": {
+        "description": "One background export's status (any member of its project).",
+        "operationId": "get_summary_report_export_api_v1_reports_summary_exports__export_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Summary Report Export",
+        "tags": [
+          "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/exports/{export_id}/download": {
+      "get": {
+        "description": "The finished file, through the API (no storage URL leaves the server).\n\n409 until the export has completed; 410 once it has expired.",
+        "operationId": "download_summary_report_export_api_v1_reports_summary_exports__export_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Download Summary Report Export",
+        "tags": [
+          "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/exports/{export_id}/retry": {
+      "post": {
+        "description": "Re-queue a failed export, or one whose message or worker was lost. 409 otherwise.",
+        "operationId": "retry_summary_report_export_api_v1_reports_summary_exports__export_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Retry Summary Report Export",
         "tags": [
           "Summary Report"
         ]

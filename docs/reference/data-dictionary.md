@@ -97,6 +97,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [release_phases](#release_phases) | ReleasePhase | 15 |
 | [release_test_run_links](#release_test_run_links) | ReleaseTestRunLink | 9 |
 | [releases](#releases) | Release | 26 |
+| [report_exports](#report_exports) | ReportExport | 16 |
 | [report_share_links](#report_share_links) | ReportShareLink | 12 |
 | [requirement_coverage](#requirement_coverage) | RequirementCoverage | 8 |
 | [review_requests](#review_requests) | ReviewRequest | 22 |
@@ -2846,7 +2847,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:6821](../../backend/app/models/postgres.py#L6821)
+[backend/app/models/postgres.py:6883](../../backend/app/models/postgres.py#L6883)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -2951,7 +2952,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:6781](../../backend/app/models/postgres.py#L6781)
+[backend/app/models/postgres.py:6843](../../backend/app/models/postgres.py#L6843)
 
 Running per-period LLM cost meter for a project.
 
@@ -3003,7 +3004,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:6725](../../backend/app/models/postgres.py#L6725)
+[backend/app/models/postgres.py:6787](../../backend/app/models/postgres.py#L6787)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3511,6 +3512,47 @@ ORM navigation and cascade declarations:
 phases: Mapped[list['ReleasePhase']] = relationship('ReleasePhase', back_populates='release', cascade='all, delete-orphan', order_by='ReleasePhase.order_index')
 test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRunLink', back_populates='release', cascade='all, delete-orphan')
 ```
+
+## report_exports
+
+[backend/app/models/postgres.py:6736](../../backend/app/models/postgres.py#L6736)
+
+VIZ-607: one background export of a report (migration 0194).
+
+Rendered by ``generate_report_export`` on the ``default`` queue; the file
+lives in object storage at ``storage_key`` until ``expires_at`` (requested
++ 7 days), when the nightly sweep deletes it and this row. The life cycle
+and its guarantees (claim, fencing by ``attempts``, failures written on
+their own session, retry) are in ``services/report_export_service``.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `UUID` | False | True | `application=uuid4` |  |
+| `project_id` | `UUID` | False | False | `—` | projects.id / CASCADE |
+| `requested_by_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `report` | `VARCHAR(40)` | False | False | `—` |  |
+| `format` | `VARCHAR(10)` | False | False | `—` |  |
+| `params` | `JSONB` | False | False | `—` |  |
+| `status` | `VARCHAR(20)` | False | False | `application=queued` |  |
+| `attempts` | `INTEGER` | False | False | `application=0` |  |
+| `storage_key` | `TEXT` | True | False | `—` |  |
+| `filename` | `VARCHAR(255)` | True | False | `—` |  |
+| `size_bytes` | `BIGINT` | True | False | `—` |  |
+| `error` | `TEXT` | True | False | `—` |  |
+| `requested_at` | `DATETIME` | False | False | `server=now()` |  |
+| `started_at` | `DATETIME` | True | False | `—` |  |
+| `finished_at` | `DATETIME` | True | False | `—` |  |
+| `expires_at` | `DATETIME` | False | False | `—` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_report_exports_format`: `format IN ('pdf', 'xlsx')`
+- `CheckConstraint` `ck_report_exports_status`: `status IN ('queued', 'running', 'completed', 'failed')`
+- `ForeignKeyConstraint` `unnamed`: `project_id`
+- `ForeignKeyConstraint` `unnamed`: `requested_by_id`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+- Index `ix_report_exports_expires_at` (unique=False): `report_exports.expires_at`; options `{}`
+- Index `ix_report_exports_project_user_requested` (unique=False): `report_exports.project_id, report_exports.requested_by_id, report_exports.requested_at`; options `{}`
 
 ## report_share_links
 

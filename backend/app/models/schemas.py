@@ -5754,6 +5754,45 @@ class RunCompareTestDelta(BaseModel):
     # label next to the current name.
 
 
+class ReportExportOut(BaseModel):
+    """VIZ-607: one background report export."""
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    format: Literal["pdf", "xlsx"]
+    status: Literal["queued", "running", "completed", "failed"]
+    attempts: int
+    #: ``mode``, ``days``, ``release_ids``, ``suite_names``.
+    params: dict[str, Any]
+    filename: Optional[str] = None
+    #: ``None`` until the file exists.
+    size_bytes: Optional[int] = None
+    #: Why it failed, in words the reader can act on.
+    error: Optional[str] = None
+    requested_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    #: After this the download is 410 and the file is deleted.
+    expires_at: datetime
+    retryable: bool
+    #: Set once ``status`` is ``completed``.
+    download_url: Optional[str] = None
+
+
+class ReportExportRequestOut(BaseModel):
+    """VIZ-607: what ``POST /exports`` decided."""
+
+    #: ``download``: small enough -- fetch the file now with the same query.
+    #: ``background``: a job was queued (202).
+    delivery: Literal["download", "background"]
+    #: Tests on the window's runs: the size estimate the decision used.
+    estimated_tests: int
+    export: Optional[ReportExportOut] = None
+    #: ``False`` when the worker could not be reached: the job stays queued
+    #: (not failed) and can be retried.
+    dispatched: Optional[bool] = None
+
+
 class RunCompareTransition(BaseModel):
     """VIZ-507: how many tests went from one status to another between the runs.
 

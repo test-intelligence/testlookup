@@ -359,6 +359,11 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/reports/runs/{run_id}/share-links` | List Share Links Endpoint | [Reports](api/reports.md) |
 | DELETE | `/api/v1/reports/share-links/{link_id}` | Revoke Share Link Endpoint | [Reports](api/reports.md) |
 | GET | `/api/v1/reports/summary` | Get Summary Report | [Summary Report](api/summary-report.md) |
+| GET | `/api/v1/reports/summary/exports` | List Summary Report Exports | [Summary Report](api/summary-report.md) |
+| POST | `/api/v1/reports/summary/exports` | Request Summary Report Export | [Summary Report](api/summary-report.md) |
+| GET | `/api/v1/reports/summary/exports/{export_id}` | Get Summary Report Export | [Summary Report](api/summary-report.md) |
+| GET | `/api/v1/reports/summary/exports/{export_id}/download` | Download Summary Report Export | [Summary Report](api/summary-report.md) |
+| POST | `/api/v1/reports/summary/exports/{export_id}/retry` | Retry Summary Report Export | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reports/summary/pdf` | Export Summary Report Pdf | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reports/summary/xlsx` | Export Summary Report Xlsx | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reviews/{review_id}` | Get Review | [Reviews](api/reviews.md) |
@@ -566,4 +571,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **557 HTTP operations**, **467 paths**, **81 domain pages**.
+Total: **562 HTTP operations**, **471 paths**, **81 domain pages**.

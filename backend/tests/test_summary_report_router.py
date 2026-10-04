@@ -68,7 +68,9 @@ def _stub_envelope():
     mocked session, so ``build_meta`` is stubbed. ``meta`` itself is pinned
     against real Postgres in ``tests/integration/test_analytics_envelope_postgres.py``."""
     stub = AsyncMock(return_value={"schema_version": 2})
-    with patch("app.routers.summary_report.build_meta", new=stub):
+    # The exports render through ``report_export_service`` (VIZ-607), which
+    # builds the same envelope.
+    with patch("app.routers.summary_report.build_meta", new=stub),             patch("app.services.report_export_service.build_meta", new=stub):
         yield stub
 
 

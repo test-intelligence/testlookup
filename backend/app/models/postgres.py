@@ -6722,6 +6722,68 @@ class DeletionJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class ReportExportStatus(str, PyEnum):
+    """VIZ-607: a background report export's life. No ``cancelled``: nothing
+    can produce it, and a state nothing writes is a filter that matches
+    nothing forever."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ReportExport(Base):
+    """VIZ-607: one background export of a report (migration 0194).
+
+    Rendered by ``generate_report_export`` on the ``default`` queue; the file
+    lives in object storage at ``storage_key`` until ``expires_at`` (requested
+    + 7 days), when the nightly sweep deletes it and this row. The life cycle
+    and its guarantees (claim, fencing by ``attempts``, failures written on
+    their own session, retry) are in ``services/report_export_service``.
+    """
+
+    __tablename__ = "report_exports"
+    __table_args__ = (
+        Index("ix_report_exports_project_user_requested", "project_id", "requested_by_id", "requested_at"),
+        Index("ix_report_exports_expires_at", "expires_at"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed')",
+            name="ck_report_exports_status",
+        ),
+        CheckConstraint("format IN ('pdf', 'xlsx')", name="ck_report_exports_format"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Which report. Only ``summary`` today.
+    report: Mapped[str] = mapped_column(String(40), nullable=False)
+    format: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: ``mode``, ``days``, ``release_ids``, ``suite_names``: what the worker
+    #: needs to rebuild -- and re-authorise -- the requester's scope.
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ReportExportStatus.QUEUED.value
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    storage_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    #: NULL until the file exists: an unmeasured size is not a 0-byte file.
+    size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ProjectRetentionPolicy(Base):
     """Per-project data retention policy (PMF US-11.4, migration 0113).
 

@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase C: background report exports (VIZ-607, part 2)
+
+**Large Summary exports render in the background.** Export PDF and Export
+Excel now ask the server first (`POST /api/v1/reports/summary/exports`, same
+scope as the screen):
+
+- A small report downloads straight away, exactly as before.
+- A large one, or any export sent with the new **In background** box ticked,
+  becomes a job. The size estimate is the tests recorded on the window's
+  runs, from one indexed query; the limit is `REPORT_EXPORT_SYNC_MAX_TESTS`
+  (default 200,000 tests, about 5 s of rendering).
+
+**Background exports panel.** A panel on the Summary page lists your exports
+that have not expired: queued, generating, ready (with size and Download), or
+failed (with the reason and **Retry**). It checks for updates every 3 s while
+an export is working. A toast with a Download button tells you when an export
+is ready, and another tells you if one failed.
+
+**How a job runs.** A worker on the `default` queue renders the file with the
+same renderer as the direct download (`report_export_service`), so both give
+the same file, and stores it under
+`report-exports/YYYY/MM/DD/<project>/<export>/`.
+
+- A duplicate delivery does nothing. A row is claimed with one guarded UPDATE.
+- A job whose worker died can be claimed again once Celery's hard time limit
+  has passed.
+- Results are fenced by attempt number, so a late older attempt cannot
+  overwrite a newer one.
+- The worker checks the requester's access again before rendering. If access
+  was removed after the request, the job fails with that reason and no file
+  is made.
+- If the worker queue cannot be reached, the job stays **queued**, not failed.
+  It can be retried after 2 minutes, and so can a failed job or one whose
+  worker died.
+
+**Downloads and audit.** Downloads go through the API (`/exports/{id}/download`).
+Any member of the project may download. A download returns 409 until the file
+is ready and 410 after 7 days. Each file made writes an audit row
+(`report_summary_export_{fmt}`), and so does each download
+(`..._download`).
+
+**Retention.** Object storage has no lifecycle rules. A nightly sweep at 01:15
+UTC (`sweep_report_exports`) deletes each day folder older than 7 days, which
+also removes the files of deleted projects, then deletes the expired rows.
+
+Migration `0194_report_exports`.
+
 ## Unreleased - Visualization Upgrade, Phase C: report exports with charts, and an Excel workbook (VIZ-607, part 1)
 
 **Summary PDF charts.** The Summary PDF now has a **Charts** section after

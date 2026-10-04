@@ -1339,6 +1339,25 @@ def require_release_access():
     )
 
 
+def require_report_export_access():
+    """VIZ-607: the caller is a member of the project that owns ``{export_id}``.
+
+    Any reader of the project may download its exports, as any reader may
+    export the report: there is no export permission in the role ladder.
+    """
+    def _model():
+        from app.models.postgres import ReportExport
+        return ReportExport
+
+    return _make_project_scoped_guard(
+        _model,
+        id_param="export_id",
+        guard_name="require_report_export_access",
+        not_found_detail="Export not found",
+        deny_detail="You do not have access to this export",
+    )
+
+
 def require_knowledge_source_access():
     """Verify the caller is a member of the project that owns ``{source_id}``."""
     def _model():

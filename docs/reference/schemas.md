@@ -22289,6 +22289,197 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ReportExportOut
+
+```json
+{
+  "description": "VIZ-607: one background report export.",
+  "properties": {
+    "attempts": {
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "download_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Download Url"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "filename": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Filename"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "format": {
+      "enum": [
+        "pdf",
+        "xlsx"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "size_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Size Bytes"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "format",
+    "status",
+    "attempts",
+    "params",
+    "requested_at",
+    "expires_at",
+    "retryable"
+  ],
+  "title": "ReportExportOut",
+  "type": "object"
+}
+```
+
+## ReportExportRequestOut
+
+```json
+{
+  "description": "VIZ-607: what ``POST /exports`` decided.",
+  "properties": {
+    "delivery": {
+      "enum": [
+        "download",
+        "background"
+      ],
+      "title": "Delivery",
+      "type": "string"
+    },
+    "dispatched": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Dispatched"
+    },
+    "estimated_tests": {
+      "title": "Estimated Tests",
+      "type": "integer"
+    },
+    "export": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ReportExportOut"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "delivery",
+    "estimated_tests"
+  ],
+  "title": "ReportExportRequestOut",
+  "type": "object"
+}
+```
+
 ## RequiredModel
 
 ```json
