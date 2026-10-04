@@ -131,8 +131,8 @@ function dataIndexOf(params: unknown): number | null {
   return typeof index === 'number' && Number.isInteger(index) && (series === undefined || series === 0) ? index : null
 }
 
-/** The key under the plot: each quadrant's shape, colour, name and count — the colour is never alone. */
-function QuadrantKey({ data, colorOf }: { data: PointsChart; colorOf: (q: Quadrant) => string }) {
+/** The key under the plot: each quadrant's shape, colour, name and count — the colour is never alone. The 3D view (VIZ-508) draws the same key. */
+export function QuadrantKey({ data, colorOf }: { data: PointsChart; colorOf: (q: Quadrant) => string }) {
   const counts = quadrantCounts(data)
   return (
     <div className="pt-2 text-xs text-[var(--color-text-secondary)]">

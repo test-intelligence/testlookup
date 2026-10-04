@@ -10,8 +10,18 @@ export default defineConfig({
   // Dev server only: the failure-group layouts' d3 modules are reached through
   // a lazy section, and a cold dev server discovered them at runtime and
   // reloaded the page mid-test (every request made twice; B0, Wave 3).
-  // Pre-bundling them up front keeps a first load a single load.
-  optimizeDeps: { include: ['d3-hierarchy', 'd3-force'] },
+  // Pre-bundling them up front keeps a first load a single load. The 3D
+  // scatter's three.js entries (VIZ-508) are reached the same way, one click
+  // deeper ("View in 3D"), and would reload the page under that click.
+  optimizeDeps: {
+    include: [
+      'd3-hierarchy',
+      'd3-force',
+      'three',
+      'three/addons/controls/OrbitControls.js',
+      'three/addons/renderers/CSS2DRenderer.js',
+    ],
+  },
   server: {
     port: 3000,
     proxy: {

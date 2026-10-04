@@ -87,6 +87,58 @@ server yet; that is L2.
 - the Markdown table.
 
 Each guard was mutation-checked by breaking it on purpose: the test caught every break.
+## Unreleased - Visualization Upgrade, Phase D: the shipped chart flags are on by default
+
+Migration `0195_enable_viz_flags_by_default` turns on, for every install (fresh
+ones and existing ones on their next migrate):
+
+- `viz_chart_data_api` (the report catalogues),
+- `viz_advanced_charts` (heatmaps, coverage map, failure groups, scatter,
+  Sankey, Explorer),
+- `viz_three_d` (the opt-in 3D scatter).
+
+It also clears each one's project and role allow-lists and sets the rollout to
+100 %: `enabled_global` is only the kill switch in front of those, so a flag
+allow-listed to one project would otherwise still be off elsewhere.
+`viz_report_context` and `viz_multi_filters` stay **off** (the report-context
+panel was removed on 2026-10-04), and `viz_customize` is untouched.
+
+**Upgrade note:** an admin who deliberately switched one of the three off has
+to switch it off again once (Settings > Feature flags), as with 0099. The
+downgrade switches them off; earlier allow-lists are not restored. Removing the
+flags and their code paths entirely is the rest of Phase D.
+## Unreleased - Visualization Upgrade, Phase C: the opt-in 3D test scatter (VIZ-508)
+
+**"View in 3D" on the test scatter** (Failures and Suite detail), behind
+`viz_three_d` (seeded OFF by 0192; no migration). The three measures the 2D
+chart shows become three axes: p95 duration (log), failure rate (0-100%) and
+executions (log) as depth, with the 2D chart's quadrant colours and shapes and
+its key. Drag to rotate (mouse or one finger); "Reset view"; hover a test for
+its tooltip; click it to open its rows.
+
+- **The 2D chart is never unmounted.** The 3D view lies over it (the 2D chart
+  is `inert` underneath), so Export and print use the 2D chart, and "Back to
+  2D" is instant. The view says so ("Export and print use the 2D chart.").
+- **Lazy.** three.js (0.186.0, exact pin) is its own chunk, about 138 kB gzip,
+  fetched on the first "View in 3D" and never before; the eager bundle grows
+  by one CSS rule (`print:hidden`, +11 bytes gzip). The flag is read through
+  the seam (`useThreeDRollout`), inside the drawn scatter only, so pages
+  without a scatter ask nothing new.
+- **No WebGL 2, no 3D.** The browser is probed before the chunk is fetched;
+  without WebGL 2 (and when the browser takes the context back) the section
+  returns to 2D and says why. Remote-desktop sessions and VMs without GPU
+  acceleration will see that notice.
+- **Safe and tidy.** Zero CSP violations under the production policy
+  (Chromium and Firefox); colours only from the theme tokens; labels and the
+  tooltip are text, never markup; the view renders on demand and gives its
+  WebGL context back when it closes.
+- **Guards.** `check-bundle-budget.mjs`'s two three.js markers are now
+  proven by an eager-import build (both found, the build failed as it must);
+  `flagSeam.ratchet.test.ts` covers `viz_three_d`;
+  `sectionOnlyModules.test.ts` lists the new modules. New e2e spec
+  `rollout-scatter-3d.spec.ts` (WebGL 2 precondition, lazy load + rotation +
+  CSP, back to 2D, export in 3D, no WebGL, context lost, flag off); the
+  Failures and Suite detail inventories gain the one `viz_three_d` lookup.
 
 ## Unreleased - Visualization Upgrade, Phase C: chart data from MCP and the CLI (VIZ-211)
 
