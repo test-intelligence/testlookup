@@ -50,6 +50,11 @@ logger = structlog.get_logger("services.run_compare")
 # signals planned in Tier 2 item 10.
 _DURATION_SPIKE_MULTIPLIER = 3.0
 
+#: VIZ-507: a test missing from one side of a comparison.
+TRANSITION_ABSENT = "absent"
+#: The status buckets a transition can name, in display order.
+TRANSITION_ORDER = ("passed", "failed", "broken", "skipped", "unknown", TRANSITION_ABSENT)
+
 # Hard cap on the number of per-test delta rows returned so a diff
 # between two enormous runs doesn't DOS the frontend.
 _MAX_DELTA_ROWS = 500
@@ -636,6 +641,15 @@ async def compare_runs(
         "renamed": 0,
     }
 
+    # VIZ-507: every test's (before -> after) status, for the status-flow
+    # Sankey. Unlike ``deltas`` this counts the unchanged tests too, so the
+    # flows conserve: each side's total is that run's test count. A test
+    # missing from one side is ``absent`` there (new / removed).
+    transitions: dict[tuple[str, str], int] = {}
+
+    def _bump(before: str, after: str, by: int = 1) -> None:
+        transitions[(before, after)] = transitions.get((before, after), 0) + by
+
     deltas: list[dict[str, Any]] = []
     for fp in all_fingerprints:
         left_tc = left_tests.get(fp)
@@ -644,6 +658,10 @@ async def compare_runs(
         right_status = right_tc.status if right_tc else None
         left_duration = left_tc.duration_ms if left_tc else None
         right_duration = right_tc.duration_ms if right_tc else None
+        _bump(
+            _status_bucket(left_status) if left_tc else TRANSITION_ABSENT,
+            _status_bucket(right_status) if right_tc else TRANSITION_ABSENT,
+        )
 
         classification = _classify(
             left_status, right_status, left_duration, right_duration,
@@ -706,6 +724,11 @@ async def compare_runs(
         ]
         counts["removed_test"] -= len(paired_removed_fps)
         counts["new_test"] -= len(paired_added_fps)
+        # A renamed pair is one test, not a removal plus an addition.
+        for left_tc, right_tc, _score in fuzzy_pairs:
+            _bump(_status_bucket(left_tc.status), TRANSITION_ABSENT, -1)
+            _bump(TRANSITION_ABSENT, _status_bucket(right_tc.status), -1)
+            _bump(_status_bucket(left_tc.status), _status_bucket(right_tc.status))
 
         for left_tc, right_tc, score in fuzzy_pairs:
             base_class = _classify(
@@ -795,6 +818,15 @@ async def compare_runs(
     return {
         "left": left_summary,
         "right": right_summary,
+        # Fixed order (before, then after, by status order), zero flows dropped.
+        "transitions": [
+            {"before": before, "after": after, "count": count}
+            for (before, after), count in sorted(
+                transitions.items(),
+                key=lambda item: (TRANSITION_ORDER.index(item[0][0]), TRANSITION_ORDER.index(item[0][1])),
+            )
+            if count > 0
+        ],
         "scope": "suite" if suite_name else "run",
         "suite_name": suite_name,
         "selection": selection,

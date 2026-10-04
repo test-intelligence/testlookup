@@ -18,6 +18,7 @@ import {
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import StatusFlowSection from '@/components/runs/StatusFlowSection'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { extractCompareErrorMessage, useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
 import { useRuns } from '@/hooks/useRuns'
@@ -257,12 +258,22 @@ export default function RunComparePage() {
           <SummaryTiles compare={compare} />
           {compare.selection && <SelectionNotice compare={compare} />}
           {compare.ai_report && <AIReportPanel report={compare.ai_report} />}
+          {/* VIZ-507: the status flows; a click filters the table below to that flow's tests. */}
+          <StatusFlowSection
+            transitions={compare.transitions}
+            onSelectClassification={(classification) => {
+              setFilter(classification ?? 'all')
+              document.querySelector('[data-delta-table]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+          />
           <DeltaFilterBar
             compare={compare}
             filter={filter}
             onFilterChange={setFilter}
           />
-          <DeltaTable deltas={filteredDeltas} truncated={compare.truncated} />
+          <div data-delta-table="">
+            <DeltaTable deltas={filteredDeltas} truncated={compare.truncated} />
+          </div>
         </div>
       )}
     </div>

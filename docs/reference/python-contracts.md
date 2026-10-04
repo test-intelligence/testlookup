@@ -15094,9 +15094,27 @@ previous_test_name: Optional[str] = None
 previous_test_fingerprint: Optional[str] = None
 ```
 
-## backend/app/models/schemas.py — RunCompareResponse
+## backend/app/models/schemas.py — RunCompareTransition
 
 [backend/app/models/schemas.py:5757](../../backend/app/models/schemas.py#L5757)
+
+Bases: `BaseModel`.
+
+VIZ-507: how many tests went from one status to another between the runs.
+
+``absent`` on a side means the test is not in that run (new / removed).
+Every test is in exactly one transition: the counts add up to each run's
+test count, which is what makes the Sankey's flows conserve.
+
+```python
+before: Literal['passed', 'failed', 'broken', 'skipped', 'unknown', 'absent']
+after: Literal['passed', 'failed', 'broken', 'skipped', 'unknown', 'absent']
+count: int = Field(ge=1)
+```
+
+## backend/app/models/schemas.py — RunCompareResponse
+
+[backend/app/models/schemas.py:5770](../../backend/app/models/schemas.py#L5770)
 
 Bases: `BaseModel`.
 
@@ -15105,6 +15123,7 @@ Bases: `BaseModel`.
 ```python
 left: RunCompareSummary
 right: RunCompareSummary
+transitions: list[RunCompareTransition] = Field(default_factory=list)
 scope: Literal['run', 'suite'] = 'run'
 suite_name: Optional[str] = None
 selection: Optional[RunCompareSelection] = None
@@ -15131,7 +15150,7 @@ truncated: bool = False
 
 ## backend/app/models/schemas.py — SuiteOwnerUpdate
 
-[backend/app/models/schemas.py:5796](../../backend/app/models/schemas.py#L5796)
+[backend/app/models/schemas.py:5811](../../backend/app/models/schemas.py#L5811)
 
 Bases: `BaseModel`.
 
@@ -15143,7 +15162,7 @@ owner_user_id: Optional[uuid.UUID] = None
 
 ## backend/app/models/schemas.py — SuiteOwnerResponse
 
-[backend/app/models/schemas.py:5801](../../backend/app/models/schemas.py#L5801)
+[backend/app/models/schemas.py:5816](../../backend/app/models/schemas.py#L5816)
 
 Bases: `BaseModel`.
 
@@ -15161,7 +15180,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — SuiteReviewUpdate
 
-[backend/app/models/schemas.py:5811](../../backend/app/models/schemas.py#L5811)
+[backend/app/models/schemas.py:5826](../../backend/app/models/schemas.py#L5826)
 
 Bases: `BaseModel`.
 
@@ -15174,7 +15193,7 @@ note: Optional[str] = Field(None, max_length=4000)
 
 ## backend/app/models/schemas.py — SuiteReviewResponse
 
-[backend/app/models/schemas.py:5816](../../backend/app/models/schemas.py#L5816)
+[backend/app/models/schemas.py:5831](../../backend/app/models/schemas.py#L5831)
 
 Bases: `BaseModel`.
 
@@ -15197,7 +15216,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerRequest
 
-[backend/app/models/schemas.py:5831](../../backend/app/models/schemas.py#L5831)
+[backend/app/models/schemas.py:5846](../../backend/app/models/schemas.py#L5846)
 
 Bases: `BaseModel`.
 
@@ -15213,7 +15232,7 @@ fail_count: Optional[int] = Field(None, ge=0, le=10000)
 
 ## backend/app/models/schemas.py — NotifyTestOwnerResponse
 
-[backend/app/models/schemas.py:5840](../../backend/app/models/schemas.py#L5840)
+[backend/app/models/schemas.py:5855](../../backend/app/models/schemas.py#L5855)
 
 Bases: `BaseModel`.
 
@@ -15230,7 +15249,7 @@ reason: Optional[str] = None
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedRequest
 
-[backend/app/models/schemas.py:5851](../../backend/app/models/schemas.py#L5851)
+[backend/app/models/schemas.py:5866](../../backend/app/models/schemas.py#L5866)
 
 Bases: `BaseModel`.
 
@@ -15247,7 +15266,7 @@ suite_name: Optional[str] = Field(None, max_length=500)
 
 ## backend/app/models/schemas.py — ClassifyUncategorizedResponse
 
-[backend/app/models/schemas.py:5863](../../backend/app/models/schemas.py#L5863)
+[backend/app/models/schemas.py:5878](../../backend/app/models/schemas.py#L5878)
 
 Bases: `BaseModel`.
 
@@ -15263,7 +15282,7 @@ suite_name: Optional[str] = None
 
 ## backend/app/models/schemas.py — DefectIntakeRequest
 
-[backend/app/models/schemas.py:5871](../../backend/app/models/schemas.py#L5871)
+[backend/app/models/schemas.py:5886](../../backend/app/models/schemas.py#L5886)
 
 Bases: `BaseModel`.
 
@@ -15290,7 +15309,7 @@ affects_releases: Optional[list[str]] = Field(None, max_length=100)
 
 ## backend/app/models/schemas.py — DefectIntakeResponse
 
-[backend/app/models/schemas.py:5898](../../backend/app/models/schemas.py#L5898)
+[backend/app/models/schemas.py:5913](../../backend/app/models/schemas.py#L5913)
 
 Bases: `BaseModel`.
 
@@ -15315,7 +15334,7 @@ model_config = ConfigDict(from_attributes=True)
 
 ## backend/app/models/schemas.py — RetentionPolicyWrite
 
-[backend/app/models/schemas.py:5918](../../backend/app/models/schemas.py#L5918)
+[backend/app/models/schemas.py:5933](../../backend/app/models/schemas.py#L5933)
 
 Bases: `BaseModel`.
 
@@ -15336,7 +15355,7 @@ audit_days: Optional[int] = Field(None, ge=365, le=3650)
 
 ## backend/app/models/schemas.py — RetentionLastPurge
 
-[backend/app/models/schemas.py:5933](../../backend/app/models/schemas.py#L5933)
+[backend/app/models/schemas.py:5948](../../backend/app/models/schemas.py#L5948)
 
 Bases: `BaseModel`.
 
@@ -15351,7 +15370,7 @@ counts: dict = Field(default_factory=dict)
 
 ## backend/app/models/schemas.py — RetentionPolicyRead
 
-[backend/app/models/schemas.py:5941](../../backend/app/models/schemas.py#L5941)
+[backend/app/models/schemas.py:5956](../../backend/app/models/schemas.py#L5956)
 
 Bases: `BaseModel`.
 
@@ -15370,7 +15389,7 @@ last_purge: Optional[RetentionLastPurge] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewCandidates
 
-[backend/app/models/schemas.py:5953](../../backend/app/models/schemas.py#L5953)
+[backend/app/models/schemas.py:5968](../../backend/app/models/schemas.py#L5968)
 
 Bases: `BaseModel`.
 
@@ -15407,7 +15426,7 @@ search_index_documents: Optional[int] = None
 
 ## backend/app/models/schemas.py — RetentionPreviewResponse
 
-[backend/app/models/schemas.py:5992](../../backend/app/models/schemas.py#L5992)
+[backend/app/models/schemas.py:6007](../../backend/app/models/schemas.py#L6007)
 
 Bases: `BaseModel`.
 
@@ -15421,7 +15440,7 @@ unmeasured: List[str] = Field(default_factory=list)
 
 ## backend/app/models/schemas.py — RetentionPurgeRequest
 
-[backend/app/models/schemas.py:6002](../../backend/app/models/schemas.py#L6002)
+[backend/app/models/schemas.py:6017](../../backend/app/models/schemas.py#L6017)
 
 Bases: `BaseModel`.
 
@@ -15434,7 +15453,7 @@ confirmation_name: str = Field(..., min_length=1, max_length=255)
 
 ## backend/app/models/schemas.py — RetentionPurgeQueued
 
-[backend/app/models/schemas.py:6008](../../backend/app/models/schemas.py#L6008)
+[backend/app/models/schemas.py:6023](../../backend/app/models/schemas.py#L6023)
 
 Bases: `BaseModel`.
 
