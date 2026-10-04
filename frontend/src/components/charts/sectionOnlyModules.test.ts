@@ -120,6 +120,13 @@ const SECTION_ONLY = new Set([
   '/src/hooks/useDrillPath.ts',
   '/src/components/reports/catalogue/RowsPanel.tsx',
   '/src/components/reports/catalogue/RowsPanel.model.ts',
+  // VIZ-508: the 3D scatter's view, model, probe and engine run only behind "View in 3D".
+  '/src/components/charts/Scatter3DView.tsx',
+  '/src/components/charts/scatter3d.model.ts',
+  '/src/components/charts/webglSupport.ts',
+  '/src/components/charts/engines/three/load.ts',
+  '/src/components/charts/engines/three/scatter3d.ts',
+  '/src/components/charts/engines/three/color.ts',
 ])
 
 /**

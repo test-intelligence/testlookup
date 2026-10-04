@@ -6,7 +6,7 @@
 | **Decision** | Keep **Recharts 3** for simple charts. Add **Apache ECharts 6**, registered per chart type on the canvas renderer, for dense charts. Use **three.js** for the single opt-in 3D scatter. Reject `echarts-gl`, Plotly and Highcharts. |
 | **Applies to** | `frontend/` — every chart added by the Visualization Upgrade (stories `VIZ-*`) |
 | **Supersedes** | — |
-| **Amended** | 2026-10-02, Wave 3: the treemap and scatter types, `d3-hierarchy` / `d3-force` for the failure-group layouts, no ECharts `large` mode (section "Wave 3 amendment") |
+| **Amended** | 2026-10-02, Wave 3: the treemap and scatter types, `d3-hierarchy` / `d3-force` for the failure-group layouts, no ECharts `large` mode (section "Wave 3 amendment"). 2026-10-04, VIZ-508: the 3D scatter shipped, its bundle markers proven (section "VIZ-508 amendment") |
 
 ## Context
 
@@ -122,9 +122,8 @@ scans the real tree.
 - **Bundle.** `echarts`, `zrender`, `recharts` and `three` must not be in an eagerly preloaded
   chunk. Each is detected by string literals that survive minification. three.js has two markers:
   `__THREE__`, which is a top-level side effect that tree-shaking may drop, and
-  `WebGLRenderer: Context Lost.`, which is written from memory of three's source and has not been
-  verified. **VIZ-508 must prove both markers with an eager-import build before anyone relies on
-  them.** The lazy ECharts base chunk has a ceiling of 198 600 bytes gzip. No production route
+  `WebGLRenderer: Context Lost.`. VIZ-508 proved both with an eager-import build (see the
+  "VIZ-508 amendment"). The lazy ECharts base chunk has a ceiling of 198 600 bytes gzip. No production route
   renders ECharts yet, so no build tests that ceiling, and the script's output says so. The script
   also prints the remaining eager headroom. On 2026-09-22 it measured 178 205 of 180 000 bytes,
   which leaves 1 795 bytes (1.0%).
@@ -178,6 +177,39 @@ three passed with zero CSP violations.
 
 The ECharts base chunk measured 160,453 bytes gzip with Wave 3 (ceiling 198,600).
 
+## VIZ-508 amendment (2026-10-04)
+
+The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration 0192).
+
+1. **Measured.** three 0.186.0 (exact pin; `@types/three` ~0.186.0 as a dev dependency). The
+   engine chunk (`engines/three/scatter3d.ts`: three core, `OrbitControls`, `CSS2DRenderer`) is
+   557,979 bytes raw, **137,936 bytes gzip**; the view chunk (`Scatter3DView`) is 6,066 raw /
+   2,667 gzip. The eager bundle is unchanged apart from the one new class, `print:hidden`
+   (+11 bytes gzip of CSS): 178,099 of 180,000 bytes gzip on 2026-10-04.
+2. **The bundle markers are proven.** A throwaway build with `import { WebGLRenderer } from
+   'three'` in `main.tsx` put three in the entry chunk with BOTH markers in it: `__THREE__` (the
+   `window.__THREE__` check survived tree-shaking) and `WebGLRenderer: Context Lost.` (r186 logs
+   it through a helper that adds `THREE.` at run time). `check:bundle` failed that build, as it
+   must. The edit was reverted; in the real build both markers are only in `scatter3d-*.js`.
+3. **WebGL 2 only.** three r163+ has no WebGL 1 renderer. `hasWebGL2()` probes (and frees its
+   context) BEFORE the chunk is fetched; without WebGL 2, a failed context, or a context the
+   browser takes back later (`webglcontextlost`), the section returns to 2D with a notice. VMs and
+   remote-desktop sessions without GPU acceleration will see that notice.
+4. **The 3D view is an overlay; the 2D chart is never unmounted.** It lies over the 2D scatter
+   (`inert` underneath), so export (which finds the ECharts instance), print (`print:hidden` on
+   the overlay) and the table keep using the 2D chart. No `preserveDrawingBuffer`, no WebGL export.
+5. **Rules kept.** `three` is value-imported only in `engines/three/` (chart guard); colours reach
+   it only through `tokenColor` (a 1 x 1 canvas read-back of the resolved token, never a numeric
+   literal); labels are `CSS2DObject`s set with `textContent`; the tooltip is React text.
+   Rendering is on demand (no animation loop); no zoom or pan (a wheel scrolls the page); mouse
+   and one-finger touch rotate, "Reset view" restores the camera; no keyboard rotation (the 2D
+   chart is the keyboard path). `dispose()` frees geometry, materials, textures, the controls,
+   the renderer and its context.
+6. **CSP.** `rollout-scatter-3d.spec.ts` opens the 3D view under the production `<meta>` with a
+   `securitypolicyviolation` listener: zero violations in Chromium and Firefox. Headless Chromium
+   needs `--use-angle=swiftshader --enable-unsafe-swiftshader` (that spec only), and the spec's
+   WebGL 2 precondition fails rather than skips.
+
 ## Consequences
 
 - The first ECharts chart a user opens costs about 185 kB gzip once; nginx serves hashed
@@ -187,8 +219,10 @@ The ECharts base chunk measured 160,453 bytes gzip with Wave 3 (ceiling 198,600)
 - jsdom has no canvas. Unit tests mock the engine modules and assert the props handed to
   them, the way `TrendChart.test.tsx` already mocks Recharts; real rendering is asserted only
   in Playwright against the gallery.
-- The 3D view was verified in Chromium only. Safari and Firefox must be checked before
-  `viz_three_d` is enabled anywhere.
+- The 3D view is verified in Chromium (SwiftShader, CI) and Firefox 155 (all seven cases of
+  `rollout-scatter-3d.spec.ts`, run locally on 2026-10-04). Safari is not checked: the product is
+  desktop-only and Safari has WebGL 2 since 15; a Safari reader without it gets the 2D chart and
+  a notice.
 
 ## How to re-run the evidence
 
