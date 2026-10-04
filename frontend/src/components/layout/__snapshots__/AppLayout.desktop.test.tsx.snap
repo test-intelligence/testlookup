@@ -390,6 +390,13 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
               <path d="M16 7h6v6">
               <path d="m22 7-8.5 8.5-5-5L2 17">
             "Trends"
+          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/explore">
+            <svg aria-hidden="true" class="lucide lucide-layout-grid h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+              <rect height="7" rx="1" width="7" x="3" y="3">
+              <rect height="7" rx="1" width="7" x="14" y="3">
+              <rect height="7" rx="1" width="7" x="14" y="14">
+              <rect height="7" rx="1" width="7" x="3" y="14">
+            "Explorer"
           <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/defects">
             <svg aria-hidden="true" class="lucide lucide-gauge h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
               <path d="m12 14 4-4">
