@@ -1,9 +1,10 @@
 /**
  * LIVE probe (Wave 3, VIZ-207/504 + VIZ-602 + VIZ-506): the Failures page's
  * failure groups, systemic clusters, drill ladder and project scatter against
- * a deployment with both flags on. Read-only (a drill is a URL change, a rows
- * panel a read). Skipped unless `PROBE_W3=1` (`PROBE_HOWTO` in
- * `tests/lib/rollout.ts`); FAILS when a flag is off.
+ * a deployment. Read-only (a drill is a URL change, a rows panel a read).
+ * Skipped unless `PROBE_W3=1` (`PROBE_HOWTO` in `tests/lib/rollout.ts`).
+ * Since Phase D (S6) the sections ask no flag, so the probe no longer checks
+ * one.
  *
  * Live-only questions: the groups' signature SQL (BE3) and the rows'
  * `error_signature` selector (BE4) are the SAME expression (a group's rows =
@@ -15,7 +16,6 @@ import {
   bringNear,
   captureResponses,
   DRAWN,
-  expectProbeFlagsOn,
   expectWireChart,
   probeEnv,
   probeGet,
@@ -40,7 +40,6 @@ test('Failures: groups, ladder and scatter draw from valid wire bodies; a group\
   const scatter = captureResponses(page, /^\/api\/v1\/analytics\/test-scatter$/)
   const clusters = captureResponses(page, /^\/api\/v1\/analytics\/systemic-clusters$/)
   const project = await probeSignIn(page, live)
-  await expectProbeFlagsOn(page, project)
   await page.goto(`${live.base}/failures`)
 
   await bringNear(page, 'failures-groups')

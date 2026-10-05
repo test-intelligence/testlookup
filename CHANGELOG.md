@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: the chart flag seam is deleted (Phase D, S6)
+
+**Nothing in the frontend reads `viz_chart_data_api`, `viz_advanced_charts`
+or `viz_three_d` any more.** S1-S5 removed every reader of the seam; S6
+deletes the seam itself and the test plumbing that answered those flags.
+No user-visible change: every chart already drew unconditionally after S5.
+Plan: `docs/viz-work/phaseD-plan.md` §2 (S6).
+
+- **Deleted:** `components/reports/catalogue/useCatalogueRollout.ts`
+  (`useCatalogueRollout`, `useAdvancedRollout`, `useThreeDRollout` and their
+  `*Status` variants), its test, and `flagSeam.ratchet.test.ts` (the ratchet
+  that kept every other module from reading the three flags).
+- **`config/vizFlags.ts` keeps all six keys.** It mirrors
+  `contracts/viz/flags.json` (the rows migration 0192 seeded), and
+  `vizFlags.test.ts` plus the backend's `test_viz_contracts.py` hold it to
+  that file, so trimming it would break the parity check. Its header now says
+  only `reportContext` and `multiFilters` are read; the flag rows (and then
+  the unread keys) are retired by a later migration (F1).
+- **Test plumbing:** `CATALOGUE_ON`, `HEATMAP_ON`, `ADVANCED_ON` and
+  `ADVANCED_ONLY` are gone from `tests/visual/production/fixtures.ts`; the
+  Overview, Summary and Release gate `-on` visual specs no longer pass a flag
+  map (no PNG changes: the pages ask no flag either way).
+  `rollout-responsive.spec.ts` drops its flag-off loop (one test per page and
+  width; titles lose ", flags on"), `rollout-presentation.spec.ts` its empty
+  flag maps, and `tests/perf/lcp.spec.ts` its `off`/`on` cells (`LCP_CELLS`
+  is now `label:url`). The live `probe-w3-*` specs no longer check the two
+  flags (`expectProbeFlagsOn` is deleted; the backend never gated the
+  endpoints on them). The harness's flag whitelist stays: the report-context
+  and multi-filter specs still turn their flags on.
+- **Docs:** `architecture/FRONTEND.md` §7 ("No chart reads a flag"),
+  `architecture/VISUALIZATION_ENGINES_ADR.md` (a Phase D amendment; the 3D
+  view is fetched only on "View in 3D", no flag), `cli/README.md`,
+  `mcp/README.md` and the CLI's `analytics` docstring (the suite-filter
+  divergence is the Trends pass-rate card's `/metrics/trends` read, not a
+  flag), and the in-app guide's Explorer paragraph (no "when the advanced
+  charts are turned on").
+
 ## Unreleased - Visualization Upgrade: Failures, the 3D scatter, the Sankey and the Explorer lose their flag gates (Phase D, S5)
 
 **The Failures sections, the test scatter (with its 3D view), the run-compare

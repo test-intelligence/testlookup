@@ -1,7 +1,9 @@
 /**
  * VIZ-106 on the real routes (Wave 2.6, plan 3.3, 3.4, 5.3): the five report
- * pages at 375, 640 (= 1280 at 200% zoom) and 768 px, with every flag off
- * and with the catalogue on, and the narrow shell's navigation drawer.
+ * pages at 375, 640 (= 1280 at 200% zoom) and 768 px with their charts, and
+ * the narrow shell's navigation drawer. Since Phase D (S1-S5) no page asks a
+ * chart flag, so there is one load per page and width (S6 removed the
+ * flag-off loop, which no page had a variant for any more).
  *
  * WHY THE SCROLLER AND NOT THE DOCUMENT. The shell is `h-screen
  * overflow-hidden` and the page scrolls inside `<main id="main-content"
@@ -16,7 +18,7 @@
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark, type ApiHandlers, type FlagMap } from '../lib/production-pages'
+import { landmark, type ApiHandlers } from '../lib/production-pages'
 import {
   expectNoErrorFrame,
   expectNoHorizontalOverflow,
@@ -41,15 +43,9 @@ interface RoutePage {
   name: string
   path: string
   ready: (page: Page) => ReturnType<Page['locator']>
-  /**
-   * The flag-off answers, or `null` for a page whose flag-off path Phase D
-   * deleted (it has no flag-off variant left to measure).
-   */
-  off: ApiHandlers | null
-  on: ApiHandlers
-  flags: FlagMap
-  /** Chart frames drawn with the flag off / on, once every section is mounted. */
-  frames: { off: number | null; on: number }
+  handlers: ApiHandlers
+  /** Chart frames drawn once every section is mounted. */
+  frames: number
 }
 
 const PAGES: RoutePage[] = [
@@ -58,10 +54,8 @@ const PAGES: RoutePage[] = [
     path: '/overview',
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
     // Phase D S1: the catalogue mounts unconditionally; the page asks no flag.
-    off: null,
-    on: OVERVIEW_ON,
-    flags: {},
-    frames: { off: null, on: 4 },
+    handlers: OVERVIEW_ON,
+    frames: 4,
   },
   {
     name: 'Trends',
@@ -69,21 +63,17 @@ const PAGES: RoutePage[] = [
     ready: (p) => landmark(p, 'Trend metrics'),
     // Phase D S3/S4: the catalogue and its heatmap mount unconditionally; the
     // page asks no flag.
-    off: null,
-    on: TRENDS_ON,
-    flags: {},
+    handlers: TRENDS_ON,
     // + Compare (VIZ-605): with nothing chosen it is a frame that says so.
-    frames: { off: null, on: 6 },
+    frames: 6,
   },
   {
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
     // Phase D S2: the catalogue mounts unconditionally; the page asks no flag.
-    off: null,
-    on: SUMMARY_REPORT_ON,
-    flags: {},
-    frames: { off: null, on: 4 },
+    handlers: SUMMARY_REPORT_ON,
+    frames: 4,
   },
   {
     name: 'Suite detail',
@@ -91,20 +81,16 @@ const PAGES: RoutePage[] = [
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     // Phase D S3: the pass-rate frame always has its overlays; the page asks no flag.
     // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag).
-    off: null,
-    on: SUITE_DETAIL_ON,
-    flags: {},
-    frames: { off: null, on: 4 },
+    handlers: SUITE_DETAIL_ON,
+    frames: 4,
   },
   {
     name: 'Release gate',
     path: `/release-gate/${RUN_ID}`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     // Phase D S2: the Context group mounts unconditionally; the page asks no flag.
-    off: null,
-    on: releaseGateOn({ clusters: GATE_CLUSTERS }),
-    flags: {},
-    frames: { off: null, on: 2 },
+    handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
+    frames: 2,
   },
 ]
 
@@ -126,39 +112,30 @@ async function mountEverySection(page: Page, api: Parameters<typeof networkQuiet
 
 for (const report of PAGES) {
   for (const width of WIDTHS) {
-    for (const on of report.off === null ? [true] : [false, true]) {
-      test(`${report.name} at ${width} px, flags ${on ? 'on' : 'off'}: nothing wider than the scroller, frames drawn inside it`, async ({
-        page,
-      }) => {
-        await page.setViewportSize({ width, height: 900 })
-        const { api, errors } = await openRollout(page, report.path, {
-          handlers: on ? report.on : (report.off as ApiHandlers),
-          flags: on ? report.flags : {},
-          ready: report.ready,
-        })
-        await networkQuiet(page, api)
-        if (on) await mountEverySection(page, api)
-        const expected = on ? report.frames.on : (report.frames.off as number)
-        await expect(page.locator('[data-chart-frame]'), `${report.name}: frames`).toHaveCount(expected)
-        // Every frame reaches a terminal state before it is measured.
-        await expect
-          .poll(async () => (await frameStates(page)).filter((s) => /: loading$/.test(s)), { timeout: 20_000 })
-          .toEqual([])
-        await expectNoErrorFrame(page)
-        // The narrow shell: the drawer is closed and the page has the whole width.
-        await expect(page.getByRole('button', { name: 'Navigation menu' })).toBeVisible()
-        await expect(page.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0)
-        const where = `${report.name} at ${width} px, flags ${on ? 'on' : 'off'}`
-        await expectNoHorizontalOverflow(page, where)
-        // The Trends "wider screen needed" apology is gone: the page is fluid.
-        await expect(page.getByText(/wider screen/i)).toHaveCount(0)
-        // No chart text drawn outside its frame, cut by its svg, or wider than its box.
-        await expectNoTextEscapes(page, where)
-        expect(api.unhandled, 'API requests with no fixture (fail closed)').toEqual([])
-        expect(api.offHost).toEqual([])
-        expect(errors, 'uncaught page errors').toEqual([])
-      })
-    }
+    test(`${report.name} at ${width} px: nothing wider than the scroller, frames drawn inside it`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      const { api, errors } = await openRollout(page, report.path, { handlers: report.handlers, ready: report.ready })
+      await networkQuiet(page, api)
+      await mountEverySection(page, api)
+      await expect(page.locator('[data-chart-frame]'), `${report.name}: frames`).toHaveCount(report.frames)
+      // Every frame reaches a terminal state before it is measured.
+      await expect
+        .poll(async () => (await frameStates(page)).filter((s) => /: loading$/.test(s)), { timeout: 20_000 })
+        .toEqual([])
+      await expectNoErrorFrame(page)
+      // The narrow shell: the drawer is closed and the page has the whole width.
+      await expect(page.getByRole('button', { name: 'Navigation menu' })).toBeVisible()
+      await expect(page.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0)
+      const where = `${report.name} at ${width} px`
+      await expectNoHorizontalOverflow(page, where)
+      // The Trends "wider screen needed" apology is gone: the page is fluid.
+      await expect(page.getByText(/wider screen/i)).toHaveCount(0)
+      // No chart text drawn outside its frame, cut by its svg, or wider than its box.
+      await expectNoTextEscapes(page, where)
+      expect(api.unhandled, 'API requests with no fixture (fail closed)').toEqual([])
+      expect(api.offHost).toEqual([])
+      expect(errors, 'uncaught page errors').toEqual([])
+    })
   }
 }
 

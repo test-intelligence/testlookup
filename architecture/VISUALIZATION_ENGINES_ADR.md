@@ -62,8 +62,9 @@ first load.
    - `echarts` and `zrender` join `recharts` in `MUST_BE_LAZY` in `check-bundle-budget.mjs`,
      and neither is ever named in `manualChunks` — naming a shared chunk gets it hoisted into
      the entry (`frontend/vite.config.ts` documents this for Recharts).
-3. **three.js draws the one 3D view** (an opt-in scatter), as its own lazy chunk behind the
-   `viz_three_d` flag. Axes, labels, picking and rotation are ours to build, which is why the
+3. **three.js draws the one 3D view** (an opt-in scatter), as its own lazy chunk fetched only
+   on an explicit "View in 3D" (it shipped behind the `viz_three_d` flag; Phase D removed that
+   gate, see below). Axes, labels, picking and rotation are ours to build, which is why the
    scope is a scatter only and why a 2D equivalent is always the default.
 4. **Tooltips return DOM nodes.** Every ECharts `formatter` is
    `formatter: domTooltipFormatter(…)` from `components/charts/tooltip.ts`. The guards below
@@ -167,8 +168,8 @@ three passed with zero CSP violations.
    is not deterministic.
 4. **Mark activation stays out of the default path.** A chart that can be activated (drill, rows,
    filter) gets its handler AND, for the SVG cursor charts, the activation code (`markKit`) from
-   its host, so `ChartCursor` and `BarChart` import only types and the pages that draw a bar or a
-   day strip with the flags off download none of it. `sectionOnlyModules.test.ts` lists the
+   its host, so `ChartCursor` and `BarChart` import only types and a page whose bars or day
+   strips take no activation downloads none of it. `sectionOnlyModules.test.ts` lists the
    Wave 3 modules no page may reach statically.
 5. **No formatter, still.** Every new option is built without a `*formatter` (axis numbers are
    ECharts' defaults on a decade-snapped log axis with the unit in the axis name; labels are
@@ -179,7 +180,8 @@ The ECharts base chunk measured 160,453 bytes gzip with Wave 3 (ceiling 198,600)
 
 ## VIZ-508 amendment (2026-10-04)
 
-The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration 0192).
+The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration 0192; turned
+on by 0195; no longer read since Phase D, see the amendment below).
 
 1. **Measured.** three 0.186.0 (exact pin; `@types/three` ~0.186.0 as a dev dependency). The
    engine chunk (`engines/three/scatter3d.ts`: three core, `OrbitControls`, `CSS2DRenderer`) is
@@ -210,6 +212,17 @@ The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration
    needs `--use-angle=swiftshader --enable-unsafe-swiftshader` (that spec only), and the spec's
    WebGL 2 precondition fails rather than skips.
 
+## Phase D amendment (2026-10-05): the flags are gone from the frontend
+
+Migration 0195 turned `viz_chart_data_api`, `viz_advanced_charts` and `viz_three_d` on
+everywhere. Phase D then removed every gate and flag-off path page by page (S1-S5) and deleted
+the one module that read them, `useCatalogueRollout.ts`, with its ratchet (S6). No chart asks a
+flag: every section this ADR describes mounts unconditionally, and the 3D view is offered on
+every scatter, still fetched only on an explicit "View in 3D" (`rollout-scatter-3d.spec.ts`
+(b) keeps proving no three.js chunk loads before that click). The engine rules above are
+unchanged. The flag rows stay seeded until a later migration retires them, so
+`config/vizFlags.ts` and `contracts/viz/flags.json` keep all six keys.
+
 ## Consequences
 
 - The first ECharts chart a user opens costs about 185 kB gzip once; nginx serves hashed
@@ -220,7 +233,8 @@ The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration
   them, the way `TrendChart.test.tsx` already mocks Recharts; real rendering is asserted only
   in Playwright against the gallery.
 - The 3D view is verified in Chromium (SwiftShader, CI) and Firefox 155 (all seven cases of
-  `rollout-scatter-3d.spec.ts`, run locally on 2026-10-04). Safari is not checked: the product is
+  `rollout-scatter-3d.spec.ts`, run locally on 2026-10-04; six since Phase D removed the
+  flag-off case). Safari is not checked: the product is
   desktop-only and Safari has WebGL 2 since 15; a Safari reader without it gets the 2D chart and
   a notice.
 

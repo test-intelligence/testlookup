@@ -18,7 +18,7 @@
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark, TALL_VIEWPORT, type ApiHandlers, type FlagMap } from '../lib/production-pages'
+import { landmark, TALL_VIEWPORT, type ApiHandlers } from '../lib/production-pages'
 import { textEscapes } from '../lib/chart-text-escapes'
 import {
   expectDrawn,
@@ -157,29 +157,27 @@ test.describe('the presentation toggle at 1280 px', () => {
   })
 })
 
-// ── Every page, flags on, in presentation mode, at 1280 ─────────────────────
+// ── Every page, every section, in presentation mode, at 1280 ────────────────
 
 interface RoutePage {
   name: string
   path: string
   ready: (page: Page) => ReturnType<Page['locator']>
   handlers: ApiHandlers
-  flags: FlagMap
   frames: number
 }
 
 const PAGES: RoutePage[] = [
   // Phase D S1: Overview asks no flag; its catalogue mounts unconditionally.
-  { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: {}, frames: 4 },
+  { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, frames: 4 },
   // Phase D S3/S4: Trends asks no flag at all; the heatmap mounts unconditionally.
-  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: {}, frames: 6 },
+  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 6 },
   // Phase D S2: Summary and Release gate ask no flag either (Suite detail: S3).
   {
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
     handlers: SUMMARY_REPORT_ON,
-    flags: {},
     frames: 4,
   },
   {
@@ -187,7 +185,6 @@ const PAGES: RoutePage[] = [
     path: `/coverage/suite?name=${SUITE}&days=30`,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     handlers: SUITE_DETAIL_ON,
-    flags: {},
     // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag).
     frames: 4,
   },
@@ -196,7 +193,6 @@ const PAGES: RoutePage[] = [
     path: `/release-gate/${RUN_ID}`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
-    flags: {},
     frames: 2,
   },
 ]
@@ -207,11 +203,7 @@ test.describe('presentation mode, every catalogue section drawn (1280 x 4000)', 
   for (const report of PAGES) {
     test(`${report.name}: nothing overflows the scroller or its frame, axis text reads 16 px or more`, async ({ page }) => {
       await seedPresentation(page)
-      const { api, errors } = await openRollout(page, report.path, {
-        handlers: report.handlers,
-        flags: report.flags,
-        ready: report.ready,
-      })
+      const { api, errors } = await openRollout(page, report.path, { handlers: report.handlers, ready: report.ready })
       await expect(page.locator('html')).toHaveAttribute('data-presentation', 'on')
       await networkQuiet(page, api)
       await expect(page.locator('[data-chart-frame]')).toHaveCount(report.frames)

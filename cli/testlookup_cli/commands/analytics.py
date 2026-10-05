@@ -14,8 +14,8 @@ Known drift, documented rather than hidden:
 
 * The UI clamps a row-grain window to 90 days; ``--days`` is passed through
   and the server's own limit (365) applies.
-* With the UI's ``viz_chart_data_api`` flag off, its legacy trend chart reads
-  ``/metrics/trends`` and differs from this under a suite filter.
+* The UI Trends page's pass-rate trend card reads ``/metrics/trends`` and
+  differs from this under a suite filter.
 * Releases are UUIDs or ``unattributed``. Resolving a release by name is a
   follow-up.
 """

@@ -1,8 +1,9 @@
 /**
  * LIVE probe (Wave 3, VIZ-205/501): the Trends suite x day heatmap against a
- * deployment with both flags on. Read-only. Skipped unless `PROBE_W3=1`
- * (`PROBE_HOWTO` in `tests/lib/rollout.ts`); FAILS, never skips, when a flag
- * is off or the credentials are missing.
+ * deployment. Read-only. Skipped unless `PROBE_W3=1` (`PROBE_HOWTO` in
+ * `tests/lib/rollout.ts`); FAILS, never skips, when the credentials are
+ * missing. Since Phase D (S6) the heatmap asks no flag, so the probe no
+ * longer checks one.
  *
  * What only a live server can show: the bodies are the server's real wire
  * shape (FK0 finding 1: the hermetic fixtures once hid that), the Trends
@@ -14,7 +15,6 @@ import {
   bringNear,
   captureResponses,
   DRAWN,
-  expectProbeFlagsOn,
   expectWireChart,
   probeEnv,
   probeGet,
@@ -42,8 +42,7 @@ test('Trends: the suite x day heatmap draws from a valid wire body; a cell\'s ro
   const live = env as ProbeEnv
   const heatmaps = captureResponses(page, /^\/api\/v1\/analytics\/heatmap$/)
   const chartData = captureResponses(page, /^\/api\/v1\/analytics\/chart-data$/)
-  const project = await probeSignIn(page, live)
-  await expectProbeFlagsOn(page, project)
+  await probeSignIn(page, live)
   await page.goto(`${live.base}/trends`)
   await bringNear(page, 'trends-heatmap')
   await expect(frameIn(page, 'trends-heatmap'), 'the heatmap drew (pick a project with runs in the last 14 days)').toHaveAttribute(

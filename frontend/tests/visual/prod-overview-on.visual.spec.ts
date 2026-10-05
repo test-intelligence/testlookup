@@ -4,13 +4,15 @@
  * Execution-trend card, OD-4), the status donut, and the lazy row's top
  * failing tests and failure categories. In the same load, `overview-verdict`
  * and `overview-kpis` are captured again under their EXISTING names: the
- * flag must leave the top of the page byte-identical to the flag-off PNGs.
+ * catalogue must leave the top of the page byte-identical to
+ * `prod-overview`'s PNGs. Since Phase D (S6) the harness turns no flag on:
+ * the page asks none.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
 import { ancestorWithClass, assertHermetic, cardAround, PINNED, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
-import { CATALOGUE_ON, OVERVIEW_ON } from './production/fixtures'
+import { OVERVIEW_ON } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -19,7 +21,6 @@ for (const theme of THEMES) {
     const { api, errors } = await openRollout(page, '/overview', {
       theme,
       handlers: OVERVIEW_ON,
-      flags: CATALOGUE_ON,
       ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
     })
 
