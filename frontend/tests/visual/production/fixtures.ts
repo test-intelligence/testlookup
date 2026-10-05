@@ -1481,10 +1481,6 @@ export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => 
 export const TOP_FAILING_PATH = '/api/v1/analytics/top-failing'
 const TOP_FAILING_HANDLER: ApiHandlers = [[TOP_FAILING_PATH, () => ({ items: TOP_FAILING_ROWS })]]
 
-/** Flags the flag-on specs turn on (`MockOptions.flags`). */
-export const CATALOGUE_ON = { viz_chart_data_api: true } as const
-export const HEATMAP_ON = { viz_chart_data_api: true, viz_advanced_charts: true } as const
-
 /** /overview with the catalogue: + top failing (Failure categories draws the page's own read). */
 export const OVERVIEW_ON: ApiHandlers = [...RELEASES_LIST, ...TOP_FAILING_HANDLER, ...OVERVIEW]
 
@@ -1585,11 +1581,6 @@ export function releaseGateOn(options: GateOnOptions = {}): ApiHandlers {
 // `tests/ci-e2e/rollout-fixtures.spec.ts` validates every one with the
 // client's own `validateAnyChartSeries` / `validateEnvelopeMeta`, so a bad
 // fixture fails there by name, never as an error frame in a screenshot.
-
-/** Both flags: every Wave 3 section draws. */
-export const ADVANCED_ON = HEATMAP_ON
-/** Only the advanced flag: the catalogue seam is off, so nothing new may render or be asked (plan 2.4). */
-export const ADVANCED_ONLY = { viz_advanced_charts: true } as const
 
 /** A 250-character name: every label channel must cut or wrap it, never spill. */
 export const HOSTILE_LONG_NAME = `Checkout regression ${'with a very long generated test name '.repeat(8)}`.slice(0, 250)
@@ -2831,10 +2822,10 @@ export const WAVE3: ApiHandlers = [
   [CHART_ROWS_PATH, chartRows],
 ]
 
-/** /coverage with both flags: + the coverage map and the environment / release heatmaps (and their rows). */
+/** /coverage with the catalogue: + the coverage map and the environment / release heatmaps (and their rows). */
 export const COVERAGE_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...COVERAGE]
 
-/** /failures with both flags: + failure groups, clusters, the ladder's chart-data, the project scatter, rows. */
+/** /failures with the catalogue: + failure groups, clusters, the ladder's chart-data, the project scatter, rows. */
 export const FAILURES_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...FAILURES]
 
 /** A request with only a query (and the project), to build a fixture body outside a route. */
@@ -2893,16 +2884,15 @@ export function wave3Bodies(): FixtureBody[] {
 
 /**
  * /trends with the catalogue: + chart-data (suites, p50, p95); the probe is a
- * `/runs` read. Wave 3: with `viz_advanced_charts` too, the suite x day
- * heatmap asks `/analytics/heatmap?kind=suite_day` itself (and a cell's rows).
+ * `/runs` read. Wave 3: the suite x day heatmap asks
+ * `/analytics/heatmap?kind=suite_day` itself (and a cell's rows).
  */
 export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...TRENDS]
 
 /**
  * /coverage/suite with the catalogue: no new request (the overlays read the
- * page's points). Wave 3: with `viz_advanced_charts` too, the test x run
- * heatmap, the scatter, their rows, and the sections' unfiltered "ever had a
- * run?" probe (`/runs?page=1&size=1`).
+ * page's points). Wave 3: the test x run heatmap, the scatter, their rows,
+ * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1`).
  */
 export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...RUNS, ...SUITE_DETAIL]
 

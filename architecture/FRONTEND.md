@@ -98,17 +98,21 @@ data). The `.badge-*` primitives already sit on the tokens.
 - Genuine DOM/network effects that must stay effects carry a **scoped,
   justified** `eslint-disable-next-line` — never a file-wide disable.
 
-## 7. Flagged chart sections and the first-visit bundle (Visualization Upgrade, Waves 2.6-3)
+## 7. Chart sections and the first-visit bundle (Visualization Upgrade, Waves 2.6-3, Phase D)
 
-- **One flag reader.** `components/reports/catalogue/useCatalogueRollout.ts` is the only
-  module that reads `viz_chart_data_api` / `viz_advanced_charts` (`useAdvancedRollout()` =
-  both on); `flagSeam.ratchet.test.ts` fails on any other reader.
+- **No chart reads a flag.** The sections shipped behind `viz_chart_data_api`,
+  `viz_advanced_charts` and `viz_three_d` through one seam (`useCatalogueRollout.ts`, held by
+  `flagSeam.ratchet.test.ts`). Migration 0195 turned the three on everywhere, Phase D (S1-S5)
+  removed every gate and flag-off path, and S6 deleted the seam and its ratchet: every chart
+  section mounts unconditionally. `config/vizFlags.ts` still lists all six keys because it
+  mirrors `contracts/viz/flags.json` (the seeded rows, retired later by migration); only
+  `viz_report_context` and `viz_multi_filters` are still read.
 - **A page change is one import and one mount** of a small static composite
-  (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only the gates
-  and ONE `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported
+  (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only ONE
+  `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported
   chunk's whole preload list into the importing chunk, and anything a composite imports
-  statically (`LazySection`, `SectionErrorBoundary`) lands in every flag-off first visit. Each
-  section also gates itself and sits in its own `LazySection`.
+  statically (`LazySection`, `SectionErrorBoundary`) lands in every first visit of the page.
+  Each section sits in its own `LazySection`.
 - **Section-only code stays out of page closures.** `components/charts/sectionOnlyModules.test.ts`
   walks each page's static value imports and fails on an edge into a section-only module
   (the chart request queue, the catalogue models, mark activation, the drill URL, the rows

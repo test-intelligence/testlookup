@@ -32,7 +32,7 @@ If a page looks wrong, check these three before anything else. Together they exp
 
 ## Explorer
 
-**Testing → Explorer** (`/explore`) draws one metric over time as small multiples. It appears when the advanced charts are turned on for the project.
+**Testing → Explorer** (`/explore`) draws one metric over time as small multiples.
 
 - **Metric** — any of the sixteen the chart API serves: counts, rates and durations.
 - **X axis** — day or week. Every panel shares the same time axis.

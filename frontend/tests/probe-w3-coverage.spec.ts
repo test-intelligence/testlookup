@@ -1,8 +1,9 @@
 /**
  * LIVE probe (Wave 3, VIZ-206/502 + VIZ-205/501 env/release kinds): the
  * Coverage page's coverage map and suite x environment heatmap against a
- * deployment with both flags on. Read-only. Skipped unless `PROBE_W3=1`
- * (`PROBE_HOWTO` in `tests/lib/rollout.ts`); FAILS when a flag is off.
+ * deployment. Read-only. Skipped unless `PROBE_W3=1` (`PROBE_HOWTO` in
+ * `tests/lib/rollout.ts`). Since Phase D (S6) the sections ask no flag, so
+ * the probe no longer checks one.
  *
  * Live-only questions: the tree's real node ids (`all`, `s:<key>`) drill to a
  * level the server answers; the environment `(none)` bucket's rows (FK1 open
@@ -14,7 +15,6 @@ import {
   bringNear,
   captureResponses,
   DRAWN,
-  expectProbeFlagsOn,
   expectWireChart,
   probeEnv,
   probeGet,
@@ -42,7 +42,6 @@ test('Coverage: the map and the environment heatmap draw from valid wire bodies;
   const maps = captureResponses(page, /^\/api\/v1\/analytics\/coverage-map$/)
   const heatmaps = captureResponses(page, /^\/api\/v1\/analytics\/heatmap$/)
   const project = await probeSignIn(page, live)
-  await expectProbeFlagsOn(page, project)
   await page.goto(`${live.base}/coverage`)
   await bringNear(page, 'coverage-map')
   await expect(frameIn(page, 'coverage-map'), 'the map drew (pick a project with tests)').toHaveAttribute('data-chart-state', DRAWN, {

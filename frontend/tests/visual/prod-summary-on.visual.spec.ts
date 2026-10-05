@@ -9,7 +9,7 @@
 import { expect, test } from '@playwright/test'
 import { assertHermetic, PINNED, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
-import { CATALOGUE_ON, SUMMARY_REPORT_ON } from './production/fixtures'
+import { SUMMARY_REPORT_ON } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -18,7 +18,6 @@ for (const theme of THEMES) {
     const { api, errors } = await openRollout(page, '/reports/summary', {
       theme,
       handlers: SUMMARY_REPORT_ON,
-      flags: CATALOGUE_ON,
       ready: (p) => p.getByText('Total tests', { exact: true }),
     })
     await expect(page.getByRole('radio', { name: 'Latest run per suite' })).toHaveAttribute('aria-checked', 'true')

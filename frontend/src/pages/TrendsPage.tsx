@@ -35,10 +35,10 @@
  * the body grid are one column, so the page needs no "wider screen" notice.
  *
  * Catalogue (VIZ-408, Wave 2.6): a lazy section below the body grid adds the
- * suite comparison, the duration band and (with `viz_advanced_charts` on, a
- * read the section makes itself) the suite x day heatmap. Since Phase D (S3)
- * the page no longer asks `viz_chart_data_api`: the catalogue and the
- * pass-rate trend's analysis variant always render.
+ * suite comparison, the duration band and the suite x day heatmap (a read the
+ * section makes itself). Since Phase D (S3/S4) the page asks no chart flag:
+ * the catalogue, the heatmap and the pass-rate trend's analysis variant
+ * always render.
  *
  * Out of scope (Phase 2 — README §"Out of Scope"):
  *   - Workflow stage drawer body

@@ -66,9 +66,10 @@ series per value (the 7 largest plus "other", unless `--top-n` says otherwise).
 UUID or `unattributed`. Both read `GET /api/v1/analytics/chart-data`, the endpoint
 MCP's `get_chart_data` reads too. `--format csv` writes the UI export's layout
 (scope as `# Label,value` lines, a gap as an empty cell, never 0) as UTF-8 with
-`\n` line ends and no BOM; `table` draws a sparkline per series. With the UI's
-`viz_chart_data_api` flag off, its legacy trend chart reads `/metrics/trends`,
-which counts every run that touched a suite whole, so under `--suite` the two
+`\n` line ends and no BOM; `table` draws a sparkline per series. The UI's
+Trends page draws its catalogue charts from the same endpoint, but its
+pass-rate trend card reads `/metrics/trends`, which counts every run that
+touched a suite whole, so under `--suite` that card and these commands
 differ. The server allows 120 chart-data requests a minute per user.
 
 Every command supports `--output json` for piping. JSON mode keeps stdout

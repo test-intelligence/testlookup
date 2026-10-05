@@ -191,10 +191,10 @@ List open quarantine proposals and approve the one with the highest flip rate
 The other analytics tools answer project-wide: the UI can narrow them to a
 release and they cannot, so their numbers and a release-filtered dashboard's
 legitimately differ. Use `get_chart_data` for a release- or suite-scoped number.
-With the UI's `viz_chart_data_api` flag off, the legacy trend chart reads
-`/api/v1/metrics/trends`, which counts every run that touched a suite whole, so
-under a suite filter it differs from `get_chart_data` (which counts only the
-suite's own tests).
+The UI's charts read the same endpoint, except the Trends page's pass-rate
+trend card, which reads `/api/v1/metrics/trends`: it counts every run that
+touched a suite whole, so under a suite filter it differs from
+`get_chart_data` (which counts only the suite's own tests).
 
 ### AI root-cause analysis
 

@@ -1,13 +1,14 @@
 /**
  * What the Wave 2.6 rollout specs share (`tests/ci-e2e/rollout-*.spec.ts`,
- * plan 5.3): opening a report page with the catalogue flags ON through the
+ * plan 5.3): opening a report page with its catalogue sections through the
  * fail-closed harness of the visual baselines (`production-pages.ts`), the
  * request log, the lazy-mount proof, and the geometry the responsive and
  * presentation specs measure.
  *
  * Everything fails closed, as the harness does: an unmocked request fails the
  * test by name, a request that leaves the dev server fails it, and nothing is
- * skipped. A flag is ON only when a spec lists it (`FlagMap`).
+ * skipped. A flag is ON only when a spec lists it (`FlagMap`); since Phase D
+ * (S6) only the report-context and multi-filter specs list one.
  */
 import { expect, type Locator, type Page } from '@playwright/test'
 import {
@@ -99,8 +100,8 @@ const P = PROJECT_ID
  * What the app shell asks for on every report route, whatever the flags
  * (session and project list twice, three shell flags, badges, notifications,
  * the release picker, the AI settings), as the former flag-off spec recorded
- * it. Since Phase D, S5 no report page asks a chart flag (the seam has no
- * reader left), so every page's inventory starts here.
+ * it. Since Phase D (S5) no report page asks a chart flag, and S6 deleted
+ * the seam that asked them, so every page's inventory starts here.
  */
 export const SHELL_BASE = [
   'GET /api/v1/auth/me',
@@ -455,7 +456,7 @@ export interface ProbeEnv {
 
 export const PROBE_HOWTO =
   'Set PROBE_W3=1, PROBE_BASE_URL (default http://testlookup.local), PROBE_USER and PROBE_PASS (a read-only ' +
-  'account), optionally PROBE_PROJECT_ID; turn viz_chart_data_api AND viz_advanced_charts on for that project; then ' +
+  'account), optionally PROBE_PROJECT_ID; then ' +
   '`npx playwright test --config probe-live.config.ts probe-w3`.'
 
 /** `null` when the probes are not asked for (the caller skips). */
@@ -501,17 +502,6 @@ export async function probeGet(page: Page, path: string): Promise<{ status: numb
     }
     return { status: response.status, body }
   }, path)
-}
-
-/** Both Wave 3 flags are ON for the project, or the probe FAILS saying how to turn them on (never skips). */
-export async function expectProbeFlagsOn(page: Page, projectId: string) {
-  for (const key of ['viz_chart_data_api', 'viz_advanced_charts']) {
-    const { status, body } = await probeGet(page, `/api/v1/feature-flags/${key}/status?project_id=${projectId}`)
-    expect(status, `${key} status`).toBe(200)
-    expect((body as { enabled?: boolean }).enabled, `${key} is OFF for project ${projectId}: the probe tests nothing. ${PROBE_HOWTO}`).toBe(
-      true,
-    )
-  }
 }
 
 /**

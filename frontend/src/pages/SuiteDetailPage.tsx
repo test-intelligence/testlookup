@@ -391,8 +391,8 @@ export default function SuiteDetailPage() {
             </div>
           )}
 
-          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite reads
-              the advanced flag and lazy-loads each section when it is near. */}
+          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite
+              lazy-loads each section when it is near (no flag since Phase D). */}
           <SuiteDetailAdvanced days={days} suiteName={suiteName} />
 
           {/* Test Cases Table */}
