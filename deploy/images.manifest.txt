@@ -53,25 +53,20 @@ redis:7-alpine                               infra  compose,k8s   core
 mongo:7                                      infra  compose,k8s   core
 
 # ── Object storage ──────────────────────────────────────────────────────────
-# DELIBERATE VERSION SKEW — two MinIO server tags, one per surface.
-#
-# Compose stays on RELEASE.2024-11-07T00-52-20Z because `make dev` documents
-# the MinIO Console at http://localhost:9001; MinIO stripped the object
-# browser out of the community console in the 2025-04 releases, so moving
-# compose forward would silently break a documented developer workflow.
-#
-# k8s stays on RELEASE.2025-09-07T16-13-09Z because that is what the deployed
-# homelab / OpenShift clusters already run; rolling a live MinIO server
-# *backwards* is riskier than leaving it pinned.
-#
-# The offline bundle therefore ships BOTH tags (they are both `core`) and the
-# drift guard pins both — if either moves, this comment must be revisited.
-quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z     infra  compose       core
-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z     infra  k8s           core
+# MinIO, Inc. stopped publishing community images: quay.io/minio/minio and
+# minio/minio on Docker Hub refuse anonymous pulls since 2026-10 (the offline
+# bundle build failed on PR #201). The server is PGSTY Silo, the maintained
+# community fork of the open-source MinIO server (AGPL-3.0, multi-arch,
+# signed manifests): it keeps the MINIO_* variables, the /minio/* health
+# routes and the .minio.sys data format, and its binary is `silo` (the k8s
+# manifests call it by name). It also keeps the full web console that the
+# 2025-04 community releases cut, so compose and k8s no longer need two tags:
+# one tag serves both, newer than both old pins (a forward upgrade only).
+pgsty/silo:RELEASE.2026-09-16T00-00-00Z      infra  compose,k8s   core
 # mc is the MinIO client used by the one-shot `minio-setup` compose service
-# (bucket creation). k8s creates buckets via `mc` inside the minio server pod,
-# so it is compose-only.
-quay.io/minio/mc:RELEASE.2024-11-05T11-29-45Z        infra  compose       core
+# (bucket creation) and `make setup-minio`. PGSTY's build of the client. k8s
+# creates buckets with an `mc` on the deploy host, so it is compose-only.
+pgsty/mc:RELEASE.2026-09-16T00-00-00Z        infra  compose       core
 
 # ── Kubernetes-only helpers ─────────────────────────────────────────────────
 # busybox runs the `wait-for-backend` init container in every worker Deployment

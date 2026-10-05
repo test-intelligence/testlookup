@@ -71,7 +71,7 @@ testlookup-offline-<version>/
 | `testlookup/frontend` | nginx serving the SPA |
 | `testlookup/mcp` | MCP server (SSE) |
 | `postgres:16-alpine`, `mongo:7`, `redis:7-alpine` | datastores |
-| `minio/minio` (**two tags** — see [§8](#8-the-deliberate-minio-version-skew)), `minio/mc` | object storage + bucket setup |
+| `pgsty/silo` (the maintained MinIO fork — see [§8](#8-object-storage-pgsty-silo)), `pgsty/mc` | object storage + bucket setup |
 | `busybox:1.36` | worker init containers on Kubernetes |
 
 `ollama/ollama` and `chromadb/chroma` are **opt-in** — add `--with-llm`. They add
@@ -335,22 +335,24 @@ pulled rather than built locally.
 
 ---
 
-## 8. The deliberate MinIO version skew
+## 8. Object storage: PGSTY Silo
 
-The bundle ships **two** MinIO server tags, and this is intentional:
+MinIO, Inc. stopped publishing community images: `quay.io/minio/minio` and
+`minio/minio` on Docker Hub refuse anonymous pulls. The bundle therefore ships
+**PGSTY Silo** (`pgsty/silo:RELEASE.2026-09-16T00-00-00Z`), the community-maintained fork of the open-source
+MinIO server, and PGSTY's build of the client (`pgsty/mc:RELEASE.2026-09-16T00-00-00Z`).
 
-| Surface | Tag | Why |
-|---|---|---|
-| Compose | `RELEASE.2024-11-07T00-52-20Z` | `make dev` documents the MinIO Console on port 9001. MinIO removed the object browser from the community console in the 2025-04 releases, so moving Compose forward would break a documented workflow. |
-| Kubernetes / OpenShift | `RELEASE.2025-09-07T16-13-09Z` | What the existing clusters already run. Rolling a live MinIO server *backwards* is riskier than leaving it pinned. |
+| What | Same as MinIO? |
+|---|---|
+| S3 API, `/minio/health/*` routes, `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Yes |
+| Data on disk (`.minio.sys`) | Yes: an existing volume is read as is |
+| Web console on port 9001 | Yes, the full console (the 2025-04 community releases had cut it) |
+| Server binary | **`silo`**, no `minio` alias: the Kubernetes manifests call `silo server` |
 
-Both are recorded in `deploy/images.manifest.txt` with the reasoning inline,
-both ship in the bundle, and CI fails if either moves — so the skew stays a
-decision, not an accident. If you standardize on one tag in your environment,
-change the manifest first; the drift guard will then tell you every file that
-needs to follow.
-
----
+One tag now serves Compose and Kubernetes. It is newer than both tags this
+bundle used to pin (Compose `RELEASE.2024-11-07`, Kubernetes
+`RELEASE.2025-09-07`), so moving an existing deployment is a forward upgrade.
+CI fails if the manifest and the deployment files disagree.
 
 ## 9. Local LLM in an air-gap
 

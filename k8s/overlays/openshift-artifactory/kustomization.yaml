@@ -251,9 +251,9 @@ images:
   - name: mongo
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/mongo
     newTag: "7"
-  - name: quay.io/minio/minio
-    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/quay.io/minio/minio
-    newTag: RELEASE.2025-09-07T16-13-09Z
+  - name: pgsty/silo
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/pgsty/silo
+    newTag: RELEASE.2026-09-16T00-00-00Z
   - name: chromadb/chroma
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/chromadb/chroma
     newTag: 1.5.9

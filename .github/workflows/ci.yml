@@ -100,7 +100,7 @@ jobs:
           echo "All k8s image tags pinned. ✓"
 
       # Same rule, widened to Compose. `docker-compose.dev-lite.yml` shipped
-      # minio/minio:latest + minio/mc:latest for a long time because the grep
+      # minio/minio:latest + minio/mc:latest (now pgsty/silo + pgsty/mc) for a long time because the grep
       # above only ever looked at k8s/ — and an unpinned tag makes an offline
       # bundle unreproducible (whatever was on Docker Hub the day it was built
       # is what the customer runs forever, with no record of which version).

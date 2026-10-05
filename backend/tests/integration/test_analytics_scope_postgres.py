@@ -30,7 +30,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -326,6 +326,34 @@ def _without_meta(characterised: dict) -> dict:
     return out
 
 
+def _leaf_diffs(expected, actual, path: str = "", out: list | None = None, cap: int = 12) -> list[str]:
+    """Every path where ``actual`` differs from ``expected``, with both values.
+
+    The first diff used to be printed as 600 characters of each body; the two
+    bodies serialise their keys in different orders, so the truncation hid the
+    field that differed (the 2026-10-05 flake had to be diagnosed from the
+    code). A path names it."""
+    out = [] if out is None else out
+    if len(out) >= cap:
+        return out
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in sorted(set(expected) | set(actual)):
+            if key not in actual:
+                out.append(f"{path}.{key}: missing")
+            elif key not in expected:
+                out.append(f"{path}.{key}: unexpected {json.dumps(actual[key])[:120]}")
+            else:
+                _leaf_diffs(expected[key], actual[key], f"{path}.{key}", out, cap)
+    elif isinstance(expected, list) and isinstance(actual, list):
+        if len(expected) != len(actual):
+            out.append(f"{path}: {len(expected)} items expected, {len(actual)} actual")
+        for i, (e, a) in enumerate(zip(expected, actual)):
+            _leaf_diffs(e, a, f"{path}[{i}]", out, cap)
+    elif expected != actual:
+        out.append(f"{path}: expected {json.dumps(expected)[:120]}, actual {json.dumps(actual)[:120]}")
+    return out
+
+
 # ── 1. characterisation ─────────────────────────────────────────────────────
 
 #: The golden's ONE deliberate re-capture: the four release-scoped summary
@@ -334,6 +362,12 @@ def _without_meta(characterised: dict) -> dict:
 #: the release it names (before, only top-failing honoured it); every other
 #: case is still the pre-VIZ-201 capture. ``meta`` (VIZ-204) is set aside by
 #: ``_without_meta`` before comparing.
+#:
+#: A second re-capture (2026-10-05) reordered rows WITHIN TIES only: lists
+#: sorted by a count alone came back in plan order, so this test flaked on
+#: PR #200. They are now tie-broken by name (see
+#: ``test_tied_counts_keep_one_order_whatever_the_plan``), and the six cases
+#: holding such ties were re-taken; a script checked that no other value moved.
 #:
 #: Captured as FastAPI's default 422 list before VIZ-210; now the contract body.
 INTENDED_ERROR_BODY_CHANGES = frozenset({
@@ -364,9 +398,11 @@ async def test_single_value_responses_match_the_pre_viz201_golden(world):
         if key not in INTENDED_ERROR_BODY_CHANGES and actual[key] != expected[key]
     ]
     assert not mismatched, (
-        f"{len(mismatched)} single-value responses changed: {mismatched[:10]}; first diff "
-        f"expected={json.dumps(expected[mismatched[0]])[:600]} "
-        f"actual={json.dumps(actual[mismatched[0]])[:600]}"
+        f"{len(mismatched)} single-value responses changed: {mismatched[:10]}; "
+        + "; ".join(
+            f"{key}: " + " | ".join(_leaf_diffs(expected[key], actual[key], cap=4))
+            for key in mismatched[:3]
+        )
     )
     # The golden is not vacuous: the seeded data reaches every route.
     assert expected["coverage/none"]["body"]["summary"]["total_executions"] > 0
@@ -751,3 +787,74 @@ async def test_single_release_trend_uses_the_project_release_index_under_a_gener
         and "primary_release_id" in node.get("Index Cond", "")
     ]
     assert hits, f"the release predicate left the index: {json.dumps(plan)[:1500]}"
+
+
+# ── 6. tied counts: one order, whatever the plan ───────────────────────────
+
+
+async def _with_plan(world, hashagg: bool, read):
+    """``read(db)`` in a transaction with hash aggregation forced on or off."""
+    async with world.sessions() as db:
+        await db.execute(text(f"SET LOCAL enable_hashagg = {'on' if hashagg else 'off'}"))
+        return await read(db)
+
+
+def _tied_runs_are_in_name_order(rows: list[dict], count_key: str, name_keys: tuple[str, ...]) -> list[str]:
+    """Each run of equal ``count_key`` must be sorted by ``name_keys``: the problems found."""
+    problems = []
+    for first, second in zip(rows, rows[1:]):
+        if first[count_key] == second[count_key]:
+            a = tuple(str(first[k]) for k in name_keys)
+            b = tuple(str(second[k]) for k in name_keys)
+            if a > b:
+                problems.append(f"{count_key}={first[count_key]}: {a} before {b}")
+    return problems
+
+
+async def test_tied_counts_keep_one_order_whatever_the_plan(world):
+    """The golden characterisation flaked (PR #200, 2026-10-05): seven cases
+    changed with no backend change, every one a list sorted by a count alone.
+    Postgres returns equal counts in plan order (a hash or a sort aggregate,
+    chosen from table statistics), so the order and, at a LIMIT, the members
+    of the list moved between runs. The tie is now broken by name.
+
+    The seeded data has ties in each of these lists. Tied rows must come
+    back in name order: before the fix, top failing listed LegacyBatch02
+    before Checkout02 at 4 failures each. Forcing the other aggregate strategy
+    must return the same list (on this data it did even before the fix; it is
+    a guard, the name order is the proof)."""
+    from app.core.release_filter import UNATTRIBUTED
+    from app.services import analytics_service, summary_report_service
+
+    project = str(world.p1)
+    names = ("suite_name", "class_name", "test_name")
+    reads = {
+        "top_failing": (
+            lambda db: analytics_service.top_failing_tests(db, project, 90, 20),
+            "fail_count",
+        ),
+        "top_failing/unattributed": (
+            lambda db: analytics_service.top_failing_tests(db, project, 90, 20, release_id=UNATTRIBUTED),
+            "fail_count",
+        ),
+        "summary failures": (
+            lambda db: summary_report_service._top_failing_tests(
+                db, world.p1, FROZEN - timedelta(days=90), FROZEN + timedelta(seconds=1), 20
+            ),
+            "failures",
+        ),
+    }
+    tied_somewhere = False
+    for label, (read, count_key) in reads.items():
+        lists = []
+        for hashagg in (True, False):
+            body = await _with_plan(world, hashagg, read)
+            rows = body["items"] if isinstance(body, dict) else body
+            lists.append([{k: row[k] for k in (count_key, *names)} for row in rows])
+        hashed, sorted_ = lists
+        counts = [row[count_key] for row in hashed]
+        tied_somewhere = tied_somewhere or len(counts) != len(set(counts))
+        assert _tied_runs_are_in_name_order(hashed, count_key, names) == [], label
+        assert hashed == sorted_, f"{label}: the list depends on the aggregate strategy"
+    # Not vacuous: the seed has ties for the tiebreak to decide.
+    assert tied_somewhere

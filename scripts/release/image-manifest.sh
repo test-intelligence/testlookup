@@ -56,7 +56,7 @@ manifest_refs() {
   ' "$IMAGE_MANIFEST_FILE"
 }
 
-# Strip the tag from a ref: minio/minio:RELEASE.x -> minio/minio
+# Strip the tag from a ref: pgsty/silo:RELEASE.x -> pgsty/silo
 manifest_ref_name() { printf '%s\n' "${1%:*}"; }
 
 # Turn a ref into a filesystem-safe basename for images/<name>.tar

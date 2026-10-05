@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased - Fixes: tied analytics lists keep one order; MinIO images move to PGSTY Silo
+
+**Tied counts came back in plan order** (found when the Postgres golden
+characterisation flaked on PR #200 with no backend change). Four lists sorted
+by a count alone and then cut by a LIMIT:
+- top failing tests (`analytics_service.top_failing_tests`);
+- flaky tests (`analytics_service.flaky_tests`);
+- coverage's per-suite rows (`analytics_service.coverage_stats`);
+- the Summary report's failures by test
+  (`summary_report_service._top_failing_tests`).
+
+Postgres returns equal counts in whatever order the plan produces, and plans
+shift with table statistics. So tied tests swapped places between reloads,
+and at the LIMIT a different tie could be dropped. Each list now breaks ties
+by suite, class and test name (then fingerprint).
+- **New test:** `test_tied_counts_keep_one_order_whatever_the_plan` holds
+  tied rows to name order. Before the fix, top failing listed LegacyBatch02
+  before Checkout02 at 4 failures each. It also requires the same list with
+  hash aggregation forced on and off.
+- **Golden re-captured:** the six cases holding ties. A script verified that
+  rows moved only within equal counts, and the deliberately-kept pre-VIZ-210
+  error bodies were left untouched.
+- **Clearer failures:** the golden test now names the differing fields
+  (`.body.top_failing_tests[6].class_name: expected …, actual …`) instead of
+  600 truncated characters of each body.
+
+**MinIO's community images were withdrawn.** `quay.io/minio/minio`,
+`quay.io/minio/mc` and Docker Hub's `minio/minio` refuse anonymous pulls, so
+the offline-bundle build failed (PR #201) and so would any fresh install. The
+server is now **PGSTY Silo** (`pgsty/silo:RELEASE.2026-09-16T00-00-00Z`), the
+maintained fork of the open-source MinIO server, and the client is
+`pgsty/mc:RELEASE.2026-09-16T00-00-00Z`.
+- **Compatibility:** Silo keeps the `MINIO_*` variables, the `/minio/*`
+  health routes, the `.minio.sys` data format and the full web console.
+- **Binary rename:** its binary is `silo`, so both k8s MinIO manifests run
+  `silo server`.
+- **One tag for every surface:** the compose and k8s skew (2024-11 and
+  2025-09, kept because the community console had been cut) is gone, and the
+  new tag is newer than both, so existing deployments upgrade forward.
+- **Files moved together:** the image manifest, four compose files, both
+  overlays, the OpenShift mapping and env example, and `make setup-minio`
+  (which ran an unpinned `minio/mc`). The air-gap guide's section 8 now
+  describes Silo.
+- **Drift test:** it asserts one Silo tag and that no `minio/minio` image
+  comes back.
+- **Smoke-tested** with podman before the change, the way compose runs it: the
+  healthcheck's `curl`, the console (HTTP 200), the `minio-setup` script
+  verbatim (buckets, anonymous download), and an object round-trip.
+
 ## Unreleased - Visualization Upgrade: the chart flag seam is deleted (Phase D, S6)
 
 **Nothing in the frontend reads `viz_chart_data_api`, `viz_advanced_charts`

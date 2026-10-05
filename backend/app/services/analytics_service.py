@@ -209,7 +209,11 @@ async def flaky_tests(
            AND COUNT(*) FILTER (
                    WHERE prev_failed IS NOT NULL AND prev_failed <> is_failed
                ) >= {_FLAKY_MIN_FLIPS}
-        ORDER BY failure_rate_pct DESC
+        -- Ties are broken by name, then fingerprint: without that, equal
+        -- counts came back in plan order (hash vs sort aggregate, table
+        -- statistics), so the list reshuffled between reloads and the golden
+        -- characterisation flaked.
+        ORDER BY failure_rate_pct DESC, suite_name, class_name, test_name, test_fingerprint
         LIMIT :limit
         """,
         params,
@@ -491,7 +495,11 @@ async def top_failing_tests(
           {suite_filter}
           {release_filter}
         GROUP BY tc.test_fingerprint
-        ORDER BY fail_count DESC
+        -- Ties are broken by name, then fingerprint: without that, equal
+        -- counts came back in plan order (hash vs sort aggregate, table
+        -- statistics), so the list reshuffled between reloads and the golden
+        -- characterisation flaked.
+        ORDER BY fail_count DESC, suite_name, class_name, test_name, tc.test_fingerprint
         LIMIT :limit
         """,
         params,
@@ -601,7 +609,8 @@ async def coverage_stats(
           {suite_filter}
           {release_filter}
         GROUP BY {effective_suite}
-        ORDER BY unique_tests DESC
+        -- Ties by suite name: equal counts otherwise came back in plan order.
+        ORDER BY unique_tests DESC, suite_name
         LIMIT 50
         """,
         params,
