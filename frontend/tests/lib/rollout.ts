@@ -99,8 +99,9 @@ const P = PROJECT_ID
  * What the app shell asks for on every report route, whatever the flags:
  * the flag-off shell of `rollout-flag-off.spec.ts` (session and project list
  * twice, three shell flags, badges, notifications, the release picker, the
- * AI settings). A page whose flag-off path Phase D deleted (Overview, S1)
- * no longer asks the seam, so its inventory starts here.
+ * AI settings). A page whose flag-off path Phase D deleted (Overview, S1;
+ * Summary and Release gate, S2) no longer asks the seam, so its inventory
+ * starts here.
  */
 export const SHELL_BASE = [
   'GET /api/v1/auth/me',

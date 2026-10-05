@@ -1,9 +1,14 @@
 /**
- * /reports/summary with the catalogue ON (Wave 2.6, VIZ-408; plan 2.2
+ * /reports/summary with the catalogue (Wave 2.6, VIZ-408; plan 2.2
  * "Summary report", 5.3). Four charts: a status donut and results-by-suite
  * bars (both from the report the page already holds, so they follow its
  * Aggregation toggle), a pass-rate trend (the one new request,
  * `/metrics/trends`, lazy), and failures by test above the existing table.
+ *
+ * Phase D S2: the page no longer asks `viz_chart_data_api` (migration 0195
+ * turned it on everywhere and the flag-off path is deleted), so every load
+ * here runs with every flag OFF in the harness and the inventory has no seam
+ * lookup (`SHELL_BASE`).
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
@@ -21,10 +26,10 @@ import {
   requestsTo,
   section,
   sectionFrame,
-  SHELL_ON,
+  SHELL_BASE,
   SHORT_VIEWPORT,
 } from '../lib/rollout'
-import { CATALOGUE_ON, HOSTILE_NAME, PROJECT_ID, SUMMARY_REPORT_ON } from '../visual/production/fixtures'
+import { HOSTILE_NAME, PROJECT_ID, SUMMARY_REPORT_ON } from '../visual/production/fixtures'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 
 const P = PROJECT_ID
@@ -37,9 +42,9 @@ const SECTIONS: [string, string][] = [
   ['summary-top-failing', 'Failures by test'],
 ]
 
-/** The flag-off list (the report), plus the seam's lookup and the trend; the markers reuse the cached release list. */
+/** The shell and the report's own reads, plus the trend; the markers reuse the cached release list. */
 const inventoryOn = (days: number, mode = 'latest') => [
-  ...SHELL_ON,
+  ...SHELL_BASE,
   `GET /api/v1/reports/summary?project_id=${P}&days=${days}&mode=${mode}`,
   // P1: the header's Views menu.
   `GET /api/v1/saved-views?project_id=${P}&page=summary_report`,
@@ -48,13 +53,12 @@ const inventoryOn = (days: number, mode = 'latest') => [
   `GET /api/v1/reports/summary/exports?project_id=${P}`,
 ]
 
-test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)', () => {
+test.describe('Summary report, everything on screen (1280 x 2400)', () => {
   test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('the four sections render with their headings and draw, beside the page’s own tables', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/reports/summary', {
       handlers: SUMMARY_REPORT_ON,
-      flags: CATALOGUE_ON,
       ready,
     })
     for (const [id, title] of SECTIONS) {
@@ -77,13 +81,12 @@ test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)'
     await expectNoErrorFrame(page)
     await expectNoTextEscapes(page, 'Summary at 1280')
     await networkQuiet(page, api)
-    expectInventory(api, errors, inventoryOn(30), 'Summary, catalogue on')
+    expectInventory(api, errors, inventoryOn(30), 'Summary, every flag off')
   })
 
   test('the donut follows the Aggregation toggle (the report’s own totals)', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/reports/summary', {
       handlers: SUMMARY_REPORT_ON,
-      flags: CATALOGUE_ON,
       ready,
     })
     const donut = sectionFrame(page, 'summary-donut', 'Status breakdown')
@@ -113,7 +116,6 @@ test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)'
     test(`axe: the catalogue sections, every impact, no violation (${theme})`, async ({ page }) => {
       const { api } = await openRollout(page, '/reports/summary', {
         handlers: SUMMARY_REPORT_ON,
-        flags: CATALOGUE_ON,
         ready,
         theme,
       })
@@ -126,7 +128,6 @@ test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)'
   test('the stored window is 365 days: every request on the wire asks for at most 90', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/reports/summary', {
       handlers: SUMMARY_REPORT_ON,
-      flags: CATALOGUE_ON,
       ready,
       days: 365,
     })
@@ -137,13 +138,12 @@ test.describe('Summary report, catalogue on, everything on screen (1280 x 2400)'
   })
 })
 
-test.describe('Summary report, catalogue on, a short screen (1280 x 600)', () => {
+test.describe('Summary report, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no trend request until the trend is near, and it is asked before it is visible', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/reports/summary', {
       handlers: SUMMARY_REPORT_ON,
-      flags: CATALOGUE_ON,
       ready,
     })
     // The two charts drawn from the report are not lazy.

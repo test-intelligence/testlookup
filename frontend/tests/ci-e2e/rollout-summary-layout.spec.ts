@@ -1,6 +1,6 @@
 /**
- * /reports/summary with the catalogue ON, while its chunk is on its way and
- * after it lands (R1-2, R1 (a), R2-6).
+ * /reports/summary with the catalogue (no flag since Phase D S2), while its
+ * chunk is on its way and after it lands (R1-2, R1 (a), R2-6).
  *
  * The page draws the catalogue frames' boxes itself until the section chunk
  * arrives (`SummaryCatalogueShell`): the same header markup and words, the
@@ -25,8 +25,8 @@
  */
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
-import { expectDrawn, expectInventory, networkQuiet, openRollout, sectionFrame, SHELL_ON } from '../lib/rollout'
-import { CATALOGUE_ON, PROJECT_ID, SUMMARY_REPORT_ON } from '../visual/production/fixtures'
+import { expectDrawn, expectInventory, networkQuiet, openRollout, sectionFrame, SHELL_BASE } from '../lib/rollout'
+import { PROJECT_ID, SUMMARY_REPORT_ON } from '../visual/production/fixtures'
 
 const ready = (p: Page) => p.getByText('Total tests', { exact: true })
 /** The section chunk's module (the dev server's `.tsx`, a build's hashed `.js`); NOT `SummaryCatalogueShell`. */
@@ -89,9 +89,9 @@ async function holdSectionChunk(page: Page) {
   return state
 }
 
-/** The trend below the screen has not asked yet: the shell, the seam's lookup and the report. */
-const inventoryOff = [
-  ...SHELL_ON,
+/** The trend below the screen has not asked yet: the shell and the report's own reads. */
+const inventoryHeld = [
+  ...SHELL_BASE,
   `GET /api/v1/reports/summary?project_id=${PROJECT_ID}&days=30&mode=latest`,
   // P1: the header's Views menu.
   `GET /api/v1/saved-views?project_id=${PROJECT_ID}&page=summary_report`,
@@ -100,14 +100,13 @@ const inventoryOff = [
 ]
 
 for (const width of [1024, 1280, 1440, 1920]) {
-  test.describe(`Summary, catalogue on, the swap at ${width} px`, () => {
+  test.describe(`Summary, the swap at ${width} px`, () => {
     test.use({ viewport: { width, height: 600 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
     test('the real frames land exactly in the stand-in’s boxes: titles, takeaways and both tables stay put', async ({ page }) => {
       const chunk = await holdSectionChunk(page)
       const { api, errors } = await openRollout(page, '/reports/summary', {
         handlers: SUMMARY_REPORT_ON,
-        flags: CATALOGUE_ON,
         ready,
       })
       // The chunk is asked for (the preload) and held: the page draws its stand-in.
@@ -129,7 +128,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
 
       // The preload asked for nothing the page did not already ask for (the trend has not mounted).
       await networkQuiet(page, api)
-      expectInventory(api, errors, inventoryOff, `Summary at ${width} with the chunk held`)
+      expectInventory(api, errors, inventoryHeld, `Summary at ${width} with the chunk held`)
     })
   })
 }
@@ -138,7 +137,7 @@ test.describe('Summary, the tables at 375 px (R2-6)', () => {
   test.use({ viewport: { width: 375, height: 1600 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('each sideways-scrolling table is a named, focusable region with a visible focus ring', async ({ page }) => {
-    await openRollout(page, '/reports/summary', { handlers: SUMMARY_REPORT_ON, flags: CATALOGUE_ON, ready })
+    await openRollout(page, '/reports/summary', { handlers: SUMMARY_REPORT_ON, ready })
     await expectDrawn(sectionFrame(page, 'summary-suites', 'Results by suite'), 'suites')
     for (const name of ['Per-suite breakdown table', 'Top failing tests table']) {
       const region = page.getByRole('region', { name })

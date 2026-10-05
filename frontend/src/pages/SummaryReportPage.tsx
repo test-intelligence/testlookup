@@ -28,17 +28,15 @@ import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
 import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
-import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
 import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import type { SavedView } from '@/services/savedViewsService'
 
-// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk, mounted only
-// when `useCatalogueRollout` reads on: with the flag off this page is the
-// Wave 2.5 page and downloads none of it. One loader for the lazy component
-// and the preload below, so both wait on the same request.
+// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk. One loader
+// for the lazy component and the preload below, so both wait on the same
+// request.
 const loadSummaryCatalogue = () => import('@/components/reports/catalogue/SummaryCatalogue')
 const SummaryCatalogue = lazyWithRetry(loadSummaryCatalogue)
 
@@ -121,10 +119,6 @@ export default function SummaryReportPage() {
   // US-7.5: on-demand download of the self-contained HTML analysis report
   // (the same document daily/weekly digest emails attach).
   const [downloadingReport, setDownloadingReport] = useState<'1d' | '7d' | null>(null)
-  // VIZ-408: the one seam. Read before any early return (a hook), so it is the
-  // only new request on a flag-off page.
-  const catalogue = useCatalogueRollout()
-
   useEffect(() => {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
   }, [mode])
@@ -146,13 +140,13 @@ export default function SummaryReportPage() {
     applyExtra: applyViewExtra,
   })
 
-  // Flag on: start the sections' chunk (the page's first chart code) as soon
-  // as the flag answers, which is usually before the report does, instead of
-  // after the report has rendered. A failure here is not reported: the lazy
-  // component asks again, and its error boundary says so.
+  // Start the sections' chunk (the page's first chart code) on mount, while
+  // the report is still loading, instead of after the report has rendered. A
+  // failure here is not reported: the lazy component asks again, and its
+  // error boundary says so.
   useEffect(() => {
-    if (catalogue) loadSummaryCatalogue().catch(() => undefined)
-  }, [catalogue])
+    loadSummaryCatalogue().catch(() => undefined)
+  }, [])
 
   // ONE scope for the screen and the PDF: both requests are built from it, so
   // the exported sign-off document cannot cover different releases from the
@@ -457,12 +451,12 @@ export default function SummaryReportPage() {
             </div>
           </section>
 
-          {/* VIZ-408, flag on: the status donut and results by suite, then the
+          {/* VIZ-408: the status donut and results by suite, then the
               trend (lazy), above the table they summarise. Until their chunk
               arrives the page draws the frames' boxes itself, from this report
               and with no chart code, so the tables below never move (R1-2)
               and the page's largest paint is not held for the charts. */}
-          {catalogue && data && (
+          {data && (
             <SectionErrorBoundary message="Failed to load charts">
               <Suspense fallback={<SummaryCatalogueShell part="headline" report={data} days={days} mode={mode} />}>
                 <SummaryCatalogue part="headline" report={data} days={days} mode={mode} />
@@ -479,7 +473,7 @@ export default function SummaryReportPage() {
             <SuiteTable rows={suites} />
           </section>
 
-          {catalogue && data && topFailing.length > 0 && (
+          {data && topFailing.length > 0 && (
             <SectionErrorBoundary message="Failed to load charts">
               <Suspense fallback={<SummaryCatalogueShell part="top-failing" report={data} days={days} mode={mode} />}>
                 <SummaryCatalogue part="top-failing" report={data} days={days} mode={mode} />

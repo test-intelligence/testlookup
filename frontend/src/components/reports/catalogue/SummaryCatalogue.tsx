@@ -2,9 +2,8 @@
  * The Summary report's catalogue sections (Wave 2.6, VIZ-408; plan 2.2
  * "Summary report").
  *
- * Mounted by `SummaryReportPage` ONLY when `useCatalogueRollout` reads on, in
- * its own chunk, and only inside the page's has-data branch (so "has this
- * project ever had a run" is already yes). The page mounts it twice, once per
+ * Mounted by `SummaryReportPage` in its own chunk, and only inside the page's
+ * has-data branch (so "has this project ever had a run" is already yes). The page mounts it twice, once per
  * place a section goes (`part`):
  *
  *   `headline`     above the per-suite table: the status donut beside the

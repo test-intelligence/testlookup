@@ -34,7 +34,8 @@
  * Phase D (track S) deletes each page's flag-off path once migration 0195
  * turned the chart flags on everywhere, and removes the page from this spec
  * in the same change: Overview left in S1 (its flag-on inventory is
- * `rollout-overview.spec.ts`).
+ * `rollout-overview.spec.ts`), Summary and Release gate in S2
+ * (`rollout-summary.spec.ts`, `rollout-release-gate.spec.ts`).
  *
  * To re-record after a DELIBERATE change to a page's requests:
  *   ROLLOUT_INVENTORY_PRINT=1 npx playwright test --config playwright.ci.config.ts rollout-flag-off
@@ -57,11 +58,9 @@ import {
   FAILURES,
   NOW,
   PROJECT_ID,
-  RELEASE_GATE,
   RUN_ID,
   SUITE,
   SUITE_DETAIL,
-  SUMMARY_REPORT,
   TRENDS,
   USER,
 } from '../visual/production/fixtures'
@@ -125,27 +124,11 @@ const PAGES: ReportPage[] = [
     headings: ['Run cadence — last 14 days', 'Suite pass rates · today'],
   },
   {
-    name: 'Summary',
-    path: '/reports/summary',
-    handlers: SUMMARY_REPORT,
-    ready: (p) => p.getByText('Total tests', { exact: true }),
-    frames: [],
-    headings: [/^Per-suite breakdown/, /^Top failing tests/],
-  },
-  {
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
     handlers: SUITE_DETAIL,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     frames: [/^Run history/, /^Pass rate trend/],
-    headings: [],
-  },
-  {
-    name: 'Release gate',
-    path: `/release-gate/${RUN_ID}`,
-    handlers: RELEASE_GATE,
-    ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
-    frames: [],
     headings: [],
   },
   // Wave 3 (VIZ-206/502, VIZ-205/501 env + release heatmaps): the page as
@@ -218,29 +201,11 @@ const INVENTORY: Record<string, string[]> = {
     `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
     `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
   ],
-  // VIZ-607: + the reader's background exports (not a flagged read: the
-  // export buttons and their panel ship with the flags off too).
-  Summary: [
-    ...SHELL,
-    `GET /api/v1/reports/summary?project_id=${P}&days=30&mode=latest`,
-    // P1: the header's Views menu (the page has no widget layout to share it with).
-    `GET /api/v1/saved-views?project_id=${P}&page=summary_report`,
-    `GET /api/v1/reports/summary/exports?project_id=${P}`,
-  ],
   'Suite detail': [
     ...SHELL,
     `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,
     `GET /api/v1/test-management/suites/${SUITE}/trend?project_id=${P}&days=30`,
     `GET /api/v1/suites?project_id=${P}`,
-  ],
-  // A second read of the AI settings, the page's own (`useAIConfig`, which
-  // only this page of the five calls).
-  'Release gate': [
-    ...SHELL,
-    `GET /api/v1/release-readiness/${RUN_ID}`,
-    'GET /api/v1/scoring-model',
-    `GET /api/v1/runs?project_id=${P}&page=1&size=1`,
-    'GET /api/v1/settings/ai',
   ],
   // Recorded on main @ 03983f12 (Wave 3 C0). The page's own reads: coverage
   // and trend over its 30 days, its newest run (`size=1`, the header's suite

@@ -15,7 +15,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SummaryReportPage from './SummaryReportPage'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
@@ -67,15 +67,7 @@ vi.mock('react-hot-toast', () => ({
   default: { error: vi.fn(), success: vi.fn() },
 }))
 
-// VIZ-408's one seam. Off unless a test turns it on, so every case written
-// against the Wave 2.5 page still runs that page.
-const rollout = vi.hoisted(() => ({ on: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.on,
-  useCatalogueRolloutStatus: () => rollout.on,
-  useAdvancedRollout: () => false,
-}))
-// Flag on only: the trend's request (K7) held loading, and the top bar's cached
+// The catalogue's trend request (K7) held loading, and the top bar's cached
 // release list. The trend's own behaviour is `SummaryCatalogue.test.tsx`'s.
 const trendsCalls = vi.hoisted(() => [] as number[])
 vi.mock('@/components/reports/catalogue/useTrendsSeries', () => ({
@@ -212,7 +204,7 @@ describe('SummaryReportPage', () => {
       expect(useTimeWindowStore.getState().days).toBe(7)
     })
 
-    fireEvent.click(screen.getByText(/Latest run per suite/i))
+    fireEvent.click(screen.getByRole('radio', { name: /Latest run per suite/i }))
     await waitFor(() => {
       expect(localStorage.getItem('summary-report.mode')).toBe('latest')
     })
@@ -353,7 +345,7 @@ describe('SummaryReportPage', () => {
 
     const beforeMode = mockGet.mock.calls.length
     // Switch FROM the default 'latest' TO 'window' to exercise the toggle.
-    fireEvent.click(screen.getByText(/All runs in window/i))
+    fireEvent.click(screen.getByRole('radio', { name: /All runs in window/i }))
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith(
@@ -633,10 +625,9 @@ describe('SummaryReportPage — release scope badge and PDF', () => {
   })
 })
 
-describe('SummaryReportPage — VIZ-106 responsive edits and metric tokens (flag independent)', () => {
+describe('SummaryReportPage — VIZ-106 responsive edits and metric tokens', () => {
   beforeEach(() => {
     mockGet.mockReset()
-    rollout.on = false
     mockProjectStore.mockImplementation((selector) => selector({
       activeProjectId: 'p1',
       activeProject: { id: 'p1', name: 'GoogleProject' },
@@ -704,7 +695,7 @@ describe('SummaryReportPage — VIZ-106 responsive edits and metric tokens (flag
   })
 })
 
-describe('SummaryReportPage — the catalogue seam (VIZ-408)', () => {
+describe('SummaryReportPage — the catalogue sections (VIZ-408)', () => {
   beforeEach(() => {
     mockGet.mockReset()
     trendsCalls.length = 0
@@ -714,10 +705,6 @@ describe('SummaryReportPage — the catalogue seam (VIZ-408)', () => {
     }))
     try { localStorage.removeItem('summary-report.mode') } catch { /* ignore */ }
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
-  })
-
-  afterEach(() => {
-    rollout.on = false
   })
 
   /** Different totals per Aggregation mode, as the server sends them. */
@@ -738,21 +725,10 @@ describe('SummaryReportPage — the catalogue seam (VIZ-408)', () => {
     return (within(table).getByRole('rowheader', { name: status }).parentElement as HTMLElement).querySelector('td')?.textContent
   }
 
-  it('flag off: no catalogue section, no trend request, only the report', async () => {
-    rollout.on = false
+  it('the four charts, each above the table it summarises', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()
-    await screen.findByText('test_pay')
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(trendsCalls).toEqual([])
-    expect(mockGet).toHaveBeenCalledTimes(1)
-  })
-
-  it('flag on: the four charts, each above the table it summarises', async () => {
-    rollout.on = true
-    mockGet.mockResolvedValue(makeReport())
-    renderPage()
-    // The first flag-on render loads the section's chunk (and the chart kit) for the first time;
+    // The first render loads the section's chunk (and the chart kit) for the first time;
     // until it lands the page's stand-in carries the same headings, so wait for the sections.
     await waitFor(
       () => expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).not.toBeNull(),
@@ -771,21 +747,19 @@ describe('SummaryReportPage — the catalogue seam (VIZ-408)', () => {
     expect(trendsCalls[trendsCalls.length - 1]).toBe(DEFAULT_TIME_WINDOW_DAYS)
   })
 
-  it('flag on: the donut follows the Aggregation toggle (the latest totals in latest mode, then the window’s)', async () => {
-    rollout.on = true
+  it('the donut follows the Aggregation toggle (the latest totals in latest mode, then the window’s)', async () => {
     servePerMode()
     renderPage()
     await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
     await waitFor(() => expect(donutCount('Passed')).toBe('149'))
     expect(donutCount('Broken')).toBe('7')
 
-    fireEvent.click(screen.getByText(/All runs in window/i))
+    fireEvent.click(screen.getByRole('radio', { name: /All runs in window/i }))
     await waitFor(() => expect(donutCount('Passed')).toBe('180'))
     expect(donutCount('Broken')).toBe('2')
   })
 
-  it('flag on: no failing-test chart when the window has no failures (the table says so already)', async () => {
-    rollout.on = true
+  it('no failing-test chart when the window has no failures (the table says so already)', async () => {
     mockGet.mockResolvedValue(makeReport({ top_failing_tests: [] }))
     renderPage()
     await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
