@@ -14,8 +14,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChartMark, MarkActivateHandler } from '@/components/charts/marks'
 import type { RowsPanelProps } from './RowsPanel.model'
 
-// VIZ-508: the scatter also asks for its 3D view (off here).
-vi.mock('./useCatalogueRollout', () => ({ useAdvancedRollout: () => true, useCatalogueRollout: () => true, useThreeDRollout: () => false }))
 vi.mock('./LazySection', () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('./useEverHadRun', () => ({ useEverHadRun: () => true }))
 vi.mock('./catalogueScope', async (importOriginal) => ({

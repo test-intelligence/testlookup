@@ -3,17 +3,17 @@
  * groups + systemic clusters (FK3), the drill ladder (FK5), the project-wide
  * test scatter (FK4) — each through its PINNED contract (`sectionContracts.ts`).
  *
- * A lazy chunk of its own, loaded by `FailuresAdvanced` only once BOTH flags
- * are on. That is the point of the split: a `lazy(() => import(...))` puts the
- * imported chunk's whole dependency list (Vite's preload map, ~60 file names
- * for these three) into the IMPORTING chunk. Here, that is this chunk; in
- * `FailuresAdvanced` it would have been the page's, on every flag-off first
- * visit (measured: +1.4 kB gzip on the Failures page chunk).
+ * A lazy chunk of its own, loaded by `FailuresAdvanced`. That is the point of
+ * the split: a `lazy(() => import(...))` puts the imported chunk's whole
+ * dependency list (Vite's preload map, ~60 file names for these three) into
+ * the IMPORTING chunk. Here, that is this chunk; in `FailuresAdvanced` it
+ * would have been the page's, on every first visit (measured: +1.4 kB gzip on
+ * the Failures page chunk).
  *
  * Each section sits in a `LazySection` (mounted, and its chunk fetched, only
  * when it scrolls near), behind `Suspense` and a `SectionErrorBoundary` (a
  * chunk that fails twice, or a section that throws, takes only itself down).
- * Each section also reads the seam itself (its contract).
+ * No section reads a flag (Phase D, S5).
  */
 import { Suspense } from 'react'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'

@@ -1,7 +1,7 @@
 /**
- * The drill ladder (VIZ-602 / 603) with only the network, the flag lookups, the
- * existence probe, the project and release scope, and Recharts' drawing
- * mocked: the seam, the scope builder, the chart pipeline, the bar chart and
+ * The drill ladder (VIZ-602 / 603) with only the network, the existence
+ * probe, the project and release scope, and Recharts' drawing mocked (it asks
+ * no flag since Phase D, S5): the scope builder, the chart pipeline, the bar chart and
  * its keyboard cursor, the drill URL, the breadcrumb, the cross-filter and the
  * scope stores are the real ones. Recharts is a stand-in that draws one
  * clickable rectangle per bar and segment and calls `<Bar onClick>` as Recharts
@@ -27,12 +27,6 @@ import type { RowsPanelProps } from './RowsPanel.model'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
-
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 
 const probe = vi.hoisted(() => ({ enabled: [] as boolean[] }))
 vi.mock('./useEverHadRun', () => ({
@@ -247,7 +241,6 @@ async function level(kind: string) {
 }
 
 beforeEach(() => {
-  flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
   probe.enabled = []
   project.id = 'p1'
   panels.props = []
@@ -292,20 +285,6 @@ describe('FailuresDrill placeholder (R2-B F-15)', () => {
 })
 
 describe('FailuresDrill (VIZ-602 / 603)', () => {
-  it.each([
-    ['both off', {}],
-    ['only the catalogue flag', { viz_chart_data_api: true }],
-    ['only the advanced flag', { viz_advanced_charts: true }],
-  ])('%s: nothing is rendered and nothing is requested', async (_name, values) => {
-    flags.values = values
-    const { container } = renderDrill({ url: '/failures?drill=suite~payments' })
-    await settle()
-    expect(container.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(container.querySelector('[data-lazy-section]')).toBeNull()
-    expect(get).not.toHaveBeenCalled()
-    expect(probe.enabled).toEqual([])
-  })
-
   it('L0 "Results by suite": one request, executions by suite x status, the window clamped to 90', async () => {
     renderDrill({ days: 365 })
     await level('suites')

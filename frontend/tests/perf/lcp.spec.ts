@@ -41,7 +41,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageErrors, type ApiHandlers, type FlagMap } from '../lib/production-pages'
 import {
   COVERAGE_ON,
-  FAILURES,
   FAILURES_ON,
   NOW,
   OVERVIEW_ON,
@@ -130,7 +129,7 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
-    // Phase D S3/S4: the composite and its heatmap mount with every flag off (the scatter keeps its gate until S5).
+    // Phase D S3-S5: the composite, its heatmap and its scatter mount with every flag off.
     handlers: SUITE_DETAIL_ON,
     handlersOn: SUITE_DETAIL_ON,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
@@ -159,7 +158,8 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Failures',
     path: '/failures',
-    handlers: FAILURES,
+    // Phase D S5: the Wave 3 sections mount with every flag off, so both cells answer their reads.
+    handlers: FAILURES_ON,
     handlersOn: FAILURES_ON,
     ready: (p) => landmark(p, 'Failure verdict'),
   },

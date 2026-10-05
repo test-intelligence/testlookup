@@ -18,7 +18,6 @@
  */
 import { useCallback, useMemo, useState, type ComponentProps, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { LayoutGrid } from 'lucide-react'
 import PageShell from '@/components/layout/PageShell'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
@@ -27,7 +26,6 @@ import { useCatalogChartData, type CatalogParams } from '@/components/charts/cha
 import { hasChartData } from '@/components/charts/chartStateCore'
 import LazySection from '@/components/reports/catalogue/LazySection'
 import { useCatalogueParams } from '@/components/reports/catalogue/catalogueScope'
-import { useAdvancedRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import { useEverHadRun } from '@/components/reports/catalogue/useEverHadRun'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import type { ReportViewScope } from '@/components/reports/savedViewsModel'
@@ -61,7 +59,6 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
 export const EXPLORER_TITLE = 'Explorer'
 export const EXPLORER_SUBTITLE = 'One metric over time, split into lines and into small multiples by suite or release.'
-export const EXPLORER_OFF_TITLE = 'The explorer is not enabled for this project'
 
 const NO_STYLES = {}
 
@@ -77,23 +74,9 @@ function exploreFiltersOf(view: SavedView): Record<string, unknown> | null {
   return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
 }
 
+/** The Explorer asks no flag (Phase D, S5): it renders on every visit, with no off or pending state. */
 export default function ExplorePage(): ReactElement {
-  const rollout = useAdvancedRolloutStatus()
-  if (rollout === true) return <Explorer />
-  return (
-    <PageShell>
-      <PageHeader title={EXPLORER_TITLE} subtitle={EXPLORER_SUBTITLE} />
-      {rollout === false ? (
-        <EmptyState
-          icon={<LayoutGrid className="h-8 w-8" aria-hidden="true" />}
-          title={EXPLORER_OFF_TITLE}
-          description="It arrives with the advanced charts. An admin can turn them on under Settings, Feature flags."
-        />
-      ) : (
-        <div data-explore-pending="" style={{ minHeight: PANEL_HEIGHT + PANEL_CHROME }} />
-      )}
-    </PageShell>
-  )
+  return <Explorer />
 }
 
 function Explorer(): ReactElement {

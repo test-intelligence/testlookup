@@ -5,9 +5,8 @@
  *
  * The page's whole change is one import of this file and one mount (since
  * Phase D, S3, unconditional: the page no longer asks the catalogue flag).
- * Since Phase D, S4 this composite and the heatmap ask no flag either: it
- * renders whenever the page has a suite. (The scatter still reads the
- * advanced seam itself until S5 removes the Failures-family gates.)
+ * Since Phase D, S4 this composite and the heatmap ask no flag either, and
+ * since S5 neither does the scatter: it renders whenever the page has a suite.
  *
  * ONE lazy chunk (`SuiteDetailAdvancedSections`) brings the two
  * sections, each a lazy chunk of its own inside its own error boundary: a

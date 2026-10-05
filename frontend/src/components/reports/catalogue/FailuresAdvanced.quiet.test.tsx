@@ -7,10 +7,6 @@ import { act, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import FailuresAdvanced from './FailuresAdvanced'
 
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: () => true,
-  useFeatureFlagStatus: () => true,
-}))
 vi.mock('./FailuresAdvancedSections', () => ({
   default: () => {
     throw new Error('chunk gone')

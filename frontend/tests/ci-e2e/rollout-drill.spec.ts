@@ -1,5 +1,6 @@
 /**
- * The Failures drill ladder (Wave 3, VIZ-602, FK5) with both flags: level 0
+ * The Failures drill ladder (Wave 3, VIZ-602, FK5), no flag asked (Phase D,
+ * S5): level 0
  * "Results by suite" (chart-data executions by suite x status, stacked), a
  * suite's statuses, a status's suites, and the leaf (a suite's tests with one
  * status, `top_n=20`), each level a history entry in the page URL
@@ -30,7 +31,6 @@ import {
 } from '../lib/rollout'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 import {
-  ADVANCED_ON,
   CHART_DATA_PATH,
   CHART_ROWS_PATH,
   FAILURES_ON,
@@ -45,7 +45,7 @@ const P = PROJECT_ID
 const ready = (p: Page) => landmark(p, 'Failure verdict')
 const DRILL = 'failures-drill'
 
-const open = (page: Page, path = '/failures') => openRollout(page, path, { handlers: FAILURES_ON, flags: ADVANCED_ON, ready })
+const open = (page: Page, path = '/failures') => openRollout(page, path, { handlers: FAILURES_ON, ready })
 
 const ladder = (page: Page) => section(page, DRILL)
 const frame = (page: Page) => ladder(page).locator('[data-chart-frame]')
@@ -61,7 +61,7 @@ async function drawn(page: Page, level: string) {
 /** The chart-data reads of the ladder, parsed (the page's other reads are not chart-data). */
 const ladderReads = (api: Parameters<typeof queryOf>[0]) => queryOf(api, CHART_DATA_PATH)
 
-test.describe('Drill ladder, both flags (1280 x 4000)', () => {
+test.describe('Drill ladder (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('level 0: results by suite, one read; the breadcrumb is the root alone', async ({ page }) => {
@@ -187,7 +187,7 @@ test.describe('Drill ladder, both flags (1280 x 4000)', () => {
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the ladder, every impact (${theme}): level 0, a bar focused, the leaf`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, flags: ADVANCED_ON, ready, theme })
+      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready, theme })
       await drawn(page, 'suites')
       const only = [`[data-catalogue-section="${DRILL}"]`]
       await expectNoBlockingViolations(page, theme, [], only)

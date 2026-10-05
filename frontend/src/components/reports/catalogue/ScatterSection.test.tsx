@@ -1,8 +1,8 @@
 /**
- * The test scatter section (VIZ-506) with only the network, the flag lookups,
- * the existence probe, the project store and the canvas engine mocked: the
- * seam, the scope builder, the chart pipeline, the frame, the drill URL and
- * the selection list are the real ones. The rows panel is a stub that shows
+ * The test scatter section (VIZ-506) with only the network, the existence
+ * probe, the project store and the canvas engine mocked (it asks no flag since
+ * Phase D, S5): the scope builder, the chart pipeline, the frame, the drill
+ * URL and the selection list are the real ones. The rows panel is a stub that shows
  * what it was handed (its own behaviour is FK0's and tested there).
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -18,12 +18,6 @@ import { __resetChartConcurrency } from '@/services/chartApi'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
-
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 
 const probe = vi.hoisted(() => ({ enabled: [] as boolean[] }))
 vi.mock('./useEverHadRun', () => ({
@@ -169,7 +163,6 @@ const searchParams = () => new URLSearchParams(screen.getByTestId('location').te
 const lastPanel = () => panels.props[panels.props.length - 1] as RowsPanelProps
 
 beforeEach(() => {
-  flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
   probe.enabled = []
   project.id = 'p1'
   panels.props = []
@@ -225,22 +218,7 @@ describe('ScatterSection placeholder (R2-B F-15)', () => {
 })
 
 describe('ScatterSection (VIZ-506)', () => {
-  it.each([
-    ['both off', {}],
-    ['only the catalogue flag', { viz_chart_data_api: true }],
-    ['only the advanced flag', { viz_advanced_charts: true }],
-  ])('%s: nothing is rendered, nothing is requested, no engine is fetched', async (_name, values) => {
-    flags.values = values
-    const { container } = renderSection()
-    await settle()
-    expect(container.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(container.querySelector('[data-lazy-section]')).toBeNull()
-    expect(get).not.toHaveBeenCalled()
-    expect(engine.load).not.toHaveBeenCalled()
-    expect(probe.enabled).toEqual([])
-  })
-
-  it('both flags on: one request for the page scope, min executions and order stated, the window clamped to 90', async () => {
+  it('one request for the page scope, min executions and order stated, the window clamped to 90', async () => {
     const frame = await drawn({ days: 365 })
     expect(scatterCalls()).toEqual([{ min_executions: 5, order: 'failures', project_id: 'p1', days: 90, suite_name: 'Auth' }])
     expect(within(frame).getByRole('heading', { name: SCATTER_TITLE })).toBeInTheDocument()
@@ -397,14 +375,15 @@ describe('ScatterSection: the opt-in 3D view (VIZ-508)', () => {
     view3d.unavailable = null
   })
 
-  it('viz_three_d off: no toggle, the 2D chart as it was', async () => {
+  it('2D is the default: the toggle is offered unpressed, the 2D chart as it was, no 3D view', async () => {
     const frame = await drawn()
-    expect(toggle(frame)).toBeNull()
+    expect(toggle(frame)).toHaveAttribute('aria-pressed', 'false')
+    expect(within(frame).getByRole('button', { name: VIEW_3D_LABEL })).toBe(toggle(frame))
     expect(scatter2d().closest('[inert]')).toBeNull()
+    expect(overlay()).toBeNull()
   })
 
-  it('on: "View in 3D" lays the 3D view OVER the 2D chart, which stays mounted and inert; "Back to 2D" removes it', async () => {
-    flags.values = { ...flags.values, viz_three_d: true }
+  it('"View in 3D" lays the 3D view OVER the 2D chart, which stays mounted and inert; "Back to 2D" removes it', async () => {
     const frame = await drawn()
     engine.instance.dispose.mockClear()
     const button = within(frame).getByRole('button', { name: VIEW_3D_LABEL })
@@ -428,7 +407,6 @@ describe('ScatterSection: the opt-in 3D view (VIZ-508)', () => {
     ['no-webgl', NO_WEBGL_NOTICE],
     ['context-lost', CONTEXT_LOST_NOTICE],
   ] as const)('%s: back to 2D with the notice, as plain text', async (reason, notice) => {
-    flags.values = { ...flags.values, viz_three_d: true }
     const frame = await drawn()
     fireEvent.click(within(frame).getByRole('button', { name: VIEW_3D_LABEL }))
     await waitFor(() => expect(view3d.unavailable).not.toBeNull())
@@ -443,19 +421,10 @@ describe('ScatterSection: the opt-in 3D view (VIZ-508)', () => {
   })
 
   it('a scatter with nothing placed offers no 3D view', async () => {
-    flags.values = { ...flags.values, viz_three_d: true }
     body = wire({ ...CHART, points: [], medians: undefined, excluded: { below_min_executions: 3, no_duration: 0, no_evaluated: 0 } })
     renderSection()
     await waitFor(() => expect(section()?.querySelector('[data-scatter-nothing]')).not.toBeNull())
     expect(section()?.querySelector('[data-scatter-view-toggle]')).toBeNull()
-  })
-
-  it('only viz_three_d: no section at all (the advanced seam comes first)', async () => {
-    flags.values = { viz_three_d: true }
-    const { container } = renderSection()
-    await settle()
-    expect(container.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(get).not.toHaveBeenCalled()
   })
 })
 

@@ -1,9 +1,8 @@
 /**
  * Overview's catalogue sections (Wave 2.6, VIZ-408; plan 2.2 "Overview").
  *
- * Mounted by `OverviewPage` ONLY when `useCatalogueRollout` reads on, and
- * loaded as its own chunk, so a flag-off session runs none of this and
- * downloads none of it. With the flag on it takes the row that held the
+ * Mounted by `OverviewPage` on every visit since Phase D, S1 (no flag), and
+ * loaded as its own chunk. It takes the row that held the
  * Execution-trend card (owner decision OD-4: the pass-rate trend REPLACES it)
  * and adds a lazy row under it:
  *

@@ -90,11 +90,11 @@ const PAGES: RoutePage[] = [
     path: `/coverage/suite?name=${SUITE}&days=30`,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     // Phase D S3: the pass-rate frame always has its overlays; the page asks no flag.
-    // S4: + the test x run heatmap (no flag); the scatter keeps its own gate until S5 (off here).
+    // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag).
     off: null,
     on: SUITE_DETAIL_ON,
     flags: {},
-    frames: { off: null, on: 3 },
+    frames: { off: null, on: 4 },
   },
   {
     name: 'Release gate',
