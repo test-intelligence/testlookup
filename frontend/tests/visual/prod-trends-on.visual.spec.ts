@@ -1,6 +1,6 @@
 /**
  * AFTER baselines of /trends with the catalogue ON (Wave 2.6, VIZ-408, plan
- * 5.2), with `viz_advanced_charts` too so the heatmap is drawn: the existing
+ * 5.2), the heatmap included (no flag asked since Phase D, S4): the existing
  * pass-rate frame with release markers and the overlay row (then with both
  * overlays switched on), the suite series (top 7 + Other, a hostile suite
  * name), the p50/p95 duration band (a p95 gap, an inverted day) and the suite
@@ -15,7 +15,7 @@
 import { expect, test } from '@playwright/test'
 import { assertHermetic, landmark, PINNED_TALL, settle, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
-import { HEATMAP_ON, TRENDS_ON } from './production/fixtures'
+import { TRENDS_ON } from './production/fixtures'
 
 // Compare (VIZ-605) sits between the suite series and the durations, so the
 // page no longer fits 4000 px: the heatmap ended at 4085.
@@ -26,7 +26,6 @@ for (const theme of THEMES) {
     const { api, errors } = await openRollout(page, '/trends', {
       theme,
       handlers: TRENDS_ON,
-      flags: HEATMAP_ON,
       ready: (p) => landmark(p, 'Trend metrics'),
     })
 

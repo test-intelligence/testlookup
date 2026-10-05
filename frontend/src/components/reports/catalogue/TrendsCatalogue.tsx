@@ -13,10 +13,9 @@
  *   2b. **Compare** (VIZ-605) — the suites and releases chosen in the filter
  *      bar on one line chart: by suite, by release, or by suite and release
  *      (colour by suite, dash by release), see `CompareSection`.
- *   3. **Suite pass rate by day** — the heatmap (VIZ-501, Wave 3), only with
- *      `viz_advanced_charts` on as well: the shared `HeatmapSection` over
- *      `/analytics/heatmap?kind=suite_day`, which reads the advanced seam
- *      itself (`useAdvancedRollout`). It has its own request since Wave 3:
+ *   3. **Suite pass rate by day** — the heatmap (VIZ-501, Wave 3;
+ *      unconditional since Phase D, S4): the shared `HeatmapSection` over
+ *      `/analytics/heatmap?kind=suite_day`. It has its own request since Wave 3:
  *      the server ranks, caps and counts the rows (top 40 by failures, no
  *      "Other" row), where the Wave 2.6 heatmap re-read section 1's top-7
  *      series. The suite series request below therefore feeds section 1 only.
@@ -371,7 +370,7 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
           onClose={() => setCustomising(false)}
         />
       ) : null}
-      {/* Its own seam read, lazy placeholder and request: nothing at all with either flag off. */}
+      {/* Its own lazy placeholder and request: nothing is asked until it is near the reader. */}
       <HeatmapSection
         days={days}
         suiteFilter={suiteFilter}

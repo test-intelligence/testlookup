@@ -36,7 +36,8 @@
  * in the same change: Overview left in S1 (its flag-on inventory is
  * `rollout-overview.spec.ts`), Summary and Release gate in S2
  * (`rollout-summary.spec.ts`, `rollout-release-gate.spec.ts`), Trends and
- * Suite detail in S3 (`rollout-trends.spec.ts`, `rollout-suite-detail.spec.ts`).
+ * Suite detail in S3 (`rollout-trends.spec.ts`, `rollout-suite-detail.spec.ts`),
+ * Coverage in S4 (`rollout-coverage-map.spec.ts`, `rollout-heatmaps.spec.ts`).
  *
  * To re-record after a DELIBERATE change to a page's requests:
  *   ROLLOUT_INVENTORY_PRINT=1 npx playwright test --config playwright.ci.config.ts rollout-flag-off
@@ -55,7 +56,6 @@ import {
   type MockedApi,
 } from '../lib/production-pages'
 import {
-  COVERAGE,
   FAILURES,
   NOW,
   PROJECT_ID,
@@ -113,17 +113,6 @@ interface ReportPage {
 }
 
 const PAGES: ReportPage[] = [
-  // Wave 3 (VIZ-206/502, VIZ-205/501 env + release heatmaps): the page as
-  // Wave 2.6 left it, which has no kit frame. The new sections mount below
-  // the suite breakdown, behind both flags.
-  {
-    name: 'Coverage',
-    path: '/coverage',
-    handlers: COVERAGE,
-    ready: (p) => landmark(p, 'Run cadence'),
-    frames: [],
-    headings: ['Suite coverage breakdown', 'Coverage gaps', 'Run cadence'],
-  },
   // Wave 3 (VIZ-207/504 groups and clusters, VIZ-602 drill ladder, VIZ-506
   // project scatter): no kit frame today either.
   {
@@ -168,18 +157,6 @@ const SHELL = [
  * matter, both sides are sorted). Recorded on main @ 71c022e0.
  */
 const INVENTORY: Record<string, string[]> = {
-  // Recorded on main @ 03983f12 (Wave 3 C0). The page's own reads: coverage
-  // and trend over its 30 days, its newest run (`size=1`, the header's suite
-  // badge), the runs list and its saved view. Nothing from
-  // the Wave 3 data layer (`/analytics/heatmap`, `/coverage-map`).
-  Coverage: [
-    ...SHELL,
-    `GET /api/v1/saved-views?project_id=${P}&page=coverage`,
-    `GET /api/v1/analytics/coverage?project_id=${P}&days=30`,
-    `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
-  ],
   // Recorded on main @ 03983f12 (Wave 3 C0). Besides the page's analytics
   // reads: its newest FAILED run, whose suspects are asked for the top
   // failing test's fingerprint, and the Jira metadata behind "Create Jira".

@@ -1,8 +1,9 @@
 /**
  * Cross-filtering (VIZ-603, P2): "Filter page by this" (the readout's button,
  * Shift+Enter, Shift-click) on the LEGACY scope, with both catalogue flags on
- * and `viz_multi_filters` OFF (owner decision 2026-10-04: the multi-filter
- * runtime is off for good).
+ * where a section still reads them (Failures, until Phase D S5; Coverage and
+ * Suite detail's heatmap ask none since S4) and `viz_multi_filters` OFF
+ * (owner decision 2026-10-04: the multi-filter runtime is off for good).
  *
  *   - a suite mark sets the page's own "Test suite" select, as the select
  *     spells the suite, REPLACING it; every read after it carries
@@ -150,7 +151,7 @@ test.describe('Cross-filter on the legacy scope, both catalogue flags, multi-fil
     page,
   }) => {
     const console = watchConsoleErrors(page)
-    const { api, errors } = await openRollout(page, '/coverage', { handlers: COVERAGE_ON, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Run cadence') })
+    const { api, errors } = await openRollout(page, '/coverage', { handlers: COVERAGE_ON, ready: (p) => landmark(p, 'Run cadence') })
     await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
     await expect(releaseSelect(page)).toHaveValue('')
     const kinds = section(page, ENV.id).locator('[data-heatmap-kinds]')
@@ -187,7 +188,6 @@ test.describe('Cross-filter on the legacy scope, both catalogue flags, multi-fil
   test('Suite detail: no page suite filter, so no cell offers one', async ({ page }) => {
     await openRollout(page, `/coverage/suite?name=${SUITE}&days=30`, {
       handlers: SUITE_DETAIL_ON,
-      flags: ADVANCED_ON,
       ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     })
     const id = 'heatmap-test_run'

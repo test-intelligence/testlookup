@@ -5,13 +5,15 @@
  * floor (VIZ-106). Since Phase D (S3) the page asks no `viz_chart_data_api`
  * of its own: there is no flag-off page.
  *
- * Wave 3 (plan 2.5, FK4 + FK1): with `viz_advanced_charts` (and, until S4,
- * `viz_chart_data_api`) on, the page's composite (`SuiteDetailAdvanced`, now
- * always mounted) adds two lazy sections for its one suite: the test x run
- * status heatmap (`heatmap-test_run`, `/analytics/heatmap?kind=test_run`) and
- * the test scatter (`scatter-suite`, `/analytics/test-scatter`), plus the
- * sections' unfiltered run probe. The composite asks both lookups whatever
- * their answers. Both sections share the page's one `rows` URL key: only the
+ * Wave 3 (plan 2.5, FK4 + FK1): the page's composite (`SuiteDetailAdvanced`,
+ * always mounted, asking no flag since S4) adds two lazy sections for its one
+ * suite: the test x run status heatmap (`heatmap-test_run`,
+ * `/analytics/heatmap?kind=test_run`, no flag since S4) and the test scatter
+ * (`scatter-suite`, `/analytics/test-scatter`), plus the sections' unfiltered
+ * run probe. The scatter still reads its own gate (`useAdvancedRollout`, both
+ * lookups, asked as soon as its chunk mounts whatever the answers) until S5
+ * removes the Failures-family gates, so the scatter tests still set
+ * `ADVANCED_ON`. Both sections share the page's one `rows` URL key: only the
  * section that opened a selection may answer it (REQUESTS FK4-1), so every
  * rows test asserts ONE panel.
  *
@@ -67,26 +69,31 @@ const PAGE_READS = [
   `GET /api/v1/suites?project_id=${P}`,
 ]
 
+const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
+const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
+
 /**
- * One cold load: the shell (`SHELL_BASE`: the page itself asks no flag since
- * S3), the page's reads, and the composite's two lookups (`useAdvancedRollout`,
- * asked whatever the answers; S4 removes them), and nothing else.
+ * One cold load at 1280 x 2400, every flag answered off: the shell
+ * (`SHELL_BASE`: neither the page nor the heatmap asks a flag since S4), the
+ * scatter's two lookups (its own `useAdvancedRollout`, asked whatever the
+ * answers; S5 removes them), the page's reads, and the test x run heatmap
+ * (near at this height since S4 mounts it unconditionally) with its run probe.
+ * The scatter, off, draws and asks nothing else.
  */
 const INVENTORY = [
   ...SHELL_BASE,
   `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
   `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`,
   ...PAGE_READS,
+  HEATMAP_LINE,
+  RUN_PROBE,
 ]
-
-const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
-const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
 
 /** The drawn scatter asks whether it may offer its 3D view (VIZ-508; answered off by the harness). */
 const THREE_D_LOOKUP = `GET /api/v1/feature-flags/viz_three_d/status?project_id=${P}`
 
-/** Both flags, every section near: + the test x run heatmap, the scatter (and its 3D lookup) and the run probe. */
-const INVENTORY_BOTH = [...INVENTORY, HEATMAP_LINE, SCATTER_LINE, THREE_D_LOOKUP, RUN_PROBE]
+/** The scatter on (`ADVANCED_ON`), every section near: + the scatter's read and its 3D lookup. */
+const INVENTORY_BOTH = [...INVENTORY, SCATTER_LINE, THREE_D_LOOKUP]
 
 const HEATMAP = { id: 'heatmap-test_run', title: 'Test results by run' } as const
 const SCATTER = { id: 'scatter-suite', title: 'Test duration vs failure rate' } as const
@@ -97,7 +104,7 @@ async function bodyHeight(frame: Locator): Promise<number> {
 
 test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-test('every viz flag off: the pass-rate frame has trend analysis and zoom, and nothing is asked for it', async ({ page }) => {
+test('the pass-rate frame has trend analysis and zoom, and nothing is asked for it', async ({ page }) => {
   const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready })
   const passRate = sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/)
   await expectDrawn(passRate, 'suite-pass-rate')
@@ -107,14 +114,15 @@ test('every viz flag off: the pass-rate frame has trend analysis and zoom, and n
   const history = frameByHeading(page, /^Run history/)
   await expectDrawn(history, 'run history')
   await expect(history.locator('[data-trend-controls], [data-chart-brush]')).toHaveCount(0)
-  await expect(page.locator('[data-catalogue-section]')).toHaveCount(1)
+  await expect(section(page, 'suite-pass-rate')).toHaveCount(1)
+  await expect(page.locator('[data-catalogue-section]', { has: page.getByRole('heading', { name: /^Run history/ }) })).toHaveCount(0)
   // The VIZ-106 floor.
   expect(await bodyHeight(history), 'run history body').toBeGreaterThanOrEqual(240)
   expect(await bodyHeight(passRate), 'pass-rate body').toBeGreaterThanOrEqual(240)
   await expectNoErrorFrame(page)
   await expectNoTextEscapes(page, 'Suite detail at 1280')
   await networkQuiet(page, api)
-  expectInventory(api, errors, INVENTORY, 'Suite detail, every flag off')
+  expectInventory(api, errors, INVENTORY, 'Suite detail')
 })
 
 // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -142,13 +150,13 @@ test('?days=365 in the URL: the page falls back to its own window, and nothing o
   expectInventory(api, errors, INVENTORY, 'Suite detail at ?days=365')
 })
 
-// ── Wave 3: the test x run heatmap and the test scatter (both flags) ──────
+// ── Wave 3: the test x run heatmap and the test scatter ───────────────────
 
-test.describe('Suite detail, both flags (1280 x 4000)', () => {
+test.describe('Suite detail, the Wave 3 sections (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  const open = (page: Page, flags: Record<string, boolean> = ADVANCED_ON) =>
-    openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags, ready })
+  // ADVANCED_ON for the scatter's own gate only (S5 removes it); the heatmap asks no flag.
+  const open = (page: Page) => openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags: ADVANCED_ON, ready })
 
   test("both sections drawn for the page's suite; exactly their reads, once each", async ({ page }) => {
     const console = watchConsoleErrors(page)
@@ -168,18 +176,8 @@ test.describe('Suite detail, both flags (1280 x 4000)', () => {
     await expectHostileAsText(page, page.locator('[data-suite-advanced]'), 'Suite detail sections')
     await expectNoErrorFrame(page)
     await networkQuiet(page, api)
-    expectInventory(api, errors, INVENTORY_BOTH, 'Suite detail, both flags')
+    expectInventory(api, errors, INVENTORY_BOTH, 'Suite detail, Wave 3 sections')
     expect(console).toEqual([])
-  })
-
-  // The advanced gate stays until S4: with its flags off, the composite draws
-  // nothing and asks no Wave 3 read.
-  test('viz_advanced_charts off: no Wave 3 section, no Wave 3 read', async ({ page }) => {
-    const { api } = await open(page, {})
-    await expectDrawn(sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/), 'suite-pass-rate')
-    await networkQuiet(page, api)
-    await expect(page.locator('[data-suite-advanced], [data-lazy-section]')).toHaveCount(0)
-    expect([...requestsTo(api, HEATMAP_PATH), ...requestsTo(api, TEST_SCATTER_PATH)]).toEqual([])
   })
 
   test("test x run: Enter on a cell opens ONE rows panel, the test's executions (its KEY, top_n bound)", async ({ page }) => {
@@ -275,7 +273,7 @@ test.describe('Suite detail, both flags (1280 x 4000)', () => {
   }
 })
 
-test.describe('Suite detail, both flags, a short screen (1280 x 600)', () => {
+test.describe('Suite detail, the Wave 3 sections, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: the heatmap read waits until it is near, and goes out before it is visible', async ({ page }) => {

@@ -13,6 +13,7 @@ import QuietSectionBoundary from './QuietSectionBoundary'
 
 const reportBoundaryError = vi.hoisted(() => vi.fn())
 vi.mock('@/utils/errorReporting', () => ({ reportBoundaryError }))
+// Only FailuresAdvanced still asks the seam (Phase D, S5 removes it); Coverage and Suite detail ask nothing since S4.
 vi.mock('./useCatalogueRollout', () => ({ useAdvancedRollout: () => true, useCatalogueRollout: () => true }))
 const gone = vi.hoisted(() => () => ({
   default: () => {

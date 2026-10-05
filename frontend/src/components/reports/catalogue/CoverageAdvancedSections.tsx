@@ -1,15 +1,15 @@
 /**
  * The Coverage page's two Wave-3 sections (the lazy half of
  * `CoverageAdvanced`): the coverage map behind its `LazySection`, and FK1's
- * heatmap section mounted bare (it owns its `LazySection` and reads its own
- * seam, as its contract asks).
+ * heatmap section mounted bare (it owns its `LazySection`, as its contract
+ * asks).
  *
  * Why a module of its own: the page imports `CoverageAdvanced` EAGERLY, so
- * whatever that file imports statically is in every flag-off first visit of
+ * whatever that file imports statically is in every first visit of
  * Coverage. `LazySection` (and its viewport hook) and two `lazy(import())`
  * preload lists there cost ~0.6 kB gzip of it and one more shared chunk in
  * every page's preload list (measured, integrator I); behind ONE lazy import
- * of this file they cost nothing until both flags are on — the pattern of
+ * of this file they stay off the page's eager chunk — the pattern of
  * `FailuresAdvanced` / `FailuresAdvancedSections`.
  */
 import { Suspense, type ReactElement } from 'react'
@@ -36,7 +36,7 @@ export default function CoverageAdvancedSections({ days, suiteFilter }: Advanced
           <CoverageMapSection days={days} suiteFilter={suiteFilter} />
         </Suspense>
       </LazySection>
-      {/* FK1's section owns its LazySection (and reads its own seam): mounted bare, as its contract asks. */}
+      {/* FK1's section owns its LazySection: mounted bare, as its contract asks. */}
       <Suspense fallback={<Placeholder height={COVERAGE_HEATMAP_SECTION_HEIGHT} />}>
         <HeatmapSection days={days} suiteFilter={suiteFilter} kinds={COVERAGE_HEATMAP_KINDS} />
       </Suspense>

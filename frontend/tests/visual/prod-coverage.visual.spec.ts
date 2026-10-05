@@ -7,11 +7,14 @@
  * and suite x release heatmaps): captured with every flag off, before any
  * Wave 3 code, so the flag-off page after the wave is proved unchanged. It
  * is captured last, after the Wave 2.5 regions, so their inputs are unchanged.
+ * Phase D, S4: the Wave 3 sections mount unconditionally (no flag is asked),
+ * so the page is opened with their answers (`COVERAGE_ON`); they sit below
+ * the body grid, so the three regions are the same pixels.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
 import { assertHermetic, landmark, openProductionPage, PINNED, THEMES, visualRegion } from '../lib/production-pages'
-import { COVERAGE, NOW, PROJECT_ID, USER } from './production/fixtures'
+import { COVERAGE_ON, NOW, PROJECT_ID, USER } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -23,7 +26,7 @@ for (const theme of THEMES) {
       me: USER,
       user: USER,
       projectId: PROJECT_ID,
-      handlers: COVERAGE,
+      handlers: COVERAGE_ON,
       ready: (p) => landmark(p, 'Run cadence'),
     })
 

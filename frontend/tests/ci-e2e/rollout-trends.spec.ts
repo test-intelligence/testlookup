@@ -1,24 +1,23 @@
 /**
  * /trends and its catalogue (Wave 2.6, VIZ-408; plan 2.2 "Trends", 5.3). Since
- * Phase D (S3) the page asks no `viz_chart_data_api` of its own: the pass-rate
- * frame always has trend analysis, zoom and release markers, and three
- * sections always sit below the body grid, each mounted (and asking) only
- * once it is near:
+ * Phase D the page asks no chart flag at all (S3: the page itself; S4: the
+ * heatmap): the pass-rate frame always has trend analysis, zoom and release
+ * markers, and three sections always sit below the body grid, each mounted
+ * (and asking) only once it is near:
  *
  *   - Pass rate by suite: `chart-data` pass_rate, day x suite, top 7 + Other;
  *   - Test duration p50 / p95: two `chart-data` day series;
- *   - Suite pass rate by day: the heatmap, ONLY with `viz_advanced_charts` as
- *     well. Wave 3 (VIZ-501, FK1) gave it its own read,
- *     `/analytics/heatmap?kind=suite_day` (the server's top suites by
- *     failures, the cut stated, no "Other" row), so with both flags the page
- *     makes 3 chart-data requests and 1 heatmap request; the suite series'
- *     request feeds the multi-series only.
+ *   - Suite pass rate by day: the heatmap. Wave 3 (VIZ-501, FK1) gave it its
+ *     own read, `/analytics/heatmap?kind=suite_day` (the server's top suites
+ *     by failures, the cut stated, no "Other" row), so the page makes 3
+ *     chart-data requests and 1 heatmap request; the suite series' request
+ *     feeds the multi-series only.
  *
  * Plus the unfiltered "ever had a run?" probe (`/runs?page=1&size=1`, no days).
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark, type FlagMap } from '../lib/production-pages'
+import { landmark } from '../lib/production-pages'
 import {
   daysOnTheWire,
   expectDrawn,
@@ -37,7 +36,6 @@ import {
 import { TALL_VIEWPORT } from '../lib/production-pages'
 import {
   CHART_DATA_PATH,
-  HEATMAP_ON,
   HEATMAP_PATH,
   HOSTILE_NAME,
   PROJECT_ID,
@@ -57,17 +55,14 @@ const HEATMAP_Q = `kind=suite_day&project_id=${P}&days=14`
 const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
 
 /**
- * One cold load. The shell (`SHELL_BASE`: the page itself asks no flag since
- * S3), the page's own reads (one window: the Wave 2.6 double-fetch fix), the
- * heatmap's two lookups (`useAdvancedRollout`, read inside the catalogue chunk
- * whatever the answers; S4 removes them), the three chart-data requests and
- * the probe. The markers read the top bar's cached release list
+ * One cold load, every section near. The shell (`SHELL_BASE`: nothing on the
+ * page asks a flag since S4), the page's own reads (one window: the Wave 2.6
+ * double-fetch fix), the three chart-data requests, the heatmap's own request
+ * and the probe. The markers read the top bar's cached release list
  * (`useReleases(..., { cached: true })`), so it is asked once.
  */
 const INVENTORY = [
   ...SHELL_BASE,
-  `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
-  `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`,
   `GET /api/v1/saved-views?project_id=${P}&page=trends`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
   `GET /api/v1/metrics/summary?project_id=${P}&days=14`,
@@ -79,10 +74,8 @@ const INVENTORY = [
   `GET ${CHART_DATA_PATH}?${SUITES_Q}`,
   `GET ${CHART_DATA_PATH}?${P50_Q}`,
   `GET ${CHART_DATA_PATH}?${P95_Q}`,
+  `GET ${HEATMAP_PATH}?${HEATMAP_Q}`,
 ]
-
-/** With the heatmap on (Wave 3): the same, plus the heatmap's own request. */
-const INVENTORY_HEATMAP = [...INVENTORY, `GET ${HEATMAP_PATH}?${HEATMAP_Q}`]
 
 const SECTIONS: [string, string][] = [
   ['trends-pass-rate', 'Pass rate trend'],
@@ -108,18 +101,18 @@ function watchEcharts(page: Page): string[] {
   return seen
 }
 
-async function openTrends(page: Page, flags: FlagMap = {}, days?: number) {
-  return openRollout(page, '/trends', { handlers: TRENDS_ON, flags, ready, days })
+async function openTrends(page: Page, days?: number) {
+  return openRollout(page, '/trends', { handlers: TRENDS_ON, ready, days })
 }
 
 test.describe('Trends, everything on screen (1280 x 4000)', () => {
   test.use({ viewport: { ...TALL_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  test('both flags: four sections with their headings, drawn; the heatmap asks /analytics/heatmap once, the series chart-data once', async ({
+  test('four sections with their headings, drawn; the heatmap asks /analytics/heatmap once, the series chart-data once', async ({
     page,
   }) => {
     const echarts = watchEcharts(page)
-    const { api, errors } = await openTrends(page, HEATMAP_ON)
+    const { api, errors } = await openTrends(page)
     for (const [id, title] of [...SECTIONS, HEATMAP]) {
       await expect(section(page, id), id).toHaveCount(1)
       await expect(section(page, id).getByRole('heading', { level: 3, name: title, exact: true })).toBeVisible()
@@ -149,38 +142,17 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
     await networkQuiet(page, api)
     expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('group_by=suite'))).toHaveLength(1)
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([`GET ${HEATMAP_PATH}?${HEATMAP_Q}`])
-    expectInventory(api, errors, INVENTORY_HEATMAP, 'Trends, both flags')
-  })
-
-  // S3: every viz flag off, the page still draws its catalogue and the
-  // analysis frame (no flag-off page any more). The heatmap still needs both
-  // advanced lookups (S4 removes that gate): off, it draws no section, no
-  // placeholder and loads no ECharts.
-  test('every viz flag off: the catalogue and the analysis frame draw; no heatmap, no placeholder for it, no ECharts download', async ({ page }) => {
-    const echarts = watchEcharts(page)
-    const { api, errors } = await openTrends(page)
-    for (const [id, title] of SECTIONS) await expectDrawn(sectionFrame(page, id, title), id)
-    const passRate = sectionFrame(page, 'trends-pass-rate', 'Pass rate trend')
-    await expect(passRate.locator('[data-trend-controls]')).toBeVisible()
-    await expect(passRate.locator('[data-chart-brush]')).toBeVisible()
-    await networkQuiet(page, api)
-    await expect(section(page, HEATMAP[0])).toHaveCount(0)
-    await expect(page.locator(`[data-lazy-section="${HEATMAP[0]}"]`)).toHaveCount(0)
-    await expect(page.getByRole('heading', { name: HEATMAP[1] })).toHaveCount(0)
-    expect(echarts, 'ECharts modules requested without the heatmap').toEqual([])
-    // The heatmap asked nothing but its two lookups: no /analytics/heatmap.
-    expect(requestsTo(api, HEATMAP_PATH)).toEqual([])
-    expectInventory(api, errors, INVENTORY, 'Trends, every flag off')
+    expectInventory(api, errors, INVENTORY, 'Trends')
   })
 
   // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
   // new sections' subtree only (the page's own pre-existing findings are not
   // this wave's; see plan 5.5 on the lab muted token), in both themes the
-  // harness renders, with both flags so the heatmap is audited too. No
+  // harness renders, the heatmap included. No
   // allowlist: R2 measured 0 violations here.
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe: the catalogue sections, every impact, no violation (${theme})`, async ({ page }) => {
-      const { api } = await openRollout(page, '/trends', { handlers: TRENDS_ON, flags: HEATMAP_ON, ready, theme })
+      const { api } = await openRollout(page, '/trends', { handlers: TRENDS_ON, ready, theme })
       for (const [id, title] of [...SECTIONS, HEATMAP]) await expectDrawn(sectionFrame(page, id, title), id)
       await networkQuiet(page, api)
       await expectNoBlockingViolations(page, theme, [], ['[data-catalogue-section]'])
@@ -188,12 +160,12 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
   }
 
   test('the stored window is 365 days: every request on the wire asks for at most 90', async ({ page }) => {
-    const { api, errors } = await openTrends(page, HEATMAP_ON, 365)
+    const { api, errors } = await openTrends(page, 365)
     for (const [id, title] of [...SECTIONS, HEATMAP]) await expectDrawn(sectionFrame(page, id, title), id)
     await networkQuiet(page, api)
     expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
     // Trends opens on its own 14 days whatever was stored: one window, no double fetch.
-    expectInventory(api, errors, INVENTORY_HEATMAP, 'Trends at a stored 365 days')
+    expectInventory(api, errors, INVENTORY, 'Trends at a stored 365 days')
   })
 })
 
@@ -201,7 +173,7 @@ test.describe('Trends, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no chart-data and no probe until a section is near, and asked before it is visible', async ({ page }) => {
-    const { api, errors } = await openTrends(page, HEATMAP_ON)
+    const { api, errors } = await openTrends(page)
     const chartData = (query: string) => () => requestsTo(api, CHART_DATA_PATH).filter((l) => l.endsWith(query)).length
     await networkQuiet(page, api)
     expect(requestsTo(api, CHART_DATA_PATH), 'chart-data before any section is near').toEqual([])

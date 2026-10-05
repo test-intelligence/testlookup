@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: the Coverage, Suite detail and Trends heatmap sections lose their flag gates (Phase D, S4)
+
+**Coverage's Wave 3 sections, the Trends heatmap and Suite detail's test x
+run heatmap draw on every load.** Migration 0195 turned the chart flags on
+everywhere, so Phase D deletes the flag-off code. S4 removes the advanced
+sections' own `useAdvancedRollout` gates outside Failures. The Failures
+family (`FailuresAdvanced`, `FailureGroupsSection`, `FailuresDrill`,
+`ScatterSection`, `StatusFlowSection`, the Explorer) keeps its gates until S5,
+and the seam file stays until S6. Plan: `docs/viz-work/phaseD-plan.md` §2.
+
+- **`CoverageAdvanced.tsx`** asks no flag: both gates (`useCatalogueRollout`
+  and the inner `useAdvancedRollout`) are gone, and the sections chunk mounts
+  unconditionally behind its `QuietSectionBoundary` and height-holding
+  Suspense fallback. `CoveragePage.tsx` is unchanged: it never asked a flag
+  itself, so the Coverage page no longer asks one at all.
+- **`CoverageMapSection.tsx`** and **`HeatmapSection.tsx`** no longer read the
+  seam. The heatmap still renders nothing for an empty `kinds` list.
+- **`SuiteDetailAdvanced.tsx`** no longer reads the seam; it still renders
+  nothing without a suite. Suite detail still makes the two flag lookups,
+  because the test scatter it mounts keeps its own gate until S5.
+- Cross-filter (`useCrossFilter`, `PageSuiteTargetContext`) and the Views
+  button are unchanged. Comments in `TrendsCatalogue`, `CoverageAdvancedSections`,
+  `SuiteDetailAdvancedSections` and `sectionContracts` now describe the
+  ungated sections.
+- **Unit tests:** the flag-off cases and seam/flag mocks are gone from
+  `CoverageAdvanced(.quiet)`, `CoverageMapSection`, `HeatmapSection`,
+  `SuiteDetailAdvanced(.quiet)`, `TrendsCatalogue` and `CoveragePage`.
+  `CoverageAdvanced.test` now asserts that no flag is looked up.
+  `QuietSectionBoundary.composites` and `rowsOwnership` keep their seam mock
+  for `FailuresAdvanced` and `ScatterSection`.
+- **e2e:**
+  - `rollout-flag-off.spec.ts` no longer lists Coverage; only Failures is left.
+  - `rollout-coverage-map` and `rollout-heatmaps` set no flags. The Coverage
+    inventory starts from `SHELL_BASE` with no lookup, and its two flag-matrix
+    tests are deleted.
+  - `rollout-trends`: the inventory is `SHELL_BASE` plus the page's reads, with
+    no flag lookup; the heatmap's request is always part of it. The
+    "every viz flag off: ... no heatmap" test is deleted.
+  - `rollout-suite-detail`: the "`viz_advanced_charts` off: no Wave 3 section"
+    test is deleted. The inventory keeps the two lookups (asked by the
+    scatter's own gate, S5) and now includes the test x run heatmap and the
+    run probe, which mount at 2,400 px. The scatter tests keep
+    `ADVANCED_ON` for the scatter's gate only.
+  - `rollout-cross-filter` (Coverage, Suite detail), `rollout-presentation` and
+    `rollout-responsive` (Trends) set no flags. In both of the latter Suite
+    detail now draws 3 frames (the heatmap joins the pass-rate and run history
+    frames). The Coverage `lcp.spec` off cell uses `COVERAGE_ON`.
+- **Visual:**
+  - `prod-coverage` uses `COVERAGE_ON`. `prod-coverage-on` and `prod-trends-on`
+    set no flags, and `prod-suite-detail-on` keeps `ADVANCED_ON` for the
+    scatter only.
+  - No PNG is expected to change. The sections mount below every captured
+    region. A local A/B, with the sections module stubbed versus real, gave
+    byte-identical coverage-verdict, cadence, breakdown, suite-run-history and
+    suite pass-rate shots, and the scroller width did not change.
+
 ## Unreleased - Visualization Upgrade: Trends and Suite detail lose their flag-off paths (Phase D, S3)
 
 **Trends and Suite detail draw their catalogue on every load.** Migration

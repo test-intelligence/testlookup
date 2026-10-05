@@ -1,8 +1,8 @@
 /**
  * The Trends catalogue sections (Wave 2.6, VIZ-408; the heatmap swapped to
- * `/analytics/heatmap?kind=suite_day` in Wave 3, VIZ-501), with only the
- * network, the flag lookups, the existence probe and the canvas engine
- * mocked: the seam, the scope builder, the chart pipeline and the frames are
+ * `/analytics/heatmap?kind=suite_day` in Wave 3, VIZ-501; no flag since
+ * Phase D, S4), with only the network, the existence probe and the canvas
+ * engine mocked: the scope builder, the chart pipeline and the frames are
  * the real ones, so "which request feeds which view" and "the window is
  * clamped on the wire" are read off the requests themselves.
  */
@@ -28,13 +28,6 @@ import { ONE_DAY_HEATMAP_REASON } from './HeatmapSection.model'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
-
-/** The two catalogue flags, read through the REAL seam (`useCatalogueRollout.ts`). */
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 
 /** The unfiltered probe: `true` once asked; records whether it was asked. */
 const probe = vi.hoisted(() => ({ enabled: [] as boolean[] }))
@@ -85,8 +78,6 @@ import TrendsCatalogue, {
 
 const CHART_DATA_URL = '/api/v1/analytics/chart-data'
 const HEATMAP_URL = '/api/v1/analytics/heatmap'
-const CATALOGUE = 'viz_chart_data_api'
-const ADVANCED = 'viz_advanced_charts'
 
 const META = { ...heatmapFrameMeta, definitions: { grain: 'execution_row' } } as EnvelopeMeta
 const DAYS = heatmapFrameWorstFirst.series.x_keys ?? []
@@ -156,7 +147,6 @@ const settle = () =>
 const section = (id: string) => document.querySelector(`[data-catalogue-section="${id}"]`) as HTMLElement | null
 
 beforeEach(() => {
-  flags.values = { [CATALOGUE]: true, [ADVANCED]: true }
   probe.enabled = []
   durationFrames.length = 0
   responses = {
@@ -264,29 +254,6 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
       { metric: 'duration_p95', group_by: 'day', project_id: 'p1', days: 30, suite_name: 'checkout' },
     ])
     expect(metricCalls('pass_rate')[0]).toMatchObject({ days: 30, suite_name: 'checkout' })
-  })
-
-  it('needs BOTH flags for the heatmap: with only the catalogue flag, no heatmap and no engine', async () => {
-    flags.values = { [CATALOGUE]: true, [ADVANCED]: false }
-    renderCatalogue({ days: 14 })
-    await waitFor(() => expect(metricCalls('pass_rate')).toHaveLength(1))
-    await screen.findByRole('heading', { name: SUITE_SERIES_TITLE })
-    expect(section('trends-heatmap')).toBeNull()
-    expect(screen.queryByRole('heading', { name: HEATMAP_TITLE })).toBeNull()
-    expect(document.querySelector('[data-lazy-section="trends-heatmap"]')).toBeNull()
-    await settle()
-    expect(heatmapCalls()).toEqual([])
-    expect(engine.load).not.toHaveBeenCalled()
-  })
-
-  it('the advanced flag alone draws no heatmap either', async () => {
-    flags.values = { [CATALOGUE]: false, [ADVANCED]: true }
-    renderCatalogue({ days: 14 })
-    await settle()
-    expect(section('trends-heatmap')).toBeNull()
-    expect(document.querySelector('[data-lazy-section="trends-heatmap"]')).toBeNull()
-    expect(heatmapCalls()).toEqual([])
-    expect(engine.load).not.toHaveBeenCalled()
   })
 
   it('clamps the window on the wire: 365 days never reaches a request (the heatmap keeps 90)', async () => {

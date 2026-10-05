@@ -1,7 +1,6 @@
 /**
- * The coverage map section (VIZ-502) with only the network, the flag lookups,
- * the existence probe, the project and the canvas engine mocked: the seam,
- * the drill path in the URL, the scope builder, the chart pipeline, the frame,
+ * The coverage map section (VIZ-502) with only the network, the existence
+ * probe, the project and the canvas engine mocked: the drill path in the URL, the scope builder, the chart pipeline, the frame,
  * the treemap's keyboard path and the rows panel are the real ones, so "which
  * level is asked for" and "where the reader lands" are read off the requests,
  * the address bar and the focused element.
@@ -31,13 +30,6 @@ import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
-
-/** The two catalogue flags, read through the REAL seam (`useCatalogueRollout.ts`). */
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 
 vi.mock('./useEverHadRun', () => ({ useEverHadRun: (enabled: boolean) => (enabled ? true : null) }))
 
@@ -212,7 +204,6 @@ async function drawn() {
 }
 
 beforeEach(() => {
-  flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
   project.id = 'p1'
   responses = { '1': LEVEL1, '2': LEVEL2, '3': LEVEL3 }
   pending = {}
@@ -240,21 +231,8 @@ afterEach(() => {
   __resetChartConcurrency()
 })
 
-describe('CoverageMapSection: the flag matrix', () => {
-  it.each([
-    ['every flag off', {}],
-    ['only viz_chart_data_api', { viz_chart_data_api: true }],
-    ['only viz_advanced_charts', { viz_advanced_charts: true }],
-  ])('%s: renders nothing and asks nothing', async (_name, values) => {
-    flags.values = values
-    const { container } = renderSection()
-    await settle()
-    expect(container.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(get).not.toHaveBeenCalled()
-    expect(engine.load).not.toHaveBeenCalled()
-  })
-
-  it('both flags: one level-1 request in the page scope, the frame titled and honestly captioned', async () => {
+describe('CoverageMapSection: the first level', () => {
+  it('one level-1 request in the page scope, the frame titled and honestly captioned', async () => {
     renderSection({ days: 30 })
     await drawn()
     expect(mapCalls()).toEqual([{ depth: 1, project_id: 'p1', days: 30 }])

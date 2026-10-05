@@ -16,9 +16,9 @@
  *     (a composite may `lazyWithRetry(() => import(...))` it);
  *   - props may only GROW, and only by OPTIONAL props (a composite written
  *     against this file must keep compiling);
- *   - the section reads the advanced seam itself (`useAdvancedRollout()`), so
- *     a composite never names a flag, and with either flag off it renders
- *     nothing and requests nothing.
+ *   - a composite never names a flag. The heatmap and coverage map sections
+ *     ask none (Phase D, S4); the Failures-family sections still read the
+ *     advanced seam themselves (`useAdvancedRollout()`) until S5.
  *
  * Types only: nothing here reaches a bundle.
  */

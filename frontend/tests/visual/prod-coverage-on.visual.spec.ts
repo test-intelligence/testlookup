@@ -1,9 +1,9 @@
 /**
- * AFTER baselines of /coverage with BOTH flags on (Wave 3, plan 5 "Visual"):
- * the test coverage map at level 1 (pass rate colour, the gap patterns and
- * their legend, the EPIC caption) and at a suite's classes, and the suite x
- * environment / suite x release heatmaps. Flag-off Coverage PNGs are not
- * touched (the composite renders nothing).
+ * AFTER baselines of /coverage's Wave 3 sections (plan 5 "Visual"): the test
+ * coverage map at level 1 (pass rate colour, the gap patterns and their
+ * legend, the EPIC caption) and at a suite's classes, and the suite x
+ * environment / suite x release heatmaps. No flag is asked since Phase D, S4
+ * (the sections mount unconditionally), so none is set.
  *
  * Lands WITH its PNGs (`visual-baselines.yml`, Linux only): a flag-on spec
  * never sits on the branch before them. Harness: `tests/lib/production-pages.ts`.
@@ -11,7 +11,7 @@
 import { expect, test } from '@playwright/test'
 import { assertHermetic, landmark, PINNED_TALL, THEMES, visualRegion } from '../lib/production-pages'
 import { bringNear, expectDrawn, expectNoErrorFrame, mountEverySection, openRollout, section, sectionFrame } from '../lib/rollout'
-import { ADVANCED_ON, COVERAGE_ON } from './production/fixtures'
+import { COVERAGE_ON } from './production/fixtures'
 
 test.use(PINNED_TALL)
 
@@ -22,9 +22,9 @@ const ENV = 'coverage-on-heatmap-env'
 const RELEASE = 'coverage-on-heatmap-release'
 
 for (const theme of THEMES) {
-  test(`coverage regions, both flags — ${theme}`, async ({ page }) => {
+  test(`coverage Wave 3 regions — ${theme}`, async ({ page }) => {
     const ready = (p: typeof page) => landmark(p, 'Run cadence')
-    const { api, errors } = await openRollout(page, '/coverage', { theme, handlers: COVERAGE_ON, flags: ADVANCED_ON, ready })
+    const { api, errors } = await openRollout(page, '/coverage', { theme, handlers: COVERAGE_ON, ready })
     await mountEverySection(page, api)
     const map = sectionFrame(page, 'coverage-map', 'Test coverage map')
     const heatmap = sectionFrame(page, 'heatmap-suite_environment', 'Suite pass rate by environment')

@@ -31,7 +31,6 @@ import {
 } from '../lib/rollout'
 import {
   GATE_CLUSTERS,
-  HEATMAP_ON,
   OVERVIEW_ON,
   releaseGateOn,
   RUN_ID,
@@ -172,8 +171,8 @@ interface RoutePage {
 const PAGES: RoutePage[] = [
   // Phase D S1: Overview asks no flag; its catalogue mounts unconditionally.
   { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: {}, frames: 4 },
-  // Phase D S3: Trends asks no flag of its own; HEATMAP_ON draws the heatmap (advanced, until S4).
-  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: HEATMAP_ON, frames: 6 },
+  // Phase D S3/S4: Trends asks no flag at all; the heatmap mounts unconditionally.
+  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: {}, frames: 6 },
   // Phase D S2: Summary and Release gate ask no flag either (Suite detail: S3).
   {
     name: 'Summary',
@@ -189,7 +188,8 @@ const PAGES: RoutePage[] = [
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     handlers: SUITE_DETAIL_ON,
     flags: {},
-    frames: 2,
+    // S4: + the test x run heatmap (no flag); the scatter still has its own gate until S5 (off here).
+    frames: 3,
   },
   {
     name: 'Release gate',

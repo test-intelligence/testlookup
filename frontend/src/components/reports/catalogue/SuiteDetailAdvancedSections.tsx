@@ -3,11 +3,11 @@
  * Suspense (the lazy half of `SuiteDetailAdvanced`).
  *
  * Why a module of its own: the page imports `SuiteDetailAdvanced` EAGERLY, so
- * everything that file imports statically is in every flag-off first visit of
+ * everything that file imports statically is in every first visit of
  * Suite detail. Two `lazy(import())` calls and `SectionErrorBoundary` there
  * cost ~2 kB gzip of it (the boundary's chunk plus each lazy import's preload
  * list, measured, integrator I); behind ONE lazy import of this file they
- * cost nothing until both flags are on — the pattern of `FailuresAdvanced` /
+ * stay off the page's eager chunk — the pattern of `FailuresAdvanced` /
  * `FailuresAdvancedSections`.
  */
 import { Suspense, type ReactElement } from 'react'

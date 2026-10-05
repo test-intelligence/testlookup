@@ -7,7 +7,6 @@ import { act, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import SuiteDetailAdvanced from './SuiteDetailAdvanced'
 
-vi.mock('./useCatalogueRollout', () => ({ useAdvancedRollout: () => true }))
 vi.mock('./SuiteDetailAdvancedSections', () => ({
   default: () => {
     throw new Error('chunk gone')
