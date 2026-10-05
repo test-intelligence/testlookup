@@ -20,9 +20,10 @@
  * WHAT A MARK DOES (OD-2): a click or Enter drills (a stacked segment drills
  * into its suite AND status in one step: the AC's "payments failed segment");
  * Shift-, Ctrl- or Cmd-click, Shift+Enter or the readout's button "Filter page
- * by this" appends a suite to the page's filter (`useCrossFilter`, only with
- * `viz_multi_filters` on); "View rows" opens the executions behind the mark
- * (`RowsPanel`), at any level and the only action at the leaf.
+ * by this" sets the page's "Test suite" select to that suite (`useCrossFilter`,
+ * through the page's `PageSuiteTargetContext`; absent without one); "View
+ * rows" opens the executions behind the mark (`RowsPanel`), at any level and
+ * the only action at the leaf.
  *
  * FOCUS: a drill, and a breadcrumb link, move focus to the chart once the new
  * level is drawn (EPIC "focus moves to the chart"); Back and Forward do not

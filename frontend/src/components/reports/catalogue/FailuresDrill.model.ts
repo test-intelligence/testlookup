@@ -195,7 +195,7 @@ const canNameSuite = (mark: ChartMark) => mark.dimension === 'suite' && fold(mar
  * Enter's). The leaf offers "View rows" only (EPIC edge "leaf level reached");
  * "no suite" cannot be named in a request, so it offers its rows only; the
  * page filter is offered for suite marks, and only when the host says the
- * page has one (`viz_multi_filters`, `useCrossFilter`).
+ * page has one (`useCrossFilter`: the page provides its suite select).
  */
 export function ladderIntents(level: LadderLevel, mark: ChartMark, filterOffered: boolean): MarkIntent[] {
   if (fold(mark.value) === OTHER) return []

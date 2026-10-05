@@ -24,6 +24,11 @@
  * present, hatched, and named ("Not run in this window", "Last run unknown",
  * "Never run"), never drawn as a low value. The map is per project: in All
  * Projects mode it says so and asks nothing.
+ *
+ * FILTER (VIZ-603, P2): a suite node also offers "Filter page by this"
+ * (Shift-click, Shift+Enter, the readout's button) when the page provides its
+ * suite select (`useCrossFilter`): it sets the page's "Test suite" select, it
+ * does not drill. A class or a test is never a page filter.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
@@ -58,6 +63,7 @@ import {
   type CoverageColorBy,
 } from '@/components/charts/coverageMap.model'
 import { encodeDrillLevel, ownedRows, readDrillLevels, useDrillPath, writeDrillParams } from '@/hooks/useDrillPath'
+import { useCrossFilter } from '@/hooks/useCrossFilter'
 import { useMultiFiltersEnabled } from '@/store/multiFiltersFlag'
 import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -183,6 +189,16 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
     truncate(used - 1)
   }, [truncate, used])
 
+  // A suite node can also filter the page (its suite select), when the page has one.
+  const cross = useCrossFilter()
+  const offersFilter = cross.offers
+  const applyFilter = cross.apply
+  const markIntents = useCallback(
+    (mark: ChartMark): MarkIntent[] =>
+      mark.dimension === 'test' ? ['rows'] : mark.dimension === 'suite' && offersFilter(mark) ? ['drill', 'filter'] : ['drill'],
+    [offersFilter],
+  )
+
   // The mark behind an open rows panel, while this page view still has it.
   const [rowsMark, setRowsMark] = useState<ChartMark | null>(null)
   const onMarkActivate = useCallback(
@@ -193,9 +209,11 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
       } else if (intent === 'rows' && mark.dimension === 'test') {
         setRowsMark(mark)
         openRows(COVERAGE_ROWS_OWNER, [{ dimension: 'test', value: mark.value }])
+      } else if (intent === 'filter' && mark.dimension === 'suite') {
+        applyFilter(mark)
       }
     },
-    [drill, openRows],
+    [applyFilter, drill, openRows],
   )
 
   const crumbs: BreadcrumbItem[] = useMemo(() => {
@@ -281,6 +299,7 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
             height={COVERAGE_MAP_HEIGHT}
             onLevelUp={used > 0 ? onLevelUp : undefined}
             onMarkActivate={onMarkActivate}
+            markIntents={markIntents}
           />
         ) : null}
       </ChartFrame>

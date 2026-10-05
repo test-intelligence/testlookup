@@ -24,6 +24,7 @@ import {
   coverageEmptyText,
 } from '@/components/charts/coverageMap.model'
 import { DRILL_DROP_WORDS } from '@/hooks/useDrillPath'
+import { PageSuiteTargetContext, type PageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { __resetChartConcurrency } from '@/services/chartApi'
 import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
 import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
@@ -46,6 +47,8 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (selector: (state: { activeProjectId: string }) => unknown) => selector({ activeProjectId: project.id }),
 }))
 vi.mock('@/hooks/useReleaseScope', () => ({ useReleaseScope: () => null }))
+// The cross-filter names a release from the top bar's list: none here (the map draws no release).
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: undefined }) }))
 
 // jsdom has no canvas: the engine is mocked at the registry.
 const engine = vi.hoisted(() => {
@@ -172,12 +175,14 @@ function renderSection({
   entry = '/coverage',
   days = 30,
   suiteFilter = null,
-}: { entry?: string; days?: number; suiteFilter?: string | string[] | null } = {}) {
+  suites = null,
+}: { entry?: string; days?: number; suiteFilter?: string | string[] | null; suites?: PageSuiteTarget | null } = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[entry]}>
       <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000, revalidateOnFocus: false }}>
         <ChartAnnouncerProvider>
-          {children}
+          {/* The Coverage page's suite select (P2): "Filter page by this" is offered only with it. */}
+          <PageSuiteTargetContext.Provider value={suites}>{children}</PageSuiteTargetContext.Provider>
           <LocationProbe />
         </ChartAnnouncerProvider>
       </SWRConfig>
@@ -476,6 +481,62 @@ describe('CoverageMapSection: level by level', () => {
       ]),
     )
     expect(within(frame()).queryByText(DRILL_DROP_WORDS.invalid)).toBeNull()
+  })
+})
+
+describe('CoverageMapSection: filter the page by a suite (VIZ-603, P2)', () => {
+  const setSuite = vi.fn()
+  const suites = (selected = ''): PageSuiteTarget => ({ selected, options: ['Checkout', 'Payments'], set: setSuite })
+  const intents = () => [...document.querySelectorAll('[data-coverage-readout] [data-mark-intent]')].map((b) => b.getAttribute('data-mark-intent'))
+  beforeEach(() => setSuite.mockReset())
+
+  it('no page suite select: a suite node offers its drill only, and Shift+Enter drills', async () => {
+    renderSection()
+    const group = await drawn()
+    group.focus()
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(intents()).toEqual(['drill'])
+    fireEvent.keyDown(group, { key: 'Enter', shiftKey: true })
+    await waitFor(() => expect(drillParams()).toEqual(['suite~payments']))
+    expect(setSuite).not.toHaveBeenCalled()
+  })
+
+  it('with one: a suite node also offers "Filter page by this"; Shift+Enter sets the select as it spells the suite, and does not drill', async () => {
+    renderSection({ suites: suites('Checkout') })
+    const group = await drawn()
+    group.focus()
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(intents()).toEqual(['drill', 'filter'])
+    expect(screen.getByRole('button', { name: 'Filter page by this' })).toBeInTheDocument()
+    fireEvent.keyDown(group, { key: 'Enter', shiftKey: true })
+    expect(setSuite.mock.calls).toEqual([['Payments']])
+    await settle()
+    expect(drillParams()).toEqual([])
+    expect(mapCalls()).toHaveLength(1)
+  })
+
+  it('the readout button does the same; a Shift-click on the node too', async () => {
+    renderSection({ suites: suites() })
+    const group = await drawn()
+    group.focus()
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    fireEvent.click(screen.getByRole('button', { name: 'Filter page by this' }))
+    expect(setSuite.mock.calls).toEqual([['Payments']])
+    const click = engine.listeners.get('click') as (params: unknown) => void
+    act(() => click({ dataIndex: 1, event: { event: { shiftKey: true } } }))
+    expect(setSuite.mock.calls).toEqual([['Payments'], ['Payments']])
+    await settle()
+    expect(drillParams()).toEqual([])
+  })
+
+  it('a class (level 2) or a test (level 3) is never a page filter', async () => {
+    renderSection({ entry: `/coverage?drill=${encodeURIComponent('suite~payments')}`, suites: suites() })
+    const group = await drawn()
+    group.focus()
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(intents()).toEqual(['drill'])
+    fireEvent.keyDown(group, { key: 'Enter', shiftKey: true })
+    expect(setSuite).not.toHaveBeenCalled()
   })
 })
 

@@ -23,6 +23,12 @@
  * project). Those say why in the frame (`not-measured`) and ask nothing.
  * The window goes through `catalogueParams` (at most 90 days on the wire;
  * the 2026-10-02 decision keeps the suite x day heatmap at 90).
+ *
+ * A cell's actions: its rows, and "Filter page by this" (VIZ-603, P2) when
+ * the cell names a suite or release the page can be filtered by
+ * (`useCrossFilter`): a suite x release cell sets the page's "Test suite"
+ * select AND the top bar's release; a suite x day or suite x environment cell
+ * sets the suite. A test x run cell (Suite detail) never offers it.
  */
 import { useCallback, useId, useState, type ReactElement } from 'react'
 import type { DrillLevel } from '@/lib/viz/contracts'
@@ -33,6 +39,7 @@ import HeatmapChartFrame from '@/components/charts/HeatmapChartFrame'
 import { heatmapOrderNote, type HeatmapRowSort } from '@/components/charts/heatmapFromMatrix'
 import { markSelectors, type ChartMark, type MarkIntent } from '@/components/charts/marks'
 import { ownedRows, useDrillPath } from '@/hooks/useDrillPath'
+import { useCrossFilter } from '@/hooks/useCrossFilter'
 import LazySection from './LazySection'
 import RowsPanel from './RowsPanel'
 import { selectorsKey, type RowsExpectation } from './RowsPanel.model'
@@ -60,7 +67,6 @@ const FRAME_CHROME = 150
 
 /** A closed rows panel (one identity: a new `[]` per render would be a new key). */
 const NO_SELECTORS: readonly DrillLevel[] = []
-const markIntents = () => HEATMAP_MARK_INTENTS
 
 /** Wave 3 additions to the pinned props (optional only, `sectionContracts.ts`). */
 export interface HeatmapSectionOwnProps extends HeatmapSectionProps {
@@ -179,14 +185,26 @@ function HeatmapSectionBody({ days, suiteFilter, kinds, title, sectionId }: Heat
   // The clicked cell's title and figures, while this page view still has them.
   const [opened, setOpened] = useState<{ key: string; title: string; expected: RowsExpectation | null } | null>(null)
   const matrix = hasChartData(state) ? state.data.series : null
+  // "Filter page by this" on a cell that names a suite or release the page can be filtered by.
+  const cross = useCrossFilter()
+  const offersFilter = cross.offers
+  const applyFilter = cross.apply
+  const markIntents = useCallback(
+    (mark: ChartMark): MarkIntent[] => [...HEATMAP_MARK_INTENTS, ...(offersFilter(mark) ? (['filter'] as const) : [])],
+    [offersFilter],
+  )
   const onMarkActivate = useCallback(
     (mark: ChartMark, intent: MarkIntent) => {
+      if (intent === 'filter') {
+        applyFilter(mark)
+        return
+      }
       if (intent !== 'rows') return
       const selectors = markSelectors(mark)
       setOpened({ key: selectorsKey(selectors), ...heatmapOpenedRows(spec, mark, selectors, matrix, asOf) })
       drill.openRows(sectionId, selectors)
     },
-    [asOf, drill, matrix, sectionId, spec],
+    [applyFilter, asOf, drill, matrix, sectionId, spec],
   )
   const rowsSelectors = heatmapOwnRows(spec, ownedRows(drill, sectionId))
   const clicked = opened !== null && rowsSelectors.length > 0 && selectorsKey(rowsSelectors) === opened.key ? opened : null

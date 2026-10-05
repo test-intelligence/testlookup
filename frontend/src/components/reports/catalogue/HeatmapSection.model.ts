@@ -176,5 +176,5 @@ export function heatmapOpenedRows(
   return { title: mark.label, expected: { y: mark.n, n: mark.n, asOf } }
 }
 
-/** Every heatmap cell offers one action: its rows (there is no level below a cell). */
+/** Every heatmap cell offers its rows (there is no level below a cell); the host adds the page filter where a cell can be one. */
 export const HEATMAP_MARK_INTENTS = ['rows'] as const
