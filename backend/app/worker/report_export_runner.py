@@ -14,7 +14,9 @@ transaction). This module is what ``generate_report_export`` and
 """
 from __future__ import annotations
 
+import time
 import uuid
+from typing import Optional
 
 import structlog
 
@@ -26,7 +28,24 @@ logger = structlog.get_logger(__name__)
 
 
 async def run_export_job(export_id: uuid.UUID) -> str:
-    """The worker's whole job. Returns the final status for the task result."""
+    """The worker's whole job. Returns the final status for the task result.
+
+    Counted once per job in ``testlookup_report_export_jobs_total`` with the
+    status it returns (``export_svc.EXPORT_JOB_OUTCOMES``): the job catches its
+    own errors, so Celery reports success for a failed export and only this
+    counter tells them apart. A job that raises out of here (its failure could
+    not even be recorded) counts as ``failed``.
+    """
+    job: dict[str, Optional[str]] = {"format": None}
+    outcome = ReportExportStatus.FAILED.value
+    try:
+        outcome = await _run(export_id, job)
+        return outcome
+    finally:
+        export_svc.count_export_job(job["format"], outcome)
+
+
+async def _run(export_id: uuid.UUID, job: dict[str, Optional[str]]) -> str:
     from app.db.postgres import AsyncSessionLocal
     from app.db.storage import get_storage_provider
 
@@ -40,9 +59,16 @@ async def run_export_job(export_id: uuid.UUID) -> str:
             export = await db.get(ReportExport, export_id)
             if export is None:
                 return "skipped"
+            job["format"] = export.format
             user, scope = await export_svc._requester_scope(db, export)
             mode: SummaryMode = "latest" if (export.params or {}).get("mode") == "latest" else "window"
-            rendered = await export_svc.render_summary_export(db, scope, mode, export.format)
+            started = time.perf_counter()
+            try:
+                rendered = await export_svc.render_summary_export(db, scope, mode, export.format)
+            finally:
+                export_svc.observe_export_render(
+                    export.format, "background", time.perf_counter() - started
+                )
             key = export_svc.object_key(export, rendered.filename)
             await get_storage_provider().put_object(key, rendered.content, content_type=rendered.media_type)
             if not await export_svc.complete(db, export_id, attempt, key=key, rendered=rendered):

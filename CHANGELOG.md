@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade, Phase D: metrics and a Grafana row (G1, G2)
+
+**Three metrics that were missing, each with a producer and a test, and a
+new "Analytics & charts (Visualization Upgrade)" row on the overview
+dashboard.** Plan: `docs/viz-work/phaseD-plan.md`, section 4.
+
+- **The metrics** (`backend/app/core/metrics.py`):
+  - `testlookup_analytics_rate_limited_total{route}`: one per 429 from
+    `analytics_read_layer.enforce_rate_limit`. `route` is the path template
+    the limit is keyed on; a request with no matched route counts as
+    `unmatched`, so a raw path with an id never becomes a series. The routes
+    in `RATE_LIMITED_ROUTES` export a 0 series from import.
+  - `testlookup_report_export_jobs_total{format,outcome}`: one per
+    background export job, with what `run_export_job` returns (`completed`,
+    `failed`, `superseded`, `skipped`; `EXPORT_JOB_OUTCOMES`). The runner
+    catches its own errors, so Celery reports a failed export as a success;
+    this counter is where the failure shows. A job that raises out of the
+    runner counts as `failed`. A skipped job never reads its row, so its
+    `format` is `unknown`. Not `report_exports_total`, which counts other
+    downloads.
+  - `testlookup_report_export_render_seconds{format,path}`: every
+    `render_summary_export`, successful or not, with `path=sync` on the
+    download-now route and `path=background` in the worker (the worker's
+    existing multiprocess exporter publishes it).
+- **The row** (`infra/monitoring/grafana/dashboards/testlookup-overview.json`,
+  row 60 at y=65, panels 61-69): miss p95 by route (yellow 0.5 s, red 1.5 s),
+  hit p95, cache hit ratio, timeouts and errors, 429s by route, degraded
+  reads by reason, epoch bump failures (1h), export jobs by outcome (1h),
+  export render p95. No alerts or budgets yet (L3).
+- **Tests:**
+  - `test_analytics_read_layer.py`: a real 429 through FastAPI routing
+    carries `Retry-After` and moves the counter by one under the template.
+  - `test_report_export_jobs.py`: each outcome is counted exactly once, and
+    renders are timed on both paths.
+  - `test_grafana_dashboard_metrics_are_declared.py` (new ratchet): every
+    `testlookup_*` series a panel reads is one a declared metric exports
+    (Counter `_total`, Histogram `_bucket`/`_count`/`_sum`); panel ids are
+    unique; grid rectangles do not overlap.
 ## Unreleased - Visualization Upgrade: "Filter page by this" on the top bar and the page suite (P2)
 
 **A chart mark filters the page again, with the multi-filter runtime off for

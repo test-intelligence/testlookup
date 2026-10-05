@@ -19,6 +19,9 @@ pytest.importorskip("fastapi")
 
 from app.core import analytics_read_layer as layer  # noqa: E402
 from app.core.analytics_errors import AnalyticsQueryError  # noqa: E402
+# Module level: ``from __future__ import annotations`` makes FastAPI resolve a
+# route's annotations in this module's globals.
+from fastapi import Request as HttpRequest  # noqa: E402
 
 pytestmark = pytest.mark.regression
 
@@ -448,6 +451,90 @@ class TestRateLimit:
         assert error.status_code == 429
         assert error.code == "rate_limited"
         assert int(error.headers["Retry-After"]) > 0
+
+    @pytest.mark.parametrize("named", [False, True], ids=["default-limit", "named-route"])
+    def test_a_429_over_http_is_counted_once_by_route_template(self, monkeypatch, named):
+        """Phase D G1. A 429 was a log line only, and the instrumentator folds
+        it into ``4xx``. Through real routing (so the label comes from the
+        matched route, as in production): the third request is a 429 with
+        ``Retry-After``, and ``testlookup_analytics_rate_limited_total`` moves
+        by exactly one, under the TEMPLATE -- never the id-bearing path."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.core.analytics_errors import analytics_query_error_handler
+        from app.core.metrics import analytics_rate_limited_total
+        from app.main import app as main_app
+
+        template = f"/api/v1/analytics/probe-{uuid.uuid4().hex[:8]}/{{item_id}}"
+        if named:
+            monkeypatch.setitem(layer.RATE_LIMITED_ROUTES, template, "2/minute")
+        user = SimpleNamespace(id=uuid.uuid4())
+
+        mini = FastAPI()
+        mini.state.limiter = main_app.state.limiter
+        mini.add_exception_handler(AnalyticsQueryError, analytics_query_error_handler)
+
+        @mini.get(template)
+        async def _probe(item_id: str, request: HttpRequest):
+            await layer.enforce_rate_limit(
+                request, user, route=layer.route_of(request), limit="2/minute"
+            )
+            return {"ok": item_id}
+
+        before = _counter(analytics_rate_limited_total, route=template)
+        client = TestClient(mini)
+        concrete = template.replace("{item_id}", "42")
+        assert [client.get(concrete).status_code for _ in range(2)] == [200, 200]
+        assert _counter(analytics_rate_limited_total, route=template) == before
+
+        refused = client.get(concrete)
+        assert refused.status_code == 429
+        assert int(refused.headers["Retry-After"]) > 0
+        assert _counter(analytics_rate_limited_total, route=template) == before + 1
+        exported = {
+            sample.labels["route"]
+            for family in analytics_rate_limited_total.collect()
+            for sample in family.samples
+        }
+        assert concrete not in exported, "a raw path became a series"
+
+    def test_a_path_with_no_matched_route_is_never_a_label(self):
+        """``route_of`` falls back to the raw path when nothing matched; that
+        path can carry an id, so it is counted as ``unmatched`` instead."""
+        request = _request(path="/api/v1/analytics/x/123")
+        request.scope["route"] = None
+        assert layer.rate_limited_label(request, "/api/v1/analytics/x/123") == "unmatched"
+        named = "/api/v1/analytics/chart-data"
+        assert layer.rate_limited_label(request, named) == named
+
+    def test_the_named_routes_export_a_zero_series_before_their_first_429(self):
+        from app.core.metrics import analytics_rate_limited_total
+
+        exported = {
+            sample.labels["route"]
+            for family in analytics_rate_limited_total.collect()
+            for sample in family.samples
+            if sample.name.endswith("_total")
+        }
+        assert set(layer.RATE_LIMITED_ROUTES) <= exported
+
+    @pytest.mark.asyncio
+    async def test_a_broken_counter_still_answers_429(self, monkeypatch):
+        from app.core import metrics
+        from app.main import app
+
+        class _Boom:
+            def labels(self, **_kw):
+                raise RuntimeError("registry exploded")
+
+        monkeypatch.setattr(metrics, "analytics_rate_limited_total", _Boom())
+        route = f"/api/v1/analytics/probe-{uuid.uuid4().hex[:8]}"
+        user = SimpleNamespace(id=uuid.uuid4())
+        await layer.enforce_rate_limit(_request(path=route, app=app), user, route=route, limit="1/minute")
+        with pytest.raises(AnalyticsQueryError) as caught:
+            await layer.enforce_rate_limit(_request(path=route, app=app), user, route=route, limit="1/minute")
+        assert caught.value.status_code == 429
 
     @pytest.mark.asyncio
     async def test_two_principals_do_not_share_a_budget(self):

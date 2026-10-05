@@ -496,6 +496,194 @@
       ],
       "title": "Failed Agent Steps",
       "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 },
+      "id": 60,
+      "title": "Analytics & charts (Visualization Upgrade)",
+      "description": "The bounded analytics read layer (backend/app/core/analytics_read_layer.py: cache, statement timeout, per-principal rate limit) and the Summary Report exports (VIZ-607). Every metric here is declared in backend/app/core/metrics.py; tests/regression/test_grafana_dashboard_metrics_are_declared.py fails on a panel that reads an undeclared one.",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "p95 of analytics reads the cache did NOT answer, by route template: the database cost of each chart. Yellow at 0.5s, red at 1.5s.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1.5 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 66 },
+      "id": 61,
+      "options": { "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(testlookup_analytics_query_duration_seconds_bucket{job=\"testlookup-backend\", outcome=\"miss\"}[5m])))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics Miss p95 by Route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "p95 of analytics reads answered from the cache, by route template. A hit pays the epoch read, the Redis GET and the ETag; it should stay far below the miss p95.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 66 },
+      "id": 62,
+      "options": { "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(testlookup_analytics_query_duration_seconds_bucket{job=\"testlookup-backend\", outcome=\"hit\"}[5m])))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics Hit p95 by Route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Share of analytics reads the cache answered, by route template (hits over every read: hit, miss, timeout, error). A ratio that falls while traffic holds means the cache is being bypassed or invalidated; check the degraded-reads panel.",
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 66 },
+      "id": 63,
+      "options": { "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum by (route) (rate(testlookup_analytics_query_duration_seconds_count{job=\"testlookup-backend\", outcome=\"hit\"}[5m])) / sum by (route) (rate(testlookup_analytics_query_duration_seconds_count{job=\"testlookup-backend\"}[5m]))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics Cache Hit Ratio by Route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Analytics reads that ended in a 503 analytics_timeout (the 5s statement timeout) or an error, by route template and outcome.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 74 },
+      "id": 64,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (route, outcome) (increase(testlookup_analytics_query_duration_seconds_count{job=\"testlookup-backend\", outcome=~\"timeout|error\"}[5m]))",
+          "legendFormat": "{{route}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics Timeouts & Errors (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Analytics reads refused with 429 by the per-principal rate limit, by route template (testlookup_analytics_rate_limited_total). The HTTP metrics fold these into 4xx.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 74 },
+      "id": 65,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (route) (increase(testlookup_analytics_rate_limited_total{job=\"testlookup-backend\"}[5m]))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics 429s by Route (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Analytics reads served with one of the read layer's guards inactive (each fails open), by reason: no_scope, epoch_timeout, cache_timeout, cache_write_timeout, statement_timeout_not_applied.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 74 },
+      "id": 66,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (reason) (increase(testlookup_analytics_read_degraded_total{job=\"testlookup-backend\"}[5m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Analytics Degraded Reads by Reason (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Analytics epoch counters that could not be bumped after a committed mutation, last hour, backend and worker together. Each one leaves cached charts stale until their TTL.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 82 },
+      "id": 67,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value" },
+      "targets": [
+        {
+          "expr": "sum(increase(testlookup_analytics_epoch_bump_failures_total[1h]))",
+          "legendFormat": "epoch bump failures",
+          "refId": "A"
+        }
+      ],
+      "title": "Epoch Bump Failures (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Background Summary Report export jobs by the outcome the worker's runner returned (completed, failed, superseded, skipped). Celery reports a failed export as a successful task; this is the only place it shows.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 82 },
+      "id": 68,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum(increase(testlookup_report_export_jobs_total[1h])) by (outcome)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Report Export Jobs by Outcome (1h)",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "p95 of the Summary Report export render (report build plus PDF/XLSX render), by path (sync: the download-now route; background: the worker job) and format. Over 1h: exports are infrequent.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 82 },
+      "id": 69,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, path, format) (rate(testlookup_report_export_render_seconds_bucket[1h])))",
+          "legendFormat": "{{path}} / {{format}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Report Export Render p95 (1h)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
