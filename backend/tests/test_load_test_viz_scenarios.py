@@ -151,6 +151,49 @@ class TestBudgets:
         assert by_name["viz_legacy_metrics_summary"].budget_for("warm") == ("", 0)
         assert by_name["viz_export_sync"].budget_for("-") == ("", 0)
 
+    def test_cold_budgets_come_from_performance_budgets(self, monkeypatch):
+        """Phase D L3: the harness holds no copy of the §5.5 numbers. Move a
+        budget in ``performance_budgets`` and the harness follows."""
+        from app.services import performance_budgets as pb
+
+        for key in harness.VIZ_BUDGET_KEYS:
+            budget = pb.get_budget(key)
+            assert budget is not None, f"{key} is not codified in LATENCY_BUDGETS"
+            assert harness._viz_budget(key) == budget.p95_ms
+        used = {sc.budget_key for sc in harness.VIZ_SCENARIOS if sc.budget_key}
+        assert used == set(harness.VIZ_BUDGET_KEYS)
+
+        moved = [
+            pb.LatencyBudget(b.operation, b.p50_ms, 777, max(b.p99_ms, 777), b.description,
+                             http_handler=b.http_handler)
+            if b.operation == "chart_rows" else b
+            for b in pb.LATENCY_BUDGETS
+        ]
+        monkeypatch.setattr(pb, "LATENCY_BUDGETS", moved)
+        rows = next(s for s in harness.VIZ_SCENARIOS if s.operation == "viz_chart_rows_page1")
+        assert rows.budget_for("cold") == ("chart_rows", 777)
+
+    def test_an_uncodified_key_is_refused_not_skipped(self):
+        cells = [
+            harness.VizCellResult("a", ROUTE, "cold", 1, budget_key="chart_rows", budget_p95_ms=300),
+            harness.VizCellResult("b", ROUTE, "cold", 1, budget_key="no_such_budget",
+                                  budget_p95_ms=harness._viz_budget("no_such_budget")),
+            harness.VizCellResult("c", ROUTE, "cold", 1),  # no budget applies: fine
+        ]
+        assert harness.unresolved_budget_keys(cells) == ["no_such_budget"]
+
+    def test_the_handler_budgets_name_the_real_routes(self):
+        """The three viz budgets an alert reads are keyed by the route template
+        the instrumentator labels ``handler`` with."""
+        from app.main import app
+        from app.services.performance_budgets import get_budget
+
+        paths = {getattr(r, "path", None) for r in app.routes}
+        for key in ("chart_data", "analytics_heatmap", "chart_rows"):
+            budget = get_budget(key)
+            assert budget is not None and budget.http_handler in paths, key
+        assert get_budget("chart_data_rate").http_handler is None  # harness-only
+
 
 # ── Separation from SCENARIOS ───────────────────────────────────────────────
 
