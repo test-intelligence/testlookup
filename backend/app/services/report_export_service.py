@@ -141,6 +141,66 @@ async def render_summary_export(
     return RenderedExport(content=content, filename=filename, media_type=media_type)
 
 
+# ── Metrics (Phase D G1) ─────────────────────────────────────────────────
+
+#: Every ``outcome`` of ``testlookup_report_export_jobs_total``: exactly the
+#: statuses ``report_export_runner.run_export_job`` returns. ``superseded`` is
+#: a late attempt whose result a newer one already owns; ``skipped`` a job
+#: with nothing to claim (a redelivered message, a row already gone).
+EXPORT_JOB_OUTCOMES = ("completed", "failed", "superseded", "skipped")
+
+#: Every ``path`` of ``testlookup_report_export_render_seconds``: ``sync`` is
+#: the download-now route, ``background`` the worker job.
+EXPORT_RENDER_PATHS = ("sync", "background")
+
+#: The ``format`` label when the job ended before it read the row, or the row
+#: names a format this module no longer renders. Bounds the label to
+#: :data:`EXPORTS` plus this one value.
+UNKNOWN_FORMAT = "unknown"
+
+
+def format_label(fmt: Optional[str]) -> str:
+    return fmt if fmt in EXPORTS else UNKNOWN_FORMAT
+
+
+def count_export_job(fmt: Optional[str], outcome: str) -> None:
+    """Count one finished export job. Never raises: telemetry cannot fail a job."""
+    try:
+        from app.core.metrics import report_export_jobs_total
+
+        report_export_jobs_total.labels(format=format_label(fmt), outcome=outcome).inc()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def observe_export_render(fmt: Optional[str], path: str, seconds: float) -> None:
+    """Observe one render. Never raises: telemetry cannot fail an export."""
+    try:
+        from app.core.metrics import report_export_render_seconds
+
+        report_export_render_seconds.labels(format=format_label(fmt), path=path).observe(
+            max(0.0, float(seconds))
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _zero_export_job_series() -> None:
+    """Every (format, outcome) series at 0 from import, so ``increase()`` sees
+    the FIRST failed job instead of a series that appears already at 1."""
+    try:
+        from app.core.metrics import report_export_jobs_total
+
+        for fmt in EXPORTS:
+            for outcome in EXPORT_JOB_OUTCOMES:
+                report_export_jobs_total.labels(format=fmt, outcome=outcome)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_zero_export_job_series()
+
+
 def audit_row(
     *, user: Any, scope: AnalyticsScope, mode: str, fmt: str, size_bytes: int,
     export_id: Optional[uuid.UUID] = None,

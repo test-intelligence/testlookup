@@ -1,13 +1,13 @@
 {
   "http_operations": 562,
   "http_paths": 471,
-  "inventory_files": 3702,
+  "inventory_files": 3703,
   "mcp": {
     "prompt": 7,
     "resource": 11,
     "tool": 68
   },
   "openapi_schemas": 475,
-  "python_modules_parsed": 2034,
+  "python_modules_parsed": 2035,
   "sqlalchemy_tables": 140
 }

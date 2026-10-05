@@ -10,7 +10,7 @@ Get Summary Report
 
 Return the summary report payload for the active project.
 
-Source: [backend/app/routers/summary_report.py:58](../../../backend/app/routers/summary_report.py#L58).
+Source: [backend/app/routers/summary_report.py:59](../../../backend/app/routers/summary_report.py#L59).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -169,7 +169,7 @@ List Summary Report Exports
 
 The reader's own background exports for the project that have not expired, newest first.
 
-Source: [backend/app/routers/summary_report.py:207](../../../backend/app/routers/summary_report.py#L207).
+Source: [backend/app/routers/summary_report.py:213](../../../backend/app/routers/summary_report.py#L213).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -315,7 +315,7 @@ was queued; poll ``GET /exports/{id}`` and download from ``download_url``
 when it completes. ``dispatched: false`` means the worker could not be
 reached: the job stays queued (it is not failed) and can be retried.
 
-Source: [backend/app/routers/summary_report.py:172](../../../backend/app/routers/summary_report.py#L172).
+Source: [backend/app/routers/summary_report.py:178](../../../backend/app/routers/summary_report.py#L178).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -492,7 +492,7 @@ Get Summary Report Export
 
 One background export's status (any member of its project).
 
-Source: [backend/app/routers/summary_report.py:226](../../../backend/app/routers/summary_report.py#L226).
+Source: [backend/app/routers/summary_report.py:232](../../../backend/app/routers/summary_report.py#L232).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_report_export_access.<locals>._check`.
 
@@ -575,7 +575,7 @@ The finished file, through the API (no storage URL leaves the server).
 
 409 until the export has completed; 410 once it has expired.
 
-Source: [backend/app/routers/summary_report.py:236](../../../backend/app/routers/summary_report.py#L236).
+Source: [backend/app/routers/summary_report.py:242](../../../backend/app/routers/summary_report.py#L242).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_report_export_access.<locals>._check`.
 
@@ -669,7 +669,7 @@ Retry Summary Report Export
 
 Re-queue a failed export, or one whose message or worker was lost. 409 otherwise.
 
-Source: [backend/app/routers/summary_report.py:274](../../../backend/app/routers/summary_report.py#L274).
+Source: [backend/app/routers/summary_report.py:280](../../../backend/app/routers/summary_report.py#L280).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_report_export_access.<locals>._check`.
 
@@ -756,7 +756,7 @@ Export Summary Report Pdf
 
 Return the summary report as a downloadable PDF, charts included (VIZ-607).
 
-Source: [backend/app/routers/summary_report.py:110](../../../backend/app/routers/summary_report.py#L110).
+Source: [backend/app/routers/summary_report.py:116](../../../backend/app/routers/summary_report.py#L116).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -913,7 +913,7 @@ Export Summary Report Xlsx
 VIZ-607: the summary report as an Excel workbook: a context sheet, then
 one sheet per part of the report, each with a native chart over its data.
 
-Source: [backend/app/routers/summary_report.py:126](../../../backend/app/routers/summary_report.py#L126).
+Source: [backend/app/routers/summary_report.py:132](../../../backend/app/routers/summary_report.py#L132).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
