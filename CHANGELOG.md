@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: the chart latency budgets are written down, alerted on and charted (Phase D, L3)
+
+**The visualization reads now have codified p95 budgets, Prometheus alerts and
+Grafana panels, all taken from the homelab load test.** That run used 1M test
+cases on one backend pod. One user's cold reads all came in within the epic
+§5.5 budgets, and the 500 ms count/rate budget held up to about 4 concurrent
+cold 90-day readers per pod. Evidence:
+`architecture/VIZ_PERFORMANCE_BASELINE.md`. Plan: `docs/viz-work/phaseD-plan.md` §5.
+
+- **`performance_budgets.LATENCY_BUDGETS`** has four new entries:
+  - `chart_data`: 1,500 ms, handler `/api/v1/analytics/chart-data`. This is a
+    route-level ceiling, because the HTTP histogram cannot tell a percentile
+    read from a count read.
+  - `chart_data_rate`: 500 ms, harness-only.
+  - `analytics_heatmap`: 800 ms, handler `/api/v1/analytics/heatmap`.
+  - `chart_rows`: 300 ms, handler `/api/v1/analytics/chart-data/rows`.
+- **Alerts:** the `testlookup.slo` group in
+  `infra/monitoring/prometheus-rules/testlookup-alerts.yml` gains
+  `TestLookupSLOChartDataSlow` (> 1.5 s), `TestLookupSLOAnalyticsHeatmapSlow`
+  (> 0.8 s) and `TestLookupSLOChartRowsSlow` (> 0.3 s).
+  `k8s/monitoring/prometheusrule.yaml` was regenerated.
+- **Grafana** (`testlookup-overview.json`): the SLO row has three new stat
+  panels (ids 70, 71 and 72), and the "SLO p95 — all monitored endpoints"
+  panel has three new series. The rows below moved down 4 units.
+- **Load harness:** `load_test_concurrent.py` no longer keeps its own copy of
+  the budgets (`VIZ_BUDGET_FALLBACK_MS` is gone). Cold viz cells read
+  `performance_budgets`. The cached-read budget (50 ms) stays harness-only as
+  `VIZ_CACHED_BUDGET_MS`, because a hit and a miss share one route.
+  `--check-budgets` now refuses a run in which a cell names a budget key that
+  resolves to nothing, where it used to show "n/a".
+- **Tests:** `test_load_test_viz_scenarios.py` checks three things. The
+  harness follows a moved budget. An uncodified key is refused. All three
+  handler budgets name real app routes.
 ## Unreleased - Visualization Upgrade: the chart flag seam is deleted (Phase D, S6)
 
 **Nothing in the frontend reads `viz_chart_data_api`, `viz_advanced_charts`
