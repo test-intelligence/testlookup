@@ -147,6 +147,47 @@ analytics_read_degraded_total = Counter(
     ["reason"],  # no_scope|epoch_timeout|cache_timeout|cache_write_timeout|statement_timeout_not_applied
 )
 
+# Phase D G1. A 429 from ``analytics_read_layer.enforce_rate_limit`` was a log
+# line and nothing else, and the HTTP instrumentator folds it into ``4xx`` with
+# every validation error -- so "a dashboard is being refused" could not be
+# graphed. One increment per refused request. ``route`` is the path TEMPLATE
+# the limit is keyed on (``/api/v1/analytics/chart-data``; the names in
+# ``analytics_read_layer.RATE_LIMITED_ROUTES`` plus any decorated route on the
+# default limit), never a path with an id in it; a request with no matched
+# route counts as ``unmatched``.
+analytics_rate_limited_total = Counter(
+    "testlookup_analytics_rate_limited_total",
+    "Analytics reads refused with 429 by the per-principal rate limit, by route template",
+    ["route"],
+)
+
+# ── Report exports (VIZ-607, Phase D G1) ────────────────────────────────────
+
+# The background export runner catches its own errors and records them on the
+# row, so Celery reports SUCCESS for an export that failed: the task metrics
+# cannot see it. One increment per job, with the status
+# ``report_export_runner.run_export_job`` returns -- the vocabulary is
+# ``report_export_service.EXPORT_JOB_OUTCOMES``. A job that raises out of the
+# runner (the failure could not even be recorded) counts as ``failed``.
+# NOT ``report_exports_total``: that one counts the other export downloads.
+report_export_jobs_total = Counter(
+    "testlookup_report_export_jobs_total",
+    "Background report export jobs by format and final outcome",
+    ["format", "outcome"],  # format: pdf|xlsx|unknown; outcome: completed|failed|superseded|skipped
+)
+
+# Wall-clock time of ``report_export_service.render_summary_export`` -- the
+# report build plus the ReportLab/openpyxl render -- on both paths: ``sync``
+# is the download-now route (the reader is waiting on it), ``background`` the
+# worker job. Every render is observed, the ones that raise included. The
+# vocabulary is ``report_export_service.EXPORT_RENDER_PATHS``.
+report_export_render_seconds = Histogram(
+    "testlookup_report_export_render_seconds",
+    "Summary report export render time by format and path",
+    ["format", "path"],  # format: pdf|xlsx|unknown; path: sync|background
+    buckets=[0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300],
+)
+
 # ── Pipeline Stages ───────────────────────────────────────────────────────────
 
 pipeline_stage_duration_seconds = Histogram(

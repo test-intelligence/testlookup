@@ -491,3 +491,161 @@ async def test_retry_route_refuses_what_is_not_retryable(session_factory, world,
     async with session_factory() as db:
         out = await router.retry_summary_report_export(export.id, db=db, current_user=world.user)
     assert out.status == "queued" and out.error is None and out.retryable is False
+
+
+# ── 8. Metrics (Phase D G1) ───────────────────────────────────────────────
+#
+# The runner catches its own errors, so Celery reports SUCCESS for a failed
+# export: ``testlookup_report_export_jobs_total`` is the only place the outcome
+# is visible. It is counted once per job with what ``run_export_job`` returns,
+# and every render is timed on the path it ran on.
+
+
+def _jobs(**labels) -> float:
+    from app.core.metrics import report_export_jobs_total
+
+    return report_export_jobs_total.labels(**labels)._value.get()
+
+
+def _all_jobs() -> float:
+    from app.core.metrics import report_export_jobs_total
+
+    return sum(
+        sample.value
+        for family in report_export_jobs_total.collect()
+        for sample in family.samples
+        if sample.name.endswith("_total")
+    )
+
+
+def _renders(**labels) -> float:
+    """Observations, not their sum: a 0.0-second render still counts."""
+    from app.core.metrics import report_export_render_seconds
+
+    return sum(bucket.get() for bucket in report_export_render_seconds.labels(**labels)._buckets)
+
+
+def _label(outcome: str) -> str:
+    # A skipped job never read its row, so it cannot know the format.
+    return "unknown" if outcome == "skipped" else "pdf"
+
+
+async def _run_to(outcome, session_factory, world, monkeypatch) -> tuple[float, float]:
+    """Drive one real job to ``outcome``; returns the counters read just before it."""
+    export = await _queued(session_factory, world)
+    _render_ok(monkeypatch, world)
+    if outcome == "skipped":
+        # A redelivered message: the first delivery completed the row.
+        assert await runner.run_export_job(export.id) == "completed"
+    elif outcome == "failed":
+        async def broken(db, scope, mode, fmt):
+            raise ValueError("chart data was malformed")
+
+        monkeypatch.setattr(export_svc, "render_summary_export", broken)
+    elif outcome == "superseded":
+        async def newer_attempt_owns_it(db, export_id, attempt, *, key, rendered):
+            return False
+
+        monkeypatch.setattr(export_svc, "complete", newer_attempt_owns_it)
+
+    before_job, before_all = _jobs(format=_label(outcome), outcome=outcome), _all_jobs()
+    assert await runner.run_export_job(export.id) == outcome
+    return before_job, before_all
+
+
+@pytest.mark.parametrize("outcome", export_svc.EXPORT_JOB_OUTCOMES)
+async def test_each_job_outcome_is_counted_exactly_once(outcome, session_factory, storage, world, monkeypatch):
+    before_job, before_all = await _run_to(outcome, session_factory, world, monkeypatch)
+    assert _jobs(format=_label(outcome), outcome=outcome) == before_job + 1
+    assert _all_jobs() == before_all + 1, "one job, one increment"
+
+
+async def test_a_job_that_raises_out_of_the_runner_is_counted_failed(session_factory, storage, world, monkeypatch):
+    """The failure could not even be recorded (the database is the error):
+    Celery sees the exception, and the counter still says ``failed``."""
+    export = await _queued(session_factory, world)
+    _render_ok(monkeypatch, world)
+
+    async def broken(db, scope, mode, fmt):
+        raise ValueError("render failed")
+
+    async def unrecordable(db, export_id, attempt, reason):
+        raise ConnectionError("database went away")
+
+    monkeypatch.setattr(export_svc, "render_summary_export", broken)
+    monkeypatch.setattr(export_svc, "fail", unrecordable)
+    before, before_all = _jobs(format="pdf", outcome="failed"), _all_jobs()
+    with pytest.raises(ConnectionError):
+        await runner.run_export_job(export.id)
+    assert _jobs(format="pdf", outcome="failed") == before + 1
+    assert _all_jobs() == before_all + 1
+
+
+async def test_a_broken_counter_does_not_fail_the_job(session_factory, storage, world, monkeypatch):
+    from app.core import metrics
+
+    class _Boom:
+        def labels(self, **_kw):
+            raise RuntimeError("registry exploded")
+
+    monkeypatch.setattr(metrics, "report_export_jobs_total", _Boom())
+    monkeypatch.setattr(metrics, "report_export_render_seconds", _Boom())
+    export = await _queued(session_factory, world)
+    _render_ok(monkeypatch, world)
+    assert await runner.run_export_job(export.id) == "completed"
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed"])
+async def test_the_background_render_is_timed_whether_or_not_it_succeeds(
+    outcome, session_factory, storage, world, monkeypatch
+):
+    sync_before = _renders(format="pdf", path="sync")
+    before = _renders(format="pdf", path="background")
+    await _run_to(outcome, session_factory, world, monkeypatch)
+    assert _renders(format="pdf", path="background") == before + 1
+    assert _renders(format="pdf", path="sync") == sync_before
+
+
+async def test_the_sync_download_render_is_timed_as_sync(session_factory, world, monkeypatch):
+    from app.routers import summary_report as router
+
+    _render_ok(monkeypatch, world)
+    background_before = _renders(format="xlsx", path="background")
+    before = _renders(format="xlsx", path="sync")
+    async with session_factory() as db:
+        response = await router._export("xlsx", "window", _scope(world.project.id), db, world.user)
+    assert response.status_code == 200
+    assert _renders(format="xlsx", path="sync") == before + 1
+    assert _renders(format="xlsx", path="background") == background_before
+
+
+def test_the_outcome_vocabulary_is_what_the_runner_returns_and_is_documented():
+    """The label vocabulary, the runner's return statements and the
+    declaration comment in ``metrics.py`` name the same values."""
+    import re
+
+    from app.core import metrics
+
+    source = inspect.getsource(runner)
+    returned = set(re.findall(r'return "([a-z]+)"', source))
+    returned |= {
+        status.value for status in ReportExportStatus
+        if f"ReportExportStatus.{status.name}.value" in source
+    }
+    assert returned == set(export_svc.EXPORT_JOB_OUTCOMES)
+    declared = inspect.getsource(metrics)
+    assert "outcome: " + "|".join(export_svc.EXPORT_JOB_OUTCOMES) in declared
+    assert "path: " + "|".join(export_svc.EXPORT_RENDER_PATHS) in declared
+
+
+def test_every_format_and_outcome_exports_a_zero_series_from_import():
+    from app.core.metrics import report_export_jobs_total
+
+    exported = {
+        (sample.labels["format"], sample.labels["outcome"])
+        for family in report_export_jobs_total.collect()
+        for sample in family.samples
+        if sample.name.endswith("_total")
+    }
+    expected = {(fmt, outcome) for fmt in export_svc.EXPORTS for outcome in export_svc.EXPORT_JOB_OUTCOMES}
+    assert expected <= exported

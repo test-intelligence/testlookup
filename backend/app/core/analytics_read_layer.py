@@ -1086,6 +1086,7 @@ async def enforce_rate_limit(
     except RateLimitExceeded as exc:
         retry = _retry_after(exc)
         logger.info("analytics_rate_limited", route=route, retry_after=retry)
+        count_rate_limited(request, route)
         raise AnalyticsQueryError(
             "rate_limited",
             f"Too many analytics requests. Retry in {retry}s.",
@@ -1114,6 +1115,51 @@ ANALYTICS_DEGRADED_REASONS = (
     "cache_write_timeout",
     "statement_timeout_not_applied",
 )
+
+
+#: The ``route`` label of ``analytics_rate_limited_total`` for a request that
+#: matched no route, so its raw path (which may carry an id) never becomes one.
+RATE_LIMITED_UNMATCHED = "unmatched"
+
+
+def rate_limited_label(request: Request, route: str) -> str:
+    """The ``route`` label for one 429: the path TEMPLATE, never a raw path.
+
+    A name in :data:`RATE_LIMITED_ROUTES` is a template by construction. Any
+    other decorated route (on the default limit) is labelled only when it is
+    the template the request actually matched -- ``route_of`` falls back to
+    the raw path when nothing matched, and that must not become a series.
+    """
+    if route in RATE_LIMITED_ROUTES:
+        return route
+    matched = getattr(request.scope.get("route"), "path", None)
+    return route if matched and matched == route else RATE_LIMITED_UNMATCHED
+
+
+def count_rate_limited(request: Request, route: str) -> None:
+    """Count one 429. Never raises: telemetry cannot turn a 429 into a 500."""
+    try:
+        from app.core.metrics import analytics_rate_limited_total
+
+        analytics_rate_limited_total.labels(route=rate_limited_label(request, route)).inc()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _zero_rate_limited_series() -> None:
+    """Create the named routes' series at 0 at import. A labelled counter has
+    no series until its first ``inc()``, and that first scrape already reads 1,
+    so ``increase()`` would never show a route's FIRST 429."""
+    try:
+        from app.core.metrics import analytics_rate_limited_total
+
+        for named in RATE_LIMITED_ROUTES:
+            analytics_rate_limited_total.labels(route=named)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_zero_rate_limited_series()
 
 
 def count_degraded(reason: str) -> None:

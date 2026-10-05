@@ -17,6 +17,7 @@ suite). See ``services/summary_report_service`` for the math.
 from __future__ import annotations
 
 import io
+import time
 from datetime import datetime, timezone
 from typing import Literal
 import uuid
@@ -86,8 +87,13 @@ async def _export(
     fmt: str, mode: SummaryMode, scope: AnalyticsScope, db: AsyncSession, current_user: User,
 ) -> StreamingResponse:
     # VIZ-607: the one renderer the background job uses too, so a file made
-    # either way is the same file.
-    rendered = await export_svc.render_summary_export(db, scope, mode, fmt)
+    # either way is the same file. Timed as ``path="sync"`` (Phase D G1): the
+    # reader is waiting on this one.
+    started = time.perf_counter()
+    try:
+        rendered = await export_svc.render_summary_export(db, scope, mode, fmt)
+    finally:
+        export_svc.observe_export_render(fmt, "sync", time.perf_counter() - started)
     # Every server export leaves an audit row (reports.py always did).
     db.add(export_svc.audit_row(
         user=current_user, scope=scope, mode=mode, fmt=fmt, size_bytes=len(rendered.content),
