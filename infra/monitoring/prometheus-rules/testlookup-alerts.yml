@@ -404,6 +404,73 @@ groups:
           summary: "/health/details p95 > 2.5s"
           description: "Each non-critical probe is supposed to be capped at 1.5s via httpx.Timeout. If this alert fires, either the probe budget regressed or pg/mongo/redis (which are not budget-wrapped) are themselves slow."
 
+      # ── chart_data — Visualization Upgrade generic chart read ───────────
+      # Route-level ceiling (epic §5.5 percentile-metric budget, 1.5s). The
+      # HTTP histogram cannot tell a count/rate read from a percentile read
+      # (both are this one route), so the tighter 500ms count/rate budget
+      # (chart_data_rate) is enforced by the load harness only. Homelab
+      # baseline (architecture/VIZ_PERFORMANCE_BASELINE.md): one user's cold
+      # 90-day read is ~240ms server p95; ~950ms at 8 concurrent cold heavy
+      # readers per pod. Sustained breach = queueing on the 12-connection pool.
+      - alert: TestLookupSLOChartDataSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/analytics/chart-data",
+                method="GET"
+              }[5m])
+            )
+          ) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          slo: chart_data
+        annotations:
+          summary: "Chart data p95 > 1.5s"
+          description: "GET /api/v1/analytics/chart-data p95 has been over the 1.5s budget for 5 minutes. Check the Analytics & charts dashboard row (cache hit ratio, miss p95 by route, timeouts & errors) and pg pool saturation — the homelab baseline queues past ~4 concurrent cold 90-day readers per pod."
+
+      # ── analytics_heatmap — Visualization Upgrade heatmaps ──────────────
+      - alert: TestLookupSLOAnalyticsHeatmapSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/analytics/heatmap",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          slo: analytics_heatmap
+        annotations:
+          summary: "Analytics heatmap p95 > 800ms"
+          description: "GET /api/v1/analytics/heatmap p95 has been over the 800ms budget for 5 minutes. suite_day and suite_release over 90 days are the heavy kinds; check the analytics cache hit ratio and miss p95 by route, and pg pool saturation."
+
+      # ── chart_rows — chart drill-down rows ──────────────────────────────
+      - alert: TestLookupSLOChartRowsSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/analytics/chart-data/rows",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          slo: chart_rows
+        annotations:
+          summary: "Chart rows p95 > 300ms"
+          description: "GET /api/v1/analytics/chart-data/rows p95 has been over the 300ms budget for 5 minutes. A single-user page-1 read is ~10ms server-side on the homelab baseline, so a sustained breach is queueing behind heavy chart reads or a lost index on the rows query."
+
   # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ──────────────────────────
   #
   # Alerts that cover the Tier 0-2 batch: outbound webhooks, flaky
