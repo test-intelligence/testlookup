@@ -11,7 +11,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, landmark, type ApiHandlers } from '../lib/production-pages'
 import { networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { PROJECT_ID, RELEASE_ID, RELEASES, SUMMARY_REPORT, TRENDS, USER } from '../visual/production/fixtures'
+import { PROJECT_ID, RELEASE_ID, RELEASES, SUMMARY_REPORT_ON, TRENDS, USER } from '../visual/production/fixtures'
 
 const P = PROJECT_ID
 const R = RELEASE_ID.current // 2026.09
@@ -146,7 +146,7 @@ test('Trends: Views saves the top-bar release, the window and the suite, and ope
 test('Summary: the aggregation mode round-trips through a view, beside the window', async ({ page }) => {
   const store = savedViews()
   const { api, errors } = await openRollout(page, '/reports/summary', {
-    handlers: [...store.handlers, ...releaseList, ...SUMMARY_REPORT],
+    handlers: [...store.handlers, ...releaseList, ...SUMMARY_REPORT_ON],
     ready: (p) => p.getByText('Total tests', { exact: true }),
   })
   const windowMode = page.getByRole('radio', { name: 'All runs in window' })

@@ -1,11 +1,11 @@
 /**
- * Summary report, flag on: the catalogue chunk (the page's first chart code)
- * is asked for as soon as the flag answers, which is usually before the report
- * has (R1 (a)). Before this, `lazy()` first asked for it when the page
- * rendered the report, and the charts started their download only then.
+ * Summary report: the catalogue chunk (the page's first chart code) is asked
+ * for on mount, while the report is still loading (R1 (a)). Before this,
+ * `lazy()` first asked for it when the page rendered the report, and the
+ * charts started their download only then.
  *
- * The section module's factory counts its imports. Only the FIRST import in a
- * file is reliable to count this way, so the flag-off case runs first.
+ * The section module's factory counts its imports (only the FIRST import in a
+ * file is reliable to count this way).
  */
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -30,13 +30,6 @@ vi.mock('@/store/projectStore', () => ({
 }))
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }))
 
-const rollout = vi.hoisted(() => ({ on: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.on,
-  useCatalogueRolloutStatus: () => rollout.on,
-  useAdvancedRollout: () => false,
-}))
-
 const chunk = vi.hoisted(() => ({ asked: 0 }))
 vi.mock('@/components/reports/catalogue/SummaryCatalogue', () => {
   chunk.asked += 1
@@ -56,24 +49,11 @@ function renderPage() {
 }
 
 afterEach(() => {
-  rollout.on = false
   mockGet.mockReset()
 })
 
-describe('SummaryReportPage — the catalogue chunk is preloaded when the flag answers', () => {
-  it('flag off: never asked for', async () => {
-    rollout.on = false
-    // The report never answers: only the flag could trigger the import.
-    mockGet.mockReturnValue(new Promise(() => {}))
-    renderPage()
-    await screen.findByRole('heading', { level: 1, name: 'Summary Report' })
-    // Long enough for an effect and a dynamic import to have run.
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(chunk.asked).toBe(0)
-  })
-
-  it('flag on: asked while the report is still loading', async () => {
-    rollout.on = true
+describe('SummaryReportPage — the catalogue chunk is preloaded on mount', () => {
+  it('asked while the report is still loading', async () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     renderPage()
     await waitFor(() => expect(chunk.asked).toBe(1))

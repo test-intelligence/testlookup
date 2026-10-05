@@ -5,6 +5,13 @@
  * top-failing chart, all around these four regions). Captured with every
  * feature flag off, the page as it is today, in its default `latest`
  * aggregation over 30 days.
+ *
+ * Phase D S2: the catalogue mounts on every load, so the page is opened with
+ * the catalogue's answers (`SUMMARY_REPORT_ON`) and every flag off, and the
+ * four regions are captured once the catalogue has drawn (the charts are
+ * `prod-summary-on`'s). The charts above the top-failing table push it past
+ * 2400 px, so the viewport is `PINNED_TALL` (the shell scrolls inside
+ * `#main-content`, so the height changes no pixel of a region).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -14,13 +21,15 @@ import {
   cardAround,
   cardByHeading,
   openProductionPage,
-  PINNED,
+  PINNED_TALL,
   THEMES,
   visualRegion,
+  waitForCharts,
 } from '../lib/production-pages'
-import { HOSTILE_NAME, NOW, PROJECT_ID, SUMMARY_REPORT, USER } from './production/fixtures'
+import { expectDrawn, sectionFrame } from '../lib/rollout'
+import { HOSTILE_NAME, NOW, PROJECT_ID, SUMMARY_REPORT_ON, USER } from './production/fixtures'
 
-test.use(PINNED)
+test.use(PINNED_TALL)
 
 for (const theme of THEMES) {
   test(`summary report regions — ${theme}`, async ({ page }) => {
@@ -30,7 +39,7 @@ for (const theme of THEMES) {
       me: USER,
       user: USER,
       projectId: PROJECT_ID,
-      handlers: SUMMARY_REPORT,
+      handlers: SUMMARY_REPORT_ON,
       ready: (p) => p.getByText('Total tests', { exact: true }),
     })
 
@@ -56,6 +65,18 @@ for (const theme of THEMES) {
     // A hostile test name is text, never markup.
     await expect(topFailing.getByText(HOSTILE_NAME, { exact: true })).toBeVisible()
     expect(await page.evaluate(() => (window as { __xss?: unknown }).__xss)).toBeUndefined()
+
+    // The catalogue sections around the tables have drawn: nothing moves after this.
+    for (const [id, title] of [
+      ['summary-donut', 'Status breakdown'],
+      ['summary-suites', 'Results by suite'],
+      ['summary-trend', 'Pass rate trend'],
+      ['summary-top-failing', 'Failures by test'],
+    ] as const) {
+      const frame = sectionFrame(page, id, title)
+      await expectDrawn(frame, id)
+      await waitForCharts(frame)
+    }
 
     await visualRegion(page, 'summary-kpis', theme, kpis)
     await visualRegion(page, 'summary-counts', theme, counts)

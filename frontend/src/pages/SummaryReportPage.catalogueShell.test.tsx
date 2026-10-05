@@ -1,8 +1,8 @@
 /**
- * Summary report, flag on, while the catalogue chunk is still on its way
- * (R1-2, R1 (a)): the page draws the frames' boxes itself, from the report it
- * holds, so nothing below them moves when the charts arrive; and it starts
- * that chunk as soon as the flag answers, not after the report has rendered.
+ * Summary report, while the catalogue chunk is still on its way (R1-2,
+ * R1 (a)): the page draws the frames' boxes itself, from the report it holds,
+ * so nothing below them moves when the charts arrive; and it starts that chunk
+ * on mount, not after the report has rendered.
  *
  * The page's lazy loader is held on a gate this file opens, so "before the
  * chunk arrives" is a state a test can sit in; once open, the REAL sections
@@ -12,7 +12,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SummaryReport } from '@/types/summaryReport'
 
 const mockGet = vi.fn()
@@ -32,13 +32,6 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'p1', activeProject: { id: 'p1', name: 'GoogleProject' } }),
 }))
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }))
-
-const rollout = vi.hoisted(() => ({ on: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.on,
-  useCatalogueRolloutStatus: () => rollout.on,
-  useAdvancedRollout: () => false,
-}))
 
 // The trend's request held loading, and the top bar's cached release list (as in SummaryReportPage.test.tsx).
 vi.mock('@/components/reports/catalogue/useTrendsSeries', () => ({ useTrendsSeries: () => ({ status: 'loading' }) }))
@@ -119,22 +112,10 @@ beforeEach(() => {
   mockGet.mockReset()
   try { localStorage.removeItem('summary-report.mode') } catch { /* ignore */ }
 })
-afterEach(() => {
-  rollout.on = false
-})
 
 // Order matters in this file: the gate opens once, in the last test.
 describe('SummaryReportPage — the catalogue while its chunk loads', () => {
-  it('flag off: no stand-in is drawn', async () => {
-    rollout.on = false
-    mockGet.mockResolvedValue(makeReport())
-    renderPage()
-    await screen.findByText('test_pay')
-    expect(document.querySelector('[data-summary-catalogue-shell]')).toBeNull()
-  })
-
-  it('flag on: until the chunk answers, the page draws both parts’ frames from its report, in place', async () => {
-    rollout.on = true
+  it('until the chunk answers, the page draws both parts’ frames from its report, in place', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()
     await screen.findByText('test_pay')
@@ -152,8 +133,7 @@ describe('SummaryReportPage — the catalogue while its chunk loads', () => {
     expect(follows(failing, screen.getByRole('heading', { name: /^Top failing tests/ }))).toBe(true)
   })
 
-  it('flag on: the real sections REPLACE the stand-in when the chunk answers', async () => {
-    rollout.on = true
+  it('the real sections REPLACE the stand-in when the chunk answers', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()
     await screen.findByText('test_pay')

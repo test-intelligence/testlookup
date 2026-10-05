@@ -43,13 +43,6 @@ vi.mock('recharts', async (importOriginal) => {
   }
 })
 
-// The one catalogue seam (K1), OFF unless a test turns it on. Every existing
-// test above the catalogue block runs with it off: the Wave 2.5 page.
-const rollout = vi.hoisted(() => ({ on: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.on,
-}))
-
 // The catalogue's two requests go through `chartGet`; only it is replaced.
 const chartGet = vi.hoisted(() => vi.fn())
 vi.mock('@/services/chartApi', async (importOriginal) => ({
@@ -351,7 +344,7 @@ describe('ReleaseGatePage — the risk score explains itself', () => {
       recommendation: 'GO',
       pass_rate: 96.0,
     }))
-    expect(await screen.findByText(/ui-6/)).toBeInTheDocument()
+    expect(await screen.findByText(/Build ui-6 — AI-powered/)).toBeInTheDocument()
     expect(screen.queryByText(/raised to the NO-GO floor/i)).not.toBeInTheDocument()
   })
 
@@ -419,8 +412,8 @@ describe('ReleaseGatePage — the risk ring (OD-6)', () => {
 //
 // The verdict is STORED; the charts only explain it. These tests hold the page
 // to that: the group sits after the evidence and outside the recommendation
-// card, it is handed nothing that names the verdict, and turning it on (with
-// data that says the opposite of the verdict) moves nothing in the card.
+// card, it is handed nothing that names the verdict, and drawing it (with data
+// that says the opposite of the verdict) moves nothing in the card.
 
 describe('ReleaseGatePage — the catalogue Context group', () => {
   const META = {
@@ -500,12 +493,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       }),
     )
   })
-  afterEach(() => {
-    rollout.on = false
-  })
-
-  async function renderWith(decision: ReleaseCouncilDecision, on: boolean, waitForChart = on) {
-    rollout.on = on
+  async function renderWith(decision: ReleaseCouncilDecision, waitForChart = true) {
     const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
     const { useRuns } = await import('@/hooks/useRuns')
     ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -544,15 +532,8 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     markup: stableMarkup(card()),
   })
 
-  it('flag off: no section, no catalogue request, the Wave 2.5 page', async () => {
-    await renderWith(flooredDecision({ cluster_insights: CLUSTERS }), false)
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(chartGet).not.toHaveBeenCalled()
-    expect(screen.getByRole('heading', { name: 'Linked Failure Clusters' })).toBeInTheDocument()
-  })
-
-  it('flag on: the group comes AFTER the recommendation card and the evidence, outside the card, above the cluster list', async () => {
-    await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), true)
+  it('the group comes AFTER the recommendation card and the evidence, outside the card, above the cluster list', async () => {
+    await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }))
     const section = group() as HTMLElement
     expect(section).toBeTruthy()
     expect(card().contains(section)).toBe(false)
@@ -575,7 +556,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     const GateCatalogue = (await import('@/components/reports/catalogue/GateCatalogue'))
       .default as unknown as ReturnType<typeof vi.fn>
     GateCatalogue.mockClear()
-    await renderWith(flooredDecision({ cluster_insights: CLUSTERS }), true)
+    await renderWith(flooredDecision({ cluster_insights: CLUSTERS }))
     const { calls } = GateCatalogue.mock
     const props = calls[calls.length - 1]?.[0] as Record<string, unknown>
     expect(Object.keys(props).sort()).toEqual(['build', 'clusters', 'runId'])
@@ -583,14 +564,14 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
   })
 
   it('names the run by its id in the captions when the decision has no build number', async () => {
-    await renderWith(flooredDecision({ build_number: null }), true)
+    await renderWith(flooredDecision({ build_number: null }))
     expect(document.querySelector('[data-gate-caption="live"]')?.textContent).toMatch(/stored decision for build run-1;/)
   })
 
   it.each([
     ['a NO_GO verdict beside releases at 100%', 'NO_GO', 60, 100],
     ['a GO verdict beside releases at 0%', 'GO', 12, 0],
-  ] as const)('verdict integrity: %s — card and ring identical with the section on and off', async (_name, recommendation, risk, rate) => {
+  ] as const)('verdict integrity: %s — card and ring identical with and without the group', async (_name, recommendation, risk, rate) => {
     const decision = flooredDecision({
       recommendation,
       risk_score: risk,
@@ -599,10 +580,22 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       cluster_insights: CLUSTERS,
     })
     chartRate = rate
-    await renderWith(decision, false)
-    const off = verdictReading()
+    // Without: the group draws nothing (its chunk answered with an empty section).
+    const GateCatalogue = (await import('@/components/reports/catalogue/GateCatalogue'))
+      .default as unknown as ReturnType<typeof vi.fn>
+    GateCatalogue.mockImplementation(() => null)
+    let off: ReturnType<typeof verdictReading>
+    try {
+      await renderWith(decision, false)
+      off = verdictReading()
+    } finally {
+      const actual = await vi.importActual<typeof import('@/components/reports/catalogue/GateCatalogue')>(
+        '@/components/reports/catalogue/GateCatalogue',
+      )
+      GateCatalogue.mockImplementation(actual.default)
+    }
     cleanup()
-    await renderWith(decision, true)
+    await renderWith(decision)
     const on = verdictReading()
     expect(on).toEqual(off)
     expect(on.ring).toBe(String(risk))
@@ -613,7 +606,6 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     const markupFor = async (recommendation: 'GO' | 'NO_GO', risk: number) => {
       await renderWith(
         flooredDecision({ recommendation, risk_score: risk, composite_risk: risk, input_snapshot: {}, cluster_insights: CLUSTERS }),
-        true,
       )
       const html = stableMarkup(group() as HTMLElement)
       cleanup()
@@ -641,7 +633,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     })
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
-      await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), true, false)
+      await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), false)
       expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
       expect(card().textContent).toContain('NO GO')
       expect(screen.getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuenow', '60')
@@ -661,8 +653,8 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
   // follows those, directly above the cluster list its share chart summarises,
   // and is an h3 like every other gate section (an h2 put the four sections
   // after it under "Context" in the outline).
-  it('flag on: the verdict, Decision Rationale and the dimension breakdown, THEN Context (an h3), then the cluster list', async () => {
-    await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), true)
+  it('the verdict, Decision Rationale and the dimension breakdown, THEN Context (an h3), then the cluster list', async () => {
+    await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }))
     const section = group() as HTMLElement
     const heading = within(section).getByRole('heading', { name: 'Context' })
     expect(heading.tagName).toBe('H3')
@@ -682,13 +674,6 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     expect(between).toEqual([])
   })
 
-  it('flag off: the cluster list keeps its Wave 2.5 place, before Decision Rationale', async () => {
-    await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), false)
-    const clusters = screen.getByRole('heading', { name: 'Linked Failure Clusters' })
-    expect(follows(screen.getByRole('heading', { name: 'Blocking Issues' }), clusters)).toBe(true)
-    expect(follows(clusters, rationaleHeading())).toBe(true)
-  })
-
   // R1-7: while the group's chunk loads, the heading, the note and a box of
   // the group's height hold its place, so the cluster list below does not
   // jump down when it arrives.
@@ -702,7 +687,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       throw new Promise(() => undefined)
     })
     try {
-      await renderWith(flooredDecision({ cluster_insights: [...clusters] }), true, false)
+      await renderWith(flooredDecision({ cluster_insights: [...clusters] }), false)
       const pending = document.querySelector('[data-gate-context-pending]') as HTMLElement
       expect(pending).not.toBeNull()
       expect(within(pending).getByRole('heading', { name: 'Context' }).tagName).toBe('H3')
@@ -721,7 +706,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
   })
 
   it('stacks the recommendation card below sm and keeps the row from sm up', async () => {
-    await renderWith(flooredDecision(), false)
+    await renderWith(flooredDecision())
     const classes = card().className.split(/\s+/)
     expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-col', 'items-start', 'sm:flex-row', 'sm:items-center']))
   })

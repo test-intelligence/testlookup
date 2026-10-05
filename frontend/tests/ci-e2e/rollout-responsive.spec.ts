@@ -31,13 +31,11 @@ import {
   GATE_CLUSTERS,
   HEATMAP_ON,
   OVERVIEW_ON,
-  RELEASE_GATE_CLUSTERED,
   releaseGateOn,
   RUN_ID,
   SUITE,
   SUITE_DETAIL,
   SUITE_DETAIL_ON,
-  SUMMARY_REPORT,
   SUMMARY_REPORT_ON,
   TRENDS,
   TRENDS_ON,
@@ -83,10 +81,11 @@ const PAGES: RoutePage[] = [
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
-    off: SUMMARY_REPORT,
+    // Phase D S2: the catalogue mounts unconditionally; the page asks no flag.
+    off: null,
     on: SUMMARY_REPORT_ON,
-    flags: CATALOGUE_ON,
-    frames: { off: 0, on: 4 },
+    flags: {},
+    frames: { off: null, on: 4 },
   },
   {
     name: 'Suite detail',
@@ -101,10 +100,11 @@ const PAGES: RoutePage[] = [
     name: 'Release gate',
     path: `/release-gate/${RUN_ID}`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
-    off: RELEASE_GATE_CLUSTERED,
+    // Phase D S2: the Context group mounts unconditionally; the page asks no flag.
+    off: null,
     on: releaseGateOn({ clusters: GATE_CLUSTERS }),
-    flags: CATALOGUE_ON,
-    frames: { off: 0, on: 2 },
+    flags: {},
+    frames: { off: null, on: 2 },
   },
 ]
 
@@ -205,7 +205,7 @@ test.describe('the navigation drawer at 375 px', () => {
 
   test('closes on navigation from inside it', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/overview', {
-      handlers: [...OVERVIEW_ON, ...SUMMARY_REPORT],
+      handlers: [...OVERVIEW_ON, ...SUMMARY_REPORT_ON],
       ready: overviewReady,
     })
     await page.getByRole('button', { name: 'Navigation menu' }).click()

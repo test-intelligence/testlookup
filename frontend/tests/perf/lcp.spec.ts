@@ -47,13 +47,11 @@ import {
   NOW,
   OVERVIEW_ON,
   PROJECT_ID,
-  RELEASE_GATE,
   releaseGateOn,
   RUN_ID,
   SUITE,
   SUITE_DETAIL,
   SUITE_DETAIL_ON,
-  SUMMARY_REPORT,
   SUMMARY_REPORT_ON,
   TRENDS,
   TRENDS_ON,
@@ -120,7 +118,8 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Summary',
     path: '/reports/summary',
-    handlers: SUMMARY_REPORT,
+    // Phase D S2: the catalogue mounts with every flag off, so both cells answer its reads.
+    handlers: SUMMARY_REPORT_ON,
     handlersOn: SUMMARY_REPORT_ON,
     ready: (p) => p.getByText('Total tests', { exact: true }),
   },
@@ -134,8 +133,9 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Release gate',
     path: `/release-gate/${RUN_ID}`,
-    handlers: RELEASE_GATE,
-    // The same stored decision (no clusters), plus the gate's live reads.
+    // Phase D S2: the Context group mounts with every flag off. The same stored
+    // decision (no clusters), plus the gate's live reads, in both cells.
+    handlers: releaseGateOn(),
     handlersOn: releaseGateOn(),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   },

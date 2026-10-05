@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: Summary and Release gate lose their flag-off paths (Phase D, S2)
+
+**The Summary report's catalogue and the Release gate's Context group mount
+on every load.** Migration 0195 turned the chart flags on everywhere, so
+Phase D deletes the flag-off code page by page. S2 covers Summary and the
+Release gate. Plan: `docs/viz-work/phaseD-plan.md` §2.
+
+- **`SummaryReportPage.tsx`** no longer calls `useCatalogueRollout`. The seam
+  file stays until S6. The catalogue chunk is preloaded on mount, while the
+  report is still loading, instead of when the flag answers. The two
+  `catalogue &&` guards are gone; the sections still need the report (`data`).
+  The Views button and the background-exports panel are unchanged. The page
+  makes one request fewer (the flag lookup).
+- **`ReleaseGatePage.tsx`** no longer calls `useCatalogueRollout`. The
+  flag-off branch (`!catalogue && clustersCard`, which put the cluster list
+  above Decision Rationale) is deleted. The Context group and the cluster
+  list below it always mount, as the flag-on branch did.
+- **Unit tests:** the seam mock is gone from `SummaryReportPage.test`,
+  `.preload.test`, `.catalogueShell.test` and `ReleaseGatePage.test`, along
+  with their flag-off cases. The gate's verdict-integrity test now compares
+  the card with the group rendering nothing against the card with the real
+  group. Two text queries became ambiguous once the catalogue renders in
+  every test, so they now use the mode radio and the page subtitle.
+- **e2e:**
+  - `rollout-flag-off.spec.ts` no longer lists Summary or Release gate.
+  - `rollout-summary(-layout)` and `rollout-release-gate` run with every flag
+    off against `SHELL_BASE`.
+  - The gate's flag-off test is deleted. Its two "section on and off"
+    verdict-integrity tests now hold the Context group's chunk and compare the
+    card before the group arrives with the card after it draws.
+  - `rollout-responsive` has no flag-off variant for either page, and
+    `rollout-presentation` asks no flag for them.
+  - `report-views` and both `lcp.spec` cells use `SUMMARY_REPORT_ON` /
+    `releaseGateOn()`.
+- **Visual:**
+  - `prod-summary.visual.spec.ts` uses `SUMMARY_REPORT_ON` and `PINNED_TALL`:
+    the charts push the top-failing table past 2400 px. It captures its four
+    regions once the charts have drawn.
+  - `prod-release-gate.visual.spec.ts` uses `releaseGateOn()`, the same
+    stored decisions. The cluster card now sits below the Context group, so
+    that load uses the 4000 px `TALL_VIEWPORT`.
+  - `RELEASE_GATE_CLUSTERED` is deleted from `fixtures.ts`.
+  - No shot is deleted, and no PNG is expected to change.
+
 ## Unreleased - Visualization Upgrade: Overview loses its flag-off path (Phase D, S1)
 
 **The Overview catalogue mounts on every load.** Migration 0195 turned

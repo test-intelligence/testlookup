@@ -24,15 +24,13 @@ import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
-import { useCatalogueRollout } from '@/components/reports/catalogue/useCatalogueRollout'
 import { GateContextPending } from '@/components/reports/catalogue/GateContextHeader'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 
 /**
- * The catalogue's "Context" group (VIZ-408), in its own chunk: a session with
- * the flag off never downloads it, and with the flag on it arrives after the
- * verdict it sits below. A stale chunk (a tab opened before a deploy) reloads
- * the page once, like a route's.
+ * The catalogue's "Context" group (VIZ-408), in its own chunk: it arrives
+ * after the verdict it sits below. A stale chunk (a tab opened before a
+ * deploy) reloads the page once, like a route's.
  */
 const GateCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/GateCatalogue'))
 
@@ -129,8 +127,6 @@ export default function ReleaseGatePage() {
   const [overrideReason, setOverrideReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
-  // The one seam (K1): false until the flag is known to be on.
-  const catalogue = useCatalogueRollout()
 
   useProjectChangeRedirect('/release-gate', Boolean(runId))
 
@@ -285,9 +281,8 @@ export default function ReleaseGatePage() {
     }
   }
 
-  // Linked cluster insights. Defined once, placed by the flag: where it always
-  // was with the catalogue off, and under the Context group (whose share chart
-  // summarises it) with the catalogue on.
+  // Linked cluster insights, placed under the Context group whose share chart
+  // summarises them.
   const clustersCard = decision.cluster_insights.length > 0 && (
     <div className="card">
       <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Linked Failure Clusters</h3>
@@ -519,10 +514,6 @@ export default function ReleaseGatePage() {
         )}
       </div>
 
-      {/* Catalogue off: the cluster list where it always was. */}
-      {!catalogue && clustersCard}
-
-
       {/* Open defects by component */}
       {decision.open_defects_by_component.length > 0 && (
         <div className="card">
@@ -566,18 +557,14 @@ export default function ReleaseGatePage() {
           that throws is one error card, never the route's error page over
           the stored verdict (rule 6). Until the chunk arrives, its heading,
           note and height hold the place (R1-7). */}
-      {catalogue && (
-        <>
-          <SectionErrorBoundary message="Failed to load charts">
-            <Suspense
-              fallback={<GateContextPending build={decision.build_number ?? runId} clusters={decision.cluster_insights} />}
-            >
-              <GateCatalogue runId={runId} build={decision.build_number ?? runId} clusters={decision.cluster_insights} />
-            </Suspense>
-          </SectionErrorBoundary>
-          {clustersCard}
-        </>
-      )}
+      <SectionErrorBoundary message="Failed to load charts">
+        <Suspense
+          fallback={<GateContextPending build={decision.build_number ?? runId} clusters={decision.cluster_insights} />}
+        >
+          <GateCatalogue runId={runId} build={decision.build_number ?? runId} clusters={decision.cluster_insights} />
+        </Suspense>
+      </SectionErrorBoundary>
+      {clustersCard}
 
       {/* Override audit trail */}
       <OverrideAuditTrail entries={decision.override_audit} />

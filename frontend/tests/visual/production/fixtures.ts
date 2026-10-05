@@ -948,14 +948,8 @@ export const GATE_CLUSTERS = GATE_CLUSTER_SPECS.map((c, i) => ({
   criticality_level: c.criticality,
   dimension_scores: [],
 }))
-
-const CLUSTERED_DECISION = { ...FLOORED_DECISION, cluster_insights: GATE_CLUSTERS }
-
-/** `/release-gate/<run>` answered with the clustered decision. */
-export const RELEASE_GATE_CLUSTERED: ApiHandlers = [
-  [/^\/api\/v1\/release-readiness\/[^/]+$/, () => CLUSTERED_DECISION],
-  ...RELEASE_GATE,
-]
+// The clustered decision is `releaseGateOn({ clusters: GATE_CLUSTERS })` (Phase D
+// S2 deleted its flag-off handler set, `RELEASE_GATE_CLUSTERED`).
 
 // ── Summary report (/reports/summary) ──────────────────────────────────────
 

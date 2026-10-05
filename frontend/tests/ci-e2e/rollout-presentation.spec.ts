@@ -174,12 +174,13 @@ const PAGES: RoutePage[] = [
   // Phase D S1: Overview asks no flag; its catalogue mounts unconditionally.
   { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: {}, frames: 4 },
   { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: HEATMAP_ON, frames: 6 },
+  // Phase D S2: Summary and Release gate ask no flag either.
   {
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
     handlers: SUMMARY_REPORT_ON,
-    flags: CATALOGUE_ON,
+    flags: {},
     frames: 4,
   },
   {
@@ -195,7 +196,7 @@ const PAGES: RoutePage[] = [
     path: `/release-gate/${RUN_ID}`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
-    flags: CATALOGUE_ON,
+    flags: {},
     frames: 2,
   },
 ]
