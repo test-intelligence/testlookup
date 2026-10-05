@@ -59,7 +59,7 @@ import statistics
 import sys
 import time
 import urllib.parse
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -465,24 +465,39 @@ VIZ_RATE_LIMITS_PER_MIN: dict[str, int] = {
     TEST_SCATTER: 60,
 }
 
-#: Epic §5.5 p95 budgets, by the ``LATENCY_BUDGETS`` names Phase D L3 will give
-#: them. Until L3 codifies them, these are the values; once it does,
-#: ``_viz_budget`` reads ``performance_budgets`` first so the two cannot drift.
-VIZ_BUDGET_FALLBACK_MS: dict[str, int] = {
-    "analytics_cached": 50,      # any read the analytics cache answers
-    "chart_data_rate": 500,      # count / rate miss at 90 d
-    "chart_data": 1500,          # percentile metrics (duration_p95)
-    "analytics_heatmap": 800,    # heatmap miss
-    "chart_rows": 300,           # rows, page 1
-}
-#: The budget a WARM cell of a cacheable scenario is held to.
+#: The ``LATENCY_BUDGETS`` entries (epic §5.5, codified in Phase D L3) a COLD
+#: cell is held to. Read from ``performance_budgets`` -- there is no fallback
+#: copy here, so the harness and the alerts cannot drift apart.
+VIZ_BUDGET_KEYS: tuple[str, ...] = (
+    "chart_data_rate",     # count / rate miss up to 90 d (harness-only)
+    "chart_data",          # percentile metrics (duration_p95); the route ceiling
+    "analytics_heatmap",   # heatmap miss
+    "chart_rows",          # rows, page 1
+)
+#: The budget a WARM cell of a cacheable scenario is held to: epic §5.5
+#: "cached read <= 50 ms". Deliberately NOT a ``LATENCY_BUDGETS`` entry: a hit
+#: and a miss share one route template, so the HTTP histogram (and so any
+#: alert) cannot tell them apart -- only the harness's cache mode can.
 CACHED_BUDGET_KEY = "analytics_cached"
+VIZ_CACHED_BUDGET_MS = 50
 
 
 def _viz_budget(key: str) -> int:
+    """p95 budget for a viz cell's key, or 0 when none applies. A key the
+    budget module does not know resolves to 0 too; ``--check-budgets`` refuses
+    a run with such a cell instead of reporting it as "n/a"."""
     if not key:
         return 0
-    return _budget(key) or VIZ_BUDGET_FALLBACK_MS.get(key, 0)
+    if key == CACHED_BUDGET_KEY:
+        return VIZ_CACHED_BUDGET_MS
+    return _budget(key)
+
+
+def unresolved_budget_keys(cells: Iterable[Any]) -> list[str]:
+    """Budget keys some cell names but that resolved to no p95. Such a cell
+    would read "n/a" and drop out of the check -- the inert-gate failure
+    ``_budget()`` warns about -- so ``--check-budgets`` refuses the run."""
+    return sorted({c.budget_key for c in cells if c.budget_key and not c.budget_p95_ms})
 
 
 def viz_path(route: str, params: list[tuple[str, object]]) -> str:
@@ -1633,6 +1648,13 @@ async def cmd_bench_viz(args: argparse.Namespace) -> int:
         failed = [r for r in results if r.verdict() == "FAIL"]
         checked = [r for r in results if r.verdict() in ("PASS", "FAIL")]
         print("\n── Viz budget compliance ──────────────────────────────────────")
+        unresolved = unresolved_budget_keys(results)
+        if unresolved:
+            print("\nERROR: budget key(s) with no codified p95 in "
+                  f"performance_budgets: {', '.join(unresolved)}")
+            if _BUDGET_IMPORT_ERROR:
+                print(f"       budget import failed: {_BUDGET_IMPORT_ERROR}")
+            return 1
         for r in checked:
             print(f"  {r.operation:40s} {r.cache:4s} c={r.concurrency:<3d} p95={r.p95:>7.1f}ms "
                   f"(budget {r.budget_key} {r.budget_p95_ms}ms) → {r.verdict()}")

@@ -15,6 +15,7 @@
 > - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas.
 > - **[FRONTEND.md](./FRONTEND.md)** — the SPA: pages→hooks→services→one-Axios layering, Zustand client-state model, the six-theme token system, and the enforcing ratchets.
 > - **[VISUALIZATION_ENGINES_ADR.md](./VISUALIZATION_ENGINES_ADR.md)** — why charts use Recharts + per-type ECharts + three.js: the CSP, bundle-budget and air-gap constraints, the measured spike, and the tooltip-XSS rule.
+> - **[VIZ_PERFORMANCE_BASELINE.md](./VIZ_PERFORMANCE_BASELINE.md)** — the homelab load test behind the visualization latency budgets: 1M-row dataset, single-user and concurrency results, the 429 burst, export timings, and the per-pod capacity conclusion.
 > - **[OBSERVABILITY.md](./OBSERVABILITY.md)** — metrics/traces/logs plus agent decision logs, the Grafana/alerting stack, and the health surfaces.
 > - **[KNOWLEDGE_RAG.md](./KNOWLEDGE_RAG.md)** — the optional RAG layer: indexing sources → chunks, grounded generation with citations, and the redaction/faithfulness/staleness guards.
 > - **[AI_EVALUATION.md](./AI_EVALUATION.md)** — model-ops: golden/feedback datasets, eval runs + drift, the model registry, and the pre-release gate that blocks regressing AI changes.
