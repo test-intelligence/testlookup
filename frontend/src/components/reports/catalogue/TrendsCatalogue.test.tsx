@@ -65,6 +65,7 @@ vi.mock('@/components/charts/DurationChartFrame', async (importOriginal) => {
   }
 })
 
+import { BUSIEST_TAKEAWAY, NO_RELEASES_REASON } from './CompareSection'
 import TrendsCatalogue, {
   DURATION_TITLE,
   durationFrameState,
@@ -126,6 +127,10 @@ function heatmapCalls(): CatalogParams[] {
   return get.mock.calls.filter(([url]) => url === HEATMAP_URL).map(([, config]) => (config as { params: CatalogParams }).params)
 }
 const metricCalls = (metric: string) => chartDataCalls().filter((params) => params.metric === metric)
+/** The suite series' request: the only pass-rate read that folds lines (`top_n`). */
+const seriesCalls = () => metricCalls('pass_rate').filter((params) => params.top_n !== undefined)
+/** Compare's requests (C1): they name the suites they compare. */
+const compareCalls = () => chartDataCalls().filter((params) => Array.isArray(params.suite_name))
 
 function renderCatalogue(props: { days: number; suiteFilter?: string | null }) {
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -206,19 +211,53 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
     renderCatalogue({ days: 14 })
     await waitFor(() => expect(within(section('trends-heatmap') as HTMLElement).getByText(/Rows: lowest pass rate first/)).toBeInTheDocument())
     expect(heatmapCalls()).toEqual([{ kind: 'suite_day', project_id: 'p1', days: 14 }])
-    expect(metricCalls('pass_rate')).toEqual([
+    expect(seriesCalls()).toEqual([
       { metric: 'pass_rate', group_by: ['day', 'suite'], top_n: 7, project_id: 'p1', days: 14 },
     ])
+    // C1: Compare starts from the series' busiest suites, its own request (no top_n: nothing is folded).
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    expect(compareCalls()[0]).toMatchObject({
+      metric: 'pass_rate',
+      group_by: ['day', 'suite'],
+      project_id: 'p1',
+      days: 14,
+      suite_name: ['billing', 'checkout', 'search'],
+    })
     // The heatmap's footer reads the SERVER's row cut (by failures); the multi-series has its lines.
     expect(within(section('trends-heatmap') as HTMLElement).getByText(/Top 7 of 12 suites by failures/)).toBeInTheDocument()
     expect(within(section('trends-heatmap') as HTMLElement).getByRole('heading', { name: HEATMAP_TITLE })).toBeInTheDocument()
     expect(within(section('trends-multi-series') as HTMLElement).getByRole('heading', { name: SUITE_SERIES_TITLE })).toBeInTheDocument()
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     await settle()
-    expect(metricCalls('pass_rate')).toHaveLength(1)
+    expect(seriesCalls()).toHaveLength(1)
+    expect(compareCalls()).toHaveLength(1)
     expect(heatmapCalls()).toHaveLength(1)
     // Trends offers one kind: no kind selector.
     expect(section('trends-heatmap')?.querySelector('[data-heatmap-kinds]')).toBeNull()
+  })
+
+  it('C1: Compare picks its own suites, and clearing the picker leaves nothing chosen', async () => {
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    const compare = section('trends-compare') as HTMLElement
+    // No release list in this project's answers: the release picker says why it is off.
+    expect(compare.querySelector('[data-compare-picker="release"]')).toHaveAttribute('aria-disabled', 'true')
+    expect(within(compare).getByText(NO_RELEASES_REASON)).toBeInTheDocument()
+
+    fireEvent.click(compare.querySelector('[data-compare-picker="suite"]') as HTMLElement)
+    fireEvent.click(await screen.findByRole('option', { name: 'search' }))
+    await waitFor(() => expect(compareCalls().at(-1)?.suite_name).toEqual(['billing', 'checkout']))
+    expect(within(compare).getByText(/One line per suite you chose/)).toBeInTheDocument()
+
+    // Down to one suite: nothing to compare, said in the frame, and no request.
+    fireEvent.click(screen.getByRole('option', { name: 'billing' }))
+    await screen.findByText(/pick two or more suites or releases/)
+    const asked = compareCalls().length
+    // Cleared: still the reader's choice; the busiest suites do not come back.
+    fireEvent.click(screen.getByRole('option', { name: 'checkout' }))
+    await settle()
+    expect(compareCalls()).toHaveLength(asked)
+    expect(screen.getByText(/pick two or more suites or releases/)).toBeInTheDocument()
   })
 
   it('the heatmap draws the endpoint’s matrix worst first, in 0..1 on the canvas', async () => {
@@ -382,13 +421,13 @@ describe('TrendsCatalogue lazy mounting', () => {
     reveal('trends-duration')
     await waitFor(() => expect(metricCalls('duration_p95')).toHaveLength(1))
 
-    // VIZ-605: with fewer than two suites or releases chosen, the comparison
-    // says so and asks nothing.
-    const before = chartDataCalls().length
+    // C1: the comparison starts from the busiest suites the series ranked,
+    // and asks once, when it is near.
+    expect(compareCalls()).toEqual([])
     reveal('trends-compare')
-    await screen.findByText(/pick two or more suites or releases/)
-    await settle()
-    expect(chartDataCalls()).toHaveLength(before)
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    expect(compareCalls()[0].suite_name).toEqual(['billing', 'checkout', 'search'])
+    await screen.findByText(BUSIEST_TAKEAWAY)
 
     // The heatmap has its own request: none until it is near, one when it is.
     expect(heatmapCalls()).toEqual([])
@@ -396,7 +435,8 @@ describe('TrendsCatalogue lazy mounting', () => {
     await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     await settle()
-    expect(metricCalls('pass_rate')).toHaveLength(1)
+    expect(seriesCalls()).toHaveLength(1)
+    expect(compareCalls()).toHaveLength(1)
   })
 
   it('a reader who reaches the heatmap first asks only the heatmap', async () => {

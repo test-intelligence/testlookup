@@ -62,6 +62,15 @@ Not enough history. Trends need runs over time.
 **My failures is empty.**
 Most auto-assignments go to a synthetic project QA-lead account. Switch the scope toggle to **team**.
 
+**A chart says "Waiting to retry".**
+Too many chart requests in a minute, usually many tabs or a script on the same account. The chart retries by itself; if it gives up, press **Retry**.
+
+**A chart shows "—" or "Not measured".**
+There was nothing to measure for that point, for example a day with only skipped tests. It is not zero. See [Charts and visual analysis](/docs/charts).
+
+**"View in 3D" shows the 2D chart with a note.**
+The browser does not offer WebGL 2, or graphics acceleration is off. The 2D chart has the same points.
+
 ## Search
 
 **Similar failures look shallow.**

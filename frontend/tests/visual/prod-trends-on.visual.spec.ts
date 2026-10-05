@@ -9,7 +9,8 @@
  * stated, the Rows / Fit colour scale toolbar, the reserved action row), so
  * `trends-on-heatmap` is RE-BASELINED; the other regions keep their PNGs. The
  * page is taller than 2400 px with the catalogue: `PINNED_TALL`, 5000 px tall
- * since Compare (VIZ-605) joined the catalogue.
+ * since Compare (VIZ-605) joined the catalogue. C1 adds `trends-on-compare`:
+ * Compare draws (the busiest three suites, its Suites / Releases pickers).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -32,11 +33,14 @@ for (const theme of THEMES) {
     const passRate = sectionFrame(page, 'trends-pass-rate', 'Pass rate trend')
     const suites = sectionFrame(page, 'trends-multi-series', 'Pass rate by suite')
     const duration = sectionFrame(page, 'trends-duration', 'Test duration (p50 / p95)')
+    // C1: Compare draws the busiest three suites with its own pickers.
+    const compare = sectionFrame(page, 'trends-compare', 'Compare')
     const heatmap = sectionFrame(page, 'trends-heatmap', 'Suite pass rate by day')
     for (const [frame, name] of [
       [passRate, 'pass rate'],
       [suites, 'suites'],
       [duration, 'duration'],
+      [compare, 'compare'],
       [heatmap, 'heatmap'],
     ] as const) {
       await expectDrawn(frame, name)
@@ -44,6 +48,7 @@ for (const theme of THEMES) {
     await waitForCharts(passRate)
     await waitForCharts(suites)
     await waitForCharts(duration)
+    await waitForCharts(compare)
     // The heatmap draws on a canvas once the lazy engine has loaded.
     await expect(heatmap.locator('canvas').first()).toBeVisible()
     await expect(heatmap.locator('[data-heatmap-rows]')).toContainText('Top 7 of 11 suites by failures.')
@@ -52,6 +57,7 @@ for (const theme of THEMES) {
     await visualRegion(page, 'trends-on-pass-rate', theme, passRate)
     await visualRegion(page, 'trends-on-multi-series', theme, suites)
     await visualRegion(page, 'trends-on-duration', theme, duration)
+    await visualRegion(page, 'trends-on-compare', theme, compare)
     await visualRegion(page, 'trends-on-heatmap', theme, heatmap)
 
     // Trend analysis switched on by the reader: both overlays, then the pointer and focus leave.

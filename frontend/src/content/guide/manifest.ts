@@ -28,6 +28,7 @@ import {
   GaugeCircle,
   Search,
   BarChart3,
+  ChartLine,
   ClipboardList,
   Plug,
   Settings,
@@ -129,6 +130,15 @@ export const DOC_PAGES: DocPage[] = [
     summary:
       'Every dashboard, what each metric counts, and what an empty state actually means.',
     keywords: ['analytics', 'trends', 'coverage', 'overview', 'metrics', 'charts'],
+  },
+  {
+    id: 'charts',
+    label: 'Charts and visual analysis',
+    group: 'Using TestLookup',
+    icon: ChartLine,
+    summary:
+      'Reading, zooming, filtering from and exporting any chart, and what each report page draws.',
+    keywords: ['chart', 'export', 'png', 'svg', 'csv', 'zoom', 'compare', 'heatmap', 'scatter', '3d', 'sankey', 'saved views', 'cross-filter', 'presentation'],
   },
   {
     id: 'test-management',

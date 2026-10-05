@@ -46,7 +46,55 @@ export const COMPARE_METRICS: Record<CompareMetric, { label: string; kind: Multi
 }
 
 export const PICK_MORE_REASON =
-  'pick two or more suites or releases in the filter bar above to compare them on one chart'
+  'pick two or more suites or releases with Suites and Releases above to compare them on one chart'
+
+/**
+ * C1 (Phase D): the comparison's OWN selection. The page's filters are
+ * single-select (one top-bar release, one page suite), so a comparison read
+ * from them could never reach two lines; the card keeps its own suites and
+ * releases, in the URL so a link reproduces the chart.
+ *
+ * A key that is ABSENT means "not chosen": the default applies. A key that is
+ * present means the reader chose, even when its only value is empty (they
+ * cleared the picker), so clearing never brings the default back.
+ */
+export const COMPARE_URL_KEYS = { suite: 'cmp_suite', release: 'cmp_release' } as const
+
+/** How many of the busiest suites the comparison starts with. */
+export const COMPARE_DEFAULT_SUITES = 3
+
+/** The reader's selection under `key`: `null` when they never chose (use the default). */
+export function readCompareChoice(params: URLSearchParams, key: string): string[] | null {
+  if (!params.has(key)) return null
+  return sorted(params.getAll(key).map((value) => value.trim()).filter(Boolean))
+}
+
+/** `params` with `key` set to `values` (an empty choice is kept as `key=`). */
+export function writeCompareChoice(params: URLSearchParams, key: string, values: readonly string[]): URLSearchParams {
+  const next = new URLSearchParams(params)
+  next.delete(key)
+  const list = sorted(values.map((value) => value.trim()).filter(Boolean))
+  if (list.length === 0) next.set(key, '')
+  for (const value of list) next.append(key, value)
+  return next
+}
+
+/**
+ * The suites to start from: the busiest lines of "Pass rate by suite" (the
+ * server ranks them; "Other" is not a suite), at most
+ * `COMPARE_DEFAULT_SUITES`. Their labels, as spelled: `suite_name` matches
+ * case-insensitively on the server.
+ */
+export function defaultCompareSuites(
+  lines: readonly { key: string; label: string }[] | null,
+  otherKey: string,
+): string[] {
+  if (!lines) return []
+  return lines
+    .filter((line) => line.key !== otherKey && line.label.trim() !== '')
+    .slice(0, COMPARE_DEFAULT_SUITES)
+    .map((line) => line.label)
+}
 
 /** "12 lines are too many …" — the reader narrows, nothing is folded away. */
 export function tooManyReason(count: number): string {

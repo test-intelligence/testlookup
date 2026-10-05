@@ -1315,18 +1315,27 @@ const wobble = (base: number, swing: number, n: number) =>
  * Trends multi-series AND heatmap (one request). The 7-day gap of the Trends
  * fixture is a gap in every suite; Notifications also did not run 2 days ago.
  */
-function suiteSeries(days: number) {
+function suiteSeries(days: number, suiteNames: string[] = []) {
+  // C1: Compare names its suites (`suite_name`, case-insensitive on the
+  // server) and folds nothing: just those suites, no "Other", no cut.
+  const named = new Set(suiteNames.map((name) => name.trim().toLowerCase()))
+  const suites = named.size > 0 ? SERIES_SUITES.filter((suite) => named.has(suite.key.toLowerCase())) : SERIES_SUITES
   return {
-    meta: chartMeta(days, {
-      truncated: true,
-      truncated_total: 11,
-      truncated_axes: { series: { dimension: 'suite', kept: 7, total: 11 } },
-    }),
+    meta: chartMeta(
+      days,
+      named.size > 0
+        ? {}
+        : {
+            truncated: true,
+            truncated_total: 11,
+            truncated_axes: { series: { dimension: 'suite', kept: 7, total: 11 } },
+          },
+    ),
     series: {
       kind: 'series',
       dimensions: ['day', 'suite'],
       x_type: 'time',
-      series: SERIES_SUITES.map((suite) => ({
+      series: suites.map((suite) => ({
         key: suite.key,
         label: suite.label,
         points: Array.from({ length: days }, (_, i) => {
@@ -1431,7 +1440,7 @@ function chartData(request: ApiRequest, releaseRate?: number) {
   const days = intParam(request, 'days', 30)
   const metric = q.get('metric')
   const groupBy = q.getAll('group_by').join(',')
-  if (metric === 'pass_rate' && groupBy === 'day,suite') return onTheWire(suiteSeries(days))
+  if (metric === 'pass_rate' && groupBy === 'day,suite') return onTheWire(suiteSeries(days, q.getAll('suite_name')))
   if ((metric === 'duration_p50' || metric === 'duration_p95') && groupBy === 'day') {
     return onTheWire(durationSeries(days, metric))
   }
