@@ -23,13 +23,13 @@
  * What is NOT fixed, deliberately: motion. A user without "reduce motion"
  * sees the charts animate, so the harness does not ask for it.
  *
- * Cells (`LCP_CELLS`): comma-separated `label:flags:url`, `flags` one of
- * `off` (every flag off, the committed baselines' state) or `on`
- * (`viz_chart_data_api` and `viz_advanced_charts` on). Default: one cell,
- * `A0:off:<the config's server>`. To compare the untouched base with the
- * branch in one interleaved run, serve the base's `dist/` yourself on
- * another port and pass e.g.
- *   LCP_CELLS=A0:off:http://127.0.0.1:4181,B:off:http://127.0.0.1:4180,C:on:http://127.0.0.1:4180
+ * Cells (`LCP_CELLS`): comma-separated `label:url`. Default: one cell,
+ * `A0:<the config's server>`. To compare the untouched base with the branch
+ * in one interleaved run, serve the base's `dist/` yourself on another port
+ * and pass e.g.
+ *   LCP_CELLS=A0:http://127.0.0.1:4181,B:http://127.0.0.1:4180
+ * Since Phase D (S6) no page asks a chart flag, so a cell no longer names a
+ * flag set (the old `off` / `on` cells answered the same reads after S5).
  *
  * Output: one JSON line per load in `test-results/lcp/lcp-<run id>.jsonl`
  * (or `LCP_OUT`), and at the end a median table per page x cell on stdout.
@@ -38,7 +38,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageErrors, type ApiHandlers, type FlagMap } from '../lib/production-pages'
+import { assertHermetic, freezeClock, landmark, mockApi, seedSession, watchPageErrors, type ApiHandlers } from '../lib/production-pages'
 import {
   COVERAGE_ON,
   FAILURES_ON,
@@ -63,24 +63,18 @@ const SETTLE_AFTER_LOAD_MS = 1_000
 const RUNS = Number(process.env.LCP_RUNS ?? 9)
 const OUT = process.env.LCP_OUT ?? `test-results/lcp/lcp-${process.env.LCP_RUN_ID ?? 'run'}.jsonl`
 
-const FLAGS: Record<string, FlagMap> = {
-  off: {},
-  on: { viz_chart_data_api: true, viz_advanced_charts: true },
-}
-
 interface Cell {
   label: string
-  flags: keyof typeof FLAGS
   /** Absolute origin, or '' for the config's own server. */
   origin: string
 }
 
 function parseCells(raw: string | undefined): Cell[] {
-  if (!raw) return [{ label: 'A0', flags: 'off', origin: '' }]
+  if (!raw) return [{ label: 'A0', origin: '' }]
   return raw.split(',').map((spec) => {
-    const [label, flags, ...rest] = spec.trim().split(':')
-    if (!label || !(flags in FLAGS)) throw new Error(`LCP_CELLS: bad cell "${spec}" (label:off|on:url)`)
-    return { label, flags: flags as Cell['flags'], origin: rest.join(':') }
+    const [label, ...rest] = spec.trim().split(':')
+    if (!label) throw new Error(`LCP_CELLS: bad cell "${spec}" (label:url)`)
+    return { label, origin: rest.join(':') }
   })
 }
 
@@ -89,14 +83,8 @@ const CELLS = parseCells(process.env.LCP_CELLS)
 interface MeasuredPage {
   name: string
   path: string
-  /** Every flag off: the committed baselines' answers. */
+  /** The page's reads plus what its catalogue sections ask (the rollout specs' fixtures). */
   handlers: ApiHandlers
-  /**
-   * The flags-on cells' answers: the same page plus what its catalogue
-   * sections ask (the rollout specs' fixtures). With the flag-off set an `on`
-   * load would fail closed on its first section request.
-   */
-  handlersOn: ApiHandlers
   /** Visible in every drawn state of the page: the load is not over before it. */
   ready: (page: Page) => Locator
 }
@@ -105,62 +93,47 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Overview',
     path: '/overview',
-    // Phase D S1: the catalogue mounts with every flag off, so both cells answer its reads.
     handlers: OVERVIEW_ON,
-    handlersOn: OVERVIEW_ON,
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
   },
   {
     name: 'Trends',
     path: '/trends',
-    // Phase D S3: the catalogue mounts with every flag off, so both cells answer its reads.
     handlers: TRENDS_ON,
-    handlersOn: TRENDS_ON,
     ready: (p) => landmark(p, 'Trend metrics'),
   },
   {
     name: 'Summary',
     path: '/reports/summary',
-    // Phase D S2: the catalogue mounts with every flag off, so both cells answer its reads.
     handlers: SUMMARY_REPORT_ON,
-    handlersOn: SUMMARY_REPORT_ON,
     ready: (p) => p.getByText('Total tests', { exact: true }),
   },
   {
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
-    // Phase D S3-S5: the composite, its heatmap and its scatter mount with every flag off.
     handlers: SUITE_DETAIL_ON,
-    handlersOn: SUITE_DETAIL_ON,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
   },
   {
     name: 'Release gate',
     path: `/release-gate/${RUN_ID}`,
-    // Phase D S2: the Context group mounts with every flag off. The same stored
-    // decision (no clusters), plus the gate's live reads, in both cells.
+    // The stored decision (no clusters), plus the gate's live reads.
     handlers: releaseGateOn(),
-    handlersOn: releaseGateOn(),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   },
-  // Wave 3: the `on` cells answer the sections' reads (coverage map, heatmaps,
-  // failure groups, the ladder's chart-data, the scatter, rows) from the
-  // wire-shaped `_ON` fixtures (B0 round 2; C0 measured A0 with the flag-off
-  // answers, before any section existed).
+  // Wave 3: the sections' reads (coverage map, heatmaps, failure groups, the
+  // ladder's chart-data, the scatter, rows) come from the wire-shaped `_ON`
+  // fixtures (B0 round 2; C0 measured A0 before any section existed).
   {
     name: 'Coverage',
     path: '/coverage',
-    // Phase D S4: the Wave 3 sections mount with every flag off, so both cells answer their reads.
     handlers: COVERAGE_ON,
-    handlersOn: COVERAGE_ON,
     ready: (p) => landmark(p, 'Coverage verdict'),
   },
   {
     name: 'Failures',
     path: '/failures',
-    // Phase D S5: the Wave 3 sections mount with every flag off, so both cells answer their reads.
     handlers: FAILURES_ON,
-    handlersOn: FAILURES_ON,
     ready: (p) => landmark(p, 'Failure verdict'),
   },
 ]
@@ -237,7 +210,6 @@ function readPaints(): PaintReading {
 interface Sample extends PaintReading {
   run: number
   cell: string
-  flags: string
   page: string
   requests: number
   apiRequests: number
@@ -303,8 +275,7 @@ for (let run = 0; run <= RUNS; run++) {
         await page.addInitScript(recordPaints)
         await seedSession(page, { theme: 'signal', user: USER, projectId: PROJECT_ID })
         await freezeClock(page, NOW)
-        const handlers = cell.flags === 'on' ? pg.handlersOn : pg.handlers
-        const api = await mockApi(page, USER, handlers, { flags: FLAGS[cell.flags], latencyMs: LATENCY_MS })
+        const api = await mockApi(page, USER, pg.handlers, { latencyMs: LATENCY_MS })
         let requests = 0
         page.on('request', () => {
           requests += 1
@@ -326,7 +297,6 @@ for (let run = 0; run <= RUNS; run++) {
         writeSample({
           run,
           cell: cell.label,
-          flags: cell.flags,
           page: pg.name,
           ...reading,
           requests,

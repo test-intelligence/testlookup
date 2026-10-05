@@ -13,7 +13,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, PINNED_TALL, THEMES, visualRegion, waitForCharts, type Theme } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, section, sectionFrame } from '../lib/rollout'
-import { CATALOGUE_ON, GATE_CLUSTERS, GATE_CLUSTERS_7, releaseGateOn, RUN_ID } from './production/fixtures'
+import { GATE_CLUSTERS, GATE_CLUSTERS_7, releaseGateOn, RUN_ID } from './production/fixtures'
 
 // 1280 x 4000: with the Context group in one column below Risk Dimension
 // Breakdown (Wave 2.6 R2-8/R2-9) and the stored caption in the cluster frame's
@@ -24,7 +24,6 @@ async function openGate(page: Page, theme: Theme, clusters: readonly unknown[]) 
   return openRollout(page, `/release-gate/${RUN_ID}`, {
     theme,
     handlers: releaseGateOn({ clusters }),
-    flags: CATALOGUE_ON,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   })
 }

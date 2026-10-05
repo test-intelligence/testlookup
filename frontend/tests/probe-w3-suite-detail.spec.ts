@@ -1,9 +1,9 @@
 /**
  * LIVE probe (Wave 3, VIZ-205/501 test x run + VIZ-506 scatter): Suite
- * detail's two sections against a deployment with both flags on. Read-only.
- * Skipped unless `PROBE_W3=1` (`PROBE_HOWTO` in `tests/lib/rollout.ts`);
- * FAILS when a flag is off. The suite: `PROBE_SUITE`, else the project's
- * first suite (`/api/v1/suites`).
+ * detail's two sections against a deployment. Read-only. Skipped unless
+ * `PROBE_W3=1` (`PROBE_HOWTO` in `tests/lib/rollout.ts`); since Phase D (S6)
+ * the sections ask no flag, so the probe no longer checks one. The suite:
+ * `PROBE_SUITE`, else the project's first suite (`/api/v1/suites`).
  *
  * Live-only questions: the status matrix and the points body are the real
  * wire shape; a scatter point's rows reconcile with its n (the evaluated
@@ -14,7 +14,6 @@ import {
   bringNear,
   captureResponses,
   DRAWN,
-  expectProbeFlagsOn,
   expectWireChart,
   probeEnv,
   probeGet,
@@ -38,7 +37,6 @@ test('Suite detail: test x run and the scatter draw from valid wire bodies; a po
   const scatter = captureResponses(page, /^\/api\/v1\/analytics\/test-scatter$/)
   const rows = captureResponses(page, /^\/api\/v1\/analytics\/chart-data\/rows$/)
   const project = await probeSignIn(page, live)
-  await expectProbeFlagsOn(page, project)
   let suite = process.env.PROBE_SUITE ?? ''
   if (!suite) {
     const suites = await probeGet(page, `/api/v1/suites?project_id=${project}`)
