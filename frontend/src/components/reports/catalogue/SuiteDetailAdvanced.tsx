@@ -3,11 +3,10 @@
  * `HeatmapSection`, `kinds=['test_run']`) and the test scatter (FK4's
  * `ScatterSection`, `placement="suite"`), both for the page's one suite.
  *
- * The page's whole change is one import of this file and one mount, under the
- * catalogue flag it already reads (`{catalogue && <SuiteDetailAdvanced .../>}`),
- * so with that flag off nothing here runs at all. This composite then asks the
- * ONE seam for the second flag (`useAdvancedRollout`); with it off it renders
- * nothing: no placeholder, no chunk, no request.
+ * The page's whole change is one import of this file and one mount (since
+ * Phase D, S3, unconditional: the page no longer asks the catalogue flag).
+ * This composite asks the ONE seam for the second flag (`useAdvancedRollout`);
+ * with it off it renders nothing: no placeholder, no chunk, no request.
  *
  * On, ONE lazy chunk (`SuiteDetailAdvancedSections`) brings the two
  * sections, each a lazy chunk of its own inside its own error boundary: a
@@ -18,7 +17,7 @@
  * `scatter-suite`), so no request and no engine chunk goes out before the
  * reader is near; while a chunk downloads, a placeholder of its height holds
  * its place. This module is small and imports no section, no boundary and no
- * chart code: the page imports it EAGERLY into every flag-off first visit.
+ * chart code: the page imports it EAGERLY into every first visit.
  */
 import { Suspense, useMemo, type ReactElement } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'

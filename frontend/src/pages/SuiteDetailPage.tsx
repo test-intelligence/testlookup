@@ -26,7 +26,6 @@ import {
   type StackedColumnModel,
 } from '@/components/charts/stackedColumnModel'
 import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
-import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import SuiteDetailAdvanced from '@/components/reports/catalogue/SuiteDetailAdvanced'
 
 const PERIODS = [
@@ -85,49 +84,8 @@ const PASS_RATE_POINT_NOTE = 'One point per day with runs · a day without runs 
 
 /**
  * Both charts' plot height: the VIZ-106 floor for a report chart (it was 220).
- * Unconditional, flag on or off — the one change to this page's existing
- * baselines this wave makes on purpose.
  */
 export const SUITE_CHART_HEIGHT = 240
-
-/**
- * What the catalogue adds to the pass-rate frame when it is on (VIZ-408,
- * plan 2.2): the trend overlays and the local zoom. No "apply as window": this
- * page's window is its own `?days`, not the global one. No `rateTarget`
- * either: the page has no target of its own to draw. Off, the frame gets
- * NEITHER prop — not `false` — and is exactly the Wave 2.5 frame.
- */
-const CATALOGUE_PASS_RATE_PROPS = { trendAnalysis: true, zoom: true } as const
-
-/**
- * The pass-rate slot's height while the flag lookup is in flight, px: the
- * flag-off frame as drawn (header and takeaway above a 240 px plot, the legend
- * and the frame's padding), measured on the hermetic Suite detail page at 1280:
- * 361 (450 at 375, where the takeaway wraps). The flag-on frame is taller by
- * its overlay row and brush; holding the flag-off height means a flag-off
- * page (every project today) barely moves when the answer lands.
- */
-export const SUITE_PASS_RATE_PENDING_HEIGHT = 360
-
-/**
- * The pass-rate slot until the catalogue flag answers (R1-6, the Overview's
- * `TrendSlotPending` and Trends' D12 rule): neither frame yet, so the frame
- * mounts ONCE, in its final parent, instead of mounting bare and remounting
- * inside the catalogue section when a flag-on answer comes back after the
- * suite data.
- */
-function PassRatePending() {
-  return (
-    <div
-      className="card flex items-center justify-center"
-      aria-busy="true"
-      data-suite-pass-rate-pending=""
-      style={{ minHeight: SUITE_PASS_RATE_PENDING_HEIGHT }}
-    >
-      <LoadingSpinner />
-    </div>
-  )
-}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -183,12 +141,6 @@ export default function SuiteDetailPage() {
   const project       = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-  // The one seam (K1), with "not known yet" kept apart: `undefined` while the
-  // lookup is in flight (the pass-rate slot holds its place), then the
-  // answer (`false` on failure), so the page is the Wave 2.5 page unless the
-  // flag is known to be on.
-  const catalogueStatus = useCatalogueRolloutStatus()
-  const catalogue = catalogueStatus === true
 
   const suiteName  = searchParams.get('name') ?? ''
   // Precedence: explicit URL ``?days=`` (deep link) > shared global
@@ -418,13 +370,13 @@ export default function SuiteDetailPage() {
               through a day nobody measured, and Trends does not either (the
               kit keeps `connectNulls` off, and a no-run day and a skips-only
               day are the same `null` to it). The takeaway says what a point
-              is instead, where a sighted reader sees it. */}
-          {trendHasRuns && (catalogueStatus === undefined ? (
-            <PassRatePending />
-          ) : catalogue ? (
-            // Flag on (VIZ-408): the same frame and data, plus the overlays and
-            // the zoom. The wrapper exists only here, so the flag-off DOM has
-            // no catalogue section at all.
+              is instead, where a sighted reader sees it.
+
+              The catalogue's additions (VIZ-408, plan 2.2): the trend overlays
+              and the local zoom. No "apply as window": this page's window is
+              its own `?days`, not the global one. No `rateTarget` either: the
+              page has no target of its own to draw. */}
+          {trendHasRuns && (
             <div data-catalogue-section="suite-pass-rate">
               <TimeSeriesChartFrame
                 title={`Pass rate trend — last ${days} days`}
@@ -433,24 +385,15 @@ export default function SuiteDetailPage() {
                 state={readyState(trendPoints)}
                 model={passRateModel}
                 height={SUITE_CHART_HEIGHT}
-                {...CATALOGUE_PASS_RATE_PROPS}
+                trendAnalysis
+                zoom
               />
             </div>
-          ) : (
-            <TimeSeriesChartFrame
-              title={`Pass rate trend — last ${days} days`}
-              takeaway={PASS_RATE_POINT_NOTE}
-              headingLevel={3}
-              state={readyState(trendPoints)}
-              model={passRateModel}
-              height={SUITE_CHART_HEIGHT}
-            />
-          ))}
+          )}
 
-          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): only with the
-              catalogue flag on; the composite reads the advanced flag and
-              lazy-loads each section when it is near. Flag off: nothing. */}
-          {catalogue && <SuiteDetailAdvanced days={days} suiteName={suiteName} />}
+          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite reads
+              the advanced flag and lazy-loads each section when it is near. */}
+          <SuiteDetailAdvanced days={days} suiteName={suiteName} />
 
           {/* Test Cases Table */}
           <div className="card">

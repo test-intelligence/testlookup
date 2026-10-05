@@ -11,7 +11,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, landmark, type ApiHandlers } from '../lib/production-pages'
 import { networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { PROJECT_ID, RELEASE_ID, RELEASES, SUMMARY_REPORT_ON, TRENDS, USER } from '../visual/production/fixtures'
+import { PROJECT_ID, RELEASE_ID, RELEASES, SUMMARY_REPORT_ON, TRENDS_ON, USER } from '../visual/production/fixtures'
 
 const P = PROJECT_ID
 const R = RELEASE_ID.current // 2026.09
@@ -96,7 +96,7 @@ function scopedTrendReads(lines: string[], suite: string) {
 
 test('Trends: Views saves the top-bar release, the window and the suite, and opening it sets all three', async ({ page }) => {
   const store = savedViews()
-  const { api, errors } = await openRollout(page, '/trends', { handlers: [...store.handlers, ...releaseList, ...TRENDS], ready: trendsReady })
+  const { api, errors } = await openRollout(page, '/trends', { handlers: [...store.handlers, ...releaseList, ...TRENDS_ON], ready: trendsReady })
   await expect(viewsButton(page)).toHaveText('Views')
   const suite = await firstSuite(page)
 
@@ -196,7 +196,7 @@ test.describe('my default view', () => {
 
   test('opens on the first visit', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/trends', {
-      handlers: [...savedViews([defaultRow(SUITE_IN_FIXTURE)]).handlers, ...releaseList, ...TRENDS],
+      handlers: [...savedViews([defaultRow(SUITE_IN_FIXTURE)]).handlers, ...releaseList, ...TRENDS_ON],
       ready: trendsReady,
     })
     await expect(releaseSelect(page)).toHaveValue(R)
@@ -211,7 +211,7 @@ test.describe('my default view', () => {
 
   test('does not open over a release in the URL (a shared link wins)', async ({ page }) => {
     const { api, errors } = await openRollout(page, `/trends?release=${R_OTHER}`, {
-      handlers: [...savedViews([defaultRow(SUITE_IN_FIXTURE)]).handlers, ...releaseList, ...TRENDS],
+      handlers: [...savedViews([defaultRow(SUITE_IN_FIXTURE)]).handlers, ...releaseList, ...TRENDS_ON],
       ready: trendsReady,
     })
     await expect(viewsButton(page)).toBeVisible()

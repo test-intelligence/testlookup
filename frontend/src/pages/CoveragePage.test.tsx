@@ -68,8 +68,8 @@ vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
 }))
 
 // Lazy chunks (the coverage sections) can take longer than waitFor's 1 s default under the full
-// suite's load; the catalogue tests use the same 5 s.
-const LAZY_TIMEOUT = 5_000
+// suite's load, and more than 5 s with coverage on (seen twice), so 10 s here.
+const LAZY_TIMEOUT = 10_000
 
 describe('CoveragePage', () => {
   beforeEach(() => {

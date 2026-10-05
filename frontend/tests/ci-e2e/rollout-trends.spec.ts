@@ -1,8 +1,9 @@
 /**
- * /trends with the catalogue ON (Wave 2.6, VIZ-408; plan 2.2 "Trends", 5.3).
- * With `viz_chart_data_api` on, the existing pass-rate frame gains trend
- * analysis, zoom and release markers, and three sections are added below the
- * body grid, each mounted (and asking) only once it is near:
+ * /trends and its catalogue (Wave 2.6, VIZ-408; plan 2.2 "Trends", 5.3). Since
+ * Phase D (S3) the page asks no `viz_chart_data_api` of its own: the pass-rate
+ * frame always has trend analysis, zoom and release markers, and three
+ * sections always sit below the body grid, each mounted (and asking) only
+ * once it is near:
  *
  *   - Pass rate by suite: `chart-data` pass_rate, day x suite, top 7 + Other;
  *   - Test duration p50 / p95: two `chart-data` day series;
@@ -30,13 +31,11 @@ import {
   requestsTo,
   section,
   sectionFrame,
-  SHELL_ON,
+  SHELL_BASE,
   SHORT_VIEWPORT,
 } from '../lib/rollout'
 import { TALL_VIEWPORT } from '../lib/production-pages'
 import {
-  ADVANCED_ONLY,
-  CATALOGUE_ON,
   CHART_DATA_PATH,
   HEATMAP_ON,
   HEATMAP_PATH,
@@ -58,14 +57,16 @@ const HEATMAP_Q = `kind=suite_day&project_id=${P}&days=14`
 const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
 
 /**
- * One cold load with the catalogue on. The flag-off list (one window: the
- * Wave 2.6 double-fetch fix), plus the seam's lookup, the heatmap's second
- * flag (read inside the lazy chunk whatever its answer), the three chart-data
- * requests and the probe. The markers read the top bar's cached release list
- * (`useReleases(..., { cached: true })`), so it is asked once, as flag off.
+ * One cold load. The shell (`SHELL_BASE`: the page itself asks no flag since
+ * S3), the page's own reads (one window: the Wave 2.6 double-fetch fix), the
+ * heatmap's two lookups (`useAdvancedRollout`, read inside the catalogue chunk
+ * whatever the answers; S4 removes them), the three chart-data requests and
+ * the probe. The markers read the top bar's cached release list
+ * (`useReleases(..., { cached: true })`), so it is asked once.
  */
-const INVENTORY_ON = [
-  ...SHELL_ON,
+const INVENTORY = [
+  ...SHELL_BASE,
+  `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
   `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`,
   `GET /api/v1/saved-views?project_id=${P}&page=trends`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
@@ -80,8 +81,8 @@ const INVENTORY_ON = [
   `GET ${CHART_DATA_PATH}?${P95_Q}`,
 ]
 
-/** Both flags (Wave 3): the same, plus the heatmap's own request. */
-const INVENTORY_BOTH = [...INVENTORY_ON, `GET ${HEATMAP_PATH}?${HEATMAP_Q}`]
+/** With the heatmap on (Wave 3): the same, plus the heatmap's own request. */
+const INVENTORY_HEATMAP = [...INVENTORY, `GET ${HEATMAP_PATH}?${HEATMAP_Q}`]
 
 const SECTIONS: [string, string][] = [
   ['trends-pass-rate', 'Pass rate trend'],
@@ -107,11 +108,11 @@ function watchEcharts(page: Page): string[] {
   return seen
 }
 
-async function openTrends(page: Page, flags: FlagMap, days?: number) {
+async function openTrends(page: Page, flags: FlagMap = {}, days?: number) {
   return openRollout(page, '/trends', { handlers: TRENDS_ON, flags, ready, days })
 }
 
-test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => {
+test.describe('Trends, everything on screen (1280 x 4000)', () => {
   test.use({ viewport: { ...TALL_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('both flags: four sections with their headings, drawn; the heatmap asks /analytics/heatmap once, the series chart-data once', async ({
@@ -148,36 +149,28 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     await networkQuiet(page, api)
     expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('group_by=suite'))).toHaveLength(1)
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([`GET ${HEATMAP_PATH}?${HEATMAP_Q}`])
-    expectInventory(api, errors, INVENTORY_BOTH, 'Trends, both flags')
+    expectInventory(api, errors, INVENTORY_HEATMAP, 'Trends, both flags')
   })
 
-  test('only viz_chart_data_api: no heatmap, no placeholder for it, no ECharts download', async ({ page }) => {
+  // S3: every viz flag off, the page still draws its catalogue and the
+  // analysis frame (no flag-off page any more). The heatmap still needs both
+  // advanced lookups (S4 removes that gate): off, it draws no section, no
+  // placeholder and loads no ECharts.
+  test('every viz flag off: the catalogue and the analysis frame draw; no heatmap, no placeholder for it, no ECharts download', async ({ page }) => {
     const echarts = watchEcharts(page)
-    const { api, errors } = await openTrends(page, CATALOGUE_ON)
+    const { api, errors } = await openTrends(page)
     for (const [id, title] of SECTIONS) await expectDrawn(sectionFrame(page, id, title), id)
+    const passRate = sectionFrame(page, 'trends-pass-rate', 'Pass rate trend')
+    await expect(passRate.locator('[data-trend-controls]')).toBeVisible()
+    await expect(passRate.locator('[data-chart-brush]')).toBeVisible()
     await networkQuiet(page, api)
     await expect(section(page, HEATMAP[0])).toHaveCount(0)
     await expect(page.locator(`[data-lazy-section="${HEATMAP[0]}"]`)).toHaveCount(0)
     await expect(page.getByRole('heading', { name: HEATMAP[1] })).toHaveCount(0)
     expect(echarts, 'ECharts modules requested without the heatmap').toEqual([])
-    // The heatmap asked nothing: no /analytics/heatmap, the seam's second lookup only.
+    // The heatmap asked nothing but its two lookups: no /analytics/heatmap.
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([])
-    expectInventory(api, errors, INVENTORY_ON, 'Trends, catalogue only')
-  })
-
-  test('only viz_advanced_charts: the Wave 2.5 page, no section, no heatmap request, no second lookup', async ({ page }) => {
-    const echarts = watchEcharts(page)
-    const { api, errors } = await openTrends(page, ADVANCED_ONLY)
-    await networkQuiet(page, api)
-    await expect(page.locator('[data-catalogue-section], [data-lazy-section]')).toHaveCount(0)
-    expect(echarts, 'ECharts modules requested with the catalogue off').toEqual([])
-    expect(requestsTo(api, HEATMAP_PATH)).toEqual([])
-    expect(requestsTo(api, '/api/v1/feature-flags/viz_advanced_charts/status')).toEqual([])
-    // The flag-off list plus the seam's one lookup (rollout-flag-off.spec.ts), nothing else.
-    const flagOffPlusLookup = INVENTORY_ON.filter(
-      (line) => !line.includes('viz_advanced_charts') && line !== PROBE && !line.startsWith(`GET ${CHART_DATA_PATH}`),
-    )
-    expectInventory(api, errors, flagOffPlusLookup, 'Trends, only viz_advanced_charts')
+    expectInventory(api, errors, INVENTORY, 'Trends, every flag off')
   })
 
   // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -200,11 +193,11 @@ test.describe('Trends, catalogue on, everything on screen (1280 x 4000)', () => 
     await networkQuiet(page, api)
     expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
     // Trends opens on its own 14 days whatever was stored: one window, no double fetch.
-    expectInventory(api, errors, INVENTORY_BOTH, 'Trends at a stored 365 days')
+    expectInventory(api, errors, INVENTORY_HEATMAP, 'Trends at a stored 365 days')
   })
 })
 
-test.describe('Trends, catalogue on, a short screen (1280 x 600)', () => {
+test.describe('Trends, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no chart-data and no probe until a section is near, and asked before it is visible', async ({ page }) => {

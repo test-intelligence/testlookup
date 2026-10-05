@@ -27,17 +27,14 @@ import {
   openRollout,
 } from '../lib/rollout'
 import {
-  CATALOGUE_ON,
   GATE_CLUSTERS,
   HEATMAP_ON,
   OVERVIEW_ON,
   releaseGateOn,
   RUN_ID,
   SUITE,
-  SUITE_DETAIL,
   SUITE_DETAIL_ON,
   SUMMARY_REPORT_ON,
-  TRENDS,
   TRENDS_ON,
 } from '../visual/production/fixtures'
 
@@ -71,11 +68,13 @@ const PAGES: RoutePage[] = [
     name: 'Trends',
     path: '/trends',
     ready: (p) => landmark(p, 'Trend metrics'),
-    off: TRENDS,
+    // Phase D S3: the catalogue mounts unconditionally; the page asks no flag
+    // (the heatmap still needs both flags until S4).
+    off: null,
     on: TRENDS_ON,
     flags: HEATMAP_ON,
     // + Compare (VIZ-605): with nothing chosen it is a frame that says so.
-    frames: { off: 2, on: 6 },
+    frames: { off: null, on: 6 },
   },
   {
     name: 'Summary',
@@ -91,10 +90,11 @@ const PAGES: RoutePage[] = [
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
-    off: SUITE_DETAIL,
+    // Phase D S3: the pass-rate frame always has its overlays; the page asks no flag.
+    off: null,
     on: SUITE_DETAIL_ON,
-    flags: CATALOGUE_ON,
-    frames: { off: 2, on: 2 },
+    flags: {},
+    frames: { off: null, on: 2 },
   },
   {
     name: 'Release gate',

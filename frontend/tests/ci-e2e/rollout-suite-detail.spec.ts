@@ -1,20 +1,19 @@
 /**
- * /coverage/suite with the catalogue ON (Wave 2.6, VIZ-408; plan 2.2 "Suite
- * detail", 5.3). The flag buys one chart's trend analysis and zoom: the
- * existing pass-rate frame gains both, drawn from the page's own points, so
- * the flag adds NO request beyond the seam's lookups. Independently of the
- * flag, both frames grow from 220 to the 240 px floor (VIZ-106).
+ * /coverage/suite and its catalogue (Wave 2.6, VIZ-408; plan 2.2 "Suite
+ * detail", 5.3). The pass-rate frame has trend analysis and zoom, drawn from
+ * the page's own points, so they add NO request. Both frames sit at the 240 px
+ * floor (VIZ-106). Since Phase D (S3) the page asks no `viz_chart_data_api`
+ * of its own: there is no flag-off page.
  *
- * Wave 3 (plan 2.5, FK4 + FK1): with `viz_advanced_charts` too, the page's
- * composite (`SuiteDetailAdvanced`) adds two lazy sections for its one suite:
- * the test x run status heatmap (`heatmap-test_run`, `/analytics/heatmap?
- * kind=test_run`) and the test scatter (`scatter-suite`, `/analytics/
- * test-scatter`), plus the sections' unfiltered run probe. With the catalogue
- * flag on, the composite asks the second flag (one lookup) whatever its
- * answer; with only `viz_advanced_charts` on, the page is the flag-off page
- * plus the seam's one lookup. Both sections share the page's one `rows` URL
- * key: only the section that opened a selection may answer it (REQUESTS
- * FK4-1), so every rows test asserts ONE panel.
+ * Wave 3 (plan 2.5, FK4 + FK1): with `viz_advanced_charts` (and, until S4,
+ * `viz_chart_data_api`) on, the page's composite (`SuiteDetailAdvanced`, now
+ * always mounted) adds two lazy sections for its one suite: the test x run
+ * status heatmap (`heatmap-test_run`, `/analytics/heatmap?kind=test_run`) and
+ * the test scatter (`scatter-suite`, `/analytics/test-scatter`), plus the
+ * sections' unfiltered run probe. The composite asks both lookups whatever
+ * their answers. Both sections share the page's one `rows` URL key: only the
+ * section that opened a selection may answer it (REQUESTS FK4-1), so every
+ * rows test asserts ONE panel.
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
@@ -39,22 +38,18 @@ import {
   RUN_PROBE,
   section,
   sectionFrame,
-  SHELL_ADVANCED,
-  SHELL_ON,
+  SHELL_BASE,
   SHORT_VIEWPORT,
   watchConsoleErrors,
 } from '../lib/rollout'
 import {
   ADVANCED_ON,
-  ADVANCED_ONLY,
-  CATALOGUE_ON,
   CHART_ROWS_PATH,
   HEATMAP_PATH,
   HOSTILE_NAME,
   PROJECT_ID,
   SCATTER_SUITE_TESTS,
   SUITE,
-  SUITE_DETAIL,
   SUITE_DETAIL_ON,
   TEST_SCATTER_PATH,
   withoutObjectMemberLabels,
@@ -65,7 +60,7 @@ const P = PROJECT_ID
 const ready = (p: Page) => p.getByRole('heading', { name: /^Run history/ })
 const PATH = `/coverage/suite?name=${SUITE}&days=30`
 
-/** The page's own reads (the flag-off list without the shell). */
+/** The page's own reads (without the shell). */
 const PAGE_READS = [
   `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,
   `GET /api/v1/test-management/suites/${SUITE}/trend?project_id=${P}&days=30`,
@@ -73,14 +68,16 @@ const PAGE_READS = [
 ]
 
 /**
- * The catalogue on: the flag-off list plus the seam's lookups (Wave 3: the
- * composite asks `viz_advanced_charts` too, once the catalogue is on), and
- * nothing else.
+ * One cold load: the shell (`SHELL_BASE`: the page itself asks no flag since
+ * S3), the page's reads, and the composite's two lookups (`useAdvancedRollout`,
+ * asked whatever the answers; S4 removes them), and nothing else.
  */
-const INVENTORY_ON = [...SHELL_ADVANCED, ...PAGE_READS]
-
-/** Only `viz_advanced_charts`: the flag-off page plus the catalogue seam's one lookup. */
-const INVENTORY_ADVANCED_ONLY = [...SHELL_ON, ...PAGE_READS]
+const INVENTORY = [
+  ...SHELL_BASE,
+  `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
+  `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`,
+  ...PAGE_READS,
+]
 
 const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
 const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
@@ -89,7 +86,7 @@ const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&p
 const THREE_D_LOOKUP = `GET /api/v1/feature-flags/viz_three_d/status?project_id=${P}`
 
 /** Both flags, every section near: + the test x run heatmap, the scatter (and its 3D lookup) and the run probe. */
-const INVENTORY_BOTH = [...INVENTORY_ON, HEATMAP_LINE, SCATTER_LINE, THREE_D_LOOKUP, RUN_PROBE]
+const INVENTORY_BOTH = [...INVENTORY, HEATMAP_LINE, SCATTER_LINE, THREE_D_LOOKUP, RUN_PROBE]
 
 const HEATMAP = { id: 'heatmap-test_run', title: 'Test results by run' } as const
 const SCATTER = { id: 'scatter-suite', title: 'Test duration vs failure rate' } as const
@@ -100,8 +97,8 @@ async function bodyHeight(frame: Locator): Promise<number> {
 
 test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-test('catalogue on: the pass-rate frame gains trend analysis and zoom, and nothing is asked for it', async ({ page }) => {
-  const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags: CATALOGUE_ON, ready })
+test('every viz flag off: the pass-rate frame has trend analysis and zoom, and nothing is asked for it', async ({ page }) => {
+  const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready })
   const passRate = sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/)
   await expectDrawn(passRate, 'suite-pass-rate')
   await expect(passRate.locator('[data-trend-controls]')).toBeVisible()
@@ -117,7 +114,7 @@ test('catalogue on: the pass-rate frame gains trend analysis and zoom, and nothi
   await expectNoErrorFrame(page)
   await expectNoTextEscapes(page, 'Suite detail at 1280')
   await networkQuiet(page, api)
-  expectInventory(api, errors, INVENTORY_ON, 'Suite detail, catalogue on')
+  expectInventory(api, errors, INVENTORY, 'Suite detail, every flag off')
 })
 
 // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -125,40 +122,24 @@ test('catalogue on: the pass-rate frame gains trend analysis and zoom, and nothi
 // both themes the harness renders. No allowlist: R2 measured 0 violations.
 for (const theme of ['signal', 'lab'] as const) {
   test(`axe: the catalogue section, every impact, no violation (${theme})`, async ({ page }) => {
-    const { api } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags: CATALOGUE_ON, ready, theme })
+    const { api } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready, theme })
     await expectDrawn(sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/), 'suite-pass-rate')
     await networkQuiet(page, api)
     await expectNoBlockingViolations(page, theme, [], ['[data-catalogue-section]'])
   })
 }
 
-test('catalogue off: no section, no overlays, no brush; both frames still at the 240 px floor', async ({ page }) => {
-  const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL, ready })
-  const passRate = frameByHeading(page, /^Pass rate trend/)
-  await expectDrawn(passRate, 'pass rate')
-  await expectDrawn(frameByHeading(page, /^Run history/), 'run history')
-  await expect(section(page, 'suite-pass-rate')).toHaveCount(0)
-  await expect(page.locator('[data-trend-controls], [data-chart-brush]')).toHaveCount(0)
-  for (const frame of await page.locator('[data-chart-frame]').all()) {
-    expect(await bodyHeight(frame), 'frame body').toBeGreaterThanOrEqual(240)
-  }
-  await networkQuiet(page, api)
-  expect(api.unhandled).toEqual([])
-  expect(errors).toEqual([])
-})
-
 test('?days=365 in the URL: the page falls back to its own window, and nothing on the wire asks for more than 90', async ({
   page,
 }) => {
   const { api, errors } = await openRollout(page, `/coverage/suite?name=${SUITE}&days=365`, {
     handlers: SUITE_DETAIL_ON,
-    flags: CATALOGUE_ON,
     ready,
   })
   await expectDrawn(sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/), 'suite-pass-rate')
   await networkQuiet(page, api)
   expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
-  expectInventory(api, errors, INVENTORY_ON, 'Suite detail at ?days=365')
+  expectInventory(api, errors, INVENTORY, 'Suite detail at ?days=365')
 })
 
 // ── Wave 3: the test x run heatmap and the test scatter (both flags) ──────
@@ -191,16 +172,10 @@ test.describe('Suite detail, both flags (1280 x 4000)', () => {
     expect(console).toEqual([])
   })
 
-  test('only viz_advanced_charts: the flag-off page plus one lookup, no section, no placeholder', async ({ page }) => {
-    const { api, errors } = await open(page, ADVANCED_ONLY)
-    await expectDrawn(frameByHeading(page, /^Pass rate trend/), 'pass rate')
-    await networkQuiet(page, api)
-    await expect(page.locator('[data-catalogue-section], [data-lazy-section], [data-suite-advanced]')).toHaveCount(0)
-    expectInventory(api, errors, INVENTORY_ADVANCED_ONLY, 'Suite detail, only viz_advanced_charts')
-  })
-
-  test('only viz_chart_data_api: no Wave 3 section, no Wave 3 read', async ({ page }) => {
-    const { api } = await open(page, CATALOGUE_ON)
+  // The advanced gate stays until S4: with its flags off, the composite draws
+  // nothing and asks no Wave 3 read.
+  test('viz_advanced_charts off: no Wave 3 section, no Wave 3 read', async ({ page }) => {
+    const { api } = await open(page, {})
     await expectDrawn(sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/), 'suite-pass-rate')
     await networkQuiet(page, api)
     await expect(page.locator('[data-suite-advanced], [data-lazy-section]')).toHaveCount(0)
