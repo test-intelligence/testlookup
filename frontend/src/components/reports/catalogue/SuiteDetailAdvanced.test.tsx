@@ -53,7 +53,7 @@ describe('SuiteDetailAdvanced', () => {
   it('on: the test x run heatmap and the suite scatter, both for the page’s one suite and window', async () => {
     flags.advanced = true
     render(<SuiteDetailAdvanced days={14} suiteName="Auth" />)
-    await waitFor(() => expect(screen.getByTestId('scatter')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('scatter')).toBeInTheDocument(), { timeout: LAZY_TIMEOUT })
     expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(propsOf('heatmap')).toEqual({ days: 14, suiteFilter: ['Auth'], kinds: ['test_run'] })
     expect(propsOf('scatter')).toEqual({ days: 14, suiteFilter: ['Auth'], placement: 'suite' })

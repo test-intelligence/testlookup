@@ -31,16 +31,9 @@ vi.mock('@/hooks/useMetrics', () => {
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
-// VIZ-408's one seam. Off unless a test turns it on, so every case written
-// against the Wave 2.5 page still runs that page.
-const rollout = vi.hoisted(() => ({ status: false as boolean | undefined }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.status ?? false,
-  useCatalogueRolloutStatus: () => rollout.status,
-  useAdvancedRollout: () => false,
-}))
-// Flag on only: the top bar's cached release list, and the two server-backed
-// sections held in their loading state (their data is the section's own test).
+// The catalogue row (VIZ-408, mounted on every render since Phase D S1): the
+// top bar's cached release list, and the server-backed section held in its
+// loading state (its data is the section's own test).
 vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [] } }) }))
 vi.mock('@/components/charts/chartCatalogSources', () => ({
   useCatalogChartData: () => ({ status: 'loading' }),
@@ -737,9 +730,8 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     await renderOneDayOfData()
     // The window store defaults to 30d.
     expect(screen.getAllByText(/1 of 30 days has data · no trend line/).length).toBe(3)
-    // And the execution-trend chart blamed runs for the same shortfall.
+    // The old execution-trend chart blamed runs for the same shortfall.
     expect(screen.queryByText(/2 timed runs/)).not.toBeInTheDocument()
-    expect(screen.getByText(/1 of 30 days has data — a trend line needs at least 2/)).toBeInTheDocument()
   })
 
   it('still says so plainly when the window really is empty', async () => {
@@ -1054,7 +1046,7 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
 // and left out of the "Automation" total (owner decision OD-7: all four
 // statuses, totals included). The pass-rate sparkline drew a day with nothing
 // evaluated as 0 %. Both now go through the chart kit.
-describe('OverviewPage — execution trend, sparklines and meter on the chart kit', () => {
+describe('OverviewPage — sparklines and meter on the chart kit', () => {
   const TREND = [
     { date: '2026-08-14', passed: 40, failed: 4, skipped: 2, broken: 6, total: 52, pass_rate: 80 },
     // Only skipped: nothing evaluated, so no pass rate — a gap, not 0 %.
@@ -1097,52 +1089,8 @@ describe('OverviewPage — execution trend, sparklines and meter on the chart ki
         </Routes>
       </MemoryRouter>,
     )
-    return (await screen.findByTestId('overview-execution-trend')) as HTMLElement
+    await screen.findByText('Total executions')
   }
-
-  /** The frame's table view, opened: header row and one row per day. */
-  function tableOf(frame: HTMLElement) {
-    fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
-    const table = within(frame).getByRole('table', { name: /data table/i })
-    const headers = within(table).getAllByRole('columnheader').map((th) => th.textContent)
-    const row = (day: string) =>
-      Array.from((within(table).getByRole('rowheader', { name: day }).parentElement as HTMLElement).querySelectorAll('td'), (td) => td.textContent)
-    return { headers, row }
-  }
-
-  it('draws all four statuses, broken included, under the frame’s own heading', async () => {
-    const frame = await renderWith(TREND)
-    expect(within(frame).getByRole('heading', { level: 3, name: 'Execution trend' })).toBeInTheDocument()
-    // jsdom lays out no plot (a zero-size container), so the drawn marks are
-    // the kit's own tests' concern; the table view is built from the same
-    // model the plot draws, and is what this page decides.
-    const { headers, row } = tableOf(frame)
-    expect(headers).toEqual(['Day (UTC)', 'Passed', 'Failed', 'Broken', 'Skipped', 'Total'])
-    expect(row('Aug 14')).toEqual(['40', '4', '6', '2', '52'])
-  })
-
-  it('counts broken executions in the foot totals and in "Automation"', async () => {
-    const frame = await renderWith(TREND)
-    const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
-    expect(totals).not.toBeNull()
-    const cell = (label: string) => (within(totals).getByText(label).parentElement as HTMLElement).textContent
-    expect(cell('Broken')).toMatch(/^Broken8\s/)
-    // 85 passed + 7 failed + 8 broken + 8 skipped.
-    expect(cell('Automation')).toMatch(/^Automation108\s+across 3 days$/)
-    expect(cell('Passed')).toMatch(/^Passed85\s+79%$/)
-  })
-
-  it('shows a status the payload does not carry as "—", never as 0', async () => {
-    // A cached pre-broken response: no `broken` field at all.
-    const legacy = TREND.map(({ broken: _broken, ...rest }) => rest)
-    const frame = await renderWith(legacy)
-    // R1 F4: the foot total under the chart says the same as the table.
-    const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
-    expect((within(totals).getByText('Broken').parentElement as HTMLElement).textContent).toBe('Broken— not measured')
-    expect((within(totals).getByText('Automation').parentElement as HTMLElement).textContent).toMatch(/^Automation100\s/)
-    const { row } = tableOf(frame)
-    expect(row('Aug 14')).toEqual(['40', '4', '—', '2', '46'])
-  })
 
   it('breaks the pass-rate line on a day with nothing evaluated, rather than drawing 0 %', async () => {
     await renderWith(TREND)
@@ -1159,9 +1107,8 @@ describe('OverviewPage — execution trend, sparklines and meter on the chart ki
   })
 
   // R2 F1 / R1 F15: `/metrics/trends` sends only the days that had runs. The
-  // chart used to draw those days as adjacent columns under a "Day (UTC)"
-  // axis, so a silent week took no room at all and "last 30 days" sat over
-  // 23 columns; the sparklines bridged the same week.
+  // sparklines used to bridge a silent week; the page's day window keeps it
+  // (the catalogue's trend draws the same window: OverviewCatalogue.test).
   describe('a week with no runs keeps its place on the time axis', () => {
     // 30 UTC days ending 2026-08-16, with nothing on Aug 5-11.
     const HOLE = new Set(['2026-08-05', '2026-08-06', '2026-08-07', '2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11'])
@@ -1170,55 +1117,12 @@ describe('OverviewPage — execution trend, sparklines and meter on the chart ki
       { date, passed: 10, failed: 1, skipped: 1, broken: 0, total: 12, pass_rate: 90.91 }
     ))
 
-    it('draws one column per window day, and a day with no runs as a measured zero', async () => {
-      const frame = await renderWith(HOLED)
-      const { row } = tableOf(frame)
-      const table = within(frame).getByRole('table', { name: /data table/i })
-      expect(within(table).getAllByRole('rowheader')).toHaveLength(30)
-      expect(row('Aug 8')).toEqual(['0', '0', '0', '0', '0'])
-      expect(row('Aug 12')).toEqual(['10', '1', '0', '1', '12'])
-    })
-
     it('breaks the pass-rate line across the hole, and counts it as zero executions', async () => {
       await renderWith(HOLED)
       const rate = screen.getByRole('img', { name: /^Avg pass rate per day, last 30 days:/ })
       expect(rate.getAttribute('aria-label')).toMatch(/: 23 points, .*, 7 not measured$/)
       const total = screen.getByRole('img', { name: /^Total executions per day, last 30 days:/ })
       expect(total.getAttribute('aria-label')).toMatch(/: 30 points, .*min 0, max 12$/)
-    })
-
-    it('still says "across N days" for the days that have data', async () => {
-      const frame = await renderWith(HOLED)
-      const totals = frame.querySelector('[data-overview-trend-totals]') as HTMLElement
-      expect((within(totals).getByText('Automation').parentElement as HTMLElement).textContent).toMatch(/across 23 days$/)
-    })
-  })
-
-  // R1 F3: two days of runs whose aggregates are not written yet (live
-  // streaming) are an all-zero window. With no filter that is "No executions
-  // in this window", never "No data matches the current filters"; with a
-  // suite filter set the filter words stay.
-  describe('an all-zero window', () => {
-    const ZEROS = ['2026-08-15', '2026-08-16'].map((date) => ({ date, passed: 0, failed: 0, skipped: 0, broken: 0, total: 0, pass_rate: 0 }))
-
-    afterEach(() => {
-      runsState.windowed = []
-    })
-
-    it('states the window, neutrally, when no filter is set', async () => {
-      const frame = await renderWith(ZEROS)
-      expect(frame).toHaveTextContent('No executions in this window')
-      expect(frame).not.toHaveTextContent('No data matches the current filters')
-    })
-
-    it('keeps the filter words when a suite filter is set', async () => {
-      // The suite picker lists the suites of the window's runs.
-      runsState.windowed = [{ id: 'r1', status: 'RUNNING', created_at: '2026-08-16T10:00:00Z', primary_suite_name: 'Checkout', suite_names: ['Checkout'] }]
-      await renderWith(ZEROS)
-      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
-      const frame = await screen.findByTestId('overview-execution-trend')
-      expect(frame).toHaveTextContent('No data matches the current filters')
-      expect(frame).not.toHaveTextContent('No executions in this window')
     })
   })
 
@@ -1246,13 +1150,10 @@ describe('OverviewPage — execution trend, sparklines and meter on the chart ki
     await screen.findAllByText(/\bPending\b/)
     expect(screen.queryByRole('meter', { name: 'Pass rate' })).toBeNull()
     expect(screen.getByRole('img', { name: 'Pass rate: not measured' })).toBeInTheDocument()
-    // The page's own branches and copy are kept: no frame for an empty window.
-    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
-    expect(screen.getByText('No executions in the last 30 days.')).toBeInTheDocument()
   })
 })
 
-describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
+describe('OverviewPage — the catalogue row (VIZ-408)', () => {
   const TREND = [
     { date: '2026-08-14', passed: 40, failed: 4, skipped: 2, broken: 6, total: 52, pass_rate: 80 },
     { date: '2026-08-15', passed: 0, failed: 0, skipped: 5, broken: 0, total: 5, pass_rate: 0 },
@@ -1268,11 +1169,9 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
 
   afterEach(() => {
     vi.useRealTimers()
-    rollout.status = false
   })
 
-  async function renderAt(status: boolean | undefined) {
-    rollout.status = status
+  async function renderPage() {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
@@ -1299,16 +1198,8 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
   const kpiValue = (label: string) =>
     (screen.getByText(label).closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums')?.textContent
 
-  it('flag off: the Wave 2.5 row, Execution trend beside Blockers, and no catalogue section', async () => {
-    await renderAt(false)
-    expect(await screen.findByTestId('overview-execution-trend')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: "What's blocking release" })).toBeInTheDocument()
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(document.querySelector('[data-overview-trend-pending]')).toBeNull()
-  })
-
-  it('sizes the metric values on the type tokens of the same value (VIZ-106), flag or no flag', async () => {
-    await renderAt(false)
+  it('sizes the metric values on the type tokens of the same value (VIZ-106)', async () => {
+    await renderPage()
     const value = (screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums') as HTMLElement
     expect(value.style.fontSize).toBe('var(--text-display-sm)')
     expect(value.className).not.toMatch(/text-\[26px\]/)
@@ -1320,7 +1211,7 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
 
   it('presentation mode (R2-13): the coverage strip’s values on the stat token, and no value or change breaks across lines', async () => {
     analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi']
-    await renderAt(false)
+    await renderPage()
     const PRESENTING = '[[data-presentation=on]_&]:'
     // The strip under the trend: 18 px at the desk on `--text-stat-sm` (18 px), so the
     // room's 40 px reaches "4437" and "8m 32s" there as it does in the KPI cards above.
@@ -1348,19 +1239,9 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
     }
   })
 
-  it('flag not answered yet: holds the trend slot instead of drawing a card it may swap out', async () => {
-    await renderAt(undefined)
-    expect(document.querySelector('[data-overview-trend-pending]')).not.toBeNull()
-    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    // The rest of the page does not wait for the flag.
-    expect(screen.getByRole('heading', { name: "What's blocking release" })).toBeInTheDocument()
-  })
-
-  it('flag on: the pass-rate trend REPLACES Execution trend (OD-4), beside the donut, above the two breakdowns', async () => {
-    await renderAt(true)
+  it('the pass-rate trend REPLACES Execution trend (OD-4), beside the donut, above the two breakdowns', async () => {
+    await renderPage()
     expect(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend' }, { timeout: 10_000 })).toBeInTheDocument()
-    expect(screen.queryByTestId('overview-execution-trend')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Execution trend' })).toBeNull()
     const ids = Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
     expect(ids).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
@@ -1370,29 +1251,21 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
     expect(categories.compareDocumentPosition(blockers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('flag on: the donut’s totals equal the KPI and the flag-off foot strip (OD-5)', async () => {
-    // Flag off: what the reader saw under the Execution trend.
-    const off = await renderAt(false)
-    const strip = (await screen.findByTestId('overview-execution-trend')).querySelector('[data-overview-trend-totals]') as HTMLElement
-    const foot = (label: string) => (within(strip).getByText(label).nextElementSibling as HTMLElement).firstChild?.textContent
-    const footTotals = { Passed: foot('Passed'), Failed: foot('Failed'), Broken: foot('Broken'), Skipped: foot('Skipped') }
-    const automation = foot('Automation')
-    expect(kpiValue('Total executions')).toBe(automation)
-    off.unmount()
-
-    // Flag on: the donut's table view.
-    await renderAt(true)
+  it('the donut’s totals equal the KPI and the window’s status counts (OD-5)', async () => {
+    await renderPage()
     const donut = (await screen.findByRole('heading', { level: 3, name: 'Status breakdown' }, { timeout: 10_000 })).closest('[data-chart-frame]') as HTMLElement
     fireEvent.click(within(donut).getByRole('button', { name: 'View as table' }))
     const table = within(donut).getByRole('table', { name: /data table/i })
     const count = (status: string) =>
       (within(table).getByRole('rowheader', { name: status }).parentElement as HTMLElement).querySelector('td')?.textContent
-    expect({ Passed: count('Passed'), Failed: count('Failed'), Broken: count('Broken'), Skipped: count('Skipped') }).toEqual(footTotals)
-    expect(donut.querySelector('[data-donut-table-total]')?.textContent).toBe(`Total ${automation} executions`)
+    // TREND summed: 85 passed, 7 failed, 8 broken, 8 skipped = 108, the KPI.
+    expect({ Passed: count('Passed'), Failed: count('Failed'), Broken: count('Broken'), Skipped: count('Skipped') })
+      .toEqual({ Passed: '85', Failed: '7', Broken: '8', Skipped: '8' })
+    expect(donut.querySelector('[data-donut-table-total]')?.textContent).toBe('Total 108 executions')
     expect(kpiValue('Total executions')).toBe('108')
   })
 
-  it('flag on: Failure categories draws the page’s own failure-categories read (one request, one SWR entry)', async () => {
+  it('Failure categories draws the page’s own failure-categories read (one request, one SWR entry)', async () => {
     const { useFailureCategories } = await import('@/hooks/useMetrics')
     const mutate = vi.fn()
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -1402,7 +1275,7 @@ describe('OverviewPage — the catalogue seam (VIZ-408)', () => {
       isLoading: false,
       mutate,
     })
-    await renderAt(true)
+    await renderPage()
     const frame = (await screen.findByRole('heading', { level: 3, name: 'Failure categories' }, { timeout: 10_000 })).closest(
       '[data-chart-frame]',
     ) as HTMLElement

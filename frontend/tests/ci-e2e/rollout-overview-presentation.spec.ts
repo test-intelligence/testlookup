@@ -10,7 +10,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { expectNoHorizontalOverflow, openRollout } from '../lib/rollout'
-import { CATALOGUE_ON, OVERVIEW_ON } from '../visual/production/fixtures'
+import { OVERVIEW_ON } from '../visual/production/fixtures'
 
 const STORAGE_KEY = 'testlookup-presentation'
 const ready = (p: Page) => p.getByRole('heading', { level: 1, name: 'Dashboard' })
@@ -72,7 +72,7 @@ for (const width of [640, 1280, 1920]) {
 
     test('presentation mode: every KPI value and change on one line, the strip’s values at the room’s size', async ({ page }) => {
       await seedPresentation(page, true)
-      await openRollout(page, '/overview', { handlers: OVERVIEW_ON, flags: CATALOGUE_ON, ready })
+      await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
       await expect(page.locator('html')).toHaveAttribute('data-presentation', 'on')
       const m = await measure(page)
       expect(m.values.length).toBeGreaterThan(0)
@@ -89,7 +89,7 @@ for (const width of [640, 1280, 1920]) {
 
     test('desk mode: the KPI grid and the strip are as they were (six columns, 18 px strip values)', async ({ page }) => {
       await seedPresentation(page, false)
-      await openRollout(page, '/overview', { handlers: OVERVIEW_ON, flags: CATALOGUE_ON, ready })
+      await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
       await expect(page.locator('html')).not.toHaveAttribute('data-presentation', 'on')
       const m = await measure(page)
       expect(m.columns).toBe(width >= 1280 ? 6 : 3)

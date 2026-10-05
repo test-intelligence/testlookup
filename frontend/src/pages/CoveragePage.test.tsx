@@ -67,6 +67,10 @@ vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
   useAdvancedRollout: () => rollout.catalogue && rollout.advanced,
 }))
 
+// Lazy chunks (the coverage sections) can take longer than waitFor's 1 s default under the full
+// suite's load; the catalogue tests use the same 5 s.
+const LAZY_TIMEOUT = 5_000
+
 describe('CoveragePage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
@@ -696,14 +700,14 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
       const found = container.querySelector('[data-coverage-advanced]') as HTMLElement | null
       expect(found).not.toBeNull()
       return found as HTMLElement
-    })
+    }, { timeout: LAZY_TIMEOUT })
     // Not near the reader yet: placeholders (the heatmap section's own, once its module loads), no section, no request.
     await waitFor(() =>
       expect([...advanced.querySelectorAll('[data-lazy-section]')].map((el) => el.getAttribute('data-lazy-section'))).toEqual([
         'coverage-map',
         'heatmap-suite_environment',
       ]),
-    )
+    { timeout: LAZY_TIMEOUT })
     expect(container.querySelector('[data-catalogue-section]')).toBeNull()
     // After the body grid, before the provenance footer.
     expect((container.querySelector('.body-grid') as HTMLElement).compareDocumentPosition(advanced)).toBe(

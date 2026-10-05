@@ -5,22 +5,14 @@ import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
 } from 'lucide-react'
-import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import Sparkline from '@/components/charts/Sparkline'
 import GaugeBar, { type GaugeTone } from '@/components/charts/GaugeBar'
-import { readyState } from '@/components/charts/chartStateCore'
 import { dayWindow } from '@/components/charts/dayStrip.model'
-import {
-  buildStackedColumnModel,
-  STATUS_STACK_SERIES,
-  utcDayLabel,
-} from '@/components/charts/stackedColumnModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ScopedLink from '@/components/ui/ScopedLink'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
-import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
@@ -47,9 +39,8 @@ import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
 import type { TestRun } from '@/types/runs'
 
-// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk. Mounted only
-// when `useCatalogueRolloutStatus` reads on, so a flag-off session never runs
-// or downloads them, and the flag-off page is the Wave 2.5 page.
+// Wave 2.6 (VIZ-408): the catalogue sections, in their own chunk, mounted on
+// every render since the chart flags were retired (Phase D S1).
 const OverviewCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/OverviewCatalogue'))
 
 // `1` = last 24 hours. Label is rendered as "24h" (the only sub-day option);
@@ -647,13 +638,13 @@ function StageCard({ stage }: { stage: RibbonStage }) {
   )
 }
 
-// ── Execution trend chart ────────────────────────────────────────────────
-const TREND_TITLE = 'Execution trend'
-const trendSubtitle = (days: number) => `Pass / fail / broken / skip over the last ${days} days`
+// ── Trend window (the catalogue's day series and the KPI sparklines) ────
+/**
+ * The catalogue's headline chart height, mirrored here so its loading row
+ * holds the same box without importing the lazy chunk
+ * (`OVERVIEW_HEADLINE_HEIGHT` in `OverviewCatalogue.tsx`).
+ */
 const TREND_HEIGHT = 260
-
-/** A count the payload may not carry (a cached pre-broken response): missing is not measured, never 0. */
-const countOf = (value: number | null | undefined) => (typeof value === 'number' ? value : null)
 
 /** One UTC day of the window, and the payload's point for it (`null`: no runs that day). */
 interface TrendDay {
@@ -677,132 +668,6 @@ function trendWindow(trends: readonly TrendPoint[], days: number): TrendDay[] {
   return dayWindow(days, utcDayIso()).map((iso) => ({ iso, point: byDay.get(iso) ?? null }))
 }
 
-/**
- * The execution trend card: executions per day by status, drawn by the kit's
- * stacked columns inside their frame (VIZ-104). The page keeps its own
- * loading and "fewer than two days" branches and their copy; the frame is
- * mounted only when there is a trend to draw.
- *
- * All FOUR statuses are drawn and totalled. The area chart this replaces
- * drew passed / failed / skipped only, so a project with broken tests saw
- * them nowhere in the chart and its "Automation" total undercounted by
- * exactly that many (owner decision OD-7).
- */
-function ExecutionTrendCard({
-  window, days, loading, filtersApplied,
-}: { window: readonly TrendDay[]; days: number; loading: boolean; filtersApplied: boolean }) {
-  const model = useMemo(
-    () =>
-      buildStackedColumnModel({
-        // One column per day of the window. A day with no runs ran nothing:
-        // a measured 0 for every status (a tick on the baseline), never a
-        // missing column and never "not measured".
-        buckets: window.map(({ iso, point: p }) => ({
-          key: iso,
-          label: utcDayLabel(iso),
-          values: p
-            ? {
-                passed: countOf(p.passed),
-                failed: countOf(p.failed),
-                broken: countOf(p.broken),
-                skipped: countOf(p.skipped),
-              }
-            : { passed: 0, failed: 0, broken: 0, skipped: 0 },
-        })),
-        // Every status the trend counts, broken included (OD-7), in the kit's
-        // one stack order, as Trends and SuiteDetail stack them (R2 F4).
-        series: STATUS_STACK_SERIES,
-        valueTitle: 'Executions',
-        bucketTitle: 'Day (UTC)',
-        xType: 'time',
-      }),
-    [window],
-  )
-  // The days that had runs: the "fewer than two days" branch, the totals and
-  // "across N days" count these, never the zero days filled in around them.
-  const trends = useMemo(() => window.flatMap(({ point }) => (point ? [point] : [])), [window])
-
-  if (loading || trends.length < 2) {
-    return (
-      <div className="card" style={{ padding: '14px 18px 18px' }}>
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{TREND_TITLE}</h3>
-        <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">{trendSubtitle(days)}</p>
-        <div className="mt-3">
-          {loading ? (
-            <div className="flex items-center justify-center" style={{ height: 240 }}>
-              <LoadingSpinner />
-            </div>
-          ) : (
-            <div
-              className="flex items-center justify-center rounded-md text-[var(--color-text-faint)] text-[12px]"
-              style={{ height: 240, borderTop: '1px dashed var(--color-border)' }}
-            >
-              {trends.length === 0
-                ? `No executions in the last ${days} days.`
-                : `1 of ${days} days has data — a trend line needs at least 2.`}
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  const total = (key: 'passed' | 'failed' | 'broken' | 'skipped') => trends.reduce((s, p) => s + (p[key] ?? 0), 0)
-  const totalPassed = total('passed')
-  const totalFailed = total('failed')
-  const totalBroken = total('broken')
-  const totalSkipped = total('skipped')
-  // A payload that carries no `broken` at all (a cached pre-broken response)
-  // did not measure it: "—" here, as in the table view above it, never a
-  // "Broken 0 · 0%" under a column of "—" (R1 F4).
-  const brokenMeasured = trends.some((p) => typeof p.broken === 'number')
-  const grand = totalPassed + totalFailed + totalBroken + totalSkipped
-  const pct = (n: number) => (grand > 0 ? Math.round((n / grand) * 100) : 0)
-
-  return (
-    <StackedColumnChartFrame
-      data-testid="overview-execution-trend"
-      title={TREND_TITLE}
-      takeaway={trendSubtitle(days)}
-      headingLevel={3}
-      state={readyState(trends)}
-      model={model}
-      height={TREND_HEIGHT}
-      bucketNoun="day"
-      filtersApplied={filtersApplied}
-      footer={
-        <div data-overview-trend-totals="" className="grid w-full grid-cols-3 sm:grid-cols-5 gap-2.5 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
-          <FootStat k="Passed"     v={`${totalPassed}`}  small={`${pct(totalPassed)}%`}  smallTone="muted" />
-          <FootStat k="Failed"     v={`${totalFailed}`}  small={`${pct(totalFailed)}%`}  smallTone="bad" />
-          <FootStat
-            k="Broken"
-            v={brokenMeasured ? `${totalBroken}` : '—'}
-            small={brokenMeasured ? `${pct(totalBroken)}%` : 'not measured'}
-            smallTone="muted"
-          />
-          <FootStat k="Skipped"    v={`${totalSkipped}`} small={`${pct(totalSkipped)}%`} smallTone="muted" />
-          <FootStat k="Automation" v={`${grand}`}        small={`across ${trends.length} day${trends.length === 1 ? '' : 's'}`} smallTone="muted" />
-        </div>
-      }
-    />
-  )
-}
-
-/**
- * The trend slot while the catalogue flag has not answered: the loading
- * card's own box (padding, the title and subtitle lines, the 240 px body),
- * with no title, because it may yet become either chart.
- */
-function TrendSlotPending() {
-  return (
-    <div className="card" style={{ padding: '14px 18px 18px' }} aria-busy="true" data-overview-trend-pending="">
-      <div className="flex items-center justify-center" style={{ height: 240 + 44 }}>
-        <LoadingSpinner />
-      </div>
-    </div>
-  )
-}
-
 /** The catalogue row while its chunk loads: the headline row's two cards, holding their height. */
 function CataloguePending() {
   return (
@@ -812,26 +677,6 @@ function CataloguePending() {
           <LoadingSpinner />
         </div>
       ))}
-    </div>
-  )
-}
-
-function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: string; smallTone: 'muted' | 'bad' | 'good' }) {
-  const smallColor = smallTone === 'bad' ? 'var(--status-failed)'
-    : smallTone === 'good' ? 'var(--status-passed)'
-    : 'var(--color-text-muted)'
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div
-        className="text-[11px] uppercase text-[var(--color-text-muted)]"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        {k}
-      </div>
-      <div className="text-[16px] font-semibold tabular-nums text-[var(--color-text)]">
-        {v}{' '}
-        <small className="text-[11px] font-medium" style={{ color: smallColor }}>{small}</small>
-      </div>
     </div>
   )
 }
@@ -1073,9 +918,6 @@ export default function OverviewPage() {
   const [, bumpGuideDismissed] = useState(0)
   const guideDismissed = isFirstRunGuideDismissed(activeProjectId)
   const analyticsView = useAnalyticsView('dashboard')
-  // VIZ-408: the one seam. `undefined` until the flag answers (the trend slot
-  // waits for it, below), then on / off; off on failure.
-  const catalogue = useCatalogueRolloutStatus()
 
   // `error` is read, not just `data`/`isLoading`: without it a failed fetch is
   // indistinguishable from an empty window, and the page below asserts the
@@ -1085,11 +927,9 @@ export default function OverviewPage() {
   const { data: trends,  isLoading: trendsLoading  } = useTrendData(days, suiteFilter)
   // Failure-kind triad (US-9.2): the by-kind aggregation ships on the same
   // failure-categories payload /failures uses, so this KPI is one SWR-cached
-  // fetch — no bespoke endpoint. With the catalogue on, the Failure categories
-  // chart draws this same read (one request, one SWR entry). Only `data` is
-  // read here: SWR re-renders for the fields a component reads, so the
-  // flag-off page keeps exactly its Wave 2.5 renders; the chart's
-  // `error`/`isValidating` are read in the catalogue branch below.
+  // fetch — no bespoke endpoint. The catalogue's Failure categories chart
+  // draws this same read (one request, one SWR entry), and its
+  // `error`/`isValidating` are passed to it below.
   const categoriesRead = useFailureCategories(days, suiteFilter)
   const failureCategories = categoriesRead.data
   const mutateCategories = categoriesRead.mutate
@@ -1602,52 +1442,32 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {catalogue === true ? (
-        <>
-          {/* VIZ-408, flag on: the pass-rate trend REPLACES the Execution
-              trend card (OD-4), beside the status donut; Top failing and
-              Failure categories sit below them; Blockers moves down a row. */}
-          <SectionErrorBoundary message="Failed to load charts">
-            <Suspense fallback={<CataloguePending />}>
-              <OverviewCatalogue
-                days={days}
-                window={trendDays}
-                trendsLoading={trendsLoading}
-                categories={{
-                  data: failureCategories,
-                  error: categoriesRead.error,
-                  isValidating: categoriesRead.isValidating,
-                  retry: retryCategories,
-                }}
-                suiteFilter={suiteFilter}
-                filtersApplied={trendFiltered}
-                everHadRun={newestRunLoaded ? everHadRun : null}
-              />
-            </Suspense>
-          </SectionErrorBoundary>
-          <SectionErrorBoundary message="Failed to load blockers">
-            <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
-          </SectionErrorBoundary>
-        </>
-      ) : (
-        /* Bottom row — Trend chart + Blockers */
-        <div className="grid grid-cols-1 xl:[grid-template-columns:1.6fr_1fr] gap-4">
-          <SectionErrorBoundary message="Failed to load execution trend">
-            {/* Until the flag answers, the slot holds its place: drawing the
-                old card and swapping it a moment later would be a layout
-                shift for every reader the flag turns on (plan 8.5). */}
-            {catalogue === undefined ? (
-              <TrendSlotPending />
-            ) : (
-              <ExecutionTrendCard window={trendDays} days={days} loading={trendsLoading} filtersApplied={trendFiltered} />
-            )}
-          </SectionErrorBoundary>
-
-          <SectionErrorBoundary message="Failed to load blockers">
-            <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
-          </SectionErrorBoundary>
-        </div>
-      )}
+      {/* VIZ-408: the pass-rate trend (which replaced the Execution trend
+          card, OD-4) beside the status donut; Top failing and Failure
+          categories sit below them; Blockers sits on its own row under them.
+          Mounted unconditionally since the chart flags were retired
+          (Phase D S1): no flag wait, no legacy branch. */}
+      <SectionErrorBoundary message="Failed to load charts">
+        <Suspense fallback={<CataloguePending />}>
+          <OverviewCatalogue
+            days={days}
+            window={trendDays}
+            trendsLoading={trendsLoading}
+            categories={{
+              data: failureCategories,
+              error: categoriesRead.error,
+              isValidating: categoriesRead.isValidating,
+              retry: retryCategories,
+            }}
+            suiteFilter={suiteFilter}
+            filtersApplied={trendFiltered}
+            everHadRun={newestRunLoaded ? everHadRun : null}
+          />
+        </Suspense>
+      </SectionErrorBoundary>
+      <SectionErrorBoundary message="Failed to load blockers">
+        <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
+      </SectionErrorBoundary>
 
       {/* Coverage micro-strip */}
       <SectionErrorBoundary message="Failed to load coverage strip">

@@ -71,16 +71,9 @@ vi.mock('@/services/runsService', () => ({
   runsService: { list: vi.fn() },
 }))
 
-// VIZ-408's one seam, read by the page. Off unless a test turns it on, so the
-// cases above run the flag-off page they were written against.
-const rollout = vi.hoisted(() => ({ status: false as boolean | undefined }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.status ?? false,
-  useCatalogueRolloutStatus: () => rollout.status,
-  useAdvancedRollout: () => false,
-}))
-// With the flag on: the releases are the top bar's cached list, and the two
-// server-backed sections record what they were handed instead of fetching.
+// The catalogue row (VIZ-408, mounted on every render since Phase D S1): the
+// releases are the top bar's cached list, and the server-backed section
+// records what it was handed instead of fetching.
 vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [] } }) }))
 const catalog = vi.hoisted(() => ({ everHadData: [] as (boolean | null)[] }))
 // Top failing reads through `useChartData` itself (its own fetcher names
@@ -135,7 +128,6 @@ describe('Overview /runs requests (M22)', () => {
     localStorage.clear()
     useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     list.mockReset()
-    rollout.status = false
     catalog.everHadData = []
   })
 
@@ -195,13 +187,12 @@ describe('Overview /runs requests (M22)', () => {
 
 // VIZ-408: the catalogue sections must not add a /runs question of their own.
 // "Has this project ever had a run?" is the page's answer (`everHadRun`), handed
-// to every frame, so the request counts above hold with the flag on as well.
-describe('Overview /runs requests with the catalogue on (VIZ-408)', () => {
+// to every frame, so the request counts above hold once the sections have drawn.
+describe('Overview /runs requests once the catalogue has drawn (VIZ-408)', () => {
   beforeEach(() => {
     localStorage.clear()
     useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     list.mockReset()
-    rollout.status = true
     catalog.everHadData = []
   })
 

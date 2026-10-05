@@ -45,7 +45,6 @@ import {
   FAILURES,
   FAILURES_ON,
   NOW,
-  OVERVIEW,
   OVERVIEW_ON,
   PROJECT_ID,
   RELEASE_GATE,
@@ -112,7 +111,8 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Overview',
     path: '/overview',
-    handlers: OVERVIEW,
+    // Phase D S1: the catalogue mounts with every flag off, so both cells answer its reads.
+    handlers: OVERVIEW_ON,
     handlersOn: OVERVIEW_ON,
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
   },

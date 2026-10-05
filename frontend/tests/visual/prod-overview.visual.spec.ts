@@ -1,8 +1,14 @@
 /**
  * BEFORE/AFTER baselines of /overview (Wave 2.5, VIZ-104): the KPI cards
- * with their three real sparklines, the verdict card with its pass-rate
- * mini meter (G7), and the execution-trend chart (A1), which drops
- * `broken` executions today (the fixture has them on every third day).
+ * with their three real sparklines and the verdict card with its pass-rate
+ * mini meter (G7).
+ *
+ * Phase D S1: the Execution-trend card (and its `overview-trend` shot) is
+ * gone; the catalogue mounts on every load, so the page is opened with the
+ * catalogue's answers (`OVERVIEW_ON`) and every flag off, and the regions
+ * are captured once the catalogue has drawn (as `prod-overview-on` captures
+ * the same two names). The pass-rate trend that replaced the card is
+ * `overview-on-trend` there.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -10,14 +16,14 @@ import {
   ancestorWithClass,
   assertHermetic,
   cardAround,
-  frameByHeading,
   openProductionPage,
   PINNED,
   THEMES,
   visualRegion,
   waitForCharts,
 } from '../lib/production-pages'
-import { NOW, OVERVIEW, PROJECT_ID, USER } from './production/fixtures'
+import { expectDrawn, sectionFrame } from '../lib/rollout'
+import { NOW, OVERVIEW_ON, PROJECT_ID, USER } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -29,7 +35,7 @@ for (const theme of THEMES) {
       me: USER,
       user: USER,
       projectId: PROJECT_ID,
-      handlers: OVERVIEW,
+      handlers: OVERVIEW_ON,
       ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
     })
 
@@ -41,12 +47,19 @@ for (const theme of THEMES) {
     const verdict = cardAround(page.getByText('RELEASE READINESS', { exact: true }))
     await expect(verdict.getByText('Conditional', { exact: false }).first()).toBeVisible()
 
-    const trend = frameByHeading(page, 'Execution trend')
-    await waitForCharts(trend)
+    for (const [id, title] of [
+      ['overview-trend', 'Pass rate trend'],
+      ['overview-donut', 'Status breakdown'],
+      ['overview-top-failing', 'Top failing tests'],
+      ['overview-categories', 'Failure categories'],
+    ] as const) {
+      const frame = sectionFrame(page, id, title)
+      await expectDrawn(frame, id)
+      await waitForCharts(frame)
+    }
 
     await visualRegion(page, 'overview-kpis', theme, kpis)
     await visualRegion(page, 'overview-verdict', theme, verdict)
-    await visualRegion(page, 'overview-trend', theme, trend)
     assertHermetic(api, errors)
   })
 }
