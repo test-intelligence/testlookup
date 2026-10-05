@@ -1,14 +1,12 @@
 /**
- * VIZ-507: the run-compare status flows. Flag off: nothing (the sankey engine
- * is never asked for). Flag on: the frame, its takeaway, a table fallback of
- * every transition, and a flow click that filters the per-test table.
+ * VIZ-507: the run-compare status flows (no flag since Phase D, S5): the
+ * frame, its takeaway, a table fallback of every transition, and a flow click
+ * that filters the per-test table.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { StatusTransition } from '@/components/charts/statusSankeyModel'
 
-const rollout = vi.hoisted(() => ({ on: true }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({ useAdvancedRollout: () => rollout.on }))
 // The engine is ECharts on a canvas: here a stand-in that offers each flow as a button.
 vi.mock('@/components/charts/StatusSankey', () => ({
   default: ({ model, onSelect }: { model: { links: { before: string; after: string }[] }; onSelect: (f: unknown) => void }) => (
@@ -30,17 +28,7 @@ const FLOWS: StatusTransition[] = [
   { before: 'absent', after: 'passed', count: 1 },
 ]
 
-beforeEach(() => {
-  rollout.on = true
-})
-
 describe('StatusFlowSection (VIZ-507)', () => {
-  it('flag off: renders nothing at all', () => {
-    rollout.on = false
-    const { container } = render(<StatusFlowSection transitions={FLOWS} onSelectClassification={vi.fn()} />)
-    expect(container).toBeEmptyDOMElement()
-  })
-
   it('draws the flows with the regressions in the takeaway, and a click filters the table to that flow', () => {
     const onSelect = vi.fn()
     render(<StatusFlowSection transitions={FLOWS} onSelectClassification={onSelect} />)

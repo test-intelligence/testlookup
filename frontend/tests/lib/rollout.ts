@@ -96,12 +96,11 @@ export async function networkQuiet(page: Page, api: MockedApi) {
 const P = PROJECT_ID
 
 /**
- * What the app shell asks for on every report route, whatever the flags:
- * the flag-off shell of `rollout-flag-off.spec.ts` (session and project list
- * twice, three shell flags, badges, notifications, the release picker, the
- * AI settings). A page whose flag-off path Phase D deleted (Overview, S1;
- * Summary and Release gate, S2) no longer asks the seam, so its inventory
- * starts here.
+ * What the app shell asks for on every report route, whatever the flags
+ * (session and project list twice, three shell flags, badges, notifications,
+ * the release picker, the AI settings), as the former flag-off spec recorded
+ * it. Since Phase D, S5 no report page asks a chart flag (the seam has no
+ * reader left), so every page's inventory starts here.
  */
 export const SHELL_BASE = [
   'GET /api/v1/auth/me',
@@ -117,12 +116,6 @@ export const SHELL_BASE = [
   `GET /api/v1/releases?project_id=${P}`,
   'GET /api/v1/settings/ai',
 ]
-
-/**
- * The shell on a report route that still asks the seam (catalogue flag ON):
- * `SHELL_BASE` plus the seam's own lookup, `viz_chart_data_api`, once.
- */
-export const SHELL_ON = [...SHELL_BASE, `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`]
 
 /**
  * The page's requests (telemetry excluded) must equal `expected` as a
@@ -339,13 +332,7 @@ export async function expectNoHorizontalOverflow(page: Page, where: string) {
   expect(o.framesOutside, `${where}: chart frames outside ${MAIN}`).toEqual([])
 }
 
-// ── Wave 3: the advanced sections (both flags) ─────────────────────────────
-
-/**
- * The shell with BOTH flags on: `SHELL_ON` plus the second seam lookup,
- * `viz_advanced_charts`, asked once the catalogue flag is on (plan 2.4).
- */
-export const SHELL_ADVANCED = [...SHELL_ON, `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`]
+// ── Wave 3: the advanced sections ──────────────────────────────────────────
 
 /** The sections' unfiltered "ever had a run?" probe (`useEverHadRun`): no `days`, no filter. */
 export const RUN_PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`

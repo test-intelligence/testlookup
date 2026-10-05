@@ -9,14 +9,15 @@
  * Phase D S3: the page asks no flag; the pass-rate region is captured with
  * every flag off (the same frame the catalogue flag used to add). S4: the
  * test x run heatmap asks no flag either (it now mounts below the pass-rate
- * region with every flag off); the Wave 3 test keeps `ADVANCED_ON` only for
- * the scatter's own gate, which S5 removes.
+ * region with every flag off). S5: the scatter asks no flag either (the
+ * Wave 3 test sets none), and its toolbar now always offers "View in 3D", so
+ * `suite-on-scatter` and `suite-on-scatter-selected` gain that button.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
 import { assertHermetic, PINNED, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, mountEverySection, openRollout, section, sectionFrame } from '../lib/rollout'
-import { ADVANCED_ON, SUITE, SUITE_DETAIL_ON } from './production/fixtures'
+import { SUITE, SUITE_DETAIL_ON } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -47,7 +48,6 @@ test.describe('Wave 3 sections', () => {
       const { api, errors } = await openRollout(page, `/coverage/suite?name=${SUITE}&days=30`, {
         theme,
         handlers: SUITE_DETAIL_ON,
-        flags: ADVANCED_ON,
         ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
       })
       await mountEverySection(page, api)

@@ -1,7 +1,7 @@
 /**
- * VIZ-504 section: the flag matrix, the requests it makes (and does not), and
- * what a group activation opens. Real seam, real fetch pipeline (`chartGet` ->
- * validator -> state), the HTTP client mocked.
+ * VIZ-504 section: the requests it makes (and does not), and what a group
+ * activation opens. It asks no flag (Phase D, S5). Real fetch pipeline
+ * (`chartGet` -> validator -> state), the HTTP client mocked.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -22,17 +22,10 @@ import FailureGroupsSection, { CLUSTERS_TAB, FailureGroupsSection as Named, GROU
 
 const GROUPS_URL = '/api/v1/analytics/failure-groups'
 const CLUSTERS_URL = '/api/v1/analytics/systemic-clusters'
-const CATALOGUE = 'viz_chart_data_api'
-const ADVANCED = 'viz_advanced_charts'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
 
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 vi.mock('./useEverHadRun', () => ({ useEverHadRun: (enabled: boolean) => (enabled ? true : null) }))
 const project = vi.hoisted(() => ({ id: 'p1' }))
 vi.mock('@/store/projectStore', () => ({
@@ -92,7 +85,6 @@ function renderSection(days = 30) {
 }
 
 beforeEach(() => {
-  flags.values = { [CATALOGUE]: true, [ADVANCED]: true }
   project.id = 'p1'
   drill.rows = []
   drill.owner = 'failures-groups'
@@ -117,20 +109,7 @@ describe('FailureGroupsSection', () => {
     expect(Named).toBe(FailureGroupsSection)
   })
 
-  it.each([
-    ['both off', {}],
-    ['only the catalogue flag', { [CATALOGUE]: true }],
-    ['only the advanced flag', { [ADVANCED]: true }],
-  ])('%s: renders nothing and asks nothing', async (_name, values) => {
-    flags.values = values
-    renderSection()
-    await settle()
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    expect(screen.queryByRole('tab')).toBeNull()
-    expect(get).not.toHaveBeenCalled()
-  })
-
-  it('both flags: ONE groups request, links included, the window clamped to 90 days', async () => {
+  it('ONE groups request, links included, the window clamped to 90 days', async () => {
     renderSection(365)
     await settle()
     expect(calls(GROUPS_URL)).toEqual([{ include: 'edges', project_id: 'p1', days: 90 }])

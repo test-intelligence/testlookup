@@ -1,6 +1,7 @@
 /**
- * VIZ-505 — the Explorer page, with only the network, the flag lookups, the
- * existence probe, the stores and the saved-views service mocked: the plan,
+ * VIZ-505 — the Explorer page, with only the network, the flag lookups (none
+ * is made since Phase D, S5), the existence probe, the stores and the
+ * saved-views service mocked: the plan,
  * the URL codec, the chart pipeline, `LazySection` and the frames are real,
  * so "one discovery plus one request per panel the reader reaches" is read
  * off the requests themselves.
@@ -14,18 +15,23 @@ import envelopeFixture from '../../../contracts/viz/fixtures/envelope/valid/filt
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { CatalogParams } from '@/components/charts/chartCatalogSources'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
-import { VIZ_FLAGS } from '@/config/vizFlags'
 import { __resetChartConcurrency } from '@/services/chartApi'
 import { useReleaseStore } from '@/store/releaseStore'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
 
-/** The two chart flags, read through the REAL seam (`useCatalogueRollout.ts`). */
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean | undefined> }))
+/** Which flags were LOOKED UP (each a request): none, since Phase D, S5. Every answer is "not known yet". */
+const flags = vi.hoisted(() => ({ asked: [] as string[] }))
 vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
+  useFeatureEnabled: (key: string) => {
+    flags.asked.push(key)
+    return false
+  },
+  useFeatureFlagStatus: (key: string) => {
+    flags.asked.push(key)
+    return undefined
+  },
 }))
 
 vi.mock('@/components/reports/catalogue/useEverHadRun', () => ({ useEverHadRun: () => true }))
@@ -50,7 +56,7 @@ vi.mock('@/store/authStore', () => ({
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
-import ExplorePage, { EXPLORER_OFF_TITLE } from './ExplorePage'
+import ExplorePage, { EXPLORER_TITLE } from './ExplorePage'
 
 const CHART_DATA_URL = '/api/v1/analytics/chart-data'
 const META = envelopeFixture.payload as unknown as EnvelopeMeta
@@ -150,7 +156,7 @@ class FakeIntersectionObserver {
 }
 
 beforeEach(() => {
-  flags.values = { [VIZ_FLAGS.chartDataApi]: true, [VIZ_FLAGS.advancedCharts]: true }
+  flags.asked = []
   project.id = 'p1'
   release.scope = null
   suiteNames = suites(5)
@@ -330,18 +336,12 @@ describe('ExplorePage (VIZ-505)', () => {
     expect(await screen.findByTestId('explore-discovery-unavailable')).toBeInTheDocument()
   })
 
-  it('flags off: the page says the explorer is not enabled, and asks nothing', async () => {
-    flags.values = { [VIZ_FLAGS.chartDataApi]: true, [VIZ_FLAGS.advancedCharts]: false }
+  it('asks no flag: the explorer itself on the first render, with no "not enabled" or pending state', () => {
     renderPage()
-    expect(screen.getByText(EXPLORER_OFF_TITLE)).toBeInTheDocument()
-    await settle()
-    expect(calls()).toHaveLength(0)
-  })
-
-  it('flags still loading: a placeholder, not "not enabled"', () => {
-    flags.values = {}
-    renderPage()
-    expect(screen.queryByText(EXPLORER_OFF_TITLE)).toBeNull()
-    expect(document.querySelector('[data-explore-pending]')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: EXPLORER_TITLE })).toBeInTheDocument()
+    expect(document.querySelector('[data-explore-summary]')).not.toBeNull()
+    expect(screen.queryByText(/not enabled/i)).toBeNull()
+    expect(document.querySelector('[data-explore-pending]')).toBeNull()
+    expect(flags.asked).toEqual([])
   })
 })

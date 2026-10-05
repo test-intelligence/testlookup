@@ -3,10 +3,8 @@
  * suite", then a suite's statuses or a status's suites, then the failing tests
  * of one suite, then the executions behind one test. OWNER: FK5.
  *
- * Behind `viz_chart_data_api` AND `viz_advanced_charts` (`useAdvancedRollout`,
- * the one seam): with either off it renders nothing and requests nothing. On,
- * it mounts behind its own `LazySection`, so nothing is asked before the
- * reader is near.
+ * It reads no flag (Phase D, S5). It mounts behind its own `LazySection`, so
+ * nothing is asked before the reader is near.
  *
  * WHERE THE READER IS lives in the address bar (C5, `useDrillPath`): the path
  * `drill=suite~payments&drill=status~failed` names the level, so Back walks up
@@ -64,7 +62,6 @@ import LazySection from './LazySection'
 import RowsPanel from './RowsPanel'
 import { selectorsKey, type RowsExpectation } from './RowsPanel.model'
 import { clampCatalogueDays, useCatalogueParams } from './catalogueScope'
-import { useAdvancedRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 import type { FailuresDrillProps } from './sectionContracts'
 
@@ -75,7 +72,7 @@ const ROOT_LEVEL = { kind: 'suites' } as const
 export const DRILL_HEIGHT = 280
 /**
  * The lazy placeholder's height: what the ladder DRAWS (frame, breadcrumb, the
- * first level's plot and footer), measured at 1280 with both flags on (R2-B
+ * first level's plot and footer), measured at 1280 (R2-B
  * F-15, `docs/viz-work/w3/r2b/diag-failures.jsonl` and X3's `x3/groups-win.jsonl`:
  * 372 px). The old estimate (the plot + 200 = 480) shrank by 108 px inside the
  * viewport as the section mounted, moving everything below it.
@@ -267,9 +264,7 @@ function FailuresDrillBody({ days, suiteFilter }: FailuresDrillProps) {
   )
 }
 
-export function FailuresDrill(props: FailuresDrillProps): ReactElement | null {
-  const on = useAdvancedRollout()
-  if (!on) return null
+export function FailuresDrill(props: FailuresDrillProps): ReactElement {
   return (
     <LazySection label="failures-drill" minHeight={DRILL_SECTION_MIN_HEIGHT}>
       <FailuresDrillBody {...props} />

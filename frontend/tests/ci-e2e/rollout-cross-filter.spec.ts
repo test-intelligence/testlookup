@@ -1,9 +1,9 @@
 /**
  * Cross-filtering (VIZ-603, P2): "Filter page by this" (the readout's button,
- * Shift+Enter, Shift-click) on the LEGACY scope, with both catalogue flags on
- * where a section still reads them (Failures, until Phase D S5; Coverage and
- * Suite detail's heatmap ask none since S4) and `viz_multi_filters` OFF
- * (owner decision 2026-10-04: the multi-filter runtime is off for good).
+ * Shift+Enter, Shift-click) on the LEGACY scope, with no chart flag set (no
+ * section asks one: Coverage and Suite detail's heatmap since Phase D S4,
+ * Failures since S5) and `viz_multi_filters` OFF (owner decision 2026-10-04:
+ * the multi-filter runtime is off for good).
  *
  *   - a suite mark sets the page's own "Test suite" select, as the select
  *     spells the suite, REPLACING it; every read after it carries
@@ -32,7 +32,6 @@ import {
 } from '../lib/rollout'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 import {
-  ADVANCED_ON,
   CHART_DATA_PATH,
   COVERAGE_ON,
   FAILURES_ON,
@@ -49,7 +48,7 @@ const ENV = { id: 'heatmap-suite_environment', title: 'Suite pass rate by enviro
 const RELEASE_TITLE = 'Suite pass rate by release'
 const FILTER = '[data-mark-intent="filter"]'
 
-const open = (page: Page) => openRollout(page, '/failures', { handlers: FAILURES_ON, flags: ADVANCED_ON, ready })
+const open = (page: Page) => openRollout(page, '/failures', { handlers: FAILURES_ON, ready })
 
 const ladder = (page: Page) => section(page, DRILL)
 /** The page's legacy suite select (`SuiteFilterSelect`) and the top bar's release select (`ReleasePicker`). */
@@ -77,7 +76,7 @@ async function optionsNamed(page: Page, name: string): Promise<string[]> {
   return values.filter((value) => suiteKey(value) === suiteKey(name))
 }
 
-test.describe('Cross-filter on the legacy scope, both catalogue flags, multi-filters off (1280 x 4000)', () => {
+test.describe('Cross-filter on the legacy scope, multi-filters off (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('Failures ladder: Shift+Enter on a suite sets the Test suite select (as spelled) and the reads; it does not drill', async ({
@@ -200,7 +199,7 @@ test.describe('Cross-filter on the legacy scope, both catalogue flags, multi-fil
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the ladder with the filter action offered, every impact (${theme})`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, flags: ADVANCED_ON, ready, theme })
+      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready, theme })
       await levelZero(page)
       await focusFirstSuite(page)
       await expect(ladder(page).locator(FILTER)).toBeVisible()

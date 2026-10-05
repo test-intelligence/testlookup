@@ -188,8 +188,8 @@ const PAGES: RoutePage[] = [
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     handlers: SUITE_DETAIL_ON,
     flags: {},
-    // S4: + the test x run heatmap (no flag); the scatter still has its own gate until S5 (off here).
-    frames: 3,
+    // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag).
+    frames: 4,
   },
   {
     name: 'Release gate',

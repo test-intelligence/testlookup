@@ -2,10 +2,9 @@
  * The test scatter section (VIZ-506): p95 duration x failure rate x volume,
  * one point per test, from `GET /api/v1/analytics/test-scatter`. OWNER: FK4.
  *
- * Behind `viz_chart_data_api` AND `viz_advanced_charts` (`useAdvancedRollout`,
- * the one seam): with either off it renders nothing and requests nothing. On,
- * it mounts behind its own `LazySection` (as `HeatmapSection` does), so no
- * request is made and no scatter engine is fetched before the reader is near.
+ * It reads no flag (Phase D, S5). It mounts behind its own `LazySection` (as
+ * `HeatmapSection` does), so no request is made and no scatter engine is
+ * fetched before the reader is near.
  *
  * What it shows, and why each piece is there:
  *   - the frame (`ChartFrame`): title, the salient-quadrant takeaway, the
@@ -24,11 +23,12 @@
  * All Projects: the endpoint needs one project (a fingerprint is per
  * project), so the frame says so and nothing is requested.
  *
- * The 3D view (VIZ-508, `viz_three_d` through `useThreeDRollout`, asked HERE
- * and nowhere else): "View in 3D" in the frame's toolbar lays the three.js
- * view OVER the 2D scatter, which stays mounted (and `inert`) underneath, so
- * export, print and the table keep reading the 2D chart. A browser that cannot
- * draw it, or that takes its context back, returns to 2D with a notice.
+ * The 3D view (VIZ-508): "View in 3D" in the frame's toolbar, offered over
+ * every drawn scatter, lays the three.js view OVER the 2D scatter, which stays
+ * mounted (and `inert`) underneath, so export, print and the table keep
+ * reading the 2D chart. 2D is the default and the three.js chunk is fetched
+ * only on the first click. A browser that cannot draw it, or that takes its
+ * context back, returns to 2D with a notice.
  *
  * The data hook: `useChartData` with the catalogue's own key, fetcher and
  * validator (`catalogKey` / `catalogFetcher` / `catalogValidator`, exactly
@@ -70,7 +70,6 @@ import { formatNumber } from '@/utils/formatters'
 import LazySection from './LazySection'
 import RowsPanel from './RowsPanel'
 import { clampCatalogueDays, useCatalogueParams } from './catalogueScope'
-import { useAdvancedRollout, useThreeDRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 import type { ScatterSectionProps } from './sectionContracts'
 import {
@@ -151,11 +150,10 @@ function ScatterBody({ days, suiteFilter, placement }: ScatterSectionProps) {
   const rowsTitle = rowsPoint?.label ?? rowsSelectors[0]?.value ?? ''
 
   // VIZ-508: the 3D view, offered only over a drawn scatter.
-  const threeD = useThreeDRollout()
   const [view, setView] = useState<'2d' | '3d'>('2d')
   const [notice, setNotice] = useState<string | null>(null)
   const drawn = chart !== null && chart.points.length > 0
-  const showing3D = threeD && drawn && view === '3d'
+  const showing3D = drawn && view === '3d'
   const toggleView = useCallback(() => {
     setNotice(null)
     setView((current) => (current === '3d' ? '2d' : '3d'))
@@ -164,12 +162,11 @@ function ScatterBody({ days, suiteFilter, placement }: ScatterSectionProps) {
     setView('2d')
     setNotice(unavailableNotice(reason))
   }, [])
-  const viewToggle =
-    threeD && drawn ? (
-      <button type="button" data-scatter-view-toggle="" aria-pressed={showing3D} onClick={toggleView} className={TOGGLE}>
-        <SwapLabel labels={VIEW_LABELS} current={showing3D ? VIEW_2D_LABEL : VIEW_3D_LABEL} />
-      </button>
-    ) : undefined
+  const viewToggle = drawn ? (
+    <button type="button" data-scatter-view-toggle="" aria-pressed={showing3D} onClick={toggleView} className={TOGGLE}>
+      <SwapLabel labels={VIEW_LABELS} current={showing3D ? VIEW_2D_LABEL : VIEW_3D_LABEL} />
+    </button>
+  ) : undefined
 
   return (
     <div data-catalogue-section={`scatter-${placement}`} className="min-w-0">
@@ -246,15 +243,13 @@ function ScatterBody({ days, suiteFilter, placement }: ScatterSectionProps) {
 /**
  * The drawn section's height, px, for the lazy placeholder: the plot plus the
  * frame's header and footer, the selection toolbar, the keyboard hint and the
- * quadrant key, MEASURED at 1280 with both flags on, on Failures and on Suite
+ * quadrant key, MEASURED at 1280, on Failures and on Suite
  * detail alike (R2-B F-15: 543 px; the old estimate, the plot + 260 = 580,
  * moved the page up 37 px as the scatter mounted).
  */
 export const SCATTER_SECTION_MIN_HEIGHT = 543
 
-export function ScatterSection(props: ScatterSectionProps): ReactElement | null {
-  const on = useAdvancedRollout()
-  if (!on) return null
+export function ScatterSection(props: ScatterSectionProps): ReactElement {
   return (
     <LazySection label={`scatter-${props.placement}`} minHeight={SCATTER_SECTION_MIN_HEIGHT}>
       <ScatterBody {...props} />

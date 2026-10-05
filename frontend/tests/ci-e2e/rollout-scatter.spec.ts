@@ -31,7 +31,6 @@ import {
 } from '../lib/rollout'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 import {
-  ADVANCED_ON,
   CHART_ROWS_PATH,
   FAILURES_ON,
   HOSTILE_NAME,
@@ -46,7 +45,7 @@ const P = PROJECT_ID
 const SCATTER = { id: 'scatter-project', title: 'Test duration vs failure rate' } as const
 
 const openFailures = (page: Page, handlers: ApiHandlers = FAILURES_ON) =>
-  openRollout(page, '/failures', { handlers, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Failure verdict') })
+  openRollout(page, '/failures', { handlers, ready: (p) => landmark(p, 'Failure verdict') })
 
 const scatter = (page: Page) => section(page, SCATTER.id)
 const frame = (page: Page) => sectionFrame(page, SCATTER.id, SCATTER.title)
@@ -57,7 +56,7 @@ async function drawn(page: Page) {
   await expect(scatter(page).locator('[data-chart-type="scatter"]')).toHaveAttribute('data-chart-status', 'ready')
 }
 
-test.describe('Project scatter on Failures, both flags (1280 x 4000)', () => {
+test.describe('Project scatter on Failures (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('project-wide: one read with no suite; every test placed; the exclusions stated', async ({ page }) => {
@@ -157,7 +156,7 @@ test.describe('Project scatter on Failures, both flags (1280 x 4000)', () => {
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the project scatter, every impact (${theme}): idle, a point focused, the selection listed`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Failure verdict'), theme })
+      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict'), theme })
       await drawn(page)
       const only = [`[data-catalogue-section="${SCATTER.id}"]`]
       await expectNoBlockingViolations(page, theme, [], only)

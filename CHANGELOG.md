@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: Failures, the 3D scatter, the Sankey and the Explorer lose their flag gates (Phase D, S5)
+
+**The Failures sections, the test scatter (with its 3D view), the run-compare
+status flows and the Explorer draw on every load, and no page asks a chart
+flag any more.** Migration 0195 turned the chart flags on everywhere, so
+Phase D deletes the flag-off code. S5 removes the last readers of the seam
+(`useCatalogueRollout.ts`); the seam file, its test and its ratchet stay until
+S6. Plan: `docs/viz-work/phaseD-plan.md` §2.
+
+- **`FailuresAdvanced.tsx`** asks no flag: both gates (`useCatalogueRollout`
+  and the inner `useAdvancedRollout`) are gone, and the sections chunk mounts
+  unconditionally behind its `QuietSectionBoundary`. The Failures page asks
+  no viz flag.
+- **`FailureGroupsSection.tsx`**, **`FailuresDrill.tsx`** and
+  **`ScatterSection.tsx`** no longer read the seam.
+- **The 3D scatter (VIZ-508):** `useThreeDRollout` is gone. "View in 3D" is
+  offered over every drawn scatter (`showing3D = drawn && view === '3d'`).
+  2D is still the default, three.js is still fetched only on the first click,
+  and a browser without WebGL 2 (or one that takes the context back) still
+  falls back to 2D with a notice. Suite detail no longer asks a flag either:
+  its scatter was the last reader.
+- **`StatusFlowSection.tsx`** (the run-compare Sankey) no longer reads the seam.
+- **`ExplorePage.tsx`**: `useAdvancedRolloutStatus`, `EXPLORER_OFF_TITLE`, the
+  "not enabled" empty state and the `data-explore-pending` placeholder are
+  gone. `ExplorePage` renders the Explorer.
+- Outside the seam file, nothing under `frontend/src` imports
+  `useCatalogueRollout.ts` (only its own test and `flagSeam.ratchet.test.ts`
+  name it). Cross-filter (`useCrossFilter`, `PageSuiteTargetContext`) and the
+  Views button are unchanged.
+- **Unit tests:** the flag-off cases and seam/flag mocks are gone from
+  `FailuresAdvanced(.quiet)`, `FailureGroupsSection`, `FailuresDrill`,
+  `ScatterSection`, `StatusFlowSection`, `ExplorePage`,
+  `QuietSectionBoundary.composites` and `rowsOwnership(.failures)`.
+  `FailuresAdvanced.test` and `ExplorePage.test` assert that no flag is looked
+  up. In `ScatterSection.test`, "`viz_three_d` off: no toggle" became "2D is the
+  default: the toggle is offered unpressed".
+- **e2e:**
+  - `rollout-flag-off.spec.ts` is deleted: Failures was its last page. The
+    Failures page-read inventory lives on in `rollout-failure-groups`
+    (`FAILURES_PAGE_READS`).
+  - `rollout-failure-groups`: the inventory is `SHELL_BASE` with no flag
+    lookup. Its two flag-matrix tests are deleted.
+  - `rollout-drill`, `rollout-scatter` and `rollout-cross-filter` set no flags.
+  - `rollout-scatter-3d`: test (g) "`viz_three_d` off: no toggle" is deleted.
+    Test (b), "three is fetched only on View in 3D", is kept.
+  - `rollout-suite-detail`: the two lookups and the 3D lookup are gone from its
+    inventories, and no test sets a flag. The scatter's read joins the
+    2,400 px inventory, because the now-unconditional scatter is near at that
+    height.
+  - `rollout-presentation` and `rollout-responsive`: Suite detail draws 4
+    frames (the scatter joins).
+  - The Failures `lcp.spec` off cell uses `FAILURES_ON`.
+  - `tests/lib/rollout.ts`: `SHELL_ON` and `SHELL_ADVANCED` are deleted, since
+    nothing uses them.
+- **Visual:**
+  - `prod-failures` uses `FAILURES_ON`. The sections mount below the four
+    regions.
+  - `prod-failures-on` and `prod-suite-detail-on` set no flags.
+  - **Expected PNG changes:** `failures-on-scatter`, `suite-on-scatter` and
+    `suite-on-scatter-selected` (both themes). The scatter's toolbar now always
+    shows "View in 3D"; the harness used to answer `viz_three_d` off.
+
 ## Unreleased - Visualization Upgrade: the Coverage, Suite detail and Trends heatmap sections lose their flag gates (Phase D, S4)
 
 **Coverage's Wave 3 sections, the Trends heatmap and Suite detail's test x

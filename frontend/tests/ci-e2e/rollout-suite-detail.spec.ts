@@ -9,11 +9,10 @@
  * always mounted, asking no flag since S4) adds two lazy sections for its one
  * suite: the test x run status heatmap (`heatmap-test_run`,
  * `/analytics/heatmap?kind=test_run`, no flag since S4) and the test scatter
- * (`scatter-suite`, `/analytics/test-scatter`), plus the sections' unfiltered
- * run probe. The scatter still reads its own gate (`useAdvancedRollout`, both
- * lookups, asked as soon as its chunk mounts whatever the answers) until S5
- * removes the Failures-family gates, so the scatter tests still set
- * `ADVANCED_ON`. Both sections share the page's one `rows` URL key: only the
+ * (`scatter-suite`, `/analytics/test-scatter`, no flag since S5: neither its
+ * section gate nor its 3D view asks one), plus the sections' unfiltered run
+ * probe. So the page asks no viz flag at all, and no test here sets one.
+ * Both sections share the page's one `rows` URL key: only the
  * section that opened a selection may answer it (REQUESTS FK4-1), so every
  * rows test asserts ONE panel.
  *
@@ -45,7 +44,6 @@ import {
   watchConsoleErrors,
 } from '../lib/rollout'
 import {
-  ADVANCED_ON,
   CHART_ROWS_PATH,
   HEATMAP_PATH,
   HOSTILE_NAME,
@@ -73,27 +71,18 @@ const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&
 const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
 
 /**
- * One cold load at 1280 x 2400, every flag answered off: the shell
- * (`SHELL_BASE`: neither the page nor the heatmap asks a flag since S4), the
- * scatter's two lookups (its own `useAdvancedRollout`, asked whatever the
- * answers; S5 removes them), the page's reads, and the test x run heatmap
- * (near at this height since S4 mounts it unconditionally) with its run probe.
- * The scatter, off, draws and asks nothing else.
+ * One cold load at 1280 x 2400: the shell (`SHELL_BASE`: the page, the heatmap
+ * and the scatter ask no flag since S5 — S4's two scatter lookups are gone),
+ * the page's reads, and both Wave 3 sections, which are near at this height
+ * (the test x run heatmap since S4, the scatter since S5 mounts it
+ * unconditionally: its top sits about 2,500 px down, inside the 200 px near
+ * margin), with their one run probe. No 3D lookup: "View in 3D" is always
+ * offered.
  */
-const INVENTORY = [
-  ...SHELL_BASE,
-  `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
-  `GET /api/v1/feature-flags/viz_advanced_charts/status?project_id=${P}`,
-  ...PAGE_READS,
-  HEATMAP_LINE,
-  RUN_PROBE,
-]
+const INVENTORY = [...SHELL_BASE, ...PAGE_READS, HEATMAP_LINE, SCATTER_LINE, RUN_PROBE]
 
-/** The drawn scatter asks whether it may offer its 3D view (VIZ-508; answered off by the harness). */
-const THREE_D_LOOKUP = `GET /api/v1/feature-flags/viz_three_d/status?project_id=${P}`
-
-/** The scatter on (`ADVANCED_ON`), every section near: + the scatter's read and its 3D lookup. */
-const INVENTORY_BOTH = [...INVENTORY, SCATTER_LINE, THREE_D_LOOKUP]
+/** Every section mounted (the 4000 px describe): the same requests, nothing more. */
+const INVENTORY_BOTH = INVENTORY
 
 const HEATMAP = { id: 'heatmap-test_run', title: 'Test results by run' } as const
 const SCATTER = { id: 'scatter-suite', title: 'Test duration vs failure rate' } as const
@@ -155,8 +144,7 @@ test('?days=365 in the URL: the page falls back to its own window, and nothing o
 test.describe('Suite detail, the Wave 3 sections (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  // ADVANCED_ON for the scatter's own gate only (S5 removes it); the heatmap asks no flag.
-  const open = (page: Page) => openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags: ADVANCED_ON, ready })
+  const open = (page: Page) => openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready })
 
   test("both sections drawn for the page's suite; exactly their reads, once each", async ({ page }) => {
     const console = watchConsoleErrors(page)
@@ -261,7 +249,7 @@ test.describe('Suite detail, the Wave 3 sections (1280 x 4000)', () => {
     test(`axe on the two sections, every impact (${theme})`, async ({ page }) => {
       // Without the Object-member names: a polluted page breaks axe itself (the hostile test owns that defect).
       const handlers = withoutObjectMemberLabels(SUITE_DETAIL_ON)
-      const { api } = await openRollout(page, PATH, { handlers, flags: ADVANCED_ON, ready, theme })
+      const { api } = await openRollout(page, PATH, { handlers, ready, theme })
       await mountEverySection(page, api)
       await expectDrawn(sectionFrame(page, HEATMAP.id, HEATMAP.title), HEATMAP.id)
       await expectDrawn(sectionFrame(page, SCATTER.id, SCATTER.title), SCATTER.id)
@@ -277,7 +265,7 @@ test.describe('Suite detail, the Wave 3 sections, a short screen (1280 x 600)', 
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: the heatmap read waits until it is near, and goes out before it is visible', async ({ page }) => {
-    const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, flags: ADVANCED_ON, ready })
+    const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready })
     await proveLazyMount(page, api, {
       label: HEATMAP.id,
       section: HEATMAP.id,

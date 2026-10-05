@@ -1,7 +1,8 @@
 /**
- * The opt-in 3D test scatter (VIZ-508): three.js, behind `viz_three_d`, laid
- * OVER the 2D scatter on Failures (`scatter-project`), which stays mounted
- * underneath. What a unit test cannot see, here in a real browser under the
+ * The opt-in 3D test scatter (VIZ-508): three.js, laid OVER the 2D scatter on
+ * Failures (`scatter-project`), which stays mounted underneath. No flag since
+ * Phase D, S5: "View in 3D" is offered over every drawn scatter, 2D is the
+ * default, and three is fetched only on the first click ((b) is that proof). What a unit test cannot see, here in a real browser under the
  * production CSP `<meta>`:
  *
  *   (a) this browser HAS WebGL 2 — a precondition that FAILS, never skips: a
@@ -13,8 +14,7 @@
  *   (d) export while the 3D view shows is the 2D chart's (PNG and CSV);
  *   (e) a browser with no WebGL gets the notice and the 2D chart, and three
  *       is never fetched;
- *   (f) the browser taking the context back: the notice, back to 2D;
- *   (g) the flag off: no toggle, no three.
+ *   (f) the browser taking the context back: the notice, back to 2D.
  *
  * Headless Chromium draws WebGL with SwiftShader only when told to (the two
  * launch flags below; this file only, so no other spec's GPU path changes).
@@ -27,10 +27,9 @@ import { EXPORT, exportFile, exportFileName } from '../lib/chart-gallery-page'
 import { decodePng } from '../lib/png'
 import { cspViolations, watchCsp } from '../lib/csp'
 import { bringNear, expectDrawn, networkQuiet, openRollout, section, sectionFrame, watchConsoleErrors } from '../lib/rollout'
-import { ADVANCED_ON, FAILURES_ON } from '../visual/production/fixtures'
+import { FAILURES_ON } from '../visual/production/fixtures'
 
 const SCATTER = { id: 'scatter-project', title: 'Test duration vs failure rate' } as const
-const THREE_D_ON = { ...ADVANCED_ON, viz_three_d: true }
 
 const VIEW_3D = 'View in 3D'
 const VIEW_2D = 'Back to 2D'
@@ -62,14 +61,14 @@ const scatter2d = (page: Page) => scatter(page).locator('[data-chart-type="scatt
 const view3d = (page: Page) => scatter(page).locator('[data-scatter-3d]')
 const toggle = (page: Page) => frame(page).locator('[data-scatter-view-toggle]')
 
-/** Opens Failures with the flags, brings the scatter near and waits for the 2D chart; every three request is recorded. */
-async function openFailures(page: Page, flags: Record<string, boolean> = THREE_D_ON) {
+/** Opens Failures (no flag set), brings the scatter near and waits for the 2D chart; every three request is recorded. */
+async function openFailures(page: Page) {
   const threeRequests: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (THREE_REQUEST.test(path)) threeRequests.push(path)
   })
-  const opened = await openRollout(page, '/failures', { handlers: FAILURES_ON, flags, ready: (p) => landmark(p, 'Failure verdict') })
+  const opened = await openRollout(page, '/failures', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict') })
   await bringNear(page, SCATTER.id)
   await expectDrawn(frame(page), SCATTER.id)
   await expect(scatter2d(page)).toHaveAttribute('data-chart-status', 'ready')
@@ -197,13 +196,4 @@ test('(f) the browser takes the context back: the notice, the view gone, the 2D 
   await expect(scatter(page).locator('[data-scatter-3d-notice]')).toHaveText(CONTEXT_LOST)
   await expect(view3d(page)).toHaveCount(0)
   await expect(scatter2d(page)).toHaveAttribute('data-chart-status', 'ready')
-})
-
-test('(g) viz_three_d off: no toggle, and three is never fetched', async ({ page }) => {
-  const { api, threeRequests } = await openFailures(page, ADVANCED_ON)
-  await networkQuiet(page, api)
-  await expect(frame(page).locator('[data-chart-toolbar]')).toBeVisible()
-  await expect(toggle(page)).toHaveCount(0)
-  await expect(frame(page).getByRole('button', { name: VIEW_3D })).toHaveCount(0)
-  expect(threeRequests).toEqual([])
 })

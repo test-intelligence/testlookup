@@ -1,8 +1,7 @@
 /**
  * The failure groups + systemic clusters section (VIZ-504), on Failure
  * analysis. OWNER: FK3. Mounted by `FailuresAdvanced` (lazy, near the reader);
- * renders nothing and asks nothing unless `useAdvancedRollout()` (the catalogue
- * flag AND `viz_advanced_charts`, the one seam that reads them).
+ * it reads no flag (Phase D, S5: the advanced charts are on everywhere).
  *
  * Two tabs (`@radix-ui/react-tabs`):
  *
@@ -49,7 +48,6 @@ import type { MarkActivateHandler, MarkIntentsFor } from '@/components/charts/ma
 import { useCatalogueParams } from './catalogueScope'
 import RowsPanel from './RowsPanel'
 import type { FailureGroupsSectionProps } from './sectionContracts'
-import { useAdvancedRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 
 export const FAILURE_GROUPS_TITLE = 'Failures grouped by error message'
@@ -191,10 +189,8 @@ function FailureGroupsBody({ days, suiteFilter }: FailureGroupsSectionProps) {
   )
 }
 
-export function FailureGroupsSection(props: FailureGroupsSectionProps): ReactElement | null {
-  // The seam, read inside the lazy section: with either flag off nothing renders and nothing is asked.
-  const on = useAdvancedRollout()
-  return on ? <FailureGroupsBody {...props} /> : null
+export function FailureGroupsSection(props: FailureGroupsSectionProps): ReactElement {
+  return <FailureGroupsBody {...props} />
 }
 
 export default FailureGroupsSection

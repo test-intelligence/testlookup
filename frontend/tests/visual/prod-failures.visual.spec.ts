@@ -8,6 +8,9 @@
  * the drill ladder, the project scatter): captured with every flag off,
  * before any Wave 3 code, and last, so the Wave 2.5 regions keep their
  * inputs.
+ * Phase D, S5: the Wave 3 sections mount unconditionally (no flag is asked),
+ * so the page is opened with their answers (`FAILURES_ON`); they sit below
+ * the body grid, so the four regions are the same pixels.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -20,7 +23,7 @@ import {
   THEMES,
   visualRegion,
 } from '../lib/production-pages'
-import { FAILURES, NOW, PROJECT_ID, USER } from './production/fixtures'
+import { FAILURES_ON, NOW, PROJECT_ID, USER } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -32,7 +35,7 @@ for (const theme of THEMES) {
       me: USER,
       user: USER,
       projectId: PROJECT_ID,
-      handlers: FAILURES,
+      handlers: FAILURES_ON,
       ready: (p) => landmark(p, 'Failure verdict'),
     })
 
