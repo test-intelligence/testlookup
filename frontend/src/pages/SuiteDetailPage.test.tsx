@@ -17,9 +17,9 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { cloneElement, isValidElement, type ReactElement } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import SuiteDetailPage, { SUITE_CHART_HEIGHT, SUITE_PASS_RATE_PENDING_HEIGHT } from './SuiteDetailPage'
+import SuiteDetailPage, { SUITE_CHART_HEIGHT } from './SuiteDetailPage'
 
 const mockGetSuiteTrend = vi.fn()
 
@@ -55,18 +55,8 @@ vi.mock('@/hooks/useMetrics', () => ({
   })),
 }))
 
-// The one catalogue seam (K1), OFF unless a test turns it on.
-// `pending`: the status lookup has not answered yet (`useCatalogueRolloutStatus` is undefined).
-const rollout = vi.hoisted(() => ({ on: false, pending: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => !rollout.pending && rollout.on,
-  useCatalogueRolloutStatus: () => (rollout.pending ? undefined : rollout.on),
-  // Wave 3: the seam's advanced reader, OFF here (the composite that calls it is stubbed below).
-  useAdvancedRollout: () => false,
-}))
-
 // Wave 3: the page's one new mount, stubbed (its flag gate and sections have
-// their own tests): what the page passes it, and under which flag it mounts.
+// their own tests): what the page passes it, and where it mounts.
 vi.mock('@/components/reports/catalogue/SuiteDetailAdvanced', () => ({
   default: ({ days, suiteName }: { days: number; suiteName: string }) => (
     <div data-testid="suite-advanced" data-days={days} data-suite={suiteName} />
@@ -249,10 +239,9 @@ describe('SuiteDetailPage — regression', () => {
 
 // ── VIZ-106 / VIZ-408 (Wave 2.6) ────────────────────────────────────────────
 //
-// Both frames rise to the 240 px floor whatever the flag says (the one
-// intended change to this page's baselines). With the catalogue flag on, the
-// pass-rate frame gains the trend overlays and the zoom — and only that frame,
-// and only then: flag off it is the Wave 2.5 frame, with no catalogue section.
+// Both frames rise to the 240 px floor. The pass-rate frame carries the trend
+// overlays and the zoom — and only that frame. Since Phase D (S3) the page
+// asks no flag: there is no flag-off frame and no pending placeholder.
 
 describe('SuiteDetailPage — Wave 2.6', () => {
   const bodyHeight = (frame: HTMLElement) =>
@@ -262,10 +251,6 @@ describe('SuiteDetailPage — Wave 2.6', () => {
     mockGetSuiteTrend.mockReset()
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
   })
-  afterEach(() => {
-    rollout.on = false
-    rollout.pending = false
-  })
 
   async function frames() {
     const history = frameOf(await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' }))
@@ -273,8 +258,7 @@ describe('SuiteDetailPage — Wave 2.6', () => {
     return { history, passRate }
   }
 
-  it.each([false, true])('both frames are 240 px tall (flag %s)', async (on) => {
-    rollout.on = on
+  it('both frames are 240 px tall', async () => {
     renderPage()
     const { history, passRate } = await frames()
     expect(SUITE_CHART_HEIGHT).toBe(240)
@@ -282,18 +266,7 @@ describe('SuiteDetailPage — Wave 2.6', () => {
     expect(bodyHeight(passRate)).toBe('240px')
   })
 
-  it('flag off: no catalogue section, no overlays, no zoom', async () => {
-    renderPage()
-    const { history, passRate } = await frames()
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-    for (const frame of [history, passRate]) {
-      expect(frame.querySelector('[data-trend-controls]')).toBeNull()
-      expect(frame.querySelector('[data-chart-brush]')).toBeNull()
-    }
-  })
-
-  it('flag on: the pass-rate frame gains the overlays and the zoom, inside its catalogue section; the run history does not', async () => {
-    rollout.on = true
+  it('the pass-rate frame has the overlays and the zoom, inside its catalogue section; the run history does not', async () => {
     renderPage()
     const { history, passRate } = await frames()
     const section = document.querySelector('[data-catalogue-section="suite-pass-rate"]') as HTMLElement
@@ -305,31 +278,6 @@ describe('SuiteDetailPage — Wave 2.6', () => {
     expect(within(passRate).queryByRole('button', { name: /apply/i })).toBeNull()
     expect(history.querySelector('[data-trend-controls]')).toBeNull()
     expect(history.querySelector('[data-chart-brush]')).toBeNull()
-  })
-
-  // R1-6: until the flag answers, the pass-rate slot holds a same-height
-  // placeholder instead of drawing the bare frame and swapping it for the
-  // catalogue one (a remount, a re-animation, and a taller frame pushing the
-  // test-case table down) when the answer comes back after the suite data.
-  it('while the flag lookup is in flight: the pass-rate slot holds its height, no frame is drawn yet', async () => {
-    rollout.pending = true
-    renderPage()
-    await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' })
-    const pending = document.querySelector('[data-suite-pass-rate-pending]') as HTMLElement
-    expect(pending).not.toBeNull()
-    expect(pending).toHaveAttribute('aria-busy', 'true')
-    expect(pending.style.minHeight).toBe(`${SUITE_PASS_RATE_PENDING_HEIGHT}px`)
-    expect(SUITE_PASS_RATE_PENDING_HEIGHT).toBeGreaterThan(SUITE_CHART_HEIGHT)
-    expect(screen.queryByRole('heading', { name: 'Pass rate trend — last 30 days' })).toBeNull()
-    expect(document.querySelector('[data-catalogue-section]')).toBeNull()
-  })
-
-  it.each([false, true])('once the flag answers (%s), the slot is the frame and the placeholder is gone', async (on) => {
-    rollout.on = on
-    renderPage()
-    const { passRate } = await frames()
-    expect(document.querySelector('[data-suite-pass-rate-pending]')).toBeNull()
-    expect(passRate.closest('[data-catalogue-section="suite-pass-rate"]') !== null).toBe(on)
   })
 
   it('the header actions wrap on a narrow screen', async () => {
@@ -352,34 +300,15 @@ describe('SuiteDetailPage — Wave 2.6', () => {
 // ── Wave 3 (VIZ-501 test x run, VIZ-506 scatter) ───────────────────────────
 //
 // The page's whole change is ONE import and ONE mount of the lazy composite,
-// under the catalogue flag it already reads: flag off (or not answered yet),
-// nothing is mounted and so nothing new is asked.
+// unconditional since Phase D (S3); the composite reads the advanced flag itself.
 
 describe('SuiteDetailPage — Wave 3 advanced sections', () => {
   beforeEach(() => {
     mockGetSuiteTrend.mockReset()
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
   })
-  afterEach(() => {
-    rollout.on = false
-    rollout.pending = false
-  })
 
-  it('flag off: the composite is not mounted', async () => {
-    renderPage()
-    await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' })
-    expect(screen.queryByTestId('suite-advanced')).toBeNull()
-  })
-
-  it('while the flag lookup is in flight: not mounted', async () => {
-    rollout.pending = true
-    renderPage()
-    await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' })
-    expect(screen.queryByTestId('suite-advanced')).toBeNull()
-  })
-
-  it('flag on: mounted once, with the page window and its one suite, between the charts and the test table', async () => {
-    rollout.on = true
+  it('mounted once, with the page window and its one suite, between the charts and the test table', async () => {
     renderPage('/coverage/suite?name=Auth&days=14')
     const advanced = await screen.findByTestId('suite-advanced')
     expect(screen.getAllByTestId('suite-advanced')).toHaveLength(1)

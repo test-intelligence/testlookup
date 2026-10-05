@@ -1,6 +1,6 @@
 /**
  * The Trends catalogue sections (VIZ-408, Wave 2.6): what `/trends` adds below
- * its body grid when `viz_chart_data_api` is on.
+ * its body grid (unconditionally since Phase D, S3).
  *
  *   1. **Pass rate by suite** — `MultiSeriesChartFrame` over
  *      `chart-data?metric=pass_rate&group_by=day&group_by=suite&top_n=7`: the
@@ -26,7 +26,7 @@
  * charts), the page's project, release and suite scope, one value as a scalar.
  *
  * Nothing is asked until a section is near the reader (`LazySection`): the
- * whole module is a lazy chunk the page only loads with the flag on, and each
+ * whole module is a lazy chunk the page loads when it draws its body, and each
  * section mounts — and asks — when it scrolls within reach. The suite request
  * starts when EITHER of its two views is near (a reader who jumps straight to
  * the heatmap still gets it), and the unfiltered "ever had a run?" probe that

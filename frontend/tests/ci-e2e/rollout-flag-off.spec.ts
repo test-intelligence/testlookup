@@ -35,7 +35,8 @@
  * turned the chart flags on everywhere, and removes the page from this spec
  * in the same change: Overview left in S1 (its flag-on inventory is
  * `rollout-overview.spec.ts`), Summary and Release gate in S2
- * (`rollout-summary.spec.ts`, `rollout-release-gate.spec.ts`).
+ * (`rollout-summary.spec.ts`, `rollout-release-gate.spec.ts`), Trends and
+ * Suite detail in S3 (`rollout-trends.spec.ts`, `rollout-suite-detail.spec.ts`).
  *
  * To re-record after a DELIBERATE change to a page's requests:
  *   ROLLOUT_INVENTORY_PRINT=1 npx playwright test --config playwright.ci.config.ts rollout-flag-off
@@ -59,9 +60,6 @@ import {
   NOW,
   PROJECT_ID,
   RUN_ID,
-  SUITE,
-  SUITE_DETAIL,
-  TRENDS,
   USER,
 } from '../visual/production/fixtures'
 
@@ -115,22 +113,6 @@ interface ReportPage {
 }
 
 const PAGES: ReportPage[] = [
-  {
-    name: 'Trends',
-    path: '/trends',
-    handlers: TRENDS,
-    ready: (p) => landmark(p, 'Trend metrics'),
-    frames: ['Daily breakdown', 'Pass rate trend'],
-    headings: ['Run cadence — last 14 days', 'Suite pass rates · today'],
-  },
-  {
-    name: 'Suite detail',
-    path: `/coverage/suite?name=${SUITE}&days=30`,
-    handlers: SUITE_DETAIL,
-    ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
-    frames: [/^Run history/, /^Pass rate trend/],
-    headings: [],
-  },
   // Wave 3 (VIZ-206/502, VIZ-205/501 env + release heatmaps): the page as
   // Wave 2.6 left it, which has no kit frame. The new sections mount below
   // the suite breakdown, behind both flags.
@@ -186,27 +168,6 @@ const SHELL = [
  * matter, both sides are sorted). Recorded on main @ 71c022e0.
  */
 const INVENTORY: Record<string, string[]> = {
-  // Trends opens on its own 14 days. Until Wave 2.6 the reset to 14 ran after
-  // the first render had already asked for the stored 30, so every page-owned
-  // read was made twice at a cold load (before-notes 13). Wave 2.6 fixed it
-  // (the page reads 14 until the store holds 14) and removed the six `days=30`
-  // lines that pinned the double fetch: each read is now made once.
-  Trends: [
-    ...SHELL,
-    `GET /api/v1/saved-views?project_id=${P}&page=trends`,
-    `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
-    `GET /api/v1/metrics/summary?project_id=${P}&days=14`,
-    `GET /api/v1/analytics/coverage?project_id=${P}&days=14`,
-    `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=14`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
-  ],
-  'Suite detail': [
-    ...SHELL,
-    `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,
-    `GET /api/v1/test-management/suites/${SUITE}/trend?project_id=${P}&days=30`,
-    `GET /api/v1/suites?project_id=${P}`,
-  ],
   // Recorded on main @ 03983f12 (Wave 3 C0). The page's own reads: coverage
   // and trend over its 30 days, its newest run (`size=1`, the header's suite
   // badge), the runs list and its saved view. Nothing from

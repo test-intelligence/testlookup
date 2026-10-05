@@ -24,7 +24,8 @@
  *             amber gap-annotation strip) → Daily breakdown (kit
  *             `StackedColumnChartFrame`: one column per day by status, a day
  *             without runs a stated gap) → Pass-rate trend (kit
- *             `TimeSeriesChartFrame` with the 90 % target line).
+ *             `TimeSeriesChartFrame` with the 90 % target line, the trend
+ *             overlays, the range brush and release markers).
  *     Right → Schedule-paused callout (only when the gap is real) → Suite
  *             pass rates → Recommended actions (role-routed; Idle chip when a
  *             role has no work).
@@ -33,12 +34,11 @@
  * Narrow viewports (VIZ-106, Wave 2.6): below 1024 px the verdict card and
  * the body grid are one column, so the page needs no "wider screen" notice.
  *
- * Catalogue (VIZ-408, Wave 2.6), only with `viz_chart_data_api` on
- * (`useCatalogueRollout`, the one seam): the pass-rate trend gains the trend
- * overlays, the range brush and release markers, and a lazy section below the
- * body grid adds the suite comparison, the duration band and (with
- * `viz_advanced_charts` too) the suite x day heatmap. With the flag off the
- * page is the Wave 2.5 page.
+ * Catalogue (VIZ-408, Wave 2.6): a lazy section below the body grid adds the
+ * suite comparison, the duration band and (with `viz_advanced_charts` on, a
+ * read the section makes itself) the suite x day heatmap. Since Phase D (S3)
+ * the page no longer asks `viz_chart_data_api`: the catalogue and the
+ * pass-rate trend's analysis variant always render.
  *
  * Out of scope (Phase 2 — README §"Out of Scope"):
  *   - Workflow stage drawer body
@@ -100,7 +100,6 @@ import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import { buildTimeSeriesModel, timeSeriesFromTrends } from '@/components/charts/timeSeriesModel'
 import { readyState, type ChartState } from '@/components/charts/chartStateCore'
 import type { ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
-import { useCatalogueRolloutStatus } from '@/components/reports/catalogue/useCatalogueRollout'
 import { useReleases } from '@/hooks/useReleases'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
@@ -116,9 +115,9 @@ type Window = (typeof WINDOWS)[number]
 const TRENDS_DEFAULT_WINDOW: Window = 14
 
 /**
- * The catalogue sections (VIZ-408): a lazy chunk, requested only when the
- * seam reads ON, so a flag-off visit downloads none of it. A stale chunk
- * (a tab opened before a deploy) reloads the page once, like a route's.
+ * The catalogue sections (VIZ-408): a lazy chunk, requested when the page
+ * draws its body. A stale chunk (a tab opened before a deploy) reloads the
+ * page once, like a route's.
  */
 const TrendsCatalogue = lazyWithRetry(() => import('@/components/reports/catalogue/TrendsCatalogue'))
 
@@ -1033,8 +1032,8 @@ function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInp
 }
 
 function PassRateTrend({
-  trend, model, days, analysis,
-}: { trend: TrendPoint[]; model: ConfidenceModel; days: number; analysis: boolean }) {
+  trend, model, days,
+}: { trend: TrendPoint[]; model: ConfidenceModel; days: number }) {
   const points = useMemo(() => {
     const cells = model.cadenceCells
     return timeSeriesFromTrends(
@@ -1042,7 +1041,6 @@ function PassRateTrend({
       { from: cells[0]?.iso, to: cells[cells.length - 1]?.iso },
     )
   }, [trend, model.cadenceCells])
-  const { chart, state } = useMemo(() => passRateChart(points), [points])
 
   const activeDays = model.passRatePerDay.length
   let takeaway: string | undefined
@@ -1053,19 +1051,7 @@ function PassRateTrend({
     takeaway = `${model.passRate.toFixed(1)}% over the last ${days} days, ${versus}${sparse}`
   }
 
-  if (analysis) return <PassRateTrendAnalysis points={points} takeaway={takeaway} />
-
-  return (
-    <TimeSeriesChartFrame
-      title="Pass rate trend"
-      takeaway={takeaway}
-      headingLevel={3}
-      height={240}
-      model={chart}
-      state={state}
-      rateTarget={PASS_RATE_TARGET}
-    />
-  )
+  return <PassRateTrendAnalysis points={points} takeaway={takeaway} />
 }
 
 type ReleaseRow = { id: string; name: string; released_at: string | null; planned_date: string | null }
@@ -1076,13 +1062,13 @@ function releaseMarkerInputs(items: readonly ReleaseRow[]): ReleaseInput[] {
 }
 
 /**
- * The same card with the catalogue on (VIZ-408): the VIZ-405 trend overlays,
- * the VIZ-407 range brush and the release markers, over the SAME points — no
- * new request (the release list is the top bar's release picker's own SWR
- * entry). A component of its own, mounted only with the flag on, so a
- * flag-off page never even subscribes to the release list. With fewer than 7
- * days with runs the kit offers the overlays disabled, its reason beside them.
- * All Projects draws no marker: a release belongs to one project.
+ * The card's chart (VIZ-408): the VIZ-405 trend overlays, the VIZ-407 range
+ * brush and the release markers over the window's points — no new request
+ * (the release list is the top bar's release picker's own SWR entry). With
+ * fewer than 7 days with runs the kit offers the overlays disabled, its
+ * reason beside them. All Projects draws no marker: a release belongs to one
+ * project. Since Phase D (S3) this is the only variant: the plain card the
+ * flag-off page drew is gone.
  */
 function PassRateTrendAnalysis({ points, takeaway }: { points: TimeSeriesPoint[]; takeaway: string | undefined }) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1470,13 +1456,6 @@ export default function TrendsPage() {
   const { options: suiteOptions } = useSuiteOptions(days)
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
-  // VIZ-408: the catalogue seam. `undefined` until the flag answers, `false`
-  // on failure. The page stays in its loading state until the answer is in
-  // (below): the pass-rate card is taller with the flag on (overlay row and
-  // brush), so drawing it before the answer and swapping it after would
-  // re-mount the card and move everything under it.
-  const catalogueStatus = useCatalogueRolloutStatus()
-  const catalogueOn = catalogueStatus === true
 
   // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
   // and every band, verdict and recommendation below is computed from that
@@ -1534,14 +1513,6 @@ export default function TrendsPage() {
         testId="trends-data-unavailable"
       />
     )
-  }
-
-  // The data is in but the rollout answer is not: keep the loading state
-  // rather than draw a pass-rate card that the answer would replace. The
-  // lookup is asked in parallel with the data and cached per project for the
-  // session, so this only waits on the first visit, if at all.
-  if (catalogueStatus === undefined) {
-    return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
   }
 
   const projectLabel = project?.name ?? 'All Projects'
@@ -1815,7 +1786,7 @@ export default function TrendsPage() {
             <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
           )}
           {analyticsView.widgetIds.includes('pass_rate_trend') && (
-            <PassRateTrend trend={trend} model={model} days={days} analysis={catalogueOn} />
+            <PassRateTrend trend={trend} model={model} days={days} />
           )}
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1828,15 +1799,13 @@ export default function TrendsPage() {
       {/* The section's own boundary (VIZ-107): a chunk that fails to load or
           a section that throws is one error card here, never the route's
           "Something went wrong" over the whole page. */}
-      {catalogueOn && (
-        <SectionErrorBoundary message="Failed to load charts">
-          <Suspense fallback={null}>
-            <PageSuiteTargetContext.Provider value={suiteTarget}>
-              <TrendsCatalogue days={days} suiteFilter={suiteFilter} />
-            </PageSuiteTargetContext.Provider>
-          </Suspense>
-        </SectionErrorBoundary>
-      )}
+      <SectionErrorBoundary message="Failed to load charts">
+        <Suspense fallback={null}>
+          <PageSuiteTargetContext.Provider value={suiteTarget}>
+            <TrendsCatalogue days={days} suiteFilter={suiteFilter} />
+          </PageSuiteTargetContext.Provider>
+        </Suspense>
+      </SectionErrorBoundary>
 
       <ProvenanceFooter totalEvidence={totalEvidence + (flakyCount > 0 ? 1 : 0)} refreshedAt={refreshedAt} />
 

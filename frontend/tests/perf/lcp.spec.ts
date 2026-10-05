@@ -50,10 +50,8 @@ import {
   releaseGateOn,
   RUN_ID,
   SUITE,
-  SUITE_DETAIL,
   SUITE_DETAIL_ON,
   SUMMARY_REPORT_ON,
-  TRENDS,
   TRENDS_ON,
   USER,
 } from '../visual/production/fixtures'
@@ -114,7 +112,14 @@ const PAGES: MeasuredPage[] = [
     handlersOn: OVERVIEW_ON,
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
   },
-  { name: 'Trends', path: '/trends', handlers: TRENDS, handlersOn: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics') },
+  {
+    name: 'Trends',
+    path: '/trends',
+    // Phase D S3: the catalogue mounts with every flag off, so both cells answer its reads.
+    handlers: TRENDS_ON,
+    handlersOn: TRENDS_ON,
+    ready: (p) => landmark(p, 'Trend metrics'),
+  },
   {
     name: 'Summary',
     path: '/reports/summary',
@@ -126,7 +131,8 @@ const PAGES: MeasuredPage[] = [
   {
     name: 'Suite detail',
     path: `/coverage/suite?name=${SUITE}&days=30`,
-    handlers: SUITE_DETAIL,
+    // Phase D S3: the composite mounts with every flag off (its sections need both flags until S4).
+    handlers: SUITE_DETAIL_ON,
     handlersOn: SUITE_DETAIL_ON,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
   },

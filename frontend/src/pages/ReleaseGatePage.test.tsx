@@ -511,10 +511,11 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     )
     await screen.findByRole('meter', { name: 'Risk Score' })
     if (waitForChart) {
-      // The group is its own lazy chunk: the first import can take a moment.
+      // The group is its own lazy chunk: the first import can take a moment, and
+      // more than 5 s under the full suite with coverage (it timed out twice there).
       await waitFor(
         () => expect(document.querySelector('[data-catalogue-section="gate-releases"] [data-chart-frame] svg')).toBeTruthy(),
-        { timeout: 5000 },
+        { timeout: 10_000 },
       )
     }
   }

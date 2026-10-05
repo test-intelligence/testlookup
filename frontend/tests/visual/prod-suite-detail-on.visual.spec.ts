@@ -6,12 +6,14 @@
  * (`suite-on-test-run`) and the test scatter (`suite-on-scatter`, then with
  * "Select slow and flaky" applied: `suite-on-scatter-selected`). The
  * catalogue-only region above keeps its PNG.
+ * Phase D S3: the page asks no flag; the pass-rate region is captured with
+ * every flag off (the same frame the catalogue flag used to add).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
 import { assertHermetic, PINNED, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, mountEverySection, openRollout, section, sectionFrame } from '../lib/rollout'
-import { ADVANCED_ON, CATALOGUE_ON, SUITE, SUITE_DETAIL_ON } from './production/fixtures'
+import { ADVANCED_ON, SUITE, SUITE_DETAIL_ON } from './production/fixtures'
 
 test.use(PINNED)
 
@@ -20,7 +22,6 @@ for (const theme of THEMES) {
     const { api, errors } = await openRollout(page, `/coverage/suite?name=${SUITE}&days=30`, {
       theme,
       handlers: SUITE_DETAIL_ON,
-      flags: CATALOGUE_ON,
       ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     })
     const passRate = sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/)
