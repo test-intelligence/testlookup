@@ -31,6 +31,11 @@
  * are the visual baselines' own (`tests/visual/production/fixtures.ts`), so
  * the page drawn here is the page in those PNGs.
  *
+ * Phase D (track S) deletes each page's flag-off path once migration 0195
+ * turned the chart flags on everywhere, and removes the page from this spec
+ * in the same change: Overview left in S1 (its flag-on inventory is
+ * `rollout-overview.spec.ts`).
+ *
  * To re-record after a DELIBERATE change to a page's requests:
  *   ROLLOUT_INVENTORY_PRINT=1 npx playwright test --config playwright.ci.config.ts rollout-flag-off
  * prints each page's observed list; paste it into `INVENTORY` and say why in
@@ -51,7 +56,6 @@ import {
   COVERAGE,
   FAILURES,
   NOW,
-  OVERVIEW,
   PROJECT_ID,
   RELEASE_GATE,
   RUN_ID,
@@ -112,14 +116,6 @@ interface ReportPage {
 }
 
 const PAGES: ReportPage[] = [
-  {
-    name: 'Overview',
-    path: '/overview',
-    handlers: OVERVIEW,
-    ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
-    frames: ['Execution trend'],
-    headings: [],
-  },
   {
     name: 'Trends',
     path: '/trends',
@@ -207,16 +203,6 @@ const SHELL = [
  * matter, both sides are sorted). Recorded on main @ 71c022e0.
  */
 const INVENTORY: Record<string, string[]> = {
-  Overview: [
-    ...SHELL,
-    `GET /api/v1/saved-views?project_id=${P}&page=dashboard`,
-    `GET /api/v1/metrics/summary?project_id=${P}&days=30`,
-    `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
-    `GET /api/v1/analytics/failure-categories?project_id=${P}&days=30`,
-    `GET /api/v1/value-metrics?project_id=${P}&days=30&months=6`,
-    `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
-    `GET /api/v1/projects/${P}/activity?limit=8&since=2026-08-19T12:00:00.000Z`,
-  ],
   // Trends opens on its own 14 days. Until Wave 2.6 the reset to 14 ran after
   // the first render had already asked for the stored 30, so every page-owned
   // read was made twice at a cold load (before-notes 13). Wave 2.6 fixed it

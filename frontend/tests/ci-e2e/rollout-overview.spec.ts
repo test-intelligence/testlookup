@@ -1,11 +1,15 @@
 /**
- * /overview with the catalogue ON (Wave 2.6, VIZ-408; plan 2.2 "Overview",
- * 5.3). With `viz_chart_data_api` on, the pass-rate trend REPLACES the
- * Execution-trend card (OD-4), a status donut sits beside it, and a lazy row
+ * /overview with the catalogue (Wave 2.6, VIZ-408; plan 2.2 "Overview",
+ * 5.3). The pass-rate trend REPLACES the Execution-trend card (OD-4), a status donut sits beside it, and a lazy row
  * adds Top failing tests and Failure categories. The trend and the donut are
  * drawn from the page's own day series (no request); the lazy row asks
  * `/analytics/top-failing`, and Failure categories draws the page's own
  * `/analytics/failure-categories` read (no second request).
+ *
+ * Phase D S1: the page no longer asks `viz_chart_data_api` (migration 0195
+ * turned it on everywhere and the flag-off path is deleted), so every load
+ * here runs with every flag OFF in the harness and the inventory has no seam
+ * lookup (`SHELL_BASE`).
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; shared rollout
  * helpers: `tests/lib/rollout.ts`.
@@ -24,10 +28,10 @@ import {
   requestsTo,
   section,
   sectionFrame,
-  SHELL_ON,
+  SHELL_BASE,
   SHORT_VIEWPORT,
 } from '../lib/rollout'
-import { CATALOGUE_ON, OVERVIEW_ON, PROJECT_ID, TOP_FAILING_PATH } from '../visual/production/fixtures'
+import { OVERVIEW_ON, PROJECT_ID, TOP_FAILING_PATH } from '../visual/production/fixtures'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 
 const P = PROJECT_ID
@@ -42,13 +46,12 @@ const SECTIONS: [string, string][] = [
 ]
 
 /**
- * One cold load with the flag on. The flag-off list of
- * `rollout-flag-off.spec.ts`, plus the seam's lookup (`SHELL_ON`) and top
- * failing. Failure categories is the page's own read and the trend's markers
+ * One cold load. The Wave 2.5 list (the shell, `SHELL_BASE`, and the page's
+ * own reads) plus top failing; no flag lookup of the page's own. Failure categories is the page's own read and the trend's markers
  * read the top bar's cached release list, so neither is asked twice.
  */
 const INVENTORY_ON = [
-  ...SHELL_ON,
+  ...SHELL_BASE,
   `GET /api/v1/saved-views?project_id=${P}&page=dashboard`,
   `GET /api/v1/metrics/summary?project_id=${P}&days=30`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
@@ -59,11 +62,11 @@ const INVENTORY_ON = [
   `GET /api/v1/projects/${P}/activity?limit=8&since=2026-08-19T12:00:00.000Z`,
 ]
 
-test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () => {
+test.describe('Overview, everything on screen (1280 x 2400)', () => {
   test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('the four sections render with their headings and draw; Execution trend is replaced', async ({ page }) => {
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, flags: CATALOGUE_ON, ready })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
     for (const [id, title] of SECTIONS) {
       await expect(section(page, id), id).toHaveCount(1)
       await expect(section(page, id).getByRole('heading', { level: 3, name: title, exact: true })).toBeVisible()
@@ -81,7 +84,7 @@ test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () =
     await expectNoErrorFrame(page)
     await expectNoTextEscapes(page, 'Overview at 1280')
     await networkQuiet(page, api)
-    expectInventory(api, errors, INVENTORY_ON, 'Overview, catalogue on')
+    expectInventory(api, errors, INVENTORY_ON, 'Overview, every flag off')
   })
 
   // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -90,7 +93,7 @@ test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () =
   // harness renders. No allowlist: R2 measured 0 violations here.
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe: the catalogue sections, every impact, no violation (${theme})`, async ({ page }) => {
-      const { api } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, flags: CATALOGUE_ON, ready, theme })
+      const { api } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready, theme })
       for (const [id, title] of SECTIONS) await expectDrawn(sectionFrame(page, id, title), id)
       await networkQuiet(page, api)
       await expectNoBlockingViolations(page, theme, [], ['[data-catalogue-section]'])
@@ -100,7 +103,6 @@ test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () =
   test('the stored window is 365 days: every request on the wire asks for at most 90', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/overview', {
       handlers: OVERVIEW_ON,
-      flags: CATALOGUE_ON,
       ready,
       days: 365,
     })
@@ -127,7 +129,7 @@ test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () =
       [TOP_FAILING_PATH, () => (fail ? respond(500, { detail: 'planted failure' }) : { items: [] })] as const,
       ...OVERVIEW_ON,
     ]
-    const { api, errors } = await openRollout(page, '/overview', { handlers, flags: CATALOGUE_ON, ready })
+    const { api, errors } = await openRollout(page, '/overview', { handlers, ready })
     const failing = sectionFrame(page, 'overview-top-failing', 'Top failing tests')
     await expect(failing).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
     for (const [id, title] of SECTIONS.filter(([id]) => id !== 'overview-top-failing')) {
@@ -145,13 +147,13 @@ test.describe('Overview, catalogue on, everything on screen (1280 x 2400)', () =
   })
 })
 
-test.describe('Overview, catalogue on, a short screen (1280 x 600)', () => {
+test.describe('Overview, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no top-failing request until the row is near, and it is asked before it is visible', async ({
     page,
   }) => {
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, flags: CATALOGUE_ON, ready })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
     // The headline row is drawn from page data: it is not lazy.
     await expectDrawn(sectionFrame(page, 'overview-trend', 'Pass rate trend'), 'trend')
     const categories = () => requestsTo(api, '/api/v1/analytics/failure-categories').length

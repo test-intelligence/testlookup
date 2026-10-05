@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: Overview loses its flag-off path (Phase D, S1)
+
+**The Overview catalogue mounts on every load.** Migration 0195 turned
+`viz_chart_data_api`, `viz_advanced_charts` and `viz_three_d` on for every
+install, so Phase D deletes the flag-off code page by page ("delete legacy,
+do not shim"). S1 is Overview only. Plan: `docs/viz-work/phaseD-plan.md` §2.
+
+- **`OverviewPage.tsx`** no longer calls `useCatalogueRolloutStatus` (the seam
+  file stays until S6). Removed: `ExecutionTrendCard` (the stacked-column
+  "Execution trend" card the pass-rate trend replaced, OD-4), `TREND_TITLE`,
+  its subtitle and `countOf`, `FootStat`, `TrendSlotPending` (the "flag not
+  answered yet" placeholder), the flag-off row and the `catalogue ===
+  undefined` wait. Kept: `trendWindow` (the KPI sparklines and the catalogue
+  read it), `CataloguePending` and `TREND_HEIGHT`. The page asks one request
+  fewer (the seam's flag lookup). The DOM matches the old flag-on branch.
+- **Unit tests:** `OverviewPage.test` and `OverviewPage.runsRequests.test`
+  drop the seam mock. The flag-off, flag-pending and card-only cases are
+  deleted, and the OD-5 donut check asserts the window's literal sums.
+- **e2e:** `tests/lib/rollout.ts` gains `SHELL_BASE` (the shell without the
+  seam lookup; `SHELL_ON` = `SHELL_BASE` + that line). Changes per spec:
+  - `rollout-overview(-presentation).spec.ts` run with every flag off
+    against `SHELL_BASE`.
+  - `rollout-flag-off.spec.ts` no longer lists Overview.
+  - `rollout-responsive.spec.ts` has no flag-off Overview variant.
+  - Every Overview visit in `rollout-responsive`, `rollout-presentation` and
+    `tests/perf/lcp.spec.ts` uses `OVERVIEW_ON`.
+- **Visual:** `prod-overview.visual.spec.ts` and the Overview half of
+  `prod-presentation.visual.spec.ts` use `OVERVIEW_ON`. The flag-off-only
+  `overview-trend` shot is deleted with its `overview-trend--{signal,lab}.png`;
+  `overview-on-trend` covers the chart that replaced it. Every other
+  Overview PNG is expected to stay byte-identical.
+
 ## Unreleased - Visualization Upgrade, Phase D: metrics and a Grafana row (G1, G2)
 
 **Three metrics that were missing, each with a producer and a test, and a

@@ -30,7 +30,6 @@ import {
   CATALOGUE_ON,
   GATE_CLUSTERS,
   HEATMAP_ON,
-  OVERVIEW,
   OVERVIEW_ON,
   RELEASE_GATE_CLUSTERED,
   releaseGateOn,
@@ -48,11 +47,15 @@ interface RoutePage {
   name: string
   path: string
   ready: (page: Page) => ReturnType<Page['locator']>
-  off: ApiHandlers
+  /**
+   * The flag-off answers, or `null` for a page whose flag-off path Phase D
+   * deleted (it has no flag-off variant left to measure).
+   */
+  off: ApiHandlers | null
   on: ApiHandlers
   flags: FlagMap
   /** Chart frames drawn with the flag off / on, once every section is mounted. */
-  frames: { off: number; on: number }
+  frames: { off: number | null; on: number }
 }
 
 const PAGES: RoutePage[] = [
@@ -60,10 +63,11 @@ const PAGES: RoutePage[] = [
     name: 'Overview',
     path: '/overview',
     ready: (p) => p.getByRole('heading', { level: 1, name: 'Dashboard' }),
-    off: OVERVIEW,
+    // Phase D S1: the catalogue mounts unconditionally; the page asks no flag.
+    off: null,
     on: OVERVIEW_ON,
-    flags: CATALOGUE_ON,
-    frames: { off: 1, on: 4 },
+    flags: {},
+    frames: { off: null, on: 4 },
   },
   {
     name: 'Trends',
@@ -122,19 +126,19 @@ async function mountEverySection(page: Page, api: Parameters<typeof networkQuiet
 
 for (const report of PAGES) {
   for (const width of WIDTHS) {
-    for (const on of [false, true]) {
+    for (const on of report.off === null ? [true] : [false, true]) {
       test(`${report.name} at ${width} px, flags ${on ? 'on' : 'off'}: nothing wider than the scroller, frames drawn inside it`, async ({
         page,
       }) => {
         await page.setViewportSize({ width, height: 900 })
         const { api, errors } = await openRollout(page, report.path, {
-          handlers: on ? report.on : report.off,
+          handlers: on ? report.on : (report.off as ApiHandlers),
           flags: on ? report.flags : {},
           ready: report.ready,
         })
         await networkQuiet(page, api)
         if (on) await mountEverySection(page, api)
-        const expected = on ? report.frames.on : report.frames.off
+        const expected = on ? report.frames.on : (report.frames.off as number)
         await expect(page.locator('[data-chart-frame]'), `${report.name}: frames`).toHaveCount(expected)
         // Every frame reaches a terminal state before it is measured.
         await expect
@@ -170,7 +174,7 @@ test.describe('the navigation drawer at 375 px', () => {
   test.use({ viewport: { width: 375, height: 800 } })
 
   test('opens as a modal dialog, traps focus, closes on Escape and gives focus back to the menu button', async ({ page }) => {
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW, ready: overviewReady })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: overviewReady })
     const menu = page.getByRole('button', { name: 'Navigation menu' })
     const drawer = page.getByRole('dialog', { name: 'Navigation' })
     // Closed: the sidebar is off-canvas, not a column eating the page.
@@ -201,7 +205,7 @@ test.describe('the navigation drawer at 375 px', () => {
 
   test('closes on navigation from inside it', async ({ page }) => {
     const { api, errors } = await openRollout(page, '/overview', {
-      handlers: [...OVERVIEW, ...SUMMARY_REPORT],
+      handlers: [...OVERVIEW_ON, ...SUMMARY_REPORT],
       ready: overviewReady,
     })
     await page.getByRole('button', { name: 'Navigation menu' }).click()
@@ -224,7 +228,7 @@ for (const width of [1024, 1280]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 })
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW, ready: overviewReady })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: overviewReady })
     await expect(page.getByRole('button', { name: 'Navigation menu' })).toHaveCount(0)
     await expect(page.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0)
     const shell = await page.evaluate((selector) => {

@@ -20,12 +20,19 @@
 import { expect, test, type Page } from '@playwright/test'
 import { landmark, TALL_VIEWPORT, type ApiHandlers, type FlagMap } from '../lib/production-pages'
 import { textEscapes } from '../lib/chart-text-escapes'
-import { expectNoErrorFrame, expectNoHorizontalOverflow, frameStates, networkQuiet, openRollout } from '../lib/rollout'
+import {
+  expectDrawn,
+  expectNoErrorFrame,
+  expectNoHorizontalOverflow,
+  frameStates,
+  networkQuiet,
+  openRollout,
+  sectionFrame,
+} from '../lib/rollout'
 import {
   CATALOGUE_ON,
   GATE_CLUSTERS,
   HEATMAP_ON,
-  OVERVIEW,
   OVERVIEW_ON,
   releaseGateOn,
   RUN_ID,
@@ -75,7 +82,11 @@ test.describe('the presentation toggle at 1280 px', () => {
   test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('toggles, grows the metric values onto the raised tokens, survives a reload, and turns off again', async ({ page }) => {
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW, ready: overviewReady })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: overviewReady })
+    // Phase D S1: the catalogue's headline row mounts on every load; read the
+    // metric values once it has drawn, so the desk and room lists are one page.
+    await expectDrawn(sectionFrame(page, 'overview-trend', 'Pass rate trend'), 'trend')
+    await expectDrawn(sectionFrame(page, 'overview-donut', 'Status breakdown'), 'donut')
     const toggle = page.locator('aside').getByRole('button', { name: 'Presentation mode' })
     const html = page.locator('html')
     await expect(toggle).toHaveAttribute('aria-pressed', 'false')
@@ -139,7 +150,7 @@ test.describe('the presentation toggle at 1280 px', () => {
       })
       observer.observe(document, { childList: true, subtree: true })
     })
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW, ready: overviewReady })
+    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: overviewReady })
     const atFirstContent = await page.evaluate(() => (window as unknown as { __atFirstContent?: string | null }).__atFirstContent)
     expect(atFirstContent, 'data-presentation when #root first got content').toBe('on')
     await expect(page.locator('aside').getByRole('button', { name: 'Presentation mode' })).toHaveAttribute('aria-pressed', 'true')
@@ -160,7 +171,8 @@ interface RoutePage {
 }
 
 const PAGES: RoutePage[] = [
-  { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: CATALOGUE_ON, frames: 4 },
+  // Phase D S1: Overview asks no flag; its catalogue mounts unconditionally.
+  { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, flags: {}, frames: 4 },
   { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, flags: HEATMAP_ON, frames: 6 },
   {
     name: 'Summary',

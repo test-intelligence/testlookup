@@ -96,18 +96,18 @@ export async function networkQuiet(page: Page, api: MockedApi) {
 const P = PROJECT_ID
 
 /**
- * What the app shell asks for on every report route with the catalogue flag
- * ON: the flag-off shell of `rollout-flag-off.spec.ts` (session and project
- * list twice, three shell flags, badges, notifications, the release picker,
- * the AI settings) plus the seam's own lookup, `viz_chart_data_api`, once.
+ * What the app shell asks for on every report route, whatever the flags:
+ * the flag-off shell of `rollout-flag-off.spec.ts` (session and project list
+ * twice, three shell flags, badges, notifications, the release picker, the
+ * AI settings). A page whose flag-off path Phase D deleted (Overview, S1)
+ * no longer asks the seam, so its inventory starts here.
  */
-export const SHELL_ON = [
+export const SHELL_BASE = [
   'GET /api/v1/auth/me',
   'GET /api/v1/auth/me',
   `GET /api/v1/feature-flags/ask_ai_chat/status?project_id=${P}`,
   `GET /api/v1/feature-flags/manual_upload/status?project_id=${P}`,
   `GET /api/v1/feature-flags/viz_multi_filters/status?project_id=${P}`,
-  `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`,
   'GET /api/v1/me/assigned-failures/count',
   'GET /api/v1/notifications/history/unread-count',
   'GET /api/v1/notifications/history?unread_only=false&limit=50',
@@ -116,6 +116,12 @@ export const SHELL_ON = [
   `GET /api/v1/releases?project_id=${P}`,
   'GET /api/v1/settings/ai',
 ]
+
+/**
+ * The shell on a report route that still asks the seam (catalogue flag ON):
+ * `SHELL_BASE` plus the seam's own lookup, `viz_chart_data_api`, once.
+ */
+export const SHELL_ON = [...SHELL_BASE, `GET /api/v1/feature-flags/viz_chart_data_api/status?project_id=${P}`]
 
 /**
  * The page's requests (telemetry excluded) must equal `expected` as a
