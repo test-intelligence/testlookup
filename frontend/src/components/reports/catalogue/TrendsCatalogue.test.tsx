@@ -246,7 +246,7 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
 
     fireEvent.click(compare.querySelector('[data-compare-picker="suite"]') as HTMLElement)
     fireEvent.click(await screen.findByRole('option', { name: 'search' }))
-    await waitFor(() => expect(compareCalls().at(-1)?.suite_name).toEqual(['billing', 'checkout']))
+    await waitFor(() => expect(compareCalls()[compareCalls().length - 1]?.suite_name).toEqual(['billing', 'checkout']))
     expect(within(compare).getByText(/One line per suite you chose/)).toBeInTheDocument()
 
     // Down to one suite: nothing to compare, said in the frame, and no request.
