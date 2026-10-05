@@ -28,7 +28,6 @@ import {
 } from '../lib/rollout'
 import {
   GATE_CLUSTERS,
-  HEATMAP_ON,
   OVERVIEW_ON,
   releaseGateOn,
   RUN_ID,
@@ -68,11 +67,11 @@ const PAGES: RoutePage[] = [
     name: 'Trends',
     path: '/trends',
     ready: (p) => landmark(p, 'Trend metrics'),
-    // Phase D S3: the catalogue mounts unconditionally; the page asks no flag
-    // (the heatmap still needs both flags until S4).
+    // Phase D S3/S4: the catalogue and its heatmap mount unconditionally; the
+    // page asks no flag.
     off: null,
     on: TRENDS_ON,
-    flags: HEATMAP_ON,
+    flags: {},
     // + Compare (VIZ-605): with nothing chosen it is a frame that says so.
     frames: { off: null, on: 6 },
   },
@@ -91,10 +90,11 @@ const PAGES: RoutePage[] = [
     path: `/coverage/suite?name=${SUITE}&days=30`,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     // Phase D S3: the pass-rate frame always has its overlays; the page asks no flag.
+    // S4: + the test x run heatmap (no flag); the scatter keeps its own gate until S5 (off here).
     off: null,
     on: SUITE_DETAIL_ON,
     flags: {},
-    frames: { off: null, on: 2 },
+    frames: { off: null, on: 3 },
   },
   {
     name: 'Release gate',

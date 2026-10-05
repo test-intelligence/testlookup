@@ -4,10 +4,9 @@
  * classes (or files) of one suite, then the tests of one class, sized by test
  * count and coloured by the reader's choice of measure.
  *
- * Only with BOTH `viz_chart_data_api` and `viz_advanced_charts` on
- * (`useAdvancedRollout`, the one seam): otherwise it renders nothing and asks
- * nothing. Mounted by `CoverageAdvanced` inside a `LazySection`, so nothing
- * runs before it is near the reader.
+ * Asks no flag (Phase D, S4: the flags are on everywhere). Mounted by
+ * `CoverageAdvanced` inside a `LazySection`, so nothing runs before it is
+ * near the reader.
  *
  * LEVEL BY LEVEL. Each level is ONE `/analytics/coverage-map` request
  * (`depth` 1, 2, 3 with the parent's KEYS), never a client-side zoom, so no
@@ -72,7 +71,6 @@ import { clampCatalogueDays, useCatalogueParams } from './catalogueScope'
 import { RowsPanel } from './RowsPanel'
 import type { RowsExpectation } from './RowsPanel.model'
 import type { CoverageMapSectionProps } from './sectionContracts'
-import { useAdvancedRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 
 export const COVERAGE_MAP_HEIGHT = 360
@@ -315,9 +313,7 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
   )
 }
 
-export function CoverageMapSection(props: CoverageMapSectionProps): ReactElement | null {
-  const on = useAdvancedRollout()
-  if (!on) return null
+export function CoverageMapSection(props: CoverageMapSectionProps): ReactElement {
   return <CoverageMapBody {...props} />
 }
 

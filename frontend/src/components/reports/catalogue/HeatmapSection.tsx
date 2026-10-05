@@ -12,10 +12,9 @@
  *
  * Hosts: Trends (`suite_day`, through `TrendsCatalogue`), Suite detail
  * (`test_run`, `SuiteDetailAdvanced`), Coverage (`suite_environment`,
- * `suite_release`, `CoverageAdvanced`). The section reads the advanced seam
- * itself (`useAdvancedRollout`): with either flag off it renders nothing,
- * requests nothing and downloads no engine. On, it mounts behind its own
- * `LazySection`, so nothing is asked until it is near the reader.
+ * `suite_release`, `CoverageAdvanced`). It asks no flag (Phase D, S4: the
+ * flags are on everywhere) and mounts behind its own `LazySection`, so
+ * nothing is asked, and no engine downloaded, until it is near the reader.
  *
  * Never a request the server must refuse: a one-day `suite_day` window is one
  * column (not a trend), and `test_run` / `suite_release` need one project
@@ -44,7 +43,6 @@ import LazySection from './LazySection'
 import RowsPanel from './RowsPanel'
 import { selectorsKey, type RowsExpectation } from './RowsPanel.model'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
-import { useAdvancedRollout } from './useCatalogueRollout'
 import { useEverHadRun } from './useEverHadRun'
 import type { HeatmapKind, HeatmapSectionProps } from './sectionContracts'
 import {
@@ -279,8 +277,7 @@ function HeatmapSectionBody({ days, suiteFilter, kinds, title, sectionId }: Heat
 }
 
 export function HeatmapSection(props: HeatmapSectionOwnProps): ReactElement | null {
-  const on = useAdvancedRollout()
-  if (!on || props.kinds.length === 0) return null
+  if (props.kinds.length === 0) return null
   const sectionId = props.sectionId ?? `heatmap-${props.kinds[0]}`
   return (
     <LazySection label={sectionId} minHeight={HEATMAP_SECTION_HEIGHT + FRAME_CHROME}>

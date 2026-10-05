@@ -7,7 +7,10 @@
  * "Select slow and flaky" applied: `suite-on-scatter-selected`). The
  * catalogue-only region above keeps its PNG.
  * Phase D S3: the page asks no flag; the pass-rate region is captured with
- * every flag off (the same frame the catalogue flag used to add).
+ * every flag off (the same frame the catalogue flag used to add). S4: the
+ * test x run heatmap asks no flag either (it now mounts below the pass-rate
+ * region with every flag off); the Wave 3 test keeps `ADVANCED_ON` only for
+ * the scatter's own gate, which S5 removes.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -35,7 +38,7 @@ for (const theme of THEMES) {
   })
 }
 
-test.describe('Wave 3 sections, both flags', () => {
+test.describe('Wave 3 sections', () => {
   // The page with both sections is taller than PINNED's 2400 px (only the height changes).
   test.use({ viewport: { width: 1280, height: 4000 } })
 

@@ -58,15 +58,6 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
 
-// Wave 3: the page's one seam call is inside `CoverageAdvanced` (its one
-// import and one mount). Both flags default OFF here, as in production.
-const rollout = vi.hoisted(() => ({ catalogue: false, advanced: false }))
-vi.mock('@/components/reports/catalogue/useCatalogueRollout', () => ({
-  useCatalogueRollout: () => rollout.catalogue,
-  useCatalogueRolloutStatus: () => rollout.catalogue,
-  useAdvancedRollout: () => rollout.catalogue && rollout.advanced,
-}))
-
 // Lazy chunks (the coverage sections) can take longer than waitFor's 1 s default under the full
 // suite's load, and more than 5 s with coverage on (seen twice), so 10 s here.
 const LAZY_TIMEOUT = 10_000
@@ -74,8 +65,6 @@ const LAZY_TIMEOUT = 10_000
 describe('CoveragePage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
-    rollout.catalogue = false
-    rollout.advanced = false
   })
 
   it('renders the coverage workflow strip above the suite breakdown', async () => {
@@ -667,22 +656,7 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
     expect((container.querySelector('.body-grid') as HTMLElement).style.gridTemplateColumns).toBe(columns)
   })
 
-  it.each([
-    ['every flag off', false, false],
-    ['only viz_chart_data_api on', true, false],
-    ['only viz_advanced_charts on', false, true],
-  ])('%s: the Wave 2.6 page, no Wave 3 section and no placeholder', async (_name, catalogue, advanced) => {
-    rollout.catalogue = catalogue
-    rollout.advanced = advanced
-    const { container } = renderCoverage()
-    expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
-    expect(container.querySelector('[data-coverage-advanced]')).toBeNull()
-    expect(container.querySelector('[data-lazy-section]')).toBeNull()
-  })
-
-  it('both flags on: the coverage map and the heatmaps are mounted lazily, below the body grid', async () => {
-    rollout.catalogue = true
-    rollout.advanced = true
+  it('the coverage map and the heatmaps are mounted lazily, below the body grid (no flag asked since Phase D, S4)', async () => {
     // An observer that never reports the sections near: they stay placeholders.
     class FarAway {
       observe() {}
@@ -695,7 +669,7 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
     })
     const { container } = renderCoverage()
     expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
-    // The sections arrive as ONE lazy module (the page chunk holds only the gates).
+    // The sections arrive as ONE lazy module (the page chunk holds only the small composite).
     const advanced = await waitFor(() => {
       const found = container.querySelector('[data-coverage-advanced]') as HTMLElement | null
       expect(found).not.toBeNull()

@@ -1,11 +1,11 @@
 /**
  * The generic matrix heatmap (Wave 3, VIZ-205 / VIZ-501, FK1) on its two
- * multi-kind hosts, with BOTH flags on (`viz_chart_data_api` AND
- * `viz_advanced_charts`): Trends (`suite_day`, section `trends-heatmap`) and
+ * multi-kind hosts: Trends (`suite_day`, section `trends-heatmap`) and
  * Coverage (`suite_environment` with a kind selector for `suite_release`,
  * section `heatmap-suite_environment`). Suite detail's `test_run` is in
- * `rollout-suite-detail.spec.ts`; the flag matrix of each page is in that
- * page's spec and in `rollout-flag-off.spec.ts`.
+ * `rollout-suite-detail.spec.ts`. No flag is asked for any of them since
+ * Phase D, S4 (migration 0195 turned the chart flags on everywhere), so no
+ * flag is set here.
  *
  * Each section asks `GET /analytics/heatmap` itself, once near; a cell is a
  * mark whose one action is its rows (`/analytics/chart-data/rows`, metric
@@ -39,7 +39,6 @@ import {
 } from '../lib/rollout'
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 import {
-  ADVANCED_ON,
   CHART_ROWS_PATH,
   COVERAGE_ON,
   HEATMAP_PATH,
@@ -56,14 +55,14 @@ const RELEASE_TITLE = 'Suite pass rate by release'
 
 
 const openTrends = (page: Page, handlers = TRENDS_ON) =>
-  openRollout(page, '/trends', { handlers, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Trend metrics') })
+  openRollout(page, '/trends', { handlers, ready: (p) => landmark(p, 'Trend metrics') })
 const openCoverage = (page: Page, handlers = COVERAGE_ON, days?: number) =>
-  openRollout(page, '/coverage', { handlers, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Run cadence'), days })
+  openRollout(page, '/coverage', { handlers, ready: (p) => landmark(p, 'Run cadence'), days })
 
 /** The heatmap's keyboard surface in a section. */
 const keyboard = (page: Page, id: string) => section(page, id).locator('[data-chart-keyboard="heatmap"]')
 
-test.describe('heatmaps, both flags, everything on screen (1280 x 4000)', () => {
+test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
   test.use({ viewport: { ...TALL_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('Trends: drawn from ONE /analytics/heatmap?kind=suite_day read; the cut is stated; no Other row', async ({ page }) => {
@@ -226,7 +225,7 @@ test.describe('heatmaps, both flags, everything on screen (1280 x 4000)', () => 
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the heatmap sections, every impact (${theme}): idle, a cell focused, the rows panel open`, async ({ page }) => {
-      await openRollout(page, '/trends', { handlers: TRENDS_ON, flags: ADVANCED_ON, ready: (p) => landmark(p, 'Trend metrics'), theme })
+      await openRollout(page, '/trends', { handlers: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics'), theme })
       await expectDrawn(sectionFrame(page, TRENDS.id, TRENDS.title), TRENDS.id)
       await expectNoBlockingViolations(page, theme, [], [`[data-catalogue-section="${TRENDS.id}"]`])
       await keyboard(page, TRENDS.id).focus()
@@ -240,7 +239,7 @@ test.describe('heatmaps, both flags, everything on screen (1280 x 4000)', () => 
   }
 })
 
-test.describe('heatmaps, both flags, a short screen (1280 x 600)', () => {
+test.describe('heatmaps, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('Trends: the heatmap read waits until the section is near, and goes out before it is visible', async ({ page }) => {

@@ -1,12 +1,12 @@
 /**
- * VIZ-501: the heatmap section — the seam (both flags), the lazy mount, the
- * one `/analytics/heatmap` request per kind, the kind selector, the row
- * order, "fit to data", and the requests it must never send (a one-day
- * suite x day, a one-project kind in All Projects).
+ * VIZ-501: the heatmap section — the lazy mount, the one
+ * `/analytics/heatmap` request per kind, the kind selector, the row order,
+ * "fit to data", and the requests it must never send (a one-day suite x day,
+ * a one-project kind in All Projects). It asks no flag since Phase D, S4.
  *
- * Only the network, the flag lookups, the project store, the existence probe
- * and the canvas engine are mocked: the seam, the scope builder, the chart
- * pipeline (validation included) and the frame are the real ones.
+ * Only the network, the project store, the existence probe and the canvas
+ * engine are mocked: the scope builder, the chart pipeline (validation
+ * included) and the frame are the real ones.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
@@ -31,12 +31,6 @@ import type { HeatmapKind } from './sectionContracts'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
-
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean> }))
-vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: (key: string) => flags.values[key] ?? false,
-  useFeatureFlagStatus: (key: string) => flags.values[key],
-}))
 
 const probe = vi.hoisted(() => ({ enabled: [] as boolean[] }))
 vi.mock('./useEverHadRun', () => ({
@@ -82,8 +76,6 @@ import {
 
 const HEATMAP_URL = '/api/v1/analytics/heatmap'
 const ROWS_URL = '/api/v1/analytics/chart-data/rows'
-const CATALOGUE = 'viz_chart_data_api'
-const ADVANCED = 'viz_advanced_charts'
 
 let responses: Partial<Record<HeatmapKind, ChartResponse<AnyChartSeries>>>
 /** What the rows endpoint counts now (its `total` and reconciliation value). */
@@ -141,7 +133,6 @@ const drawnByTheSection = () => [...document.querySelectorAll('[data-lazy-sectio
 const frameState = () => section()?.querySelector('[data-chart-frame]')?.getAttribute('data-chart-state')
 
 beforeEach(() => {
-  flags.values = { [CATALOGUE]: true, [ADVANCED]: true }
   probe.enabled = []
   rowsTotal.value = 0
   project.id = 'p1'
@@ -178,22 +169,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('HeatmapSection: the seam', () => {
-  it.each([
-    ['neither flag', {}],
-    ['only the catalogue flag', { [CATALOGUE]: true }],
-    ['only the advanced flag', { [ADVANCED]: true }],
-  ])('%s: renders nothing, asks nothing, loads no engine', async (_name, values) => {
-    flags.values = values
-    renderSection()
-    await settle()
-    expect(drawnByTheSection()).toEqual([])
-    expect(get).not.toHaveBeenCalled()
-    expect(engine.load).not.toHaveBeenCalled()
-    expect(probe.enabled).toEqual([])
-  })
-
-  it('both flags: one request for the kind, in the page’s scope, and the frame draws it', async () => {
+describe('HeatmapSection: the mount', () => {
+  it('one request for the kind, in the page’s scope, and the frame draws it', async () => {
     renderSection({ suiteFilter: 'checkout' })
     await waitFor(() => expect(frameState()).toBe('ready'))
     expect(heatmapCalls()).toEqual([{ kind: 'suite_day', project_id: 'p1', days: 14, suite_name: 'checkout' }])

@@ -2,14 +2,17 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CoverageMapSectionProps, HeatmapSectionProps } from './sectionContracts'
 
-/** The two flags, read through the REAL seam (`useCatalogueRollout.ts`); which keys were looked up. */
-const flags = vi.hoisted(() => ({ values: {} as Record<string, boolean>, asked: [] as string[] }))
+/** Which flag keys were looked up: none, since Phase D, S4 (the block mounts unconditionally). */
+const flags = vi.hoisted(() => ({ asked: [] as string[] }))
 vi.mock('@/hooks/useFeatureFlags', () => ({
   useFeatureEnabled: (key: string) => {
     flags.asked.push(key)
-    return flags.values[key] ?? false
+    return false
   },
-  useFeatureFlagStatus: (key: string) => flags.values[key],
+  useFeatureFlagStatus: (key: string) => {
+    flags.asked.push(key)
+    return false
+  },
 }))
 
 // The sections are their owners' (pinned contracts): stand-ins that show the props they were given.
@@ -34,7 +37,6 @@ import CoverageAdvanced, {
 import { COVERAGE_ADVANCED_HEIGHT } from './CoverageAdvanced.model'
 
 beforeEach(() => {
-  flags.values = {}
   flags.asked = []
   mounted.map = []
   mounted.heatmap = []
@@ -47,28 +49,7 @@ afterEach(() => {
 const LAZY_TIMEOUT = 5_000
 
 describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
-  it('every flag off: renders nothing, and the only lookup is the catalogue seam', () => {
-    const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} />)
-    expect(container.innerHTML).toBe('')
-    expect(new Set(flags.asked)).toEqual(new Set(['viz_chart_data_api']))
-  })
-
-  it('only viz_advanced_charts on: nothing, and the advanced flag is not even looked up', () => {
-    flags.values = { viz_advanced_charts: true }
-    const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} />)
-    expect(container.innerHTML).toBe('')
-    expect(flags.asked).not.toContain('viz_advanced_charts')
-  })
-
-  it('only viz_chart_data_api on: nothing (no placeholder, no section chunk)', () => {
-    flags.values = { viz_chart_data_api: true }
-    const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} />)
-    expect(container.innerHTML).toBe('')
-    expect(mounted.map).toEqual([])
-  })
-
-  it('both on, far from the reader: the map is a placeholder of its height; the heatmap section is mounted bare (it owns its LazySection)', async () => {
-    flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
+  it('far from the reader: the map is a placeholder of its height; the heatmap section is mounted bare (it owns its LazySection)', async () => {
     class FarAway {
       observe() {}
       unobserve() {}
@@ -89,13 +70,12 @@ describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
     expect(mounted.map).toEqual([])
   })
 
-  it('both on and near: the map and the environment / release heatmaps, with the page scope', async () => {
-    flags.values = { viz_chart_data_api: true, viz_advanced_charts: true }
+  it('near: the map and the environment / release heatmaps, with the page scope, and no flag is looked up', async () => {
     render(<CoverageAdvanced days={14} suiteFilter={['a', 'b']} />)
     expect(await screen.findByTestId('map', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     await waitFor(() => expect(mounted.map[mounted.map.length - 1]).toEqual({ days: 14, suiteFilter: ['a', 'b'] }))
     expect(mounted.heatmap[mounted.heatmap.length - 1]).toEqual({ days: 14, suiteFilter: ['a', 'b'], kinds: ['suite_environment', 'suite_release'] })
-
+    expect(flags.asked).toEqual([])
   })
 })
