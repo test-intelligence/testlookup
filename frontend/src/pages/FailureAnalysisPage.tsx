@@ -85,6 +85,7 @@ import {
 } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { bulkWriteSuite } from '@/lib/scopeParams'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
@@ -2269,6 +2270,8 @@ export default function FailureAnalysisPage() {
   })
   const analyticsView = useAnalyticsView('failures')
   const { options: suiteOptions } = useSuiteOptions(days)
+  // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
+  const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
 
   // ── Compare-to-previous-window toggle ────────────────────────────────
   // The "Compare to previous window" CTA flips this on, which triggers a
@@ -2900,7 +2903,9 @@ export default function FailureAnalysisPage() {
         </div>
       </div>
 
-      <FailuresAdvanced days={days} suiteFilter={suiteFilter} />
+      <PageSuiteTargetContext.Provider value={suiteTarget}>
+        <FailuresAdvanced days={days} suiteFilter={suiteFilter} />
+      </PageSuiteTargetContext.Provider>
 
       <ProvenanceFooter model={model} refreshedAt={refreshedAt} />
 

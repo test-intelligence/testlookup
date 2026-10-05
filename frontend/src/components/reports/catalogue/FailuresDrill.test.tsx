@@ -22,6 +22,7 @@ import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
 import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 import { useSuiteStore } from '@/store/suiteStore'
 import { DRILL_DROP_WORDS } from '@/hooks/useDrillPath'
+import { PageSuiteTargetContext, type PageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import type { RowsPanelProps } from './RowsPanel.model'
 
 const get = vi.hoisted(() => vi.fn())
@@ -47,6 +48,8 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (selector: (state: { activeProjectId: string }) => unknown) => selector({ activeProjectId: project.id }),
 }))
 vi.mock('@/hooks/useReleaseScope', () => ({ useReleaseScope: () => null }))
+// The cross-filter names a release from the top bar's list: none here (the ladder draws no release).
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: undefined }) }))
 
 const plot = vi.hoisted(() => ({ data: [] as Record<string, unknown>[] }))
 vi.mock('recharts', () => ({
@@ -198,12 +201,21 @@ function Location() {
   return <output data-testid="location">{location.search}</output>
 }
 
-function renderDrill({ url = '/failures', days = 30, suiteFilter = null as string | string[] | null } = {}) {
+/**
+ * The ladder in its page. `suites`: the page's suite select (`PageSuiteTargetContext`, as the
+ * Failures page provides it): the page filter is offered only with one.
+ */
+function renderDrill({
+  url = '/failures',
+  days = 30,
+  suiteFilter = null as string | string[] | null,
+  suites = null as PageSuiteTarget | null,
+} = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[url]}>
       <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, revalidateOnFocus: false }}>
         <ChartAnnouncerProvider>
-          {children}
+          <PageSuiteTargetContext.Provider value={suites}>{children}</PageSuiteTargetContext.Provider>
           <Location />
         </ChartAnnouncerProvider>
       </SWRConfig>
@@ -211,6 +223,10 @@ function renderDrill({ url = '/failures', days = 30, suiteFilter = null as strin
   )
   return render(<FailuresDrill days={days} suiteFilter={suiteFilter} />, { wrapper })
 }
+
+/** The Failures page's suite select, observed: what "Filter page by this" writes. */
+const setSuite = vi.fn()
+const pageSuites = (selected = ''): PageSuiteTarget => ({ selected, options: ['Checkout', 'Payments'], set: setSuite })
 
 const settle = () =>
   act(async () => {
@@ -519,8 +535,10 @@ describe('FailuresDrill (VIZ-602 / 603)', () => {
     expect(lastPanel().selectors).toEqual([{ dimension: 'suite', value: 'payments' }])
   })
 
-  describe('603: filter the page by a suite', () => {
-    it('viz_multi_filters off: the action is absent, and a Shift-click drills (M-603b)', async () => {
+  describe('603: filter the page by a suite (P2: the page’s own suite select)', () => {
+    beforeEach(() => setSuite.mockReset())
+
+    it('no page suite select: the action is absent, and a Shift-click drills (M-603b)', async () => {
       renderDrill()
       await level('suites')
       const chart = surface()
@@ -529,22 +547,29 @@ describe('FailuresDrill (VIZ-602 / 603)', () => {
       expect(within(section()).queryByRole('button', { name: 'Filter page by this' })).toBeNull()
       fireEvent.click(rect('failed:payments'), { shiftKey: true })
       expect(drillParams()).toEqual(['suite~payments', 'status~failed'])
+      expect(setSuite).not.toHaveBeenCalled()
+    })
+
+    it('with one: Shift-click REPLACES the page’s suite with this one, as the select spells it; the drill does not move', async () => {
+      renderDrill({ suites: pageSuites('Checkout') })
+      await level('suites')
+      fireEvent.click(rect('failed:payments'), { shiftKey: true })
+      expect(setSuite.mock.calls).toEqual([['Payments']])
+      expect(drillParams()).toEqual([])
+      // Never the multi-filter store: it is not the page's filter.
       expect(useSuiteStore.getState().activeSuiteNames).toEqual([])
     })
 
-    it('on: Shift-click APPENDS the suite to the page filter, as spelled (M-603a); the drill does not move', async () => {
-      useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
-      useSuiteStore.getState().setActiveSuites(['Checkout'], 'p1')
-      renderDrill()
+    it('the suite already selected is not written again', async () => {
+      renderDrill({ suites: pageSuites('Payments') })
       await level('suites')
       fireEvent.click(rect('failed:payments'), { shiftKey: true })
-      expect(useSuiteStore.getState().activeSuiteNames).toEqual(['Checkout', 'Payments'])
+      expect(setSuite).not.toHaveBeenCalled()
       expect(drillParams()).toEqual([])
     })
 
-    it('on: the readout offers "Filter page by this", and Shift+Enter does the same', async () => {
-      useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
-      renderDrill()
+    it('with one: the readout offers "Filter page by this", and Shift+Enter does the same', async () => {
+      renderDrill({ suites: pageSuites() })
       await level('suites')
       const chart = surface()
       chart.focus()
@@ -556,13 +581,12 @@ describe('FailuresDrill (VIZ-602 / 603)', () => {
         'Filter page by this',
       ])
       fireEvent.keyDown(chart, { key: 'Enter', shiftKey: true })
-      expect(useSuiteStore.getState().activeSuiteNames).toEqual(['Payments'])
+      expect(setSuite.mock.calls).toEqual([['Payments']])
     })
   })
 
   it('axe finds nothing on the section with the readout and its buttons open', async () => {
-    useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
-    renderDrill({ url: '/failures?drill=status~failed' })
+    renderDrill({ url: '/failures?drill=status~failed', suites: pageSuites() })
     await level('status-suites')
     const chart = surface()
     chart.focus()

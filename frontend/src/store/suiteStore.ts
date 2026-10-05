@@ -25,11 +25,13 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { capDistinct } from './releaseStore'
 import { onLogoutReset, SUITE_FILTER_STORAGE_KEY } from './logoutReset'
+import { isValidSuiteName } from '@/lib/suiteName'
+
+// The name rules live in a pure module (the cross-filter checks names without this store).
+export { isValidSuiteName, SUITE_NAME_MAX } from '@/lib/suiteName'
 
 /** Most suites one selection may hold (contract C1, `suite_cap`). */
 export const SUITE_CAP = 50
-/** Longest suite name the contract accepts (C1, `suite_name_length`). */
-export const SUITE_NAME_MAX = 500
 
 interface SuiteStore {
   /** Selected suite names, distinct, at most ``SUITE_CAP``. */
@@ -44,13 +46,6 @@ interface SuiteStore {
   clearSuites: () => void
   /** Remove some names (after validating against a project's suite list). */
   removeSuites: (names: readonly string[]) => void
-}
-
-/** A suite name the contract accepts: 1–500 code points, not only whitespace. */
-export function isValidSuiteName(name: unknown): name is string {
-  if (typeof name !== 'string') return false
-  const length = [...name].length
-  return length >= 1 && length <= SUITE_NAME_MAX && name.trim() !== ''
 }
 
 export const useSuiteStore = create<SuiteStore>()(

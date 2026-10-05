@@ -38,6 +38,40 @@ dashboard.** Plan: `docs/viz-work/phaseD-plan.md`, section 4.
     `testlookup_*` series a panel reads is one a declared metric exports
     (Counter `_total`, Histogram `_bucket`/`_count`/`_sum`); panel ids are
     unique; grid rectangles do not overlap.
+## Unreleased - Visualization Upgrade: "Filter page by this" on the top bar and the page suite (P2)
+
+**A chart mark filters the page again, with the multi-filter runtime off for
+good.** Owner decision 2026-10-04: the filter works from the top bar's
+Project + Release and the page's own suite filter. "Filter page by this"
+(VIZ-603: the readout's button, Shift+Enter, Shift-click) no longer needs
+`viz_multi_filters`. Design: `docs/viz-work/views-crossfilter-design.md`, P2.
+
+- **A suite mark sets the page's "Test suite" select** on Trends, Coverage
+  and Failures. The pages hand their select down to the catalogue through a
+  new `PageSuiteTargetContext` (`hooks/pageSuiteTarget.ts`). The filter
+  REPLACES the selection (the legacy scope is single-select). The suite is
+  written as the select spells it, never as the chart's lower-cased key,
+  which would add a second option for the same suite.
+- **A release mark sets the top-bar release** (`setActiveRelease`) in a pinned
+  project. The picker mirrors it to `?release=` and checks it against its
+  list. A suite x release heatmap cell (Coverage) sets both filters.
+- **Where it is offered:** the Failures ladder's suite bars (as before), the
+  Coverage map's suite nodes (new) and the suite heatmap cells on Trends and
+  Coverage (new). It is not offered on a status, class, test, environment or
+  day mark, nor on Suite detail, Overview or Summary (no page suite filter).
+  Project is not a target: no chart draws project marks.
+- **Feedback:** the page announcer and a toast name what was applied and how
+  to clear it, e.g. `Page filtered by suite "Payments" (clear: "All suites").`
+  Filtering by what is already applied changes nothing and says so.
+- **Code:** `hooks/useCrossFilter.ts` (rewritten; imports none of
+  `multiFiltersFlag`, `suiteStore`, `scopeNoticeStore`, `settledScope`, held
+  by an import-guard test), `lib/suiteName.ts` (new: `isValidSuiteName`,
+  `SUITE_NAME_MAX`, re-exported from `store/suiteStore.ts`),
+  `CoverageMapSection`, `HeatmapSection`, the three pages.
+- **Tests:** `useCrossFilter.test` rewritten without the flag;
+  `FailuresDrill.test`, `CoverageMapSection.test` and `HeatmapSection.test`
+  filter cases with the provider; `tests/ci-e2e/rollout-cross-filter.spec.ts`
+  rewritten for the catalogue flags with multi-filters off.
 
 ## Unreleased - Visualization Upgrade: "Views" on the report pages (P1)
 
