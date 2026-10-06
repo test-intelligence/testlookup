@@ -64,7 +64,9 @@ export default function HelpMenu() {
               {label}
             </Link>
           ))}
-          <div className="mt-1 border-t border-[var(--color-border)] px-0 pb-1 pt-1.5">
+          {/* `empty:hidden`: the badge renders nothing until the backend has
+              reported a version, and an empty footer is a dangling rule. */}
+          <div data-help-build="" className="mt-1 border-t border-[var(--color-border)] px-0 pb-1 pt-1.5 empty:hidden">
             <AppVersionBadge />
           </div>
         </div>

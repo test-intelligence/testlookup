@@ -34,6 +34,19 @@ function getInitials(fullName: string | null | undefined, username: string): str
 /** Personal notification preferences: every role (UX redesign P1). */
 export const MY_NOTIFICATIONS = '/settings/my-notifications'
 
+/** A role as people say it ("QA Lead"), not its code ("QA_LEAD"). */
+const ROLE_LABEL: Record<string, string> = {
+  VIEWER: 'Viewer',
+  TESTER: 'Tester',
+  QA_ENGINEER: 'QA Engineer',
+  QA_LEAD: 'QA Lead',
+  ADMIN: 'Admin',
+}
+
+function roleLabel(role: string | null | undefined): string {
+  return role ? ROLE_LABEL[role] ?? role : ''
+}
+
 const ACCOUNT_ITEM =
   'w-full text-left px-4 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)] flex items-center gap-2 transition-colors'
 
@@ -42,7 +55,7 @@ const ACCOUNT_ITEM =
    selector only triggers a re-render when its specific value changes. */
 function UserProfileDropdown() {
   const userName = useAuthStore(s => s.user?.full_name || s.user?.username || 'User')
-  const userRole = useAuthStore(s => s.user?.role || '')
+  const userRole = useAuthStore(s => roleLabel(s.user?.role))
   const userEmail = useAuthStore(s => s.user?.email || '')
   const avatarColor = useAuthStore(s => s.user?.avatar_color || 'blue')
   const username = useAuthStore(s => s.user?.username || 'U')

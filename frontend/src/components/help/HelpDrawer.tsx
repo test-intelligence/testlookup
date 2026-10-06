@@ -80,8 +80,9 @@ export default function HelpDrawer({ reserveSpaceIn }: { reserveSpaceIn?: RefObj
         </Link>
       }
     >
+      {/* No catalogue summary line: every topic opens with its own summary
+          sentence, and the two read as the same thing said twice. */}
       <div ref={bodyRef} data-help-topic={page.id} className="min-w-0">
-        <p className="mb-3 text-[12px] text-[var(--color-text-muted)]">{page.summary}</p>
         <DocLinkFollowContext.Provider value={follow}>
           <DocMarkdown source={source} hideTitle />
         </DocLinkFollowContext.Provider>

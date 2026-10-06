@@ -177,7 +177,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div>
@@ -363,7 +363,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <nav aria-label="Breadcrumb" class="mb-4">
@@ -555,16 +555,16 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div class="mb-4" data-section-tabs="trends">
           <nav aria-label="Trends pages" class="flex items-end gap-1 border-b border-[var(--color-border)]" data-route-tabs="">
-            <a aria-current="page" class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium transition-colors border-[var(--color-accent)] text-[var(--color-text)]" data-discover="true" data-route-tab="/trends" href="/trends">
+            <a aria-current="page" class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-[var(--color-accent)] text-[var(--color-text)]" data-discover="true" data-route-tab="/trends" href="/trends">
               "Trends"
-            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/coverage" href="/coverage">
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/coverage" href="/coverage">
               "Coverage"
-            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/explore" href="/explore">
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/explore" href="/explore">
               "Explorer"
         <div>
           "Page"

@@ -256,6 +256,9 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    // The role as people say it, not its code.
+    expect(screen.getByText(/^Admin · test@example\.com$/)).toBeInTheDocument()
+    expect(screen.queryByText(/ADMIN/)).not.toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /My profile/ })).toHaveAttribute('href', '/settings/profile')
     expect(screen.getByRole('menuitem', { name: /My notifications/ })).toHaveAttribute('href', '/settings/my-notifications')
     expect(screen.getByRole('listbox', { name: 'Color theme' })).toBeInTheDocument()

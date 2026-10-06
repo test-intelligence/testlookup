@@ -2494,7 +2494,7 @@ frontend/src/components/guide/MermaidDiagram.tsx,implementation/configuration,18
 frontend/src/components/guide/mermaidConfig.ts,implementation/configuration,96,,mermaid,DiagramPalette; cssVar; readDiagramPalette; mermaidConfig
 frontend/src/components/help/DocArticle.tsx,implementation/configuration,277,,react; react-router-dom; react-markdown; remark-gfm; lucide-react; react-hot-toast; @/components/guide/MermaidDiagram; @/utils/clipboard; @/content/guide/slug; ./docLinks,nodeText; DocLink; DocCodeBlock; DocMarkdown
 frontend/src/components/help/HelpDrawer.test.tsx,test,95,,@testing-library/react; react-router-dom; vitest; @/store/helpStore; ./HelpDrawer; ./docLinks,Where; renderDrawer
-frontend/src/components/help/HelpDrawer.tsx,implementation/configuration,91,,react; react-router-dom; lucide-react; @/components/ui/SidePanel; @/store/helpStore; @/content/guide/manifest; @/content/guide/sources; ./DocArticle; ./docLinks,RefObject; HelpDrawer
+frontend/src/components/help/HelpDrawer.tsx,implementation/configuration,92,,react; react-router-dom; lucide-react; @/components/ui/SidePanel; @/store/helpStore; @/content/guide/manifest; @/content/guide/sources; ./DocArticle; ./docLinks,RefObject; HelpDrawer
 frontend/src/components/help/docLinks.ts,implementation/configuration,34,,react; @/content/guide/slug,headingsOf; parseDocHref
 frontend/src/components/help/helpTopics.test.ts,test,30,,vitest; @/content/guide/manifest; @/content/guide/sources; @/content/guide/slug; @/components/layout/navConfig; ./helpTopics,
 frontend/src/components/help/helpTopics.ts,implementation/configuration,71,,,HelpTopic; helpTopicFor
@@ -2510,7 +2510,7 @@ frontend/src/components/layout/AppVersionBadge.tsx,implementation/configuration,
 frontend/src/components/layout/DegradedBanner.test.tsx,test,104,,@testing-library/react; vitest; ./DegradedBanner; @/hooks/useSystemHealth,health
 frontend/src/components/layout/DegradedBanner.tsx,implementation/configuration,84,,lucide-react; @/hooks/useSystemHealth,label; DegradedBanner
 frontend/src/components/layout/HelpMenu.test.tsx,test,37,,@testing-library/react; react-router-dom; vitest; @/store/helpStore; ./HelpMenu,renderAt
-frontend/src/components/layout/HelpMenu.tsx,implementation/configuration,74,,react; react-router-dom; lucide-react; @/components/ui/HeaderPopover; @/store/helpStore; @/components/help/helpTopics; ./AppVersionBadge,HelpMenu
+frontend/src/components/layout/HelpMenu.tsx,implementation/configuration,76,,react; react-router-dom; lucide-react; @/components/ui/HeaderPopover; @/store/helpStore; @/components/help/helpTopics; ./AppVersionBadge,HelpMenu
 frontend/src/components/layout/PageShell.tsx,implementation/configuration,22,,react,ReactNode; PageShell
 frontend/src/components/layout/ReleasePicker.test.tsx,test,532,,react; @testing-library/react; react-router-dom; vitest; ./ReleasePicker; @/store/releaseStore; @/store/projectStore,UrlProbe; BackButton; renderPicker; loaded; stillLoading; revalidatingWithStale; LinkTo
 frontend/src/components/layout/ReleasePicker.tsx,implementation/configuration,273,,react; react-router-dom; react-hot-toast; @/hooks/useReleases; @/store/projectStore; @/store/releaseStore; @/types/releases,ReleasePicker
@@ -2521,8 +2521,8 @@ frontend/src/components/layout/SettingsBackBar.tsx,implementation/configuration,
 frontend/src/components/layout/Sidebar.test.tsx,test,215,,@testing-library/react; react-router-dom; vitest; ./Sidebar,renderAt; navIds; activeId
 frontend/src/components/layout/Sidebar.tsx,implementation/configuration,223,,react; react-router-dom; lucide-react; clsx; @/hooks/usePermissions; @/hooks/useFeatureFlags; @/hooks/useAIConfig; @/hooks/useMyFailuresCountUnscoped; @/hooks/useLiveRunningCount; @/components/ui/AppLogo; @/hooks/useModalFocus; ./navConfig,MouseEvent; NavItem; readCollapsed; writeCollapsed; SidebarDrawer; InboxBadge; LiveDot; SidebarItem; Sidebar
 frontend/src/components/layout/TopBar.alignment.test.tsx,test,64,,@testing-library/react; react-router-dom; vitest; ./TopBar,renderTopBar
-frontend/src/components/layout/TopBar.test.tsx,test,294,,@testing-library/react; react-router-dom; vitest; ./TopBar,
-frontend/src/components/layout/TopBar.tsx,implementation/configuration,400,,react; lucide-react; react-router-dom; @/store/projectStore; ./ReleasePicker; @/store/authStore; @/hooks/usePermissions; lucide-react; @/hooks/useNotifications; @/services/notificationService; @/components/ui/ThemePicker; @/components/ui/PresentationToggle; ./HelpMenu; @/components/ui/HeaderPopover; @/utils/formatCompactDateTime,getInitials; UserProfileDropdown; TopBarNavToggle; TopBar; onKey
+frontend/src/components/layout/TopBar.test.tsx,test,297,,@testing-library/react; react-router-dom; vitest; ./TopBar,
+frontend/src/components/layout/TopBar.tsx,implementation/configuration,413,,react; lucide-react; react-router-dom; @/store/projectStore; ./ReleasePicker; @/store/authStore; @/hooks/usePermissions; lucide-react; @/hooks/useNotifications; @/services/notificationService; @/components/ui/ThemePicker; @/components/ui/PresentationToggle; ./HelpMenu; @/components/ui/HeaderPopover; @/utils/formatCompactDateTime,getInitials; roleLabel; UserProfileDropdown; TopBarNavToggle; TopBar; onKey
 frontend/src/components/layout/buildInfo.ts,implementation/configuration,38,,@/hooks/useSystemHealth,known; shortRevision; buildTitle
 frontend/src/components/layout/navConfig.test.ts,test,66,,react-router-dom; vitest; ./navConfig,routed; prefixServed
 frontend/src/components/layout/navConfig.ts,implementation/configuration,199,,lucide-react; @/components/ui/RouteTabs,LucideIcon; NavSection; NavItem; NavAccess; visibleNavItems; ownsPath; ownership; owningNavItem
