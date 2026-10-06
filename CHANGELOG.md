@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: Compare picks its own suites and releases, and the chart guide (Phase D, C1 + U1)
+
+**U1: the in-app guide gains "Charts and visual analysis"** (`/docs/charts`,
+group "Using TestLookup"). It covers:
+- reading any chart: the takeaway, badges, footer totals, "—" for not
+  measured, how skipped results leave the pass rate, the empty and error
+  states, and "Waiting to retry";
+- interacting: tooltip, legend, zoom, table, full screen, presentation mode;
+- filtering the page from a chart;
+- per-chart PNG, SVG and CSV exports and their provenance;
+- what each report page draws, including Compare;
+- the Explorer and saved views;
+- a limits table.
+
+Every statement was checked against the code. Edits elsewhere:
+- **Dashboards:** links the new page.
+- **Reports:** splits "Exports" into chart exports and Summary report files,
+  with the background jobs, the 7-day expiry, re-checked access and the audit
+  record.
+- **Integrations:** the CLI `analytics` command, MCP `get_chart_data`, and a
+  429 row in the errors table.
+- **Troubleshooting:** "Waiting to retry", "—", and the 3D fallback.
+
+`DocsPage.test` requires the `charts` page.
+
+**Trends' Compare card drew nothing for anyone.** It compared the suites and
+releases chosen in the filter bar, but the filter bar is single-select (one
+top-bar release, one page suite) since `viz_multi_filters` was turned off for
+good, so no selection reached the two lines a comparison needs. The card
+always said "pick two or more suites or releases in the filter bar above",
+which no reader could do. Found while writing the chart guide (U1). Plan:
+`docs/viz-work/phaseD-plan.md` §7.
+
+- **Suites and Releases pickers in the card's toolbar** (`ui/MultiSelect`, at
+  most 8 each). The choice is kept in the URL (`cmp_suite`, `cmp_release`), so
+  a link reproduces the chart. A cleared picker stays cleared (`cmp_suite=`):
+  the default does not come back.
+- **It starts drawn.** Until the reader chooses, Compare takes the 3 busiest
+  suites of "Pass rate by suite" (that chart's own ranking, no request of its
+  own; only while it draws one line per suite), or the page's suite when one
+  is set, and the top-bar release. The takeaway says "The busiest suites in
+  the window; choose others with Suites."
+- **The release picker needs one project**; otherwise it is off and says
+  "Choose one project to compare releases".
+- The request and merge logic (`compareModel`, `compareData`) is unchanged.
+- **Tests:** `compareModel.test` covers the URL choice (absent, cleared,
+  replaced) and the default; `TrendsCatalogue.test` covers the default
+  request, the pickers driving the request, and a cleared picker asking
+  nothing. `rollout-trends` adds Compare's request to the page's exact
+  inventory and asserts it draws with three suites chosen. The chart-data fixture now
+  honours `suite_name` as the server does.
+
 ## Unreleased - Visualization Upgrade: the chart latency budgets are written down, alerted on and charted (Phase D, L3)
 
 **The visualization reads now have codified p95 budgets, Prometheus alerts and

@@ -48,6 +48,15 @@ Conventions worth knowing:
 
 A terminal client over the same API. Use it in CI steps where a shell is easier than a language SDK. It needs the same API key and base URL.
 
+The `analytics` command reads the same chart data the pages draw:
+
+```bash
+testlookup analytics trends --project <id> --days 30 --by suite -o table
+testlookup analytics chart --metric pass_rate --group-by day --group-by release -o csv
+```
+
+Output is a table, CSV or JSON. Chart reads are limited to 120 a minute per user; on a 429 the command says so and asks you to retry later.
+
 ## SDKs
 
 Client libraries live under `client/` in the repository. Use one when you want to send results from inside your test code rather than shelling out to curl.
@@ -55,6 +64,8 @@ Client libraries live under `client/` in the repository. Use one when you want t
 ## MCP server
 
 The Model Context Protocol server lets an AI client query TestLookup as a tool — asking about runs and failures in natural language. It runs as its own service and speaks stdio and SSE.
+
+Its `get_chart_data` tool returns one chart's data: a metric (executions by default), up to two grouping dimensions, and optional project, releases, suites and window. A point with no data comes back as `y: null` with `measured: false`, never 0, so a client can tell "nothing to measure" from "zero". When rate limited, the tool returns `retry_after`.
 
 > **Important.** An MCP client reaches your test data. Give it a credential scoped to what it should see, and remember that anything it reads may be sent to whatever model backs that client. See [Security and privacy](/docs/security).
 
@@ -74,6 +85,7 @@ Where configured, TestLookup can notify external systems and file issues. Both a
 | 403 | Authenticated, not authorised | Check project membership and role |
 | 404 | Not found or not visible to you | Check the id and project scope |
 | 422 | Validation failed | Read the response body; it names the field |
+| 429 | Too many requests | Wait the `Retry-After` seconds, then retry |
 
 ## Related
 

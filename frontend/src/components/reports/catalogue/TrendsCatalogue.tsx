@@ -57,10 +57,11 @@ import { hasChartData, type ChartResponse, type ChartState } from '@/components/
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
 import { durationBandPoints } from '@/components/charts/durationBuckets'
 import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
-import { buildMultiSeriesModel, multiSeriesInputFromChartData } from '@/components/charts/multiSeriesModel'
+import { buildMultiSeriesModel, multiSeriesInputFromChartData, OTHER_KEY } from '@/components/charts/multiSeriesModel'
 import type { ScopeValue } from '@/lib/scopeParams'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import CompareSection, { COMPARE_HEIGHT } from './CompareSection'
+import { defaultCompareSuites } from './compareModel'
 import LazySection from './LazySection'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
 import { HeatmapSection } from './HeatmapSection'
@@ -335,6 +336,11 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
   const suiteState: ChartState<ChartResponse> = singleDay
     ? oneDay<ChartResponse>(ONE_DAY_SUITES_REASON)
     : suites
+  // C1: Compare starts from the busiest suites this chart already ranked (no request of its own);
+  // only while the chart draws one line per suite.
+  const suiteLines = custom.applied.seriesBy === 'suite' ? (seriesChartOf(suiteState)?.series ?? null) : null
+  const busiestKey = defaultCompareSuites(suiteLines, OTHER_KEY).join('\n')
+  const busiestSuites = useMemo(() => (busiestKey ? busiestKey.split('\n') : []), [busiestKey])
 
   return (
     <div data-trends-catalogue="" className="mt-3.5 grid grid-cols-1 gap-3.5 min-w-0">
@@ -349,7 +355,13 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
         />
       </LazySection>
       <LazySection label="trends-compare" minHeight={COMPARE_HEIGHT + FRAME_CHROME}>
-        <CompareNear days={days} suiteFilter={suiteFilter} everHadData={everHadData} onNear={onDurationNear} />
+        <CompareNear
+          days={days}
+          suiteFilter={suiteFilter}
+          everHadData={everHadData}
+          busiestSuites={busiestSuites}
+          onNear={onDurationNear}
+        />
       </LazySection>
       <LazySection label="trends-duration" minHeight={DURATION_HEIGHT + FRAME_CHROME}>
         <DurationSection

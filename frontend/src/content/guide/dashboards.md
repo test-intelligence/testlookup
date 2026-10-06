@@ -32,7 +32,7 @@ If a page looks wrong, check these three before anything else. Together they exp
 
 ## Explorer
 
-**Testing → Explorer** (`/explore`) draws one metric over time as small multiples.
+**Testing → Explorer** (`/explore`) draws one metric over time as small multiples. See [Charts and visual analysis](/docs/charts) for reading, zooming and exporting its charts.
 
 - **Metric** — any of the sixteen the chart API serves: counts, rates and durations.
 - **X axis** — day or week. Every panel shares the same time axis.
@@ -69,5 +69,6 @@ Coverage here is about which tests ran and what they exercised **according to th
 
 ## Related
 
+- [Charts and visual analysis](/docs/charts)
 - [Concepts and terminology](/docs/concepts)
 - [Troubleshooting](/docs/troubleshooting)
