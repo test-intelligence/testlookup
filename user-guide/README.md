@@ -18,7 +18,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [AI features](ai-features.md) | Run Intelligence, Deep Investigation, the Agent Pipeline, Ask AI chat, and configuring the AI tier |
 | [Administration & settings](administration.md) | Projects, users, API keys, integrations & webhooks, flags, audit, storage, backup/restore & upgrades, and the admin checklists |
 | [Sizing & capacity](sizing.md) | Reference hardware profiles (small/medium/large), per-service CPU/RAM, and the disk-growth math for retention planning |
-| [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, Value Metrics, Search — and how their counts relate |
+| [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, the shared chart frame (exports, Compare, Explorer, saved views, limits), Value Metrics, Search — and how their counts relate |
 | [Working with runs](working-with-runs.md) | The run list and detail pages, comparing runs, bisect-from-green, and a red-build routine |
 | [Defects & promotion](defects.md) | Promoting clusters to defects, auto-severity, issue-tracker auto-linking, duplicate detection |
 | [Compliance & governance](compliance.md) | Compliance packs — the exportable, reproducible evidence bundle behind a release decision — plus the SOC 2 / GDPR / HIPAA control-family mapping and its stated limits |
