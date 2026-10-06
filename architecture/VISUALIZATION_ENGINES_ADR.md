@@ -220,8 +220,9 @@ the one module that read them, `useCatalogueRollout.ts`, with its ratchet (S6). 
 flag: every section this ADR describes mounts unconditionally, and the 3D view is offered on
 every scatter, still fetched only on an explicit "View in 3D" (`rollout-scatter-3d.spec.ts`
 (b) keeps proving no three.js chunk loads before that click). The engine rules above are
-unchanged. The flag rows stay seeded until a later migration retires them, so
-`config/vizFlags.ts` and `contracts/viz/flags.json` keep all six keys.
+unchanged. Migration 0196 (F1) retired the three rows, with the never-read `viz_customize`:
+`contracts/viz/flags.json` keeps them as the record of 0192's seed, marked
+`"retired_by": "0196"`, and `config/vizFlags.ts` no longer lists them.
 
 ## Consequences
 
