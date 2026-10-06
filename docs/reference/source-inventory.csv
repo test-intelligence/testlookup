@@ -2716,7 +2716,7 @@ frontend/src/components/ui/SortableHeader.test.tsx,test,71,,@testing-library/rea
 frontend/src/components/ui/SortableHeader.tsx,implementation/configuration,45,,lucide-react; @/hooks/useTableSort,Props; SortableHeader
 frontend/src/components/ui/StatusBadge.test.tsx,test,28,,@testing-library/react; vitest; ./StatusBadge,
 frontend/src/components/ui/StatusBadge.tsx,implementation/configuration,21,,clsx,Props; StatusBadge
-frontend/src/components/ui/StatusBanner.test.tsx,test,67,,@testing-library/react; react-router-dom; vitest; ./KpiStrip; ./MetricCard; ./StatusBanner,
+frontend/src/components/ui/StatusBanner.test.tsx,test,70,,@testing-library/react; react-router-dom; vitest; ./KpiStrip; ./MetricCard; ./StatusBanner,
 frontend/src/components/ui/StatusBanner.tsx,implementation/configuration,87,,react; react-router-dom; clsx,BannerState; BannerFact; StatusBanner
 frontend/src/components/ui/SuiteBadge.test.tsx,test,37,,@testing-library/react; vitest; ./SuiteBadge,
 frontend/src/components/ui/SuiteBadge.tsx,implementation/configuration,70,,clsx; lucide-react; react-router-dom,Props; SuiteBadge

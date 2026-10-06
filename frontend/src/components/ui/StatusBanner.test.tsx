@@ -62,6 +62,9 @@ describe('KpiStrip + compact MetricCard', () => {
       />,
     )
     expect(screen.getByText('91.2%').className).toContain('text-2xl')
-    expect(screen.getByText('Down 2.1 pp vs previous period (worse)')).toBeInTheDocument()
+    // Two spans, so a narrow tile truncates the change text and never "(worse)".
+    expect(screen.getByText('Down 2.1 pp vs previous period')).toBeInTheDocument()
+    expect(screen.getByText('(worse)')).toBeInTheDocument()
+    expect(screen.getByTitle('Down 2.1 pp vs previous period (worse)')).toHaveAttribute('data-metric-trend', 'down')
   })
 })
