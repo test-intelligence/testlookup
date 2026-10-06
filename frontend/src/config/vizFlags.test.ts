@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
  * `VIZ_FLAGS` is held to `contracts/viz/flags.json` — the same file the
- * backend's flag constants and migration 0192 are held to.
+ * backend's flag constants and migrations 0192 / 0196 are held to: to its
+ * entries WITHOUT `retired_by` (0196 deleted the other four rows).
  *
  * Loaded through `import.meta.glob(..., '?raw')` rather than `node:fs`: this
  * tsconfig has no `@types/node` and `npm run build` type-checks test files too
@@ -23,10 +24,12 @@ const RAW = Object.values(
 interface FlagsContract {
   contract: string
   version: number
-  flags: { key: string; description: string }[]
+  flags: { key: string; description: string; retired_by?: string }[]
 }
 
 const contract = (): FlagsContract => JSON.parse(RAW ?? '{"flags":[]}') as FlagsContract
+/** The entries whose rows still exist. */
+const live = () => contract().flags.filter((flag) => flag.retired_by === undefined)
 
 describe('VIZ_FLAGS matches contracts/viz/flags.json', () => {
   it('finds the contract file', () => {
@@ -36,8 +39,15 @@ describe('VIZ_FLAGS matches contracts/viz/flags.json', () => {
   })
 
   it('has the same keys in the same order', () => {
-    expect(Object.values(VIZ_FLAGS)).toEqual(contract().flags.map((flag) => flag.key))
-    expect(VIZ_FLAG_KEYS).toEqual(contract().flags.map((flag) => flag.key))
+    expect(Object.values(VIZ_FLAGS)).toEqual(live().map((flag) => flag.key))
+    expect(VIZ_FLAG_KEYS).toEqual(live().map((flag) => flag.key))
+    // F1 (0196): exactly the four shipped / unread rows are retired.
+    expect(contract().flags.filter((flag) => flag.retired_by).map((flag) => [flag.key, flag.retired_by])).toEqual([
+      ['viz_chart_data_api', '0196'],
+      ['viz_advanced_charts', '0196'],
+      ['viz_customize', '0196'],
+      ['viz_three_d', '0196'],
+    ])
   })
 
   it('has no duplicate key, and every key is one the flag API can create', () => {
@@ -47,7 +57,7 @@ describe('VIZ_FLAGS matches contracts/viz/flags.json', () => {
     for (const key of VIZ_FLAG_KEYS) expect(key).not.toContain('.')
   })
 
-  it('types a key as one of the six literals', () => {
+  it('types a key as one of the live literals', () => {
     const key: VizFlagKey = VIZ_FLAGS.multiFilters
     expect(key).toBe('viz_multi_filters')
     // @ts-expect-error — a misspelt key must not type-check.

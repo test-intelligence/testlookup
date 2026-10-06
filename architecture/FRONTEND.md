@@ -104,9 +104,11 @@ data). The `.badge-*` primitives already sit on the tokens.
   `viz_advanced_charts` and `viz_three_d` through one seam (`useCatalogueRollout.ts`, held by
   `flagSeam.ratchet.test.ts`). Migration 0195 turned the three on everywhere, Phase D (S1-S5)
   removed every gate and flag-off path, and S6 deleted the seam and its ratchet: every chart
-  section mounts unconditionally. `config/vizFlags.ts` still lists all six keys because it
-  mirrors `contracts/viz/flags.json` (the seeded rows, retired later by migration); only
-  `viz_report_context` and `viz_multi_filters` are still read.
+  section mounts unconditionally. Migration 0196 (F1) then deleted those three rows and the
+  never-read `viz_customize`; `contracts/viz/flags.json` keeps all six as the record of what
+  0192 seeded, marking the four `"retired_by": "0196"`. `config/vizFlags.ts` lists only the
+  two live keys, `viz_report_context` and `viz_multi_filters` (off for good, still read by the
+  report-chrome slot and the multi-filter runtime until that code goes).
 - **A page change is one import and one mount** of a small static composite
   (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only ONE
   `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported

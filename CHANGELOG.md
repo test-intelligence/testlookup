@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: the shipped flag rows are retired (Phase D, F1)
+
+**Migration 0196 deletes the four viz flag rows that no code reads any more:**
+- `viz_chart_data_api`, `viz_advanced_charts` and `viz_three_d`: shipped, on
+  everywhere since 0195, and asked by nothing since Phase D's S6 deleted the
+  seam;
+- `viz_customize`: seeded by 0192 and never read.
+
+They disappear from the admin feature-flag list. No behaviour changes: nothing
+looked them up.
+- **Kept:** `viz_report_context` and `viz_multi_filters`. Both are off for
+  good (owner decision 2026-10-04), but the report-chrome slot and the
+  multi-filter runtime still read them; their rows go with that code.
+- **The record stays.** `contracts/viz/flags.json` still lists 0192's six,
+  and marks the four `"retired_by": "0196"`.
+  - `app/core/viz_flags.py` gains `VIZ_RETIRED_FLAG_KEYS` and
+    `VIZ_LIVE_FLAG_KEYS`.
+  - `frontend/src/config/vizFlags.ts` lists only the two live keys, and
+    `vizFlags.test.ts` holds it to the unmarked entries.
+- **Downgrade:** re-inserts the four rows as 0195 left them (the three
+  shipped flags on for everyone, `viz_customize` off). Later admin edits to
+  those rows are not recoverable, but nothing read them.
+- **Tests:** `test_viz_flag_defaults.py` holds 0196 to the marks:
+  - it is 0195's only child;
+  - it deletes exactly the marked keys;
+  - the downgrade restores the 0195 state with 0192's descriptions.
+
+  Upgrade, downgrade and upgrade again were run against a throwaway
+  Postgres 16: two rows, then six as 0195 left them, then two again.
+- **Docs:** the contracts README, `architecture/FRONTEND.md` §7 and the
+  engines ADR's Phase D amendment are updated.
+
 ## Unreleased - Fixes: tied analytics lists keep one order; MinIO images move to PGSTY Silo
 
 **Tied counts came back in plan order** (found when the Postgres golden

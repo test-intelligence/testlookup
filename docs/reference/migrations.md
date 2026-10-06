@@ -203,3 +203,4 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0193_systemic_cluster_membership_key.py](../../backend/migrations/versions/0193_systemic_cluster_membership_key.py) | `'0193'` | `'0192'` | Systemic flake clusters get a membership key (VIZ-207). |
 | [backend/migrations/versions/0194_report_exports.py](../../backend/migrations/versions/0194_report_exports.py) | `'0194'` | `'0193'` | VIZ-607 — background report exports. |
 | [backend/migrations/versions/0195_enable_viz_flags_by_default.py](../../backend/migrations/versions/0195_enable_viz_flags_by_default.py) | `'0195'` | `'0194'` | enable the shipped Visualization Upgrade flags by default |
+| [backend/migrations/versions/0196_retire_shipped_viz_flags.py](../../backend/migrations/versions/0196_retire_shipped_viz_flags.py) | `'0196'` | `'0195'` | retire the shipped Visualization Upgrade flag rows |
