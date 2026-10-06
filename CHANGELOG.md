@@ -42,6 +42,36 @@ no page uses them yet.
   signal and lab themes, including the **⋯** menu open and a `?tab=` choice
   surviving a reload.
 - **Tests:** unit tests for each primitive (19).
+## Unreleased - The unused `report_metrics` summary block is removed (contract C6)
+
+`GET /api/v1/metrics/summary?include=report_metrics` (VIZ-302) fed the
+report-context panel's metrics strip, which was deleted in Phase D (#206); no
+other client asked for it. The opt-in block is removed with everything that
+existed only for it.
+
+**Nothing changes for any caller:** without the include, the response, its SQL
+and its cache key were already exactly those of the endpoint before the block
+existed. An `include` parameter a client still sends is ignored, like any
+unknown query parameter.
+
+- **Backend:**
+  - the route's `include` parameter and `summary_includes`;
+  - `get_dashboard_summary`'s `report_metrics` flag, its cache-key segment
+    and its cached-shape check;
+  - `services/report_metrics_service.py`;
+  - the C6 models (`ReportMetrics`, `MetricsPeriod`, `PreviousPeriod`,
+    `MetricsWindow`) and their registry entry.
+- **Contract:** the C6 section of `contracts/viz/README.md` and
+  `contracts/viz/fixtures/report_metrics/`. The contracts are now C1-C5.
+  `rate_range` stays, documented and exercised under the C3 tree stats.
+- **Frontend:** `ReportMetrics` and `validateReportMetrics` in
+  `lib/viz/contracts.ts`, and their registry entries.
+- **Tests:**
+  - `tests/test_report_metrics.py` and
+    `tests/integration/test_report_metrics_postgres.py` are deleted (also
+    from `ci.yml`).
+  - The rule lists in `test_viz_contracts.py` and `contracts.test.ts` lose
+    the C6 rules.
 
 ## Unreleased - Visualization Upgrade: the report-context panel and the multi-select filters are removed (Phase D, M0-M3)
 

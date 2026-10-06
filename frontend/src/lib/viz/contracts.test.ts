@@ -81,7 +81,7 @@ const FIXTURES: Fixture[] = Object.entries(FIXTURE_SOURCES)
 const of = (verdict: 'valid' | 'invalid') =>
   FIXTURES.filter((f) => f.verdict === verdict).map((f) => [`${f.kind}/${f.name}`, f] as const)
 
-const EXPECTED_KINDS = ['chart_series', 'drill_path', 'envelope', 'report_metrics', 'scope', 'widget_config']
+const EXPECTED_KINDS = ['chart_series', 'drill_path', 'envelope', 'scope', 'widget_config']
 
 /** The rule id an error string starts with. */
 const ruleOf = (error: string) => error.slice(0, error.indexOf(':'))
