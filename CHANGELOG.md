@@ -61,6 +61,12 @@ deleted or merged in this phase.
     Failures, and the rail surviving a reload.
   - New baselines: sidebar expanded and collapsed, section tabs, Help menu,
     help drawer and account menu, in both themes.
+- **Found by the baselines:** the first CI run showed 94 changed regions on
+  pages whose content did not change. A tab inherited a 19.5 px line height,
+  so the section-tab bar was 37.5 px tall and every page under it sat on a
+  half pixel, which made its text and charts re-rasterise. Tabs now set
+  `leading-5`, so the bar is 38 px. `shell.spec.ts` checks the bar's height,
+  and those pages keep their baselines.
 
 ## Unreleased - UX redesign P0: the page-template primitives, and tighter cards
 

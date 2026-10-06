@@ -2735,7 +2735,7 @@ frontend/src/components/ui/SuiteBadge.test.tsx,test,37,,@testing-library/react; 
 frontend/src/components/ui/SuiteBadge.tsx,implementation/configuration,70,,clsx; lucide-react; react-router-dom,Props; SuiteBadge
 frontend/src/components/ui/SuiteFilterSelect.tsx,implementation/configuration,36,,lucide-react; @/lib/scopeControls,SuiteFilterSelect
 frontend/src/components/ui/Tabs.test.tsx,test,68,,@testing-library/react; react; react-router-dom; vitest; ./Tabs; ./useTabParam,setup
-frontend/src/components/ui/Tabs.tsx,implementation/configuration,79,,react; clsx,TabItem; tabClass; TabCount; Tabs
+frontend/src/components/ui/Tabs.tsx,implementation/configuration,83,,react; clsx,TabItem; tabClass; TabCount; Tabs
 frontend/src/components/ui/ThemePicker.test.tsx,test,42,,vitest; @testing-library/react; ./ThemePicker; @/store/themeStore,
 frontend/src/components/ui/ThemePicker.tsx,implementation/configuration,44,,@/store/themeStore,ThemePicker
 frontend/src/components/ui/TimingCell.test.tsx,test,93,,@testing-library/react; vitest; ./TimingCell,
@@ -3322,7 +3322,7 @@ frontend/tests/ci-e2e/rollout-suite-detail.spec.ts,test,292,,@playwright/test; .
 frontend/tests/ci-e2e/rollout-summary-layout.spec.ts,test,162,,@axe-core/playwright; @playwright/test; ../lib/rollout; ../visual/production/fixtures,Page; Box; layout; holdSectionChunk
 frontend/tests/ci-e2e/rollout-summary.spec.ts,test,161,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../lib/axe-gate,Page
 frontend/tests/ci-e2e/rollout-trends.spec.ts,test,210,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../lib/production-pages; ../visual/production/fixtures; ../lib/axe-gate,Page; watchEcharts; openTrends
-frontend/tests/ci-e2e/shell.spec.ts,test,98,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page
+frontend/tests/ci-e2e/shell.spec.ts,test,102,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page
 frontend/tests/ci-e2e/trend-overlays.spec.ts,test,612,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures; ../lib/axe-gate; ../lib/chart-text-escapes; ../lib/chart-gallery-page,Locator; Page; watchErrors; openGallery; drawnMarks; expectNoTextEscapes; pointAtFlaggedDay; Rect
 frontend/tests/diagram-harness/harness.tsx,test,106,,react; react-dom/client; react-router-dom; ../../src/index.css; ../../src/pages/DocsPage; ../../src/components/guide/MermaidDiagram; ../../src/components/guide/mermaidConfig,pagesWithDiagrams; Harness; Window
 frontend/tests/docs-diagrams.spec.ts,test,223,,@playwright/test; fs; path; url; ./lib/diagram-geometry,fontFromStylesheet

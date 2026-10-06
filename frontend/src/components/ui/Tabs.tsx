@@ -15,7 +15,11 @@ export const TAB_BAR_CLASS = 'flex items-end gap-1 border-b border-[var(--color-
 
 export function tabClass(active: boolean): string {
   return clsx(
-    '-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+    // `leading-5`: a whole-pixel bar (20 + 16 + 2 = 38 px). With the inherited
+    // 1.5 line height (19.5 px) the bar was 37.5 px, and every page under a
+    // section-tab bar sat on a half pixel: its text and charts re-rasterised,
+    // and 94 unchanged regions came out "changed" in the P1 baselines.
+    '-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors',
     active
       ? 'border-[var(--color-accent)] text-[var(--color-text)]'
       : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]',

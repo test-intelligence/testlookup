@@ -32,6 +32,10 @@ test('a QA lead: 12 places, Failures active, and the section tabs above the page
   const tabs = page.locator('[data-section-tabs="failures"] [data-route-tab]')
   await expect(tabs).toHaveText(['Failures', 'Defects', 'Root cause (AI)'])
   await expect(page.locator('[data-route-tab="/failures"]')).toHaveAttribute('aria-current', 'page')
+  // A whole-pixel bar: at 37.5 px every page under it sat on a half pixel, and
+  // 94 unchanged regions re-rasterised in the P1 baselines.
+  const barHeight = await page.locator('[data-section-tabs]').evaluate((el) => el.getBoundingClientRect().height)
+  expect(barHeight).toBe(38)
   await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
