@@ -46,6 +46,19 @@ no page uses them yet.
   CVE-2026-96748 and CVE-2026-96749 (HIGH, published 2026-10-06; the Trivy
   dependency scan fails every PR until fixed). `motor` 3.7.1 accepts
   `pymongo` <5.0; the Mongo-related backend tests pass on 4.18.2.
+- **Security, accepted (also published 2026-10-06):** CVE-2026-104873 in
+  `langgraph-sdk` 0.2.15 (backend image).
+  - Why it can't be fixed now: `langgraph==0.6.11` requires
+    `langgraph-sdk<0.3`, and the fix (0.4.4) needs `langchain-core>=1.4`. That
+    is the langchain 1.x migration, already the follow-up for CVE-2026-34070.
+  - Why it is accepted as NOT REACHABLE: the SDK is the client for a remote
+    LangGraph server. In 0.6.11 only `RemoteGraph` imports it, and nothing
+    here imports `RemoteGraph` or the SDK.
+  - The `.trivyignore.yaml` entry expires on 2027-01-04.
+  - `tests/regression/test_langgraph_sdk_unreachable.py` holds both facts.
+    It scans the sources, and with the pinned langgraph it checks that
+    importing the workflows does not load the SDK. It was checked in a venv
+    with 0.6.11: not loaded.
 
 ## Unreleased - The unused `report_metrics` summary block is removed (contract C6)
 
