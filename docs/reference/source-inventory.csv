@@ -2148,7 +2148,7 @@ frontend/scripts/check-bundle-budget.mjs,implementation/configuration,283,,node:
 frontend/scripts/check-theme-tokens.mjs,implementation/configuration,348,,node:fs; node:path; node:url; ./chart-guard.mjs,walk; themeBlock; token; lineOf; chartColourViolations; walkAll
 frontend/src/App.routeTargets.test.ts,test,144,,vitest,fix; declaredRoutes; toMatcher; routeLiteralsIn; isNonRoute
 frontend/src/App.routes.test.tsx,test,37,,@testing-library/react; react-router-dom; vitest; ./App,
-frontend/src/App.tsx,implementation/configuration,324,,react; react-router-dom; @/components/layout/AppLayout; @/components/auth/ProtectedRoute; @/components/ui/LoadingSpinner; @/components/ErrorBoundary; @/hooks/useWebVitals; @/hooks/usePermissions; @/hooks/useDocumentTitle; @/pages/LoginPage; @/utils/lazyWithRetry; @/pages/ResetPasswordPage,ComponentType; AppRoute; RouteFallback; RouteErrorFallback; renderLazyRoute; ManagementGuard; App
+frontend/src/App.tsx,implementation/configuration,332,,react; react-router-dom; @/components/layout/AppLayout; @/components/auth/ProtectedRoute; @/components/ui/LoadingSpinner; @/components/ErrorBoundary; @/hooks/useWebVitals; @/hooks/usePermissions; @/hooks/useDocumentTitle; @/pages/LoginPage; @/utils/lazyWithRetry; @/pages/ResetPasswordPage,ComponentType; AppRoute; RouteFallback; RouteErrorFallback; renderLazyRoute; ManagementGuard; App
 frontend/src/components/ErrorBoundary.test.tsx,test,88,,react; @testing-library/react; vitest; ./ErrorBoundary,Thrower
 frontend/src/components/ErrorBoundary.tsx,implementation/configuration,84,,react; ../utils/errorReporting,Props; State; ErrorBoundary
 frontend/src/components/SwrMutateBridge.tsx,implementation/configuration,20,,react; swr; @/utils/swrCacheMutate,SwrMutateBridge
@@ -2690,27 +2690,34 @@ frontend/src/components/ui/Breadcrumbs.tsx,implementation/configuration,75,,luci
 frontend/src/components/ui/Chip.test.tsx,test,174,,@testing-library/react; react; vitest; ./Chip,ChipItem; Harness; Deferred
 frontend/src/components/ui/Chip.tsx,implementation/configuration,176,,lucide-react; react; @/utils/formatters,Ref; RefObject; ChipProps; Chip; ChipItem; ChipListProps; ChipList
 frontend/src/components/ui/DataUnavailable.tsx,implementation/configuration,65,,lucide-react; @/utils/loadError,Props; DataUnavailable
+frontend/src/components/ui/Disclosure.test.tsx,test,48,,@testing-library/react; vitest; ./Disclosure,
+frontend/src/components/ui/Disclosure.tsx,implementation/configuration,78,,react; lucide-react; clsx,ReactNode; readStored; writeStored; Disclosure
 frontend/src/components/ui/EmptyState.test.tsx,test,31,,@testing-library/react; lucide-react; vitest; ./EmptyState,
 frontend/src/components/ui/EmptyState.tsx,implementation/configuration,16,,react,Props; EmptyState
 frontend/src/components/ui/ExperimentalBadge.tsx,implementation/configuration,26,,lucide-react,ExperimentalBadge
 frontend/src/components/ui/Field.tsx,implementation/configuration,50,,react,ReactNode; FieldProps; Field
 frontend/src/components/ui/HeaderPopover.test.tsx,test,78,,react; @testing-library/react; vitest; ./HeaderPopover,Harness
 frontend/src/components/ui/HeaderPopover.tsx,implementation/configuration,122,,react; react; react-dom,HeaderPopover
+frontend/src/components/ui/KpiStrip.tsx,implementation/configuration,21,,react; clsx,KpiStrip
 frontend/src/components/ui/LoadingSpinner.test.tsx,test,23,,@testing-library/react; vitest; ./LoadingSpinner,names
 frontend/src/components/ui/LoadingSpinner.tsx,implementation/configuration,15,,clsx,Props; LoadingSpinner
 frontend/src/components/ui/MetricCard.a11y.test.tsx,test,107,,@testing-library/react; lucide-react; vitest; ./MetricCard; @/test/readSourceFile,themeTokens; luminance; contrast; on; textToken
 frontend/src/components/ui/MetricCard.test.tsx,test,153,,@testing-library/react; lucide-react; vitest; ./MetricCard,trendRowClass
-frontend/src/components/ui/MetricCard.tsx,implementation/configuration,113,,react; lucide-react; clsx,MetricData; Props; MetricCard
+frontend/src/components/ui/MetricCard.tsx,implementation/configuration,149,,react; lucide-react; clsx,MetricData; Props; MetricCard
 frontend/src/components/ui/MultiSelect.test.tsx,test,667,,@testing-library/react; react; vitest; ./MultiSelect,MultiSelectOption; MultiSelectProps; HarnessProps; Harness; openWithKeyboard; squeezeScroller
 frontend/src/components/ui/MultiSelect.tsx,implementation/configuration,807,,lucide-react; react; react-dom; @/utils/formatters; ./popoverContainer,KeyboardEvent; RefObject; MultiSelectOption; MultiSelectProps; Row; nextTabbableAfter; MultiSelect
+frontend/src/components/ui/OverflowMenu.tsx,implementation/configuration,80,,react; react-router-dom; lucide-react; clsx; ./HeaderPopover,ReactNode; OverflowItem; OverflowMenu
 frontend/src/components/ui/PageHeader.test.tsx,test,51,,@testing-library/react; react-router-dom; vitest; @/hooks/useDocumentTitle; ./PageHeader,RouteTitleHarness
-frontend/src/components/ui/PageHeader.tsx,implementation/configuration,26,,react; @/hooks/useDocumentTitle,Props; PageHeader
+frontend/src/components/ui/PageHeader.tsx,implementation/configuration,75,,react; lucide-react; clsx; @/hooks/useDocumentTitle; @/store/helpStore; ./OverflowMenu,OverflowItem; Props; PageHeader
+frontend/src/components/ui/PageHeaderV2.test.tsx,test,62,,@testing-library/react; react-router-dom; vitest; ./PageHeader; @/store/helpStore,
 frontend/src/components/ui/Pagination.test.tsx,test,58,,@testing-library/react; vitest; ./Pagination,
 frontend/src/components/ui/Pagination.tsx,implementation/configuration,31,,lucide-react,Props; Pagination
 frontend/src/components/ui/PresentationToggle.test.tsx,test,47,,@testing-library/react; vitest; @/store/presentationStore; ./PresentationToggle,
 frontend/src/components/ui/PresentationToggle.tsx,implementation/configuration,41,,lucide-react; clsx; @/store/presentationStore,PresentationToggle
 frontend/src/components/ui/ProjectRequiredEmptyState.test.tsx,test,149,,@testing-library/react; react-router-dom; react; vitest; ./ProjectRequiredEmptyState,
 frontend/src/components/ui/ProjectRequiredEmptyState.tsx,implementation/configuration,124,,react; react-router-dom; lucide-react; ./EmptyState; @/hooks/usePermissions; @/store/projectStore,Props; ProjectRequiredEmptyState
+frontend/src/components/ui/RouteTabs.test.tsx,test,53,,@testing-library/react; react-router-dom; vitest; ./RouteTabs,RouteTabItem; activeAt
+frontend/src/components/ui/RouteTabs.tsx,implementation/configuration,53,,react-router-dom; ./Tabs,RouteTabItem; routeTabActive; RouteTabs
 frontend/src/components/ui/ScopeBadge.tsx,implementation/configuration,89,,lucide-react; @/lib/viz/contracts,LucideIcon; ScopeDimension; scopeBadgeText; ScopeBadgeProps; ScopeBadge; IgnoredFilterBadges
 frontend/src/components/ui/ScopedLink.test.tsx,test,138,,@testing-library/react; react-router-dom; vitest; @/store/projectStore; ./ScopedLink,
 frontend/src/components/ui/ScopedLink.tsx,implementation/configuration,82,,react-router-dom; clsx; @/config/routeScope; @/store/projectStore,Props; ScopedLink
@@ -2724,14 +2731,21 @@ frontend/src/components/ui/SortableHeader.test.tsx,test,71,,@testing-library/rea
 frontend/src/components/ui/SortableHeader.tsx,implementation/configuration,45,,lucide-react; @/hooks/useTableSort,Props; SortableHeader
 frontend/src/components/ui/StatusBadge.test.tsx,test,28,,@testing-library/react; vitest; ./StatusBadge,
 frontend/src/components/ui/StatusBadge.tsx,implementation/configuration,21,,clsx,Props; StatusBadge
+frontend/src/components/ui/StatusBanner.test.tsx,test,67,,@testing-library/react; react-router-dom; vitest; ./KpiStrip; ./MetricCard; ./StatusBanner,
+frontend/src/components/ui/StatusBanner.tsx,implementation/configuration,87,,react; react-router-dom; clsx,BannerState; BannerFact; StatusBanner
 frontend/src/components/ui/SuiteBadge.test.tsx,test,37,,@testing-library/react; vitest; ./SuiteBadge,
 frontend/src/components/ui/SuiteBadge.tsx,implementation/configuration,70,,clsx; lucide-react; react-router-dom,Props; SuiteBadge
 frontend/src/components/ui/SuiteFilterSelect.tsx,implementation/configuration,36,,lucide-react; @/lib/scopeControls,SuiteFilterSelect
+frontend/src/components/ui/Tabs.test.tsx,test,68,,@testing-library/react; react; react-router-dom; vitest; ./Tabs; ./useTabParam,setup
+frontend/src/components/ui/Tabs.tsx,implementation/configuration,79,,react; clsx,TabItem; tabClass; TabCount; Tabs
 frontend/src/components/ui/ThemePicker.test.tsx,test,42,,vitest; @testing-library/react; ./ThemePicker; @/store/themeStore,
 frontend/src/components/ui/ThemePicker.tsx,implementation/configuration,109,,react; lucide-react; @/store/themeStore; @/components/ui/HeaderPopover,ThemePicker
 frontend/src/components/ui/TimingCell.test.tsx,test,93,,@testing-library/react; vitest; ./TimingCell,
 frontend/src/components/ui/TimingCell.tsx,implementation/configuration,90,,clsx; @/utils/formatters,TimingCell
+frontend/src/components/ui/WindowPicker.test.tsx,test,25,,@testing-library/react; vitest; @/store/timeWindowStore; ./WindowPicker,
+frontend/src/components/ui/WindowPicker.tsx,implementation/configuration,56,,react; clsx; @/store/timeWindowStore,windowLabel; WindowPicker
 frontend/src/components/ui/popoverContainer.ts,implementation/configuration,17,,,resolvePopoverContainer
+frontend/src/components/ui/useTabParam.ts,implementation/configuration,36,,react; react-router-dom,useTabParam
 frontend/src/components/workflow/WorkflowTimeline.test.tsx,test,152,,@testing-library/react; vitest; ./WorkflowTimeline,
 frontend/src/components/workflow/WorkflowTimeline.tsx,implementation/configuration,803,,react; lucide-react; clsx; @/components/ui/EmptyState,ElementType; WorkflowStageNode; WorkflowEventNode; WorkflowTimelineProps; StageMeta; formatValue; formatDuration; stageKey; stageDisplayName; eventLabel; EventIcon; if; StageNode; WorkflowEventFeed; WorkflowTimeline
 frontend/src/components/workflow/workflowPresets.test.ts,test,536,,vitest; @/services/releaseCouncilService; ./workflowPresets,as
@@ -3013,6 +3027,7 @@ frontend/src/pages/dev/ChartGalleryPage.tsx,implementation/configuration,961,,re
 frontend/src/pages/dev/ChartStatesGallery.tsx,implementation/configuration,150,,react; @/components/charts/ChartFrame; @/components/charts/HeatmapChart; @/components/charts/engines/echarts/heatmapOption; @/components/charts/engines/lazyChartEngine; @/components/charts/chartState; @/lib/viz/contracts; @/hooks/useChartData; ./chartGalleryFixtures; ./chartStatesFixtures,ChartState; StateItemId; stateFromError; ThrowingRenderer; renderHeatmap; InvalidPayloadFrame; ChartStatesGallery
 frontend/src/pages/dev/PrimitivesPage.test.tsx,test,68,,@testing-library/react; react-router-dom; vitest; ./PrimitivesPage; ./primitivesFixtures,renderAt
 frontend/src/pages/dev/PrimitivesPage.tsx,implementation/configuration,276,,react; react-router-dom; @/components/ui/Breadcrumbs; @/components/ui/Chip; @/components/ui/MultiSelect; @/components/ui/SidePanel; @/components/ui/Skeleton; @/store/themeStore; @/utils/download; @/utils/formatters; ./primitivesFixtures,ReactNode; ChipItem; ThemeId; resolveTheme; Section; PrimitivesPage
+frontend/src/pages/dev/UxPrimitivesPage.tsx,implementation/configuration,172,,react; react-router-dom; lucide-react; @/components/ui/Disclosure; @/components/ui/KpiStrip; @/components/ui/MetricCard; @/components/ui/PageHeader; @/components/ui/RouteTabs; @/components/ui/StatusBanner; @/components/ui/Tabs; @/components/ui/useTabParam; @/components/ui/WindowPicker; @/store/themeStore,ReactNode; BannerState; ThemeId; resolveTheme; Section; Spark; UxPrimitivesPage
 frontend/src/pages/dev/chartGalleryFixtures.ts,implementation/configuration,2327,,@/components/charts/coverageMap.model; @/components/charts/failureGroups/failureGroups.fixtures; @/components/charts/failureGroups/failureGroups.model; @/components/charts/GaugeBar; @/components/charts/heatmapFromMatrix; @/components/charts/Sparkline.model; @/components/charts/TimeSeriesChart,error; GalleryTrendPoint; GalleryMatrix; GalleryStatusMatrix; galleryChartHeight; error; GalleryCategorySeries; GalleryStatus; GalleryStatusCounts; gallerySeries; galleryStatusSeries; galleryStatusRowsSeries; error; GalleryTimeSeriesFixture; GalleryHistogramFixture; GalleryStackedFixture; GalleryDayStripFixture; GalleryHeatmapFrameFixture; GalleryCoverageMapFixture; GalleryScatterFixture; GalleryClustersFixture; Object; GalleryFormat; GallerySparkline; GalleryGaugeBar; GalleryRingGauge; GallerySeriesPoint; GalleryComparisonSeries; GalleryComparison; galleryDay; rateSeries; GalleryComparability; GalleryZoom; GalleryItemBase; GalleryItem; galleryEngine; galleryDomMarks; galleryFramed; galleryCanvasSize
 frontend/src/pages/dev/chartStatesFixtures.ts,implementation/configuration,184,,@/lib/viz/contracts; ./chartGalleryFixtures,GalleryMatrix; StateItemId; StateItem
 frontend/src/pages/dev/primitivesFixtures.ts,implementation/configuration,52,,@/components/ui/Chip; @/components/ui/MultiSelect,
@@ -3165,6 +3180,7 @@ frontend/src/store/authStore.logoutScope.test.ts,test,37,,vitest; ./authStore; .
 frontend/src/store/authStore.logoutScopeUnloaded.test.ts,test,26,,vitest; ./authStore,
 frontend/src/store/authStore.mfa.test.ts,test,194,,vitest,httpError
 frontend/src/store/authStore.ts,implementation/configuration,190,,zustand; zustand/middleware; ../services/api; ./logoutReset,User; AuthState; normalizeRole; normalizeUser
+frontend/src/store/helpStore.ts,implementation/configuration,28,,zustand,HelpState; openHelp
 frontend/src/store/logoutReset.ts,implementation/configuration,42,,,onLogoutReset; resetReportScopeOnLogout
 frontend/src/store/presentationStore.test.ts,test,89,,vitest,load
 frontend/src/store/presentationStore.tokens.test.ts,test,161,,vitest; @/test/readSourceFile,scale; Theme; Rgb; blockOf; declarations; themeHex; colourOf; luminance; contrast; scale
@@ -3454,6 +3470,7 @@ export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => 
   },
   {
     label: ",of; change; ApiHandler; ApiHandlers; ApiRequest; TrendPoint; of; trendDay; trendPoints; summary; runs; runList; valueMetrics; suiteTrend; suiteDetail; coverage; defects; runIntelligence; of; summaryReport; hubRuns; ReleaseSpec; chartMeta; yet; of; suiteSeries; durationSeries; releaseSeries; onTheWire; chartData; GateOnOptions; releaseGateOn; scopedTo; StatusCounts; statusCounts; passRateOf; HeatRow; rankHeatRows; rateCell; AxisCut; heatmapMeta; rateMatrix; suiteDayMatrix; suiteEnvironmentMatrix; suiteReleaseMatrix; testRunMatrix; heatmap; node; key; key; MapTest; MapClass; MapSuite; mapTests; is; and; nodeStats; treeNode; rankChildren; coverageMapLevel; coverageMap; GroupSpec; trendAxis; groupTrend; failureGroupsBody; failureGroups; systemicClustersBody; systemicClusters; ScatterTest; median; of; scatterTests; testScatterBody; testScatter; LadderStatus; categoryBody; ladderTests; ladderChartData; rowsOf; FixtureCell; matrixCell; rowsTotal; rowStatuses; testNameOf; chartRowsPage; chartRows; fixtureRequest; FixtureBody; wave3Bodies; withoutObjectMemberLabels
+frontend/tests/visual/ux-primitives.visual.spec.ts,test,51,,@playwright/test,
 frontend/tsconfig.build.json,implementation/configuration,14,,,check
 frontend/tsconfig.json,implementation/configuration,25,,,
 frontend/tsconfig.node.json,implementation/configuration,11,,,

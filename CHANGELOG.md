@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased - UX redesign P0: the page-template primitives, and tighter cards
+
+The first phase of the UI/UX redesign (plan:
+`docs/ux-review-2026-10-06/03-implementation-plan.md`, owner-approved
+2026-10-06). P0 adds the building blocks the later phases put on the pages;
+no page uses them yet.
+
+- **New in `components/ui/`:**
+  - `Tabs` + `useTabParam`: one tab bar, with the selection kept in `?tab=`
+    (replace navigation, an unknown value falls back, the default tab drops
+    the key).
+  - `RouteTabs`: section tabs that are links to routes; the most specific
+    match is active.
+  - `Disclosure`: collapsed "Details" sections. Content is not rendered
+    while closed; an optional `persistKey` remembers the reader's choice.
+  - `OverflowMenu`: the header's **⋯**, on `HeaderPopover`.
+  - `StatusBanner`: a one-line verdict, with a state pill in words, up to 4
+    facts and one link.
+  - `KpiStrip`: up to 5 compact metric tiles in one row.
+  - `WindowPicker`: one control bound to the global time window; it snaps
+    to the page's options and writes the snapped value back.
+- **Changed:**
+  - `MetricCard` gains a `compact` variant: about 72 px, `text-2xl`, an
+    inline sparkline, and the change line on one line, keeping its words.
+  - `PageHeader` v2 adds `helpTopic` (a **?** that opens the new
+    `helpStore`; the drawer comes in P1), `overflow` (**⋯**), a `tabs` slot
+    and a `compact` size. Without the new props it renders the v1 DOM
+    exactly, so no page moves. `compact` stays off until pages adopt the
+    template in P3.
+- **Density (the only pixel change):**
+  - `.card` padding 20 → 16 px.
+  - `EmptyState` vertical padding 80 → 48 px.
+
+  The affected visual baselines were regenerated on CI and read.
+- **Gallery:** a dev-only `/__ux-primitives` page shows every primitive in its
+  main states. `tests/visual/ux-primitives.visual.spec.ts` baselines it in the
+  signal and lab themes, including the **⋯** menu open and a `?tab=` choice
+  surviving a reload.
+- **Tests:** unit tests for each primitive (19).
+
 ## Unreleased - Visualization Upgrade: the report-context panel and the multi-select filters are removed (Phase D, M0-M3)
 
 **The code behind `viz_report_context` and `viz_multi_filters` is deleted,

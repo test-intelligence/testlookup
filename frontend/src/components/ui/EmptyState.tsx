@@ -4,7 +4,7 @@ interface Props { icon?: ReactNode; title: string; description?: string; action?
 
 export default function EmptyState({ icon, title, description, action }: Props) {
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
+    <div className="flex flex-col items-center justify-center py-12 text-center">
       {icon && (
         <div className="p-4 bg-[var(--color-bg-secondary)] rounded-2xl mb-4 text-[var(--color-text-muted)]">{icon}</div>
       )}

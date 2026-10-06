@@ -210,6 +210,7 @@ path: string
 <Route path="/login" element={<LoginPage />} />
 <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
 <Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
+<Route path="/__ux-primitives" element={renderLazyRoute(UxPrimitivesPage)} />
 <Route path="/reset-password" element={<ResetPasswordPage />} />
 <Route path="/*" element={<AppLayout />}>
 <Route key={path} path={path} element={renderLazyRoute(component)} />

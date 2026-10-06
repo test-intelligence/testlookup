@@ -26,6 +26,14 @@ interface Props {
    * should pass 'down' so a falling trend renders green, not red.
    */
   positiveDirection?: 'up' | 'down'
+  /**
+   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `text-2xl` value,
+   * no icon block, the change line on one line, and `sparkline` beside the
+   * value.
+   */
+  compact?: boolean
+  /** A small inline chart beside the value (compact variant only). */
+  sparkline?: ReactNode
 }
 
 const DIRECTION_WORD = { up: 'Up', down: 'Down', flat: 'No change' } as const
@@ -45,6 +53,8 @@ export default function MetricCard({
   accentColor = 'default',
   loading,
   positiveDirection = 'up',
+  compact = false,
+  sparkline,
 }: Props) {
   const dir = metric?.trend_direction
   const hasTrend = metric?.trend != null || Boolean(metric?.trend_text)
@@ -64,6 +74,32 @@ export default function MetricCard({
     red:     'bg-[var(--status-failed-bg)] text-[var(--status-failed)]',
     amber:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)]',
     purple:  'bg-[var(--status-flaky-bg)] text-[var(--status-flaky)]',
+  }
+
+  if (compact) {
+    return (
+      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0">
+        <p className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">{title}</p>
+        <div className="flex items-end justify-between gap-2">
+          {loading ? (
+            <div className="h-7 w-20 animate-pulse rounded bg-[var(--color-bg-secondary)]">
+              <span className="sr-only">Loading</span>
+            </div>
+          ) : (
+            <p className="whitespace-nowrap text-2xl font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
+          )}
+          {sparkline && !loading && <div className="min-w-0 shrink">{sparkline}</div>}
+        </div>
+        {hasTrend && !loading && (
+          <p data-metric-trend={dir ?? 'unknown'} className={clsx('mt-1 flex items-center gap-1 truncate text-[11px] font-medium', trendColor)}>
+            {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
+            <span className="truncate text-[var(--color-text-secondary)]">
+              {[word, trendText, judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null].filter(Boolean).join(' ')}
+            </span>
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
