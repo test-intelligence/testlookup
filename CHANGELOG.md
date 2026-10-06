@@ -42,6 +42,7 @@ no page uses them yet.
   signal and lab themes, including the **⋯** menu open and a `?tab=` choice
   surviving a reload.
 - **Tests:** unit tests for each primitive (19).
+
 ## Unreleased - The unused `report_metrics` summary block is removed (contract C6)
 
 `GET /api/v1/metrics/summary?include=report_metrics` (VIZ-302) fed the
