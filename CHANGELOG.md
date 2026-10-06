@@ -42,6 +42,10 @@ no page uses them yet.
   signal and lab themes, including the **⋯** menu open and a `?tab=` choice
   surviving a reload.
 - **Tests:** unit tests for each primitive (19).
+- **Security (found by this PR's CI):** `pymongo` 4.17.0 → 4.18.2 for
+  CVE-2026-96748 and CVE-2026-96749 (HIGH, published 2026-10-06; the Trivy
+  dependency scan fails every PR until fixed). `motor` 3.7.1 accepts
+  `pymongo` <5.0; the Mongo-related backend tests pass on 4.18.2.
 
 ## Unreleased - The unused `report_metrics` summary block is removed (contract C6)
 
