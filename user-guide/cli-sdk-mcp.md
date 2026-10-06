@@ -26,6 +26,7 @@ Install from the repo: `pip install ./cli`. Command groups (each has `--help`):
 | `intelligence` | Run-intelligence reports |
 | `deep` | Deep-investigation workflows |
 | `reports` | Summary reports |
+| `analytics` | The chart data the report pages draw: `analytics trends` (a metric over time, optionally one line per suite/release/…) and `analytics chart` (any metric by one or two dimensions), as a table, CSV or JSON |
 | `keys` | Manage API keys |
 | `health` | Check backend reachability/health |
 
@@ -70,6 +71,8 @@ python mcp/server.py --transport sse    # SSE on port 8002 — for networked age
 ```
 
 Tool coverage mirrors the app's domains: `runs` (including `get_test_step_flips` for step-level flakiness), `search`, `analysis`, `intelligence`, `deep`, `defects`, `quarantine`, `release`, `reports`, `metrics`, `analytics`, `projects`, `governance`, `compliance_pack`, `decision_trail`, `billing`, and a `health_check` that reports the backend's per-dependency health.
+
+For charts, `get_chart_data` returns the same series the report pages draw: a metric (executions by default), up to two grouping dimensions, and optional project, releases, suites and window. A point with no data comes back as `y: null` with `measured: false`, never 0, and a rate-limited call returns `retry_after` (chart reads allow 120 requests a minute per user).
 
 Beyond reads, the server ships **write-path tools** so an agent can close the triage loop: propose/release quarantines (approval stays with a QA Lead), bulk-promote recovered tests, file deduplicated Jira defects (with a mandatory dry-run preview), correct AI classifications, reassign failures, and manage the notification transition policy. Stdio writes run under its configured login; network writes run under the presenting client's validated bearer token. Both are audit-logged with that identity.
 

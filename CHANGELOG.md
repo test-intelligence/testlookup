@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased - Docs: the repository user guide covers the charts (Phase D, U2)
+
+The in-app chart guide (`/docs/charts`, U1) is now mirrored in the
+repository docs:
+- **`user-guide/dashboards.md`:** a new "Charts on the report pages"
+  section. It covers reading the footer and "—", interacting, filtering
+  from a chart, exports and their provenance, what each page adds (Compare
+  with its own pickers, the 3D scatter, Run compare), the Explorer and saved
+  views, and the limits.
+- **`user-guide/cli-sdk-mcp.md`:** the CLI `analytics` command and the MCP
+  `get_chart_data` tool.
+- **`user-guide/README.md` and the root `README.md`:** their summaries name
+  the chart features.
+
+Docs only.
+
 ## Unreleased - Visualization Upgrade: the shipped flag rows are retired (Phase D, F1)
 
 **Migration 0196 deletes the four viz flag rows that no code reads any more:**

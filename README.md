@@ -48,7 +48,7 @@ Open the dashboard at [localhost:3000](http://localhost:3000), Swagger at [local
 | Investigation | Rules/ML/LLM/auto routing; failure clusters, regression comparisons, anomaly evidence, optional deep workflow and bounded cluster investigations |
 | Governance | Agent configuration and versioned workflows, decision trails, human report review, typed action proposals, release policies and override history |
 | Test operations | Canonical suites/tests, authored test lifecycle, plans and strategies, failure assignment, flaky quarantine, ownership and retention |
-| Reports | Run intelligence, project summaries, HTML/PDF reports, evidence bundles, share links and compliance packs with policy controls |
+| Reports and charts | Run intelligence, project summaries, HTML/PDF/Excel reports (large ones in the background), evidence bundles, share links and compliance packs with policy controls; report-page charts with PNG/SVG/CSV export, heatmaps, coverage map, failure groups, scatter with opt-in 3D, Sankey run compare, multi-criteria Compare, an Explorer of small multiples and saved views |
 | Integrations | Jira, GitHub/GitLab, knowledge sources, notifications, CLI, Python/JS/Java/Go client code, MCP |
 | Identity | JWT and API keys, project membership and role checks, MFA, SAML SSO and SCIM provisioning |
 | Operations | Health probes, Prometheus metrics, optional tracing/monitoring, backups, migrations, Compose and Kubernetes deployment assets |

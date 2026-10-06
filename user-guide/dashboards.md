@@ -29,6 +29,18 @@ If the summary "doesn't match" another page, it's almost always the aggregation 
 
 The page also offers **Download analysis report (1d / 7d)** — the self-contained HTML analysis report that daily/weekly email digests can attach (see [Administration → Digests](administration.md)). It bundles the executive summary, runs, failures for investigation, flaky & quarantine, slowest tests, release gate, defects, and ownership into one offline-readable file, using the same window semantics as this page.
 
+## Charts on the report pages
+
+Overview, Trends, Coverage, Failure Analysis, Suite detail, the Summary Report, the Release gate and Run compare draw their charts in one shared frame. The in-app guide, **Docs → Charts and visual analysis** (`/docs/charts`), covers it in full; the essentials:
+
+- **Read the footer first.** It states the scope, "Showing top N of M" when lines were folded into *Other*, and the run and execution totals. **—** means *not measured* (there was nothing to count), never zero; a pass rate leaves skipped results out of both sides, so a day of only skips is a gap.
+- **Interact.** Hover for the tooltip; select a legend entry to hide a line (Shift shows it alone); drag the range brush to zoom (the footer, table and export then cover the zoomed days only); **View as table** shows the numbers; **Full screen** enlarges one chart; *Presentation mode* (sidebar footer) enlarges the whole app for screen sharing.
+- **Filter the page from a chart.** Shift- or Ctrl-click a suite to set the page's **Test suite** filter (Trends, Coverage, Failures), or a release to set the top-bar release (one project selected).
+- **Export a chart.** Every chart's **Export** menu offers PNG, SVG and CSV; each file records the project, release, suite, window, totals, when it was generated and the app version. Whole-report PDF/Excel exports are the Summary Report's (large ones run in the background and stay downloadable for 7 days).
+- **What each page adds.** Trends: pass rate by suite (**Customise** to change metric, lines and buckets), the p50/p95 duration band, trend overlays, **Compare** (pick suites and releases in the card; it starts with the three busiest suites) and a suite-by-day heatmap. Coverage: the test coverage map and pass-rate heatmaps. Failure Analysis: failures grouped by message, flake clusters, a drill-down from suite to execution, and the duration-vs-failure-rate scatter with an opt-in **View in 3D**. Run compare: how each test's status changed between two runs.
+- **Explorer (`/explore`)** draws one metric as small multiples, one panel per suite or release (up to 12). **Views** on each report page saves the window, release and suite filters per project, privately or shared with the project.
+- **Limits:** 8 lines per chart (7 + Other), windows of 1-365 days (per-execution charts up to 90), 2,000 scatter points by default (5,000 max), and 120 chart requests a minute per user (60 for heatmaps, the coverage map, failure groups and the scatter). Past the limit a chart says *Waiting to retry* and retries by itself.
+
 ## Value Metrics (`/value-metrics`)
 
 The ROI page: the **engineer-hours-saved headline** (last 30 days, with FTE equivalent and a monthly trend), plus the operational counters — **defects auto-grouped**, **duplicate tickets prevented**, flaky tests identified, **automated go/no-go assessments**, and AI reports generated. The headline's math, per-project tunable assumptions, and honesty caveats are documented in [Value Metrics — the engineer-hours-saved model](value-metrics.md).
