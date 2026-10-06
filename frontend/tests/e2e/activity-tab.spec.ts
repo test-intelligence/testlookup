@@ -44,27 +44,21 @@ test.describe('Activity tab', () => {
     await performRealLogin(page);
   });
 
-  test('is reachable from the sidebar and renders its own page', async ({ page }) => {
-    // Navigate FIRST. The sidebar collapses every group whose activePrefixes
-    // do not match the current path, so the Activity entry is only in the DOM
-    // once the Testing group claims /activity. That is precisely the bug this
-    // asserts against: the entry was added to the group's children but not to
-    // its activePrefixes, so landing on /activity left its own group closed
-    // and the entry off screen entirely.
+  test('renders its own page, and the sidebar says where it is: under Admin', async ({ page }) => {
+    // UX redesign P1: /activity is a QA-lead page, so it left the end-user
+    // nav (a viewer clicking it was silently redirected) and lives under
+    // Admin. The sidebar must still say where the reader is: Admin, the place
+    // that owns /activity, is the active item.
     await page.goto('/activity');
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
       timeout: 15_000,
     });
 
-    const link = page.getByRole('link', { name: 'Activity', exact: true });
+    const admin = page.locator('[data-nav-id="admin"]');
     await expect(
-      link,
-      'the Testing group does not claim /activity, so its own nav entry is ' +
-        'not on screen for the page the reader is looking at',
-    ).toBeVisible({ timeout: 10_000 });
-
-    await link.click();
-    await expect(page).toHaveURL(/\/activity/);
+      admin,
+      'no sidebar place claims /activity, so the nav is silent about where the reader is',
+    ).toHaveAttribute('aria-current', 'page', { timeout: 10_000 });
   });
 
   test('offers a project picker in All Projects mode instead of a dead end', async ({

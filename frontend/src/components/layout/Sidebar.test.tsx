@@ -1,11 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import Sidebar from './Sidebar'
+import Sidebar, { SIDEBAR_COLLAPSED_KEY } from './Sidebar'
 
 // Mock usePermissions to control what the Sidebar renders
 const mockPermissions = {
-  role: 'ADMIN' as const,
+  role: 'ADMIN' as string,
   isAdmin: true,
   isQaLead: true,
   isQaEngineer: true,
@@ -23,7 +23,7 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => mockPermissions,
 }))
 
-// Control the rollout flags per key (manual_upload MRU-17, ask_ai_chat US-2.1).
+// Control the rollout flags per key (ask_ai_chat US-2.1).
 const mockFlags = vi.hoisted(() => ({ byKey: {} as Record<string, boolean> }))
 vi.mock('@/hooks/useFeatureFlags', () => ({
   useFeatureEnabled: (key: string) => mockFlags.byKey[key] ?? false,
@@ -36,190 +36,180 @@ vi.mock('@/hooks/useAIConfig', () => ({
   useAIConfig: () => ({ data: mockAI.config }),
 }))
 
-// Sidebar source as text, via Vite. `node:fs` would type-check under vitest and
-// then fail `npm run build` (which is `tsc && vite build`), because tsconfig
-// sets types: ["vite/client"] and does not pull in @types/node — the same trap
-// documented in routeScope.ratchet.test.ts.
-const SIDEBAR_SOURCE: string = Object.values(
-  import.meta.glob('./Sidebar.tsx', { query: '?raw', import: 'default', eager: true }),
-)[0] as string
+const mockCounts = vi.hoisted(() => ({ inbox: 0, live: 0 }))
+vi.mock('@/hooks/useMyFailuresCountUnscoped', () => ({
+  useMyFailuresCountUnscoped: () => ({ data: { count: mockCounts.inbox } }),
+}))
+vi.mock('@/hooks/useLiveRunningCount', () => ({
+  useLiveRunningCount: () => mockCounts.live,
+}))
 
-describe('Sidebar', () => {
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Sidebar />
+    </MemoryRouter>,
+  )
+}
+
+function navIds(): string[] {
+  return [...document.querySelectorAll('[data-nav-id]')].map((el) => el.getAttribute('data-nav-id') ?? '')
+}
+
+function activeId(): string | null {
+  return document.querySelector('[data-nav-id][aria-current="page"]')?.getAttribute('data-nav-id') ?? null
+}
+
+describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
   beforeEach(() => {
     mockPermissions.role = 'ADMIN'
     mockPermissions.canAccessManagement = true
-    mockPermissions.canViewSettings = true
     mockFlags.byKey = {}
     mockAI.config = undefined
+    mockCounts.inbox = 0
+    mockCounts.live = 0
+    window.localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
   })
 
-  it('hides Upload Report when the manual_upload flag is off, shows it when on', () => {
-    // Render within a Testing route so that group is expanded (children render).
-    const { rerender } = render(
-      <MemoryRouter initialEntries={['/runs']}><Sidebar /></MemoryRouter>,
-    )
-    expect(screen.getByRole('link', { name: /Coverage/ })).toBeInTheDocument()  // group is open
-    expect(screen.queryByRole('link', { name: /Upload Report/ })).not.toBeInTheDocument()
+  it('a viewer sees 10 items (11 with Ask AI), no Releases and no Admin', () => {
+    mockPermissions.role = 'VIEWER'
+    mockPermissions.canAccessManagement = false
+    renderAt('/overview')
+    expect(navIds()).toEqual([
+      'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports', 'release-gate',
+    ])
+    expect(screen.queryByRole('link', { name: /Admin/ })).not.toBeInTheDocument()
+  })
 
-    mockFlags.byKey = { manual_upload: true }
-    rerender(<MemoryRouter initialEntries={['/runs']}><Sidebar /></MemoryRouter>)
-    expect(screen.getByRole('link', { name: /Upload Report/ })).toBeInTheDocument()
+  it('a QA lead or admin sees Releases in RELEASE and Admin in the footer: 12, 13 with Ask AI', () => {
+    mockFlags.byKey = { ask_ai_chat: true }
+    mockAI.config = { analysis_mode: 'auto' }
+    renderAt('/overview')
+    expect(navIds()).toEqual([
+      'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports',
+      'release-gate', 'releases', 'ask-ai', 'admin',
+    ])
+    expect(screen.getByRole('link', { name: /Admin/ })).toHaveAttribute('href', '/settings')
+  })
+
+  it('section labels are text, not links', () => {
+    renderAt('/overview')
+    const labels = [...document.querySelectorAll('[data-nav-section]')].map((el) => el.textContent)
+    expect(labels).toEqual(['INVESTIGATE', 'QUALITY', 'RELEASE'])
+    for (const el of document.querySelectorAll('[data-nav-section]')) expect(el.closest('a')).toBeNull()
   })
 
   it('shows Ask AI only when the ask_ai_chat flag is on AND the AI mode is not rules', () => {
-    // Render within an AI Reports route so that group is expanded.
-    const at = ['/agents']
-    const { rerender } = render(
-      <MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>,
-    )
-    // Flag off → hidden regardless of mode.
-    expect(screen.getByRole('link', { name: /AI Pipeline/ })).toBeInTheDocument() // group open
+    const { rerender } = renderAt('/overview')
     expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
 
-    // Flag on but rules mode → still hidden (nothing to chat with).
     mockFlags.byKey = { ask_ai_chat: true }
     mockAI.config = { analysis_mode: 'rules' }
-    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
+    rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
     expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
 
-    // Flag on but AI config not yet loaded → hidden (no flicker of a dead link).
     mockAI.config = undefined
-    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
+    rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
     expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
 
-    // Flag on + LLM-capable mode → visible.
     mockAI.config = { analysis_mode: 'auto' }
-    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
-    expect(screen.getByRole('link', { name: /Ask AI/ })).toBeInTheDocument()
+    rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: /Ask AI/ })).toHaveAttribute('href', '/chat')
   })
 
-  it('lists the Explorer (VIZ-505) after Trends, whatever the flags: no flag lookup on every page', () => {
-    render(<MemoryRouter initialEntries={['/trends']}><Sidebar /></MemoryRouter>)
-    const links = screen.getAllByRole('link').map(a => a.getAttribute('href'))
-    expect(screen.getByRole('link', { name: /Explorer/ })).toHaveAttribute('href', '/explore')
-    expect(links.indexOf('/explore')).toBe(links.indexOf('/trends') + 1)
+  it.each([
+    ['/overview', 'home'],
+    ['/my-failures', 'inbox'],
+    ['/reviews', 'inbox'],
+    ['/runs', 'runs'],
+    ['/runs/r1', 'runs'],
+    ['/runs/r1/intelligence', 'runs'],
+    ['/runs/compare', 'runs'],
+    ['/live', 'runs'],
+    ['/intelligence', 'runs'],
+    ['/failures', 'failures'],
+    ['/defects', 'failures'],
+    ['/deep-investigate/r1', 'failures'],
+    ['/flaky-coach', 'flaky'],
+    ['/quarantine', 'flaky'],
+    ['/trends', 'trends'],
+    ['/coverage', 'trends'],
+    ['/explore', 'trends'],
+    ['/coverage/suite', 'suites'],
+    ['/suites/s1', 'suites'],
+    ['/canonical-test-cases/x', 'suites'],
+    ['/test-management', 'test-cases'],
+    ['/reports/summary', 'reports'],
+    ['/value-metrics', 'reports'],
+    ['/release-gate/r1', 'release-gate'],
+    ['/releases/rel1', 'releases'],
+    ['/policies/p1', 'releases'],
+    ['/settings/ai', 'admin'],
+    ['/projects', 'admin'],
+    ['/activity', 'admin'],
+    ['/agents/workflows', 'admin'],
+  ])('%s highlights %s, and only it', (path, id) => {
+    renderAt(path)
+    expect(activeId()).toBe(id)
+    expect(document.querySelectorAll('[data-nav-id][aria-current="page"]')).toHaveLength(1)
   })
 
-  it('opens the Testing group on /explore itself', () => {
-    render(<MemoryRouter initialEntries={['/explore']}><Sidebar /></MemoryRouter>)
-    expect(screen.getByRole('link', { name: /Explorer/ })).toBeInTheDocument()
+  it.each(['/search', '/docs', '/getting-started', '/settings/profile', '/settings/my-notifications'])(
+    '%s highlights nothing: it is not a sidebar place',
+    (path) => {
+      renderAt(path)
+      expect(activeId()).toBeNull()
+    },
+  )
+
+  it('the Inbox keeps its count badge', () => {
+    mockCounts.inbox = 7
+    renderAt('/overview')
+    const inbox = document.querySelector('[data-nav-id="inbox"]') as HTMLElement
+    expect(within(inbox).getByLabelText('7 assigned failures')).toHaveTextContent('7')
   })
 
-  it('renders branding and top-level group links', () => {
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
-
-    // Group headers are always visible
-    expect(screen.getByRole('link', { name: /Dashboard/ })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Testing/ })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /AI Reports/ })).toBeInTheDocument()
+  it('Runs shows a live dot while a run is reporting, and none otherwise', () => {
+    const { rerender } = renderAt('/overview')
+    expect(document.querySelector('[data-nav-live]')).toBeNull()
+    mockCounts.live = 2
+    rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
+    const runs = document.querySelector('[data-nav-id="runs"]') as HTMLElement
+    expect(within(runs).getByRole('img', { name: '2 runs live now' })).toBeInTheDocument()
   })
 
-  it('shows Management group for admin/QA Lead users', () => {
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
+  it('collapses to the icon rail, labels as tooltips, and remembers it', () => {
+    const { unmount } = renderAt('/runs')
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+    const aside = document.querySelector('aside') as HTMLElement
+    expect(aside).toHaveAttribute('data-sidebar', 'collapsed')
+    expect(aside.className).toContain('w-16')
+    const runs = document.querySelector('[data-nav-id="runs"]') as HTMLElement
+    expect(runs).toHaveAttribute('title', 'Runs')
+    expect(runs).toHaveAccessibleName('Runs')
+    expect(runs.textContent).toBe('')
+    expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)).toBe('1')
+    unmount()
 
-    expect(screen.getByRole('link', { name: /Management/ })).toBeInTheDocument()
+    renderAt('/runs')
+    expect(document.querySelector('aside')).toHaveAttribute('data-sidebar', 'collapsed')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+    expect(document.querySelector('aside')).toHaveAttribute('data-sidebar', 'expanded')
+    expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)).toBeNull()
   })
 
-  it('shows Settings link for admin/QA Lead users', () => {
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
+  it('the footer has no profile, settings, presentation or version rows any more', () => {
+    renderAt('/overview')
+    expect(screen.queryByRole('link', { name: /My Profile/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Presentation mode/ })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-testid="app-version-badge"]')).toBeNull()
   })
 
-  it('hides Management group for VIEWER role', () => {
-    mockPermissions.canAccessManagement = false
-
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
-
-    expect(screen.queryByRole('link', { name: /Management/ })).not.toBeInTheDocument()
-  })
-
-  it('hides Settings link for non-management roles', () => {
-    mockPermissions.canAccessManagement = false
-
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
-
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
-  })
   // The e2e suite anchors ~38 'the app shell rendered' assertions on this
-  // landmark. It replaced a bare locator('aside'), which was a strict-mode
-  // violation on every page carrying a second <aside> (LiveExecutionPage's
-  // 'Pipeline events' panel, ChatPage's conversation list) — so those tests
-  // passed only while the page under test happened to be empty. Dropping the
-  // accessible name here would break all of them at once, far from the cause.
+  // landmark (a bare locator('aside') was ambiguous beside the Live page's
+  // 'Pipeline events' panel).
   it('exposes the primary nav as a landmark with a stable accessible name', () => {
-    render(
-      <MemoryRouter>
-        <Sidebar />
-      </MemoryRouter>,
-    )
-
+    renderAt('/overview')
     expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument()
-  })
-})
-
-describe('Sidebar — a group must claim the routes of its own children', () => {
-  /**
-   * A group expands and highlights when `location.pathname` starts with one of
-   * its `activePrefixes` (see `isWithinGroup`). Adding a child to `children`
-   * without adding its route to `activePrefixes` produces a nav that is silent
-   * about where you are: land on the page and its own group stays collapsed,
-   * so the entry you just used is not even on screen.
-   *
-   * This is exactly what happened when `/activity` was added to the Testing
-   * group. Read from the component SOURCE rather than an exported constant,
-   * because the nav config is module-private and exporting it purely for a
-   * test would let the two drift apart in a different way.
-   */
-  const source = SIDEBAR_SOURCE
-
-  const groups = [...source.matchAll(/activePrefixes:\s*\[([^\]]*)\][\s\S]*?children:\s*\[([\s\S]*?)\n\s{2,4}\]/g)]
-
-  it('parses at least three groups out of the sidebar source', () => {
-    // Without this the loop below could iterate zero times and pass vacuously.
-    expect(groups.length).toBeGreaterThanOrEqual(3)
-  })
-
-  it('covers every child route with one of its own activePrefixes', () => {
-    const uncovered: string[] = []
-
-    for (const [, prefixBlob, childBlob] of groups) {
-      const prefixes = [...prefixBlob.matchAll(/'([^']+)'/g)].map(m => m[1])
-      const childRoutes = [...childBlob.matchAll(/to:\s*'([^']+)'/g)].map(m => m[1])
-
-      for (const route of childRoutes) {
-        // Compare on the path only — `/runs?upload=1` is the `/runs` page.
-        const path = route.split('?')[0]
-        if (!prefixes.some(p => path.startsWith(p))) {
-          uncovered.push(`${route} (prefixes: ${prefixes.join(', ')})`)
-        }
-      }
-    }
-
-    expect(
-      uncovered,
-      'these nav children are not claimed by their group\'s activePrefixes, so ' +
-        'the group stays collapsed on the very page the entry links to',
-    ).toEqual([])
   })
 })

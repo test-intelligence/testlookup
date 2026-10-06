@@ -26,12 +26,17 @@
  */
 import { ArrowLeft } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
+import { usePermissions } from '@/hooks/usePermissions'
 
 import { SETTINGS_ROOT, isSettingsSubPage } from './settingsRoutes'
 
 export default function SettingsBackBar() {
   const { pathname } = useLocation()
-  if (!isSettingsSubPage(pathname)) return null
+  // UX redesign P1: `/settings` is QA lead and admin only. A viewer on their
+  // own profile or notifications page was offered a link that redirected them
+  // away; the link is for those who can open it.
+  const { canAccessManagement } = usePermissions()
+  if (!isSettingsSubPage(pathname) || !canAccessManagement) return null
 
   return (
     <nav aria-label="Breadcrumb" className="mb-4">

@@ -19,9 +19,15 @@
  */
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SettingsBackBar from './SettingsBackBar'
+
+const perms = vi.hoisted(() => ({ canAccessManagement: true }))
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms }))
+beforeEach(() => {
+  perms.canAccessManagement = true
+})
 import { isSettingsSubPage } from './settingsRoutes'
 
 const APP_SOURCE = Object.values(
@@ -82,6 +88,16 @@ describe('SettingsBackBar rendering', () => {
   it('renders nothing outside settings', () => {
     const { container } = renderAt('/runs')
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it('UX redesign P1: renders nothing for a user who cannot open /settings (a viewer on their own profile)', () => {
+    // /settings is QA lead+; the link redirected a viewer away from their profile.
+    perms.canAccessManagement = false
+    for (const path of ['/settings/profile', '/settings/my-notifications']) {
+      const { container, unmount } = renderAt(path)
+      expect(container, path).toBeEmptyDOMElement()
+      unmount()
+    }
   })
 })
 

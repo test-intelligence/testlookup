@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased - UX redesign P1: the shell — a flat sidebar, section tabs, Help, and the account menu
+
+Phase P1 of the UI/UX redesign (`docs/ux-review-2026-10-06/03-implementation-plan.md`).
+The navigation goes from 31 entries in collapsible groups to **11 places for a
+viewer and 13 for a QA lead or admin**. Every route is kept; nothing is
+deleted or merged in this phase.
+
+- **Sidebar** (`components/layout/navConfig.ts`, one list for the sidebar, the
+  active item and the section tabs):
+  - Home · Inbox, then INVESTIGATE (Runs, Failures, Flaky tests), QUALITY
+    (Trends, Suites, Test cases, Reports), RELEASE (Release gate, Releases),
+    ASSIST (Ask AI, behind its flag and an LLM mode), and Admin in the footer
+    (QA lead and admin). Section labels are text, not links that also toggle.
+  - The active item is the place that owns the page, so a page reached any
+    way still says where it is: `/coverage/suite` is Suites, `/activity` is
+    Admin, `/runs/<id>/intelligence` is Runs.
+  - Inbox keeps the assigned-failures badge. Runs shows a red dot while a
+    run is reporting (the Live page's own source and freshness rule, polled
+    every 30 s).
+  - It collapses to a 64 px icon rail, with the labels as tooltips, and stays
+    collapsed in that browser. The narrow-screen drawer always shows labels.
+  - Every item has a `data-nav-id`, so tests select places, not label text.
+- **Section tabs:** a place with several pages shows them as tabs above each
+  one: Runs (History · Live · Compare · AI verdicts), Failures (Failures ·
+  Defects · Root cause), Flaky tests (Detected · Quarantine), Trends (Trends
+  · Coverage · Explorer), Reports (Summary · Value), Releases (Releases · Gate
+  policies), Inbox (Assigned to me · Approvals). `AppLayout` renders them from
+  `navConfig`, so no page carries them.
+- **Help:**
+  - A **?** menu in the top bar: *Help for this page*, Getting started,
+    Documentation, Chart guide, Troubleshooting, and the build line with
+    copy-for-a-bug-report (moved from the sidebar footer).
+  - *Help for this page* opens a **help drawer** beside the page. It shows
+    the documentation topic mapped to the route (`helpTopics.ts`), on the
+    relevant section where there is one.
+  - A link to another topic opens it in the drawer. *Open in full docs* goes
+    to `/docs/<topic>#section`.
+  - The Markdown renderer moved out of `DocsPage` into
+    `components/help/DocArticle.tsx`, shared by both.
+- **Account menu:** name, role and email, *My profile*, *My notifications*,
+  the theme as six inline swatches (the top-bar theme dropdown is gone), and
+  presentation mode (moved from the sidebar footer), then *Sign out*.
+- **My notifications** (`/settings/my-notifications`, every role): the user's
+  own channels and history. The bell's links went to the admin-only page,
+  which sent a viewer back to Home without a word. *Back to Settings* is no
+  longer offered to someone who cannot open Settings.
+- **Upload report** is the primary button on Runs (the `?upload=1` deep link
+  still opens it).
+- **Tests:**
+  - `navConfig.test.ts`: every link and owned route is routed, the counts,
+    and longest-prefix ownership.
+  - `helpTopics.test.ts`: every topic and anchor is a real page and heading,
+    and every place has its own topic.
+  - Sidebar, SectionTabs, HelpMenu, HelpDrawer, account menu and My
+    notifications tests.
+  - The desktop shell snapshot was rewritten once, deliberately, for the new
+    shell.
+  - New hermetic e2e `shell.spec.ts`: the place counts per role, ? on
+    Failures, and the rail surviving a reload.
+  - New baselines: sidebar expanded and collapsed, section tabs, Help menu,
+    help drawer and account menu, in both themes.
+
 ## Unreleased - UX redesign P0: the page-template primitives, and tighter cards
 
 The first phase of the UI/UX redesign (plan:

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, Bell, CheckCircle, Menu, XCircle } from 'lucide-react'
+import { Search, Bell, BellRing, CheckCircle, Menu, UserCircle2, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { ReleasePicker } from './ReleasePicker'
@@ -9,6 +9,8 @@ import { LogOut } from 'lucide-react'
 import { useUnreadCount, useNotificationHistory, invalidateNotifications } from '@/hooks/useNotifications'
 import { notificationService } from '@/services/notificationService'
 import ThemePicker from '@/components/ui/ThemePicker'
+import PresentationToggle from '@/components/ui/PresentationToggle'
+import HelpMenu from './HelpMenu'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 
@@ -28,6 +30,12 @@ function getInitials(fullName: string | null | undefined, username: string): str
   }
   return username.slice(0, 2).toUpperCase()
 }
+
+/** Personal notification preferences: every role (UX redesign P1). */
+export const MY_NOTIFICATIONS = '/settings/my-notifications'
+
+const ACCOUNT_ITEM =
+  'w-full text-left px-4 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)] flex items-center gap-2 transition-colors'
 
 /* P4-1: Three selectors that each return a primitive string — Zustand's
    default Object.is equality works correctly with primitives, so each
@@ -75,12 +83,30 @@ function UserProfileDropdown() {
         anchorRef={triggerRef}
         open={open}
         onClose={() => setOpen(false)}
-        width={192}
+        width={264}
         ariaLabel="Account"
       >
-        <div className="py-1">
+        <div className="py-1" data-account-menu="">
           <div className="px-4 py-2 border-b border-[var(--color-border)]">
-            <p className="text-sm text-[var(--color-text-secondary)] font-medium">{userEmail}</p>
+            <p className="text-sm font-semibold text-[var(--color-text)] truncate">{userName}</p>
+            <p className="text-xs text-[var(--color-text-muted)] truncate">
+              {userRole}
+              {userEmail ? ` · ${userEmail}` : ''}
+            </p>
+          </div>
+          <Link to="/settings/profile" role="menuitem" onClick={() => setOpen(false)} className={ACCOUNT_ITEM}>
+            <UserCircle2 className="w-4 h-4" aria-hidden="true" />
+            My profile
+          </Link>
+          <Link to={MY_NOTIFICATIONS} role="menuitem" onClick={() => setOpen(false)} className={ACCOUNT_ITEM}>
+            <BellRing className="w-4 h-4" aria-hidden="true" />
+            My notifications
+          </Link>
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] mt-1">
+            <ThemePicker />
+          </div>
+          <div className="px-1.5 pb-1 border-b border-[var(--color-border)]">
+            <PresentationToggle />
           </div>
           <button
             role="menuitem"
@@ -261,7 +287,13 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
           / profile menu bunch up mid-header on a wide screen — which put the
           theme picker's 16rem ``right-0`` panel over page content instead of
           against the edge, where the other menus sit. */}
-      <div className="relative ml-auto">
+      {/* Help (UX redesign P1): starts the right-aligned trailing group, so
+          ``ml-auto`` sits on it; the bell and the account menu follow. */}
+      <div className="ml-auto">
+        <HelpMenu />
+      </div>
+
+      <div className="relative">
         <button
           ref={bellTriggerRef}
           onClick={() => setBellOpen(v => !v)}
@@ -297,7 +329,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
                   </button>
                 )}
                 <Link
-                  to="/settings/notifications"
+                  to={MY_NOTIFICATIONS}
                   onClick={() => setBellOpen(false)}
                   className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
                 >
@@ -350,7 +382,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
 
             <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-bg-hover)]/50">
               <Link
-                to="/settings/notifications"
+                to={MY_NOTIFICATIONS}
                 onClick={() => setBellOpen(false)}
                 className="text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
               >
@@ -360,9 +392,6 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
           </div>
         </HeaderPopover>
       </div>
-
-      {/* Color-theme picker */}
-      <ThemePicker />
 
       {/* User profile — P4-1: single consolidated selector to prevent 3x re-renders */}
       <UserProfileDropdown />

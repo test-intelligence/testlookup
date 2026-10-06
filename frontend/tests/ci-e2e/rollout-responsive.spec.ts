@@ -188,7 +188,8 @@ test.describe('the navigation drawer at 375 px', () => {
     await page.getByRole('button', { name: 'Navigation menu' }).click()
     const drawer = page.getByRole('dialog', { name: 'Navigation' })
     await expect(drawer).toBeVisible()
-    await drawer.getByRole('link', { name: 'Summary Report', exact: true }).click()
+    // UX redesign P1: Reports (Summary · Value), selected by its stable nav id.
+    await drawer.locator('[data-nav-id="reports"]').click()
     await expect(page).toHaveURL(/\/reports\/summary$/)
     await expect(page.getByText('Total tests', { exact: true })).toBeVisible()
     await expect(drawer).toHaveCount(0)

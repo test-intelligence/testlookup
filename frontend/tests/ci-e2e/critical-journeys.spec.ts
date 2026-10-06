@@ -69,7 +69,8 @@ test.describe('hermetic critical journeys', () => {
     await page.getByRole('button', { name: 'Log In' }).click()
 
     await expect(page).toHaveURL(/\/reviews$/)
-    await expect(page.getByRole('navigation')).toBeVisible()
+    // Named: since the UX redesign P1 a section's tabs are a <nav> too.
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
   })
 
   test('an explicitly rejected persisted token cannot expose a protected route', async ({ page }) => {

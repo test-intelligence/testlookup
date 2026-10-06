@@ -5,6 +5,10 @@
  * probe tested the *header button* after explicitly selecting a project, and
  * never followed the sidebar link — which is the entry point a user actually
  * clicks. So the feature was called verified while its primary path was untested.
+ *
+ * Since the UX redesign P1 the sidebar has no Upload entry: the `?upload=1`
+ * deep link stays (bookmarks, docs), and Upload report is the primary button
+ * on Runs, which the click test below follows.
  */
 import { expect, test } from '@playwright/test'
 
@@ -68,7 +72,8 @@ test('the sidebar deep link opens the upload drawer', async ({ page }) => {
   ).toBeAttached()
 })
 
-test('clicking the sidebar entry (not typing the URL) opens the drawer', async ({ page }) => {
+// UX redesign P1: Upload left the sidebar; it is the primary button on Runs.
+test('clicking Upload report on Runs (not typing the URL) opens the drawer', async ({ page }) => {
   await login(page)
   await page.goto(`${BASE}/runs`, { waitUntil: 'networkidle' })
   const select = page.locator('select[aria-label="Select project"]')
@@ -81,14 +86,14 @@ test('clicking the sidebar entry (not typing the URL) opens the drawer', async (
   await select.selectOption(values[0])
   await page.waitForTimeout(1000)
 
-  const link = page.getByRole('link', { name: /upload report/i }).first()
-  test.skip(!(await link.count()), 'sidebar entry not rendered (group collapsed / flag off)')
-  await link.click()
+  const button = page.getByRole('button', { name: /upload report/i }).first()
+  test.skip(!(await button.count()), 'Upload report not rendered (manual_upload flag off)')
+  await button.click()
   await page.waitForTimeout(1500)
 
   await expect(
     drawer(page).first(),
-    'clicking the sidebar Upload Report entry left the user on the runs list',
+    'clicking Upload report on Runs left the user on the runs list',
   ).toBeAttached()
 })
 

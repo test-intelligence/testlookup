@@ -27,7 +27,7 @@ test.describe('Authentication Flow', () => {
         { at: access_token, rt: refresh_token },
       );
       await page.goto('/overview');
-      await expect(page.getByRole('navigation')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
       return;
     }
 
@@ -74,7 +74,7 @@ test.describe('Authentication Flow', () => {
 
     await page.waitForURL(/.*\/overview/, { timeout: 20000 });
     // Sidebar navigation is always present once authenticated
-    await expect(page.getByRole('navigation')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
   });
 
 });

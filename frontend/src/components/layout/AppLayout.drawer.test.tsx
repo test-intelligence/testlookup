@@ -22,6 +22,7 @@ vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: undefined })
 vi.mock('@/hooks/useMyFailuresCountUnscoped', () => ({
   useMyFailuresCountUnscoped: () => ({ data: { count: 0 } }),
 }))
+vi.mock('@/hooks/useLiveRunningCount', () => ({ useLiveRunningCount: () => 0 }))
 vi.mock('@/hooks/useNotifications', () => ({
   useUnreadCount: () => ({ data: { unread: 0 } }),
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
@@ -158,8 +159,11 @@ describe('AppLayout below 1024 px: the navigation drawer', () => {
     const dialog = openDrawer()
     const inside = within(dialog)
     const first = inside.getByRole('button', { name: 'Close navigation' })
-    // The last control in the drawer: the presentation toggle in its footer.
-    const last = inside.getByRole('button', { name: 'Presentation mode' })
+    // The last control in the drawer: Admin, in its footer (UX redesign P1;
+    // the drawer has no rail toggle, it is opened to read the labels).
+    const last = inside.getByRole('link', { name: 'Admin' })
+    const controls = dialog.querySelectorAll('a[href], button')
+    expect(controls[controls.length - 1]).toBe(last)
 
     last.focus()
     tab()
@@ -199,7 +203,7 @@ describe('AppLayout below 1024 px: the navigation drawer', () => {
   it('closes when a link in it is followed', () => {
     renderShell('/overview')
     const dialog = openDrawer()
-    fireEvent.click(within(dialog).getByRole('link', { name: 'My Failures' }))
+    fireEvent.click(within(dialog).getByRole('link', { name: 'Inbox' }))
     expect(drawer()).toBeNull()
   })
 
@@ -223,16 +227,16 @@ describe('AppLayout below 1024 px: the navigation drawer', () => {
     expect(drawer()).toBeNull()
   })
 
-  it('carries the presentation toggle in the drawer footer, operable from inside the dialog', () => {
-    const { container } = renderShell()
-    const header = container.querySelector('header') as HTMLElement
-    expect(within(header).queryByRole('button', { name: 'Presentation mode' })).toBeNull()
-    const dialog = openDrawer()
-    const toggle = within(dialog).getByRole('button', { name: 'Presentation mode' })
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(drawer()).not.toBeNull() // toggling is not a navigation
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  it('shows labels even when the desktop rail is collapsed (UX redesign P1)', () => {
+    window.localStorage.setItem('tl.sidebar.collapsed', '1')
+    try {
+      renderShell()
+      const dialog = openDrawer()
+      expect(dialog).toHaveAttribute('data-sidebar', 'expanded')
+      expect(within(dialog).getByRole('link', { name: 'Runs' })).toHaveTextContent('Runs')
+      expect(within(dialog).queryByRole('button', { name: /sidebar/ })).toBeNull()
+    } finally {
+      window.localStorage.removeItem('tl.sidebar.collapsed')
+    }
   })
 })

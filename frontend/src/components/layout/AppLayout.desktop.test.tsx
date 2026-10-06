@@ -1,20 +1,17 @@
 /**
- * VIZ-106 (Wave 2.6, OD-9): at 1024 px and above the app shell is the shell
- * it was before the narrow-screen drawer existed — the same elements, the
- * same attributes, the same classes.
+ * The desktop app shell (1024 px and above), element by element: the same
+ * elements, attributes and classes on every run.
  *
- * The snapshot beside this file was written from origin/main's shell
- * (71c022e0, before any VIZ-106 edit), and every later run compares the
- * desktop render against it. The drawer's own styling lives ONLY in
- * `max-lg:` utilities, which apply below 1024 px and nowhere else, so they
- * are removed before the comparison; any other class, attribute or element
- * that appears or moves at desktop width fails here.
- *
- * The one intended desktop addition is the presentation-mode toggle, a row
- * of the sidebar footer (PLAN OD-13, moved off the top bar: see Sidebar.tsx);
- * it is marked `data-presentation-toggle` and left out of the comparison by
- * name. The top bar and the page column gain nothing. `AppLayout.drawer.test.tsx` covers the
- * narrow shell itself.
+ * The snapshot beside this file was first written from origin/main's shell
+ * (71c022e0, VIZ-106) and re-written ONCE, deliberately, for the UX redesign
+ * P1 shell: the flat `navConfig` sidebar with section labels and the rail
+ * toggle, Admin in its footer, the Help menu before the bell, the theme and
+ * presentation controls moved into the account menu, and the section tabs
+ * above a multi-page section's pages (Trends · Coverage · Explorer on
+ * `/trends`). Any other change at desktop width fails here. The drawer's own
+ * styling lives ONLY in `max-lg:` utilities, which apply below 1024 px, so
+ * they are removed before the comparison. `AppLayout.drawer.test.tsx` covers
+ * the narrow shell itself.
  */
 import { render } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -32,6 +29,7 @@ vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: undefined })
 vi.mock('@/hooks/useMyFailuresCountUnscoped', () => ({
   useMyFailuresCountUnscoped: () => ({ data: { count: 3 } }),
 }))
+vi.mock('@/hooks/useLiveRunningCount', () => ({ useLiveRunningCount: () => 1 }))
 vi.mock('@/hooks/useNotifications', () => ({
   useUnreadCount: () => ({ data: { unread: 2 } }),
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
@@ -91,10 +89,9 @@ const NARROW_ONLY = /^max-[a-z0-9]+:/
 /**
  * The shell as a desktop browser sees it: one line per element with every
  * attribute, `class` without its narrow-only utilities, React ids normalised,
- * text trimmed. The presentation toggle is skipped (the intended addition).
+ * text trimmed.
  */
 function desktopShape(node: Element, depth = 0): string[] {
-  if (node.hasAttribute('data-presentation-toggle')) return []
   const pad = '  '.repeat(depth)
   const attrs = Array.from(node.attributes)
     .map((a) => {
@@ -144,15 +141,15 @@ describe('AppLayout at 1024 px and above: the shell origin/main shipped', () => 
     expect(desktopShape(root).join('\n')).toMatchSnapshot()
   })
 
-  it('the one addition is the presentation toggle in the sidebar footer, after Settings; the top bar gains nothing; no drawer piece renders', () => {
+  it('P1: Help sits before the bell, the theme and presentation controls are in the closed account menu, no drawer piece renders', () => {
     const { container } = renderShell('/overview')
-    const toggles = container.querySelectorAll('[data-presentation-toggle]')
-    expect(toggles).toHaveLength(1)
-    const toggle = toggles[0]
-    expect(toggle.closest('aside')).not.toBeNull()
-    expect(toggle.closest('nav')).toBeNull()
-    expect(toggle.previousElementSibling?.getAttribute('href')).toBe('/settings')
-    expect(container.querySelector('header [data-presentation-toggle]')).toBeNull()
+    const header = container.querySelector('header') as HTMLElement
+    const help = header.querySelector('[data-help-menu]') as HTMLElement
+    const bell = header.querySelector('button[aria-label^="Notifications"]') as HTMLElement
+    expect(help.compareDocumentPosition(bell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('[data-presentation-toggle]')).toBeNull()
+    expect(container.querySelector('[data-theme-picker]')).toBeNull()
+    expect(container.querySelector('aside [data-stub="app-version"]')).toBeNull()
     expect(container.querySelector('[aria-label="Navigation menu"]')).toBeNull()
     expect(container.querySelector('[data-shell-backdrop]')).toBeNull()
     expect(container.querySelector('[role="dialog"]')).toBeNull()

@@ -108,7 +108,9 @@ export const SHELL_BASE = [
   'GET /api/v1/auth/me',
   'GET /api/v1/auth/me',
   `GET /api/v1/feature-flags/ask_ai_chat/status?project_id=${P}`,
-  `GET /api/v1/feature-flags/manual_upload/status?project_id=${P}`,
+  // UX redesign P1: the sidebar's Runs live dot. (Upload left the sidebar,
+  // so the shell no longer asks for the manual_upload flag; Runs still does.)
+  `GET /api/v1/stream/active?project_id=${P}&days=1`,
   'GET /api/v1/me/assigned-failures/count',
   'GET /api/v1/notifications/history/unread-count',
   'GET /api/v1/notifications/history?unread_only=false&limit=50',

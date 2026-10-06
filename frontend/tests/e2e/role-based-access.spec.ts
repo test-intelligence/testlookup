@@ -83,7 +83,7 @@ test.describe('Role-based access control', () => {
 
     // A real Router link to a non-management route stays available to every
     // authenticated role and proves the router rendered the destination.
-    await page.getByRole('link', { name: 'Testing', exact: true }).click();
+    await page.locator('[data-nav-id="runs"]').click();
     await expect(page).toHaveURL(/\/runs/, { timeout: 8000 });
     await expect(page.getByRole('heading', { name: 'Test Runs', exact: true })).toBeVisible({
       timeout: 10000,
