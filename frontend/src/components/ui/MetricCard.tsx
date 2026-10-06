@@ -77,6 +77,8 @@ export default function MetricCard({
   }
 
   if (compact) {
+    const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
+    const changeLine = [word, trendText].filter(Boolean).join(' ')
     return (
       <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0">
         <p className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">{title}</p>
@@ -91,11 +93,20 @@ export default function MetricCard({
           {sparkline && !loading && <div className="min-w-0 shrink">{sparkline}</div>}
         </div>
         {hasTrend && !loading && (
-          <p data-metric-trend={dir ?? 'unknown'} className={clsx('mt-1 flex items-center gap-1 truncate text-[11px] font-medium', trendColor)}>
+          <p
+            data-metric-trend={dir ?? 'unknown'}
+            title={[changeLine, judgement].filter(Boolean).join(' ')}
+            className={clsx('mt-1 flex min-w-0 items-center gap-1 text-[11px] font-medium', trendColor)}
+          >
             {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
-            <span className="truncate text-[var(--color-text-secondary)]">
-              {[word, trendText, judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null].filter(Boolean).join(' ')}
-            </span>
+            {/* Only the change text truncates: the judgement is what a narrow
+                strip card must never cut ("vs previous period (bet…"). */}
+            <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{changeLine}</span>
+            {judgement && (
+              <span data-trend-judgement="" className="shrink-0 text-[var(--color-text-secondary)]">
+                {judgement}
+              </span>
+            )}
           </p>
         )}
       </div>

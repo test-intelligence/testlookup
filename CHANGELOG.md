@@ -24,6 +24,9 @@ no page uses them yet.
 - **Changed:**
   - `MetricCard` gains a `compact` variant: about 72 px, `text-2xl`, an
     inline sparkline, and the change line on one line, keeping its words.
+    On a narrow tile only the change text truncates; "(better)" / "(worse)"
+    never does, and the full line is the tooltip. (The first CI baseline
+    showed "Up 8% vs previous period (bet…".)
   - `PageHeader` v2 adds `helpTopic` (a **?** that opens the new
     `helpStore`; the drawer comes in P1), `overflow` (**⋯**), a `tabs` slot
     and a `compact` size. Without the new props it renders the v1 DOM

@@ -150,4 +150,35 @@ describe('MetricCard', () => {
     expect(container.querySelector('[aria-live]')).toBeNull()
     expect(container.querySelector('[role="status"]')).toBeNull()
   })
+
+  it('compact: a narrow card truncates the change text, never the judgement', () => {
+    // The P0 baseline showed "Up 8% vs previous period (bet…": one truncating
+    // span cut the word that says whether the change is good.
+    const { container } = render(
+      <MetricCard
+        compact
+        title="Runs"
+        icon={null}
+        metric={{ value: 412, trend_direction: 'up', trend_text: '8% vs previous period' }}
+      />,
+    )
+
+    const judgement = container.querySelector('[data-trend-judgement]')
+    expect(judgement).toHaveTextContent('(better)')
+    expect(judgement).toHaveClass('shrink-0')
+    expect(judgement).not.toHaveClass('truncate')
+    const change = judgement?.previousElementSibling
+    expect(change).toHaveTextContent('Up 8% vs previous period')
+    expect(change).toHaveClass('truncate')
+    expect(container.querySelector('[data-metric-trend]')).toHaveAttribute('title', 'Up 8% vs previous period (better)')
+  })
+
+  it('compact: an unjudged change has no judgement span', () => {
+    const { container } = render(
+      <MetricCard compact title="Duration" icon={null} metric={{ value: '4m', trend_direction: 'none', trend_text: 'not measured last period' }} />,
+    )
+
+    expect(container.querySelector('[data-trend-judgement]')).toBeNull()
+    expect(container.querySelector('[data-metric-trend]')).toHaveAttribute('title', 'not measured last period')
+  })
 })

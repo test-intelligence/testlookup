@@ -2702,8 +2702,8 @@ frontend/src/components/ui/KpiStrip.tsx,implementation/configuration,21,,react; 
 frontend/src/components/ui/LoadingSpinner.test.tsx,test,23,,@testing-library/react; vitest; ./LoadingSpinner,names
 frontend/src/components/ui/LoadingSpinner.tsx,implementation/configuration,15,,clsx,Props; LoadingSpinner
 frontend/src/components/ui/MetricCard.a11y.test.tsx,test,107,,@testing-library/react; lucide-react; vitest; ./MetricCard; @/test/readSourceFile,themeTokens; luminance; contrast; on; textToken
-frontend/src/components/ui/MetricCard.test.tsx,test,153,,@testing-library/react; lucide-react; vitest; ./MetricCard,trendRowClass
-frontend/src/components/ui/MetricCard.tsx,implementation/configuration,149,,react; lucide-react; clsx,MetricData; Props; MetricCard
+frontend/src/components/ui/MetricCard.test.tsx,test,184,,@testing-library/react; lucide-react; vitest; ./MetricCard,trendRowClass
+frontend/src/components/ui/MetricCard.tsx,implementation/configuration,160,,react; lucide-react; clsx,MetricData; Props; MetricCard
 frontend/src/components/ui/MultiSelect.test.tsx,test,667,,@testing-library/react; react; vitest; ./MultiSelect,MultiSelectOption; MultiSelectProps; HarnessProps; Harness; openWithKeyboard; squeezeScroller
 frontend/src/components/ui/MultiSelect.tsx,implementation/configuration,807,,lucide-react; react; react-dom; @/utils/formatters; ./popoverContainer,KeyboardEvent; RefObject; MultiSelectOption; MultiSelectProps; Row; nextTabbableAfter; MultiSelect
 frontend/src/components/ui/OverflowMenu.tsx,implementation/configuration,80,,react; react-router-dom; lucide-react; clsx; ./HeaderPopover,ReactNode; OverflowItem; OverflowMenu
