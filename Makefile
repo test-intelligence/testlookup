@@ -465,7 +465,7 @@ setup-minio: .env ## Manually configure MinIO bucket and webhook (runs inside Do
 		-e MINIO_ENDPOINT=http://minio:9000 \
 		-e BACKEND_URL=http://backend:8000 \
 		--entrypoint sh \
-		minio/mc /setup-minio.sh
+		pgsty/mc:RELEASE.2026-09-16T00-00-00Z /setup-minio.sh
 
 # ── Client SDKs ──────────────────────────────────────────────
 

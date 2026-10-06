@@ -71,6 +71,10 @@ def _resolve_bash() -> str | None:
     return None
 
 
+#: A hang guard for one generator run (see ``generated_env``), not a speed bound.
+_GEN_TIMEOUT_S = 300
+
+
 # Resolved once: the probe spawns a process, and these tests spawn enough
 # already. None => no usable bash on this machine => skip, don't error.
 _BASH = _resolve_bash()
@@ -134,9 +138,13 @@ def _run_generator(workdir: Path) -> None:
         # Windows path explicitly because the host may expose stale Python
         # shims ahead of the active installation.
         env["TL_PYTHON_BIN"] = sys.executable.replace("\\", "/")
+    # The timeout guards a HANG, it does not measure speed: on a Windows host
+    # Git Bash + Python start-up takes ~45 s per run alone, and the full-suite
+    # push gate twice pushed it past the old 60 s (2026-10-05). A real hang
+    # still fails, at _GEN_TIMEOUT_S.
     res = subprocess.run(
         [_BASH, "scripts/gen-dev-env.sh"],
-        cwd=workdir, capture_output=True, text=True, timeout=60,
+        cwd=workdir, capture_output=True, text=True, timeout=_GEN_TIMEOUT_S,
         env=env,
     )
     assert res.returncode == 0, f"generator failed (rc={res.returncode}): {res.stderr}"
@@ -188,5 +196,5 @@ def test_idempotent_when_env_exists(tmp_path: Path):
     if os.name == "nt":
         env["TL_PYTHON_BIN"] = sys.executable.replace("\\", "/")
     subprocess.run([_BASH, "scripts/gen-dev-env.sh"], cwd=tmp_path, check=True,
-                   capture_output=True, timeout=60, env=env)
+                   capture_output=True, timeout=_GEN_TIMEOUT_S, env=env)
     assert (tmp_path / ".env").read_text(encoding="utf-8") == first, "second run mutated existing .env"

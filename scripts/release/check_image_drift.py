@@ -123,7 +123,7 @@ def compose_image_refs(path: Path) -> list[tuple[int, str]]:
 
 
 def strip_registry_prefix(ref: str) -> str:
-    """``${VAR:?msg}/minio/minio:TAG`` -> ``minio/minio:TAG``."""
+    """``${VAR:?msg}/pgsty/silo:TAG`` -> ``pgsty/silo:TAG``."""
     stripped = INTERPOLATION.sub("", ref, count=1)
     return stripped.lstrip("/")
 

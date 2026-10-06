@@ -1245,21 +1245,6 @@
   "body": {
    "items": [
     {
-     "class_name": "com.qa.reporting.ReportingSuiteTest",
-     "fail_count": 1,
-     "failure_rate_pct": 33.3,
-     "last_seen": "2026-09-14T09:37:36.773667+00:00",
-     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
-     "likely_cause_code": "low_volatility",
-     "pass_count": 2,
-     "project_name": "vizscope-p1-<tag>",
-     "source": "auto",
-     "suite_name": "ReportingSuite",
-     "test_fingerprint": "7043056b8db9bcf3",
-     "test_name": "testReportingCase02",
-     "total_runs": 3
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "fail_count": 1,
      "failure_rate_pct": 33.3,
@@ -1287,6 +1272,21 @@
      "suite_name": "InventorySuite",
      "test_fingerprint": "d58773b471951219",
      "test_name": "testInventoryCase04",
+     "total_runs": 3
+    },
+    {
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
+     "fail_count": 1,
+     "failure_rate_pct": 33.3,
+     "last_seen": "2026-09-14T09:37:36.773667+00:00",
+     "likely_cause": "Emerging / low-volatility flake — gather more runs to confirm before quarantining.",
+     "likely_cause_code": "low_volatility",
+     "pass_count": 2,
+     "project_name": "vizscope-p1-<tag>",
+     "source": "auto",
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02",
      "total_runs": 3
     }
    ],
@@ -4026,20 +4026,20 @@
      "test_name": "testReportingCase02"
     },
     {
-     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
-     "failure_step": null,
-     "failures": 4,
-     "step_breakdown": null,
-     "suite_name": "LegacyBatchSuite",
-     "test_name": "testLegacyBatchCase02"
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "failure_step": null,
      "failures": 4,
      "step_breakdown": null,
      "suite_name": "CheckoutSuite",
      "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "LegacyBatchSuite",
+     "test_name": "testLegacyBatchCase02"
     },
     {
      "class_name": "com.qa.inventory.InventorySuiteTest",
@@ -4656,20 +4656,20 @@
      "test_name": "testReportingCase02"
     },
     {
-     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
-     "failure_step": null,
-     "failures": 4,
-     "step_breakdown": null,
-     "suite_name": "LegacyBatchSuite",
-     "test_name": "testLegacyBatchCase02"
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "failure_step": null,
      "failures": 4,
      "step_breakdown": null,
      "suite_name": "CheckoutSuite",
      "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "failure_step": null,
+     "failures": 4,
+     "step_breakdown": null,
+     "suite_name": "LegacyBatchSuite",
+     "test_name": "testLegacyBatchCase02"
     },
     {
      "class_name": "com.qa.inventory.InventorySuiteTest",
@@ -5123,17 +5123,6 @@
      "test_name": "testReportingCase02"
     },
     {
-     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
-     "fail_count": 4,
-     "failure_category": "TEST_DATA",
-     "failure_kind": "test_code",
-     "failure_step": null,
-     "last_failed": "2026-07-30T07:40:36.828424+00:00",
-     "suite_name": "LegacyBatchSuite",
-     "test_fingerprint": "26f2f39b51844e62",
-     "test_name": "testLegacyBatchCase02"
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "fail_count": 4,
      "failure_category": "INFRASTRUCTURE",
@@ -5143,6 +5132,17 @@
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02"
     }
    ],
    "period_days": 90
@@ -5219,17 +5219,6 @@
      "test_name": "testReportingCase02"
     },
     {
-     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
-     "fail_count": 4,
-     "failure_category": "TEST_DATA",
-     "failure_kind": "test_code",
-     "failure_step": null,
-     "last_failed": "2026-07-30T07:40:36.828424+00:00",
-     "suite_name": "LegacyBatchSuite",
-     "test_fingerprint": "26f2f39b51844e62",
-     "test_name": "testLegacyBatchCase02"
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "fail_count": 4,
      "failure_category": "INFRASTRUCTURE",
@@ -5239,6 +5228,17 @@
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
+    },
+    {
+     "class_name": "com.qa.legacybatch.LegacyBatchSuiteTest",
+     "fail_count": 4,
+     "failure_category": "TEST_DATA",
+     "failure_kind": "test_code",
+     "failure_step": null,
+     "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "suite_name": "LegacyBatchSuite",
+     "test_fingerprint": "26f2f39b51844e62",
+     "test_name": "testLegacyBatchCase02"
     }
    ],
    "period_days": 90
@@ -5468,17 +5468,6 @@
      "test_name": "testCheckoutCase02"
     },
     {
-     "class_name": "com.qa.reporting.ReportingSuiteTest",
-     "fail_count": 1,
-     "failure_category": "PRODUCT_BUG",
-     "failure_kind": "product",
-     "failure_step": null,
-     "last_failed": "2026-08-31T05:40:23.876672+00:00",
-     "suite_name": "ReportingSuite",
-     "test_fingerprint": "7043056b8db9bcf3",
-     "test_name": "testReportingCase02"
-    },
-    {
      "class_name": "com.qa.checkout.CheckoutSuiteTest",
      "fail_count": 1,
      "failure_category": "PRODUCT_BUG",
@@ -5488,6 +5477,17 @@
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
+    },
+    {
+     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "fail_count": 1,
+     "failure_category": "UNKNOWN",
+     "failure_kind": "unknown",
+     "failure_step": null,
+     "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "suite_name": "InventorySuite",
+     "test_fingerprint": "d58773b471951219",
+     "test_name": "testInventoryCase04"
     },
     {
      "class_name": "com.qa.notification.NotificationSuiteTest",
@@ -5501,15 +5501,15 @@
      "test_name": "testNotificationsCase01"
     },
     {
-     "class_name": "com.qa.inventory.InventorySuiteTest",
+     "class_name": "com.qa.reporting.ReportingSuiteTest",
      "fail_count": 1,
-     "failure_category": "UNKNOWN",
-     "failure_kind": "unknown",
+     "failure_category": "PRODUCT_BUG",
+     "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-08-31T05:40:23.876672+00:00",
-     "suite_name": "InventorySuite",
-     "test_fingerprint": "d58773b471951219",
-     "test_name": "testInventoryCase04"
+     "suite_name": "ReportingSuite",
+     "test_fingerprint": "7043056b8db9bcf3",
+     "test_name": "testReportingCase02"
     }
    ],
    "period_days": 90

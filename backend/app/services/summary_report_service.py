@@ -1131,7 +1131,9 @@ async def _top_failing_tests(
         .group_by(
             effective_suite, TestCase.class_name, TestCase.test_name
         )
-        .order_by(desc("failures"))
+        # Ties by name: equal counts otherwise came back in plan order, so the
+        # list reshuffled between reloads (the golden characterisation flaked).
+        .order_by(desc("failures"), "suite_name", "class_name", "test_name")
         .limit(limit)
     )
     in_suite = effective_suite_clause(suite_name)

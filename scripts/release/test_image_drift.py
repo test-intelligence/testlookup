@@ -85,9 +85,11 @@ def test_manifest_shape():
     # Everything a default `make offline-bundle` must carry.
     assert "postgres:16-alpine" in core
     assert "busybox:1.36" in core
-    # The deliberate MinIO skew: both server tags ship in the bundle.
-    minio = sorted(r.ref for r in rows if r.name == "quay.io/minio/minio")
-    assert len(minio) == 2, "the compose/k8s MinIO skew must stay explicit in the manifest"
+    # One object-storage server tag for every surface (PGSTY Silo since
+    # MinIO's community images were withdrawn; the compose/k8s skew is gone).
+    silo = sorted(r.ref for r in rows if r.name == "pgsty/silo")
+    assert len(silo) == 1, "compose and k8s share one Silo tag"
+    assert not [r.ref for r in rows if "minio/minio" in r.name], "no withdrawn MinIO image may come back"
     # The optional LLM images are opt-in, never core.
     llm = {r.ref for r in rows if r.bundle == "llm"}
     assert llm == {"ollama/ollama:0.5.4", "chromadb/chroma:1.5.9"}
@@ -182,7 +184,7 @@ def test_script_not_sourcing_the_manifest_fails(repo: Path):
 
 
 def test_latest_tag_in_any_compose_file_fails(repo: Path):
-    _sub(repo / "docker-compose.dev-lite.yml", "minio/mc:RELEASE.2024-11-05T11-29-45Z", "minio/mc:latest")
+    _sub(repo / "docker-compose.dev-lite.yml", "pgsty/mc:RELEASE.2026-09-16T00-00-00Z", "pgsty/mc:latest")
     errors = _joined(check_latest_tags(repo))
     assert "floating ':latest'" in errors
 
