@@ -1,4 +1,4 @@
-"""Visualization contracts C1-C6 as Pydantic models.
+"""Visualization contracts C1-C5 as Pydantic models.
 
 The specification is ``contracts/viz/README.md``. The fixtures beside it are
 checked twice -- here by ``tests/test_viz_contracts.py`` and on the other side
@@ -291,7 +291,7 @@ NonNegativeNumber = Annotated[
 UnitNumber = Annotated[
     Union[int, float], _finite_number("weight_range", minimum=0, maximum=1)
 ]
-#: C6 ``rate_range`` and C3 tree ``stats.pass_rate``: a percentage.
+#: C3 tree ``stats.pass_rate`` ``rate_range``: a percentage.
 Rate = Annotated[Union[int, float], _finite_number("rate_range", minimum=0, maximum=100)]
 #: C3 tree ``stats.flaky_share`` ``share_range``: a ratio.
 Share = Annotated[Union[int, float], _finite_number("share_range", minimum=0, maximum=1)]
@@ -1228,103 +1228,6 @@ class DrillPath(VizPayload):
         return value
 
 
-# ── C6 · Report metrics ──────────────────────────────────────
-
-#: The metrics of one period, in the strip's order. Each may be ``null`` (not
-#: measured) and then needs a reason under its own name (``metric_reason``).
-REPORT_METRIC_KEYS: tuple[str, ...] = (
-    "runs",
-    "total_tests",
-    "passed",
-    "failed",
-    "broken",
-    "skipped",
-    "unknown",
-    "pass_rate",
-    "total_duration_ms",
-    "avg_duration_ms",
-    "duration_runs",
-)
-
-ComparableReasonCode = Literal["no_data", "partial_window", "different_basis", "not_measured"]
-COMPARABLE_REASON_CODES: tuple[str, ...] = get_args(ComparableReasonCode)
-
-
-class MetricsWindow(VizContract):
-    from_: str = Field(alias="from")
-    to: str
-    days: Count
-
-    _days = field_validator("from_", "to")(_check_day)
-
-
-class MetricsPeriod(VizContract):
-    """One window's figures. Every key is required; ``null`` is "not measured"."""
-
-    runs: Count | None
-    total_tests: Count | None
-    passed: Count | None
-    failed: Count | None
-    broken: Count | None
-    skipped: Count | None
-    unknown: Count | None
-    pass_rate: Rate | None
-    total_duration_ms: Count | None
-    avg_duration_ms: Count | None
-    duration_runs: Count | None
-    reasons: dict[str, str]
-    window: MetricsWindow
-
-    @model_validator(mode="after")
-    def _metric_reason(self) -> "MetricsPeriod":
-        for key in REPORT_METRIC_KEYS:
-            if getattr(self, key) is None and _BLANK_RE.fullmatch(self.reasons.get(key, "")):
-                raise ValueError(
-                    f"metric_reason: {key} is null, so reasons.{key} must say why"
-                )
-        return self
-
-
-class PreviousPeriod(MetricsPeriod):
-    """The window before ``current``, and whether the two can be compared."""
-
-    comparable: bool
-    reason: str | None
-    reason_code: ComparableReasonCode | None
-
-    @model_validator(mode="after")
-    def _comparable_reason(self) -> "PreviousPeriod":
-        if self.comparable:
-            if self.reason is not None or self.reason_code is not None:
-                raise ValueError(
-                    "comparable_reason: a comparable period carries no reason and no reason_code"
-                )
-        elif _BLANK_RE.fullmatch(self.reason or "") or self.reason_code is None:
-            raise ValueError(
-                "comparable_reason: a period that is not comparable needs a reason and a reason_code"
-            )
-        return self
-
-
-class ReportMetrics(VizPayload):
-    """``report_metrics`` on ``/metrics/summary``: the strip's figures (VIZ-302)."""
-
-    schema_version: PositiveCount
-    pass_rate_basis: Literal["executions", "unique_tests"]
-    current: MetricsPeriod
-    previous: PreviousPeriod
-
-    @model_validator(mode="after")
-    def _comparable_measured(self) -> "ReportMetrics":
-        if self.previous.comparable and not (
-            (self.current.runs or 0) >= 1 and (self.previous.runs or 0) >= 1
-        ):
-            raise ValueError(
-                "comparable_measured: comparable is true only when both periods have runs"
-            )
-        return self
-
-
 # ── Registry ─────────────────────────────────────────────────
 
 #: Keyed by the fixture folder under ``contracts/viz/fixtures``.
@@ -1334,7 +1237,6 @@ CONTRACT_MODELS: dict[str, type[BaseModel]] = {
     "chart_series": ChartSeries,
     "widget_config": WidgetConfig,
     "drill_path": DrillPath,
-    "report_metrics": ReportMetrics,
 }
 
 
