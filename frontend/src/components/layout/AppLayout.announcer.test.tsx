@@ -79,11 +79,10 @@ const APP_SOURCE = Object.entries(
   import.meta.glob('/src/App.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>,
 )[0][1]
 
-/** The mounts allowed: the layout, and the two dev pages routed OUTSIDE it (checked below). */
+/** The mounts allowed: the layout, and the dev gallery routed OUTSIDE it (checked below). */
 const ALLOWED_MOUNTS = [
   '/src/components/layout/AppLayout.tsx',
   '/src/pages/dev/ChartGalleryPage.tsx',
-  '/src/pages/dev/ReportContextPage.tsx',
 ]
 
 describe('AppLayout · no second announcer', () => {
@@ -99,7 +98,7 @@ describe('AppLayout · no second announcer', () => {
   it('routes the dev pages that mount their own provider outside the layout', () => {
     const layoutRoute = APP_SOURCE.indexOf('element={<AppLayout />}')
     expect(layoutRoute).toBeGreaterThan(0)
-    for (const path of ['/__charts', '/__report-context']) {
+    for (const path of ['/__charts']) {
       const at = APP_SOURCE.indexOf(`path="${path}"`)
       expect(at, `${path} is routed`).toBeGreaterThan(0)
       expect(at, `${path} is routed before (outside) the AppLayout route`).toBeLessThan(layoutRoute)

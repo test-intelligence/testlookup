@@ -559,7 +559,7 @@ function SummaryScopeBadge({
   requestedReleaseId,
 }: {
   meta: EnvelopeMeta | undefined
-  /** One release (scalar) or, with `viz_multi_filters`, several. */
+  /** The release the report is scoped to, if any. */
   requestedReleaseId: string | readonly string[] | null
 }) {
   const checked = meta === undefined ? null : validateEnvelopeMeta(meta)

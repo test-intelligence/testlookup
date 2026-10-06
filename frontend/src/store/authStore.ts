@@ -78,11 +78,11 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 }));
-        // Security M1: the saved release/suite filters (`tl.release-filter`,
-        // `tl.suite-filter`) and the settled data scope belong to THIS user's
-        // session — the next sign-in on this browser must not inherit them.
-        // Through a registry (store/logoutReset.ts), not an import of
-        // settledScope: this store is eager, the scope machinery is not.
+        // Security M1: the saved release filter (`tl.release-filter`, and a
+        // `tl.suite-filter` an older build may have left) belongs to THIS
+        // user's session — the next sign-in on this browser must not inherit
+        // it. Through a registry (store/logoutReset.ts), not an import of the
+        // scope store: this store is eager.
         resetReportScopeOnLogout();
       },
       logoutServer: async () => {

@@ -39,8 +39,6 @@ export const DRILL_TITLE = 'Results by suite'
 export const ROOT_CRUMB = 'All suites'
 /** How many tests the leaf level asks for. */
 export const LADDER_TOP_N = 20
-/** The notice's reason for a drill-down the page could not open (the values are the sentences). */
-export const DRILL_NOTICE_REASON = 'Drill-down in this link'
 
 export const LADDER_DROP_WORDS = {
   unsupported: 'This view drills by suite and status only, so the rest of the drill-down in this link was not applied.',

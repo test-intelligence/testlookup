@@ -371,13 +371,14 @@ with no verdict (`total_tests` minus the four statuses, per run, never below 0).
 The six rollout flags. Keys use underscores, because the flag API only accepts
 `^[a-z][a-z0-9_]*$` — a dotted key could never be recreated through it. Migration `0192`
 seeds them **disabled** with `rollout_percent` 100, like earlier flag migrations, so switching
-`enabled_global` on is the whole rollout step. The frontend constants in
-`frontend/src/config/vizFlags.ts` and the backend constants in `backend/app/core/viz_flags.py`
-are each tested against this file.
+`enabled_global` on is the whole rollout step. The backend constants in
+`backend/app/core/viz_flags.py` are tested against this file.
 
-The file stays the record of what `0192` seeded. Migration `0195` turned the shipped three on,
-and `0196` (Phase D, F1) deleted the rows nothing reads any more: those entries carry
-`"retired_by": "0196"` (`viz_chart_data_api`, `viz_advanced_charts`, `viz_customize`,
-`viz_three_d`). `vizFlags.ts` lists only the entries without that mark, and
-`viz_flags.VIZ_RETIRED_FLAG_KEYS` and the migration are held to the marks. Do not reuse a
-retired key for a new flag: a new flag is a new key and a new migration.
+All six are retired; the file stays the record of what `0192` seeded. Migration `0195` turned
+the shipped three on; `0196` (Phase D, F1) deleted the four nothing read (`"retired_by":
+"0196"`: `viz_chart_data_api`, `viz_advanced_charts`, `viz_customize`, `viz_three_d`), and
+`0197` (Phase D, M1-M3) the report-context panel's two once their code was removed
+(`"retired_by": "0197"`: `viz_report_context`, `viz_multi_filters`). The frontend constants
+file is gone with its last reader; `viz_flags.VIZ_RETIRED_BY_0196` / `VIZ_RETIRED_BY_0197`
+and the migrations are held to the marks. Do not reuse a retired key for a new flag: a new
+flag is a new key and a new migration.

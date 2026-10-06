@@ -64,7 +64,7 @@ import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
@@ -1808,9 +1808,8 @@ export default function RunsPage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel } = usePageSuiteFilter()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   // Client-side table pagination. Analytics widgets (signature clustering,
   // build velocity, KPIs) continue to consume the full fetched window so
@@ -2182,7 +2181,6 @@ export default function RunsPage() {
           />
           <SuiteFilterSelect
             value={selectedSuite}
-            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

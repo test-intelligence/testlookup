@@ -204,3 +204,4 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0194_report_exports.py](../../backend/migrations/versions/0194_report_exports.py) | `'0194'` | `'0193'` | VIZ-607 — background report exports. |
 | [backend/migrations/versions/0195_enable_viz_flags_by_default.py](../../backend/migrations/versions/0195_enable_viz_flags_by_default.py) | `'0195'` | `'0194'` | enable the shipped Visualization Upgrade flags by default |
 | [backend/migrations/versions/0196_retire_shipped_viz_flags.py](../../backend/migrations/versions/0196_retire_shipped_viz_flags.py) | `'0196'` | `'0195'` | retire the shipped Visualization Upgrade flag rows |
+| [backend/migrations/versions/0197_retire_last_viz_flags.py](../../backend/migrations/versions/0197_retire_last_viz_flags.py) | `'0197'` | `'0196'` | retire the last Visualization Upgrade flag rows |

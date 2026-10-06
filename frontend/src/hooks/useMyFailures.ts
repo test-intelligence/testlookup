@@ -4,9 +4,6 @@ import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { myFailuresService } from '@/services/myFailuresService'
 import { useReleaseScope } from './useReleaseScope'
 import { keyPart, scopeArg } from '@/lib/scopeParams'
-import { useSuiteScope } from './useSuiteScope'
-// Scoped reads opt into superseded-scope aborting (services/scopeAbort.ts).
-import { scopedFetch } from '@/services/scopeAbort'
 
 /**
  * Paginated list of the caller's auto-assigned failures.
@@ -19,30 +16,15 @@ export function useMyFailures(params: { days?: number; page?: number; size?: num
   // and nothing was sending it — the picker sat in the header changing nothing
   // on this page. An inert filter is worse than an absent one: it reads as
   // "these are 2.4.0's failures" when they are the project's.
-  //
-  // Both axes repeat on the endpoint (VIZ-303 / E3): every selected release
-  // and every globally selected suite is sent — none → no parameter, one →
-  // the legacy scalar, several → a repeated key. The suite scope is `null`
-  // with the multi-filter flag off, so a flag-off request is unchanged.
   const release = scopeArg(useReleaseScope())
-  const suites = scopeArg(useSuiteScope())
   return useProjectScopedSWR(
     'my-failures',
-    (projectId) =>
-      scopedFetch(() => myFailuresService.list({ project_id: projectId, release_id: release, suite_name: suites, ...params })),
+    (projectId) => myFailuresService.list({ project_id: projectId, release_id: release, ...params }),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
     // In the deps as well as the params, or switching releases serves the
-    // previous release's page from cache under the new release's name. Lists
-    // as their joined strings: never an array rebuilt per render.
-    [params.days, params.page, params.size, params.scope, keyPart(release), ...suiteDeps(suites)],
+    // previous release's page from cache under the new release's name.
+    [params.days, params.page, params.size, params.scope, keyPart(release)],
   )
-}
-
-/** The suite axis in a dep list: nothing at all when none is selected, so a
- *  flag-off key is byte-identical to the key before the axis existed. */
-function suiteDeps(suites: string | string[] | null): string[] {
-  const key = keyPart(suites)
-  return key ? [`suites:${key}`] : []
 }
 
 /**
@@ -59,15 +41,13 @@ export function useMyFailuresCount(params: { days?: number } = {}) {
   // Scoped with the list, not independently. The count endpoint's own comment
   // says a disagreement means "the badge advertises work the page cannot
   // show", and a release-scoped page beside a project-wide badge is exactly
-  // that. Same axes, same wire rule as the list.
+  // that. Same axis, same wire rule as the list.
   const release = scopeArg(useReleaseScope())
-  const suites = scopeArg(useSuiteScope())
   return useProjectScopedSWR(
     'my-failures-count',
-    (projectId) =>
-      scopedFetch(() => myFailuresService.count({ project_id: projectId, days: params.days, release_id: release, suite_name: suites })),
+    (projectId) => myFailuresService.count({ project_id: projectId, days: params.days, release_id: release }),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
-    [params.days, keyPart(release), ...suiteDeps(suites)],
+    [params.days, keyPart(release)],
   )
 }
 

@@ -85,7 +85,7 @@ import {
   daysBetweenDayIso, formatDayIso, relativeDayLabel, shiftDayIso, utcDayIso,
 } from '@/utils/calendarDay'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { scopeArg } from '@/lib/scopeParams'
@@ -1436,9 +1436,8 @@ export default function TrendsPage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
   const viewsMenu = useReportViewsMenu({
     route: '/trends',
@@ -1656,7 +1655,6 @@ export default function TrendsPage() {
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
-            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

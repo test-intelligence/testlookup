@@ -6,11 +6,12 @@ charts, 3D; the report-context panel's two stay off), and
 ``tests/test_viz_contracts.py`` holds this module and the migration to that
 file -- same keys, same order -- so a flag cannot be renamed on one side only.
 
-0196 (Phase D, F1) deletes the rows of the four nothing reads any more; the
-file marks them ``"retired_by": "0196"`` and :data:`VIZ_RETIRED_FLAG_KEYS`
-names them. ``frontend/src/config/vizFlags.ts`` mirrors only the live two
-(:data:`VIZ_LIVE_FLAG_KEYS`), which go when the report-chrome and multi-filter
-code that reads them is removed.
+Every row is retired now. 0196 (Phase D, F1) deleted the four nothing read
+(the shipped three and ``viz_customize``); 0197 (Phase D, M1-M3) deleted the
+report-context panel's two once the code reading them was removed. The file
+marks each with its ``"retired_by"`` migration, and :data:`VIZ_RETIRED_BY_0196`
+/ :data:`VIZ_RETIRED_BY_0197` are held to those marks. No frontend constant
+mirrors them any more: nothing reads a viz flag.
 """
 
 from __future__ import annotations
@@ -33,14 +34,26 @@ VIZ_FLAG_KEYS: tuple[str, ...] = (
 
 #: Deleted by migration 0196: shipped (on since 0195) or never read, and asked
 #: by no code since Phase D. In ``flags.json`` order.
-VIZ_RETIRED_FLAG_KEYS: tuple[str, ...] = (
+VIZ_RETIRED_BY_0196: tuple[str, ...] = (
     VIZ_CHART_DATA_API,
     VIZ_ADVANCED_CHARTS,
     VIZ_CUSTOMIZE,
     VIZ_THREE_D,
 )
 
-#: Rows that still exist after 0196: off for good, read until their code goes.
+#: Deleted by migration 0197: off for good since 2026-10-04, and read by no
+#: code once the report chrome and the multi-filter runtime were removed.
+VIZ_RETIRED_BY_0197: tuple[str, ...] = (
+    VIZ_REPORT_CONTEXT,
+    VIZ_MULTI_FILTERS,
+)
+
+#: Every retired key, in ``flags.json`` order: all six.
+VIZ_RETIRED_FLAG_KEYS: tuple[str, ...] = tuple(
+    key for key in VIZ_FLAG_KEYS if key in VIZ_RETIRED_BY_0196 + VIZ_RETIRED_BY_0197
+)
+
+#: Rows that still exist: none.
 VIZ_LIVE_FLAG_KEYS: tuple[str, ...] = tuple(
     key for key in VIZ_FLAG_KEYS if key not in VIZ_RETIRED_FLAG_KEYS
 )

@@ -1,6 +1,5 @@
 import { ChevronDown } from 'lucide-react'
-import { ScopeSummaryButton } from './ScopeSummaryButton'
-import { SEVERAL_SELECTED, suiteSelectOptions } from '@/lib/scopeControls'
+import { suiteSelectOptions } from '@/lib/scopeControls'
 
 export default function SuiteFilterSelect({
   value,
@@ -9,7 +8,6 @@ export default function SuiteFilterSelect({
   disabled = false,
   allLabel = 'All suites',
   title = 'Filter by test suite',
-  multiLabel,
 }: {
   value: string
   onChange: (value: string) => void
@@ -17,33 +15,7 @@ export default function SuiteFilterSelect({
   disabled?: boolean
   allLabel?: string
   title?: string
-  /**
-   * Set when several suites are selected globally (VIZ-303, "2 suites"). The
-   * control is then a read-only summary, not a `<select>`: a native select
-   * commits the next option on a single ArrowDown, which silently collapsed
-   * several suites into one (a11y M5). Activating it moves focus to the report
-   * filter bar's suite control, or opens a menu where a suite is picked
-   * explicitly.
-   */
-  multiLabel?: string
 }) {
-  if (multiLabel) {
-    return (
-      <span className="relative inline-flex items-center">
-        <ScopeSummaryButton
-          dimension="suite"
-          ariaLabel="Test suite"
-          label={multiLabel}
-          title={`${multiLabel} selected — ${title.toLowerCase()}`}
-          disabled={disabled}
-          selected={SEVERAL_SELECTED}
-          options={[{ value: '', label: allLabel }, ...options.map(name => ({ value: name, label: name }))]}
-          onPick={onChange}
-          className="text-[12.5px] font-medium rounded-md"
-        />
-      </span>
-    )
-  }
   return (
     <label className="relative inline-flex items-center" title={title}>
       <span className="sr-only">Test suite</span>

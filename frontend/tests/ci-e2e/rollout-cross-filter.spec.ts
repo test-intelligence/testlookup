@@ -2,8 +2,8 @@
  * Cross-filtering (VIZ-603, P2): "Filter page by this" (the readout's button,
  * Shift+Enter, Shift-click) on the LEGACY scope, with no chart flag set (no
  * section asks one: Coverage and Suite detail's heatmap since Phase D S4,
- * Failures since S5) and `viz_multi_filters` OFF (owner decision 2026-10-04:
- * the multi-filter runtime is off for good).
+ * Failures since S5). The multi-filter runtime it once also ran against is
+ * gone (Phase D, M1-M3).
  *
  *   - a suite mark sets the page's own "Test suite" select, as the select
  *     spells the suite, REPLACING it; every read after it carries

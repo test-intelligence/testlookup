@@ -12,16 +12,10 @@
  *     03-02 … 03-08 (1 … 7), with `applyAsWindow` over the report pages'
  *     window options (1, 7, 14, 30, 90).
  *
- * WHAT IS NOT COVERED HERE, plainly: the story's "promote-to-filter round trip
- * with URL". No route mounts a zoomable frame yet (the charts are
- * gallery-only until VIZ-408), and the gallery sits outside `AppLayout`, so
- * nothing syncs its scope to `?window=` and there is no window chip to see.
- * This spec covers the half the gallery CAN show — Apply writes the page
- * window through the report filter bar's own store, that choice survives a
- * reload, and the zoom clears — and `src/components/charts/zoom/applyAsWindow.url.test.tsx`
- * covers store → `?window=` → store through the real `useScopeUrlSync`. The
- * chip, reload-from-URL and Back belong to the first report page that mounts
- * a zoomable chart (VIZ-408).
+ * What it covers: Apply writes the page window through the global time-window
+ * store, that choice survives a reload, and the zoom clears. The window is
+ * not in the URL: the `?window=` sync was the multi-filter runtime's, which
+ * stayed off and was removed in Phase D (M1-M3).
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { galleryItem, openGallery, watchErrors } from '../lib/chart-gallery-page'

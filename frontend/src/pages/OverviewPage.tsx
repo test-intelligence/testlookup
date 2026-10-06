@@ -20,11 +20,10 @@ import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { scopeArg } from '@/lib/scopeParams'
-import { SEVERAL_SELECTED, suiteSelectOptions } from '@/lib/scopeControls'
-import { ScopeSummaryButton } from '@/components/ui/ScopeSummaryButton'
+import { suiteSelectOptions } from '@/lib/scopeControls'
 import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
 import RecentActivityPanel from '@/components/activity/RecentActivityPanel'
 import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
@@ -890,9 +889,8 @@ export default function OverviewPage() {
   const days = snapToAllowed(storedDays, TIME_OPTIONS)
   const setDays = setStoredDays
   const [showPicker, setShowPicker] = useState(false)
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
   const viewsMenu = useReportViewsMenu({
     route: '/overview',
@@ -1161,42 +1159,24 @@ export default function OverviewPage() {
 
         <div className="flex flex-wrap items-center gap-2.5">
           {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          {multiLabel ? (
-            // Several suites (VIZ-303): a read-only summary, never a native
-            // select — one ArrowDown there collapsed them into one (a11y M5).
-            <span className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-              <span aria-hidden>Suite</span>
-              <ScopeSummaryButton
-                dimension="suite"
-                ariaLabel="Suite"
-                label={multiLabel}
-                title={`${multiLabel} selected — filter dashboard metrics by test suite`}
-                selected={SEVERAL_SELECTED}
-                options={[{ value: '', label: 'All suites' }, ...suiteOptions.map((suite) => ({ value: suite, label: suite }))]}
-                onPick={setSelectedSuite}
-                className="h-8 min-w-[220px] rounded-md text-[13px]"
-              />
-            </span>
-          ) : (
-            <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-              <span>Suite</span>
-              <select
-                value={selectedSuite}
-                onChange={(event) => setSelectedSuite(event.target.value)}
-                className="h-8 min-w-[220px] rounded-md border bg-[var(--color-bg-secondary)] px-2 text-[13px] text-[var(--color-text)]"
-                style={{ borderColor: 'var(--color-border)' }}
-                title="Filter dashboard metrics by test suite"
-              >
-                <option value="">All suites</option>
-                {/* The selected suite even when this page's options (recent
-                    runs) do not list it — else "All suites" shows while the
-                    page is filtered (m4). */}
-                {suiteSelectOptions(suiteOptions, selectedSuite).map((suite) => (
-                  <option key={suite} value={suite}>{suite}</option>
-                ))}
-              </select>
-            </label>
-          )}
+          <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+            <span>Suite</span>
+            <select
+              value={selectedSuite}
+              onChange={(event) => setSelectedSuite(event.target.value)}
+              className="h-8 min-w-[220px] rounded-md border bg-[var(--color-bg-secondary)] px-2 text-[13px] text-[var(--color-text)]"
+              style={{ borderColor: 'var(--color-border)' }}
+              title="Filter dashboard metrics by test suite"
+            >
+              <option value="">All suites</option>
+              {/* The selected suite even when this page's options (recent
+                  runs) do not list it — else "All suites" shows while the
+                  page is filtered (m4). */}
+              {suiteSelectOptions(suiteOptions, selectedSuite).map((suite) => (
+                <option key={suite} value={suite}>{suite}</option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => setShowPicker(true)}

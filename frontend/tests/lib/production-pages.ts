@@ -164,10 +164,9 @@ export type ApiHandler = (request: ApiRequest) => unknown
 export type ApiHandlers = ReadonlyArray<readonly [string | RegExp, ApiHandler, string?]>
 
 /**
- * Feature flags a test turns ON, by key (`viz_multi_filters: true`). Every
- * key not listed reads OFF, so the default (no map) is the committed
- * baselines' state: every flag off. Since Phase D (S6) the charts ask no
- * flag; only the report-context and multi-filter specs still turn one on.
+ * Feature flags a test turns ON, by key (`ask_ai_chat: true`). Every key not
+ * listed reads OFF, so the default (no map) is the committed baselines'
+ * state: every flag off. Since Phase D no viz flag exists to turn on.
  */
 export type FlagMap = Readonly<Record<string, boolean>>
 

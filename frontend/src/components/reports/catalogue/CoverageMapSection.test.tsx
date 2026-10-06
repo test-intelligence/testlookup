@@ -15,7 +15,6 @@ import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { CatalogParams } from '@/components/charts/chartCatalogSources'
 import {
   CLASS_KEY_SEPARATOR,
-  COVERAGE_DRILL_NOTICE_REASON,
   COVERAGE_DROP_WORDS,
   COVERAGE_MAP_CAPTION,
   COVERAGE_MAP_EMPTY_HEIGHT,
@@ -25,8 +24,6 @@ import {
 import { DRILL_DROP_WORDS } from '@/hooks/useDrillPath'
 import { PageSuiteTargetContext, type PageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { __resetChartConcurrency } from '@/services/chartApi'
-import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
-import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 
 const get = vi.hoisted(() => vi.fn())
 vi.mock('@/services/api', () => ({ api: { get } }))
@@ -208,8 +205,6 @@ beforeEach(() => {
   responses = { '1': LEVEL1, '2': LEVEL2, '3': LEVEL3 }
   pending = {}
   where.search = ''
-  useMultiFiltersFlagStore.setState({ enabled: false, resolved: true })
-  useScopeNoticeStore.getState().dismiss()
   get.mockReset()
   get.mockImplementation((url: string, config: { params: CatalogParams }) => {
     if (url === URL_MAP) {
@@ -437,28 +432,16 @@ describe('CoverageMapSection: level by level', () => {
     await waitFor(() => expect(mapCalls()).toContainEqual({ depth: 2, suite: 'payments', project_id: 'p1', days: 30 }))
   })
 
-  it("with viz_multi_filters on, the cut goes to the page's notice (the filter bar), not the frame (R1B-6)", async () => {
-    useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
+  it("a suite outside the page's suite filter is cut, and the frame says so (R1B-6)", async () => {
     renderSection({ entry: '/coverage?drill=suite~payments', suiteFilter: 'Auth' })
     await drawn()
-    await waitFor(() =>
-      expect(useScopeNoticeStore.getState().notices).toEqual([
-        { dimension: 'drill', values: [COVERAGE_DROP_WORDS.outOfScope], reason: COVERAGE_DRILL_NOTICE_REASON },
-      ]),
-    )
-    expect(within(frame()).queryByText(COVERAGE_DROP_WORDS.outOfScope)).toBeNull()
+    expect(await within(frame()).findByText(COVERAGE_DROP_WORDS.outOfScope)).toBeInTheDocument()
   })
 
-  it('with viz_multi_filters on, a link the parser cut is named on the page notice too', async () => {
-    useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
+  it('a link the parser cut is named in the frame', async () => {
     renderSection({ entry: '/coverage?drill=nonsense' })
     await drawn()
-    await waitFor(() =>
-      expect(useScopeNoticeStore.getState().notices).toEqual([
-        { dimension: 'drill', values: [DRILL_DROP_WORDS.invalid], reason: COVERAGE_DRILL_NOTICE_REASON },
-      ]),
-    )
-    expect(within(frame()).queryByText(DRILL_DROP_WORDS.invalid)).toBeNull()
+    expect(await within(frame()).findByText(DRILL_DROP_WORDS.invalid)).toBeInTheDocument()
   })
 })
 

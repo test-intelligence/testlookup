@@ -22,6 +22,8 @@ from app.core.viz_flags import (
     VIZ_LIVE_FLAG_KEYS,
     VIZ_MULTI_FILTERS,
     VIZ_REPORT_CONTEXT,
+    VIZ_RETIRED_BY_0196,
+    VIZ_RETIRED_BY_0197,
     VIZ_RETIRED_FLAG_KEYS,
     VIZ_THREE_D,
 )
@@ -114,18 +116,17 @@ def test_migration_0196_follows_0195_alone():
 
 def test_0196_retires_exactly_the_keys_flags_json_marks():
     marked = [flag["key"] for flag in _contract_flags() if flag.get("retired_by") == "0196"]
-    assert list(VIZ_RETIRED_FLAG_KEYS) == marked
-    assert _load_0196()._FLAG_KEYS == VIZ_RETIRED_FLAG_KEYS
-    # The removed panel's two are still read (report chrome, multi-filter
-    # runtime): their rows go with that code, not here.
-    assert set(VIZ_LIVE_FLAG_KEYS) == {VIZ_REPORT_CONTEXT, VIZ_MULTI_FILTERS}
-    assert set(VIZ_LIVE_FLAG_KEYS) | set(VIZ_RETIRED_FLAG_KEYS) == set(VIZ_FLAG_KEYS)
+    assert list(VIZ_RETIRED_BY_0196) == marked
+    assert _load_0196()._FLAG_KEYS == VIZ_RETIRED_BY_0196
+    # The removed panel's two went with its code, in 0197, not here.
+    assert VIZ_REPORT_CONTEXT not in VIZ_RETIRED_BY_0196
+    assert VIZ_MULTI_FILTERS not in VIZ_RETIRED_BY_0196
 
 
 def test_0196_upgrade_deletes_only_those_rows(monkeypatch):
     sent = _statements(monkeypatch, "upgrade")
     assert {" ".join(s.text.split()) for s in sent} == {"DELETE FROM feature_flags WHERE key = :key"}
-    assert [s.compile().params["key"] for s in sent] == list(VIZ_RETIRED_FLAG_KEYS)
+    assert [s.compile().params["key"] for s in sent] == list(VIZ_RETIRED_BY_0196)
 
 
 def test_0196_downgrade_restores_the_0195_state(monkeypatch):
@@ -145,3 +146,65 @@ def test_0196_downgrade_restores_the_0195_state(monkeypatch):
         VIZ_CUSTOMIZE: False,
         VIZ_THREE_D: True,
     }
+
+
+# -- 0197 (Phase D, M1-M3): the report-context panel's two go with its code ------------------
+
+MIGRATION_0197 = MIGRATION.parent / "0197_retire_last_viz_flags.py"
+
+
+def _load_0197():
+    spec = importlib.util.spec_from_file_location("migration_0197", MIGRATION_0197)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _statements_0197(monkeypatch, step: str) -> list:
+    from alembic import op
+
+    sent: list = []
+    monkeypatch.setattr(op, "execute", sent.append, raising=False)
+    getattr(_load_0197(), step)()
+    return sent
+
+
+def test_migration_0197_follows_0196_alone():
+    module = _load_0197()
+    assert (module.revision, module.down_revision) == ("0197", "0196")
+    children = [
+        path.name
+        for path in MIGRATION.parent.glob("*.py")
+        if 'down_revision = "0196"' in path.read_text(encoding="utf-8")
+    ]
+    assert children == [MIGRATION_0197.name], f"0196 has more than one child: {children}"
+
+
+def test_0197_retires_exactly_the_keys_flags_json_marks_and_leaves_none():
+    marked = [flag["key"] for flag in _contract_flags() if flag.get("retired_by") == "0197"]
+    assert list(VIZ_RETIRED_BY_0197) == marked == [VIZ_REPORT_CONTEXT, VIZ_MULTI_FILTERS]
+    assert _load_0197()._FLAG_KEYS == VIZ_RETIRED_BY_0197
+    # With 0196, every row 0192 seeded is retired, each by exactly one migration.
+    assert not set(VIZ_RETIRED_BY_0196) & set(VIZ_RETIRED_BY_0197)
+    assert set(VIZ_RETIRED_FLAG_KEYS) == set(VIZ_FLAG_KEYS)
+    assert VIZ_LIVE_FLAG_KEYS == ()
+    assert all(flag.get("retired_by") in ("0196", "0197") for flag in _contract_flags())
+
+
+def test_0197_upgrade_deletes_only_those_rows(monkeypatch):
+    sent = _statements_0197(monkeypatch, "upgrade")
+    assert {" ".join(s.text.split()) for s in sent} == {"DELETE FROM feature_flags WHERE key = :key"}
+    assert [s.compile().params["key"] for s in sent] == list(VIZ_RETIRED_BY_0197)
+
+
+def test_0197_downgrade_restores_both_off(monkeypatch):
+    descriptions = {flag["key"]: flag["description"] for flag in _contract_flags()}
+    restored = []
+    for statement in _statements_0197(monkeypatch, "downgrade"):
+        sql = " ".join(statement.text.split())
+        assert sql.startswith("INSERT INTO feature_flags ") and sql.endswith("ON CONFLICT (key) DO NOTHING"), sql
+        assert ":description, false, 100, now(), now())" in sql  # off, as they were retired
+        params = statement.compile().params
+        assert params["description"] == descriptions[params["key"]]  # 0192's words
+        restored.append(params["key"])
+    assert restored == [VIZ_REPORT_CONTEXT, VIZ_MULTI_FILTERS]

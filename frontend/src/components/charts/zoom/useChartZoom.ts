@@ -18,8 +18,9 @@
  * throw away the reader's zoom.
  */
 import { useCallback, useMemo, useState } from 'react'
-import { useReportScope } from '@/store/reportScope'
-import { scopeKey } from '@/lib/scopeParams'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useTimeWindowStore } from '@/store/timeWindowStore'
 import { resolveZoom, zoomKeysFor, type ZoomKeys, type ZoomRange } from './zoomModel'
 
 interface Held extends ZoomKeys {
@@ -34,19 +35,23 @@ export interface ChartZoom {
   setRange: (range: ZoomRange | null) => void
   /** The global window in force, in days. */
   windowDays: number
-  /** The report filter bar's own window setter. */
+  /** Set the global window (1-365 days; anything else is ignored). */
   setWindowDays: (days: number) => void
 }
 
+function setWindowDays(days: number): void {
+  if (!Number.isInteger(days) || days < 1 || days > 365) return
+  useTimeWindowStore.getState().setDays(days)
+}
+
 export function useChartZoom(xs: readonly string[], initial?: ZoomKeys | null): ChartZoom {
-  const scope = useReportScope()
-  const key = JSON.stringify([
-    scope.projectId,
-    scope.allProjects,
-    scopeKey(scope.releaseIds),
-    scopeKey(scope.suiteNames),
-    scope.windowDays,
-  ])
+  // The global scope a zoom is held under: the project, the release a request
+  // is scoped to (`useReleaseScope`: none outside one project) and the window.
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  const projectId = !activeProjectId || activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
+  const releaseId = useReleaseScope()
+  const windowDays = useTimeWindowStore((s) => s.days)
+  const key = JSON.stringify([projectId, releaseId, windowDays])
   const [held, setHeld] = useState<Held | null>(() => (initial ? { ...initial, scope: key } : null))
 
   // A scope change DROPS the zoom (the React "adjust state during render"
@@ -66,5 +71,5 @@ export function useChartZoom(xs: readonly string[], initial?: ZoomKeys | null): 
     [xs, key],
   )
 
-  return { range, setRange, windowDays: scope.windowDays, setWindowDays: scope.setWindowDays }
+  return { range, setRange, windowDays, setWindowDays }
 }

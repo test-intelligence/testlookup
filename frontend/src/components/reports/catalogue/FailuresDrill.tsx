@@ -37,11 +37,8 @@ import { hasChartData, type ChartResponse, type ChartState } from '@/components/
 import type { ChartMark, MarkIntent } from '@/components/charts/marks'
 import { readDrillLevels, encodeDrillLevel, ownedRows, useDrillPath, writeDrillParams } from '@/hooks/useDrillPath'
 import { useCrossFilter } from '@/hooks/useCrossFilter'
-import { useMultiFiltersEnabled } from '@/store/multiFiltersFlag'
-import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 import type { DrillLevel } from '@/lib/viz/contracts'
 import {
-  DRILL_NOTICE_REASON,
   ROOT_CRUMB,
   answersLevel,
   drillLevels,
@@ -93,7 +90,6 @@ function FailuresDrillBody({ days, suiteFilter }: FailuresDrillProps) {
   const [, setSearchParams] = useSearchParams()
   const drill = useDrillPath()
   const cross = useCrossFilter()
-  const multi = useMultiFiltersEnabled()
   const windowDays = clampCatalogueDays(days)
 
   const suiteKey = JSON.stringify(suiteFilter ?? null)
@@ -198,13 +194,8 @@ function FailuresDrillBody({ days, suiteFilter }: FailuresDrillProps) {
     [applyFilter, drillTo, learn, level, openRows],
   )
 
-  // What the link named that was not applied: the page's notice when the page has one, else here.
+  // What the link named that was not applied: said here, under the frame.
   const dropped = useMemo(() => [...drill.dropped, ...ladder.dropped], [drill.dropped, ladder.dropped])
-  const droppedKey = JSON.stringify(dropped)
-  useEffect(() => {
-    const values = JSON.parse(droppedKey) as string[]
-    if (multi && values.length > 0) useScopeNoticeStore.getState().pushNotice({ dimension: 'drill', values, reason: DRILL_NOTICE_REASON })
-  }, [droppedKey, multi])
 
   const crumbs: BreadcrumbItem[] = useMemo(() => {
     const items: BreadcrumbItem[] = [{ label: ROOT_CRUMB, to: drillSearch(location.search, []) }]
@@ -244,7 +235,7 @@ function FailuresDrillBody({ days, suiteFilter }: FailuresDrillProps) {
             }}
           >
             <Breadcrumbs items={crumbs} />
-            {!multi && dropped.length > 0 ? (
+            {dropped.length > 0 ? (
               <p data-drill-notice="" className="text-xs text-[var(--color-text-secondary)]">
                 {dropped.join(' ')}
               </p>

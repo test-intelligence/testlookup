@@ -1,7 +1,7 @@
 /**
- * The report routes (VIZ-301): every route that gets the report chrome —
- * context header, filter bar, chips, filtered summary and metrics strip —
- * mounted ONCE by the layout (`ReportChromeSlot`), behind `viz_report_context`.
+ * The report routes (VIZ-301): the aggregate report pages. Saved views are
+ * keyed by these (`savedViewsModel.ts`); the report-context panel that was
+ * mounted on them is gone (Phase D, M0).
  *
  * `reportRoutes.ratchet.test.tsx` holds this list to `App.tsx` in both
  * directions: every entry is a real route, and every route in App.tsx is
@@ -9,7 +9,6 @@
  * cannot land without someone deciding whether it is a report.
  */
 import { matchPath } from 'react-router-dom'
-import { REPORT_WINDOW_OPTIONS } from '@/components/filters/filterOptions'
 
 /** Paths exactly as `App.tsx` registers them, with a leading slash. */
 export const REPORT_ROUTES = [
@@ -73,23 +72,6 @@ export const NOT_REPORT_ROUTES: Record<string, string> = {
 
 /** Every `/settings/...` management route is settings, not a report. */
 export const NOT_REPORT_PREFIXES = ['/settings/'] as const
-
-/**
- * The window options of a report page whose set differs from the report
- * default (`REPORT_WINDOW_OPTIONS`: 1, 7, 14, 30, 90). The chrome snaps the
- * stored window to the SAME set its page does (`snapToAllowed`), so both
- * answer for one window. Kept in step with each page's own constant
- * (`SummaryReportPage.DAYS_OPTIONS`, `ValueMetricsPage.VALUE_OPTIONS`).
- */
-export const REPORT_ROUTE_WINDOW_OPTIONS: Partial<Record<ReportRoute, readonly number[]>> = {
-  '/reports/summary': [1, 7, 30, 90],
-  '/value-metrics': [7, 30, 90, 365],
-}
-
-/** The window options the page on `route` offers. */
-export function windowOptionsFor(route: ReportRoute): readonly number[] {
-  return REPORT_ROUTE_WINDOW_OPTIONS[route] ?? REPORT_WINDOW_OPTIONS
-}
 
 /** The report route pattern `pathname` matches, or `null`. */
 export function matchReportRoute(pathname: string): ReportRoute | null {

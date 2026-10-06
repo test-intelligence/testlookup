@@ -30,10 +30,7 @@ vi.mock('@/services/http', () => ({ getData, postData: vi.fn(), deleteData: vi.f
 
 import LiveExecutionPage from './LiveExecutionPage'
 import liveStreamService from '@/services/liveStreamService'
-import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
 import { useProjectStore } from '@/store/projectStore'
-import { useSuiteStore } from '@/store/suiteStore'
-import { SCOPE_SETTLE_MS, settleScopeNow } from '@/store/settledScope'
 
 const PROJECT = 'aaaaaaaa-0000-4000-8000-000000000001'
 
@@ -48,29 +45,10 @@ beforeEach(() => {
   live.useLiveExecution.mockClear()
   getData.mockClear()
   useProjectStore.setState({ activeProjectId: PROJECT, activeProject: { id: PROJECT, name: 'Checkout' } as never })
-  useSuiteStore.setState({ activeSuiteNames: [], scopedProjectId: null })
-  useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
-  settleScopeNow()
 })
 
 describe('LiveExecutionPage suite scope', () => {
-  it('passes the SETTLED selection — several suites too — not the click-by-click one', async () => {
-    vi.useFakeTimers()
-    try {
-      render(<MemoryRouter><LiveExecutionPage /></MemoryRouter>)
-      expect(lastSuiteArg()).toBeNull()
-      act(() => { useSuiteStore.getState().setActiveSuites(['payments', 'cart'], PROJECT) })
-      // Not yet settled: the request is not rebuilt per click.
-      expect(lastSuiteArg()).toBeNull()
-      await act(async () => { await vi.advanceTimersByTimeAsync(SCOPE_SETTLE_MS) })
-      expect(lastSuiteArg()).toEqual(['cart', 'payments'])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('flag OFF: exactly the page-local single suite, as before', () => {
-    useMultiFiltersFlagStore.setState({ enabled: false, resolved: true })
+  it('passes the page-local suite: none until one is picked', () => {
     render(<MemoryRouter><LiveExecutionPage /></MemoryRouter>)
     expect(lastSuiteArg()).toBeNull()
   })

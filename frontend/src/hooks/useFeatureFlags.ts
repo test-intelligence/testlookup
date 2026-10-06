@@ -72,7 +72,7 @@ export function useFeatureEnabled(key: string): boolean {
  * closed, the answer `useFeatureEnabled` has always given).
  *
  * A caller that must not flicker across a project switch holds its last
- * answer while this reads `undefined` (see `useScopeUrlSync`).
+ * answer while this reads `undefined`.
  */
 export function useFeatureFlagStatus(key: string): boolean | undefined {
   const activeProjectId = useProjectStore((s) => s.activeProjectId)

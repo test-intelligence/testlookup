@@ -114,7 +114,7 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 - A view keeps the top-bar release, the window, the page's suite filter, and page settings such as the Summary mode.
 - Views belong to a project. The **Views** button appears once one project is selected.
 - **Share with the project** makes a view visible to every member; shared views are marked "(shared)". Opening someone else's view never shows you data you could not already see.
-- **My default for this page** opens that view when you first come to the page, unless the link you followed already names a release or suite.
+- **My default for this page** opens that view when you first come to the page, unless the link you followed already names a release.
 
 ## Limits
 
