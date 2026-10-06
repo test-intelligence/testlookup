@@ -17,7 +17,6 @@
  * (`savedViewsKey`), so a page with both asks once.
  */
 import { useEffect, useId, useRef, useState, type FormEvent, type MouseEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import { Bookmark, Share2, Star, Trash2 } from 'lucide-react'
@@ -29,7 +28,6 @@ import {
   updateSavedView,
   type SavedView,
 } from '@/services/savedViewsService'
-import { SCOPE_URL_KEYS } from '@/lib/scopeUrl'
 import { useAuthStore } from '@/store/authStore'
 import {
   defaultAppliedKey,
@@ -60,11 +58,8 @@ export interface SavedViewsMenuProps {
    * configuration under `explore`). They never replace a scope key.
    */
   extraFilters?: Record<string, unknown>
-  /**
-   * Whether the URL already describes the page, so my default view must not
-   * open over it. Default: the URL names releases or suites.
-   */
-  linked?: boolean
+  /** Whether the URL already describes the page, so my default view must not open over it. */
+  linked: boolean
   /**
    * `accent` (default): the Explorer's header button. `ghost`: the report
    * pages' header buttons (their `GhostBtn`, class for class).
@@ -106,7 +101,7 @@ export default function SavedViewsMenu({
   current,
   onApply,
   extraFilters,
-  linked: linkedProp,
+  linked,
   variant = 'accent',
 }: SavedViewsMenuProps) {
   const [open, setOpen] = useState(false)
@@ -128,9 +123,7 @@ export default function SavedViewsMenu({
   const views = orderViews((data ?? []).filter(isReportView), userId)
 
   // My default view for this page opens on the first visit in this tab,
-  // unless the URL already names releases or suites (a shared link wins).
-  const [params] = useSearchParams()
-  const linked = linkedProp ?? (params.has(SCOPE_URL_KEYS.release) || params.has(SCOPE_URL_KEYS.suites))
+  // unless the link already describes the page (a shared link wins).
   const myDefault = views.find((view) => view.is_default && view.user_id === userId) ?? null
   useEffect(() => {
     const key = defaultAppliedKey(projectId, page)

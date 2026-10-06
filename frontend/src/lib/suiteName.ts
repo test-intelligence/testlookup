@@ -1,8 +1,6 @@
 /**
  * What a suite NAME may be (contract C1, `suite_name_length`), with no store
- * attached: the scope URL, the suite store and the cross-filter all check a
- * name by these rules, and the cross-filter must not load the multi-filter
- * suite store to do it (P2). `store/suiteStore.ts` re-exports both.
+ * attached: the cross-filter checks a name by these rules (P2).
  */
 
 /** Longest suite name the contract accepts (C1, `suite_name_length`). */

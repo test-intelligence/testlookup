@@ -77,9 +77,6 @@ export const COVERAGE_DROP_WORDS = {
   outOfScope: 'A suite in this link’s drill-down is not in the page’s suite filter, so the map opens above it.',
 } as const
 
-/** The notice's reason for a drill-down the page could not open (the values are the sentences). */
-export const COVERAGE_DRILL_NOTICE_REASON = 'Drill-down in this link'
-
 export interface CoverageLevelRead {
   level: CoverageLevel
   /** How many levels of the path the map applied (the rest were cut). */

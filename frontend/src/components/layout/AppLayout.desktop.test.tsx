@@ -64,7 +64,6 @@ vi.mock('@/store/authStore', () => ({ useAuthStore: stores.useAuthStore }))
 vi.mock('./ReleasePicker', () => ({ ReleasePicker: () => <div data-stub="release-picker" /> }))
 vi.mock('./AppVersionBadge', () => ({ default: () => <div data-stub="app-version" /> }))
 vi.mock('./DegradedBanner', () => ({ default: () => null }))
-vi.mock('./ScopeUrlSyncGate', () => ({ default: () => null }))
 
 /** The Tailwind v4 `max-lg:` query, as the shell's narrow switch reads it. */
 const NARROW_QUERY = '(width < 64rem)'

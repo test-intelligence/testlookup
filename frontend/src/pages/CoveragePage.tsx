@@ -59,7 +59,7 @@ import { useCoverage, useTrendData } from '@/hooks/useMetrics'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
@@ -1597,9 +1597,8 @@ export default function CoveragePage() {
   const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
   const viewsMenu = useReportViewsMenu({
     route: '/coverage',
@@ -1768,7 +1767,6 @@ export default function CoveragePage() {
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
-            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

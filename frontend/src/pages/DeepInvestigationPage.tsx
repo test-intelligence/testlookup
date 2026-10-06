@@ -63,7 +63,7 @@ import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { scopeKey } from '@/lib/scopeParams'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -1707,9 +1707,8 @@ export default function DeepInvestigationPage() {
   const { isQaEngineer } = usePermissions()
 
   const [settings, setSettings] = useState<RunSettings>(loadSettings)
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteNames, suiteLabel, multiLabel, flagResolved } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   const { options: suiteOptions } = useSuiteOptions(0)
   useEffect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) }, [settings])
 
@@ -1751,7 +1750,6 @@ export default function DeepInvestigationPage() {
   const suiteBaselineRef = useRef<string | null>(null)
   const focusedRunLoading = Boolean(fallbackFetch.isLoading)
   useEffect(() => {
-    if (!flagResolved) return
     if (suiteBaselineRef.current === null) {
       suiteBaselineRef.current = suiteKey
       return
@@ -1766,7 +1764,7 @@ export default function DeepInvestigationPage() {
     if (recentItems.some(r => r.id === runId)) return
     if (focusedRun && runInSuites(focusedRun, suiteNames)) return
     navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
-  }, [flagResolved, suiteKey, suiteNames, pageSuiteFilter, runId, recentItems, focusedRun, runsLoading, runsValidating, focusedRunLoading, navigate])
+  }, [suiteKey, suiteNames, pageSuiteFilter, runId, recentItems, focusedRun, runsLoading, runsValidating, focusedRunLoading, navigate])
 
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
   const { data: findings = [] } = useDeepFindings(runId ?? null)
@@ -1939,7 +1937,6 @@ export default function DeepInvestigationPage() {
           </GhostBtn>
           <SuiteFilterSelect
             value={selectedSuite}
-            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

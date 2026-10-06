@@ -24,7 +24,7 @@ import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { normalizeScope } from '@/lib/scopeParams'
-import { SCOPE_URL_KEYS } from '@/lib/scopeUrl'
+import { RELEASE_PARAM } from '@/components/layout/ReleasePicker'
 import type { SavedView } from '@/services/savedViewsService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useReleaseStore } from '@/store/releaseStore'
@@ -87,7 +87,7 @@ export function useReportViewsMenu({
   // the URL alone would lose the race with the default-view effect. The page
   // suite has no URL key, so it cannot say a link was followed. A page with
   // no release (Defects) is never "linked" by one.
-  const linked = release && (params.has(SCOPE_URL_KEYS.release) || (activeReleaseId !== null && scopedProjectId === projectId))
+  const linked = release && (params.has(RELEASE_PARAM) || (activeReleaseId !== null && scopedProjectId === projectId))
 
   const onApply = useCallback(
     (scope: ReportViewScope, view: SavedView) => {

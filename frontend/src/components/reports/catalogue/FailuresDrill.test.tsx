@@ -18,9 +18,6 @@ import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import type { CatalogParams } from '@/components/charts/chartCatalogSources'
 import { __resetChartConcurrency } from '@/services/chartApi'
-import { useMultiFiltersFlagStore } from '@/store/multiFiltersFlag'
-import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
-import { useSuiteStore } from '@/store/suiteStore'
 import { DRILL_DROP_WORDS } from '@/hooks/useDrillPath'
 import { PageSuiteTargetContext, type PageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import type { RowsPanelProps } from './RowsPanel.model'
@@ -92,7 +89,7 @@ vi.mock('./RowsPanel', () => {
 })
 
 import FailuresDrill, { DRILL_SECTION_MIN_HEIGHT } from './FailuresDrill'
-import { DRILL_NOTICE_REASON, DRILL_TITLE, LADDER_DROP_WORDS, LADDER_TOP_N, ROOT_CRUMB } from './FailuresDrill.model'
+import { DRILL_TITLE, LADDER_DROP_WORDS, LADDER_TOP_N, ROOT_CRUMB } from './FailuresDrill.model'
 
 const URL = '/api/v1/analytics/chart-data'
 const HOSTILE = '<img src=x onerror="window.__xss=1">'
@@ -249,9 +246,6 @@ beforeEach(() => {
   get.mockImplementation((url: string, config: { params: CatalogParams }) =>
     url === URL ? respond(config.params) : Promise.reject(Object.assign(new Error('no fixture'), { response: { status: 500, data: {} } })),
   )
-  useMultiFiltersFlagStore.setState({ enabled: false, resolved: true })
-  useSuiteStore.getState().clearSuites()
-  useScopeNoticeStore.getState().dismiss()
   globalThis.ResizeObserver = class {
     observe() {}
     unobserve() {}
@@ -487,14 +481,6 @@ describe('FailuresDrill (VIZ-602 / 603)', () => {
     await level('tests')
   })
 
-  it('with the page filter on, a dropped level goes to the page’s notice instead', async () => {
-    useMultiFiltersFlagStore.setState({ enabled: true, resolved: true })
-    renderDrill({ url: '/failures?drill=suite~payments&drill=nonsense' })
-    await level('statuses')
-    expect(section().querySelector('[data-drill-notice]')).toBeNull()
-    expect(useScopeNoticeStore.getState().notices).toEqual([{ dimension: 'drill', values: [DRILL_DROP_WORDS.invalid], reason: DRILL_NOTICE_REASON }])
-  })
-
   it('open rows of another section’s shape (the scatter’s [test]) are not this section’s panel', async () => {
     renderDrill({ url: '/failures?rows=by~scatter-project&rows=test~fp-1' })
     await level('suites')
@@ -535,8 +521,6 @@ describe('FailuresDrill (VIZ-602 / 603)', () => {
       fireEvent.click(rect('failed:payments'), { shiftKey: true })
       expect(setSuite.mock.calls).toEqual([['Payments']])
       expect(drillParams()).toEqual([])
-      // Never the multi-filter store: it is not the page's filter.
-      expect(useSuiteStore.getState().activeSuiteNames).toEqual([])
     })
 
     it('the suite already selected is not written again', async () => {

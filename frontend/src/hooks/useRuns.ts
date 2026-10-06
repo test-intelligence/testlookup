@@ -5,7 +5,6 @@ import { useReleaseScope } from './useReleaseScope'
 import { keyPart, scopeArg } from '@/lib/scopeParams'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
-import { scopedFetch } from '@/services/scopeAbort'
 
 interface UseRunsOptions {
   /**
@@ -61,17 +60,14 @@ export function useRuns(
   const effectiveParams = normalizedSuiteParams(params)
   return useProjectScopedSWR(
     'runs',
-    // `scopedFetch`: this read follows the report scope, so it opts into
-    // superseded-scope aborting (services/scopeAbort.ts).
-    (projectId) =>
-      scopedFetch(() => {
-        // Global filter first, caller's params second, so an EXPLICIT
-        // `release_id` from a page that is already about one release wins
-        // over the header picker rather than being silently overridden by it.
-        const query = { ...(release !== null ? { release_id: release } : {}), ...effectiveParams }
-        // A quiet read adds its option; every other call is exactly what it was.
-        return opts?.quiet ? runsService.list(projectId, query, { suppressToast: true }) : runsService.list(projectId, query)
-      }),
+    (projectId) => {
+      // Global filter first, caller's params second, so an EXPLICIT
+      // `release_id` from a page that is already about one release wins
+      // over the header picker rather than being silently overridden by it.
+      const query = { ...(release !== null ? { release_id: release } : {}), ...effectiveParams }
+      // A quiet read adds its option; every other call is exactly what it was.
+      return opts?.quiet ? runsService.list(projectId, query, { suppressToast: true }) : runsService.list(projectId, query)
+    },
     { refreshInterval: REFRESH_INTERVALS.ACTIVE },
     // The EFFECTIVE release, in the deps and not just the params: without it,
     // switching releases would reuse the previous release's cached run list

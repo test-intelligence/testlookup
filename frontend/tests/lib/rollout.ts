@@ -8,7 +8,7 @@
  * Everything fails closed, as the harness does: an unmocked request fails the
  * test by name, a request that leaves the dev server fails it, and nothing is
  * skipped. A flag is ON only when a spec lists it (`FlagMap`); since Phase D
- * (S6) only the report-context and multi-filter specs list one.
+ * no rollout spec lists one (the last viz flags were retired).
  */
 import { expect, type Locator, type Page } from '@playwright/test'
 import {
@@ -98,17 +98,17 @@ const P = PROJECT_ID
 
 /**
  * What the app shell asks for on every report route, whatever the flags
- * (session and project list twice, three shell flags, badges, notifications,
+ * (session and project list twice, two shell flags, badges, notifications,
  * the release picker, the AI settings), as the former flag-off spec recorded
- * it. Since Phase D (S5) no report page asks a chart flag, and S6 deleted
- * the seam that asked them, so every page's inventory starts here.
+ * it. Since Phase D no report page asks a viz flag: S6 deleted the chart
+ * seam, and M1-M3 the multi-filter gate (which asked `viz_multi_filters` on
+ * every page), so every page's inventory starts here.
  */
 export const SHELL_BASE = [
   'GET /api/v1/auth/me',
   'GET /api/v1/auth/me',
   `GET /api/v1/feature-flags/ask_ai_chat/status?project_id=${P}`,
   `GET /api/v1/feature-flags/manual_upload/status?project_id=${P}`,
-  `GET /api/v1/feature-flags/viz_multi_filters/status?project_id=${P}`,
   'GET /api/v1/me/assigned-failures/count',
   'GET /api/v1/notifications/history/unread-count',
   'GET /api/v1/notifications/history?unread_only=false&limit=50',

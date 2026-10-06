@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased - Visualization Upgrade: the report-context panel and the multi-select filters are removed (Phase D, M0-M3)
+
+**The code behind `viz_report_context` and `viz_multi_filters` is deleted,
+and migration 0197 retires both rows.** The owner turned them off for good on
+2026-10-04. The other session that was to remove the panel never landed it,
+so this takes over its scope (M0) together with Track M (M1-M3). With 0196,
+every viz flag row 0192 seeded is retired. **Nothing users see changes**: both
+flags were off everywhere, so none of this code ran.
+
+- **M0, the report-context panel:** `ReportChrome` / `Slot` / `View`,
+  `CompactReportContext`, `ReportContextHeader`, `MetricsStrip`,
+  `metricsModel`, `releaseOptions`, `components/filters/*` (filter bar,
+  chips, filtered summary), `useReportMetrics`, the `/__report-context` dev
+  page, and `report-context.spec.ts`.
+  - `contextModel.windowText`, the zoom's only use, moved to
+    `charts/zoom/windowWords.ts`.
+  - `reportRoutes.ts` keeps the route registry, which saved views key on; its
+    ratchet keeps the registry checks.
+- **M1-M3, the multi-select runtime:** `ScopeUrlSyncGate` / `Runtime`,
+  `multiFiltersRuntime*`, `ReleaseSummary`, `ScopeSummaryButton`,
+  `useScopeUrlSync`, `lib/scopeUrl` and `scopeUrlValidation`, the stores
+  `multiFiltersFlag`, `settledScope`, `suiteStore`, `scopeNoticeStore` and
+  `reportScope`, the superseded-request aborting (`scopeAbort*`, its SWR
+  middleware and axios hooks), and `report-scope.spec.ts`.
+  - `useSuiteScope.ts` is replaced by `usePageSuiteFilter.ts`, the page-local
+    suite each report page uses.
+  - `useReleaseScope` returns one release or `null`.
+  - `releaseStore` is single-release. An entry saved by a multi-select build
+    still restores: the merge reads the list's first valid id, and the version
+    stays 0.
+  - `useChartZoom` keys its reset on the project, release and window directly.
+  - `ReleasePicker`'s effects no longer wait for the flag to answer, so they
+    run from the first render, as before VIZ-303.
+  - The Failures drill and the coverage map always say a dropped link
+    inline.
+  - `SavedViewsMenu`'s `linked` prop is required; the page decides it.
+- **Flags:** migration 0197 deletes `viz_report_context` and
+  `viz_multi_filters`. The downgrade re-inserts both off. `flags.json` marks
+  them `"retired_by": "0197"`. `viz_flags.py` gains `VIZ_RETIRED_BY_0196` /
+  `VIZ_RETIRED_BY_0197`, and `VIZ_LIVE_FLAG_KEYS` is empty.
+  `frontend/src/config/vizFlags.ts`, now with no reader, is deleted.
+- **e2e harness:** `SHELL_BASE` loses the
+  `feature-flags/viz_multi_filters/status` lookup every page made through the
+  gate.
+- **Not in this change:** the backend `include=report_metrics` block on
+  `/metrics/summary` (contract C6) that only the panel requested. It has no
+  caller left and is a separate removal.
+- **Tests:**
+  - Deleted with their modules.
+  - `usePageSuiteFilter.test` and `scopeParams.test` keep the cases that
+    still apply.
+  - `releaseStore.restore.test` covers N3 validation and the old-entry
+    restore.
+  - The logout test covers the release entry and a stale `tl.suite-filter`.
+  - The coverage-map tests now assert the dropped-link sentences in the
+    frame.
+  - `test_viz_flag_defaults.py` holds 0197 to the marks.
+  - 0197 was run upgrade, downgrade, upgrade on a throwaway Postgres 16.
+
 ## Unreleased - Docs: the repository user guide covers the charts (Phase D, U2)
 
 The in-app chart guide (`/docs/charts`, U1) is now mirrored in the

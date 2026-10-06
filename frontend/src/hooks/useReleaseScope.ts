@@ -1,7 +1,5 @@
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useReleaseStore } from '@/store/releaseStore'
-import { useMultiFiltersEnabled } from '@/store/multiFiltersFlag'
-import { useSettledScopeStore } from '@/store/settledScope'
 import { useActiveProjectId } from './useProjectScopedSWR'
 
 /**
@@ -29,24 +27,7 @@ export function useReleaseScope(): ReleaseScope {
   const projectId = useActiveProjectId()
   const releaseId = useReleaseStore(s => s.activeReleaseId)
   const scopedProjectId = useReleaseStore(s => s.scopedProjectId)
-  const multi = useMultiFiltersEnabled()
-  // Flag ON reads the SETTLED selection (store/settledScope.ts): data follows
-  // the pickers 250 ms after the last change, as one request, and the pair
-  // (ids, project) settles together so the guard below holds for it too.
-  const settledIds = useSettledScopeStore(s => s.releaseIds)
-  const settledProjectId = useSettledScopeStore(s => s.releaseProjectId)
   if (projectId === null || projectId === ALL_PROJECTS_ID) return null
-  if (multi) {
-    // The guard below, on the SETTLED pair: the active project changes at
-    // once, so while project A's selection is still settling nothing is sent
-    // for B. (Not the raw pair: that would let a clear-then-reselect burst
-    // through the debounce as an extra request.)
-    if (settledProjectId !== projectId) return null
-    // The whole selection, sorted and identity-stable (OR within the
-    // dimension, so order is not meaning), or null for none — never `[]`,
-    // which is truthy and would read as "filtered" to `if (releaseId)`.
-    return settledIds.length > 0 ? settledIds : null
-  }
   // The selection must belong to the project being asked about.
   //
   // `ReleasePicker` clears a selection that outlived its project, but it does
@@ -62,18 +43,13 @@ export function useReleaseScope(): ReleaseScope {
   // `scopedProjectId` is the field the store exists to record. Comparing it
   // here makes the guard depend on the pairing rather than on effect ordering.
   if (scopedProjectId !== projectId) return null
-  // Flag OFF: exactly the pre-multi-select answer — the scalar, or null.
   return releaseId
 }
 
 /**
- * What `useReleaseScope` hands a consumer.
- *
- *  - flag off: `string | null`, exactly as before VIZ-303;
- *  - flag on:  `string[] | null` (sorted, non-empty, stable identity).
- *
- * Consumers never branch on the shape: they pass it to a service through
- * `scopeArg` (one value becomes the legacy scalar on the wire) and into an SWR
- * key through `keyPart` (a sorted joined string, never an array).
+ * What `useReleaseScope` hands a consumer: the one release, or `null`.
+ * (VIZ-303's multi-release mode, behind `viz_multi_filters`, was removed in
+ * Phase D; consumers still pass it through `scopeArg` / `keyPart`, which take
+ * a scalar as it is.)
  */
-export type ReleaseScope = string | readonly string[] | null
+export type ReleaseScope = string | null

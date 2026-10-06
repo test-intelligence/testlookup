@@ -1,29 +1,10 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { SWRConfig, type SWRConfiguration } from 'swr'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
 import SettingsBackBar from './SettingsBackBar'
-import ScopeUrlSyncGate from './ScopeUrlSyncGate'
-import { useMultiFiltersRuntimeStore } from './multiFiltersRuntimeLoader'
-import { scopeSupersededMiddleware } from '@/services/scopeAbortCore'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
-
-/** VIZ-303: a request aborted because the report scope moved on is never
- *  shown as an error. Nested config: SWR concatenates `use` with the root's
- *  and keeps the root's cache (no `provider` here). */
-const LAYOUT_SWR_CONFIG: SWRConfiguration = { use: [scopeSupersededMiddleware] }
-
-/**
- * The report chrome slot comes with the lazy multi-filters runtime: it renders
- * nothing unless `viz_multi_filters` is on, and in the app the flag reads 'on'
- * only once that runtime has loaded (`ScopeUrlSyncGate`).
- */
-function ReportChromeHost() {
-  const runtime = useMultiFiltersRuntimeStore((s) => s.runtime)
-  return runtime ? <runtime.ReportChromeSlot /> : null
-}
 
 /**
  * VIZ-106 (Wave 2.6, OD-9): below 1024 px the sidebar is a drawer. This is
@@ -73,11 +54,7 @@ export default function AppLayout() {
   const drawerOpen = narrow && navOpen
 
   return (
-    <SWRConfig value={LAYOUT_SWR_CONFIG}>
-      {/* VIZ-306: the ONE mount of the report-scope URL sync. It resolves the
-          `viz_multi_filters` flag for every other reader; with the flag off
-          it does nothing else, and its implementation is never downloaded. */}
-      <ScopeUrlSyncGate />
+    <>
       <div className="flex h-screen overflow-hidden bg-[var(--color-bg)]">
         <a
           href="#main-content"
@@ -115,26 +92,19 @@ export default function AppLayout() {
             <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
               <SettingsBackBar />
               {/* VIZ-104 (Wave 2.5): the ONE page-level chart announcer, for
-                  every routed page. Each ChartFrame reports its changes to it,
-                  and the report chrome's filtered-dataset line (FilteredSummary)
-                  coalesces with them into one polite message — so it wraps the
-                  chrome AND the page. Without it a frame renders but never
-                  announces. No routed page mounts a provider of its own (a
-                  second one would be a second pair of live regions): the dev
-                  gallery and report-context pages that do sit outside this
-                  layout. `AppLayout.announcer.test.tsx` holds both facts. */}
+                  every routed page. Each ChartFrame reports its changes to it.
+                  Without it a frame renders but never announces. No routed page
+                  mounts a provider of its own (a second one would be a second
+                  pair of live regions): the dev gallery pages that do sit
+                  outside this layout. `AppLayout.announcer.test.tsx` holds both
+                  facts. */}
               <ChartAnnouncerProvider>
-                {/* VIZ-301: the ONE mount of the report chrome (header, filter bar,
-                    chips, summary, metrics strip). It renders nothing unless the
-                    route is a registered report route and `viz_report_context` is
-                    on. */}
-                <ReportChromeHost />
                 <Outlet />
               </ChartAnnouncerProvider>
             </div>
           </main>
         </div>
       </div>
-    </SWRConfig>
+    </>
   )
 }

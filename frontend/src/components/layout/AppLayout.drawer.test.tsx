@@ -51,7 +51,6 @@ vi.mock('@/store/authStore', () => ({ useAuthStore: stores.useAuthStore }))
 vi.mock('./ReleasePicker', () => ({ ReleasePicker: () => null }))
 vi.mock('./AppVersionBadge', () => ({ default: () => null }))
 vi.mock('./DegradedBanner', () => ({ default: () => null }))
-vi.mock('./ScopeUrlSyncGate', () => ({ default: () => null }))
 
 /** A controllable `matchMedia`: `setNarrow` fires the change the way a resize does. */
 const viewport = { narrow: true, listeners: new Set<() => void>() }

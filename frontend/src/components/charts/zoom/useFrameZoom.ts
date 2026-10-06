@@ -115,9 +115,8 @@ export function useFrameZoom({
 
   const onPromote = useCallback(
     (days: number) => {
-      // The report filter bar's own setter: the store, and — with
-      // `viz_multi_filters` on — `?window=` through the URL sync. The new
-      // window changes the scope, and that clears this zoom.
+      // The global window store's setter. The new window changes the scope,
+      // and that clears this zoom.
       setWindowDays(days)
       // Keyed on the title, not a `useId`: an id here would renumber every id
       // an unzoomable frame renders, for a report only a zoomable one makes.

@@ -2,7 +2,6 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 import { extractErrorMessage, shouldToastError } from './apiErrors'
-import { trackScopeRequest, untrackScopeRequest } from './scopeAbortCore'
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -85,10 +84,7 @@ api.interceptors.request.use((config) => {
   if (token && isSameOriginRequest(config)) {
     config.headers.Authorization = `Bearer ${token}`
   }
-  // VIZ-303: a GET that follows the settled report scope gets an abort signal,
-  // fired when the scope moves on (services/scopeAbort.ts). Every other
-  // request passes through untouched.
-  return trackScopeRequest(config)
+  return config
 })
 
 // ── 401-refresh exclusions ───────────────────────────────────────────────────
@@ -153,16 +149,9 @@ function processQueue(error: unknown, token: string | null) {
 
 // Response interceptor: on 401 try to refresh once, then retry original request
 api.interceptors.response.use(
-  (res) => {
-    untrackScopeRequest(res.config)
-    return res
-  },
+  (res) => res,
   async (error: AxiosError<{ detail?: unknown }>) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
-
-    // Aborted because the report scope moved on: not a failure. No toast; the
-    // SWR middleware keeps it off the page (services/scopeAbort.ts).
-    if (untrackScopeRequest(originalRequest, error)) return Promise.reject(error)
 
     if (
       error.response?.status === 401 &&

@@ -46,7 +46,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { usePageSuiteFilter } from '@/hooks/useSuiteScope'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useLiveExecution, computeLiveStats } from '@/hooks/useLiveExecution'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
@@ -571,9 +571,8 @@ export default function LiveExecutionPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   // In All Projects mode, pass undefined so polling returns all sessions
   const projectId = isAllProjects ? undefined : selectedProject?.id?.toString()
-  // VIZ-303: page-local with viz_multi_filters off (unchanged), the global
-  // suite store with it on — see usePageSuiteFilter.
-  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel, multiLabel } = usePageSuiteFilter()
+  // The page-local suite filter (usePageSuiteFilter).
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // Cutoff (in days) for completed sessions shown alongside the always-current
   // active set. 1 = last 24 hours; 0 = no cutoff. Sourced from the
   // shared user-level preference so selecting "24h" here propagates to
@@ -931,7 +930,6 @@ export default function LiveExecutionPage() {
           <LiveWindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
-            multiLabel={multiLabel}
             onChange={setSelectedSuite}
             options={suiteOptions}
             allLabel="All suites"

@@ -7,10 +7,9 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { addUtcDays } from '../seriesAlignment'
-import FilterChips from '@/components/filters/FilterChips'
 import ChartRangeBrush, { APPLY_AS_FILTER_LABEL, RESET_ZOOM_LABEL } from './ChartRangeBrush'
 import type { BrushScale } from './brushScale'
-import { applyAsWindowLabel, windowAppliedAnnouncement } from './windowWords'
+import { applyAsWindowLabel, windowAppliedAnnouncement, windowText } from './windowWords'
 import { PROMOTE_NOT_LATEST_REASON, RELATIVE_DAY_WORDS, type PromoteDecision, type ZoomRange } from './zoomModel'
 
 const XS = Array.from({ length: 30 }, (_, i) => addUtcDays('2026-09-01', i))
@@ -373,25 +372,12 @@ describe('ChartRangeBrush — Reset zoom and Apply as time filter', () => {
     expect(onPromote).not.toHaveBeenCalled()
   })
 
-  // Review F8: "last 1 day" on the button, "last 24 hours" on the chip it writes to.
-  it('names a one-day window exactly as the filter chip it sets does', () => {
+  // Review F8: a one-day window is "last 24 hours", never "last 1 day".
+  it('names a one-day window "last 24 hours", never "last 1 day"', () => {
     render(<Harness initial={{ start: 29, end: 29 }} promote={{ enabled: true, days: 1 }} />)
     const label = screen.getByRole('button', { name: /^Apply as time filter: / }).textContent ?? ''
-    render(
-      <FilterChips
-        releases={[]}
-        suites={[]}
-        windowDays={1}
-        defaultWindowDays={30}
-        onRemoveRelease={() => {}}
-        onRemoveSuite={() => {}}
-        onResetWindow={() => {}}
-        onClearAll={() => {}}
-      />,
-    )
-    const chipWords = label.replace('Apply as time filter: ', '')
-    expect(chipWords).toBe('last 24 hours')
-    expect(screen.getByText(chipWords)).toBeInTheDocument()
+    expect(label.replace('Apply as time filter: ', '')).toBe('last 24 hours')
+    expect(windowText(1)).toBe('Last 24 hours')
     expect(windowAppliedAnnouncement(1)).toBe('Page window set to the last 24 hours')
     expect(applyAsWindowLabel(7)).toBe('Apply as time filter: last 7 days')
   })

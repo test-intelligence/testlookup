@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EnvelopeMeta } from '@/lib/viz/contracts'
 import { analyzeTrend, anomalyRuleText, formatTrendPercent } from '@/lib/trendStats'
 import { useProjectStore } from '@/store/projectStore'
-import { useSuiteStore } from '@/store/suiteStore'
+import { useReleaseStore } from '@/store/releaseStore'
 import { useTimeWindowStore } from '@/store/timeWindowStore'
 import TimeSeriesChartFrame from './TimeSeriesChartFrame'
 import { ANNOUNCE_DEBOUNCE_MS, ChartAnnouncerProvider } from './ChartAnnouncer'
@@ -157,7 +157,7 @@ const dataRows = () =>
 function resetScope() {
   useTimeWindowStore.setState({ days: 30 })
   useProjectStore.setState({ activeProjectId: null })
-  useSuiteStore.setState({ activeSuiteNames: [], scopedProjectId: null })
+  useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
 }
 
 describe('TimeSeriesChartFrame — VIZ-407 zoom', () => {
@@ -293,8 +293,9 @@ describe('TimeSeriesChartFrame — VIZ-407 zoom', () => {
     act(() => useProjectStore.setState({ activeProjectId: 'project-b' }))
     expect(screen.queryByRole('button', { name: RESET_ZOOM_LABEL })).toBeNull()
 
+    // A release of the active project scopes the requests, so it resets the zoom too.
     zoomToLast(10)
-    act(() => useSuiteStore.setState({ activeSuiteNames: ['payments'] }))
+    act(() => useReleaseStore.setState({ activeReleaseId: '11111111-0000-4000-8000-000000000001', scopedProjectId: 'project-b' }))
     expect(screen.queryByRole('button', { name: RESET_ZOOM_LABEL })).toBeNull()
   })
 

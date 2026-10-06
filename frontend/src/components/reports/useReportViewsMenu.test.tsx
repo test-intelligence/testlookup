@@ -80,7 +80,7 @@ beforeEach(() => {
   toast.mockReset()
   window.sessionStorage.clear()
   useProjectStore.setState({ activeProjectId: 'p1' })
-  useReleaseStore.setState({ activeReleaseId: 'r1', activeReleaseIds: ['r1'], scopedProjectId: 'p1' })
+  useReleaseStore.setState({ activeReleaseId: 'r1', scopedProjectId: 'p1' })
   useTimeWindowStore.setState({ days: 14 })
 })
 
@@ -160,10 +160,10 @@ describe('useReportViewsMenu', () => {
 
   it('linked: a release in the URL, or one already in effect for this project', () => {
     expect(renderMenuHook().result.current?.linked).toBe(true)
-    useReleaseStore.setState({ activeReleaseId: 'r1', activeReleaseIds: ['r1'], scopedProjectId: 'other-project' })
+    useReleaseStore.setState({ activeReleaseId: 'r1', scopedProjectId: 'other-project' })
     expect(renderMenuHook().result.current?.linked).toBe(false)
     expect(renderMenuHook({}, '/trends?release=r9').result.current?.linked).toBe(true)
-    useReleaseStore.setState({ activeReleaseId: null, activeReleaseIds: [], scopedProjectId: null })
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     expect(renderMenuHook().result.current?.linked).toBe(false)
   })
 })
@@ -182,7 +182,7 @@ describe('useReportViewsMenu with the menu: my default view', () => {
   const myDefault = view({ release_ids: ['r2'], release_id: 'r2', suites: ['Checkout'], window: 30 }, { is_default: true })
 
   it('opens on the first visit when no release is in effect', async () => {
-    useReleaseStore.setState({ activeReleaseId: null, activeReleaseIds: [], scopedProjectId: null })
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     service.listSavedViews.mockResolvedValue([myDefault])
     const setSuite = vi.fn()
     render(<Page setSuite={setSuite} />, { wrapper: routerAt('/trends') })
@@ -198,7 +198,7 @@ describe('useReportViewsMenu with the menu: my default view', () => {
     await waitFor(() => expect(service.listSavedViews).toHaveBeenCalledTimes(1))
     first.unmount()
 
-    useReleaseStore.setState({ activeReleaseId: null, activeReleaseIds: [], scopedProjectId: null })
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     render(<Page setSuite={setSuite} />, { wrapper: routerAt('/trends?release=r9') })
     await waitFor(() => expect(service.listSavedViews).toHaveBeenCalledTimes(2))
     // Let the default-view effect run, if it were going to.

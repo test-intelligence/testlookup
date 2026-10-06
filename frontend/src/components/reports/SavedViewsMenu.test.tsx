@@ -60,14 +60,14 @@ const CURRENT = { releaseIds: ['r2'], suiteNames: ['cart', 'payments'], windowDa
 function renderMenu(
   onApply = vi.fn(),
   url = '/trends',
-  extra: Pick<ComponentProps<typeof SavedViewsMenu>, 'extraFilters' | 'linked'> = {},
+  extra: Partial<Pick<ComponentProps<typeof SavedViewsMenu>, 'extraFilters' | 'linked'>> = {},
 ) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[url]}>
       <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
     </MemoryRouter>
   )
-  render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={onApply} {...extra} />, { wrapper })
+  render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={onApply} linked={false} {...extra} />, { wrapper })
   return onApply
 }
 
@@ -160,7 +160,7 @@ describe('SavedViewsMenu', () => {
     await waitFor(() => expect(service.updateSavedView).toHaveBeenCalledWith('v1', { is_default: true }))
   })
 
-  it('opens my default once per tab, and never over a scope the URL names', async () => {
+  it('opens my default once per tab, and never over a link that describes the page', async () => {
     service.listSavedViews.mockResolvedValue([view({ is_default: true })])
     const onApply = renderMenu()
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1))
@@ -171,7 +171,8 @@ describe('SavedViewsMenu', () => {
     expect(again).not.toHaveBeenCalled()
 
     window.sessionStorage.clear()
-    const linked = renderMenu(vi.fn(), '/trends?release=r9')
+    // The page (`useReportViewsMenu`) says `?release=` describes it.
+    const linked = renderMenu(vi.fn(), '/trends?release=r9', { linked: true })
     await waitFor(() => expect(service.listSavedViews).toHaveBeenCalledTimes(3))
     expect(linked).not.toHaveBeenCalled()
   })
@@ -190,7 +191,7 @@ describe('SavedViewsMenu', () => {
     })
   })
 
-  it('VIZ-505: my default hands onApply the view, and `linked` overrides the URL rule both ways', async () => {
+  it('VIZ-505: my default hands onApply the view, and `linked` alone decides, whatever the URL', async () => {
     const mine = view({ is_default: true, filters: { kind: 'report_view', page: 'trends', window: 14, explore: { metric: 'pass_rate' } } })
     service.listSavedViews.mockResolvedValue([mine])
     const onApply = renderMenu()
@@ -225,7 +226,7 @@ describe('SavedViewsMenu', () => {
         const timer = setTimeout(() => setHeader(true), 30)
         return () => clearTimeout(timer)
       }, [loading])
-      return header ? <SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} variant="ghost" /> : null
+      return header ? <SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} linked={false} variant="ghost" /> : null
     }
     render(
       <MemoryRouter initialEntries={['/trends']}>
@@ -253,7 +254,7 @@ describe('SavedViewsMenu', () => {
         <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
       </MemoryRouter>
     )
-    render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} variant="ghost" />, { wrapper })
+    render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} linked={false} variant="ghost" />, { wrapper })
     const trigger = screen.getByRole('button', { name: /Views/ })
     expect(trigger.className).toBe(
       'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50',

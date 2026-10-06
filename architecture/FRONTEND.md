@@ -106,9 +106,16 @@ data). The `.badge-*` primitives already sit on the tokens.
   removed every gate and flag-off path, and S6 deleted the seam and its ratchet: every chart
   section mounts unconditionally. Migration 0196 (F1) then deleted those three rows and the
   never-read `viz_customize`; `contracts/viz/flags.json` keeps all six as the record of what
-  0192 seeded, marking the four `"retired_by": "0196"`. `config/vizFlags.ts` lists only the
-  two live keys, `viz_report_context` and `viz_multi_filters` (off for good, still read by the
-  report-chrome slot and the multi-filter runtime until that code goes).
+  0192 seeded, marking the four `"retired_by": "0196"`.
+- **No report scope beyond one release and one page suite.** The report-context panel
+  (`viz_report_context`: header, filter bar, chips, metrics strip) and the multi-select
+  release/suite filters (`viz_multi_filters`: their stores, `?release=&suites=&window=` URL
+  sync, superseded-request aborting) stayed off and were deleted in Phase D (M0-M3); migration
+  0197 retired their two rows, so no viz flag is left and `config/vizFlags.ts` is gone. The
+  scope is the top-bar project and release (`useReleaseScope`: one id or `null`), the global
+  window, and each page's own suite select (`usePageSuiteFilter`), which "Filter page by this"
+  writes through `pageSuiteTarget`. Saved views (`SavedViewsMenu`, `useReportViewsMenu`) keep
+  the report-route registry (`reportRoutes.ts`).
 - **A page change is one import and one mount** of a small static composite
   (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only ONE
   `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported

@@ -40,7 +40,6 @@ import type { ChartMark, MarkIntent } from '@/components/charts/marks'
 import {
   answersLevel,
   COLOR_BY_OPTIONS,
-  COVERAGE_DRILL_NOTICE_REASON,
   COVERAGE_MAP_CAPTION,
   COVERAGE_MAP_EMPTY_HEIGHT,
   COVERAGE_MAP_TITLE,
@@ -63,8 +62,6 @@ import {
 } from '@/components/charts/coverageMap.model'
 import { encodeDrillLevel, ownedRows, readDrillLevels, useDrillPath, writeDrillParams } from '@/hooks/useDrillPath'
 import { useCrossFilter } from '@/hooks/useCrossFilter'
-import { useMultiFiltersEnabled } from '@/store/multiFiltersFlag'
-import { useScopeNoticeStore } from '@/store/scopeNoticeStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type { DrillLevel, EnvelopeMeta, TreeChart } from '@/lib/viz/contracts'
 import { clampCatalogueDays, useCatalogueParams } from './catalogueScope'
@@ -122,7 +119,6 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
   const [, setSearchParams] = useSearchParams()
   const drillState = useDrillPath()
   const { path, truncate, openRows, closeRows } = drillState
-  const multi = useMultiFiltersEnabled()
   const rows = ownedRows(drillState, COVERAGE_ROWS_OWNER)
   // Cut at the first level the map cannot open, a suite outside the page's suite filter included (R1B-6).
   const suiteKey = JSON.stringify(suiteFilter ?? null)
@@ -174,14 +170,8 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
     [setSearchParams, usedPath],
   )
 
-  // What the link named that was not applied: the page's notice when the page has one (the
-  // report filter bar, `viz_multi_filters`), else the frame's footer. As the Failures ladder does.
+  // What the link named that was not applied: said in the frame's footer, as the Failures ladder does.
   const dropped = useMemo(() => [...drillState.dropped, ...read.dropped], [drillState.dropped, read.dropped])
-  const droppedKey = JSON.stringify(dropped)
-  useEffect(() => {
-    const values = JSON.parse(droppedKey) as string[]
-    if (multi && values.length > 0) useScopeNoticeStore.getState().pushNotice({ dimension: 'drill', values, reason: COVERAGE_DRILL_NOTICE_REASON })
-  }, [droppedKey, multi])
   const onLevelUp = useCallback(() => {
     pendingFocus.current = true
     truncate(used - 1)
@@ -275,7 +265,7 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
         footer={
           <>
             {/* A shared link that named a level this page could not open (C5: the path stops there, and says so). */}
-            {(multi ? [] : dropped).map((sentence) => (
+            {dropped.map((sentence) => (
               <span key={sentence} data-drill-dropped="">
                 {sentence}
               </span>
