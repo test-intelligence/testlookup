@@ -4,17 +4,22 @@ import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import { STATES_META } from '@/pages/dev/chartStatesFixtures'
 import { mergeCompareMeta, validateCompare } from './compareData'
 import {
+  COMPARE_DEFAULT_SUITES,
   COMPARE_MAX_SERIES,
+  COMPARE_URL_KEYS,
   compareComparability,
   compareOptions,
   compareRequests,
   compareSeries,
   compareStyles,
+  defaultCompareSuites,
   effectiveCompareBy,
   pairKey,
+  readCompareChoice,
   seriesCount,
   stylesForLines,
   tooManyReason,
+  writeCompareChoice,
   type CompareSlice,
 } from './compareModel'
 
@@ -183,5 +188,47 @@ describe('the comparison’s envelope and comparability', () => {
     const bad = validateCompare({ parts: [{ releaseId: R1, payload: good }, { releaseId: R2, payload: { meta: STATES_META } }] })
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.errors[0]).toMatch(/^slice 1: /)
+  })
+})
+
+describe('Compare picks its own suites and releases (C1)', () => {
+  const K = COMPARE_URL_KEYS.suite
+
+  it('an absent key is "not chosen"; a present one is the choice, sorted, blanks dropped', () => {
+    expect(readCompareChoice(new URLSearchParams('days=14'), K)).toBeNull()
+    expect(readCompareChoice(new URLSearchParams(`${K}=search&${K}=checkout&${K}=%20`), K)).toEqual(['checkout', 'search'])
+  })
+
+  it('clearing the picker is kept as a choice of none, so the default does not come back', () => {
+    const cleared = writeCompareChoice(new URLSearchParams(`days=14&${K}=checkout`), K, [])
+    expect(cleared.toString()).toBe(`days=14&${K}=`)
+    expect(readCompareChoice(cleared, K)).toEqual([])
+  })
+
+  it('writing replaces only its own key, sorted and de-duplicated', () => {
+    const next = writeCompareChoice(new URLSearchParams(`days=14&${K}=old&cmp_release=r1`), K, ['search', 'checkout', 'search'])
+    expect(next.getAll(K)).toEqual(['checkout', 'search'])
+    expect(next.get('days')).toBe('14')
+    expect(next.getAll('cmp_release')).toEqual(['r1'])
+  })
+
+  it('the default is the busiest lines as ranked, labels as spelled, never "Other", at most three', () => {
+    const lines = [
+      { key: 'checkout', label: 'Checkout' },
+      { key: '__other__', label: 'Other' },
+      { key: 'search', label: 'Search' },
+      { key: 'billing', label: 'Billing' },
+      { key: 'cart', label: 'Cart' },
+    ]
+    expect(defaultCompareSuites(lines, '__other__')).toEqual(['Checkout', 'Search', 'Billing'])
+    expect(defaultCompareSuites(lines, '__other__')).toHaveLength(COMPARE_DEFAULT_SUITES)
+    expect(defaultCompareSuites(null, '__other__')).toEqual([])
+  })
+
+  it('the default reaches a comparison the filter bar never could: three suites compare by suite', () => {
+    const suites = defaultCompareSuites([{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }], '__other__')
+    expect(compareOptions(suites, [])).toEqual(['suite'])
+    // The single-select page scope alone (one suite, one release) offers nothing.
+    expect(compareOptions(['A'], ['r1'])).toEqual([])
   })
 })

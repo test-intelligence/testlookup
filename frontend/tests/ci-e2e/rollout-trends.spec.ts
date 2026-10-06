@@ -6,12 +6,14 @@
  * (and asking) only once it is near:
  *
  *   - Pass rate by suite: `chart-data` pass_rate, day x suite, top 7 + Other;
+ *   - Compare (C1): its own `chart-data` read of the suites it compares,
+ *     starting from the three busiest of the suite series (no `top_n`);
  *   - Test duration p50 / p95: two `chart-data` day series;
  *   - Suite pass rate by day: the heatmap. Wave 3 (VIZ-501, FK1) gave it its
  *     own read, `/analytics/heatmap?kind=suite_day` (the server's top suites
- *     by failures, the cut stated, no "Other" row), so the page makes 3
+ *     by failures, the cut stated, no "Other" row), so the page makes 4
  *     chart-data requests and 1 heatmap request; the suite series' request
- *     feeds the multi-series only.
+ *     feeds the multi-series and Compare's default only.
  *
  * Plus the unfiltered "ever had a run?" probe (`/runs?page=1&size=1`, no days).
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
@@ -47,6 +49,8 @@ const P = PROJECT_ID
 const ready = (p: Page) => landmark(p, 'Trend metrics')
 
 const SUITES_Q = `metric=pass_rate&group_by=day&group_by=suite&top_n=7&project_id=${P}&days=14`
+/** Compare (C1): the busiest three of the suite series, sorted; the page scope first, as the card builds it. */
+const COMPARE_Q = `project_id=${P}&days=14&metric=pass_rate&group_by=day&group_by=suite&suite_name=Auth&suite_name=Checkout&suite_name=Payments`
 const P50_Q = `metric=duration_p50&group_by=day&project_id=${P}&days=14`
 const P95_Q = `metric=duration_p95&group_by=day&project_id=${P}&days=14`
 /** The heatmap's own read (Wave 3): the page's 14 days, the page scope. */
@@ -72,6 +76,7 @@ const INVENTORY = [
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
   PROBE,
   `GET ${CHART_DATA_PATH}?${SUITES_Q}`,
+  `GET ${CHART_DATA_PATH}?${COMPARE_Q}`,
   `GET ${CHART_DATA_PATH}?${P50_Q}`,
   `GET ${CHART_DATA_PATH}?${P95_Q}`,
   `GET ${HEATMAP_PATH}?${HEATMAP_Q}`,
@@ -82,6 +87,7 @@ const SECTIONS: [string, string][] = [
   ['trends-multi-series', 'Pass rate by suite'],
   ['trends-duration', 'Test duration (p50 / p95)'],
 ]
+const COMPARE: [string, string] = ['trends-compare', 'Compare']
 const HEATMAP: [string, string] = ['trends-heatmap', 'Suite pass rate by day']
 
 /**
@@ -140,7 +146,13 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
     await expectNoErrorFrame(page)
     await expectNoTextEscapes(page, 'Trends at 1280')
     await networkQuiet(page, api)
-    expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('group_by=suite'))).toHaveLength(1)
+    expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('top_n=7'))).toHaveLength(1)
+    // C1: Compare draws the busiest three suites, one line each, with its own pickers.
+    const compare = sectionFrame(page, ...COMPARE)
+    await expectDrawn(compare, 'trends-compare')
+    await expect(compare).toContainText('The busiest suites in the window; choose others with Suites.')
+    await expect(compare.locator('[data-compare-picker="suite"]')).toHaveAccessibleName('Suites, 3 selected')
+    expect(requestsTo(api, CHART_DATA_PATH).filter((line) => line.includes('suite_name='))).toEqual([`GET ${CHART_DATA_PATH}?${COMPARE_Q}`])
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([`GET ${HEATMAP_PATH}?${HEATMAP_Q}`])
     expectInventory(api, errors, INVENTORY, 'Trends')
   })

@@ -14,7 +14,8 @@ Everything TestLookup can produce, what generates it, and where it lands.
 | **Release decision** | `release_risk` | Deep pipeline | Narrative only | Release gate |
 | **Defect** | `defect_commander` or manual | Gated / manual | Title + description | Defects |
 | **Run comparison** | Compare feature | On request | Yes — narrative | Compare view |
-| **Exports** | Export endpoints | On request | No | Download |
+| **Chart exports** | Each chart's **Export** menu | On request | No | Download: PNG, SVG or CSV |
+| **Summary report files** | Summary report | On request, or in the background | No | Download: PDF or Excel |
 | **Notifications** | Notification service | Event-driven | Depends on content | Configured channel |
 | **API / CLI / SDK / MCP responses** | Respective interface | On request | Passes through what is stored | Your tooling |
 
@@ -38,6 +39,18 @@ The deep pipeline ends with a critic that checks the report against the plan the
 
 Reports reflect the run they were generated from. Re-running analysis produces a new result rather than editing the old one. A report you are reading is a record of a moment, not a live view.
 
+## Summary report files
+
+**Export PDF** and **Export Excel** on the Summary report produce the whole report for the current scope.
+
+- A small report downloads at once. A large one, or one you send with **In background** ticked, is prepared as a job, so you can keep working.
+- **Background exports** lists your jobs: Queued, Generating…, Ready or Failed. It updates by itself while a job runs, and a message with **Download** appears when the file is ready. **Retry** sends a failed job again.
+- A finished file stays downloadable for **7 days**, then it is removed.
+- Your access is checked again when the file is generated and when it is downloaded: losing project access stops both.
+- Every export is recorded in the audit log with its scope and size.
+
+To export one chart instead, use its **Export** menu: see [Charts and visual analysis](/docs/charts).
+
 ## Sharing and retention
 
 Where sharing is enabled, a report can be made available beyond the app. Retention is an administrative setting.
@@ -48,3 +61,4 @@ Where sharing is enabled, a report can be made available beyond the app. Retenti
 
 - [AI agents and the pipeline](/docs/ai-agents)
 - [Releases and gates](/docs/releases)
+- [Charts and visual analysis](/docs/charts)

@@ -72,7 +72,7 @@ describe('documentation registry', () => {
     // Named rather than counted: losing one should say WHICH.
     const required = [
       'introduction', 'getting-started', 'concepts', 'ingestion',
-      'ai-agents', 'failure-analysis', 'flaky', 'search', 'dashboards',
+      'ai-agents', 'failure-analysis', 'flaky', 'search', 'dashboards', 'charts',
       'reports', 'decisions', 'releases', 'test-management',
       'integrations', 'administration', 'architecture', 'workflows',
       'security', 'troubleshooting',
