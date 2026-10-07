@@ -275,9 +275,11 @@ const ROUTES: FoldRoute[] = [
     path: '/settings',
     handlers: () => LAYOUT,
     ready: (p) => p.locator('[data-settings-index]'),
-    // 1,288 / 1,288. OVER the list-page target: the index is seven groups of
-    // one-line links (85-1,183) and nothing else.
-    budget: 1_300,
+    // 1,687 / 1,687. OVER the list-page target: the index is seven groups of
+    // one-line links and nothing else, in ONE column since the P5 baselines
+    // (two columns beside the sub-nav cut every description to ten characters;
+    // they measured 1,288).
+    budget: 1_700,
     target: 1_100,
     table: false,
   },

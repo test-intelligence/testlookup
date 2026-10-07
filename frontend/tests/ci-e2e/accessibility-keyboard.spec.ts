@@ -100,8 +100,11 @@ test.describe('hermetic keyboard and landmark journeys', () => {
   test('skips repeated navigation and focuses the main landmark', async ({ page }) => {
     await page.goto('/reviews')
 
-    await page.keyboard.press('Tab')
     const skipLink = page.getByRole('link', { name: 'Skip to main content' })
+    // A Tab pressed before the shell mounts lands on the document, never the
+    // link (failed once in a full local run under load; passed on repeat).
+    await skipLink.waitFor({ state: 'attached' })
+    await page.keyboard.press('Tab')
     await expect(skipLink).toBeFocused()
     await expect(skipLink).toBeVisible()
     await page.keyboard.press('Enter')
