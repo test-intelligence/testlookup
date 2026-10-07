@@ -15,6 +15,7 @@ import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useGitlabIntegration, testGitlabConnection } from '@/hooks/useGitlabIntegration'
@@ -35,6 +36,8 @@ const MR_COMMENT_LABELS: Record<MrCommentMode, string> = {
   failures_only: 'Failures only — comment when tests fail (default)',
   always: 'Always — comment on every merge-request run',
 }
+
+const HELP_TOPIC = helpTopicParam('/settings/gitlab')
 
 /** Narrow a raw <select> value via the label record's keys (no blind cast). */
 function isMrCommentMode(value: string): value is MrCommentMode {
@@ -118,6 +121,8 @@ export default function GitLabIntegrationPage() {
     return (
       <div className="space-y-4">
         <PageHeader
+          compact
+          helpTopic={HELP_TOPIC}
           title="GitLab Integration"
           subtitle="Per-project GitLab merge-request + commit-status configuration"
           actions={<ExperimentalBadge />}
@@ -138,6 +143,8 @@ export default function GitLabIntegrationPage() {
     return (
       <div className="space-y-4">
         <PageHeader
+          compact
+          helpTopic={HELP_TOPIC}
           title="GitLab Integration"
           subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}
           actions={<ExperimentalBadge />}
@@ -214,6 +221,8 @@ export default function GitLabIntegrationPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
         title="GitLab Integration"
         subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}
         actions={<ExperimentalBadge />}
@@ -236,120 +245,127 @@ export default function GitLabIntegrationPage() {
           )}
         </div>
 
-        <FieldText
-          label="GitLab base URL"
-          value={form.base_url}
-          onChange={(v) => edit({ base_url: v })}
-          disabled={!canEdit}
-          placeholder="https://gitlab.com"
-          help="For self-managed instances: your GitLab URL (e.g. https://gitlab.corp.com)."
-        />
+        {/* Two columns at >= 1280 px (P5 item 4): base URL | project path,
+            token | toggles; the comment mode and its explanation keep the
+            full width below. */}
+        <div data-gitlab-fields="" className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <FieldText
+            label="GitLab base URL"
+            value={form.base_url}
+            onChange={(v) => edit({ base_url: v })}
+            disabled={!canEdit}
+            placeholder="https://gitlab.com"
+            help="For self-managed instances: your GitLab URL (e.g. https://gitlab.corp.com)."
+          />
 
-        <FieldText
-          label="Project path"
-          value={form.project_path}
-          onChange={(v) => edit({ project_path: v })}
-          disabled={!canEdit}
-          placeholder="my-group/my-project"
-          help="The group/project path (or nested group/subgroup/project)."
-        />
+          <FieldText
+            label="Project path"
+            value={form.project_path}
+            onChange={(v) => edit({ project_path: v })}
+            disabled={!canEdit}
+            placeholder="my-group/my-project"
+            help="The group/project path (or nested group/subgroup/project)."
+          />
 
-        {/* PAT — write-only per the contract. */}
-        {removingToken ? (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 text-[var(--status-broken)]">
-              <AlertTriangle className="h-3.5 w-3.5" /> Token will be removed when you save
-            </span>
-            <button
-              type="button"
-              onClick={() => setRemovingToken(false)}
-              className="text-[11px] text-[var(--color-text-muted)] hover:underline"
-            >
-              Cancel — keep the stored token
-            </button>
-          </div>
-        ) : showTokenInput ? (
-          <div className="space-y-1">
-            <FieldText
-              label="Personal / Project Access Token"
-              value={tokenDraft}
-              onChange={(v) => {
-                setTokenDraft(v)
-                setDirty(true)
-              }}
-              disabled={!canEdit}
-              placeholder="glpat-..."
-              type="password"
-              autoComplete="new-password"
-              help="Needs the api scope (or read_api + write MR/commit-status). Stored encrypted; never displayed after saving."
-            />
-            {hasToken && replacing && canEdit && (
+          {/* PAT — write-only per the contract. */}
+          {removingToken ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 text-[var(--status-broken)]">
+                <AlertTriangle className="h-3.5 w-3.5" /> Token will be removed when you save
+              </span>
               <button
                 type="button"
-                onClick={() => {
-                  setReplacing(false)
-                  setTokenDraft('')
-                }}
+                onClick={() => setRemovingToken(false)}
                 className="text-[11px] text-[var(--color-text-muted)] hover:underline"
               >
                 Cancel — keep the stored token
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 text-[var(--status-passed)]">
-              <ShieldCheck className="h-3.5 w-3.5" /> Token set
-            </span>
-            {canEdit && (
-              <button
-                type="button"
-                onClick={() => setReplacing(true)}
-                className="text-[var(--color-accent)] hover:underline"
-              >
-                Replace token
-              </button>
-            )}
-            {canEdit && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'Remove the stored GitLab token? The removal is applied when you save.',
-                    )
-                  ) {
-                    setRemovingToken(true)
-                    setDirty(true)
-                  }
+            </div>
+          ) : showTokenInput ? (
+            <div className="space-y-1">
+              <FieldText
+                label="Personal / Project Access Token"
+                value={tokenDraft}
+                onChange={(v) => {
+                  setTokenDraft(v)
+                  setDirty(true)
                 }}
-                className="text-[var(--status-failed)] hover:underline"
-              >
-                Remove token
-              </button>
-            )}
+                disabled={!canEdit}
+                placeholder="glpat-..."
+                type="password"
+                autoComplete="new-password"
+                help="Needs the api scope (or read_api + write MR/commit-status). Stored encrypted; never displayed after saving."
+              />
+              {hasToken && replacing && canEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReplacing(false)
+                    setTokenDraft('')
+                  }}
+                  className="text-[11px] text-[var(--color-text-muted)] hover:underline"
+                >
+                  Cancel — keep the stored token
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 text-[var(--status-passed)]">
+                <ShieldCheck className="h-3.5 w-3.5" /> Token set
+              </span>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => setReplacing(true)}
+                  className="text-[var(--color-accent)] hover:underline"
+                >
+                  Replace token
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Remove the stored GitLab token? The removal is applied when you save.',
+                      )
+                    ) {
+                      setRemovingToken(true)
+                      setDirty(true)
+                    }
+                  }}
+                  className="text-[var(--status-failed)] hover:underline"
+                >
+                  Remove token
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <label className="text-xs flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                disabled={!canEdit}
+                onChange={(e) => edit({ enabled: e.target.checked })}
+              />
+              <span>Enable GitLab integration for this project</span>
+            </label>
+
+            <label className="text-xs flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.commit_status_enabled}
+                disabled={!canEdit}
+                onChange={(e) => edit({ commit_status_enabled: e.target.checked })}
+              />
+              <span>Post a commit status (pipeline check) on every ingested run</span>
+            </label>
           </div>
-        )}
-
-        <label className="text-xs flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={form.enabled}
-            disabled={!canEdit}
-            onChange={(e) => edit({ enabled: e.target.checked })}
-          />
-          <span>Enable GitLab integration for this project</span>
-        </label>
-
-        <label className="text-xs flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={form.commit_status_enabled}
-            disabled={!canEdit}
-            onChange={(e) => edit({ commit_status_enabled: e.target.checked })}
-          />
-          <span>Post a commit status (pipeline check) on every ingested run</span>
-        </label>
+        </div>
 
         <label className="text-xs block">
           <span className="text-[var(--color-text-muted)]">Merge-request comment</span>

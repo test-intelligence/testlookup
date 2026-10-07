@@ -20,6 +20,10 @@ import type { AgentRunEntry } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import FixAttemptsSection from '@/components/fixer/FixAttemptsSection'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
+import PageHeader from '@/components/ui/PageHeader'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/agent-activity')
 
 const PAGE_SIZE = 50
 
@@ -157,29 +161,30 @@ export default function AgentActivityPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--color-text)]">Agent Activity</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            The governance ledger — every agent run with its trigger, spend, and the actions it proposed or took.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-          Agent
-          <select
-            value={agentFilter}
-            onChange={(e) => { setAgentFilter(e.target.value); setOffset(0) }}
-            aria-label="Filter by agent"
-            className="rounded-md px-2 py-1.5 text-sm bg-[var(--color-bg)] text-[var(--color-text)]"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
-            <option value="">All agents</option>
-            {agentOptions.map((a) => (
-              <option key={a} value={a} className="capitalize">{a}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {/* The agent filter stays where it was, right of the title (the header's actions slot). */}
+      <PageHeader
+        compact
+        title="Agent Activity"
+        subtitle="The governance ledger — every agent run with its trigger, spend, and the actions it proposed or took."
+        helpTopic={HELP_TOPIC}
+        actions={
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+            Agent
+            <select
+              value={agentFilter}
+              onChange={(e) => { setAgentFilter(e.target.value); setOffset(0) }}
+              aria-label="Filter by agent"
+              className="rounded-md px-2 py-1.5 text-sm bg-[var(--color-bg)] text-[var(--color-text)]"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              <option value="">All agents</option>
+              {agentOptions.map((a) => (
+                <option key={a} value={a} className="capitalize">{a}</option>
+              ))}
+            </select>
+          </label>
+        }
+      />
 
       {!scopedProjectId ? (
         <div

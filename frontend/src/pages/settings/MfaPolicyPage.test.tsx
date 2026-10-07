@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MfaPolicyPage from './MfaPolicyPage'
 import type { MfaPolicy } from '@/types/mfa'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 const mockGetPolicy = vi.fn<() => Promise<MfaPolicy>>()
 const mockUpdatePolicy = vi.fn()
@@ -173,6 +174,35 @@ describe('MfaPolicyPage', () => {
         expect.objectContaining({ lockout_threshold: 5, require_mfa: false }),
       ),
     )
+  })
+
+  it('has the compact header with the route help topic (UX redesign P5)', async () => {
+    renderPage()
+    await screen.findByLabelText(/require mfa to sign in/i)
+
+    expectTemplateHeader('MFA & Lockout Policy', '/settings/mfa-policy')
+  })
+
+  it('puts the requirement and the lockout side by side at >= 1280 px, Save and the confirmation under both', async () => {
+    const { container } = renderPage()
+    await screen.findByLabelText(/require mfa to sign in/i)
+
+    // PageHeader keeps its own title width; the page column is what must not be capped.
+    expect(Array.from(container.querySelectorAll('.max-w-3xl')).filter((el) => !el.closest('[data-page-header]'))).toEqual([])
+    const grid = container.querySelector('[data-settings-form-grid]') as HTMLElement
+    expect(grid).toHaveClass('grid', 'grid-cols-1', 'xl:grid-cols-2')
+    expect(Array.from(grid.children).map((c) => c.querySelector('h2')?.textContent?.trim())).toEqual([
+      'Require two-factor authentication',
+      'Failed sign-in lockout',
+    ])
+    // The two lockout fields stack inside the half-width card.
+    const lockoutFields = screen.getByLabelText(/failed attempts before lockout/i).closest('.grid')
+    expect(lockoutFields).toHaveClass('sm:grid-cols-2', 'xl:grid-cols-1')
+
+    expect(grid.contains(screen.getByRole('button', { name: /save policy/i }))).toBe(false)
+    fireEvent.click(screen.getByLabelText(/require mfa to sign in/i))
+    fireEvent.click(screen.getByRole('button', { name: /save policy/i }))
+    expect(grid.contains(await screen.findByTestId('mfa-enable-confirm'))).toBe(false)
   })
 
   it('refuses an out-of-range lockout threshold client-side', async () => {

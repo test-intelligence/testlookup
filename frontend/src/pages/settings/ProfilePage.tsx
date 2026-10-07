@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Eye, EyeOff, KeyRound, Loader2, UserCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import MfaSecuritySection from '@/components/mfa/MfaSecuritySection'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/services/api'
@@ -23,6 +24,8 @@ const AVATAR_COLORS: { key: string; bg: string; ring: string }[] = [
 ]
 
 const COLOR_MAP = Object.fromEntries(AVATAR_COLORS.map(c => [c.key, c]))
+
+const HELP_TOPIC = helpTopicParam('/settings/profile')
 
 function getInitials(fullName: string | null | undefined, username: string): string {
   if (fullName?.trim()) {
@@ -153,233 +156,240 @@ export default function ProfilePage() {
   const colorEntry = COLOR_MAP[avatarColor] ?? COLOR_MAP['blue']
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-4">
       <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
         title="My Profile"
         subtitle="Update your display name, avatar, password, and two-factor authentication"
       />
 
-      {/* ── Profile Information ───────────────────────────────────────────── */}
-      <section className="card space-y-6">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
-          <UserCircle2 className="h-4 w-4 text-[var(--color-text-muted)]" />
-          Profile Information
-        </h2>
+      {/* Profile and password side by side at >= 1280 px (P5 item 4), in
+          place of one max-w-2xl column; two-factor below at full width. */}
+      <div data-profile-forms="" className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+        {/* ── Profile Information ───────────────────────────────────────────── */}
+        <section className="card space-y-6">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
+            <UserCircle2 className="h-4 w-4 text-[var(--color-text-muted)]" />
+            Profile Information
+          </h2>
 
-        {/* Avatar preview + colour picker */}
-        <div className="flex items-start gap-6">
-          {/* Live preview */}
-          <div className={`h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 ${colorEntry.bg}`}>
-            {initials}
-          </div>
-
-          {/* Colour swatches */}
-          <div className="flex-1">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Avatar colour</p>
-            <div className="flex flex-wrap gap-2">
-              {AVATAR_COLORS.map(c => (
-                <button
-                  key={c.key}
-                  type="button"
-                  title={c.key}
-                  onClick={() => setAvatarColor(c.key)}
-                  className={`h-7 w-7 rounded-full ${c.bg} transition-all ${
-                    avatarColor === c.key
-                      ? `ring-2 ring-offset-2 ring-offset-[var(--color-bg-secondary)] ${c.ring} scale-110`
-                      : 'opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  {avatarColor === c.key && (
-                    <Check className="h-3.5 w-3.5 text-white mx-auto" />
-                  )}
-                </button>
-              ))}
+          {/* Avatar preview + colour picker */}
+          <div className="flex items-start gap-6">
+            {/* Live preview */}
+            <div className={`h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 ${colorEntry.bg}`}>
+              {initials}
             </div>
-          </div>
-        </div>
 
-        {/* Full name */}
-        <div>
-          <label htmlFor="profile-field-0" className="block text-sm font-medium text-[var(--color-text)] mb-1">
-            Full Name
-          </label>
-          <input id="profile-field-0"
-            type="text"
-            className="input w-full"
-            placeholder="Your display name"
-            value={fullName}
-            onChange={e => setFullName(e.target.value)}
-            maxLength={255}
-          />
-        </div>
-
-        {/* Read-only fields */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="profile-field-1" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
-              Username <span className="text-[10px] font-normal">(read-only)</span>
-            </label>
-            <input id="profile-field-1"
-              type="text"
-              className="input w-full opacity-60 cursor-not-allowed"
-              value={user.username}
-              readOnly
-            />
-          </div>
-          <div>
-            <label htmlFor="profile-field-2" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
-              Email <span className="text-[10px] font-normal">(read-only)</span>
-            </label>
-            <input id="profile-field-2"
-              type="email"
-              className="input w-full opacity-60 cursor-not-allowed"
-              value={user.email}
-              readOnly
-            />
-          </div>
-        </div>
-
-        {/* Role badge */}
-        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-          <span>Role:</span>
-          <span className="px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)]">
-            {user.role}
-          </span>
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            className="btn-primary flex items-center gap-2"
-            onClick={handleSaveProfile}
-            disabled={savingProfile}
-          >
-            {savingProfile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            Save Profile
-          </button>
-        </div>
-      </section>
-
-      {/* ── Change Password ───────────────────────────────────────────────── */}
-      <section className="card space-y-5">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-[var(--color-text-muted)]" />
-          Change Password
-        </h2>
-
-        {/* Current password */}
-        <div>
-          <label htmlFor="profile-field-3" className="block text-sm font-medium text-[var(--color-text)] mb-1">
-            Current Password
-          </label>
-          <div className="relative">
-            <input id="profile-field-3"
-              type={showCur ? 'text' : 'password'}
-              className="input w-full pr-10"
-              placeholder="Enter current password"
-              value={currentPw}
-              onChange={e => setCurrentPw(e.target.value)}
-              autoComplete="current-password"
-            />
-            <button
-              type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              onClick={() => setShowCur(v => !v)}
-              tabIndex={-1}
-            >
-              {showCur ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-        </div>
-
-        {/* New password */}
-        <div>
-          <label htmlFor="profile-field-4" className="block text-sm font-medium text-[var(--color-text)] mb-1">
-            New Password
-          </label>
-          <div className="relative">
-            <input id="profile-field-4"
-              type={showNew ? 'text' : 'password'}
-              className="input w-full pr-10"
-              placeholder="Enter new password"
-              value={newPw}
-              onChange={e => setNewPw(e.target.value)}
-              autoComplete="new-password"
-            />
-            <button
-              type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              onClick={() => setShowNew(v => !v)}
-              tabIndex={-1}
-            >
-              {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-
-          {/* Strength bar */}
-          {newPw && (
-            <div className="mt-2 space-y-1.5">
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(i => (
-                  <div
-                    key={i}
-                    className={`h-1 flex-1 rounded-full transition-colors ${
-                      i <= strength.score ? strength.color : 'bg-[var(--color-border)]'
+            {/* Colour swatches */}
+            <div className="flex-1">
+              <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Avatar colour</p>
+              <div className="flex flex-wrap gap-2">
+                {AVATAR_COLORS.map(c => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    title={c.key}
+                    onClick={() => setAvatarColor(c.key)}
+                    className={`h-7 w-7 rounded-full ${c.bg} transition-all ${
+                      avatarColor === c.key
+                        ? `ring-2 ring-offset-2 ring-offset-[var(--color-bg-secondary)] ${c.ring} scale-110`
+                        : 'opacity-70 hover:opacity-100'
                     }`}
-                  />
+                  >
+                    {avatarColor === c.key && (
+                      <Check className="h-3.5 w-3.5 text-white mx-auto" />
+                    )}
+                  </button>
                 ))}
-                <span className="text-xs text-[var(--color-text-muted)] ml-1 w-20">{strength.label}</span>
               </div>
-              <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-                {strength.checks.map(c => (
-                  <li key={c.label} className={`flex items-center gap-1 text-xs ${c.ok ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-faint)]'}`}>
-                    <Check className={`h-3 w-3 ${c.ok ? 'opacity-100' : 'opacity-0'}`} />
-                    {c.label}
-                  </li>
-                ))}
-              </ul>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Confirm password */}
-        <div>
-          <label htmlFor="profile-field-5" className="block text-sm font-medium text-[var(--color-text)] mb-1">
-            Confirm New Password
-          </label>
-          <div className="relative">
-            <input id="profile-field-5"
-              type={showConf ? 'text' : 'password'}
-              className="input w-full pr-10"
-              placeholder="Repeat new password"
-              value={confirmPw}
-              onChange={e => setConfirmPw(e.target.value)}
-              autoComplete="new-password"
+          {/* Full name */}
+          <div>
+            <label htmlFor="profile-field-0" className="block text-sm font-medium text-[var(--color-text)] mb-1">
+              Full Name
+            </label>
+            <input id="profile-field-0"
+              type="text"
+              className="input w-full"
+              placeholder="Your display name"
+              value={fullName}
+              onChange={e => setFullName(e.target.value)}
+              maxLength={255}
             />
+          </div>
+
+          {/* Read-only fields: two-up while the cards are stacked, one-up once
+              the card is half the page, so a long email is not clipped. */}
+          <div className="grid grid-cols-2 gap-4 xl:grid-cols-1">
+            <div>
+              <label htmlFor="profile-field-1" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
+                Username <span className="text-[10px] font-normal">(read-only)</span>
+              </label>
+              <input id="profile-field-1"
+                type="text"
+                className="input w-full opacity-60 cursor-not-allowed"
+                value={user.username}
+                readOnly
+              />
+            </div>
+            <div>
+              <label htmlFor="profile-field-2" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
+                Email <span className="text-[10px] font-normal">(read-only)</span>
+              </label>
+              <input id="profile-field-2"
+                type="email"
+                className="input w-full opacity-60 cursor-not-allowed"
+                value={user.email}
+                readOnly
+              />
+            </div>
+          </div>
+
+          {/* Role badge */}
+          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+            <span>Role:</span>
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)]">
+              {user.role}
+            </span>
+          </div>
+
+          <div className="flex justify-end">
             <button
-              type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              onClick={() => setShowConf(v => !v)}
-              tabIndex={-1}
+              className="btn-primary flex items-center gap-2"
+              onClick={handleSaveProfile}
+              disabled={savingProfile}
             >
-              {showConf ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {savingProfile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Save Profile
             </button>
           </div>
-          {confirmPw && newPw !== confirmPw && (
-            <p className="text-xs text-[var(--status-failed)] mt-1">Passwords do not match</p>
-          )}
-        </div>
+        </section>
 
-        <div className="flex justify-end">
-          <button
-            className="btn-primary flex items-center gap-2"
-            onClick={handleChangePassword}
-            disabled={savingPw || !currentPw || !newPw || !confirmPw || newPw !== confirmPw}
-          >
-            {savingPw ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-            Update Password
-          </button>
-        </div>
-      </section>
+        {/* ── Change Password ───────────────────────────────────────────────── */}
+        <section className="card space-y-5">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-[var(--color-text-muted)]" />
+            Change Password
+          </h2>
+
+          {/* Current password */}
+          <div>
+            <label htmlFor="profile-field-3" className="block text-sm font-medium text-[var(--color-text)] mb-1">
+              Current Password
+            </label>
+            <div className="relative">
+              <input id="profile-field-3"
+                type={showCur ? 'text' : 'password'}
+                className="input w-full pr-10"
+                placeholder="Enter current password"
+                value={currentPw}
+                onChange={e => setCurrentPw(e.target.value)}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                onClick={() => setShowCur(v => !v)}
+                tabIndex={-1}
+              >
+                {showCur ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* New password */}
+          <div>
+            <label htmlFor="profile-field-4" className="block text-sm font-medium text-[var(--color-text)] mb-1">
+              New Password
+            </label>
+            <div className="relative">
+              <input id="profile-field-4"
+                type={showNew ? 'text' : 'password'}
+                className="input w-full pr-10"
+                placeholder="Enter new password"
+                value={newPw}
+                onChange={e => setNewPw(e.target.value)}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                onClick={() => setShowNew(v => !v)}
+                tabIndex={-1}
+              >
+                {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+
+            {/* Strength bar */}
+            {newPw && (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map(i => (
+                    <div
+                      key={i}
+                      className={`h-1 flex-1 rounded-full transition-colors ${
+                        i <= strength.score ? strength.color : 'bg-[var(--color-border)]'
+                      }`}
+                    />
+                  ))}
+                  <span className="text-xs text-[var(--color-text-muted)] ml-1 w-20">{strength.label}</span>
+                </div>
+                <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                  {strength.checks.map(c => (
+                    <li key={c.label} className={`flex items-center gap-1 text-xs ${c.ok ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-faint)]'}`}>
+                      <Check className={`h-3 w-3 ${c.ok ? 'opacity-100' : 'opacity-0'}`} />
+                      {c.label}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Confirm password */}
+          <div>
+            <label htmlFor="profile-field-5" className="block text-sm font-medium text-[var(--color-text)] mb-1">
+              Confirm New Password
+            </label>
+            <div className="relative">
+              <input id="profile-field-5"
+                type={showConf ? 'text' : 'password'}
+                className="input w-full pr-10"
+                placeholder="Repeat new password"
+                value={confirmPw}
+                onChange={e => setConfirmPw(e.target.value)}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                onClick={() => setShowConf(v => !v)}
+                tabIndex={-1}
+              >
+                {showConf ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            {confirmPw && newPw !== confirmPw && (
+              <p className="text-xs text-[var(--status-failed)] mt-1">Passwords do not match</p>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={handleChangePassword}
+              disabled={savingPw || !currentPw || !newPw || !confirmPw || newPw !== confirmPw}
+            >
+              {savingPw ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              Update Password
+            </button>
+          </div>
+        </section>
+      </div>
 
       {/* ── Two-Factor Authentication ─────────────────────────────────────── */}
       <MfaSecuritySection />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Edit3, FolderOpen, Key, Plus, RefreshCw, Shield, Trash2, UserCheck, UserPlus, UserX, Users } from 'lucide-react'
+import { Edit3, Plus, RefreshCw, Shield, Trash2, UserCheck, UserPlus, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useUsers, refreshUsers } from '@/hooks/useUserManagement'
 import { useApiKeys, refreshApiKeys } from '@/hooks/useApiKeys'
@@ -8,6 +8,11 @@ import { projectsService } from '@/services/projectsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useAuthStore } from '@/store/authStore'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageHeader from '@/components/ui/PageHeader'
+import ScopedLink from '@/components/ui/ScopedLink'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
@@ -57,39 +62,42 @@ async function syncSelfIfEdited(editedUserId: string): Promise<void> {
 }
 
 
+const HELP_TOPIC = helpTopicParam('/users')
+
+type UsersPageTab = 'users' | 'project-members' | 'api-keys'
+
+const TAB_IDS: readonly UsersPageTab[] = ['users', 'project-members', 'api-keys']
+
+/**
+ * `?tab=` ids are a contract: the settings sub-nav links "Members & access" to
+ * `/users?tab=project-members` (`settingsNav.ts`). The API-keys tab is the
+ * signed-in user's OWN keys — `GET /api/v1/keys` without a project returns
+ * `user_id == current user` for every role — so it is "My API keys", named
+ * apart from the project's "Streaming API keys" (UX redesign P5 item 3).
+ */
+const TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [
+  { id: 'users', label: 'Users' },
+  { id: 'project-members', label: 'Project access' },
+  { id: 'api-keys', label: 'My API keys' },
+]
+
 export default function UserManagementPage() {
-  const [tab, setTab] = useState<'users' | 'apikeys' | 'project-members'>('users')
+  const [tab, setTab] = useTabParam(TAB_IDS, 'users')
   const { canManageUsers, canGenerateApiKeys, isAdmin } = usePermissions()
 
-  const tabClass = (t: typeof tab) =>
-    `px-4 py-2 text-sm font-medium transition-colors ${
-      tab === t ? 'text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-    }`
-
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[var(--color-text)]">User Management</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-0.5">Manage users, roles, project access, and API keys</p>
-        </div>
-      </div>
-
-      <div className="flex gap-1 border-b border-[var(--color-border)]">
-        <button onClick={() => setTab('users')} className={tabClass('users')}>
-          <span className="flex items-center gap-2"><Users className="h-4 w-4" /> Users</span>
-        </button>
-        <button onClick={() => setTab('project-members')} className={tabClass('project-members')}>
-          <span className="flex items-center gap-2"><FolderOpen className="h-4 w-4" /> Project Access</span>
-        </button>
-        <button onClick={() => setTab('apikeys')} className={tabClass('apikeys')}>
-          <span className="flex items-center gap-2"><Key className="h-4 w-4" /> API Keys</span>
-        </button>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
+        title="User Management"
+        subtitle="Users and roles, project access, and your own API keys"
+        tabs={<Tabs items={TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="User management sections" />}
+      />
 
       {tab === 'users' && <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />}
       {tab === 'project-members' && <ProjectMembersTab isAdmin={isAdmin} canManageUsers={canManageUsers} />}
-      {tab === 'apikeys' && <ApiKeysTab canGenerateApiKeys={canGenerateApiKeys} />}
+      {tab === 'api-keys' && <ApiKeysTab canGenerateApiKeys={canGenerateApiKeys} />}
     </div>
   )
 }
@@ -566,7 +574,7 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="add-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
+      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-lg p-6 space-y-4">
         <h2 id="add-user-title" className="text-lg font-semibold text-[var(--color-text)]">Add User</h2>
         {result ? (
           <div className="space-y-4">
@@ -646,30 +654,34 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="user-field-5" className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
-              <input id="user-field-5" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
-                placeholder="user@company.com" />
-            </div>
-            <div>
-              <label htmlFor="user-field-6" className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
-              <input id="user-field-6" type="text" required value={username} onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
-                placeholder="jdoe" />
-            </div>
-            <div>
-              <label htmlFor="user-field-7" className="block text-sm text-[var(--color-text-muted)] mb-1">Full name (optional)</label>
-              <input id="user-field-7" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
-                placeholder="Jane Doe" />
-            </div>
-            <div>
-              <label htmlFor="user-field-8" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
-              <select id="user-field-8" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
-                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+            {/* Two columns, as in Edit User (P5 item 4): email | username,
+                full name | role. */}
+            <div data-add-user-fields="" className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="user-field-5" className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
+                <input id="user-field-5" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
+                  placeholder="user@company.com" />
+              </div>
+              <div>
+                <label htmlFor="user-field-6" className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
+                <input id="user-field-6" type="text" required value={username} onChange={(e) => setUsername(e.target.value)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
+                  placeholder="jdoe" />
+              </div>
+              <div>
+                <label htmlFor="user-field-7" className="block text-sm text-[var(--color-text-muted)] mb-1">Full name (optional)</label>
+                <input id="user-field-7" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
+                  placeholder="Jane Doe" />
+              </div>
+              <div>
+                <label htmlFor="user-field-8" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
+                <select id="user-field-8" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
+                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
@@ -766,14 +778,19 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── API Keys Tab ──────────────────────────────────────────────
+// ── My API Keys Tab ───────────────────────────────────────────
 
+/**
+ * The signed-in user's own keys: listed, minted and revoked as them
+ * (`/api/v1/keys` with no project — owner-only on every verb). Not the
+ * project's streaming keys, which live at `/settings/api-keys`.
+ */
 function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
   const { data: keys, isLoading } = useApiKeys()
   const [showCreateModal, setShowCreateModal] = useState(false)
 
   async function handleRevoke(keyId: string, name: string) {
-    if (!confirm(`Revoke key "${name}"? This cannot be undone.`)) return
+    if (!confirm(`Revoke your key "${name}"? This cannot be undone.`)) return
     try {
       await userManagementService.revokeApiKey(keyId)
       refreshApiKeys()
@@ -787,11 +804,18 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <p data-my-api-keys-intro="" className="text-xs text-[var(--color-text-muted)]">
+          API keys you own. A key acts as you, with your role narrowed by its scopes. A project&rsquo;s
+          CI keys are under{' '}
+          {/* ScopedLink: that page shows one project at a time; "a project's"
+              already says so, so the hint stays in the title. */}
+          <ScopedLink to="/settings/api-keys" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">Streaming API keys</ScopedLink>.
+        </p>
         {canGenerateApiKeys && (
           <button onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors">
-            <Plus className="h-4 w-4" /> Generate Key
+            className="flex shrink-0 items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors">
+            <Plus className="h-4 w-4" /> Generate key
           </button>
         )}
       </div>
@@ -816,7 +840,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                   <div className="flex flex-wrap gap-1">
                     {k.scopes.length > 0 ? k.scopes.map((s) => (
                       <span key={s} className="text-xs bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] px-1.5 py-0.5 rounded">{s}</span>
-                    )) : <span className="text-xs text-[var(--color-text-muted)]">all</span>}
+                    )) : <span className="text-xs text-[var(--color-text-muted)]">full access</span>}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.expires_at ? new Date(k.expires_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">Never</span>}</td>
@@ -829,7 +853,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
               </tr>
             ))}
             {(keys ?? []).length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--color-text-muted)]">No API keys yet. Generate one to authenticate CI/CD pipelines.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--color-text-muted)]">You have no API keys. Generate one to authenticate a script or pipeline as you.</td></tr>
             )}
           </tbody>
         </table>
@@ -870,7 +894,7 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="generate-api-key-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 id="generate-api-key-title" className="text-lg font-semibold text-[var(--color-text)]">Generate API Key</h2>
+        <h2 id="generate-api-key-title" className="text-lg font-semibold text-[var(--color-text)]">Generate my API key</h2>
         {createdKey ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2 p-3 bg-[var(--status-broken-bg)]/30 border border-[var(--status-broken-bd)]/50 rounded text-[var(--status-broken)] text-xs">
@@ -892,10 +916,18 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="user-field-11" className="block text-sm text-[var(--color-text-muted)] mb-1">Key name</label>
-              <input id="user-field-11" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. GitHub Actions CI"
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
+            {/* Name | expiry in two columns (P5 item 4); the scope chips below. */}
+            <div data-create-key-fields="" className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="user-field-11" className="block text-sm text-[var(--color-text-muted)] mb-1">Key name</label>
+                <input id="user-field-11" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. GitHub Actions CI"
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
+              </div>
+              <div>
+                <label htmlFor="user-field-12" className="block text-sm text-[var(--color-text-muted)] mb-1">Expiry (days, optional)</label>
+                <input id="user-field-12" type="number" min={1} max={365} value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)} placeholder="Never expires"
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
+              </div>
             </div>
             <div>
               <span id="apikey-scopes" className="block text-sm text-[var(--color-text-muted)] mb-2">Scopes (leave empty for full access)</span>
@@ -907,11 +939,6 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
                   </button>
                 ))}
               </div>
-            </div>
-            <div>
-              <label htmlFor="user-field-12" className="block text-sm text-[var(--color-text-muted)] mb-1">Expiry (days, optional)</label>
-              <input id="user-field-12" type="number" min={1} max={365} value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)} placeholder="Never expires"
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>

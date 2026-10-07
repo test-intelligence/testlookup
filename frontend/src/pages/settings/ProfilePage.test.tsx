@@ -71,3 +71,32 @@ describe('ProfilePage', () => {
     expect(fullNameInput().value).toBe('')
   })
 })
+
+// UX redesign P5: the template header, and item 4 — profile | password side
+// by side at >= 1280 px instead of one max-w-2xl column.
+describe('ProfilePage layout', () => {
+  beforeEach(() => {
+    mocked.state.user = makeUser({})
+  })
+
+  it('renders the compact template header with a help topic', () => {
+    render(<ProfilePage />)
+    expect(document.querySelector('[data-page-header]')).toHaveAttribute('data-compact', 'true')
+    expect(screen.getByRole('button', { name: 'Help: My Profile' })).toHaveAttribute('data-help-topic', 'administration')
+  })
+
+  it('puts the profile and password forms in a grid that goes two-up at xl, with no max-w column', () => {
+    const { container } = render(<ProfilePage />)
+    const grid = container.querySelector('[data-profile-forms]') as HTMLElement
+    expect(grid).not.toBeNull()
+    expect(grid.className).toContain('xl:grid-cols-2')
+    expect(container.querySelector('[class*="max-w-2xl"]')).toBeNull()
+
+    const sections = grid.querySelectorAll(':scope > section')
+    expect(sections).toHaveLength(2)
+    expect(sections[0].textContent).toMatch(/Profile Information/)
+    expect(sections[1].textContent).toMatch(/Change Password/)
+    // Two-factor stays below the pair, at full width.
+    expect(grid.contains(screen.getByText(/Two-Factor|two-factor/, { selector: 'h2, h3' }))).toBe(false)
+  })
+})

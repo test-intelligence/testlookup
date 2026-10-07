@@ -54,6 +54,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { id: 'projects', label: 'Projects', description: 'Create, rename and archive projects', to: '/projects', requires: 'management' },
       { id: 'members', label: 'Members & access', description: "Who is on each project, and their role in it", to: '/users', tab: 'project-members', requires: 'management' },
       { id: 'ownership', label: 'Ownership', description: 'Which team owns which suites and tests', to: '/ownership', requires: 'management' },
+      { id: 'team-channels', label: 'Team channels', description: "Each team's alerts sent to the team's own channel", to: '/settings/team-channels', requires: 'management' },
       { id: 'api-keys', label: 'Streaming API keys', description: "The project's keys for CI result streaming", to: '/settings/api-keys', requires: 'management' },
       { id: 'retention', label: 'Retention & purge', description: 'How long runs and artifacts are kept', to: '/settings/retention', requires: 'management' },
       { id: 'project-data', label: 'Project data', description: 'Export, import and reset a project\'s data', to: '/settings/project-data', requires: 'management' },

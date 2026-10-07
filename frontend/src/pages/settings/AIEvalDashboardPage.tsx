@@ -18,6 +18,9 @@ import {
   runPreReleaseGate,
   seedGoldenDatasets,
 } from '../../services/aiEvalService';
+import { helpTopicParam } from '@/components/help/helpTopics';
+
+const HELP_TOPIC = helpTopicParam('/settings/ai-eval');
 
 type Tab = 'dashboard' | 'datasets' | 'gate';
 
@@ -121,10 +124,12 @@ export default function AIEvalDashboardPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="AI Evaluation Dashboard"
         subtitle="Measure AI output quality: precision, recall, agreement, and drift over time."
+        helpTopic={HELP_TOPIC}
       />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">

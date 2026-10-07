@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import IntegrationHealthPage from './IntegrationHealthPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 vi.mock('@/services/integrationHealthService', () => ({
   getAllStatus: vi.fn(),
@@ -48,5 +49,18 @@ describe('IntegrationHealthPage', () => {
     expect(screen.getByText(/Current Status/i).compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     fireEvent.click(pipeline)
     expect(screen.getByText(/Health workflow/i)).toBeInTheDocument()
+  })
+})
+
+describe('IntegrationHealthPage — the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic; Probe All Now stays its one action', async () => {
+    const { getAllStatus, getHealthTrends, getProviderHistory } = await import('@/services/integrationHealthService')
+    ;(getAllStatus as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(getHealthTrends as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(getProviderHistory as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+    render(<IntegrationHealthPage />)
+    expectTemplateHeader('Integration Health', '/settings/integration-health')
+    expect(screen.getByRole('button', { name: /probe all now/i }).closest('[data-page-header]')).not.toBeNull()
   })
 })

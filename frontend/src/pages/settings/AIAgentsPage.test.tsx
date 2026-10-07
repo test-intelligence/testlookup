@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AIAgentsPage from './AIAgentsPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 vi.mock('@/hooks/useAgentGovernance', () => ({
   useAgentPolicies: vi.fn(),
@@ -138,5 +139,18 @@ describe('AIAgentsPage', () => {
     expect(screen.queryByTestId('agent-policy-investigator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('fixer-config-card-stub')).not.toBeInTheDocument()
     expect(screen.queryByTestId('agent-config-panel-stub')).not.toBeInTheDocument()
+  })
+})
+
+describe('AIAgentsPage — the settings page template (UX redesign P5)', () => {
+  it('replaces the page-local h1 with the compact header and the route help topic', async () => {
+    await mockPolicies()
+    // The all-projects test above leaves its return value in place.
+    const { useActiveProjectId } = await import('@/hooks/useProjectScopedSWR')
+    ;(useActiveProjectId as ReturnType<typeof vi.fn>).mockReturnValue('proj-1')
+    render(<AIAgentsPage />)
+    expectTemplateHeader('AI Agents', '/settings/ai-agents')
+    // The cards are untouched: already multi-column inside, full width.
+    expect(screen.getByTestId('agent-policy-investigator')).toBeInTheDocument()
   })
 })

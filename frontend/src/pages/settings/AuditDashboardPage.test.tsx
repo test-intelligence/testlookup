@@ -23,6 +23,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AuditDashboardPage from './AuditDashboardPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import { ALL_PROJECTS_ID } from '../../store/projectStore'
 
 const mockUseAuditEvents = vi.fn()
@@ -170,3 +171,11 @@ function fireObservabilityTab() {
   // the assertion then reads as a missing empty-state message.
   fireEvent.click(screen.getByRole('button', { name: /project observability/i }))
 }
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic; Export CSV stays its one action', () => {
+    renderPage()
+    expectTemplateHeader('Audit Dashboard', '/settings/audit')
+    expect(screen.getByRole('button', { name: 'Export CSV' }).closest('[data-page-header]')).not.toBeNull()
+  })
+})

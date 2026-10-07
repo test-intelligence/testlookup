@@ -377,4 +377,21 @@ describe('GitLabIntegrationPage', () => {
     expect(screen.queryByText('Remove token')).toBeNull()
     expect(screen.getByText(/You need the QA Lead role or higher/)).toBeTruthy()
   })
+
+  // UX redesign P5 item 4: two columns of fields at >= 1280 px.
+  it('lays base URL | project path and token | toggles in a grid that goes two-up at xl', async () => {
+    mockGet.mockResolvedValue(baseConfig({ has_token: false }))
+    await renderPage()
+
+    const baseUrl = await screen.findByPlaceholderText('https://gitlab.com')
+    const grid = baseUrl.closest('[data-gitlab-fields]') as HTMLElement
+    expect(grid).not.toBeNull()
+    expect(grid.className).toContain('xl:grid-cols-2')
+    expect(grid.className).not.toMatch(/max-w-/)
+    expect(grid.contains(screen.getByPlaceholderText('my-group/my-project'))).toBe(true)
+    expect(grid.contains(screen.getByPlaceholderText('glpat-...'))).toBe(true)
+    expect(grid.contains(screen.getByText('Enable GitLab integration for this project'))).toBe(true)
+    // The comment mode and its explanation keep the full width, below the grid.
+    expect(grid.contains(screen.getByRole('combobox'))).toBe(false)
+  })
 })

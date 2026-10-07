@@ -103,13 +103,24 @@ const saveButton = () => screen.getByRole('button', { name: /save draft/i })
  * twice, so `getByDisplayValue` throws on multiple matches.
  *
  * Order, verified by rendering the page: [0] GO threshold, [1] NO_GO
- * threshold, [2] pass-rate minimum, [3] hard-floor factor, [4..9] bands and
- * hard caps, then the seven dimension weights LAST.
+ * threshold, [2] pass-rate minimum, [3] hard-floor factor, [4..6] bands. The
+ * hard caps and the dimension weights are in collapsed disclosures (UX
+ * redesign P5), so they are not rendered until opened.
  */
 const numbers = () => screen.getAllByRole('spinbutton') as HTMLInputElement[]
 const goThreshold = () => numbers()[0]
-/** The weights are the trailing seven numeric inputs. */
-const weightInputs = () => numbers().slice(-7)
+
+const DIMENSION_LABELS = [
+  'User Impact', 'Env Sensitivity', 'Reproducibility', 'Regression Likely',
+  'Hist. Recurrence', 'Blast Radius', 'Diagnosis Conf',
+]
+const disclosure = (title: string) => screen.getByRole('button', { name: new RegExp(`^${title}`) })
+/** The seven weights, by their labels, after opening their disclosure. */
+function weightInputs(): HTMLInputElement[] {
+  const toggle = disclosure('Dimension weights')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+  return DIMENSION_LABELS.map(label => screen.getByLabelText(label) as HTMLInputElement)
+}
 
 function nameIt(value = 'Release gate') {
   fireEvent.change(nameBox(), { target: { value } })
@@ -217,6 +228,126 @@ describe('save-time validation refuses incoherent policies', () => {
       ),
     )
     expect(mockCreatePolicy).not.toHaveBeenCalled()
+  })
+})
+
+describe('the editor layout (UX redesign P5 item 6)', () => {
+  it('keeps the decision rules open and collapses the tuning behind them', () => {
+    renderAt('/policies/new')
+
+    for (const heading of ['Metadata', 'Thresholds', 'Pass-Rate Bands', 'Rules']) {
+      expect(screen.getByRole('heading', { name: heading, level: 2 })).toBeInTheDocument()
+    }
+    // The old open sections are gone as headings: each is a disclosure now.
+    for (const old of ['Hard Caps', 'Failure-Kind Weighting', 'Dimension Weights']) {
+      expect(screen.queryByRole('heading', { name: old })).not.toBeInTheDocument()
+    }
+    for (const title of ['Hard caps', 'Failure-kind weighting', 'Dimension weights']) {
+      expect(disclosure(title)).toHaveAttribute('aria-expanded', 'false')
+    }
+    // Collapsed means not rendered: the caps' and weights' fields are absent.
+    expect(screen.queryByLabelText('Max P0 defects')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('User Impact')).not.toBeInTheDocument()
+    expect(numbers()).toHaveLength(7) // four thresholds, three bands
+
+    fireEvent.click(disclosure('Hard caps'))
+    expect(screen.getByLabelText('Max P0 defects')).toHaveValue(0)
+  })
+
+  it('puts the open sections before the disclosures, inside the primary content', () => {
+    const { container } = renderAt('/policies/new')
+    const primary = container.querySelector('[data-primary]') as HTMLElement
+    expect(primary).not.toBeNull()
+    const rules = screen.getByRole('heading', { name: 'Rules', level: 2 })
+    const firstDisclosure = container.querySelector('[data-disclosure]') as HTMLElement
+    expect(primary.contains(rules)).toBe(true)
+    expect(primary.contains(firstDisclosure)).toBe(true)
+    expect(rules.compareDocumentPosition(firstDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('states each collapsed section in its summary line', () => {
+    renderAt('/policies/new')
+    expect(disclosure('Hard caps')).toHaveTextContent('P0 defects ≤ 0 · flaky ≤ 10 · new failures (24h) ≤ 20')
+    expect(disclosure('Failure-kind weighting')).toHaveTextContent('Off (opt-in)')
+    expect(disclosure('Dimension weights')).toHaveTextContent('Sum: 1.00')
+    expect(disclosure('Dimension weights')).not.toHaveTextContent('must be 1.00')
+  })
+
+  it('says an off-sum weight set is invalid while its section is closed', () => {
+    renderAt('/policies/new')
+    fireEvent.change(weightInputs()[0], { target: { value: '0.5' } })
+    fireEvent.click(disclosure('Dimension weights')) // close it again
+    expect(screen.queryByLabelText('User Impact')).not.toBeInTheDocument()
+    expect(disclosure('Dimension weights')).toHaveTextContent('Sum: 1.25 (must be 1.00)')
+  })
+
+  it('puts the simulator in its own right-hand column at >= 1280 px, after the form', () => {
+    const { container } = renderAt('/policies/new')
+    const layout = container.querySelector('[data-policy-layout]') as HTMLElement
+    expect(layout.className).toContain('xl:grid-cols-[minmax(0,1fr)_360px]')
+    const simulator = container.querySelector('[data-policy-simulator]') as HTMLElement
+    expect(simulator.parentElement).toBe(layout)
+    expect(simulator.className).toContain('xl:sticky')
+    expect(screen.getByRole('heading', { name: 'Policy Simulator' })).toBeInTheDocument()
+    const form = container.querySelector('[data-policy-form]') as HTMLElement
+    expect(form.compareDocumentPosition(simulator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('labels every metadata field, two side by side and the description full width', () => {
+    renderAt('/policies/new')
+    expect(screen.getByLabelText('Name')).toBe(nameBox())
+    expect(screen.getByLabelText('Project ID')).toBeInTheDocument()
+    const description = screen.getByLabelText('Description')
+    expect(description.tagName).toBe('TEXTAREA')
+    // The two short fields share one row; the textarea is outside that grid.
+    const row = nameBox().closest('.grid') as HTMLElement
+    expect(row.className).toContain('grid-cols-2')
+    expect(row.contains(screen.getByLabelText('Project ID'))).toBe(true)
+    expect(row.contains(description)).toBe(false)
+  })
+
+  it('has a compact header with the help topic, and "Back to policies" in the overflow menu', () => {
+    const { container } = renderAt('/policies/new')
+    expect(container.querySelector('[data-page-header]')).toHaveAttribute('data-compact', 'true')
+    expect(screen.getByRole('button', { name: 'Help: New Policy' })).toHaveAttribute('data-help-topic', 'releases')
+    expect(screen.queryByRole('button', { name: 'Back to policies' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Back to policies' })).toHaveAttribute('href', '/policies')
+  })
+
+  it('simulates the policy as edited, not as saved', async () => {
+    const { simulatePolicy } = await import('../services/policyService')
+    ;(simulatePolicy as ReturnType<typeof vi.fn>).mockResolvedValue({
+      original_recommendation: 'NO_GO',
+      simulated_recommendation: 'CONDITIONAL_GO',
+      original_composite: 61.2,
+      simulated_composite: 48.0,
+      rule_evaluations: [],
+      diff_summary: 'The lower NO_GO threshold changes the verdict.',
+    })
+    renderAt('/policies/new')
+    fireEvent.change(goThreshold(), { target: { value: '15' } })
+    fireEvent.change(screen.getByLabelText('Run ID'), { target: { value: 'run-42' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate' }))
+
+    await waitFor(() => expect(screen.getByText('The lower NO_GO threshold changes the verdict.')).toBeInTheDocument())
+    expect(simulatePolicy).toHaveBeenCalledWith(
+      'run-42',
+      expect.objectContaining({ thresholds: expect.objectContaining({ go_threshold: 15 }) }),
+    )
+    expect(screen.getByText('CONDITIONAL_GO')).toBeInTheDocument()
+  })
+})
+
+describe('the list (UX redesign P5)', () => {
+  it('has a compact header with the help topic and New Policy as its one action', () => {
+    const { container } = renderAt('/policies')
+    expect(container.querySelector('[data-page-header]')).toHaveAttribute('data-compact', 'true')
+    expect(screen.getByRole('button', { name: 'Help: Release Gate Policies' })).toHaveAttribute(
+      'data-help-anchor',
+      'the-decision-rules-in-order',
+    )
+    expect(screen.getByRole('button', { name: /new policy/i })).toBeInTheDocument()
   })
 })
 

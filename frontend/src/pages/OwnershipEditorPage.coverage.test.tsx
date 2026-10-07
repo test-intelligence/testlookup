@@ -28,9 +28,6 @@ vi.mock('@/hooks/useOwnershipRules', () => ({
   }),
   useCodeownersCoverage: () => coverageMock(),
 }))
-vi.mock('@/hooks/useTeamChannels', () => ({
-  useTeamChannels: () => ({ channels: [], isError: false, refresh: vi.fn() }),
-}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (s: { activeProjectId: string }) => unknown) =>

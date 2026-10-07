@@ -8,6 +8,9 @@ import { useModalFocus } from '@/hooks/useModalFocus'
 import type { Project, ProjectUpdate } from '@/types/projects'
 import { fromNow } from '@/utils/formatters'
 import toast from 'react-hot-toast'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/projects')
 
 interface NewProjectForm {
   name: string
@@ -95,7 +98,8 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Projects" subtitle="Manage test projects and their integrations"
+      <PageHeader compact title="Projects" subtitle="Manage test projects and their integrations"
+        helpTopic={HELP_TOPIC}
         actions={canEdit ? (
           <button className="btn-primary flex items-center gap-2 text-sm"
             onClick={() => { setForm(EMPTY_FORM); setShowModal(true) }}>

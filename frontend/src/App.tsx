@@ -47,6 +47,7 @@ const NotificationsPage = lazy(() => import('@/pages/settings/NotificationsPage'
 const MyNotificationsPage = lazy(() =>
   import('@/pages/settings/NotificationsPage').then((m) => ({ default: m.MyNotificationsPage })),
 )
+const TeamChannelsPage = lazy(() => import('@/pages/settings/TeamChannelsPage'))
 const AIConfigPage = lazy(() => import('@/pages/settings/AIConfigPage'))
 const IntegrationsSettingsPage = lazy(() => import('@/pages/settings/IntegrationsPage'))
 const StoragePage = lazy(() => import('@/pages/settings/StoragePage'))
@@ -184,6 +185,8 @@ const managementRoutes: AppRoute[] = [
   { path: 'users', component: UserManagementPage },
   { path: 'settings', component: SettingsPage },
   { path: 'settings/notifications', component: NotificationsPage },
+  // UX redesign P5: a team's notification channel, out of Ownership.
+  { path: 'settings/team-channels', component: TeamChannelsPage },
   { path: 'settings/ai', component: AIConfigPage },
   { path: 'settings/integrations', component: IntegrationsSettingsPage },
   { path: 'settings/storage', component: StoragePage },

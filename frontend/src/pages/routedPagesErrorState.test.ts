@@ -91,6 +91,8 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/MfaPolicyPage': 'own-error-ui',
   'settings/AIAgentsPage': 'own-error-ui',
   'settings/AgentActivityPage': 'own-error-ui',
+  // UX redesign P5: out of Ownership, with the alerts it had there.
+  'settings/TeamChannelsPage': 'own-error-ui',
 
   SettingsPage: 'no-fetch',
   DocsPage: 'no-fetch',

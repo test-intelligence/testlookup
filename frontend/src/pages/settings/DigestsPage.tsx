@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import { useTabParam } from '@/components/ui/useTabParam';
+import { helpTopicParam } from '@/components/help/helpTopics';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import Disclosure from '@/components/ui/Disclosure';
 import { buildDigestWorkflow } from '@/components/workflow/workflowPresets';
@@ -24,8 +27,17 @@ import Field from '@/components/ui/Field'
 
 type Tab = 'subscriptions' | 'saved-views' | 'preview';
 
+const TAB_IDS: readonly Tab[] = ['subscriptions', 'saved-views', 'preview'];
+const TAB_ITEMS: readonly TabItem<Tab>[] = [
+  { id: 'subscriptions', label: 'Digest Subscriptions' },
+  { id: 'saved-views', label: 'Saved Views' },
+  { id: 'preview', label: 'Preview Digest' },
+];
+const HELP_TOPIC = helpTopicParam('/settings/digests');
+
 export default function DigestsPage() {
-  const [tab, setTab] = useState<Tab>('subscriptions');
+  // The tab lives in `?tab=` (the page template's Tabs + useTabParam).
+  const [tab, setTab] = useTabParam(TAB_IDS, 'subscriptions');
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId: string | undefined = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined);
 
@@ -132,27 +144,15 @@ export default function DigestsPage() {
     [subs, views, preview],
   );
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'subscriptions', label: 'Digest Subscriptions' },
-    { key: 'saved-views', label: 'Saved Views' },
-    { key: 'preview', label: 'Preview Digest' },
-  ];
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
         title="Digests & Saved Views"
         subtitle="Schedule quality digests and save filter views for quick access."
+        tabs={<Tabs items={TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="Digest sections" />}
       />
-
-      <div className="flex gap-1 border-b border-[var(--color-border)]">
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
-            {t.label}
-          </button>
-        ))}
-      </div>
 
       {error && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{error}</div>}
 

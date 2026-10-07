@@ -57,6 +57,7 @@ vi.mock('react-hot-toast', () => ({
 }))
 
 import ProjectsPage from './ProjectsPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 const REQUIRED = [/project name/i, /slug/i]
 const OPTIONAL = [/description/i, /jira project key/i, /ocp namespace/i]
@@ -115,5 +116,14 @@ describe('ProjectsPage accessibility', () => {
     fireEvent.keyDown(first, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+  })
+})
+
+describe('ProjectsPage — the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic; New Project stays its one action', async () => {
+    render(<ProjectsPage />)
+    const newProject = await screen.findByRole('button', { name: /new project/i })
+    expectTemplateHeader('Projects', '/projects')
+    expect(newProject.closest('[data-page-header]')).not.toBeNull()
   })
 })

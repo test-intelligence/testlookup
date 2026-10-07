@@ -22,6 +22,10 @@ import type { AgentMode, AgentPolicy, AgentPolicyBudgets } from '@/types/investi
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import FixerConfigCard from '@/components/fixer/FixerConfigCard'
 import AgentConfigPanel from '@/components/agents/AgentConfigPanel'
+import PageHeader from '@/components/ui/PageHeader'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/ai-agents')
 
 const AGENT_LABEL: Record<string, { title: string; desc: string }> = {
   investigator: {
@@ -227,13 +231,12 @@ export default function AIAgentsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">AI Agents</h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Per-agent governance: trust-ladder autonomy mode, budgets, and promotion status. Every agent launches in
-          shadow mode and earns promotion through clean shadow runs.
-        </p>
-      </div>
+      <PageHeader
+        compact
+        title="AI Agents"
+        subtitle="Per-agent governance: trust-ladder autonomy mode, budgets, and promotion status. Every agent launches in shadow mode and earns promotion through clean shadow runs."
+        helpTopic={HELP_TOPIC}
+      />
 
       {!scopedProjectId ? (
         <div

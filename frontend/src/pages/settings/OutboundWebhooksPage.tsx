@@ -18,6 +18,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
@@ -37,6 +38,8 @@ const EMPTY_FORM: WebhookSubscriptionWrite = {
   enabled: true,
   max_retries: 5,
 }
+
+const HELP_TOPIC = helpTopicParam('/settings/webhooks')
 
 /**
  * Outbound Webhooks settings page — Tier 2 item 6.
@@ -183,6 +186,8 @@ export default function OutboundWebhooksPage() {
     return (
       <div className="space-y-4">
         <PageHeader
+          compact
+          helpTopic={HELP_TOPIC}
           title="Outbound Webhooks"
           subtitle="Subscribe external systems to TestLookup events"
         />
@@ -198,6 +203,8 @@ export default function OutboundWebhooksPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
         title="Outbound Webhooks"
         subtitle={`HMAC-signed event delivery for ${activeProject?.name || 'this project'}`}
         actions={
@@ -396,45 +403,51 @@ function CreateForm({
           />
         </label>
       </div>
-      <label className="text-xs block">
-        <span className="text-[var(--color-text-muted)]">Target URL (https only)</span>
-        <input
-          type="text"
-          value={form.target_url}
-          onChange={(e) => onChange({ ...form, target_url: e.target.value })}
-          placeholder="https://events.example.com/hooks/testlookup"
-          className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
-        />
-      </label>
-      <label className="text-xs block">
-        <span className="text-[var(--color-text-muted)]">HMAC secret (used to sign deliveries)</span>
-        <input
-          type="password"
-          value={form.secret ?? ''}
-          onChange={(e) => onChange({ ...form, secret: e.target.value })}
-          placeholder="Shared secret — stored encrypted"
-          className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
-        />
-      </label>
+      {/* Target URL | secret pair up at >= 1280 px (P5 item 4). */}
+      <div data-webhook-endpoint="" className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <label className="text-xs block">
+          <span className="text-[var(--color-text-muted)]">Target URL (https only)</span>
+          <input
+            type="text"
+            value={form.target_url}
+            onChange={(e) => onChange({ ...form, target_url: e.target.value })}
+            placeholder="https://events.example.com/hooks/testlookup"
+            className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          />
+        </label>
+        <label className="text-xs block">
+          <span className="text-[var(--color-text-muted)]">HMAC secret (used to sign deliveries)</span>
+          <input
+            type="password"
+            value={form.secret ?? ''}
+            onChange={(e) => onChange({ ...form, secret: e.target.value })}
+            placeholder="Shared secret — stored encrypted"
+            className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          />
+        </label>
+      </div>
 
       <fieldset className="space-y-1.5">
         <legend className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
           Events
         </legend>
-        {catalog.map((e) => (
-          <label key={e.event_type} className="flex items-start gap-2 text-xs">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={form.events.includes(e.event_type)}
-              onChange={() => toggleEvent(e.event_type)}
-            />
-            <span>
-              <span className="block font-mono text-[var(--color-text)]">{e.event_type}</span>
-              <span className="block text-[var(--color-text-muted)]">{e.description}</span>
-            </span>
-          </label>
-        ))}
+        {/* The event checklist in two columns at >= 1280 px. */}
+        <div data-webhook-events="" className="grid grid-cols-1 gap-1.5 xl:grid-cols-2">
+          {catalog.map((e) => (
+            <label key={e.event_type} className="flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.events.includes(e.event_type)}
+                onChange={() => toggleEvent(e.event_type)}
+              />
+              <span>
+                <span className="block font-mono text-[var(--color-text)]">{e.event_type}</span>
+                <span className="block text-[var(--color-text-muted)]">{e.description}</span>
+              </span>
+            </label>
+          ))}
+        </div>
       </fieldset>
 
       <div className="flex justify-end gap-2 pt-2">

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ApiKeysPage, { CreatedKeyModal } from './ApiKeysPage'
 
@@ -53,17 +54,17 @@ beforeEach(() => {
 describe('ApiKeysPage identity safety', () => {
   it('renders a retryable outage instead of claiming the key list is empty', () => {
     hookState = { isLoading: false, error: Object.assign(new Error('down'), { response: { status: 503 } }), mutate: retry }
-    render(<ApiKeysPage />)
+    render(<ApiKeysPage />, { wrapper: MemoryRouter })
 
     expect(screen.getByTestId('api-keys-unavailable')).toHaveAttribute('role', 'alert')
-    expect(screen.queryByText('No API keys yet')).not.toBeInTheDocument()
+    expect(screen.queryByText('No streaming keys yet')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(retry).toHaveBeenCalledTimes(1)
   })
 
   it('removes a one-time key secret when the active project changes', async () => {
     create.mockResolvedValue(created)
-    const view = render(<ApiKeysPage />)
+    const view = render(<ApiKeysPage />, { wrapper: MemoryRouter })
     fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
     fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
@@ -81,7 +82,7 @@ describe('ApiKeysPage identity safety', () => {
 
   it('removes a displayed one-time key secret when the role is downgraded', async () => {
     create.mockResolvedValue(created)
-    const view = render(<ApiKeysPage />)
+    const view = render(<ApiKeysPage />, { wrapper: MemoryRouter })
     fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
     fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
@@ -98,7 +99,7 @@ describe('ApiKeysPage identity safety', () => {
     let resolveRefresh!: () => void
     create.mockImplementation(() => new Promise(resolve => { resolveCreate = resolve }))
     refresh.mockImplementation(() => new Promise<void>(resolve => { resolveRefresh = resolve }))
-    const view = render(<ApiKeysPage />)
+    const view = render(<ApiKeysPage />, { wrapper: MemoryRouter })
     fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
     fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
@@ -122,7 +123,7 @@ describe('ApiKeysPage identity safety', () => {
 
   it('removes a one-time key secret when the authenticated session changes', async () => {
     create.mockResolvedValue(created)
-    const view = render(<ApiKeysPage />)
+    const view = render(<ApiKeysPage />, { wrapper: MemoryRouter })
     fireEvent.click(screen.getByRole('button', { name: 'Generate streaming key' }))
     fireEvent.change(screen.getByPlaceholderText('ci-runner-prod'), { target: { value: 'CI key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))

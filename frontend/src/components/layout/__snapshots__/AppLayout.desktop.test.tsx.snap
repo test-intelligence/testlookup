@@ -395,6 +395,9 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
                     <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ownership" href="/ownership">
                       "Ownership"
                   <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="team-channels" href="/settings/team-channels">
+                      "Team channels"
+                  <li>
                     <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="api-keys" href="/settings/api-keys">
                       "Streaming API keys"
                   <li>

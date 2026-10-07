@@ -47,6 +47,7 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/settings/github': { topic: 'integrations' },
   '/settings/gitlab': { topic: 'integrations' },
   '/settings/webhooks': { topic: 'integrations' },
+  '/settings/team-channels': { topic: 'administration', anchor: 'notifications-and-webhooks' },
   '/projects': { topic: 'administration' },
   '/users': { topic: 'administration' },
   '/ownership': { topic: 'administration' },

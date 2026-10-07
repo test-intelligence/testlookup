@@ -72,3 +72,18 @@ describe('VerdictBand blocker severity icons', () => {
     /* eslint-enable no-restricted-syntax */
   })
 })
+
+describe('VerdictBand headline', () => {
+  it('calls a not-yet-evaluated in-progress release in progress, not "in planning"', () => {
+    // The band highlights an IN-PROGRESS release; with no gate signal yet it
+    // said "<name> is in planning" about it.
+    const release = makeRelease({
+      name: 'Checkout',
+      version: '2.5.0',
+      gate: { decision: 'not_evaluated', composite: null, coverage: null, flakePct: null, updatedAt: null },
+    })
+    render(<VerdictBand highlighted={release} inProgressReleases={[release]} />)
+    expect(screen.getByText('Checkout (2.5.0) is in progress, not evaluated yet')).toBeInTheDocument()
+    expect(screen.queryByText(/is in planning/)).not.toBeInTheDocument()
+  })
+})

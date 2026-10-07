@@ -13,6 +13,9 @@ import {
 } from '@/hooks/useIntegrationHealth';
 import { triggerProbe } from '../../services/integrationHealthService';
 import { formatCompactDateTime } from '@/utils/formatters'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/integration-health')
 
 const STATUS_COLORS: Record<string, string> = {
   healthy: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
@@ -60,10 +63,12 @@ export default function IntegrationHealthPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Integration Health"
         subtitle="Active health probes for Jira, Splunk, GitHub, Slack, Teams, SMTP, and more."
+        helpTopic={HELP_TOPIC}
         actions={
           <button onClick={() => handleProbe()} disabled={probing}
             className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">

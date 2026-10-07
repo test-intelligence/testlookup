@@ -34,6 +34,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AIEvalDashboardPage from './AIEvalDashboardPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { AIQualityDashboard } from '../../services/aiEvalService'
 
 const mockGetDashboard = vi.fn<() => Promise<AIQualityDashboard>>()
@@ -220,5 +221,13 @@ describe('the evaluation workflow timeline is collapsed at the bottom', () => {
     expect(tab.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     fireEvent.click(pipeline)
     expect(screen.getByText('Evaluation workflow')).toBeInTheDocument()
+  })
+})
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic', async () => {
+    mockGetDashboard.mockResolvedValue(dashboard(null))
+    renderPage()
+    expectTemplateHeader('AI Evaluation Dashboard', '/settings/ai-eval')
   })
 })

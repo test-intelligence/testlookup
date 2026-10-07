@@ -137,6 +137,19 @@ describe('WorkflowEditorPage', () => {
     vi.mocked(publishWorkflow).mockResolvedValue({ ...custom, status: 'published', read_only: true })
   })
 
+  // UX redesign P5 (D3): the page sits under Admin › AI beside "Pipeline
+  // runs"; its header is the template's (compact, help topic), and its one
+  // action names the sibling page as the sub-nav does — no back link.
+  it('has the template header: compact, a help topic, and a "Pipeline runs" link (not a back link)', async () => {
+    const { container } = renderPage()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Workflow editor' })).toBeInTheDocument()
+    const header = container.querySelector('[data-page-header]') as HTMLElement
+    expect(header).toHaveAttribute('data-compact', 'true')
+    expect(screen.getByRole('button', { name: 'Help: Workflow editor' })).toHaveAttribute('data-help-topic', 'ai-agents')
+    expect(screen.getByRole('link', { name: 'Pipeline runs' })).toHaveAttribute('href', '/agents')
+    expect(screen.queryByRole('link', { name: /Agent pipeline/i })).toBeNull()
+  })
+
   it('lists coverage, protects built-ins, forks them, and previews their graph', async () => {
     renderPage()
 
