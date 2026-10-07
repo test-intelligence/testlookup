@@ -146,6 +146,9 @@ ACCEPTED = {
     "CVE-2026-53613", "CVE-2026-53614", "CVE-2026-76642", "CVE-2026-78410",
     # util-linux fixes not yet on the Alpine mirror (c9fe5d71 homelab build)
     "CVE-2026-53612", "CVE-2026-78408", "CVE-2026-78409",
+    # langgraph-sdk via langgraph==0.6.11 (fix needs the langchain 1.x migration);
+    # backend/tests/regression/test_langgraph_sdk_unreachable.py holds "not reachable"
+    "CVE-2026-104873",
 }
 
 

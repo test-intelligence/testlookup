@@ -103,6 +103,11 @@ const ChartGalleryPage = import.meta.env.DEV
 const PrimitivesPage = import.meta.env.DEV
   ? reactLazy(() => import('@/pages/dev/PrimitivesPage'))
   : null
+// `/__ux-primitives` — the UX redesign's primitives (P0), the subject of
+// `tests/visual/ux-primitives.visual.spec.ts`. Same DEV-only guard.
+const UxPrimitivesPage = import.meta.env.DEV
+  ? reactLazy(() => import('@/pages/dev/UxPrimitivesPage'))
+  : null
 
 type AppRoute = {
   path: string
@@ -295,6 +300,9 @@ export default function App() {
       )}
       {import.meta.env.DEV && PrimitivesPage && (
         <Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
+      )}
+      {import.meta.env.DEV && UxPrimitivesPage && (
+        <Route path="/__ux-primitives" element={renderLazyRoute(UxPrimitivesPage)} />
       )}
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />

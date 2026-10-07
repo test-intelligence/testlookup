@@ -55,6 +55,18 @@ vulnerabilities:
       backend/app or mcp calls load_prompt or any langchain file-based prompt/chain loader.
       Follow-up: langchain 1.x migration.
     expired_at: 2026-12-09
+  # ── backend image: langgraph-sdk 0.2.15, pulled in by langgraph==0.6.11, which
+  #    requires langgraph-sdk<0.3. The fix (0.4.4) needs langchain-core>=1.4, i.e.
+  #    the langchain 1.x migration (same follow-up as CVE-2026-34070).
+  - id: CVE-2026-104873
+    statement: >-
+      NOT REACHABLE. Authorization bypass in langgraph-sdk, the HTTP client for a
+      remote LangGraph Platform server. In langgraph 0.6.11 only
+      langgraph/pregel/remote.py (RemoteGraph) imports langgraph_sdk, nothing in
+      langgraph imports that module, and nothing in backend/ or mcp/ imports
+      langgraph_sdk or RemoteGraph: the app runs its graphs in-process and never
+      talks to a LangGraph server. Follow-up: langchain 1.x migration.
+    expired_at: 2027-01-04
   # ── frontend image: util-linux in nginx:alpine, no fixed version published yet.
   # ── frontend image: util-linux fixes not yet on the Alpine mirror (the c9fe5d71
   #    homelab build upgraded only apk-tools); apk upgrade takes them when they land.

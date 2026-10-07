@@ -14,8 +14,8 @@ httpcore==1.0.9
 sqlalchemy[asyncio]==2.0.51
 asyncpg==0.31.0
 alembic==1.19.1
-motor==3.7.1            # Async MongoDB driver (requires pymongo>=4.9,<4.11)
-pymongo==4.17.0          # Must stay <4.11 to match motor 3.7.0 constraint
+motor==3.7.1            # Async MongoDB driver (requires pymongo>=4.9,<5.0)
+pymongo==4.18.2          # CVE-2026-96748/-96749 fixed in 4.18.2; must stay <5.0 for motor 3.7.1
 
 # ── Object Storage ───────────────────────────────────────────
 # aioboto3 bundles a compatible boto3 + botocore internally.
