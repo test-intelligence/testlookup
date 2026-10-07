@@ -566,7 +566,8 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
             key="mttr"
             compact
             icon={null}
-            title="Mean time to resolve"
+            title="Time to resolve"
+            hint="Mean time to resolve, over the defects resolved"
             metric={{ value: model.mttrDays != null ? `${model.mttrDays.toFixed(1)}d` : '—' }}
           />,
           <MetricCard key="escape" compact icon={null} title="Escape rate" metric={{ value: `${escapeRate}%` }} />,

@@ -10,7 +10,9 @@
  * (640 px) the strip wraps rather than push the page sideways. A compact card's value never wraps (`whitespace-nowrap`)
  * and its change line is one truncated line (its full text is the title), so
  * "every value and change on one line" holds by construction; this spec
- * measures it in a real browser at three widths, and that nothing overflows.
+ * measures it in a real browser at three widths, and that nothing overflows:
+ * not the page sideways, and not a sparkline over its own value or out of its
+ * tile (the room-sized value leaves it too little room: it drops below).
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
@@ -58,7 +60,20 @@ function measure(page: Page) {
     // `auto-fit` keeps its collapsed tracks in the computed value as `0px`:
     // count the tracks that hold a tile.
     const columns = getComputedStyle(strip).gridTemplateColumns.split(' ').filter((t) => parseFloat(t) > 0).length
-    return { values, changes, columns }
+    // Each tile's sparkline (its aside) against its value and its card: the P3
+    // baseline drew the room-sized "4437" over its own sparkline, and that
+    // sparkline into the next tile.
+    const collisions = Array.from(strip.querySelectorAll('[data-metric-card="compact"]'), (card) => {
+      const value = card.querySelector('p.tabular-nums')?.getBoundingClientRect()
+      const aside = (card.querySelector('[data-metric-aside]')?.firstElementChild as Element | null)?.getBoundingClientRect()
+      if (!value || !aside) return null
+      const box = card.getBoundingClientRect()
+      const overlaps = value.left < aside.right && aside.left < value.right && value.top < aside.bottom && aside.top < value.bottom
+      const outside = aside.left < box.left || aside.right > box.right
+      return overlaps || outside ? `${(card.textContent ?? '').trim().slice(0, 24)}: overlaps ${overlaps}, outside ${outside}` : null
+    }).filter(Boolean)
+    const asides = strip.querySelectorAll('[data-metric-aside]').length
+    return { values, changes, columns, collisions, asides }
   })
 }
 
@@ -75,6 +90,8 @@ for (const width of [640, 1280, 1920]) {
       expect(m.changes.length, 'the fixture sends a change for every KPI').toBe(5)
       for (const v of m.values) expect(v.lines, `KPI value "${v.text}"`).toBe(1)
       for (const d of m.changes) expect(d.lines, `KPI change "${d.text}"`).toBe(1)
+      expect(m.asides, 'the fixture draws three sparklines').toBe(3)
+      expect(m.collisions, 'no sparkline over its value or out of its tile').toEqual([])
       // One row of five on a desktop page; at 640 px the room-sized tiles
       // cannot fit five across, so the strip wraps (and nothing scrolls sideways).
       if (width >= 1280) expect(m.columns, 'one row of five tiles').toBe(5)
@@ -91,6 +108,8 @@ for (const width of [640, 1280, 1920]) {
       else expect(m.columns).toBeLessThanOrEqual(5)
       await expectNoHorizontalOverflow(page, `Overview, desk, ${width}`)
       for (const v of m.values) expect(v.lines, `KPI value "${v.text}"`).toBe(1)
+      expect(m.asides).toBe(3)
+      expect(m.collisions, 'no sparkline over its value or out of its tile').toEqual([])
     })
   })
 }

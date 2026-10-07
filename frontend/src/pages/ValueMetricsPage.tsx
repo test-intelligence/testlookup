@@ -517,14 +517,16 @@ export default function ValueMetricsPage() {
       )}
 
       {/* ── The value counters, one strip (UX redesign P3: seven cards → five).
-          "Defects promoted" is the second fact of "Defects auto-grouped", and
-          the derived "Release decisions" (blocked + conditional, both shown
-          on "Risky releases blocked") is gone. */}
+          "Defects promoted" is the second fact of "Defects grouped", and the
+          derived "Release decisions" (blocked + conditional, both shown on
+          "Releases blocked") is gone. The labels are short enough to stay
+          whole at 1280 px (`kpi-labels.spec.ts`); the full names are hints. */}
       <KpiStrip>
         <MetricCard
           compact
           icon={null}
-          title="Defects auto-grouped"
+          title="Defects grouped"
+          hint="Defects auto-grouped"
           metric={{ value: counter(metrics.defects_auto_grouped) }}
           sparkline={<CounterNote>{metrics.tests_grouped} tests · {metrics.defects_promoted} promoted to Jira</CounterNote>}
         />
@@ -545,14 +547,16 @@ export default function ValueMetricsPage() {
         <MetricCard
           compact
           icon={null}
-          title="Risky releases blocked"
+          title="Releases blocked"
+          hint="Risky releases blocked"
           metric={{ value: counter(metrics.risky_releases_blocked) }}
           sparkline={<CounterNote>{metrics.releases_conditional} conditional · {metrics.release_overrides} overridden</CounterNote>}
         />
         <MetricCard
           compact
           icon={null}
-          title="Intelligence reports"
+          title="AI reports"
+          hint="Intelligence reports"
           metric={{ value: counter(metrics.intelligence_reports_generated) }}
           sparkline={<CounterNote>AI analyses generated</CounterNote>}
         />
@@ -621,10 +625,10 @@ export default function ValueMetricsPage() {
         // click away, so nobody reads the dashes as a data bug.
         <Disclosure title="No value-generating activity yet for this window" summary="what fills these counters">
           <ul className="text-[12.5px] space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
-            <li><strong className="text-[var(--color-text-secondary)]">Defects auto-grouped</strong> · run deep investigation on failing builds to cluster failures.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Defects grouped</strong> · run deep investigation on failing builds to cluster failures.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Duplicates avoided</strong> · file a defect from a cluster and the system detects duplicates of prior ones.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Flaky tests found</strong> · the Flaky Coach scans history; needs ≥ 5 runs per fingerprint to flag.</li>
-            <li><strong className="text-[var(--color-text-secondary)]">Risky releases blocked</strong> · publish a Release Gate Policy and run release-gate evaluation on a build.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Releases blocked</strong> · publish a Release Gate Policy and run release-gate evaluation on a build.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Defects promoted</strong> · promote a cluster to a tracked defect from the Failure Analysis page.</li>
           </ul>
         </Disclosure>

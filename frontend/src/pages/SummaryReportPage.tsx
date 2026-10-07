@@ -48,6 +48,7 @@ import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
 import type { SummaryReport, SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
+import { formatDuration } from '@/utils/formatters'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
 import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
@@ -641,7 +642,9 @@ function runFactsLine(report: SummaryReport): string {
   return [
     `Runs in window: ${fmtInt(report.run_count)}`,
     report.runs_per_day != null ? `Avg / day: ${report.runs_per_day.toFixed(2)}` : null,
-    `Avg duration: ${fmtInt(report.avg_duration_ms)} ms`,
+    // A duration, not a count: "512,400 ms" read as a number to divide in
+    // your head; the Dashboard says "8m 32s" for the same mean.
+    `Avg duration: ${formatDuration(Math.round(report.avg_duration_ms))}`,
     report.latest_run_at ? `Latest run: ${fmtDateTime(report.latest_run_at)}` : null,
   ].filter((part): part is string => part !== null).join(' · ')
 }

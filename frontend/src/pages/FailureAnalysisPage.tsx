@@ -908,7 +908,7 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
   const suite = [test.suite_name, test.class_name].filter(Boolean).join(' · ')
   return (
     <tr data-failing-row="" style={{ borderBottom: '1px solid var(--color-border)' }} className="hover:bg-[var(--color-bg-hover)]">
-      <td style={{ padding: '8px 12px', minWidth: 260 }}>
+      <td style={{ padding: '8px 12px', minWidth: 220 }}>
         <div className="flex flex-col gap-0.5 min-w-0">
           <Link
             to={testSearchHref(test.test_name)}
@@ -933,7 +933,9 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
       </td>
       <td style={{ padding: '8px 12px' }}>
         <div className="text-[13px] font-semibold tabular-nums" style={{ color: 'var(--status-failed)' }}>{test.fail_count}</div>
-        <div data-failure-rate="" className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+        {/* Wraps: on one line this cell pushed the table past its card at
+            1280 px and the Jira / Suspects row actions off-screen. */}
+        <div data-failure-rate="" className="text-[11px] text-[var(--color-text-muted)]">
           {measured
             ? <><strong>{fmtPct((measured.fail_count / measured.total_runs) * 100)} failure rate</strong> · failed {measured.fail_count} of {measured.total_runs} executions</>
             : sharePct !== null

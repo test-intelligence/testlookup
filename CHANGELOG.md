@@ -59,6 +59,25 @@ Measured at 1440 x 900 on the hermetic fixtures:
     40 px in the room).
   - `PageHeader`'s **?** takes `topic#anchor`, so Defects' help opens on
     "Promoting to a defect".
+- **Found reading the P3 baselines:**
+  - Failures: at 1280 px the Top failing table was wider than its card, and
+    its Jira and Suspects row actions were scrolled out of sight. The
+    failure-rate cell now wraps and the test column is narrower.
+    `fold-failures.spec.ts` checks the card at 1280 and 1440.
+  - Runs: the banner repeated the title's "3 of 4 builds failed" as a
+    "Failing builds" fact. The fact is removed.
+  - Presentation mode: the 40 px KPI value covered its own sparkline, and the
+    sparkline ran into the next tile. A tile's sparkline now takes the room
+    the value leaves and moves below the value when there is less than
+    4 rem. `rollout-overview-presentation.spec.ts` checks for overlap at
+    640, 1280 and 1920 px.
+  - KPI labels were cut on CI's Linux font ("MEAN TIME TO RESOL…"). They are
+    now Time to resolve, Defects grouped, Releases blocked and AI reports,
+    and each card's full name is its hover text. New `kpi-labels.spec.ts`
+    keeps every strip label whole, with 4 px to spare, on all eight pages
+    at 1280 and 1440.
+  - Summary: the average duration reads "8m 32s", as on the Dashboard,
+    instead of "512,400 ms".
 - **Dead code:** the Summary top-failing part and its adapter,
   `useValueMetricsKpi`, and three unused Summary caption words.
 - **Homelab deploy (found deploying P2):** an old pod still Terminating after

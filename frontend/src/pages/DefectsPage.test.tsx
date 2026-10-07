@@ -341,7 +341,7 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
 
   it('deletes the four hard-coded glyphs', async () => {
     const kpis = await renderWith([p0('d1', 4)])
-    for (const label of ['Open defects', 'P0 / P1 open', 'Mean time to resolve', 'Escape rate']) {
+    for (const label of ['Open defects', 'P0 / P1 open', 'Time to resolve', 'Escape rate']) {
       const cell = kpiCell(kpis, label)
       expect(cell.querySelector('svg:not(.lucide)'), label).toBeNull()
       expect(cell.querySelector('polyline'), label).toBeNull()

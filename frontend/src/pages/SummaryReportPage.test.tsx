@@ -755,11 +755,20 @@ describe('SummaryReportPage — the page template (P3)', () => {
     await screen.findByText('Total tests')
     const header = document.querySelector('[data-page-header]') as HTMLElement
     expect(within(header).getByText(
-      `Runs in window: 4 · Avg / day: 0.57 · Avg duration: 12,345 ms · Latest run: ${new Date('2026-05-15T00:00:00+00:00').toLocaleString()}`,
+      `Runs in window: 4 · Avg / day: 0.57 · Avg duration: 12.3s · Latest run: ${new Date('2026-05-15T00:00:00+00:00').toLocaleString()}`,
     )).toBeInTheDocument()
     // And when the report was generated, at the toolbar's end.
     const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
     expect(toolbar).toHaveTextContent(`Generated ${new Date('2026-05-16T00:00:00+00:00').toLocaleString()}`)
+  })
+
+  it('states the average duration as a duration, as the Dashboard does ("8m 32s", not "512,400 ms")', async () => {
+    mockGet.mockResolvedValue(makeReport({ avg_duration_ms: 512_400.4 }))
+    renderPage()
+    await screen.findByText('Total tests')
+    const subtitle = (document.querySelector('[data-page-header]') as HTMLElement).querySelector('p') as HTMLElement
+    expect(subtitle.textContent).toContain('Avg duration: 8m 32s ·')
+    expect(subtitle.textContent).not.toMatch(/\d ms\b/)
   })
 
   it('no runs per day in latest mode (the server sends none): the subtitle leaves it out', async () => {
@@ -767,7 +776,7 @@ describe('SummaryReportPage — the page template (P3)', () => {
     renderPage()
     await screen.findByText('Total tests')
     const subtitle = (document.querySelector('[data-page-header]') as HTMLElement).querySelector('p') as HTMLElement
-    expect(subtitle.textContent).toMatch(/^Runs in window: 4 · Avg duration: 12,345 ms · Latest run: /)
+    expect(subtitle.textContent).toMatch(/^Runs in window: 4 · Avg duration: 12.3s · Latest run: /)
   })
 
   it('header: the help topic, Views, and every export in ⋯', async () => {
