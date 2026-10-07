@@ -31,7 +31,10 @@ export function TabCount({ value, active }: { value: number; active: boolean }) 
     <span
       data-tab-count=""
       className={clsx(
-        'rounded px-1.5 py-px text-[10.5px] tabular-nums',
+        // `leading-4`: 16 + 2 px fits the tab's 20 px line. Inheriting
+        // `leading-5` it was 22 px, so a counted tab stood 2 px taller than
+        // the others and its label sat higher on the bar.
+        'rounded px-1.5 py-px text-[10.5px] leading-4 tabular-nums',
         active ? 'bg-[var(--color-accent-bg-soft)] text-[var(--color-text)]' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
       )}
     >

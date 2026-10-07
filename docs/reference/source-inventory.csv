@@ -2735,7 +2735,7 @@ frontend/src/components/ui/SuiteBadge.test.tsx,test,37,,@testing-library/react; 
 frontend/src/components/ui/SuiteBadge.tsx,implementation/configuration,70,,clsx; lucide-react; react-router-dom,Props; SuiteBadge
 frontend/src/components/ui/SuiteFilterSelect.tsx,implementation/configuration,36,,lucide-react; @/lib/scopeControls,SuiteFilterSelect
 frontend/src/components/ui/Tabs.test.tsx,test,68,,@testing-library/react; react; react-router-dom; vitest; ./Tabs; ./useTabParam,setup
-frontend/src/components/ui/Tabs.tsx,implementation/configuration,83,,react; clsx,TabItem; tabClass; TabCount; Tabs
+frontend/src/components/ui/Tabs.tsx,implementation/configuration,86,,react; clsx,TabItem; tabClass; TabCount; Tabs
 frontend/src/components/ui/ThemePicker.test.tsx,test,42,,vitest; @testing-library/react; ./ThemePicker; @/store/themeStore,
 frontend/src/components/ui/ThemePicker.tsx,implementation/configuration,44,,@/store/themeStore,ThemePicker
 frontend/src/components/ui/TimingCell.test.tsx,test,93,,@testing-library/react; vitest; ./TimingCell,
@@ -3472,7 +3472,7 @@ export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => 
   },
   {
     label: ",of; change; ApiHandler; ApiHandlers; ApiRequest; TrendPoint; of; trendDay; trendPoints; summary; runs; runList; valueMetrics; suiteTrend; suiteDetail; coverage; defects; runIntelligence; of; summaryReport; hubRuns; ReleaseSpec; chartMeta; yet; of; suiteSeries; durationSeries; releaseSeries; onTheWire; chartData; GateOnOptions; releaseGateOn; scopedTo; StatusCounts; statusCounts; passRateOf; HeatRow; rankHeatRows; rateCell; AxisCut; heatmapMeta; rateMatrix; suiteDayMatrix; suiteEnvironmentMatrix; suiteReleaseMatrix; testRunMatrix; heatmap; node; key; key; MapTest; MapClass; MapSuite; mapTests; is; and; nodeStats; treeNode; rankChildren; coverageMapLevel; coverageMap; GroupSpec; trendAxis; groupTrend; failureGroupsBody; failureGroups; systemicClustersBody; systemicClusters; ScatterTest; median; of; scatterTests; testScatterBody; testScatter; LadderStatus; categoryBody; ladderTests; ladderChartData; rowsOf; FixtureCell; matrixCell; rowsTotal; rowStatuses; testNameOf; chartRowsPage; chartRows; fixtureRequest; FixtureBody; wave3Bodies; withoutObjectMemberLabels
-frontend/tests/visual/ux-primitives.visual.spec.ts,test,51,,@playwright/test,
+frontend/tests/visual/ux-primitives.visual.spec.ts,test,62,,@playwright/test,
 frontend/tsconfig.build.json,implementation/configuration,14,,,check
 frontend/tsconfig.json,implementation/configuration,25,,,
 frontend/tsconfig.node.json,implementation/configuration,11,,,
