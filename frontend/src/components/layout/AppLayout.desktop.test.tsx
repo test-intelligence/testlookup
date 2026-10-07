@@ -140,11 +140,13 @@ describe('AppLayout at 1024 px and above: the shell origin/main shipped', () => 
   it.each(['/overview', '/trends', '/settings/profile'])('%s: elements, attributes and desktop classes are unchanged', async (path) => {
     const { container } = renderShell(path)
     // The settings layout is a lazy chunk: the shape is the one a user sees once it is in.
-    if (path.startsWith('/settings')) await screen.findByRole('navigation', { name: 'Settings' })
+    // 10 s: the first load of a lazy chunk under a loaded machine took past
+    // findBy's 1 s default (the P5 push gate, beside other sessions' builds).
+    if (path.startsWith('/settings')) await screen.findByRole('navigation', { name: 'Settings' }, { timeout: 10_000 })
     const root = container.firstElementChild
     if (!root) throw new Error('AppLayout rendered nothing')
     expect(desktopShape(root).join('\n')).toMatchSnapshot()
-  })
+  }, 20_000)
 
   it('P1: Help sits before the bell, the theme and presentation controls are in the closed account menu, no drawer piece renders', () => {
     const { container } = renderShell('/overview')
