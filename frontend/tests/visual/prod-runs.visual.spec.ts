@@ -38,7 +38,9 @@ for (const theme of THEMES) {
     })
 
     const banner = page.locator('[data-status-banner]')
-    await expect(banner).toContainText('Failing builds 6 of 13')
+    // The failing count is the title's, once (no "Failing builds" fact repeating it).
+    await expect(banner).toContainText('6 of 13 builds failed')
+    await expect(banner).not.toContainText('Failing builds')
 
     // The two Disclosures below the table, opened for their regions.
     await page.getByRole('button', { name: /^How this verdict is computed/ }).click()
