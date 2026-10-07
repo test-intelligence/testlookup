@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased - UX redesign P6: lock it in — a fold budget and gate ratchets
+
+Phase P6 of the UI/UX redesign. Tests and gate checks now hold the
+template and the fold, and the last pages that missed the template use it.
+
+- **Fold budget:** `fold-budget.spec.ts` covers 19 routes at 1440 × 900.
+  On each it checks that:
+  - the page has exactly one primary content, starting at most 320 px down;
+  - the page stays within its height budget, and where a page runs over the
+    plan's target, the spec's comment says where the height goes;
+  - nothing scrolls sideways, and a table fits its card, at 1440 and 1280.
+- **Releases:** one status banner replaces the verdict band and the KPI
+  strip, so the list starts at 263 px (it was 466). The summary, top
+  blockers and KPI cards are in a collapsed "Release health · this week"
+  section.
+- **Found by the fold budget:**
+  - `/settings` had no marked primary content.
+  - The Inbox's table (`/my-failures`) was 1,168 px wide in a card that clips at 1,134,
+    which cut off the row actions. Its Test column now shrinks.
+- **The template everywhere:**
+  - Deep Investigation, Live and Search use the template header, so no page
+    makes its own title any more.
+  - Defects' status filter and the agent config panel use the shared tabs.
+  - Live's time window uses the shared window picker.
+- **Dead code removed:**
+  - Run Intelligence's standalone page and header, unrouted since P4. Its
+    body and decision report stay, inside the run page.
+  - The Failures composite. The page loads each section in its own tab.
+- **Quality gate**, 47 to 50 guards. All three new guards are absolute:
+  - `frontend.page-header-only`: a page's title comes from `PageHeader`.
+  - `frontend.nav-item-budget`: the sidebar has at most 14 items.
+  - `frontend.tabs-primitive-only`: no hand-rolled tab list.
+  - `repo.no-gitignored-source` also checks untracked files with this
+    checkout's own git. On Windows, git ignores case, so `*apikey*` dropped
+    a new `ApiKeysPage.test.tsx` from the P5 commit while the gate passed.
+- **Push gate:** it now also runs CI's script self-tests (quality gate,
+  mypy ratchet, CI security, clean scratch and push check), checked against
+  `ci.yml`'s list.
+
 ## Unreleased - UX redesign P5: settings and admin in one place
 
 Phase P5 of the UI/UX redesign. Every settings and admin page now sits
