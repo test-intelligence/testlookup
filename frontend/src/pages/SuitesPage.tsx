@@ -76,7 +76,7 @@ function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }
       >
         {failing}
       </td>
-      <td className="px-4 py-3 text-[var(--color-text-muted)]" data-col="owner">
+      <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text-muted)]" data-col="owner">
         {owner ? (
           <span
             className={aggregate.owner_is_fallback ? 'italic' : undefined}
@@ -368,7 +368,8 @@ export default function SuitesPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <FolderTree className="h-4 w-4 text-[var(--color-text-muted)]" />
-                        <span className="font-medium text-[var(--color-text)]">{s.name}</span>
+                        {/* One line: "All Tests" broke as "All / Tests" in a squeezed column (P4 baselines). */}
+                        <span data-suite-name="" className="whitespace-nowrap font-medium text-[var(--color-text)]">{s.name}</span>
                         {s.is_default && (
                           <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
                             <Star className="h-3 w-3" /> Default
@@ -376,8 +377,14 @@ export default function SuitesPage() {
                         )}
                       </div>
                     </td>
-                    <td className="max-w-[280px] truncate px-4 py-3 text-[var(--color-text-muted)]" title={s.description ?? undefined}>
-                      {s.description ?? <span className="italic">—</span>}
+                    <td className="px-4 py-3 text-[var(--color-text-muted)]" title={s.description ?? undefined}>
+                      {/* w-0 min-w-full: the description truncates in whatever width the
+                          names and the numbers leave it, and never sets the column's width
+                          (a truncated cell still sized it to the whole text: the list ran
+                          21 px past its card at 1280 px on CI's font). */}
+                      <div data-suite-description="" className="w-0 min-w-full max-w-[280px] truncate">
+                        {s.description ?? <span className="italic">—</span>}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">
                       {s.test_case_count ?? '—'}

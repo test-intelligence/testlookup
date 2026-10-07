@@ -696,6 +696,18 @@ describe('RunsPage — the AI-verdict column (P4, D2)', () => {
     expect(cell('run-1').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'No AI verdict: this run has not been analysed')
   })
 
+  it('has no Test Suite column: the suite sits under its run number, in the Build cell', () => {
+    renderRunsPage(brokenWindow())
+    const headers = within(primary()).getAllByRole('columnheader').map((h) => h.textContent?.trim())
+    // A column of its own put the table 66 px past its card at 1280 px on CI's
+    // font, and the row actions out of sight (fold-runs.spec.ts measures it).
+    expect(headers).not.toContain('Test Suite')
+    expect(headers.indexOf('Signature')).toBe(headers.findIndex((h) => h?.startsWith('Build')) + 1)
+    const build = row('run-1').querySelectorAll('td')[1] as HTMLElement
+    expect(build.querySelector('a[href="/runs/run-1"]')).not.toBeNull()
+    expect(build.querySelector('[data-run-suite]')).not.toBeNull()
+  })
+
   it('asks once per run on screen, for that run\'s report', async () => {
     renderRunsPage(brokenWindow())
     await waitFor(() => expect(primary().querySelectorAll('[data-ai-verdict="none"]')).toHaveLength(4))

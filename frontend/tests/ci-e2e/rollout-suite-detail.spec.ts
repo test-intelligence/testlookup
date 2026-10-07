@@ -24,7 +24,7 @@
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { frameByHeading } from '../lib/production-pages'
+import { frameByHeading, type MockedApi } from '../lib/production-pages'
 import {
   daysOnTheWire,
   expectDrawn,
@@ -36,6 +36,7 @@ import {
   expectOneRowsPanel,
   mountEverySection,
   networkQuiet,
+  observed,
   openRollout,
   proveLazyMount,
   queryOf,
@@ -67,20 +68,30 @@ const ready = (p: Page) => p.getByRole('heading', { name: /^Run history/ })
 const PATH = `/coverage/suite?name=${SUITE}&days=30`
 
 /**
- * The page's own reads (without the shell). P4: the suites list twice (the
- * redirect resolves the name with it, then the suite page reads it again for
- * its Move targets), the suite and its catalog (the page's header and tab
- * counts), and the window's analytics once (the KPI strip and the Charts tab
- * share the one request).
+ * The page's own reads (without the shell): the suite and its catalog (the
+ * page's header and tab counts), and the window's analytics once (the KPI
+ * strip and the Charts tab share the one request). Plus the suites list
+ * (`SUITES_LINE`), counted apart: the redirect resolves the name with it and
+ * the suite page reads it for its Move targets, under one SWR key, so the
+ * page's read goes out only when it mounts more than SWR's 2 s dedupe after
+ * the redirect's. Twice on the eager redirect, once since it is lazy (P4,
+ * the eager budget): a matter of timing, held as "once or twice".
  */
+const SUITES_LINE = `GET /api/v1/suites?project_id=${P}`
 const PAGE_READS = [
   `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,
   `GET /api/v1/test-management/suites/${SUITE}/trend?project_id=${P}&days=30`,
-  `GET /api/v1/suites?project_id=${P}`,
-  `GET /api/v1/suites?project_id=${P}`,
   `GET /api/v1/suites/${SUITE_ID}`,
   `GET /api/v1/suites/${SUITE_ID}/test-cases`,
 ]
+
+/** `expectInventory`, with the suites list read once or twice (see `PAGE_READS`) and everything else exact. */
+function expectSuiteInventory(api: MockedApi, errors: string[], expected: readonly string[], what: string) {
+  const reads = observed(api).filter((line) => line === SUITES_LINE).length
+  expect(reads, `${what}: the suites list, by the redirect and (past SWR's dedupe) the page`).toBeGreaterThanOrEqual(1)
+  expect(reads, `${what}: the suites list, by the redirect and (past SWR's dedupe) the page`).toBeLessThanOrEqual(2)
+  expectInventory({ ...api, seen: api.seen.filter((line) => line !== SUITES_LINE) }, errors, expected, what)
+}
 
 const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
 const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&project_id=${P}&days=30&suite_name=${SUITE}`
@@ -129,7 +140,7 @@ test('the pass-rate frame has trend analysis and zoom, and nothing is asked for 
   await expectNoErrorFrame(page)
   await expectNoTextEscapes(page, 'Suite detail at 1280')
   await networkQuiet(page, api)
-  expectInventory(api, errors, INVENTORY, 'Suite detail')
+  expectSuiteInventory(api, errors, INVENTORY, 'Suite detail')
 })
 
 // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -154,7 +165,7 @@ test('?days=365 in the URL: the page falls back to its own window, and nothing o
   await expectDrawn(sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/), 'suite-pass-rate')
   await networkQuiet(page, api)
   expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
-  expectInventory(api, errors, INVENTORY, 'Suite detail at ?days=365')
+  expectSuiteInventory(api, errors, INVENTORY, 'Suite detail at ?days=365')
 })
 
 // ── Wave 3: the test x run heatmap and the test scatter ───────────────────
@@ -182,7 +193,7 @@ test.describe('Suite detail, the Wave 3 sections (1280 x 4000)', () => {
     await expectHostileAsText(page, page.locator('[data-suite-advanced]'), 'Suite detail sections')
     await expectNoErrorFrame(page)
     await networkQuiet(page, api)
-    expectInventory(api, errors, INVENTORY_BOTH, 'Suite detail, Wave 3 sections')
+    expectSuiteInventory(api, errors, INVENTORY_BOTH, 'Suite detail, Wave 3 sections')
     expect(console).toEqual([])
   })
 

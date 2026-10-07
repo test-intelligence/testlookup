@@ -301,16 +301,16 @@ describe('SuiteCasesPage latest-run column', () => {
     ])
   })
 
-  it('names the column "Latest run", not "Last seen"', () => {
+  it('no column of its own (P4: the table ran past its card at 1280 px): the row\'s Run action names the run', () => {
     renderPage()
-    expect(screen.getByRole('columnheader', { name: 'Latest run' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Latest run' })).toBeNull()
     expect(screen.queryByRole('columnheader', { name: /Last seen/i })).toBeNull()
   })
 
-  it('renders the run id as a link to that run, labelled as a run', () => {
+  it('renders the run id as a link into that run, labelled as a run', () => {
     renderPage()
     const link = screen.getByRole('link', { name: 'run 1a2b3c4d' })
-    expect(link).toHaveAttribute('href', '/runs/1a2b3c4d-0000-4000-8000-000000000001')
+    expect(link.getAttribute('href')).toMatch(/^\/runs\/1a2b3c4d-0000-4000-8000-000000000001(\/tests\/.+)?$/)
   })
 
   it('shows a dash, not a link, when the case has no run', () => {
@@ -381,7 +381,7 @@ describe('SuiteCasesPage — the suite page template (P4)', () => {
     renderPage()
     const headers = screen.getAllByRole('columnheader').map((th) => th.textContent)
     expect(headers).toEqual([
-      '', 'Test', 'Class', 'Pass rate', 'Executions', 'Avg duration', 'Last result', 'Status', 'Source', 'Latest run', '',
+      '', 'Test', 'Class', 'Pass rate', 'Executions', 'Avg duration', 'Last result', 'Status', '',
     ])
     const row = document.querySelector('[data-test-row="fp-c1"]') as HTMLElement
     expect(within(row).getByText('80.0%')).toBeInTheDocument()

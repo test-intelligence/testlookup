@@ -71,7 +71,9 @@ export default function SuiteTestsTable({
   return (
     <div data-primary="" data-suite-tests="" className="overflow-x-auto rounded-lg ring-1 ring-[var(--color-border)]">
       <table className="w-full divide-y divide-[var(--color-border)] text-sm">
-        <thead className="bg-[var(--color-bg-secondary)] text-left text-xs uppercase whitespace-nowrap text-[var(--color-text-muted)]">
+        {/* Headers may wrap ("Avg / duration"): one-line headers set the widths of columns whose
+            values are a number, and the table ran past its card (P4 baselines, CI's font). */}
+        <thead className="bg-[var(--color-bg-secondary)] text-left text-xs uppercase text-[var(--color-text-muted)]">
           <tr>
             {canEdit && (
               <th className="w-10 px-4 py-2">
@@ -91,11 +93,9 @@ export default function SuiteTestsTable({
             <th className="px-3 py-2 font-medium text-right">Executions</th>
             <th className="px-3 py-2 font-medium text-right">Avg duration</th>
             <th className="px-3 py-2 font-medium">Last result</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Source</th>
-            {/* The row carries the latest run's id, not a timestamp, so
-                this column names the run rather than claiming a date. */}
-            <th className="px-3 py-2 font-medium">Latest run</th>
+            {/* The source sits under the status, and the latest run is the row's Run action:
+                two columns of their own kept the table 58 px past its card at 1280 px. */}
+            <th className="px-3 py-2 font-medium" title="The case's lifecycle status, and where it came from">Status</th>
             <th className="px-3 py-2 font-medium" />
           </tr>
         </thead>
@@ -148,7 +148,10 @@ export default function SuiteTestsTable({
                     {stat?.is_flaky && <FlakyPill />}
                   </div>
                   {stat?.last_error && (
-                    <p data-last-error="" className="mt-0.5 truncate text-xs text-[var(--status-failed)]/70" title={stat.last_error}>
+                    // w-0 min-w-full: the error fills the cell and truncates there, but adds
+                    // nothing to the column's width (a truncated line still sizes a table
+                    // column to its whole text).
+                    <p data-last-error="" className="mt-0.5 w-0 min-w-full truncate text-xs text-[var(--status-failed)]/70" title={stat.last_error}>
                       {stat.last_error}
                     </p>
                   )}
@@ -175,30 +178,22 @@ export default function SuiteTestsTable({
                 <td className="px-3 py-2">
                   {stat?.last_status ? <LastStatusBadge status={stat.last_status} /> : <NoRun title={noRunTitle} />}
                 </td>
-                <td className="px-3 py-2"><StatusPill status={c.status} /></td>
-                <td className="px-3 py-2 text-[var(--color-text-muted)]">{c.source}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-[var(--color-text-muted)] text-xs">
-                  {c.last_seen_run_id ? (
-                    <Link
-                      to={`/runs/${c.last_seen_run_id}`}
-                      onClick={e => e.stopPropagation()}
-                      title={`Open run ${c.last_seen_run_id}`}
-                      className="hover:text-[var(--color-accent)] hover:underline"
-                    >
-                      run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
-                    </Link>
-                  ) : '—'}
+                <td className="px-3 py-2">
+                  <StatusPill status={c.status} />
+                  <p data-case-source="" className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{c.source}</p>
                 </td>
                 <td className="px-3 py-2 text-right">
                   <div className="inline-flex items-center gap-1">
-                    {runHref && (
+                    {/* The latest run, named by its id (the row carries the run's id,
+                        not a timestamp, so it names the run rather than claim a date). */}
+                    {runHref && c.last_seen_run_id && (
                       <Link
                         to={runHref}
                         onClick={e => e.stopPropagation()}
-                        title="Open latest run"
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+                        title={`Open this test's result in its latest run, ${c.last_seen_run_id}`}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
                       >
-                        <ExternalLink className="h-3 w-3" /> Run
+                        <ExternalLink className="h-3 w-3" aria-hidden="true" /> run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
                       </Link>
                     )}
                     {canEdit && (

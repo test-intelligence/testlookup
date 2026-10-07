@@ -21,7 +21,7 @@
  * window, a fifth that never ran, eight recent runs).
  */
 import { expect, test, type Page } from '@playwright/test'
-import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
+import { MAIN, networkQuiet, openRollout, primaryOverflow, requestsTo } from '../lib/rollout'
 import {
   HEATMAP_PATH,
   SUITE,
@@ -170,3 +170,32 @@ test('/suites: the run columns, and the table within the fold budget', async ({ 
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })
+
+// The P4 baselines showed both tables wider than their cards at 1280 px on CI's
+// font: the suite's tests lost "Latest run" and the Move action off the right
+// edge, and the list broke "All Tests" and "QA Lead" mid-name.
+for (const width of [1280, 1440]) {
+  test(`at ${width} px the suite's tests and the suites list fit their cards, names on one line`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const tests = await openRollout(page, SUITE_PATH, { handlers: SUITE_DETAIL_ON, ready: (p) => p.locator('[data-suite-tests]') })
+    await networkQuiet(page, tests.api)
+    const catalog = await primaryOverflow(page)
+    console.log(`OVERFLOW ${SUITE_PATH} @${width} ${JSON.stringify(catalog)}`)
+    expect(catalog.scrollWidth, "the suite's tests are no wider than their card").toBeLessThanOrEqual(catalog.clientWidth)
+    await expect(page.locator('[data-suite-tests]').getByRole('button', { name: /Move/ }).first()).toBeInViewport()
+
+    await page.goto('/suites')
+    await expect(page.locator('[data-primary] table')).toBeVisible()
+    const list = await primaryOverflow(page)
+    console.log(`OVERFLOW /suites @${width} ${JSON.stringify(list)}`)
+    expect(list.scrollWidth, 'the suites list is no wider than its card').toBeLessThanOrEqual(list.clientWidth)
+    // A name or an owner is one line: an inline box broken across lines has one rect per line.
+    const broken = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-primary] [data-suite-name], [data-primary] [data-col="owner"] > span'))
+        .filter((el) => el.getClientRects().length > 1)
+        .map((el) => el.textContent),
+    )
+    expect(broken, 'names or owners broken across lines').toEqual([])
+    expect(tests.errors).toEqual([])
+  })
+}

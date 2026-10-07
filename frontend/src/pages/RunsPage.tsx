@@ -1018,8 +1018,10 @@ function RunsTable({
                   aria-label="Select all visible runs"
                 />
               </th>
+              {/* The suite is under the run number ("Run #60" counts per
+                  suite): a column of its own put the table 66 px past its
+                  card at 1280 px on CI's font, the row actions off-screen. */}
               <ThSort label="Build" />
-              <Th label="Test Suite" />
               <Th label="Signature" />
               <Th label="Status" />
               <Th label="AI verdict" />
@@ -1037,7 +1039,7 @@ function RunsTable({
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={10} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]">
                   No runs in the window. Try a longer window or check your reporter.
                 </td>
               </tr>
@@ -1098,13 +1100,13 @@ function RunsTable({
                         Uploaded
                       </span>
                     )}
-                  </td>
-                  <td style={{ padding: CELL_PAD }}>
-                    <SuiteBadge
-                      primary={r.primary_suite_name}
-                      all={r.suite_names}
-                      linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
-                    />
+                    <div className="mt-1 font-sans font-normal" data-run-suite="">
+                      <SuiteBadge
+                        primary={r.primary_suite_name}
+                        all={r.suite_names}
+                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                      />
+                    </div>
                   </td>
                   <td style={{ padding: CELL_PAD }}>
                     <SignatureChip
@@ -1134,8 +1136,13 @@ function RunsTable({
                         {r.passed_tests > 0 && <span style={{ flex: r.passed_tests, background: 'var(--status-passed)' }} />}
                         {r.failed_tests > 0 && <span style={{ flex: r.failed_tests, background: 'var(--status-failed)' }} />}
                       </div>
-                      <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">
-                        <span style={{ color: 'var(--status-passed)' }}>{r.passed_tests}</span> · <span style={{ color: 'var(--status-failed)' }}>{r.failed_tests}</span> · <span>{r.total_tests} total</span>
+                      {/* Two groups that wrap between them when the column is
+                          tight (passed · failed over the total), never inside one. */}
+                      <span className="text-[10.5px] leading-tight tabular-nums text-[var(--color-text-muted)]" data-run-tests-counts="">
+                        <span className="whitespace-nowrap">
+                          <span style={{ color: 'var(--status-passed)' }}>{r.passed_tests}</span> · <span style={{ color: 'var(--status-failed)' }}>{r.failed_tests}</span> ·
+                        </span>{' '}
+                        <span className="whitespace-nowrap">{r.total_tests} total</span>
                       </span>
                     </div>
                   </td>
