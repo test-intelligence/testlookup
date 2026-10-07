@@ -3338,7 +3338,7 @@ frontend/src/utils/testManagementTotals.test.ts,test,113,,vitest; ./testManageme
 frontend/src/utils/testManagementTotals.ts,implementation/configuration,70,,,CasesResponse; CasesTotals; describeStatBasis; deriveTestManagementTotals
 frontend/src/vite-env.d.ts,implementation/configuration,1,,,
 frontend/tailwind.config.js,implementation/configuration,86,,,system
-frontend/tests/ci-e2e/accessibility-keyboard.spec.ts,test,156,,@playwright/test; @axe-core/playwright,Page; Route; json; seedSession; installApi
+frontend/tests/ci-e2e/accessibility-keyboard.spec.ts,test,159,,@playwright/test; @axe-core/playwright,Page; Route; json; seedSession; installApi
 frontend/tests/ci-e2e/chart-export.spec.ts,test,282,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures; ../lib/chart-gallery-page; ../lib/png,
 frontend/tests/ci-e2e/chart-fullscreen-text.spec.ts,test,152,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; DOMRectLike; TextReport; readTexts; enterFullscreen; exitFullscreen
 frontend/tests/ci-e2e/chart-fullscreen.spec.ts,test,398,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; enter; sizes; as; as; withoutFullscreenApi; as; ignoredByAssistiveTech
@@ -3350,7 +3350,7 @@ frontend/tests/ci-e2e/chart-touch.spec.ts,test,90,,@playwright/test; ../lib/char
 frontend/tests/ci-e2e/chart-zoom.spec.ts,test,519,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; press; Alignment; alignment; expectAligned
 frontend/tests/ci-e2e/critical-journeys.spec.ts,test,96,,@playwright/test,Page; Route; json; installHermeticApi
 frontend/tests/ci-e2e/fold-agents.spec.ts,test,155,,@playwright/test; ../lib/rollout; ../visual/production/fixtures; ../visual/production/fixtures-run; ../visual/production/fixtures-pages,Page; foldGeometry
-frontend/tests/ci-e2e/fold-budget.spec.ts,test,430,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../visual/production/fixtures-run; ../visual/production/fixtures-pages,Locator; Page; ApiHandlers; FoldRoute; Fold; measure; blocks; open; clippedTables; expectFits
+frontend/tests/ci-e2e/fold-budget.spec.ts,test,432,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../visual/production/fixtures-run; ../visual/production/fixtures-pages,Locator; Page; ApiHandlers; FoldRoute; Fold; measure; blocks; open; clippedTables; expectFits
 frontend/tests/ci-e2e/fold-coverage.spec.ts,test,57,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page
 frontend/tests/ci-e2e/fold-defects.spec.ts,test,75,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page; FoldGeometry; foldGeometry
 frontend/tests/ci-e2e/fold-failures.spec.ts,test,98,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures,Page; FoldGeometry; foldGeometry
