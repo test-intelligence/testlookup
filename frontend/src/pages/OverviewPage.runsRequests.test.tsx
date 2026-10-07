@@ -47,14 +47,6 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
 vi.mock('@/hooks/useValueMetrics', () => ({
   useValueMetricsKpi: () => ({ metrics: undefined }),
 }))
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
-    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
-    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
-    updateInstance: vi.fn(), moveInstance: vi.fn(),
-  }),
-}))
 vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useIntegrationsConfig')>()
   return { ...actual, useIntegrationsConfig: () => ({ config: undefined, error: undefined, isLoading: false }) }

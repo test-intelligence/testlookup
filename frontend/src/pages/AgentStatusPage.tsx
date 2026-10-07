@@ -20,9 +20,9 @@ import agentService from '@/services/agentService'
 import { isDegradedPipeline, PUBLIC_PIPELINE_STATUS_LABEL, isPipelineInProgress, publicPipelineStatus } from '@/types/agent'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import Disclosure from '@/components/ui/Disclosure'
 import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
 import RightRail from '@/components/agents/computeGraph/RightRail'
-import ModeTabs, { type WorkflowMode } from '@/components/agents/computeGraph/ModeTabs'
 import { mapPipelineToComputeGraph } from '@/components/agents/computeGraph/mapping'
 import type { SelectedId } from '@/components/agents/computeGraph/types'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
@@ -658,7 +658,6 @@ export default function AgentStatusPage() {
   // different pipeline type.
   const canvasDescribesPipeline =
     stages.length === 0 || computeGraph.recognised > 0
-  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>('debug')
   // Default canvas selection: the first running stage (or first failed) so
   // the rail isn't empty on first paint.
   const [canvasSelection, setCanvasSelection] = useState<SelectedId>(null)
@@ -987,11 +986,12 @@ export default function AgentStatusPage() {
 
               {/* Direction-C compute graph: 1750×560 canvas with absolute-
                   positioned nodes, SVG bezier edges, a decision diamond, and a
-                  360px right rail. Debug mode (the default) renders the canvas;
-                  the other ModeTabs swap in their own bodies. */}
+                  360px right rail. It used to sit under a Live · Debug · Audit ·
+                  Compare tab bar, but only Debug (this canvas) had a body:
+                  Audit and Compare were placeholder text and Live
+                  pointed at the strip above. The bar is not rendered. */}
               <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
-                <ModeTabs mode={workflowMode} onChange={setWorkflowMode} liveActive={liveRuns.length > 0} />
-                {workflowMode === 'debug' && !canvasDescribesPipeline ? (
+                {!canvasDescribesPipeline ? (
                   /* This canvas has fixed nodes for the offline/deep pipeline.
                      For an investigation pipeline it recognised none of the
                      stages and used to render nine placeholders as `pending`
@@ -1016,7 +1016,7 @@ export default function AgentStatusPage() {
                       ))}
                     </ul>
                   </div>
-                ) : workflowMode === 'debug' ? (
+                ) : (
                   <div className="flex" style={{ height: 600 }}>
                     <ComputeCanvas
                       stages={computeGraph.stages}
@@ -1031,33 +1031,8 @@ export default function AgentStatusPage() {
                       decision={computeGraph.decision}
                     />
                   </div>
-                ) : (
-                  <div className="flex items-center justify-center h-[300px] text-sm text-[var(--color-text-muted)] px-6 text-center">
-                    {workflowMode === 'live' && 'Live mode: see the Live Executions strip above.'}
-                    {workflowMode === 'audit' && 'Audit view — coming in the next iteration.'}
-                    {workflowMode === 'compare' && 'Compare view — coming in the next iteration.'}
-                  </div>
                 )}
               </div>
-
-              {/* Original chevron-flow timeline kept below as a fallback /
-                  power-user surface. Lives in a details disclosure so the
-                  compute graph is the default. */}
-              <details className="mt-4">
-                <summary className="cursor-pointer text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                  Classic workflow timeline
-                </summary>
-                <div className="mt-2">
-                  <WorkflowTimeline
-                    title="Workflow Progress"
-                    subtitle="The agent pipeline path for this run, including skip reasons and event history."
-                    stages={(timeline?.stages ?? stages) as AgentStageResult[]}
-                    events={timeline?.events}
-                    showInspector
-                    showEventFeed
-                  />
-                </div>
-              </details>
 
               <details className="card mt-4">
                 <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">
@@ -1072,6 +1047,19 @@ export default function AgentStatusPage() {
               </details>
                 </>
               )}
+
+              {/* The chevron-flow timeline (real stages, skip reasons, event
+                  history) — collapsed at the bottom of the page. */}
+              <Disclosure title="Pipeline" defaultOpen={false} className="mt-4">
+                <WorkflowTimeline
+                  title="Workflow Progress"
+                  subtitle="The agent pipeline path for this run, including skip reasons and event history."
+                  stages={(timeline?.stages ?? stages) as AgentStageResult[]}
+                  events={timeline?.events}
+                  showInspector
+                  showEventFeed
+                />
+              </Disclosure>
             </>
           )}
         </div>

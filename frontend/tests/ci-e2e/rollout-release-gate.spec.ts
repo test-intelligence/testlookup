@@ -33,7 +33,6 @@ import {
   section,
   sectionFrame,
   SHELL_BASE,
-  SHORT_VIEWPORT,
 } from '../lib/rollout'
 import {
   CHART_DATA_PATH,
@@ -262,8 +261,13 @@ function assertClean(unhandled: string[], errors: string[]) {
   expect(errors, 'uncaught page errors').toEqual([])
 }
 
-test.describe('Release gate, a short screen (1280 x 600)', () => {
-  test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+// 400 px tall, not SHORT_VIEWPORT's 600: the UX redesign P2 moved the
+// "Release decision flow" timeline from above the comparison to a collapsed
+// section at the bottom, so at 600 px the comparison is already near at load
+// (measured: mounted at 600 and 500; 292 px below the fold at 400). The proof
+// needs it beyond the near margin, which a 400 px screen still gives.
+test.describe('Release gate, a short screen (1280 x 400)', () => {
+  test.use({ viewport: { width: 1280, height: 400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: neither the run nor chart-data is asked until the comparison is near, and both before it is visible', async ({
     page,

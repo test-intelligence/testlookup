@@ -13,6 +13,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import Disclosure from '@/components/ui/Disclosure'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import { releaseCouncilService } from '@/services/releaseCouncilService'
@@ -380,17 +381,6 @@ export default function ReleaseGatePage() {
         </div>
       )}
 
-      <WorkflowTimeline
-        title="Release decision flow"
-        subtitle="Policy rules, cluster review, evidence synthesis, and the final gate recommendation"
-        stages={workflow?.stages ?? []}
-        events={workflow?.events ?? []}
-        stageOrder={workflow?.stageOrder ?? []}
-        compact
-        showInspector
-        showEventFeed
-      />
-
       {/* Main decision banner */}
       {/* Stacked below `sm` (VIZ-106): a 120 px ring beside the verdict does not
           fit a phone. From `sm` up it is the row it always was. */}
@@ -626,6 +616,20 @@ export default function ReleaseGatePage() {
           </div>
         )}
       </div>
+
+      {/* The decision flow (policy rules → cluster review → evidence → gate)
+          is the mechanism behind the verdict above: collapsed, at the end. */}
+      <Disclosure title="How this was decided" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Release decision flow"
+          subtitle="Policy rules, cluster review, evidence synthesis, and the final gate recommendation"
+          stages={workflow?.stages ?? []}
+          events={workflow?.events ?? []}
+          stageOrder={workflow?.stageOrder ?? []}
+          showInspector
+          showEventFeed
+        />
+      </Disclosure>
     </div>
   )
 }

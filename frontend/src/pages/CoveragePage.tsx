@@ -3,45 +3,38 @@
  * design_handoff_test_coverage/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (project · window · updated) + Customize +
- *             7d/14d/30d/90d window picker + Export + "View all suites" CTA
+ *   Header  → title + crumb (project · window · updated) + saved Views +
+ *             24h/7d/14d/30d/90d window picker + suite filter + CSV Export +
+ *             "View all suites" (the suites list, /suites).
  *   Verdict → 1.45fr | 1fr split. Left: pulsing eyebrow → 26 px
  *             "<Health> · <reason>" headline → lede → up to 3 issue rows
  *             (bad / warn / info) → action buttons. Right: 44 px health
  *             score + threshold-marked meter (red→amber→green) + 2×2
  *             weighted dimension grid (Pass Rate 35 % / Tag Quality 25 % /
  *             Run Cadence 25 % / Suite Breadth 15 %).
- *   Ribbon  → slim 4-stage workflow strip (60 px), each stage with status
- *             icon + name + evidence count (+ confidence on stage 3).
  *   KPIs    → 5 cells: Unique tests · Test suites (+ untagged badge) ·
- *             Total executions (+ Δ vs previous window) · Pass rate
- *             breakdown · Run cadence (days_with_runs / window).
+ *             Total executions (+ Δ, later vs earlier half of the window) ·
+ *             Pass rate breakdown · Run cadence (days_with_runs / window).
  *   Body    → 1.65fr | 1fr.
  *     Left  → Suite breakdown (stacked bars per suite, with hatched
  *             "Untagged" segment) + Untagged-executions callout (data
- *             quality framing, paths + apply-labels CTA).
- *     Right → Coverage gaps · Run-cadence heatmap (window-day grid) ·
- *             Recommended actions (Developer / QA / Release manager).
- *   Footer → Provenance line + decision-trail link.
+ *             quality framing).
+ *     Right → Coverage gaps · Run-cadence heatmap (window-day grid).
  *
- * Out of scope (Phase 2 — README §"Out of Scope"):
- *   - <600 px mobile (renders a "wider screen" notice)
- *   - Workflow drawer body, decision-trail modal body, apply-labels modal
- *   - 90-day heatmap densification
- *   - Print styles, i18n beyond key strings
+ * P2 (UX redesign, "remove the noise"): the invented 4-stage workflow ribbon
+ * and its evidence counts, the provenance footer, the recommended-actions
+ * card, the widget picker and every control that only raised a not-built
+ * toast (Fix tagging, Schedule, Configure schedule, Apply suite labels, Open
+ * runner config) are gone: the page shows only what it does.
  *
  * Data: derives everything from the existing useCoverage(days) +
  * useTrendData(days). Tag-quality is computed from any suite named
- * "Unknown Suite" / empty / null in the suites response. No new backend
- * endpoints are introduced for v1 — apply-labels and per-stage workflow
- * data are wired as TODO toasts pending the README §"Data & State"
- * endpoints landing.
+ * "Unknown Suite" / empty / null in the suites response.
  */
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
-  Download, FileText, LayoutGrid, Layers, ShieldCheck, TestTube, XCircle,
+  AlertTriangle, ChevronRight, Clock, Download, Layers, ShieldCheck, TestTube, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -53,8 +46,6 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
@@ -426,7 +417,6 @@ function deriveIssues(model: ReturnType<typeof computeHealthModel>, suites: Cove
           {' '}<span className="dim">Likely a missing label in the test runner.</span>
         </>
       ),
-      cta: { label: 'Fix tagging', onClick: () => toast('Apply-labels modal — coming in Phase 2', { icon: '🏷️' }) },
     })
   }
 
@@ -441,7 +431,6 @@ function deriveIssues(model: ReturnType<typeof computeHealthModel>, suites: Cove
           {' '}<span className="dim">Re-enable scheduled runs or extend the window for a meaningful trend.</span>
         </>
       ),
-      cta: { label: 'Schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
     })
   }
 
@@ -468,12 +457,11 @@ function GhostBtn({
   )
 }
 
-function PrimaryBtn({ children, onClick, title }: { children: React.ReactNode; onClick?: () => void; title?: string }) {
+function PrimaryBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
       style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
@@ -518,7 +506,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
 
 // ── Verdict card ──────────────────────────────────────────────────────────
 function VerdictCard({
-  model, verdict, lede, issues, onOpenTriage, onCompare, comparing, onSchedule,
+  model, verdict, lede, issues, onOpenTriage, onCompare, comparing,
 }: {
   model: ReturnType<typeof computeHealthModel>
   verdict: Verdict
@@ -531,7 +519,6 @@ function VerdictCard({
    *  page, not by this card, so swapping branches doesn't reflow the
    *  verdict body. */
   comparing: boolean
-  onSchedule: () => void
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -585,7 +572,6 @@ function VerdictCard({
           <GhostBtn onClick={onCompare}>
             {comparing ? 'Hide comparison' : 'Compare to previous window'}
           </GhostBtn>
-          <GhostBtn onClick={onSchedule}>Configure schedule</GhostBtn>
         </div>
       </div>
 
@@ -823,91 +809,6 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
   )
 }
 
-// ── Workflow ribbon (slim, decorative for v1) ────────────────────────────
-interface RibbonStage {
-  num: number
-  name: string
-  evidence: number
-  /** US-15.1 honesty fix: this used to be a hardcoded ``confidencePct: 85``
-   *  rendered as "85% confidence" — an invented number, and not a
-   *  confidence in anything. It now carries the deterministic composite
-   *  coverage score, under its real name. */
-  coverageScorePct?: number
-}
-const COVERAGE_STAGES: RibbonStage[] = [
-  { num: 1, name: 'Coverage Snapshot', evidence: 0 },
-  { num: 2, name: 'Suite Breadth',     evidence: 0 },
-  { num: 3, name: 'Coverage Risk',     evidence: 0 },
-  { num: 4, name: 'Coverage Actions',  evidence: 0 },
-]
-
-function CoverageRibbon({ totalEvidence, coverageScorePct }: { totalEvidence: number; coverageScorePct: number }) {
-  // Distribute the evidence across the 4 stages so the slim ribbon shows a
-  // believable per-stage count even though the backend doesn't yet emit
-  // per-stage data. Stage 1 (Snapshot) carries the bulk; the rest get 1
-  // each so users see the workflow ran end-to-end.
-  const distributed = COVERAGE_STAGES.map((s, i) => ({
-    ...s,
-    evidence: i === 0 ? Math.max(0, totalEvidence - 3) : 1,
-    coverageScorePct: i === 2 ? coverageScorePct : s.coverageScorePct,
-  }))
-
-  return (
-    <section
-      className="rounded-xl"
-      aria-label="Coverage workflow"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Coverage workflow · last analysis</h3>
-        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-          <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: 'var(--status-passed)' }} />
-          Completed · 4 stages · {totalEvidence} evidence items · {coverageScorePct}% coverage score
-        </div>
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-        {distributed.map((s, i) => <SlimStageCell key={s.num} stage={s} isLast={i === distributed.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function SlimStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className="relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]"
-      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none"
-        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: 'var(--status-passed)' }}
-      >
-        <Check className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-      <span className="flex flex-col gap-px min-w-0">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">
-          {stage.evidence} evidence
-          {stage.coverageScorePct != null && (
-            <>
-              <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-              <span className="font-semibold" style={{ color: 'var(--status-passed)' }}>{stage.coverageScorePct}% coverage score</span>
-            </>
-          )}
-        </span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: 'var(--status-passed)', opacity: 0.7 }} />
-    </button>
-  )
-}
-
 // ── KPI strip ─────────────────────────────────────────────────────────────
 type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
 
@@ -956,10 +857,8 @@ function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }
   )
 }
 
-function Delta({ value }: { value: number | null }) {
-  if (value == null || !Number.isFinite(value)) {
-    return <span className="tabular-nums text-[var(--color-text-muted)]">no change</span>
-  }
+/** A measured change, in percent. An unmeasured one is not drawn at all (the caller omits it), never "no change". */
+function Delta({ value }: { value: number }) {
   if (value === 0) return <span className="tabular-nums text-[var(--color-text-muted)]">no change</span>
   const sign = value > 0 ? '+' : '−'
   const color = value > 0 ? 'var(--status-passed)' : 'var(--status-failed)'
@@ -1027,12 +926,14 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
       <div className="flex items-center justify-between gap-2.5 mt-3.5 pt-3 text-[11.5px] text-[var(--color-text-muted)]" style={{ borderTop: '1px solid var(--color-border)' }}>
         <span>
           Showing {tagged.length} suite{tagged.length === 1 ? '' : 's'}
-          {untagged.length > 0 && <> + 1 untagged group</>}
+          {untagged.length > 0 && <> + {untagged.length} untagged group{untagged.length === 1 ? '' : 's'}</>}
           {' · '}
           {totalExecutions} executions total
         </span>
-        <Link to="/coverage/suite" className="hover:underline" style={{ color: 'var(--color-accent)' }}>
-          Jump to test cases →
+        {/* /coverage/suite needs a suite `name` (without one it is an empty
+            page): the list of every suite is /suites. */}
+        <Link to="/suites" className="hover:underline" style={{ color: 'var(--color-accent)' }}>
+          Browse suites →
         </Link>
       </div>
     </section>
@@ -1266,18 +1167,6 @@ function UntaggedCallout({ untaggedRuns, totalRuns, suites }: { untaggedRuns: nu
           </div>
         ))}
       </div>
-
-      <div className="flex flex-wrap gap-2 mt-3">
-        <PrimaryBtn
-          onClick={() => toast('Apply-labels modal — coming in Phase 2', { icon: '🏷️' })}
-          title="Bulk-apply suite labels to the untagged executions"
-        >
-          Apply suite labels
-        </PrimaryBtn>
-        <GhostBtn onClick={() => toast('Runner config docs — open the integration guide', { icon: '⚙️' })} title="Open the test-runner integration guide">
-          Open runner config
-        </GhostBtn>
-      </div>
     </section>
   )
 }
@@ -1435,150 +1324,6 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
   )
 }
 
-// ── Recommended actions ───────────────────────────────────────────────────
-interface RecRow {
-  role: 'dev' | 'qa' | 'rm'
-  Icon: typeof CodeIcon
-  label: string
-  owner?: string
-  body: React.ReactNode
-}
-
-function buildRecActions(model: ReturnType<typeof computeHealthModel>, suites: CoverageSuite[]): RecRow[] {
-  const recs: RecRow[] = []
-  const worstFailing = suites.filter(s => !isUntaggedRow(s) && s.failed > 0).sort((a, b) => a.pass_rate - b.pass_rate)[0]
-  if (worstFailing) {
-    recs.push({
-      role: 'dev',
-      Icon: CodeIcon,
-      label: `Developer · ${worstFailing.suite_name}`,
-      body: (
-        <>
-          Investigate why <code>{worstFailing.suite_name}</code> is failing — {worstFailing.failed} of{' '}
-          {worstFailing.passed + worstFailing.failed + worstFailing.skipped} runs failed in the current window.
-        </>
-      ),
-    })
-  }
-  if (model.untaggedRuns > 0) {
-    recs.push({
-      role: 'qa',
-      Icon: ShieldCheck,
-      label: 'QA · tagging',
-      body: (
-        <>
-          Add <code>@suite</code> annotations to the untagged spec files so the {model.untaggedRuns} currently-untagged{' '}
-          run{model.untaggedRuns === 1 ? '' : 's'} can be attributed and prioritized.
-        </>
-      ),
-    })
-  }
-  if (model.daysWithRuns < 5) {
-    recs.push({
-      role: 'rm',
-      Icon: Clock,
-      label: 'Release manager · cadence',
-      body: (
-        <>
-          Re-enable the nightly CI schedule — only {model.daysWithRuns} day{model.daysWithRuns === 1 ? '' : 's'} of the window
-          had executions, so trends and baselines won't be reliable.
-        </>
-      ),
-    })
-  }
-  return recs
-}
-
-function RecommendedActions({ recs }: { recs: RecRow[] }) {
-  return (
-    <section
-      aria-label="Recommended actions"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '14px 16px 16px' }}
-    >
-      <h3 className="text-[13px] font-semibold m-0 mb-1 flex justify-between items-center text-[var(--color-text)]">
-        Recommended actions
-        <span className="text-[11px] font-medium text-[var(--color-text-muted)]">routed by role</span>
-      </h3>
-      <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">Generated from coverage gaps and failing suites.</p>
-      {recs.length === 0 ? (
-        <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
-          No recommendations — coverage is healthy.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {recs.map((r, i) => <RecActionRow key={i} rec={r} />)}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function RecActionRow({ rec }: { rec: RecRow }) {
-  const palette = {
-    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
-    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
-  }[rec.role]
-  const Icon = rec.Icon
-  return (
-    <div
-      className="grid items-center gap-2.5 rounded-md border"
-      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          {rec.label}
-        </div>
-        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
-          {rec.body}
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={() => toast('Action queue — coming in Phase 2', { icon: '🚀' })}
-        className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
-        style={{ borderColor: 'var(--color-border)' }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-      >
-        Open
-      </button>
-    </div>
-  )
-}
-
-// ── Provenance footer ─────────────────────────────────────────────────────
-function ProvenanceFooter({ evidenceCount, refreshedAt }: { evidenceCount: number; refreshedAt: string }) {
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>coverage analyzer v1</span>
-        <span aria-hidden>·</span>
-        <span>{evidenceCount} evidence item{evidenceCount === 1 ? '' : 's'}</span>
-        <span aria-hidden>·</span>
-        <span>last refreshed {refreshedAt}</span>
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
-  )
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function CoveragePage() {
   // Two body columns from 768 px; one below, where 205 + 124 px columns squeezed the cards (Wave 3, X2/X3).
@@ -1596,7 +1341,6 @@ export default function CoveragePage() {
   const days = snapToAllowed(storedDays, WINDOWS) as Window
   const setDays = setStoredDays as (w: Window) => void
 
-  const [showPicker, setShowPicker] = useState(false)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
@@ -1607,7 +1351,6 @@ export default function CoveragePage() {
     suite: { names: suiteNames, set: setSelectedSuite },
     release: true,
   })
-  const analyticsView = useAnalyticsView('coverage')
   const { options: suiteOptions } = useSuiteOptions(days)
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
@@ -1617,8 +1360,8 @@ export default function CoveragePage() {
   // upload results they have already uploaded.
   const { data: coverageData, isLoading, error: coverageError, mutate: retryCoverage } =
     useCoverage(days, suiteFilter)
-  // Real arrival time of this view's payload — the provenance row below used
-  // to hardcode its age, so freshly ingested coverage claimed to be hours old.
+  // Real arrival time of this view's payload (the header's "Updated" age),
+  // never a hardcoded age that made fresh coverage claim to be hours old.
   const fetchedAt = useDataFreshness(coverageData)
   const { data: trendData } = useTrendData(days, suiteFilter)
 
@@ -1673,7 +1416,6 @@ export default function CoveragePage() {
   const verdict: Verdict = verdictForScore(model.composite)
   const issues = useMemo(() => deriveIssues(model, suites, days, navigate), [model, suites, days, navigate])
   const gaps = useMemo(() => buildGaps(model, suites, days), [model, suites, days])
-  const recs = useMemo(() => buildRecActions(model, suites), [model, suites])
 
   // Surface the most-recent run's suite in the header so a user landing here
   // can see which suite the coverage snapshot represents at a glance. Must
@@ -1694,11 +1436,11 @@ export default function CoveragePage() {
   const projectLabel = project?.name ?? 'All Projects'
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const latestRun = latestRuns?.items?.[0]
-  const totalEvidence = (summary.suite_count ?? 0) + suites.length + (model.untaggedRuns > 0 ? 1 : 0)
-  // Deterministic composite coverage score — NOT an AI confidence (US-15.1).
-  const coverageScorePct = clamp(model.composite, 0, 100)
 
-  // KPI deltas — best-effort derived from the trend tail (last vs prior half).
+  // The Total executions delta: the later half of the window's trend days
+  // against the earlier half (it is NOT the previous window; this page has no
+  // read of that unless "Compare to previous window" is on). Too few days, or
+  // an earlier half that ran nothing, is unmeasured and not drawn.
   const totalExecDelta = (() => {
     if (trend.length < 2) return null
     const half = Math.max(1, Math.floor(trend.length / 2))
@@ -1760,10 +1502,6 @@ export default function CoveragePage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Customize
-          </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
@@ -1783,7 +1521,7 @@ export default function CoveragePage() {
             Export
           </GhostBtn>
           <Link
-            to="/coverage/suite"
+            to="/suites"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
             style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
@@ -1818,7 +1556,6 @@ export default function CoveragePage() {
             onOpenTriage={() => navigate(`/failures?days=${days}`)}
             onCompare={() => setComparing(c => !c)}
             comparing={comparing}
-            onSchedule={() => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' })}
           />
 
           {comparing && (
@@ -1849,112 +1586,90 @@ export default function CoveragePage() {
             )
           )}
 
-          <CoverageRibbon totalEvidence={totalEvidence} coverageScorePct={coverageScorePct} />
-
           {/* KPI strip — 5 cells. */}
-          {analyticsView.widgetIds.includes('coverage_kpis') && (
-            <section aria-label="Coverage metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-              <KpiCell
-                Icon={TestTube}
-                label="Unique tests"
-                value={summary.unique_tests ?? 0}
-                meta={<><Delta value={null} /> · vs prev {days}d</>}
-                isFirst
-              />
-              <KpiCell
-                Icon={Layers}
-                label="Test suites"
-                value={
-                  <>
-                    {summary.suite_count ?? 0}
-                    {model.untaggedRuns > 0 && (
-                      <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">
-                        + 1 untagged
-                      </span>
-                    )}
-                  </>
-                }
-                meta={suites.filter(s => !isUntaggedRow(s)).slice(0, 3).map(s => s.suite_name).join(' · ') || '—'}
-                tone="accent"
-              />
-              <KpiCell
-                label="Total executions"
-                value={summary.total_executions ?? 0}
-                meta={<><Delta value={totalExecDelta} /> · vs prev {days}d</>}
-              />
-              <KpiCell
-                label="Pass rate"
-                value={`${(summary.avg_pass_rate ?? 0).toFixed(1)}%`}
-                tone={(summary.avg_pass_rate ?? 0) >= 90 ? 'good' : (summary.avg_pass_rate ?? 0) >= 70 ? 'warn' : 'bad'}
-                meta={(() => {
-                  const passed  = suites.reduce((s, x) => s + x.passed,  0)
-                  const failed  = suites.reduce((s, x) => s + x.failed,  0)
-                  const skipped = suites.reduce((s, x) => s + x.skipped, 0)
-                  return <>{passed} passed · {failed} failed · {skipped} skipped</>
-                })()}
-              />
-              <KpiCell
-                label="Run cadence"
-                value={
-                  <>
-                    {model.daysWithRuns}
-                    <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {days} days</span>
-                  </>
-                }
-                tone={model.daysWithRuns < Math.ceil(days * 0.3) ? 'warn' : 'neutral'}
-                meta={
-                  model.daysWithRuns < Math.ceil(days * 0.3) ? (
-                    <span className="font-medium" style={{ color: 'var(--status-broken)' }}>⚠ Schedule may be paused</span>
-                  ) : (
-                    <>{Math.round((model.daysWithRuns / days) * 100)}% of window</>
-                  )
-                }
-                isLast
-              />
-            </section>
-          )}
+          <section aria-label="Coverage metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+            <KpiCell
+              Icon={TestTube}
+              label="Unique tests"
+              value={summary.unique_tests ?? 0}
+              isFirst
+            />
+            <KpiCell
+              Icon={Layers}
+              label="Test suites"
+              value={
+                <>
+                  {summary.suite_count ?? 0}
+                  {model.untaggedRuns > 0 && (
+                    <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">
+                      + 1 untagged
+                    </span>
+                  )}
+                </>
+              }
+              meta={suites.filter(s => !isUntaggedRow(s)).slice(0, 3).map(s => s.suite_name).join(' · ') || '—'}
+              tone="accent"
+            />
+            <KpiCell
+              label="Total executions"
+              value={summary.total_executions ?? 0}
+              meta={totalExecDelta == null || !Number.isFinite(totalExecDelta)
+                ? undefined
+                : <><Delta value={totalExecDelta} /> · later vs earlier half of window</>}
+            />
+            <KpiCell
+              label="Pass rate"
+              value={`${(summary.avg_pass_rate ?? 0).toFixed(1)}%`}
+              tone={(summary.avg_pass_rate ?? 0) >= 90 ? 'good' : (summary.avg_pass_rate ?? 0) >= 70 ? 'warn' : 'bad'}
+              meta={(() => {
+                const passed  = suites.reduce((s, x) => s + x.passed,  0)
+                const failed  = suites.reduce((s, x) => s + x.failed,  0)
+                const skipped = suites.reduce((s, x) => s + x.skipped, 0)
+                return <>{passed} passed · {failed} failed · {skipped} skipped</>
+              })()}
+            />
+            <KpiCell
+              label="Run cadence"
+              value={
+                <>
+                  {model.daysWithRuns}
+                  <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {days} days</span>
+                </>
+              }
+              tone={model.daysWithRuns < Math.ceil(days * 0.3) ? 'warn' : 'neutral'}
+              meta={
+                model.daysWithRuns < Math.ceil(days * 0.3) ? (
+                  <span className="font-medium" style={{ color: 'var(--status-broken)' }}>⚠ Schedule may be paused</span>
+                ) : (
+                  <>{Math.round((model.daysWithRuns / days) * 100)}% of window</>
+                )
+              }
+              isLast
+            />
+          </section>
 
           {/* Body grid — 1.65fr | 1fr from 768 px, one column below it */}
           <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
             <div className="flex flex-col gap-3.5 min-w-0">
-              {analyticsView.widgetIds.includes('pass_rate_by_suite') && (
-                <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
-              )}
+              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
               <UntaggedCallout untaggedRuns={model.untaggedRuns} totalRuns={model.totalRuns} suites={suites.filter(isUntaggedRow)} />
             </div>
             <div className="flex flex-col gap-3.5 min-w-0">
               <CoverageGaps gaps={gaps} />
               <CadenceHeatmap trend={trend} days={days} />
-              <RecommendedActions recs={recs} />
             </div>
           </div>
 
           <PageSuiteTargetContext.Provider value={suiteTarget}>
             <CoverageAdvanced days={days} suiteFilter={suiteFilter} />
           </PageSuiteTargetContext.Provider>
-
-          <ProvenanceFooter evidenceCount={totalEvidence} refreshedAt={refreshedAt} />
         </>
       )}
 
-      {showPicker && (
-        <WidgetPicker
-          page="coverage"
-          enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
-
-      {/* Mobile fallback notice — design Phase 2 */}
+      {/* Below lg the two-column layout is cramped: say so rather than hide it. */}
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full coverage layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>
   )
 }
-
-// Keep a few icons referenced so future Phase-2 wiring (apply-labels modal,
-// decision-trail link expansion) doesn't trip the unused-imports rule when
-// re-introducing them.
-void FileText

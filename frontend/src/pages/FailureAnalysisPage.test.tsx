@@ -35,6 +35,8 @@ vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
 
+// P2: the page no longer reads the saved widget selection. The hook stays
+// mocked so a test can hand it a narrow selection and prove nothing hides.
 const analyticsControls = vi.hoisted(() => ({
   widgetIds: ['failures_kpis', 'failure_category_pie', 'top_failing_bar', 'flaky_leaderboard_table'],
 }))
@@ -96,7 +98,7 @@ describe('FailureAnalysisPage', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('renders the failure analysis workflow strip above the charts', async () => {
+  it('renders the heading and KPI row with no decorative workflow ribbon (P2)', async () => {
     const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
 
@@ -126,9 +128,13 @@ describe('FailureAnalysisPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Failure analysis workflow/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/Flaky Detection/i).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/Failure Analysis/i).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: 'Failure Analysis' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Failure metrics' })).toBeInTheDocument()
+    // The ribbon showed four invented stages with a fabricated "1 evidence" each.
+    expect(screen.queryByText(/Failure analysis workflow/i)).toBeNull()
+    expect(screen.queryByText(/Flaky Detection/i)).toBeNull()
+    expect(screen.queryByText(/evidence item/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Stage \d/ })).toBeNull()
   })
 
   // X3: at 375 px the 205 + 124 px body columns pushed a card past the screen; below 768 px it is one column.
@@ -152,20 +158,20 @@ describe('FailureAnalysisPage', () => {
           </Routes>
         </MemoryRouter>,
       )
-      await screen.findByText(/Failure analysis workflow/i)
+      await screen.findByRole('heading', { name: 'Failure Analysis' })
       expect((container.querySelector('.body-grid') as HTMLElement).style.gridTemplateColumns).toBe(columns)
-      // The workflow ribbon: four stages across from 768 px, two by two below (a quarter of 375 px is
-      // narrower than "Categorization").
-      const ribbon = container.querySelector('[data-ribbon-columns]') as HTMLElement
-      expect(ribbon.style.gridTemplateColumns).toBe(`repeat(${wide ? 4 : 2}, minmax(0, 1fr))`)
+      // P2: the workflow ribbon (and its responsive 4/2-column grid) is gone.
+      expect(container.querySelector('[data-ribbon-columns]')).toBeNull()
     } finally {
       vi.unstubAllGlobals()
     }
   })
 
-  it('removes deselected failure panels from the rendered layout', async () => {
+  it('a saved widget selection no longer hides any section, and there is no Customize button (P2)', async () => {
     const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
+    // A narrow saved selection used to hide every other section forever once
+    // the picker was gone. The page must not read it any more.
     analyticsControls.widgetIds = ['failures_kpis']
     ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
@@ -180,8 +186,12 @@ describe('FailureAnalysisPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Failure Analysis' })).toBeInTheDocument()
-    expect(screen.queryByText('Failure category distribution')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Flakiness analysis')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Failure metrics' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: "What's failing" })).toBeInTheDocument()
+    expect(screen.getByText('Failure category distribution')).toBeInTheDocument()
+    expect(screen.getByLabelText('Flakiness analysis')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
+    expect(screen.queryByTitle(/Customize widgets/i)).toBeNull()
   })
 
   it('treats a manually-triaged flake as a flake (not a "hard regression") and labels it "Flagged"', async () => {
@@ -544,8 +554,8 @@ describe('FailureAnalysisPage', () => {
   })
 
   it('Export button triggers a CSV download with the in-window failure data', async () => {
-    // Pin the user-visible feature: the Export button used to toast
-    // "coming in Phase 2". Now it downloads a CSV with the page's data.
+    // Pin the user-visible feature: the Export button used to be a
+    // placeholder toast. Now it downloads a CSV with the page's data.
     const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
 
@@ -862,7 +872,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(within(dialog).queryByRole('button', { name: /Record correction/i })).toBeNull()
   })
 
-  it('routes the QA "Recommended actions" entry to the correction dialog (no more placeholder toast)', async () => {
+  it('the correction dialog is reached from the category card; the Recommended-actions card is gone (P2)', async () => {
     const { useAnalysisLookup } = await import('@/hooks/useAnalysisLookup')
     ;(useAnalysisLookup as ReturnType<typeof vi.fn>).mockReturnValue({
       lookup: { analysis_id: 'an-1', failure_category: 'UNKNOWN', analyzed_at: '2026-07-01T00:00:00Z' },
@@ -873,11 +883,69 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
     renderPage()
 
-    // The QA clustering rec renders with an "Open" CTA — clicking it opens
-    // the same correction dialog the category card uses.
-    const qaRec = (await screen.findByText(/QA · clustering/i)).closest('div[class*="grid"]') as HTMLElement
-    fireEvent.click(within(qaRec).getByRole('button', { name: /^Open$/i }))
+    // The QA rec's "Open" repeated the category card's correction CTA (and
+    // its two siblings were placeholder toasts). Only the card's path stays.
+    await screen.findByRole('heading', { name: 'Failure category distribution' })
+    expect(screen.queryByText(/Recommended actions/i)).toBeNull()
+    expect(screen.queryByText(/QA · clustering/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Open$/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Correct the classification/i }))
     expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
+  })
+
+  it('shows no fabricated detail on the What\'s-failing card or the footer (P2)', async () => {
+    await seedFailingScenario()
+    renderPage()
+
+    await screen.findByRole('button', { name: /Mute test/i })
+    expect(screen.queryByRole('button', { name: /View run logs/i })).toBeNull()
+    expect(screen.queryByRole('region', { name: /Recent failure summary/i })).toBeNull()
+    expect(screen.queryByText(/stack traces will appear here/i)).toBeNull()
+    expect(screen.queryByText(/owner data not yet available/i)).toBeNull()
+    expect(screen.queryByText(/Mean time to fix/i)).toBeNull()
+    expect(screen.queryByText(/^Provenance$/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
+    // The KPI row holds the four measured cells only.
+    const kpis = screen.getByRole('region', { name: 'Failure metrics' })
+    expect(Array.from(kpis.children).map(c => c.textContent?.match(/^[A-Za-z ]+?(?=\d|—|$)/)?.[0])).toEqual([
+      'Repeat failures', 'Flaky tests', 'Uncategorized', 'Total executions',
+    ])
+  })
+
+  describe('the What\'s-failing status pill comes from the data (P2)', () => {
+    const pills = () => {
+      const card = screen.getByRole('heading', { name: "What's failing" }).closest('.rounded-xl') as HTMLElement
+      return within(card)
+    }
+
+    it('a repeat failure the flake detector did not flag reads "Repeat failure", never "Hard regression" / "Not flaky"', async () => {
+      await seedFailingScenario()
+      renderPage()
+      await screen.findByRole('button', { name: /Mute test/i })
+      expect(pills().getByText('Repeat failure')).toBeInTheDocument()
+      expect(screen.queryByText('Hard regression')).toBeNull()
+      expect(screen.queryByText('Not flaky')).toBeNull()
+    })
+
+    it('a test on the flaky list reads "Flaky"', async () => {
+      await seedFailingScenario({
+        flakyItems: [{ test_fingerprint: 'fp-top', test_name: 'checkout_flow', total_runs: 10, fail_count: 4, failure_rate_pct: 40 }],
+      })
+      renderPage()
+      await screen.findByRole('button', { name: /Mute test/i })
+      expect(pills().getByText('Flaky')).toBeInTheDocument()
+      expect(pills().queryByText('Repeat failure')).toBeNull()
+    })
+
+    it('a single failure of a test not on the flaky list carries no pill', async () => {
+      await seedFailingScenario({
+        topFailingItem: { test_name: 'checkout_flow', fail_count: 1, test_fingerprint: 'fp-top', suite_name: 'Checkout' },
+      })
+      renderPage()
+      await screen.findByRole('button', { name: /Mute test/i })
+      expect(pills().queryByText('Repeat failure')).toBeNull()
+      expect(pills().queryByText('Flaky')).toBeNull()
+    })
   })
 })
 
@@ -1279,7 +1347,6 @@ describe('FailureAnalysisPage — Wave 3', () => {
     ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
-    analyticsControls.widgetIds = ['failures_kpis', 'failure_category_pie']
     try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
     useTimeWindowStore.setState({ days: 30 })
     advanced.props = []

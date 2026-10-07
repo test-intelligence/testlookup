@@ -196,3 +196,41 @@ describe('SuiteCasesPage bulk move', () => {
     })
   })
 })
+
+// P2 item 7: the "Last seen" column showed a run-id prefix under a header that
+// read as a date. The row has no timestamp, so the cell is a link to that run
+// labelled as a run, under a header that claims no date.
+describe('SuiteCasesPage latest-run column', () => {
+  beforeEach(async () => {
+    const { useSuite, useSuites, useSuiteTestCases } = await import('@/hooks/useSuites')
+    ;(useSuite as ReturnType<typeof vi.fn>).mockReturnValue({ data: SUITE_A, isLoading: false, error: null })
+    ;(useSuites as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [SUITE_A, SUITE_B], total: 2 } })
+    ;(useSuiteTestCases as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          { ..._case('c1', 'test_login'), last_seen_run_id: '1a2b3c4d-0000-4000-8000-000000000001' },
+          _case('c2', 'test_logout'),
+        ],
+        total: 2,
+      },
+      isLoading: false,
+    })
+  })
+
+  it('names the column "Latest run", not "Last seen"', () => {
+    renderPage()
+    expect(screen.getByRole('columnheader', { name: 'Latest run' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /Last seen/i })).toBeNull()
+  })
+
+  it('renders the run id as a link to that run, labelled as a run', () => {
+    renderPage()
+    const link = screen.getByRole('link', { name: 'run 1a2b3c4d' })
+    expect(link).toHaveAttribute('href', '/runs/1a2b3c4d-0000-4000-8000-000000000001')
+  })
+
+  it('shows a dash, not a link, when the case has no run', () => {
+    renderPage()
+    expect(screen.getAllByRole('link', { name: /^run / })).toHaveLength(1)
+  })
+})

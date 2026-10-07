@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
+import Disclosure from '@/components/ui/Disclosure';
 import { buildDigestWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type DigestContent,
@@ -142,16 +143,6 @@ export default function DigestsPage() {
       <PageHeader
         title="Digests & Saved Views"
         subtitle="Schedule quality digests and save filter views for quick access."
-      />
-
-      <WorkflowTimeline
-        title="Digest workflow"
-        subtitle="Collect signals, resolve saved views, compile the digest, and deliver it to the right channel"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
       />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
@@ -392,6 +383,19 @@ export default function DigestsPage() {
           )}
         </>
       )}
+
+      {/* The digest stage flow, built from the subscriptions and views above:
+          collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Digest workflow"
+          subtitle="Collect signals, resolve saved views, compile the digest, and deliver it to the right channel"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   );
 }

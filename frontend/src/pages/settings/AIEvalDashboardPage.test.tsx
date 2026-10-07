@@ -28,7 +28,7 @@
  * than as "a Partially Correct label exists", so a future tile that renders
  * the wrong field still fails.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -204,5 +204,21 @@ describe('runtime eval provenance', () => {
     expect(await screen.findByText('UNRESOLVED')).toBeInTheDocument()
     expect(screen.getByText(/3 of 12 recent runs/)).toBeInTheDocument()
     expect(screen.getByText(/Unknown: f{64}/)).toBeInTheDocument()
+  })
+})
+
+// P2 item 3: the evaluation workflow timeline is a collapsed "Pipeline"
+// disclosure at the bottom of the page; it renders nothing until opened.
+describe('the evaluation workflow timeline is collapsed at the bottom', () => {
+  it('starts closed below the tabs and opens on click', async () => {
+    mockGetDashboard.mockResolvedValue(dashboard(null as unknown as AIQualityDashboard['agreement']))
+    renderPage()
+    const pipeline = await screen.findByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Evaluation workflow')).toBeNull()
+    const tab = screen.getByRole('button', { name: 'Evaluation Gate' })
+    expect(tab.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText('Evaluation workflow')).toBeInTheDocument()
   })
 })

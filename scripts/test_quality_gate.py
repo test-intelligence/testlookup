@@ -259,6 +259,30 @@ def test_base_agent_subclass_ignores_workflow_compiler_support_types(
     assert qg._agents_base_agent_subclass() == []
 
 
+# ── Guard: frontend.no-unbuilt-stubs (UX redesign P2) ─────────────────────────
+
+
+def test_no_unbuilt_stubs_catches_toasts_menus_and_comments(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "X.tsx", """
+        // Phase-2: wire this up
+        const a = () => toast('Coming soon')
+        const b = { label: 'Export', hint: 'next iteration' }
+        const c = 'phase 2 of the rollout'
+        const d = 'fine'
+    """)
+    lines = sorted(v.line for v in qg._frontend_no_unbuilt_stubs())
+    assert lines == [1, 2, 3, 4]
+
+
+def test_no_unbuilt_stubs_lets_a_test_assert_the_phrase_is_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "X.test.tsx", """
+        expect(screen.queryByText(/coming soon/i)).toBeNull()
+    """)
+    assert qg._frontend_no_unbuilt_stubs() == []
+
+
 # ── Guard: frontend.ingest-formats-match-backend ─────────────────────────────
 
 

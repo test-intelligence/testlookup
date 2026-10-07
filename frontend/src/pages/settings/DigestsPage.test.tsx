@@ -99,3 +99,18 @@ describe('DigestsPage schedule selector', () => {
     expect(screen.getByText(/week in review/i)).toBeInTheDocument()
   })
 })
+
+// P2 item 3: the digest workflow timeline is a collapsed "Pipeline"
+// disclosure at the bottom of the page; it renders nothing until opened.
+describe('DigestsPage workflow timeline', () => {
+  it('starts closed below the tabs and opens on click', () => {
+    render(<DigestsPage />)
+    const pipeline = screen.getByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Digest workflow')).toBeNull()
+    const tab = screen.getByRole('button', { name: 'Preview Digest' })
+    expect(tab.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText('Digest workflow')).toBeInTheDocument()
+  })
+})

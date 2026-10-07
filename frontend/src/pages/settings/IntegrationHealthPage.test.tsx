@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import IntegrationHealthPage from './IntegrationHealthPage'
@@ -37,8 +37,16 @@ describe('IntegrationHealthPage', () => {
 
     render(<IntegrationHealthPage />)
 
-    expect(await screen.findByText(/Health workflow/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/jira/i).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/jira/i)).length).toBeGreaterThan(0)
     expect(screen.getByText(/Current Status/i)).toBeInTheDocument()
+
+    // P2 item 3: the health workflow timeline is a collapsed "Pipeline"
+    // disclosure at the bottom of the page; nothing renders until opened.
+    const pipeline = screen.getByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/Health workflow/i)).toBeNull()
+    expect(screen.getByText(/Current Status/i).compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText(/Health workflow/i)).toBeInTheDocument()
   })
 })

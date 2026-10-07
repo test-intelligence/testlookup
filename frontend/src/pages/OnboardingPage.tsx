@@ -10,6 +10,7 @@ import { onboardingService, type OnboardingStep } from '@/services/onboardingSer
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useOnboardingStatus } from '@/hooks/useOnboardingStatus'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import Disclosure from '@/components/ui/Disclosure'
 import { buildOnboardingWorkflow } from '@/components/workflow/workflowPresets'
 
 const STEP_ICONS: Record<string, React.ElementType> = {
@@ -188,16 +189,6 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      <WorkflowTimeline
-        title="Activation workflow"
-        subtitle="Create a project, connect data, and unlock Run Intelligence"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
-      />
-
       {/* Progress bar */}
       <div className="card">
         <div className="flex items-center justify-between mb-2">
@@ -280,6 +271,18 @@ export default function OnboardingPage() {
           </button>
         </div>
       )}
+
+      {/* The same steps as a stage flow: collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Activation workflow"
+          subtitle="Create a project, connect data, and unlock Run Intelligence"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   )
 }

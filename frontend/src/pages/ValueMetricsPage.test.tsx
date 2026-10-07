@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { ValueMetrics, ValueMetricsMonthly } from '@/types/valueMetrics'
+import { useTimeWindowStore } from '@/store/timeWindowStore'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
 
@@ -173,6 +174,7 @@ async function renderPage() {
 describe('ValueMetricsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useTimeWindowStore.setState({ days: 30 })
     mockCanManage = true
     storeState.activeProjectId = 'proj-1'
     storeState.activeProject = { id: 'proj-1', name: 'Project One' }
@@ -187,14 +189,38 @@ describe('ValueMetricsPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the value realization workflow strip once metrics load', async () => {
+  // UX P2: the "Value Realization Workflow" ribbon showed invented stages
+  // (and named the product "RunScope AI"); the legacy "Triage Time Saved"
+  // hero duplicated the hours-saved headline with a second, simpler model.
+  it('renders neither the decorative workflow ribbon nor the legacy triage-time hero', async () => {
     await renderPage()
 
+    expect(await screen.findByRole('heading', { name: 'Value Metrics' })).toBeInTheDocument()
+    await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)
+    expect(screen.queryByText(/Value Realization Workflow/i)).toBeNull()
+    expect(screen.queryByText(/Value Capture/i)).toBeNull()
+    expect(screen.queryByText(/RunScope AI/i)).toBeNull()
+    expect(screen.queryByText(/Triage Time Saved/i)).toBeNull()
+    // baseMetrics: triage_time_saved_minutes 360 → the legacy hero's line.
+    expect(screen.queryByText(/minutes saved over the last/i)).toBeNull()
+  })
+
+  it('labels the hours-saved headline as a fixed last-30-days figure the window picker does not change', async () => {
+    await renderPage()
+
+    await screen.findByText('42.5h')
+    const note = screen.getByTestId('hours-saved-window-note')
+    expect(note).toHaveTextContent('Always the last 30 days: the window picker does not change this figure.')
+
+    // Pick a 90-day window: the page refetches for 90 days, but the headline
+    // still reads the API's fixed 30-day figure and still says so.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '90' } })
     await waitFor(() => {
-      expect(screen.getByText(/Value Realization Workflow/i)).toBeInTheDocument()
+      expect(mockGet.mock.calls.some((call) => call[1] === 90)).toBe(true)
     })
-    expect(screen.getByText(/Value Capture/i)).toBeInTheDocument()
-    expect(screen.getByText(/Value Metrics/i)).toBeInTheDocument()
+    expect(await screen.findByText('42.5h')).toBeInTheDocument()
+    expect(screen.getByText(/Eng-Hours Saved · Last 30 Days/i)).toBeInTheDocument()
+    expect(screen.getByTestId('hours-saved-window-note')).toBeInTheDocument()
   })
 
   it('renders the hours-saved headline + FTE equivalent when available', async () => {

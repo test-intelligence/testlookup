@@ -3,46 +3,38 @@
  *
  * Layout (matches design_handoff_intelligence_selector/):
  *   ┌────────────────────────────────────────────────────────────┐
- *   │  Header (title · sub · 3 action buttons)                    │
+ *   │  Header (title · sub · Compare runs)                        │
  *   │  Verdict card (status-aware) · composite health · delta · bar│
- *   │  Filter bar (search · range · branch · env · status · saved)│
+ *   │  Filter bar (search · range · branch · status · suite)      │
  *   │  ┌────────────────────────────┐ ┌──────────────────────────┐│
- *   │  │ Runs table (6 cols)        │ │ Cross-run insights        ││
- *   │  │                            │ │ Intelligence spend        ││
- *   │  │                            │ │ Recent activity           ││
+ *   │  │ Runs table                 │ │ Intelligence spend        ││
  *   │  └────────────────────────────┘ └──────────────────────────┘│
  *   └────────────────────────────────────────────────────────────┘
  *
  * Verdict state machine: at-risk → attention → all-clear, driven by
  * the current runs window (any FAILED → at-risk; any FLAKY/BROKEN → attention).
  * Composite health, delta, and the stacked bar are all derived from the same
- * data the runs table is showing — no extra round-trip.
+ * data the runs table is showing — one page of at most RUNS_FETCH_SIZE runs,
+ * and the page says so when the window holds more.
  *
- * Right-rail panels: Spend is wired to the real per-project LLM meter
+ * Right rail: Spend is wired to the real per-project LLM meter
  * (GET /projects/{id}/llm-usage + /llm-quota via useProjectUsage /
- * useProjectQuota). Insights still renders a graceful empty state pending
- * the /api/intelligence/insights endpoint proposed in the handoff; Activity
- * synthesizes from the runs already in scope.
+ * useProjectQuota). The cross-run insights panel (no backend, a fixed
+ * "0 insights") and the activity feed (the table's top five runs again, with
+ * toast-only links) were removed.
  */
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Activity,
-  ArrowRight,
   ChevronDown,
   Coins,
   GitBranch,
   GitCompare,
-  Layers,
-  MessageSquare,
   Search,
-  Sparkles,
   TrendingDown,
   TrendingUp,
-  Zap,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -55,6 +47,7 @@ import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useMostRecentRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { fromNow } from '@/utils/formatters'
 import type { TestRun } from '@/types/runs'
 import GaugeBar from '@/components/charts/GaugeBar'
@@ -84,11 +77,15 @@ interface HealthSummary {
 }
 
 const RANGE_OPTIONS = [
-  { id: '24h', label: 'Last 24h',  hours: 24 },
-  { id: '7d',  label: 'Last 7d',   hours: 24 * 7 },
-  { id: '30d', label: 'Last 30d',  hours: 24 * 30 },
+  { id: '24h', label: 'Last 24h',  days: 1 },
+  { id: '7d',  label: 'Last 7d',   days: 7 },
+  { id: '30d', label: 'Last 30d',  days: 30 },
 ] as const
 type RangeId = (typeof RANGE_OPTIONS)[number]['id']
+const RANGE_DAYS = RANGE_OPTIONS.map(r => r.days)
+
+/** One page of runs is all this page fetches; every count is computed from it. */
+const RUNS_FETCH_SIZE = 50
 
 function isFailed(r: TestRun) { return /failed/i.test(r.status) }
 function isBroken(r: TestRun) { return /broken/i.test(r.status) }
@@ -169,26 +166,34 @@ export default function IntelligenceHubPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAll = projectId === ALL_PROJECTS_ID
 
-  // Default range is 30d (24h → 7d 2026-05-15 → 30d 2026-08-15). Most CI
-  // workloads don't ship a fresh run every day, and 7d still left projects
-  // that had been quiet for a week staring at "0 runs" — reported as the
-  // whole page being broken. Matches DEFAULT_TIME_WINDOW_DAYS in
-  // timeWindowStore; this page keeps its own URL-param default so deep-links
-  // stay shareable, which is why the two have to be changed together.
-  const range  = (params.get('range') ?? '30d') as RangeId
+  // The window follows the global time-window store (the same 24h / 7d / 30d
+  // the user picked on any other page), snapped to this page's options. A
+  // `?range=` deep link still wins when present, so shared links keep their
+  // window; picking a range here writes both the store and the URL.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const urlRange = RANGE_OPTIONS.find(r => r.id === params.get('range'))
+  const rangeDef = urlRange
+    ?? RANGE_OPTIONS.find(r => r.days === snapToAllowed(storedDays, RANGE_DAYS))
+    ?? RANGE_OPTIONS[RANGE_OPTIONS.length - 1]
+  const range: RangeId = rangeDef.id
+  const days = rangeDef.days
   const branch = params.get('branch') ?? ''
   const status = params.get('status') ?? 'all'
   const query  = params.get('q') ?? ''
   const suite  = params.get('suite') ?? ''
 
-  const rangeDef = RANGE_OPTIONS.find(r => r.id === range) ?? RANGE_OPTIONS[0]
-  // The runs endpoint accepts ``days`` — translate the hours-based UI to days.
-  const days = Math.max(1, Math.round(rangeDef.hours / 24))
-
   const { options: suiteOptions } = useSuiteOptions(days)
   const { data, isLoading, error: runsError, mutate: retryRuns } =
-    useRuns({ page: 1, size: 50, days, ...(suite && { suite_name: suite }) })
+    useRuns({ page: 1, size: RUNS_FETCH_SIZE, days, ...(suite && { suite_name: suite }) })
   const allRuns = useMemo(() => data?.items ?? [], [data?.items])
+  // Everything on this page (verdict, health, counts, table, branches) is
+  // computed client-side from ONE page of at most RUNS_FETCH_SIZE runs. When
+  // the window holds more, say so instead of presenting a sample as the window.
+  const windowTotal = typeof data?.total === 'number' ? data.total : allRuns.length
+  const capped = windowTotal > allRuns.length
+    ? { loaded: allRuns.length, total: windowTotal }
+    : null
 
   // When the window is empty, "no runs" is not the useful answer — "your most
   // recent run was 10 days ago" is. This looks further back ONLY in that case,
@@ -261,6 +266,10 @@ export default function IntelligenceHubPage() {
   }, [allRuns])
 
   function updateParam(key: string, value: string | null) {
+    if (key === 'range') {
+      const picked = RANGE_OPTIONS.find(r => r.id === value)
+      if (picked) setStoredDays(picked.days)
+    }
     const next = new URLSearchParams(params)
     if (value && value !== 'all') next.set(key, value)
     else next.delete(key)
@@ -281,28 +290,17 @@ export default function IntelligenceHubPage() {
     <div className="space-y-3.5">
       <PageHeader
         title="Run Intelligence"
-        subtitle="AI analyzes every run · pick one to drill into, or follow the insights below"
+        subtitle="AI analyzes every run · pick one to drill into"
         actions={
-          <div className="flex items-center gap-2 flex-wrap">
-            <HeaderBtn icon={MessageSquare} onClick={() => toast('Decision trail — opens audit log', { icon: '📜' })}>
-              Decision trail
-            </HeaderBtn>
-            <HeaderBtn icon={GitCompare} onClick={() => navigate('/runs/compare')}>
-              Compare runs
-            </HeaderBtn>
-            <HeaderBtn
-              icon={Layers}
-              primary
-              onClick={() => toast('Analyze new run — wire to ingestion trigger', { icon: '✨' })}
-            >
-              Analyze new run
-            </HeaderBtn>
-          </div>
+          <HeaderBtn icon={GitCompare} onClick={() => navigate('/runs/compare')}>
+            Compare runs
+          </HeaderBtn>
         }
       />
 
       <VerdictCard
         health={health}
+        capped={capped}
         topRunId={topRun?.id}
         onJump={() => topRun && navigate(`/runs/${topRun.id}/intelligence`)}
         onFlakies={() => updateParam('status', 'flaky')}
@@ -315,6 +313,7 @@ export default function IntelligenceHubPage() {
         branch={branch}
         status={status}
         runsCount={visibleRuns.length}
+        capped={capped}
         onChange={updateParam}
         availableBranches={availableBranches}
         suite={suite}
@@ -339,9 +338,7 @@ export default function IntelligenceHubPage() {
         />
 
         <div className="space-y-3.5">
-          <InsightsPanel />
           <SpendPanel projectId={isAll ? null : projectId} />
-          <ActivityPanel runs={visibleRuns.slice(0, 5)} />
         </div>
       </div>
     </div>
@@ -351,23 +348,17 @@ export default function IntelligenceHubPage() {
 // ── Header button ──────────────────────────────────────────────────────────
 
 function HeaderBtn({
-  children, icon: Icon, onClick, primary = false,
+  children, icon: Icon, onClick,
 }: {
   children: React.ReactNode
-  icon: typeof MessageSquare
+  icon: typeof GitCompare
   onClick: () => void
-  primary?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={clsx(
-        'inline-flex items-center gap-1.5 text-[13px] font-medium px-3 py-1.5 rounded-md border transition-colors',
-        primary
-          ? 'bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] border-transparent text-white'
-          : 'bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]',
-      )}
+      className="inline-flex items-center gap-1.5 text-[13px] font-medium px-3 py-1.5 rounded-md border transition-colors bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
     >
       <Icon className="h-3.5 w-3.5" />
       {children}
@@ -426,10 +417,14 @@ const VERDICT_STYLE: Record<VerdictState, {
   },
 }
 
+/** Set when the window holds more runs than the one page this page fetched. */
+type RunsCap = { loaded: number; total: number } | null
+
 function VerdictCard({
-  health, topRunId, onJump, onFlakies, onNotifications,
+  health, capped, topRunId, onJump, onFlakies, onNotifications,
 }: {
   health: HealthSummary
+  capped: RunsCap
   topRunId?: string
   onJump: () => void
   onFlakies: () => void
@@ -460,6 +455,15 @@ function VerdictCard({
           <p className="mt-2 mb-0 text-[13.5px] leading-relaxed text-[var(--color-text-secondary)] max-w-[60ch]">
             {s.lede(health.counts, health.rangeLabel)}
           </p>
+          {capped && (
+            <p
+              data-testid="intelligence-runs-cap"
+              className="mt-1.5 mb-0 text-[12px] text-[var(--color-text-muted)]"
+            >
+              Showing the latest {capped.loaded} runs of {capped.total} in this window — the
+              verdict, health and counts here are computed from those {capped.loaded}.
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             <VerdictCta onClick={onJump} disabled={!topRunId}>
               Jump to most recent run <Kbd>↵</Kbd>
@@ -582,7 +586,7 @@ function LegendItem({ color, label }: { color: string; label: string }) {
 // ── Filter bar ─────────────────────────────────────────────────────────────
 
 function FilterBar({
-  query, range, branch, status, suite, runsCount, onChange, availableBranches, availableSuites,
+  query, range, branch, status, suite, runsCount, capped, onChange, availableBranches, availableSuites,
 }: {
   query: string
   range: RangeId
@@ -590,6 +594,7 @@ function FilterBar({
   status: string
   suite: string
   runsCount: number
+  capped: RunsCap
   onChange: (key: string, value: string | null) => void
   availableBranches: string[]
   availableSuites: string[]
@@ -605,7 +610,9 @@ function FilterBar({
           type="search"
           value={query}
           onChange={e => onChange('q', e.target.value || null)}
-          placeholder="Search runs by ID, branch, commit, PR…"
+          // What the filter really matches (build number, branch, job): it
+          // never searched commits or PRs, which the placeholder promised.
+          placeholder="Search by build number, branch or job…"
           className="flex-1 bg-transparent outline-none text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
           aria-label="Search runs"
         />
@@ -644,6 +651,7 @@ function FilterBar({
 
       <div className="ml-auto text-[11.5px] text-[var(--color-text-faint)]">
         {runsCount} run{runsCount === 1 ? '' : 's'} match
+        {capped && <> · of the latest {capped.loaded}</>}
       </div>
     </section>
   )
@@ -960,22 +968,6 @@ function RailPanel({
   )
 }
 
-function InsightsPanel() {
-  // Real cross-run insights need the /api/intelligence/insights endpoint
-  // proposed in the handoff. Until then, render a graceful empty state — the
-  // section is still discoverable and clearly intentional.
-  return (
-    <RailPanel title="Cross-run AI insights" right="0 insights · 24h">
-      <div className="px-4 py-5 text-[12.5px] text-[var(--color-text-muted)] text-center">
-        No anomalies detected in the current window.
-        <div className="mt-2 text-[11.5px] text-[var(--color-text-faint)]">
-          Perf drift, flake-rising, and coverage signals will appear here once cross-run analysis is enabled.
-        </div>
-      </div>
-    </RailPanel>
-  )
-}
-
 function SpendPanel({ projectId }: { projectId: string | null }) {
   // Real project LLM meter: GET /projects/{id}/llm-usage (current MONTHLY
   // period) + /llm-quota (hard cap). The endpoints are per-project, so in
@@ -1063,54 +1055,5 @@ function SpendCell({ label, value, sub }: { label: string; value: string; sub?: 
       </div>
       {sub && <div className="mt-1 text-[10.5px] text-[var(--color-text-faint)]">{sub}</div>}
     </div>
-  )
-}
-
-function ActivityPanel({ runs }: { runs: TestRun[] }) {
-  // Synthesize an activity feed from the runs we already have, so the panel
-  // shows real content immediately. When a dedicated /api/intelligence/activity
-  // endpoint lands, replace this loop with the proper event stream.
-  if (runs.length === 0) {
-    return (
-      <RailPanel title="Recent activity">
-        <div className="px-4 py-5 text-[12.5px] text-[var(--color-text-muted)] text-center">
-          No activity in this window.
-        </div>
-      </RailPanel>
-    )
-  }
-  return (
-    <RailPanel
-      title="Recent activity"
-      right={<button onClick={() => toast('Full activity log — wire to /audit', { icon: '📜' })} className="text-[var(--color-accent)] hover:underline">View all</button>}
-    >
-      <ul className="divide-y divide-[var(--color-border)]">
-        {runs.map(r => (
-          <li key={r.id} className="grid grid-cols-[52px_1fr] items-start gap-3 px-4 py-2.5">
-            <span className="text-[11px] tabular-nums text-[var(--color-text-muted)] pt-0.5">
-              {fromNow(r.created_at).replace(' ago', '')}
-            </span>
-            <span className="text-[12.5px] text-[var(--color-text-secondary)] min-w-0">
-              {/* Per-(project, suite) Run #N is the canonical handle now;
-                  legacy rows without run_seq fall back to the raw
-                  SDK build_number prefixed with "#" so the copy still
-                  reads naturally ("Run #1234 failed on main"). */}
-              {(() => {
-                const label = r.run_seq != null ? `#${r.run_seq}` : `#${r.build_number}`
-                const code = <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">{label}</code>
-                if (isFailed(r)) return <><Zap className="inline h-3 w-3 mr-1 text-[var(--status-failed)]" />Run {code} failed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span> — {r.failed_tests} test{r.failed_tests === 1 ? '' : 's'}</>
-                if (isFlaky(r))  return <><Activity className="inline h-3 w-3 mr-1 text-[var(--status-flaky)]" />Run {code} recovered after {r.broken_tests} retr{r.broken_tests === 1 ? 'y' : 'ies'}</>
-                return <><Sparkles className="inline h-3 w-3 mr-1 text-[var(--status-passed)]" />Run {code} passed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span></>
-              })()}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <div className="px-4 py-2.5 text-center text-[11.5px] border-t border-[var(--color-border)]">
-        <button onClick={() => toast('Full activity log — wire to /audit', { icon: '📜' })} className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
-          View full activity log <ArrowRight className="h-3 w-3" />
-        </button>
-      </div>
-    </RailPanel>
   )
 }

@@ -71,7 +71,8 @@ const INVENTORY = [
   `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
   `GET /api/v1/metrics/summary?project_id=${P}&days=14`,
   `GET /api/v1/analytics/coverage?project_id=${P}&days=14`,
-  `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=14`,
+  // No analytics/flaky-tests since the UX redesign P2: it fed only the
+  // provenance footer's count, and the footer was removed.
   `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
   PROBE,

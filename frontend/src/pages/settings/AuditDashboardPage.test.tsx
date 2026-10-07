@@ -143,6 +143,21 @@ describe('project-scoped observability says why it is empty', () => {
   })
 })
 
+// P2 item 3: the tenant audit flow is a collapsed "Pipeline" disclosure at the
+// bottom of the page; it renders nothing until opened.
+describe('the audit workflow timeline is collapsed at the bottom', () => {
+  it('starts closed, sits after the tabs, and opens on click', () => {
+    renderPage()
+    const pipeline = screen.getByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Tenant audit flow')).toBeNull()
+    const tab = screen.getByRole('button', { name: /project observability/i })
+    expect(tab.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText('Tenant audit flow')).toBeInTheDocument()
+  })
+})
+
 /** Switch to the observability tab by its control.
  *
  * `fireEvent`, not `dispatchEvent`/`element.click()` — React does not observe
@@ -150,8 +165,8 @@ describe('project-scoped observability says why it is empty', () => {
  * missing message rather than an unclicked tab. */
 function fireObservabilityTab() {
   // Must be the TAB, named "Project Observability". A looser /observability/i
-  // also matches the WorkflowTimeline stage button "Observability Export",
-  // which renders above it — clicking that changes nothing and the assertion
-  // then reads as a missing empty-state message.
+  // would also match the WorkflowTimeline stage button "Observability Export"
+  // once the "Pipeline" disclosure is open — clicking that changes nothing and
+  // the assertion then reads as a missing empty-state message.
   fireEvent.click(screen.getByRole('button', { name: /project observability/i }))
 }

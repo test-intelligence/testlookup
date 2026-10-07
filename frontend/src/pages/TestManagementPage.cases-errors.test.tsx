@@ -182,3 +182,50 @@ describe('TestCasesTab request failures and retries', () => {
     })
   })
 })
+
+// P2: controls whose only handler was a "not built yet" toast (or a
+// disabled stub) are not rendered; the working controls beside them stay.
+describe('TestCasesTab renders no stub controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(useAuditLog).mockReturnValue({ data: undefined } as ReturnType<typeof useAuditLog>)
+    vi.mocked(useTestCases).mockImplementation(() => ({
+      data: page([testCase()]),
+      error: undefined,
+      isLoading: false,
+      isValidating: false,
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useTestCases>))
+  })
+
+  it('has no "+ Save" view chip, Import CSV, Knowledge graph or card "view all" links', () => {
+    renderTab()
+    expect(screen.getByText('Checkout preserves cart')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /\+ Save/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Import CSV/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Knowledge graph/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /View all/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Open strategy/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Audit log/i })).toBeNull()
+    // The real ones remain.
+    expect(screen.getByRole('button', { name: /Export/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'My drafts' })).toBeInTheDocument()
+    expect(screen.getByText(/Review queue/)).toBeInTheDocument()
+    expect(screen.getByText('Strategy gaps')).toBeInTheDocument()
+  })
+
+  it('has no disabled Owner chip and never sends an owner filter', () => {
+    renderTab()
+    expect(screen.queryByRole('combobox', { name: 'Owner' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeEnabled()
+    for (const [params] of vi.mocked(useTestCases).mock.calls) {
+      expect(params).not.toHaveProperty('assignee_id')
+    }
+  })
+
+  it('offers no "Unautomated" view that applied no filter', () => {
+    renderTab()
+    expect(screen.queryByRole('button', { name: 'Unautomated' })).toBeNull()
+  })
+})

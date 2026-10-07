@@ -12,7 +12,7 @@
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
+import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,8 @@ const MOCK_INTELLIGENCE = {
       representative_error: 'ConnectionTimeoutException: Unable to acquire JDBC Connection',
       member_test_ids: ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8'],
       cohesion_score: 0.85,
-      criticality_level: 'HIGH',
+      // Widened so a test can supply an unscored (null) cluster.
+      criticality_level: 'HIGH' as FailureClusterIntel['criticality_level'],
       dimension_scores: [],
     },
   ],
@@ -222,12 +223,19 @@ function mockHooks(overrides?: {
   })
 }
 
+function renderRunIntel() {
+  return render(
+    <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+      <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+    </MemoryRouter>,
+  )
+}
+
 describe('RunIntelligencePage', () => {
   beforeEach(() => {
-    // The user-decision feature persists to localStorage under
-    // ``tl.runIntel.decision.<runId>`` so a refresh keeps the panel in
-    // sync. Wipe between tests so one test's recorded decision doesn't
-    // leak into the next.
+    // Some tests seed a stale ``tl.runIntel.decision.<runId>`` entry (left by
+    // the removed local-only decision controls) to prove it is ignored. Wipe
+    // between tests so one test's seed doesn't leak into the next.
     try {
       localStorage.removeItem('tl.runIntel.persona')
       Object.keys(localStorage)
@@ -689,81 +697,36 @@ describe('RunIntelligencePage', () => {
     expect(await screen.findByText(/Intelligence Hub/i)).toBeInTheDocument()
   })
 
-  it('updates the release readiness panel when "Approve with conditions" is clicked', async () => {
-    // Pin the user-visible feature: action buttons in the verdict card
-    // must update the panel state, not just toast. The MOCK_INTELLIGENCE
-    // default has ``recommendation: 'NO_GO'`` so the panel starts at
-    // No-Go. Clicking "Approve with conditions" records a local CONDITIONAL_GO
-    // decision that overrides the displayed gate until the user clicks Undo.
+  // P2: Hold / Override / Approve-with-conditions were saved only to this
+  // browser's localStorage (no gate-decision endpoint), so a "decision" nobody
+  // else could see. The controls are not rendered until they persist.
+  it('renders no Hold / Override / Approve / Undo controls on the verdict', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderRunIntel()
 
-    render(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    // Before the click: starts at the system-computed No-Go.
+    // The system-computed verdict and its reasoning still render.
     expect((await screen.findAllByText(/No-Go/i)).length).toBeGreaterThan(0)
-    expect(screen.queryByText(/Approved with conditions by you/i)).toBeNull()
-    expect(screen.queryByText(/Undo decision/i)).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /Approve with conditions/i }))
-
-    // After the click: the panel flips to Conditional Go and the lede
-    // describes the user's recorded decision. The Undo affordance appears.
-    // "Conditional Go" appears in both the H2 + the RiskMeter pill, so
-    // assert on at-least-one match rather than findByText (which throws
-    // on multiple matches).
-    expect((await screen.findAllByText(/Conditional Go/i)).length).toBeGreaterThan(0)
-    expect(screen.getByText(/Approved with conditions by you/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Undo decision/i })).toBeInTheDocument()
-    // The user-decision text replaces the persona/decision lede, so the
-    // original "High user impact with product bugs" reasoning isn't shown.
-    expect(screen.queryByText(/High user impact with product bugs detected/i)).toBeNull()
+    expect(screen.getAllByText(/High user impact with product bugs detected/i).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /Hold release/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Approve with conditions/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Undo decision/i })).toBeNull()
   })
 
-  it('records "Held by you" as No-Go and lets the user Undo to revert', async () => {
-    // The "Hold release" path covers the second action button. Starting
-    // from a CONDITIONAL_GO intelligence response, click Hold → panel
-    // moves to No-Go; click Undo → panel returns to Conditional Go.
+  it('renders no Hold control on a Conditional Go verdict either', async () => {
     mockHooks({
       intelligence: {
         ...MOCK_INTELLIGENCE,
         release_decision: { ...MOCK_INTELLIGENCE.release_decision, recommendation: 'CONDITIONAL_GO' },
       },
     })
-
-    render(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
+    renderRunIntel()
     expect((await screen.findAllByText(/Conditional Go/i)).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: /Hold release/i }))
-
-    expect(await screen.findByText(/Held by you/i)).toBeInTheDocument()
-    expect((await screen.findAllByText(/No-Go/i)).length).toBeGreaterThan(0)
-
-    fireEvent.click(screen.getByRole('button', { name: /Undo decision/i }))
-
-    // After undo: original CONDITIONAL_GO is restored and the user-decision
-    // lede is gone.
+    expect(screen.queryByRole('button', { name: /Hold release/i })).toBeNull()
     expect(screen.queryByText(/Held by you/i)).toBeNull()
-    expect(screen.queryByRole('button', { name: /Undo decision/i })).toBeNull()
-    expect((await screen.findAllByText(/Conditional Go/i)).length).toBeGreaterThan(0)
   })
 
-  it('rehydrates the user decision from localStorage on a fresh render', async () => {
-    // The decision persists per-run under ``tl.runIntel.decision.<runId>``
-    // so a page refresh / navigation away and back keeps the user's panel
-    // state in sync until the backend gate-decision endpoint lands. Pin the
-    // contract by pre-seeding localStorage and verifying first render.
+  it('ignores a decision left in localStorage by the removed controls: the gate is the system one', async () => {
     localStorage.setItem(
       'tl.runIntel.decision.run-abc',
       JSON.stringify({
@@ -774,17 +737,105 @@ describe('RunIntelligencePage', () => {
       }),
     )
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderRunIntel()
 
-    render(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
+    expect((await screen.findAllByText(/No-Go/i)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Override applied by you/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Undo decision/i })).toBeNull()
+  })
 
-    expect(await screen.findByText(/Override applied by you/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Undo decision/i })).toBeInTheDocument()
+  // P2 item 7: the header said "N of N shown" while only three were rendered.
+  it('"N of M shown" counts the failure blocks actually rendered', async () => {
+    const base = MOCK_INTELLIGENCE.failure_clusters[0]
+    const clusters = Array.from({ length: 5 }, (_, i) => ({
+      ...base, id: `row-${i}`, cluster_id: `cl-${i}`, label: `Cluster number ${i}`,
+    }))
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, failure_clusters: clusters } })
+    renderRunIntel()
+
+    expect(await screen.findByText('3 of 5 failures shown')).toBeInTheDocument()
+    expect(screen.getByText(/\+ 2 more failures not shown/)).toBeInTheDocument()
+    expect(screen.getAllByText(/^Cluster number \d$/)).toHaveLength(3)
+  })
+
+  it('says "1 of 1" when every cluster is rendered', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderRunIntel()
+    expect(await screen.findByText('1 of 1 failure shown')).toBeInTheDocument()
+    expect(screen.queryByText(/more failures? not shown/)).toBeNull()
+  })
+
+  // P2 item 7: the cluster pill said "Product bug" whatever the data said.
+  it('labels a cluster with its real criticality, never a fixed "Product bug"', async () => {
+    const base = MOCK_INTELLIGENCE.failure_clusters[0]
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        failure_clusters: [
+          { ...base, criticality_level: 'LOW' },
+          { ...base, id: 'row-2', cluster_id: 'cl-2', label: 'Unscored', criticality_level: null },
+        ],
+      },
+    })
+    renderRunIntel()
+    await screen.findByText('2 of 2 failures shown')
+    const pills = screen.getAllByTestId('cluster-criticality')
+    // One pill (the LOW one); the unscored cluster gets none.
+    expect(pills).toHaveLength(1)
+    expect(pills[0]).toHaveTextContent('Low criticality')
+    // The old fixed pill text (the category card's real "Product Bug" row,
+    // from category_breakdown, is a different string and stays).
+    expect(screen.queryByText('Product bug')).toBeNull()
+  })
+
+  // P2 item 7: "Criticality scoring" and "Release risk assessment" were
+  // always shown as passed checks.
+  it('does not claim criticality scoring or risk assessment passed when the data does not show it', async () => {
+    const base = MOCK_INTELLIGENCE.failure_clusters[0]
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        failure_clusters: [{ ...base, criticality_level: null }],
+        // summary stage only; no release_risk stage and no composite risk.
+      },
+    })
+    renderRunIntel()
+    await screen.findByText('AI confidence')
+    expect(screen.queryByText('Criticality scoring')).toBeNull()
+    expect(screen.queryByText('Release risk assessment')).toBeNull()
+  })
+
+  it('shows those checks as passed when a cluster is scored and release_risk completed', async () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        pipeline_stages: [
+          ...MOCK_INTELLIGENCE.pipeline_stages,
+          {
+            stage_name: 'release_risk',
+            status: 'completed',
+            started_at: '2026-03-30T12:01:10Z',
+            completed_at: '2026-03-30T12:01:20Z',
+            skipped_reason: null,
+            execution_path: 'executed',
+            fallback_used: false,
+          },
+        ],
+      },
+    })
+    renderRunIntel()
+    await screen.findByText('AI confidence')
+    expect(screen.getByText('Criticality scoring')).toBeInTheDocument()
+    expect(screen.getByText('Release risk assessment')).toBeInTheDocument()
+  })
+
+  // P2 item 1: the pipeline stage cell was a <button> whose onClick did nothing.
+  it('renders pipeline stages as display-only cells, not dead buttons', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderRunIntel()
+    const stage = await screen.findByRole('group', { name: /^Stage 8: Summary, done$/ })
+    expect(stage.tagName).not.toBe('BUTTON')
+    expect(screen.queryByRole('button', { name: /^Stage \d+:/ })).toBeNull()
   })
 
   // -- US-15.1 AI trust chrome --------------------------------------------

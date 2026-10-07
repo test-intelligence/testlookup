@@ -7,17 +7,20 @@
  * ------
  * ┌─────────────────────────────────────────────────────────────────────┐
  * │  Header: Active Runs | Tests In Progress | Pass Rate | WS Status   │
- * ├──────────────────────────────────────┬──────────────────────────────┤
- * │  Active Sessions Table               │  Recent Events Feed          │
- * │  (sortable, filterable by project)   │  (last 200 live events)      │
- * └──────────────────────────────────────┴──────────────────────────────┘
+ * ├─────────────────────────────────────────────────────────────────────┤
+ * │  Sessions table (sortable, filterable, paginated)                  │
+ * ├─────────────────────────────────────────────────────────────────────┤
+ * │  Pipeline events feed (last 200 live events, full width)           │
+ * ├─────────────────────────────────────────────────────────────────────┤
+ * │  Connect a test runner (collapsed)                                 │
+ * └─────────────────────────────────────────────────────────────────────┘
  *
  * Data sources
  * ------------
  * - SWR polling GET /api/v1/stream/active (5 s interval, 10 s when WS open)
  * - WebSocket   /ws/live/{projectId} (push updates, merges into local state)
  */
-import { Fragment, useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
@@ -26,9 +29,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
-  CircleDashed,
   CircleDot,
-  Clock,
   Code2,
   Copy,
   Check,
@@ -598,8 +599,7 @@ export default function LiveExecutionPage() {
   const [sortDir,   setSortDir]   = useState<SortDir>('desc')
   const [search,    setSearch]    = useState('')
   const [filter,    setFilter]    = useState<'all' | 'running' | 'failures'>('all')
-  const [selectedStageId, setSelectedStageId] = useState<string>('stream_connection')
-  const [feedFilter, setFeedFilter] = useState<'all' | 'errors' | 'stage'>('all')
+  const [feedFilter, setFeedFilter] = useState<'all' | 'errors' | 'runs'>('all')
   const [showRawSessions, setShowRawSessions] = useState(false)
   const { options: suiteOptions } = useSuiteOptions(7)
 
@@ -678,84 +678,6 @@ export default function LiveExecutionPage() {
   // computeLiveStats. (Was passed / passed+failed here, dropping BROKEN.)
   const visibleStats = useMemo(() => computeLiveStats(visibleSessions), [visibleSessions])
 
-  const workflow = useMemo(() => {
-    // Only surface a confidence score for the stream when the socket state
-    // actually implies something meaningful. For "closed"/"error"/idle we
-    // leave it undefined so the UI hides the pill instead of showing a
-    // fabricated percentage.
-    const streamConfidence =
-      wsStatus === 'open' ? 100 : wsStatus === 'connecting' ? 60 : undefined
-
-    // Likewise, zero-valued evidence counts are meaningless and should be
-    // omitted so the "0 evidence" pill doesn't render on empty pages.
-    const omitIfZero = (n: number): number | undefined => (n > 0 ? n : undefined)
-
-    const workflowStages = [
-      {
-        stage_name: 'stream_connection',
-        status: wsStatus === 'open' ? 'completed' : wsStatus === 'connecting' ? 'running' : wsStatus === 'error' ? 'failed' : 'pending',
-        label: 'Stream Connection',
-        description: 'Keep the live execution channel healthy',
-        confidence_score: streamConfidence,
-        evidence_count: omitIfZero(recentEvents.length),
-        result_data: { ws_status: wsStatus },
-      },
-      {
-        stage_name: 'run_monitoring',
-        status: suiteScopedRunningSessions.length > 0 ? 'running' : 'pending',
-        label: 'Run Monitoring',
-        description: 'Track active runs and current tests',
-        evidence_count: omitIfZero(suiteScopedRunningSessions.length),
-        result_data: { running_sessions: suiteScopedRunningSessions.length, visible_sessions: visibleSessions.length },
-      },
-      {
-        stage_name: 'event_rollup',
-        status: recentEvents.length > 0 ? 'completed' : 'pending',
-        label: 'Event Rollup',
-        description: 'Roll execution events into a single live pulse',
-        evidence_count: omitIfZero(recentEvents.length),
-        result_data: { recent_events: recentEvents.length },
-      },
-      {
-        stage_name: 'release_readout',
-        status: suiteScopedSessions.length > 0 ? 'completed' : 'pending',
-        label: 'Release Readout',
-        description: 'Summarize the current execution state for release and QA',
-        evidence_count: omitIfZero(suiteScopedSessions.length),
-        result_data: { total_sessions: suiteScopedSessions.length, visible_pass_rate: visibleStats.overallPassRate },
-      },
-    ]
-
-    const workflowEvents = recentEvents.slice(0, 8).map((event, index) => ({
-      event_type: event.type === 'live_run_complete'
-        ? 'stage_completed'
-        : event.type === 'live_run_started'
-          ? 'stage_started'
-          : event.type === 'live_warning'
-            ? 'stage_failed'
-            : 'tool_invoked',
-      stage_name: event.type === 'live_run_complete'
-        ? 'release_readout'
-        : event.type === 'live_run_started'
-          ? 'run_monitoring'
-          : 'event_rollup',
-      test_case_id: event.run_id ?? null,
-      timestamp: new Date(event.timestamp - index * 1000).toISOString(),
-      detail: {
-        type: event.type,
-        status: event.last_status,
-        test: event.last_test,
-        message: event.message,
-      },
-    }))
-
-    return {
-      stages: workflowStages,
-      events: workflowEvents,
-      stageOrder: workflowStages.map(stage => stage.stage_name),
-    }
-  }, [wsStatus, suiteScopedRunningSessions.length, recentEvents, suiteScopedSessions.length, visibleSessions.length, visibleStats.overallPassRate])
-
   // Dedup by ``run_id`` so each LiveSession gets exactly one row in the
   // table. The earlier implementation deduped by ``build_number``, which
   // existed to collapse a legacy ingestion duplicate (one logical run
@@ -784,8 +706,8 @@ export default function LiveExecutionPage() {
     return [...byRunId.values()]
   }, [visibleSessions])
 
-  // Client-side pagination of the sessions table. KPIs and the workflow
-  // strip continue to consume visibleSessions in full so their aggregates
+  // Client-side pagination of the sessions table. The KPIs continue to
+  // consume visibleSessions in full so their aggregates
   // stay correct; only the on-screen table slices to 25 rows per page.
   const TABLE_PAGE_SIZE = 25
   const [tablePage, setTablePage] = useState(1)
@@ -806,19 +728,16 @@ export default function LiveExecutionPage() {
     return sessionsForTable.slice(start, start + TABLE_PAGE_SIZE)
   }, [sessionsForTable, tablePage])
 
-  // Currently-selected workflow stage (for the detail strip below the subway).
-  const selectedStage = workflow.stages.find(stage => stage.stage_name === selectedStageId) ?? workflow.stages[0]
-
   // Last update timestamp for the header.
   const lastUpdateLabel = recentEvents[0]
     ? new Date(recentEvents[0].timestamp).toLocaleTimeString()
     : '—'
 
-  // Pipeline events for the right rail. Maps recentEvents through a small
-  // tone-aware mapper so the design's success/info/warning/error palette
-  // surfaces correctly. Filter tabs trim by tone.
+  // Pipeline events feed. Maps recentEvents through a small tone-aware
+  // mapper so the success/info/warning/error palette surfaces correctly.
+  // Filter tabs trim by tone (errors) or to run start/complete (runs).
   type FeedEvent = {
-    stage: string
+    label: string
     time: string
     ago: string
     kind: string
@@ -834,13 +753,16 @@ export default function LiveExecutionPage() {
         e.last_status?.toUpperCase() === 'FAILED' || e.last_status?.toUpperCase() === 'BROKEN' ? 'error' :
         e.type === 'live_test_result' ? 'success' :
         'info'
-      const stage =
-        e.type === 'live_run_complete' ? 'Release Readout' :
-        e.type === 'live_run_started' ? 'Run Monitoring' :
-        e.type === 'live_test_result' ? 'Event Rollup' :
-        'Stream Connection'
+      // What the event IS. These used to be the names of the four invented
+      // "workflow" stages (Stream Connection, Run Monitoring, …).
+      const label =
+        e.type === 'live_run_complete' ? 'Run completed' :
+        e.type === 'live_run_started' ? 'Run started' :
+        e.type === 'live_test_result' ? 'Test result' :
+        e.type === 'live_warning' ? 'Warning' :
+        'Stream event'
       return {
-        stage,
+        label,
         time: new Date(e.timestamp).toLocaleTimeString(),
         ago: relativeTime(e.timestamp),
         kind: e.type,
@@ -852,7 +774,7 @@ export default function LiveExecutionPage() {
   }, [recentEvents])
   const filteredFeed = useMemo(() => {
     if (feedFilter === 'errors') return pipelineEvents.filter(e => e.tone === 'error' || e.tone === 'warning')
-    if (feedFilter === 'stage') return pipelineEvents.filter(e => e.kind.startsWith('live_run_') || e.kind === 'rollup_finalized')
+    if (feedFilter === 'runs') return pipelineEvents.filter(e => e.kind.startsWith('live_run_') || e.kind === 'rollup_finalized')
     return pipelineEvents
   }, [pipelineEvents, feedFilter])
 
@@ -1245,252 +1167,83 @@ export default function LiveExecutionPage() {
         </div>
       </section>
 
-      {/* ════ Workflow + Event feed ════ */}
-      <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
-        {/* Workflow flow + selected detail */}
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 space-y-5">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-[var(--color-text)]">Live execution workflow</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                Connection health → run monitoring → event rollup → release readout
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]">
-                <Check className="w-3 h-3" />
-                {workflow.stages.filter(s => s.status === 'completed').length} done
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]">
-                <CircleDashed className="w-3 h-3" />
-                {workflow.stages.filter(s => s.status === 'pending').length} pending
-              </span>
-            </div>
+      {/* ════ Event feed ════ */}
+      {/* Full width now that the decorative workflow panel beside it is gone;
+          capped so a 200-event buffer scrolls inside the panel. */}
+      <aside
+        aria-label="Pipeline events"
+        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col max-h-[480px]"
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-[var(--color-text)]">Pipeline events</p>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]">
+              {pipelineEvents.length}
+            </span>
           </div>
-
-          {/* Subway map of stages */}
-          <div className="flex items-stretch gap-0 overflow-x-auto pb-1">
-            {workflow.stages.map((stage, idx) => {
-              const isLast = idx === workflow.stages.length - 1
-              const status = stage.status
-              const isSelected = selectedStageId === stage.stage_name
-              const Icon = status === 'completed' ? Check : status === 'failed' ? XCircle : status === 'running' ? Activity : Clock
-              const stageColor =
-                status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' :
-                status === 'failed' ? 'color-mix(in srgb, var(--status-failed) 12%, transparent)' :
-                status === 'running' ? 'var(--color-accent-muted)' :
-                'var(--color-bg-hover)'
-              const stageBorder =
-                status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 40%, transparent)' :
-                status === 'failed' ? 'color-mix(in srgb, var(--status-failed) 40%, transparent)' :
-                status === 'running' ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' :
-                'var(--color-border)'
-              const stageIconColor =
-                status === 'completed' ? 'text-[var(--status-passed)]' :
-                status === 'failed' ? 'text-[var(--status-failed)]' :
-                status === 'running' ? 'text-[var(--color-accent)]' :
-                'text-[var(--color-text-muted)]'
-              const statusLabelColor =
-                status === 'completed' ? 'text-[var(--status-passed)]' :
-                status === 'failed' ? 'text-[var(--status-failed)]' :
-                status === 'running' ? 'text-[var(--color-accent)]' :
-                'text-[var(--color-text-muted)]'
+          <div className="flex gap-1">
+            {(['all', 'errors', 'runs'] as const).map(f => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFeedFilter(f)}
+                className={clsx(
+                  'px-2 py-0.5 rounded text-[10px] uppercase tracking-wider',
+                  feedFilter === f
+                    ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
+          {filteredFeed.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-[var(--color-text-faint)]">
+              <Radio className="h-7 w-7 mb-2 opacity-40" />
+              <p className="text-xs">Waiting for events…</p>
+            </div>
+          ) : (
+            filteredFeed.map((e, i) => {
+              const Icon = e.tone === 'success' ? CheckCircle2 : e.tone === 'warning' ? AlertTriangle : e.tone === 'error' ? XCircle : CircleDot
+              const iconColor =
+                e.tone === 'success' ? 'text-[var(--status-passed)]' :
+                e.tone === 'warning' ? 'text-[var(--status-broken)]' :
+                e.tone === 'error' ? 'text-[var(--status-failed)]' :
+                'text-[var(--color-accent-2)]'
               return (
-                <Fragment key={stage.stage_name}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStageId(stage.stage_name)}
-                    className={clsx(
-                      'relative bg-[var(--color-bg-card)] border rounded-2xl px-4 py-3.5 min-w-[232px] text-left flex-shrink-0 transition-colors',
-                      status === 'pending' && 'opacity-60 border-dashed',
-                      status === 'failed' && 'border-[var(--status-failed-bd)]',
-                    )}
-                    style={{
-                      borderColor: isSelected ? 'var(--color-accent)' : stageBorder,
-                      outline: isSelected ? '2px solid var(--color-accent)' : 'none',
-                      outlineOffset: isSelected ? -2 : 0,
-                      boxShadow: isSelected ? '0 0 0 4px var(--color-accent-muted)' : 'none',
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="h-7 w-7 rounded-full flex items-center justify-center border"
-                          style={{ background: stageColor, borderColor: stageBorder }}
-                        >
-                          <Icon className={clsx('w-3.5 h-3.5', stageIconColor, status === 'running' && 'animate-spin')} />
-                        </div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">{stage.label}</p>
-                      </div>
-                      <span className={clsx('text-[10px] uppercase tracking-wider', statusLabelColor)}>
-                        {status === 'completed' ? 'Done' : status === 'failed' ? 'Failed' : status === 'running' ? 'Running' : 'Pending'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mb-2">{stage.description}</p>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {stage.confidence_score != null && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]">
-                          {stage.confidence_score}% conf
+                <div
+                  key={`${e.kind}-${e.time}-${i}`}
+                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 px-3 py-2 hover:border-[var(--color-border-light)]"
+                >
+                  <div className="flex items-start gap-2">
+                    <Icon className={clsx('w-3.5 h-3.5 mt-0.5 flex-shrink-0', iconColor)} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-[var(--color-text)] truncate">{e.label}</p>
+                        {/* relativeTime already says "… ago" / "just now". */}
+                        <span className="text-[10px] text-[var(--color-text-faint)] font-mono whitespace-nowrap">
+                          {e.ago}
                         </span>
-                      )}
-                      {stage.evidence_count != null && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--color-accent) 10%, transparent)] text-[var(--color-accent)] border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]">
-                          {stage.evidence_count} evidence
-                        </span>
-                      )}
-                      {stage.confidence_score == null && stage.evidence_count == null && (
-                        <span className="text-[11px] text-[var(--color-text-faint)]">No data yet</span>
-                      )}
-                    </div>
-                  </button>
-                  {!isLast && (
-                    <div
-                      className={clsx('flex-auto self-center mx-0.5 relative', 'min-w-[24px] h-0.5')}
-                      style={{
-                        background: status === 'completed'
-                          ? 'var(--status-passed)'
-                          : 'repeating-linear-gradient(90deg, var(--color-text-faint) 0 4px, transparent 4px 8px)',
-                      }}
-                    >
-                      <span
-                        className="absolute -right-px top-1/2 -translate-y-1/2 w-0 h-0"
-                        style={{
-                          borderTop: '5px solid transparent',
-                          borderBottom: '5px solid transparent',
-                          borderLeft: status === 'completed'
-                            ? '6px solid var(--status-passed)'
-                            : '6px solid var(--color-text-faint)',
-                        }}
-                      />
-                    </div>
-                  )}
-                </Fragment>
-              )
-            })}
-          </div>
-
-          {/* Selected stage detail strip */}
-          {selectedStage && (
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/40 p-4">
-              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-[var(--color-text)]">{selectedStage.label}</p>
-                  <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-                    selected stage
-                  </span>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                <div className="rounded-lg bg-[var(--color-bg-card)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Status</p>
-                  <p className="mt-1 font-medium text-[var(--color-text)] capitalize">{selectedStage.status}</p>
-                </div>
-                <div className="rounded-lg bg-[var(--color-bg-card)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Confidence</p>
-                  <p className="mt-1 font-medium text-[var(--color-text)]">
-                    {selectedStage.confidence_score != null ? `${selectedStage.confidence_score}%` : '—'}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[var(--color-bg-card)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Evidence</p>
-                  <p className="mt-1 font-medium text-[var(--color-text)]">
-                    {selectedStage.evidence_count != null ? `${selectedStage.evidence_count} events` : '—'}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[var(--color-bg-card)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Cost</p>
-                  <p className="mt-1 font-medium text-[var(--color-text-muted)]">—</p>
-                </div>
-              </div>
-              {selectedStage.result_data && Object.keys(selectedStage.result_data).length > 0 && (
-                <div className="mt-3 rounded-lg bg-[var(--color-bg-card)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Result data</p>
-                  <div className="font-mono text-xs">
-                    {Object.entries(selectedStage.result_data).map(([k, v]) => (
-                      <div key={k}>
-                        <span className="text-[var(--color-text-muted)]">{k}:</span>{' '}
-                        <span className="text-[var(--status-passed)]">{String(v)}</span>
                       </div>
-                    ))}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{e.kind}</span>
+                        {e.detail && <span className="text-[10px] text-[var(--color-text-muted)] truncate">· {e.detail}</span>}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
+              )
+            })
           )}
         </div>
-
-        {/* Single consolidated Pipeline events feed */}
-        <aside className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col xl:max-h-[640px]">
-          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-[var(--color-text)]">Pipeline events</p>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]">
-                {pipelineEvents.length}
-              </span>
-            </div>
-            <div className="flex gap-1">
-              {(['all', 'errors', 'stage'] as const).map(f => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFeedFilter(f)}
-                  className={clsx(
-                    'px-2 py-0.5 rounded text-[10px] uppercase tracking-wider',
-                    feedFilter === f
-                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
-            {filteredFeed.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-[var(--color-text-faint)]">
-                <Radio className="h-7 w-7 mb-2 opacity-40" />
-                <p className="text-xs">Waiting for events…</p>
-              </div>
-            ) : (
-              filteredFeed.map((e, i) => {
-                const Icon = e.tone === 'success' ? CheckCircle2 : e.tone === 'warning' ? AlertTriangle : e.tone === 'error' ? XCircle : CircleDot
-                const iconColor =
-                  e.tone === 'success' ? 'text-[var(--status-passed)]' :
-                  e.tone === 'warning' ? 'text-[var(--status-broken)]' :
-                  e.tone === 'error' ? 'text-[var(--status-failed)]' :
-                  'text-[var(--color-accent-2)]'
-                return (
-                  <div
-                    key={`${e.kind}-${e.time}-${i}`}
-                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 px-3 py-2 hover:border-[var(--color-border-light)]"
-                  >
-                    <div className="flex items-start gap-2">
-                      <Icon className={clsx('w-3.5 h-3.5 mt-0.5 flex-shrink-0', iconColor)} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-medium text-[var(--color-text)] truncate">{e.stage}</p>
-                          <span className="text-[10px] text-[var(--color-text-faint)] font-mono whitespace-nowrap">
-                            {e.ago} ago
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{e.kind}</span>
-                          {e.detail && <span className="text-[10px] text-[var(--color-text-muted)] truncate">· {e.detail}</span>}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-          <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between">
-            <span>Streaming · 100ms batch</span>
-            <span className="font-mono">{recentEvents.length} buffered</span>
-          </div>
-        </aside>
-      </section>
+        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between">
+          <span>Streaming · 100ms batch</span>
+          <span className="font-mono">{recentEvents.length} buffered</span>
+        </div>
+      </aside>
 
       {/* ════ Connect a runner (collapsed) ════ */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">

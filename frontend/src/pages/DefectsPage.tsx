@@ -2,44 +2,37 @@
  * Defects — verdict-led redesign per design_handoff_defects/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb + Customize + status tabs with counts +
+ *   Header  → title + crumb + saved views + status tabs with counts +
  *             "+ New defect" CTA.
  *   Verdict → 1.65fr | 1fr split. Variants BLOCKED / AT_RISK / HEALTHY /
  *             PENDING. Left: pulsing eyebrow → 26 px headline → lede →
- *             3 issue rows (release blockers / unowned P0s / Jira gaps)
- *             → CTAs (Triage P0s · Assign unowned · Open release dashboard).
- *             Right: 44 px composite queue-health score + 2×2 weighted
- *             dimension grid (P0 throughput 35 / Ownership 20 / Jira coverage
- *             25 / Fix velocity 20).
- *   Ribbon  → slim 4-stage workflow: intake · linkage · triage · resolution.
- *             States drawn from real counts (linkage warns when unlinked > 0,
- *             triage warns when unowned P0s exist, resolution stays neutral).
+ *             issue rows (release blockers / Jira gaps).
+ *             Right: 44 px composite queue-health score + weighted dimension
+ *             grid (P0 throughput 35 / Jira coverage 25 / Fix velocity 20,
+ *             re-normalised over their sum of 80 → 44 / 31 / 25 %). There is
+ *             no Ownership dimension: the backend has no owner field.
  *   KPIs    → 5 cells with sparklines: Open · P0+P1 · MTTR · Escape rate ·
  *             Oldest open P0.
  *   Body    → 1.65fr | 1fr.
- *     Left  → Defects table (Key · Title · Severity · Status · Owner · Jira
- *             · Age · Actions) wrapped in `.table-scroll` so the column
+ *     Left  → Defects table (Key · Title · Severity · Status · Jira · Age ·
+ *             Actions) wrapped in `.table-scroll` so the column
  *             never overflows. P0 rows get faint red row-bg, on hover deeper.
+ *             The only row action is opening the linked Jira ticket.
  *     Right → Jira bridge card · Component breakdown (severity-stacked bars
- *             per suite) · Recommended actions (role-routed).
- *   Footer → Provenance line + Decision-trail link.
+ *             per suite).
  *
- * Out of scope (Phase 2 — README §11 + §"Out of scope" implications):
- *   - Bulk actions on the table.
- *   - Link-Jira / Assign / Approve modals (per-row pills emit toasts).
- *   - Triage focus flow over the 3 P0s (verdict CTA emits a toast).
- *   - Bridge settings deep-link (link emits a toast).
- *   - Print styles.
+ * UX redesign P2: a control renders only when it does something real, so
+ * there are no Link-Jira / Assign / Triage buttons until those flows exist.
  *
  * Data: derives every section from the existing useDefects(...). A
- * useFailureCategories() call sat here too, described as feeding the workflow
- * ribbon; its result was never destructured, so it fed nothing. Removed once
- * the release filter made it re-fetch on every release change to no effect.
+ * useFailureCategories() call sat here too; its result was never
+ * destructured, so it fed nothing. Removed once the release filter made it
+ * re-fetch on every release change to no effect.
  * The README assumes a richer DefectItem with severity,
  * owner, release tag, and bridge metadata — none of which the current model
- * carries. Every "missing" field is synthesised:
+ * carries. Severity is synthesised; owner is NOT (nothing renders it):
  *   - severity     ← failure_category + ai_confidence_score
- *   - owner        ← absent (rendered as Unassigned)
+ *   - key          ← jira_ticket_id, else the defect id's first 8 characters
  *   - jira link    ← jira_ticket_id / jira_ticket_url
  *   - age          ← created_at
  *   - bridge state ← derived from per-row jira_ticket_id presence
@@ -49,9 +42,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BarChart3, Bug, Check, ChevronRight,
-  Clock, Code as CodeIcon, ExternalLink, Layers, LayoutGrid, Plus, Search,
-  ShieldCheck, TrendingUp, Wrench, XCircle,
+  AlertCircle, AlertTriangle, BarChart3, Bug, Clock, ExternalLink, Plus,
+  Search, ShieldCheck, TrendingUp, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -60,11 +52,9 @@ import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import GaugeBar from '@/components/charts/GaugeBar'
 import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { refreshDefects, useDefects } from '@/hooks/useMetrics'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -161,13 +151,16 @@ const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
 }
 
 // ── Queue-health model ───────────────────────────────────────────────────
-type DimensionId = 'p0_throughput' | 'ownership' | 'jira_coverage' | 'fix_velocity'
+type DimensionId = 'p0_throughput' | 'jira_coverage' | 'fix_velocity'
+// The design's weights. Ownership (0.20) was a fourth: with no owner field
+// on the backend it scored every open defect as unowned, so it is gone, and
+// the composite divides by the remaining weights' sum to stay on 0-100.
 const WEIGHTS: Record<DimensionId, number> = {
   p0_throughput: 0.35,
-  ownership:     0.20,
   jira_coverage: 0.25,
   fix_velocity:  0.20,
 }
+const WEIGHT_SUM = Object.values(WEIGHTS).reduce((a, b) => a + b, 0)
 
 interface DimensionScore {
   id: DimensionId
@@ -182,9 +175,6 @@ interface DefectRow extends DefectItem {
   ageMs: number
   ageLabel: string
   ageTone: 'good' | 'warn' | 'bad' | 'neutral'
-  ownerInitials: string | null
-  ownerLabel: string
-  isUnowned: boolean
   isUnlinked: boolean
   componentName: string
   titleText: string
@@ -206,7 +196,6 @@ interface QueueModel {
   p1Count: number
   p2Count: number
   p3Count: number
-  p0Unowned: number
   unlinkedTotal: number
   unlinkedP0: number
   oldestP0: DefectRow | null
@@ -239,12 +228,6 @@ function ageOf(iso: string): { ms: number; label: string; tone: DefectRow['ageTo
   return { ms, label: `${d}d`, tone: d >= 5 ? 'bad' : d >= 3 ? 'warn' : 'good' }
 }
 
-function ownerOf(_d: DefectItem): { initials: string | null; label: string; isUnowned: boolean } {
-  // Backend doesn't yet expose an owner — every row reads as Unassigned.
-  // When owner lands on the model, switch to: (d as DefectItem & { owner })
-  return { initials: null, label: 'Unassigned', isUnowned: true }
-}
-
 function statusKeyOf(s: string): StatusKey {
   const u = s.toUpperCase()
   if (u === 'OPEN') return 'OPEN'
@@ -254,12 +237,11 @@ function statusKeyOf(s: string): StatusKey {
   return 'OPEN'
 }
 
-function buildKeyLabel(id: string): string {
-  // Short, stable defect "key" derived from the row id. Matches the visual
-  // pattern in the design (`EVG-1247`) without inventing a backend numbering.
-  let n = 0
-  for (let i = 0; i < id.length; i++) n = ((n << 5) - n) + id.charCodeAt(i)
-  return `EVG-${(Math.abs(n) % 9000) + 1000}`
+/** A real identifier for the row: its Jira ticket when linked, otherwise the
+ *  defect's own id, shortened. It used to be `EVG-####`, a hash of the id
+ *  dressed as a ticket number that did not exist anywhere. */
+function buildKeyLabel(d: DefectItem): string {
+  return d.jira_ticket_id || d.id.slice(0, 8)
 }
 
 function componentOf(d: DefectItem): string {
@@ -272,7 +254,6 @@ function componentOf(d: DefectItem): string {
 function buildRow(d: DefectItem): DefectRow {
   const severity = classifySeverity(d)
   const a = ageOf(d.created_at)
-  const o = ownerOf(d)
   const isUnlinked = !d.jira_ticket_id
   const componentName = componentOf(d)
   const statusKey = statusKeyOf(d.resolution_status)
@@ -282,16 +263,13 @@ function buildRow(d: DefectItem): DefectRow {
     ageMs: a.ms,
     ageLabel: a.label,
     ageTone: a.tone,
-    ownerInitials: o.initials,
-    ownerLabel: o.label,
-    isUnowned: o.isUnowned,
     isUnlinked,
     componentName,
     titleText: d.test_name,
     subtitleText: d.suite_name
       ? `${d.suite_name} suite · from ${(d.failure_category || 'analysis').toLowerCase().replace(/_/g, ' ')}`
       : `${(d.failure_category || 'analysis').toLowerCase().replace(/_/g, ' ')}`,
-    keyLabel: buildKeyLabel(d.id),
+    keyLabel: buildKeyLabel(d),
     jiraKey: d.jira_ticket_id ?? null,
     statusKey,
   }
@@ -318,7 +296,6 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
   const p2Count = sevCounts('P2')
   const p3Count = sevCounts('P3')
 
-  const p0Unowned = rows.filter(r => r.severity === 'P0' && r.isUnowned && (r.statusKey === 'OPEN' || r.statusKey === 'IN_PROGRESS')).length
   const unlinkedTotal = rows.filter(r => r.isUnlinked).length
   const unlinkedP0 = rows.filter(r => r.severity === 'P0' && r.isUnlinked).length
 
@@ -363,17 +340,18 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
   const p0InWindow = rows.filter(r => r.severity === 'P0').length
   const p0Resolved = rows.filter(r => r.severity === 'P0' && (r.statusKey === 'RESOLVED' || r.statusKey === 'CLOSED')).length
   const p0Throughput = p0InWindow > 0 ? (p0Resolved / p0InWindow) * 100 : 100
-  const ownershipScore = total > 0 ? ((total - rows.filter(r => r.isUnowned && (r.statusKey === 'OPEN' || r.statusKey === 'IN_PROGRESS')).length) / total) * 100 : 100
   const jiraCoverageScore = total > 0 ? ((total - unlinkedTotal) / total) * 100 : 100
   const fixVelocityScore = mttrDays == null
     ? 100
     : Math.max(0, 100 - (mttrDays / 7) * 100)   // 0d → 100; 7d → 0 (linear)
 
+  // Each dimension carries its RE-NORMALISED weight (design weight / sum), so
+  // the tiles' percentages add up to 100 and the composite is their weighted
+  // mean on 0-100.
   const dimensions: DimensionScore[] = [
-    { id: 'p0_throughput', label: 'P0 throughput', score: p0Throughput,      weight: WEIGHTS.p0_throughput, tone: toneFor(p0Throughput) },
-    { id: 'ownership',     label: 'Ownership',     score: ownershipScore,    weight: WEIGHTS.ownership,     tone: toneFor(ownershipScore) },
-    { id: 'jira_coverage', label: 'Jira coverage', score: jiraCoverageScore, weight: WEIGHTS.jira_coverage, tone: toneFor(jiraCoverageScore) },
-    { id: 'fix_velocity',  label: 'Fix velocity',  score: fixVelocityScore,  weight: WEIGHTS.fix_velocity,  tone: toneFor(fixVelocityScore) },
+    { id: 'p0_throughput', label: 'P0 throughput', score: p0Throughput,      weight: WEIGHTS.p0_throughput / WEIGHT_SUM, tone: toneFor(p0Throughput) },
+    { id: 'jira_coverage', label: 'Jira coverage', score: jiraCoverageScore, weight: WEIGHTS.jira_coverage / WEIGHT_SUM, tone: toneFor(jiraCoverageScore) },
+    { id: 'fix_velocity',  label: 'Fix velocity',  score: fixVelocityScore,  weight: WEIGHTS.fix_velocity / WEIGHT_SUM,  tone: toneFor(fixVelocityScore) },
   ]
   const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
 
@@ -387,7 +365,7 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
     composite, dimensions,
     total, open, inProgress, resolved, closed,
     p0Count, p1Count, p2Count, p3Count,
-    p0Unowned, unlinkedTotal, unlinkedP0,
+    unlinkedTotal, unlinkedP0,
     oldestP0, mttrDays,
     countsByStatus, countsByComponent,
     rows,
@@ -403,35 +381,6 @@ function pickVerdict(model: QueueModel): Verdict {
 }
 
 // ── Atoms (shared shape with sibling redesigns) ──────────────────────────
-function GhostBtn({
-  children, onClick, title, asChildLink, disabled,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  title?: string
-  asChildLink?: string
-  disabled?: boolean
-}) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
-  if (asChildLink) {
-    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className={cls}
-      style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {children}
-    </button>
-  )
-}
-
 function PrimaryBtn({
   children, onClick, title, disabled,
 }: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
@@ -503,18 +452,19 @@ interface IssueRowSpec {
   tone: 'bad' | 'warn' | 'info'
   Icon: typeof XCircle
   body: React.ReactNode
-  cta?: { label: string; onClick?: () => void }
 }
 
+interface Cta { label: string; onClick: () => void }
+
 function VerdictCard({
-  model, verdict, summary, lede, issues, ctas,
+  model, verdict, summary, lede, issues, cta,
 }: {
   model: QueueModel
   verdict: Verdict
   summary: React.ReactNode
   lede: React.ReactNode
   issues: IssueRowSpec[]
-  ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
+  cta?: Cta
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -563,10 +513,11 @@ function VerdictCard({
           }
         </div>
 
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          {ctas.primary && <CtaBtn cta={ctas.primary} primary />}
-          {ctas.secondary.filter((x): x is IssueRowSpec['cta'] => Boolean(x)).map((c, i) => <CtaBtn key={i} cta={c} />)}
-        </div>
+        {cta && (
+          <div className="flex flex-wrap gap-2 mt-3.5">
+            <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
@@ -575,12 +526,6 @@ function VerdictCard({
       </div>
     </section>
   )
-}
-
-function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean }) {
-  if (!cta) return null
-  if (primary) return <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
-  return <GhostBtn onClick={cta.onClick}>{cta.label}</GhostBtn>
 }
 
 function IssueRow({ issue }: { issue: IssueRowSpec }) {
@@ -593,18 +538,12 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
   return (
     <div
       className="grid gap-2.5 items-center rounded-md border"
-      style={{ gridTemplateColumns: '22px 1fr auto', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
+      style={{ gridTemplateColumns: '22px 1fr', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
     >
       <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
         <Icon className="h-3 w-3" />
       </span>
       <div className="text-[13px] text-[var(--color-text)] leading-[1.4]">{issue.body}</div>
-      {issue.cta && (
-        <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-          style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'var(--color-accent-bg-soft)' }}>
-          {issue.cta.label} →
-        </button>
-      )}
     </div>
   )
 }
@@ -696,119 +635,6 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
         </div>
       </div>
     </div>
-  )
-}
-
-// ── Workflow ribbon ──────────────────────────────────────────────────────
-type StageStatus = 'done' | 'warn' | 'active' | 'pending'
-
-interface RibbonStage {
-  num: number
-  name: string
-  status: StageStatus
-  meta: React.ReactNode
-}
-
-function buildRibbon(model: QueueModel): RibbonStage[] {
-  const totalEvidence = 6
-  const linkageOk = model.unlinkedTotal === 0
-  return [
-    {
-      num: 1, name: 'Defect intake', status: 'done',
-      meta: <>{model.total} total · {totalEvidence} evidence</>,
-    },
-    {
-      num: 2, name: 'Jira linkage',
-      status: linkageOk ? 'done' : 'warn',
-      meta: linkageOk
-        ? <>{model.total} / {model.total} linked · 6 evidence</>
-        : <>{model.total - model.unlinkedTotal} / {model.total} linked · {model.unlinkedTotal} unlinked · 6 evidence</>,
-    },
-    {
-      num: 3, name: 'Triage focus',
-      status: model.p0Count > 0 ? 'active' : 'done',
-      meta: <>{model.p0Count} P0 · {model.p1Count} P1 · awaiting owner: {model.p0Unowned} · 5 evidence</>,
-    },
-    {
-      num: 4, name: 'Resolution flow',
-      status: model.mttrDays != null ? 'done' : 'pending',
-      meta: model.mttrDays != null
-        ? <>avg {model.mttrDays.toFixed(1)}d open→closed · 5 evidence</>
-        : <>no closures yet · 5 evidence</>,
-    },
-  ]
-}
-
-function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
-  return (
-    <section
-      aria-label="Defect workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <div>
-          <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-1.5">
-            Defect workflow
-            <span className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>compact</span>
-          </h3>
-          <p className="text-[11.5px] text-[var(--color-text-muted)] m-0 mt-0.5">
-            Intake, link to Jira, triage by severity, drive to resolution.
-          </p>
-        </div>
-        <span className="text-[11.5px] text-[var(--color-text-muted)]">
-          {stages.filter(s => s.status === 'done').length} of {stages.length} stages on track
-        </span>
-      </div>
-      <div
-        className="grid rounded-md overflow-hidden"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', border: '1px solid var(--color-border)' }}
-      >
-        {stages.map((s, i) => <StageCell key={s.num} stage={s} isLast={i === stages.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)',   fg: 'var(--status-passed)',            icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
-    : stage.status === 'warn'
-      ? { bg: 'var(--gate-conditional-bg)', fg: 'var(--status-broken)',           icon: <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} /> }
-      : stage.status === 'active'
-        ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',  fg: 'var(--color-accent)', icon: <ChevronRight className="h-2.5 w-2.5" strokeWidth={3} /> }
-        : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <Clock className="h-2.5 w-2.5" strokeWidth={2.5} /> }
-  const trackFg = stage.status === 'done' ? 'var(--status-passed)'
-    : stage.status === 'warn' ? 'var(--gate-conditional)'
-    : stage.status === 'active' ? 'var(--color-accent)'
-    : 'var(--color-text-muted)'
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}, ${stage.status}`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className={clsx(
-        'relative flex items-start gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
-        stage.status === 'pending' && 'opacity-80',
-      )}
-      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none mt-px"
-        style={{ width: 18, height: 18, background: ic.bg, color: ic.fg }}
-      >
-        {ic.icon}
-      </span>
-      <span className="flex flex-col gap-px min-w-0">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">{stage.meta}</span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: trackFg, opacity: 0.7 }} />
-    </button>
   )
 }
 
@@ -963,16 +789,13 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
 type SortKey = 'age' | 'severity' | 'status'
 
 function DefectsTable({
-  rows, search, setSearch, sortKey, setSortKey, onLinkJira, onAssign, onOpen,
+  rows, search, setSearch, sortKey, setSortKey,
 }: {
   rows: DefectRow[]
   search: string
   setSearch: (s: string) => void
   sortKey: SortKey
   setSortKey: (k: SortKey) => void
-  onLinkJira: (r: DefectRow) => void
-  onAssign:   (r: DefectRow) => void
-  onOpen:     (r: DefectRow) => void
 }) {
   const filtered = useMemo(() => {
     if (!search.trim()) return rows
@@ -1018,7 +841,7 @@ function DefectsTable({
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search defects, owners, Jira keys…"
+            placeholder="Search defects, Jira keys…"
             className="bg-transparent text-[12px] text-[var(--color-text)] outline-none w-[260px]"
             aria-label="Search defects"
           />
@@ -1033,7 +856,6 @@ function DefectsTable({
               <Th label="Title" />
               <ThSort label="Severity" active={sortKey === 'severity'} onClick={() => setSortKey('severity')} />
               <ThSort label="Status"   active={sortKey === 'status'}   onClick={() => setSortKey('status')} />
-              <Th label="Owner" />
               <Th label="Jira" />
               <ThSort label="Age" active={sortKey === 'age'} onClick={() => setSortKey('age')} sortDir={sortKey === 'age' ? '↓' : undefined} />
               <Th label="Actions" align="right" />
@@ -1042,12 +864,12 @@ function DefectsTable({
           <tbody>
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={7} className="text-center py-10 text-[var(--color-text-muted)]">
                   {search.trim() ? 'No defects match the search.' : 'No defects in this filter.'}
                 </td>
               </tr>
             )}
-            {sorted.map(r => <DefectRowEl key={r.id} row={r} onLinkJira={onLinkJira} onAssign={onAssign} onOpen={onOpen} />)}
+            {sorted.map(r => <DefectRowEl key={r.id} row={r} />)}
           </tbody>
         </table>
       </div>
@@ -1055,14 +877,7 @@ function DefectsTable({
   )
 }
 
-function DefectRowEl({
-  row, onLinkJira, onAssign, onOpen,
-}: {
-  row: DefectRow
-  onLinkJira: (r: DefectRow) => void
-  onAssign:   (r: DefectRow) => void
-  onOpen:     (r: DefectRow) => void
-}) {
+function DefectRowEl({ row }: { row: DefectRow }) {
   const isP0 = row.severity === 'P0'
   const sevPalette: Record<Severity, { bg: string; bd: string; fg: string }> = {
     P0: { bg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',     fg: 'var(--status-failed)' },
@@ -1080,13 +895,12 @@ function DefectRowEl({
     : row.ageTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
 
-  // Pick the contextual primary action per the design.
-  const ctaLabel = row.isUnlinked ? 'Link Jira' : row.isUnowned ? 'Assign' : row.statusKey === 'IN_PROGRESS' ? 'Review' : 'Open'
-  const ctaOnClick = () => {
-    if (row.isUnlinked) onLinkJira(row)
-    else if (row.isUnowned) onAssign(row)
-    else onOpen(row)
-  }
+  // The one real row action: open the linked Jira ticket. A row without a
+  // safe ticket URL has nothing to open, so it renders no action at all
+  // (no "Link Jira" / "Assign" button until those flows exist).
+  const jiraHref = row.jira_ticket_url && isSafeExternalUrl(row.jira_ticket_url)
+    ? row.jira_ticket_url
+    : null
 
   return (
     <tr
@@ -1123,27 +937,6 @@ function DefectRowEl({
         </span>
       </td>
       <td style={{ padding: '10px 12px' }}>
-        {row.isUnowned ? (
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]" aria-label="Unassigned">
-            <span
-              aria-hidden
-              className="inline-flex items-center justify-center rounded-full"
-              style={{ width: 18, height: 18, background: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)', color: 'var(--color-text-muted)', fontSize: 10 }}
-            >?</span>
-            Unassigned
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-[11.5px]">
-            <span
-              aria-hidden
-              className="inline-flex items-center justify-center rounded-full text-[9px] font-semibold text-white"
-              style={{ width: 18, height: 18, background: '#6366f1' }}
-            >{row.ownerInitials}</span>
-            {row.ownerLabel}
-          </span>
-        )}
-      </td>
-      <td style={{ padding: '10px 12px' }}>
         {row.isUnlinked ? (
           <span
             className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] italic font-mono"
@@ -1151,9 +944,9 @@ function DefectRowEl({
           >
             unlinked
           </span>
-        ) : row.jira_ticket_url && isSafeExternalUrl(row.jira_ticket_url) ? (
+        ) : jiraHref ? (
           <a
-            href={row.jira_ticket_url}
+            href={jiraHref}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-[10.5px] font-mono px-1.5 py-0.5 rounded-md"
@@ -1196,29 +989,22 @@ function DefectRowEl({
         </span>
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-        <div className="inline-flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={ctaOnClick}
-            className="text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
+        {jiraHref && (
+          <a
+            href={jiraHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
+            className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
             style={{
               color: 'var(--color-accent)',
               borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
               background: 'var(--color-accent-bg-soft)',
             }}
           >
-            {ctaLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpen(row)}
-            title="Open defect"
-            className="inline-flex items-center justify-center h-6 w-6 rounded-md border text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            <ExternalLink className="h-3 w-3" />
-          </button>
-        </div>
+            Open <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
       </td>
     </tr>
   )
@@ -1391,149 +1177,6 @@ function Legend({ color, label }: { color: string; label: string }) {
   )
 }
 
-// ── Recommended actions ──────────────────────────────────────────────────
-interface RecRow {
-  role: 'dev' | 'qa' | 'rm'
-  Icon: typeof CodeIcon
-  label: string
-  who?: string
-  body: React.ReactNode
-  cta: { label: string; onClick: () => void }
-}
-
-function buildRecActions(model: QueueModel): RecRow[] {
-  const recs: RecRow[] = []
-  if (model.p0Unowned > 0) {
-    const samples = model.rows
-      .filter(r => r.severity === 'P0' && r.isUnowned && (r.statusKey === 'OPEN' || r.statusKey === 'IN_PROGRESS'))
-      .slice(0, 2)
-      .map(r => r.keyLabel)
-      .join(', ')
-    recs.push({
-      role: 'qa',
-      Icon: ShieldCheck,
-      label: 'QA Lead',
-      who: '@release-qa',
-      body: <>Assign {samples} ({model.p0Unowned} unowned P0{model.p0Unowned === 1 ? '' : 's'}). Triaged from AI analysis with no owner attached.</>,
-      cta: { label: 'Assign', onClick: () => toast('Assign modal — coming in Phase 2', { icon: '🎯' }) },
-    })
-  }
-  if (model.unlinkedP0 > 0) {
-    const oldest = model.rows
-      .filter(r => r.severity === 'P0' && r.isUnlinked)
-      .sort((a, b) => b.ageMs - a.ageMs)[0]
-    recs.push({
-      role: 'dev',
-      Icon: CodeIcon,
-      label: 'Developer',
-      who: oldest?.componentName ? `@team-${oldest.componentName}` : '@dev',
-      body: <>Link <code>{oldest?.keyLabel}</code> to Jira ({oldest?.ageLabel ?? ''} old, bridge miss).</>,
-      cta: { label: 'Link', onClick: () => toast('Jira-link modal — coming in Phase 2', { icon: '🔗' }) },
-    })
-  }
-  if (model.p0Count > 0) {
-    recs.push({
-      role: 'rm',
-      Icon: Wrench,
-      label: 'Release manager',
-      who: '@releng',
-      body: <>Hold the release until the {model.p0Count} P0{model.p0Count === 1 ? '' : 's'} resolve.</>,
-      cta: { label: 'Hold', onClick: () => toast('Hold-deploys editor — coming in Phase 2', { icon: '🚦' }) },
-    })
-  }
-  return recs
-}
-
-function RecommendedActions({ recs }: { recs: RecRow[] }) {
-  return (
-    <CardShell title="Recommended actions" rightSlot={<span>routed to current blockers</span>}>
-      <div className="px-4 py-3.5 flex flex-col gap-2">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">Generated from open P0s, unlinked rows, and unowned items.</p>
-        {recs.length === 0 ? (
-          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
-            No recommendations — queue is clean.
-          </p>
-        ) : (
-          recs.map((r, i) => <RecActionRow key={i} rec={r} />)
-        )}
-      </div>
-    </CardShell>
-  )
-}
-
-function RecActionRow({ rec }: { rec: RecRow }) {
-  const palette = {
-    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
-    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
-  }[rec.role]
-  const Icon = rec.Icon
-  return (
-    <div
-      className="grid items-center gap-2.5 rounded-md border"
-      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          {rec.label}
-          {rec.who && (
-            <span
-              className="font-mono text-[11px] text-[var(--color-text-secondary)] px-1.5 py-px rounded-sm"
-              style={{ background: 'var(--color-bg-secondary)', textTransform: 'none', letterSpacing: 0 }}
-            >
-              {rec.who}
-            </span>
-          )}
-        </div>
-        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
-          {rec.body}
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={rec.cta.onClick}
-        className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
-        style={{ borderColor: 'var(--color-border)' }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-      >
-        {rec.cta.label}
-      </button>
-    </div>
-  )
-}
-
-// ── Provenance footer ────────────────────────────────────────────────────
-function ProvenanceFooter({ totalEvidence }: { totalEvidence: number }) {
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>defect bridge v1</span>
-        <span aria-hidden>·</span>
-        <span>{totalEvidence} evidence items · 3 tools</span>
-        <span aria-hidden>·</span>
-        <span>auto-link enabled</span>
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
-  )
-}
-
 // ── Shared shell ─────────────────────────────────────────────────────────
 function CardShell({
   title, rightSlot, children,
@@ -1587,11 +1230,9 @@ export default function DefectsPage() {
     applyExtra: applyViewExtra,
   })
 
-  const [showPicker, setShowPicker] = useState(false)
   const [intakeOpen, setIntakeOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('age')
-  const analyticsView = useAnalyticsView('defects')
 
   const intakeProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
   const openIntake = () => {
@@ -1611,8 +1252,6 @@ export default function DefectsPage() {
   const allDefects = useMemo<DefectItem[]>(() => allDefectsData?.items ?? [], [allDefectsData])
   const model = useMemo(() => buildQueueModel(allDefects), [allDefects])
   const verdict = pickVerdict(model)
-  const ribbonStages = useMemo(() => buildRibbon(model), [model])
-  const recs = useMemo(() => buildRecActions(model), [model])
 
   if (!project && !isAllProjects) {
     return (
@@ -1649,7 +1288,7 @@ export default function DefectsPage() {
     if (verdict === 'HEALTHY') return <>{model.total} total · 0 P0 blocking</>
     if (verdict === 'BLOCKED') {
       const stale = model.rows.filter(r => r.severity === 'P0' && r.ageTone === 'bad').length
-      return <>{model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} blocking release · {model.p0Unowned} unassigned · {stale} stale</>
+      return <>{model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} blocking release · {stale} stale</>
     }
     return <>{model.open + model.inProgress} open · {model.p1Count + model.p2Count + model.p3Count} non-P0</>
   })()
@@ -1658,7 +1297,7 @@ export default function DefectsPage() {
     if (verdict === 'PENDING')
       // Surface concrete next steps when the queue is empty but the
       // project may still have failures worth triaging. Three explicit
-      // routes: review unassigned failures on /my-failures, hand off
+      // routes: review your failures on /my-failures, hand off
       // to deep AI investigation, or create a defect manually.
       return (
         <>
@@ -1677,8 +1316,9 @@ export default function DefectsPage() {
       return (
         <>
           {model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} {samples ? <>(<code>{samples}</code>) </> : null}
-          are blocking the release. {model.p0Unowned > 0 ? `${model.p0Unowned} of them are unassigned. ` : ''}
-          {model.unlinkedP0 > 0 ? `${model.unlinkedP0} have no Jira ticket — the bridge missed them. ` : ''}
+          are blocking the release.{' '}
+          {/* The count only: nothing here knows why a ticket is missing. */}
+          {model.unlinkedP0 > 0 ? `${model.unlinkedP0} ${model.unlinkedP0 === 1 ? 'has' : 'have'} no Jira ticket. ` : ''}
           Triage P0s first, then close the bridge gaps.
         </>
       )
@@ -1694,23 +1334,9 @@ export default function DefectsPage() {
       body: (
         <>
           <strong>{model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} blocking release.</strong>
-          {' '}<span className="text-[var(--color-text-muted)]">All open or in-progress, none closed today.</span>
+          {' '}<span className="text-[var(--color-text-muted)]">All open or in progress.</span>
         </>
       ),
-      cta: { label: 'Triage P0s', onClick: () => toast('Triage flow — coming in Phase 2', { icon: '🎯' }) },
-    })
-  }
-  if (model.p0Unowned > 0) {
-    issues.push({
-      tone: 'warn',
-      Icon: Layers,
-      body: (
-        <>
-          <strong>{model.p0Unowned} P0{model.p0Unowned === 1 ? ' is' : 's are'} unassigned.</strong>
-          {' '}<span className="text-[var(--color-text-muted)]">Came in from AI analysis with no owner attached.</span>
-        </>
-      ),
-      cta: { label: 'Assign', onClick: () => toast('Assign modal — coming in Phase 2', { icon: '🎯' }) },
     })
   }
   if (model.unlinkedTotal > 0) {
@@ -1719,38 +1345,20 @@ export default function DefectsPage() {
       Icon: AlertTriangle,
       body: (
         <>
-          <strong>{model.unlinkedTotal} defect{model.unlinkedTotal === 1 ? '' : 's'} from this week have no Jira ticket</strong>
-          {' '}— they exist only in TestLookup. <span className="text-[var(--color-text-muted)]">The auto-link rule is missing them.</span>
+          {/* No "from this week" (the count is every unlinked defect in the
+              list) and no claim about an auto-link rule the page cannot see. */}
+          <strong>{model.unlinkedTotal} defect{model.unlinkedTotal === 1 ? ' has' : 's have'} no Jira ticket</strong>
+          {' '}— {model.unlinkedTotal === 1 ? 'it exists' : 'they exist'} only in TestLookup.
         </>
       ),
-      cta: { label: 'Open bridge', onClick: () => toast('Bridge settings — coming in Phase 2', { icon: '⚙️' }) },
     })
   }
 
-  const verdictCtas = {
-    primary: model.p0Count > 0
-      ? { label: `Triage ${model.p0Count} P0${model.p0Count === 1 ? '' : 's'}`, onClick: () => toast('Triage flow — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
-      : { label: 'New defect', onClick: openIntake } as IssueRowSpec['cta'],
-    secondary: [
-      model.p0Unowned > 0
-        ? { label: `Assign ${model.p0Unowned} unowned`, onClick: () => toast('Assign modal — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
-        : null,
-      { label: 'Open release dashboard', onClick: () => toast('Release dashboard — coming in Phase 2', { icon: '🚀' }) } as IssueRowSpec['cta'],
-    ].filter((c): c is IssueRowSpec['cta'] => c !== null),
-  }
-
-  // KPI helpers
-
-  // Per-row action handlers
-  const onLinkJira = (r: DefectRow) => toast(`Link Jira for ${r.keyLabel} — coming in Phase 2`, { icon: '🔗' })
-  const onAssign   = (r: DefectRow) => toast(`Assign ${r.keyLabel} — coming in Phase 2`, { icon: '🎯' })
-  const onOpen     = (r: DefectRow) => {
-    if (r.jira_ticket_url && isSafeExternalUrl(r.jira_ticket_url)) {
-      window.open(r.jira_ticket_url, '_blank', 'noopener,noreferrer')
-    } else {
-      toast(`Detail view for ${r.keyLabel} — coming in Phase 2`, { icon: '🔍' })
-    }
-  }
+  // The verdict's one real action. While P0s are open there is no triage
+  // flow to start, so the card shows no button rather than a stub.
+  const verdictCta: Cta | undefined = model.p0Count > 0
+    ? undefined
+    : { label: 'New defect', onClick: openIntake }
 
   return (
     <PageShell>
@@ -1780,10 +1388,6 @@ export default function DefectsPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Customize
-          </GhostBtn>
           <StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />
           <PrimaryBtn onClick={openIntake}>
             <Plus className="h-3.5 w-3.5" />
@@ -1798,14 +1402,10 @@ export default function DefectsPage() {
         summary={summaryNode}
         lede={lede}
         issues={issues}
-        ctas={verdictCtas}
+        cta={verdictCta}
       />
 
-      <WorkflowRibbon stages={ribbonStages} />
-
-      {analyticsView.widgetIds.includes('defect_kpis') && (
-        <DefectKpiStrip model={model} />
-      )}
+      <DefectKpiStrip model={model} />
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1815,30 +1415,13 @@ export default function DefectsPage() {
             setSearch={setSearch}
             sortKey={sortKey}
             setSortKey={setSortKey}
-            onLinkJira={onLinkJira}
-            onAssign={onAssign}
-            onOpen={onOpen}
           />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <JiraBridgeCard model={model} />
-          {analyticsView.widgetIds.includes('defect_category_bar') && (
-            <ComponentBreakdown model={model} />
-          )}
-          <RecommendedActions recs={recs} />
+          <ComponentBreakdown model={model} />
         </div>
       </div>
-
-      <ProvenanceFooter totalEvidence={5 + model.total} />
-
-      {showPicker && (
-        <WidgetPicker
-          page="defects"
-          enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
 
       {intakeOpen && intakeProjectId && (
         <DefectIntakeModal

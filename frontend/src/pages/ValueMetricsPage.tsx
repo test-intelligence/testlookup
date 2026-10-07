@@ -9,12 +9,10 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
-import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import { readyState } from '@/components/charts/chartState'
 import { buildStackedColumnModel, type StackedColumnSeriesInput } from '@/components/charts/stackedColumnModel'
 import { formatNumber } from '@/utils/formatters'
-import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
 import { valueMetricsService } from '@/services/valueMetricsService'
 import { refreshValueMetrics, useValueMethodology, useValueMetrics } from '@/hooks/useValueMetrics'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -372,7 +370,6 @@ function MonthlyHoursChart({ monthly, methodologyVersion }: { monthly: ValueMetr
 
 export default function ValueMetricsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
-  const project = useProjectStore(s => s.activeProject)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
   const { canAccessManagement } = usePermissions()
   // Global shared time window — Value Metrics' options diverge from
@@ -393,7 +390,6 @@ export default function ValueMetricsPage() {
     return <DataUnavailable error={error} onRetry={() => void refresh()} testId="value-metrics-data-unavailable" />
   }
   if (!metrics) return null
-  const workflow = buildValueMetricsWorkflow(metrics, days, project?.name ?? 'All Projects')
 
   // Hours-saved model (US-12.1). Defensive against the parallel-built
   // backend: only treat the model as available when the headline actually
@@ -431,9 +427,6 @@ export default function ValueMetricsPage() {
     metrics.releases_conditional === 0 &&
     metrics.release_overrides === 0
   )
-  // If even the hero number is essentially "from N intel reports * 20min",
-  // qualify it so users don't think it's an aggregate of everything.
-  const heroIsFromIntelOnly = nonIntelSignalsAllZero && metrics.intelligence_reports_generated > 0
 
   return (
     <div className="space-y-6">
@@ -494,6 +487,11 @@ export default function ValueMetricsPage() {
             >
               <HelpCircle className="h-3.5 w-3.5" /> How is this calculated?
             </button>
+          </p>
+          {/* The API reports hours saved for a fixed trailing 30 days only
+              (`hours_saved_30d`); the window picker above does not reach it. */}
+          <p className="text-xs text-[var(--color-text-faint)] mt-1" data-testid="hours-saved-window-note">
+            Always the last 30 days: the window picker does not change this figure.
           </p>
         </div>
       ) : (
@@ -580,39 +578,6 @@ export default function ValueMetricsPage() {
           }}
         />
       )}
-
-      <WorkflowTimeline
-        title="Value Realization Workflow"
-        subtitle="Track how RunScope AI converts triage, clustering, and release protection into measurable value."
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-      />
-
-      {/* Hero: triage time saved (legacy simple counter model) */}
-      <div className="card border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/10 p-6">
-        <div className="flex items-center gap-3 mb-2">
-          <Clock className="h-6 w-6 text-[var(--color-text)]" />
-          <p className="text-sm text-[var(--color-text-muted)] uppercase tracking-wider">Triage Time Saved</p>
-        </div>
-        <p className="text-4xl font-black text-[var(--color-text-secondary)] tabular-nums">
-          {metrics.triage_time_saved_hours}h
-        </p>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1">
-          {metrics.triage_time_saved_minutes} minutes saved over the last {days} days
-          {heroIsFromIntelOnly && (
-            <>
-              {' '}
-              <span className="text-[var(--color-text-faint)]">
-                — entirely from {metrics.intelligence_reports_generated} intelligence report
-                {metrics.intelligence_reports_generated === 1 ? '' : 's'}; no clustering,
-                defect, flaky, or release-gate signal yet.
-              </span>
-            </>
-          )}
-        </p>
-      </div>
 
       {nonIntelSignalsAllZero && (
         // Empty-state banner: data IS accurate but the project hasn't

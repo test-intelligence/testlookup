@@ -3,7 +3,7 @@
  * "Bisect from last green" / "Start bisect" / "Bisect from green" CTA
  * on the /runs page.
  *
- * The CTAs used to toast ``"Bisect modal — coming in Phase 2"``; they
+ * The CTAs used to toast a "bisect modal later" placeholder; they
  * now navigate to /runs/compare with pre-filled left / right / suite
  * params. Pinning the URL construction here is a cheap regression
  * guard against:
@@ -18,10 +18,36 @@
  *     of toasting a clear "no green run found" reason).
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
+import { SWRConfig } from 'swr'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { TestRun } from '@/types/runs'
-import { buildBisectHref, buildPipelineModel, BuildVelocityCard, HealthMeter, RunKpiStrip } from './RunsPage'
+import { useRuns } from '@/hooks/useRuns'
+import RunsPage, { buildBisectHref, buildPipelineModel, BuildVelocityCard, HealthMeter, RunKpiStrip } from './RunsPage'
+
+// Only the full-page P2 describe at the bottom uses these; the pure helpers
+// and components above never touch them.
+vi.mock('@/hooks/useRuns', () => ({
+  useRuns: vi.fn(),
+  useMostRecentRun: vi.fn(() => ({ data: undefined })),
+}))
+vi.mock('@/hooks/useSuiteOptions', () => ({
+  useSuiteOptions: () => ({ options: [], isLoading: false }),
+}))
+vi.mock('@/store/projectStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/store/projectStore')>()
+  const state = {
+    activeProjectId: 'proj-1',
+    activeProject: { id: 'proj-1', name: 'Project One' },
+    projects: [{ id: 'proj-1', name: 'Project One' }],
+  }
+  return {
+    ...actual,
+    useProjectStore: (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+  }
+})
+vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
 
 // Build the href and assert it is non-null, returning the narrowed
 // string so the URL-introspection cases can read it without a `!`
@@ -317,5 +343,86 @@ describe('HealthMeter — the kit GaugeBar', () => {
     expect(screen.queryByRole('meter')).toBeNull()
     expect(screen.getByRole('img', { name: 'Pipeline health: not measured' })).toBeInTheDocument()
     expect(container.querySelector('[data-gauge-marker]')).toBeNull()
+  })
+})
+
+// ── UX redesign P2: anything not built is not rendered. The workflow ribbon
+// (an invented "stages × 7" evidence count), the provenance footer ("+7",
+// "3 tools", a toast-only "Decision trail"), the recommended-actions card
+// (invented @team-checkout / @release-qa / @releng and "Auto-deploy is
+// currently armed") and every toast-only CTA are gone. ────────────────────
+describe('RunsPage — renders only what it really does (P2)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
+
+  /** One green build, then three red ones sharing a signature, none carrying
+   *  branch / release metadata: every removed block used to render here. */
+  function brokenWindow(): TestRun[] {
+    return newestFirst([
+      run(1, { status: 'PASSED', passed_tests: 10, failed_tests: 0, pass_rate: 100, created_at: hoursAgo(30) }),
+      run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(20) }),
+      run(3, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(10) }),
+      run(4, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(2) }),
+    ])
+  }
+
+  function renderRunsPage(runs: TestRun[]) {
+    vi.mocked(useRuns).mockReturnValue({
+      data: { items: runs, total: runs.length, page: 1, size: 500, pages: 1 },
+      isLoading: false,
+      error: undefined,
+      mutate: vi.fn(),
+    } as never)
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+        <MemoryRouter><RunsPage /></MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  it('has no workflow ribbon, provenance footer or recommended actions', () => {
+    renderRunsPage(brokenWindow())
+    expect(screen.getByRole('region', { name: 'Pipeline verdict' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Run workflow' })).toBeNull()
+    expect(screen.queryByText(/Run workflow/i)).toBeNull()
+    expect(screen.queryByText(/^compact$/i)).toBeNull()
+    expect(screen.queryByText(/evidence/i)).toBeNull()
+    expect(screen.queryByText(/stages/i)).toBeNull()
+    expect(screen.queryByText(/3 tools/)).toBeNull()
+    expect(screen.queryByText(/Provenance/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
+    expect(screen.queryByText('Recommended actions')).toBeNull()
+  })
+
+  it('invents no owner handles and no deploy state', () => {
+    renderRunsPage(brokenWindow())
+    for (const handle of [/@team-checkout/, /@release-qa/, /@releng/]) {
+      expect(screen.queryByText(handle)).toBeNull()
+    }
+    expect(screen.queryByText(/currently armed/i)).toBeNull()
+  })
+
+  it('renders no toast-only CTA: Diff against HEAD, Hold deploys, Open cluster, Fix reporter, Triage cluster', () => {
+    renderRunsPage(brokenWindow())
+    for (const name of [
+      /Diff against HEAD/i, /Hold/i, /Open cluster/i, /Fix reporter/i, /Triage cluster/i, /^Start$/,
+    ]) {
+      expect(screen.queryByRole('button', { name }), String(name)).toBeNull()
+    }
+  })
+
+  it('keeps the real facts and actions those blocks sat beside', () => {
+    renderRunsPage(brokenWindow())
+    // The issue rows stay — only their stub buttons went.
+    expect(screen.getByText(/3 builds share signature/)).toBeInTheDocument()
+    expect(screen.getByText(/Branch, release, and duration absent/)).toBeInTheDocument()
+    // The verdict's real CTAs: bisect and open intelligence.
+    const verdict = screen.getByRole('region', { name: 'Pipeline verdict' })
+    expect(within(verdict).getByRole('button', { name: 'Bisect from last green' })).toBeInTheDocument()
+    expect(within(verdict).getByRole('button', { name: /^Open intelligence · #104$/ })).toBeInTheDocument()
+    // The last-green callout keeps its facts and its one real action.
+    const callout = screen.getByRole('region', { name: 'Last green build' })
+    expect(within(callout).getByText('Bisect target')).toBeInTheDocument()
+    expect(within(callout).getByText('Hours ago')).toBeInTheDocument()
+    expect(within(callout).getAllByRole('button').map(b => b.textContent?.trim())).toEqual(['Start bisect'])
   })
 })

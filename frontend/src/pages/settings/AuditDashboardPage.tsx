@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
+import Disclosure from '@/components/ui/Disclosure';
 import { buildAuditWorkflow } from '@/components/workflow/workflowPresets';
 import { exportAuditCSV } from '../../services/auditDashboardService';
 import {
@@ -74,16 +75,6 @@ export default function AuditDashboardPage() {
             Export CSV
           </button>
         }
-      />
-
-      <WorkflowTimeline
-        title="Tenant audit flow"
-        subtitle="Access events, configuration changes, quality rollups, and scoped exports"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
       />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
@@ -177,6 +168,19 @@ export default function AuditDashboardPage() {
           )}
         </div>
       )}
+
+      {/* The audit stage flow, built from the events and metrics above:
+          collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Tenant audit flow"
+          subtitle="Access events, configuration changes, quality rollups, and scoped exports"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   );
 }

@@ -143,29 +143,16 @@ describe('SearchPage', () => {
   })
 
   /**
-   * "Queries today" must not invent a number.
+   * The index verdict keeps only tiles with a real metric behind them.
    *
-   * The tile was fed ``recents.length * 24`` — the count of searches in *this
-   * browser's* localStorage (``tl.search.recent``), multiplied by an arbitrary
-   * 24 — and rendered through a compact number formatter as a platform metric.
-   *
-   * Measured on the live deployment with three seeded recent searches:
-   *
-   *     INDEX FRESHNESS    —static
-   *     LATENCY P95        —ms
-   *     QUERIES TODAY      72   no data      <-- 3 x 24
-   *     ZERO-RESULT RATE   —target ≤ 5%
-   *
-   * The tile displayed a number while its own sub-label said "no data", and it
-   * was the only one of the four that did not degrade honestly — the other
-   * three already render an em dash when their metric is unavailable.
-   *
-   * There is no query-volume metric in the backend (the source called it "a P2
-   * backend ask"), so the honest rendering is the em dash its neighbours use.
-   * When that endpoint lands, this test should be updated to assert the real
-   * value flows through — not deleted.
+   * "Queries today" was once fed ``recents.length * 24`` (this browser's
+   * recent-search count times 24); after that was fixed it, "Latency p95" and
+   * "Zero-result rate" all rendered a permanent "—" because the backend has no
+   * query-volume, latency or zero-result metric. UX P2 deletes the three null
+   * tiles; the items-indexed headline and index freshness are real and stay.
+   * When such a metric lands, add its tile back with the real value.
    */
-  it('renders no query-volume number, because no query-volume metric exists', async () => {
+  it('renders the real index verdict (items indexed, freshness) and none of the null tiles', async () => {
     localStorage.setItem(
       'tl.search.recent',
       JSON.stringify(
@@ -174,29 +161,76 @@ describe('SearchPage', () => {
         })),
       ),
     )
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 47, test_run: 20, suite: 5, defect: 0, flaky_test: 1, release: 3,
+    })
     renderAt('/search')
 
-    const label = await screen.findByText(/Queries today/i)
-    const tile = label.closest('div')?.parentElement ?? label.parentElement
-    const text = tile?.textContent ?? ''
-    expect(text, 'the Queries today tile did not render at all').not.toBe('')
-    expect(
-      text,
-      "the tile shows a fabricated count derived from this browser's recent-search list",
-    ).not.toMatch(/\d/)
-    expect(text).toContain('—')
+    const verdict = await screen.findByRole('region', { name: 'Index verdict' })
+    await waitFor(() => {
+      expect(verdict).toHaveTextContent('76 items indexed across 6 entity types')
+    })
+    expect(verdict).toHaveTextContent(/Index freshness/i)
+    for (const gone of [/Queries today/i, /Zero-result rate/i, /Latency p95/i, /target ≤ 5%/, /no data/i]) {
+      expect(screen.queryByText(gone)).toBeNull()
+    }
   })
 
-  it('renders the search workflow strip and search controls', async () => {
+  // UX P2: the "Retrieval workflow" ribbon showed four invented stages
+  // ("Ranking: recency, ownership, severity weighting" — there is no ranker).
+  it('renders the search controls and no decorative workflow ribbon', async () => {
     renderAt('/search')
 
-    // The workflow ribbon is identified by aria-label ("Search workflow"),
-    // but its visible heading reads "Retrieval workflow" — match either.
-    expect(
-      (await screen.findAllByText(/(Search|Retrieval) workflow/i)).length,
-    ).toBeGreaterThan(0)
-    // Hero search input is the stable signal that controls rendered.
-    expect(screen.getByPlaceholderText(/Search tests, runs, suites/i)).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Search across the workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Search workflow' })).toBeNull()
+    expect(screen.queryByText(/(Search|Retrieval) workflow/i)).toBeNull()
+    expect(screen.queryByText(/Drill into result/i)).toBeNull()
+  })
+
+  // UX P2: every one of these was a toast-only stub or a claim the backend
+  // does not back (there is no field:value syntax and no suggestion service).
+  it('renders no stub control, no provenance footer and no invented query syntax', async () => {
+    localStorage.setItem('tl.search.saved', JSON.stringify([{
+      id: 'sv1', label: 'Saved login', query: 'login', mode: 'keyword', scope: 'tests', slot: 1,
+    }]))
+    renderAt('/search')
+
+    await screen.findByText('Saved login')
+    for (const name of [/^Saved searches$/i, /Index settings/i, /Manage/i, /Ranking trail/i]) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+    expect(screen.queryByText(/Ranking trail/i)).toBeNull()
+    expect(screen.queryByText('Query syntax')).toBeNull()
+    expect(screen.queryByText(/Suggested for you/i)).toBeNull()
+    expect(screen.queryByText(/candidates/i)).toBeNull()
+    expect(screen.queryByText(/status:failed/)).toBeNull()
+    expect(screen.queryByText(/page size 25/)).toBeNull()
+  })
+
+  it('says exactly which fields global search matches, in the lede and the placeholder', async () => {
+    renderAt('/search')
+
+    const input = await screen.findByRole('textbox', { name: 'Search across the workspace' })
+    const placeholder = input.getAttribute('placeholder') ?? ''
+    // The old placeholder advertised a field:value syntax the backend never parsed.
+    expect(placeholder).not.toMatch(/status:|owner:|last 7d|commit|PR/)
+    expect(placeholder).toMatch(/test names/)
+    expect(placeholder).toMatch(/build numbers, branches, jobs/)
+    expect(screen.getByTestId('search-matched-fields')).toHaveTextContent(
+      'Case-insensitive substring match on test names, suite names, error messages and tags; '
+      + 'run build numbers, branches, jobs and tags; defect Jira IDs; flaky test names; and '
+      + 'release names and versions.',
+    )
+    expect(screen.queryByText(/field:value/)).toBeNull()
+  })
+
+  it('shows the Saved searches card only when the browser holds saved searches', async () => {
+    renderAt('/search')
+    await screen.findByText(/Your queries will appear here/i)
+    // No card, and no empty state pointing at a bookmark button that does not exist.
+    expect(screen.queryByText('Saved searches')).toBeNull()
+    expect(screen.queryByText(/Save a query by clicking/i)).toBeNull()
   })
 
   it('normalizes disabled retrieval modes to the available keyword mode', async () => {
@@ -296,7 +330,8 @@ describe('SearchPage', () => {
     expect(await screen.findByText('order_history_loads')).toBeInTheDocument()
     // Assert after result rows settle so this cannot pass against the
     // pre-response fallback and then regress when `search_type` is applied.
-    expect(screen.getByText('Keyword retrieval', { exact: true })).toBeInTheDocument()
+    // The results header names the retrieval the API reports it ran.
+    expect(screen.getByText('keyword', { exact: true }).tagName).toBe('CODE')
     expect(mockGlobalSearch).toHaveBeenCalledWith(
       expect.objectContaining({ q: 'loads', page: 1, size: 25 }),
     )

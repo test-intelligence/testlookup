@@ -298,7 +298,7 @@ export default function AIConfigPage() {
       // This page keeps its own useState copy, loaded by a raw useEffect above
       // that predates the frontend.swr-only-fetching convention. Everything
       // ELSE reads 'settings/ai-config' through useAIConfig — Sidebar, ChatPage,
-      // ReleaseGatePage, AgentStatusPage, AgentWorkflowPage — and the
+      // ReleaseGatePage, AgentStatusPage — and the
       // active-tier panel on THIS screen reads useAIModelStatus. Neither was
       // invalidated, so a saved change sat behind a 60s / 15s poll while the
       // form showed the new value.

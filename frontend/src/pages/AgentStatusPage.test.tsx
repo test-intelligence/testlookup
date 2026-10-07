@@ -521,6 +521,11 @@ describe('AgentStatusPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
 
+    // The timeline lives in the collapsed "Pipeline" disclosure (P2), which
+    // renders nothing until opened.
+    expect(screen.queryByText(/workflow progress/i)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Pipeline' }))
+
     expect(screen.getByText(/workflow progress/i)).toBeInTheDocument()
     expect(screen.getByText(/workflow event feed/i)).toBeInTheDocument()
     expect(screen.getByText(/summary started/i)).toBeInTheDocument()

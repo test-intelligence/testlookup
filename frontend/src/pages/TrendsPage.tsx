@@ -2,17 +2,15 @@
  * Trends — verdict-led redesign per design_handoff_trends/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (project · window · refreshed) + Customize +
- *             7d/14d/30d/90d window picker + Export PDF + "Email report" CTA.
+ *   Header  → title + crumb (project · window · refreshed) + saved Views +
+ *             24h/7d/14d/30d/90d window picker + suite filter.
  *   Verdict → 1.45fr | 1fr split. Variants HEALTHY / MIXED / INSUFFICIENT
  *             / DECLINING / PENDING. Left: pulsing eyebrow → 26 px headline
- *             "<verdict> · <summary>" → lede → 3 issue rows → CTAs. Right:
- *             44 px trend-confidence score with the kit's marker `GaugeBar`
- *             (red→amber→green track, ticks at 33 / 66) + 2×2 weighted
- *             dimension grid (Data coverage 40 % / Sample size 25 % /
+ *             "<verdict> · <summary>" → lede → up to 3 issue rows → CTAs.
+ *             Right: 44 px trend-confidence score with the kit's marker
+ *             `GaugeBar` (red→amber→green track, ticks at 33 / 66) + 2×2
+ *             weighted dimension grid (Data coverage 40 % / Sample size 25 % /
  *             Variance stability 20 % / Tag quality 15 %).
- *   Ribbon  → slim 3-stage workflow (Trend capture / Signal comparison /
- *             Report delivery). Click → drawer (Phase 2).
  *   KPIs    → 5 cells: Pass rate · Days with runs · Executions · Suites ·
  *             Last run. Pass rate and Executions carry a kit `Sparkline` of
  *             the window's real per-day series (a day without runs is a
@@ -27,9 +25,12 @@
  *             `TimeSeriesChartFrame` with the 90 % target line, the trend
  *             overlays, the range brush and release markers).
  *     Right → Schedule-paused callout (only when the gap is real) → Suite
- *             pass rates → Recommended actions (role-routed; Idle chip when a
- *             role has no work).
- *   Footer → Provenance line + decision-trail link.
+ *             pass rates over the window.
+ *
+ * P2 (UX redesign, "remove the noise"): the invented 3-stage workflow ribbon,
+ * the provenance footer, the recommended-actions card, the widget picker and
+ * every control that only raised a not-built toast (Export PDF, Email report,
+ * Resume schedule, Compare runs) are gone: the page shows only what it does.
  *
  * Narrow viewports (VIZ-106, Wave 2.6): below 1024 px the verdict card and
  * the body grid are one column, so the page needs no "wider screen" notice.
@@ -40,30 +41,17 @@
  * the catalogue, the heatmap and the pass-rate trend's analysis variant
  * always render.
  *
- * Out of scope (Phase 2 — README §"Out of Scope"):
- *   - Workflow stage drawer body
- *   - Decision-trail modal body
- *   - Email-report compose modal
- *   - 90-day heatmap wrap rules
- *   - Cumulative-volume chart (intentionally removed — see README)
- *   - Print styles for Export PDF
- *
  * Data: derives every section from existing useTrendData + useDashboardSummary
- * + useCoverage + useFlakyTests. The README proposes new dedicated trends /
- * cadence / suites endpoints — none exist yet, so v1 reads from the existing
- * trend tail and synthesises the remaining signals (variance, gap detection,
- * suite micro-history) deterministically. Schedule-resume / email-report /
- * export-PDF emit toasts pending the new endpoints.
+ * + useCoverage. The README proposes dedicated trends / cadence / suites
+ * endpoints — none exist yet, so the page reads the existing trend tail and
+ * derives the remaining signals (variance, gap detection) deterministically.
  */
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useNow } from '@/hooks/useNow'
 import { Link } from 'react-router-dom'
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BarChart3, Calendar, ChevronRight,
-  Clock, Download, Layers, LayoutGrid, Mail, Search, ShieldCheck, TrendingUp,
-  XCircle,
+  AlertCircle, BarChart3, Calendar, Clock, Layers, Search, TrendingUp, XCircle,
 } from 'lucide-react'
-import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -76,11 +64,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import {
-  useCoverage, useDashboardSummary, useFlakyTests, useTrendData,
-} from '@/hooks/useMetrics'
+import { useCoverage, useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
 import {
   daysBetweenDayIso, formatDayIso, relativeDayLabel, shiftDayIso, utcDayIso,
 } from '@/utils/calendarDay'
@@ -421,45 +405,28 @@ function pickVerdict(model: ConfidenceModel): Verdict {
 
 // ── Atoms ──────────────────────────────────────────────────────────────────
 function GhostBtn({
-  children, onClick, title, asChildLink, disabled,
+  children, onClick, asChildLink,
 }: {
   children: React.ReactNode
   onClick?: () => void
-  title?: string
   asChildLink?: string
-  disabled?: boolean
 }) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
+  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors'
   if (asChildLink) {
-    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
+    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }}>{children}</Link>
   }
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
-      disabled={disabled}
       className={cls}
       style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
       onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
     >
       {children}
     </button>
   )
-}
-
-function PrimaryBtn({
-  children, onClick, title, asChildLink,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; asChildLink?: string }) {
-  const cls = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors'
-  const style: React.CSSProperties = { background: 'var(--color-btn-primary-bg)', color: 'white' }
-  const hoverIn  = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')
-  const hoverOut = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')
-  if (asChildLink) {
-    return <Link to={asChildLink} className={cls} style={style} title={title} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>{children}</Link>
-  }
-  return <button type="button" onClick={onClick} title={title} className={cls} style={style} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>{children}</button>
 }
 
 function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window) => void }) {
@@ -510,7 +477,7 @@ function VerdictCard({
   summary: React.ReactNode
   lede: React.ReactNode
   issues: IssueRowSpec[]
-  ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
+  ctas: NonNullable<IssueRowSpec['cta']>[]
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -559,10 +526,11 @@ function VerdictCard({
           }
         </div>
 
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          {ctas.primary && <CtaBtn cta={ctas.primary} primary />}
-          {ctas.secondary.filter((x): x is IssueRowSpec['cta'] => Boolean(x)).map((c, i) => <CtaBtn key={i} cta={c} />)}
-        </div>
+        {ctas.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3.5">
+            {ctas.map((c, i) => <CtaBtn key={i} cta={c} />)}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
@@ -573,13 +541,7 @@ function VerdictCard({
   )
 }
 
-function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean }) {
-  if (!cta) return null
-  if (primary) {
-    return cta.to
-      ? <PrimaryBtn asChildLink={cta.to}>{cta.label}</PrimaryBtn>
-      : <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
-  }
+function CtaBtn({ cta }: { cta: NonNullable<IssueRowSpec['cta']> }) {
   return cta.to
     ? <GhostBtn asChildLink={cta.to}>{cta.label}</GhostBtn>
     : <GhostBtn onClick={cta.onClick}>{cta.label}</GhostBtn>
@@ -705,78 +667,6 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
         </div>
       </div>
     </div>
-  )
-}
-
-// ── Workflow ribbon (slim, 3-stage) ───────────────────────────────────────
-interface RibbonStage { num: number; name: string; evidence: number; confidencePct: number }
-
-const TRENDS_STAGES: RibbonStage[] = [
-  { num: 1, name: 'Trend capture',     evidence: 1, confidencePct: 95 },
-  { num: 2, name: 'Signal comparison', evidence: 5, confidencePct: 88 },
-  { num: 3, name: 'Report delivery',   evidence: 1, confidencePct: 90 },
-]
-
-function TrendsRibbon({ totalEvidence, confidencePct }: { totalEvidence: number; confidencePct: number }) {
-  return (
-    <section
-      aria-label="Trends workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Trends workflow · last analysis</h3>
-        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-          <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: 'var(--status-passed)' }} />
-          Completed · {TRENDS_STAGES.length} stages · {totalEvidence} evidence items · {confidencePct}% confidence
-        </div>
-      </div>
-      {/* One step per row below lg (VIZ-106, R2-4): three to a 375 px row drew
-          the ordinals over the titles and cut the counts to "1 e…", and at 640
-          a third of the row still cut every count. From lg (the desktop shell)
-          up, the three columns it always was. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3">
-        {TRENDS_STAGES.map((s, i) => <TrendStageCell key={s.num} stage={s} isLast={i === TRENDS_STAGES.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}, done, ${stage.evidence} evidence, ${stage.confidencePct}% confidence`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className={clsx(
-        'relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
-        // The column divider, only where there are columns.
-        !isLast && 'lg:border-r lg:border-solid lg:border-[var(--color-border)]',
-      )}
-      style={{ padding: '8px 12px', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none"
-        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: 'var(--status-passed)' }}
-      >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M5 12l5 5L20 7" />
-        </svg>
-      </span>
-      <span className="flex flex-col gap-px min-w-0">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">
-          {stage.evidence} evidence
-          <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-          <span className="font-semibold" style={{ color: 'var(--status-passed)' }}>{stage.confidencePct}% confidence</span>
-        </span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: 'var(--status-passed)', opacity: 0.7 }} />
-    </button>
   )
 }
 
@@ -926,7 +816,6 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
             </span>
             <span>
               {model.silentDays}-day silence between <code className="font-mono text-[11px]">{shortDate(model.gapStart)}</code> and <code className="font-mono text-[11px]">{shortDate(model.gapEnd)}</code>.
-              {' '}If you intended this (e.g. release freeze), pin a note. If not, the scheduler is paused.
             </span>
           </div>
         )}
@@ -1096,8 +985,13 @@ function PassRateTrendAnalysis({ points, takeaway }: { points: TimeSeriesPoint[]
 }
 
 // ── Schedule-paused callout ───────────────────────────────────────────────
+// The window's longest silence, stated as the dates it covers. The gap is the
+// LONGEST one, not necessarily the trailing one: only a gap that runs up to
+// today says the schedule "has not fired since"; an older gap that runs have
+// since ended is a past silence, and is called that.
 function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
-  if (model.silentDays < 7 || !model.gapStart) return null
+  if (model.silentDays < 7 || !model.gapStart || !model.gapEnd) return null
+  const ongoing = model.gapEnd === utcDayIso()
   return (
     <section
       aria-labelledby="schedpaused"
@@ -1110,29 +1004,26 @@ function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
       }}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Schedule appears paused</h3>
-        <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-          style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
-        >
-          Action needed
-        </span>
+        <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+          {ongoing ? 'Schedule appears paused' : 'Run gap in this window'}
+        </h3>
+        {ongoing && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
+            style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+          >
+            Action needed
+          </span>
+        )}
       </div>
       <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-        The scheduled nightly run hasn't fired since <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code>.
-        {' '}Most other widgets on this page degrade quietly when data is sparse — this one shouldn't.
+        {ongoing
+          ? <>No executions have landed since <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code>.</>
+          : <>No executions landed from <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code> to <code className="font-mono text-[11.5px]">{shortDate(model.gapEnd)}</code>.</>}
       </p>
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <CalloutStat label="Silent days" value={model.silentDays} />
         <CalloutStat label="Expected runs missed" value={`~${model.expectedRunsMissed}`} />
-      </div>
-      <div className="flex flex-wrap gap-2 mt-3">
-        <PrimaryBtn onClick={() => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' })}>
-          Resume nightly
-        </PrimaryBtn>
-        <GhostBtn onClick={() => toast('Schedule view — coming in Phase 2', { icon: '👁️' })}>
-          View schedule
-        </GhostBtn>
       </div>
     </section>
   )
@@ -1153,14 +1044,24 @@ function CalloutStat({ label, value }: { label: string; value: React.ReactNode }
 }
 
 // ── Suite pass rates ──────────────────────────────────────────────────────
-function SuitePassRates({ suites }: { suites: CoverageSuite[] }) {
-  const filtered = suites
-    .filter(s => (s.passed + s.failed + s.skipped) > 0)
-    .slice(0, 6)
+/**
+ * Each suite's pass rate over the page's window (the coverage read is asked
+ * for the same `days`), at most the first {@link SUITE_ROWS_SHOWN} suites with
+ * executions. The card once said "· today" / "Single day" / "No delta
+ * available — single day of data." whatever window was picked: it is the
+ * window's rate, and it says so.
+ */
+const SUITE_ROWS_SHOWN = 6
+function SuitePassRates({ suites, days }: { suites: CoverageSuite[]; days: number }) {
+  const withRuns = suites.filter(s => (s.passed + s.failed + s.skipped) > 0)
+  const filtered = withRuns.slice(0, SUITE_ROWS_SHOWN)
   return (
-    <CardShell title="Suite pass rates · today" rightSlot={<span>Single day</span>}>
+    <CardShell
+      title={`Suite pass rates — last ${days === 1 ? '24 hours' : `${days} days`}`}
+      rightSlot={withRuns.length > filtered.length ? <span>{filtered.length} of {withRuns.length} suites</span> : undefined}
+    >
       <div className="px-4 pt-2 pb-4">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2.5">No delta available — single day of data.</p>
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2.5">Passed of evaluated executions per suite across the window; skips are excluded.</p>
         {filtered.length === 0 ? (
           <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
         ) : (
@@ -1205,161 +1106,6 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
   )
 }
 
-// ── Recommended actions ───────────────────────────────────────────────────
-interface RecRow {
-  role: 'dev' | 'qa' | 'rm'
-  Icon: typeof BarChart3
-  label: string
-  body: React.ReactNode
-  dim?: boolean
-  cta?: { label: string; onClick: () => void; idle?: boolean }
-}
-
-function buildRecActions(model: ConfidenceModel, suites: CoverageSuite[]): RecRow[] {
-  const recs: RecRow[] = []
-
-  // Release manager — always relevant when there's a gap.
-  if (model.silentDays >= 7 && model.gapStart && model.gapEnd) {
-    recs.push({
-      role: 'rm',
-      Icon: Clock,
-      label: 'Release manager',
-      body: (
-        <>
-          Restart the nightly schedule and backfill <code>{shortDate(model.gapStart)}</code> → <code>{shortDate(model.gapEnd)}</code> if signal is needed for the release window.
-        </>
-      ),
-      cta: { label: 'Open', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
-    })
-  }
-
-  // Developer — only when there's a recent failing suite.
-  const failingSuite = suites
-    .filter(s => (s.passed + s.failed + s.skipped) > 0 && s.failed > 0)
-    .sort((a, b) => a.pass_rate - b.pass_rate)[0]
-  if (failingSuite) {
-    const evaluated = failingSuite.passed + failingSuite.failed
-    recs.push({
-      role: 'dev',
-      Icon: BarChart3,
-      label: 'Developer',
-      body: (
-        <>
-          <code>{failingSuite.suite_name}</code> failed {failingSuite.failed} of {evaluated} evaluated executions — investigate before assuming the trend is just sparse data.
-        </>
-      ),
-      cta: { label: 'Open', onClick: () => toast('Failure detail — coming in Phase 2', { icon: '🔍' }) },
-    })
-  }
-
-  // QA — Idle row when sample size too small.
-  if (model.daysWithRuns < 5) {
-    recs.push({
-      role: 'qa',
-      Icon: ShieldCheck,
-      label: 'QA',
-      dim: true,
-      body: <>No QA action — wait for at least 5 days of data before reviewing trend deltas.</>,
-      cta: { label: 'Idle', onClick: () => undefined, idle: true },
-    })
-  }
-
-  return recs
-}
-
-function RecommendedActions({ recs }: { recs: RecRow[] }) {
-  return (
-    <CardShell title="Recommended actions" rightSlot={<span>routed by role</span>}>
-      <div className="px-4 py-3.5 flex flex-col gap-2">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">Generated from the data gap and today's failures.</p>
-        {recs.length === 0 ? (
-          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
-            No recommendations — trend data is consistent.
-          </p>
-        ) : (
-          recs.map((r, i) => <RecActionRow key={i} rec={r} />)
-        )}
-      </div>
-    </CardShell>
-  )
-}
-
-function RecActionRow({ rec }: { rec: RecRow }) {
-  const palette = {
-    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
-    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
-  }[rec.role]
-  const Icon = rec.Icon
-  return (
-    <div
-      className={clsx('grid items-center gap-2.5 rounded-md border', rec.dim && 'opacity-60')}
-      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          {rec.label}
-        </div>
-        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
-          {rec.body}
-        </p>
-      </div>
-      {rec.cta && (
-        rec.cta.idle ? (
-          <span
-            className="text-[11px] px-2 py-1 rounded-md cursor-default"
-            style={{ color: 'var(--color-text-faint)', border: '1px solid var(--color-border)', background: 'transparent' }}
-          >
-            {rec.cta.label}
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={rec.cta.onClick}
-            className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-          >
-            {rec.cta.label}
-          </button>
-        )
-      )}
-    </div>
-  )
-}
-
-// ── Provenance footer ─────────────────────────────────────────────────────
-function ProvenanceFooter({ totalEvidence, refreshedAt }: { totalEvidence: number; refreshedAt: string }) {
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>trends analyzer v1</span>
-        <span aria-hidden>·</span>
-        <span>{totalEvidence} evidence items · 2 tools</span>
-        <span aria-hidden>·</span>
-        <span>refreshed {refreshedAt}</span>
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
-  )
-}
-
 // ── Shared shell ──────────────────────────────────────────────────────────
 function CardShell({
   title, rightSlot, children,
@@ -1384,14 +1130,6 @@ function CardShell({
 // ── Helpers ───────────────────────────────────────────────────────────────
 function relativeAgo(iso: string | null): string {
   return relativeDayLabel(iso)
-}
-
-function normaliseList<T>(raw: unknown): T[] {
-  if (Array.isArray(raw)) return raw as T[]
-  if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown }).items)) {
-    return (raw as { items: T[] }).items
-  }
-  return []
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────
@@ -1435,7 +1173,6 @@ export default function TrendsPage() {
   const days = (resetPending ? TRENDS_DEFAULT_WINDOW : snapToAllowed(storedDays, WINDOWS)) as Window
   const setDays = setStoredDays as (w: Window) => void
 
-  const [showPicker, setShowPicker] = useState(false)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
@@ -1451,27 +1188,24 @@ export default function TrendsPage() {
   // the window neutrally, "No executions in this window" (R1 F3).
   const releaseScope = useReleaseScope()
   const trendFiltered = scopeArg(suiteFilter) !== null || scopeArg(releaseScope) !== null
-  const analyticsView = useAnalyticsView('trends')
   const { options: suiteOptions } = useSuiteOptions(days)
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
 
   // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
-  // and every band, verdict and recommendation below is computed from that
+  // and every band and verdict below is computed from that
   // empty array -- a full page of conclusions drawn from no measurement.
   const { data: trendsData,   isLoading: trendsLoading, error: trendsError, mutate: retryTrends } =
     useTrendData(days, suiteFilter)
-  // Real arrival time of this view's payload. This provenance age used to be
-  // the literal '12m ago' for every project, however fresh the data was.
+  // Real arrival time of this view's payload (the header's "refreshed" age),
+  // never a literal like '12m ago' for every project.
   const fetchedAt = useDataFreshness(trendsData)
   const { data: dashSummary }                              = useDashboardSummary(days, suiteFilter)
   const { data: coverageData }                             = useCoverage(days, suiteFilter)
-  const { data: flakyData }                                = useFlakyTests(days, suiteFilter)
   const { data: latestRuns }                               = useRuns({ page: 1, size: 1, days, ...(suiteFilter && { suite_name: suiteFilter }) })
 
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
   const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
-  const flakyCount = useMemo(() => normaliseList<{ test_fingerprint: string }>(flakyData).length, [flakyData])
 
   // Untagged share — count of runs where suite name is "Unknown Suite" / empty.
   const untaggedShare = useMemo(() => {
@@ -1488,7 +1222,6 @@ export default function TrendsPage() {
 
   const model = useMemo(() => computeConfidenceModel(trend, days, untaggedShare), [trend, days, untaggedShare])
   const verdict = pickVerdict(model)
-  const recs = useMemo(() => buildRecActions(model, suites), [model, suites])
 
   if (!project && !isAllProjects) {
     return (
@@ -1541,19 +1274,27 @@ export default function TrendsPage() {
     return <>Mixed signal across {model.daysWithRuns} active days — pass rate variance is moderate. Verify the recent failures before declaring a regression.</>
   })()
 
-  // Issues
+  // Issues. A row carries a CTA only when the page can do it (widen the
+  // window); "Resume schedule" and "Compare runs" only raised a not-built
+  // toast, and are gone (P2).
   const issues: IssueRowSpec[] = []
   if (model.silentDays >= 7) {
+    // The longest silence is not always the trailing one: only a gap that
+    // runs up to today means nothing has run since it began.
+    const gapOngoing = model.gapEnd === utcDayIso()
     issues.push({
       tone: 'bad',
       Icon: AlertCircle,
       body: (
         <>
           <strong>{model.emptyDays} of {model.windowDays} days</strong> have no executions
-          {model.gapStart ? <> — the scheduler appears paused since <span className="text-[var(--color-text-muted)]">{shortDate(model.gapStart)}</span>.</> : '.'}
+          {model.gapStart && gapOngoing
+            ? <> — none since <span className="text-[var(--color-text-muted)]">{shortDate(model.gapStart)}</span>; the schedule appears paused.</>
+            : model.gapStart && model.gapEnd
+              ? <> — the longest silence ran from <span className="text-[var(--color-text-muted)]">{shortDate(model.gapStart)}</span> to <span className="text-[var(--color-text-muted)]">{shortDate(model.gapEnd)}</span>.</>
+              : '.'}
         </>
       ),
-      cta: { label: 'Resume schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
     })
   }
   if (model.daysWithRuns < 3 && model.totalExecutions > 0) {
@@ -1563,10 +1304,10 @@ export default function TrendsPage() {
       body: (
         <>
           Cannot compute trend direction — need at least <strong>3 data points</strong>, have {model.daysWithRuns}.
-          {' '}<span className="text-[var(--color-text-muted)]">Pass rate, volume, and MTTF tiles show a single value, not a delta.</span>
+          {' '}<span className="text-[var(--color-text-muted)]">The pass-rate and execution tiles show a single value, not a delta.</span>
         </>
       ),
-      cta: { label: 'Widen to 90d', onClick: () => setDays(90) },
+      cta: days < 90 ? { label: 'Widen to 90d', onClick: () => setDays(90) } : undefined,
     })
   }
   if (model.totalExecutions > 0 && model.daysWithRuns >= 1) {
@@ -1575,32 +1316,20 @@ export default function TrendsPage() {
       Icon: AlertCircle,
       body: (
         <>
-          The latest active day had <strong>{model.totalExecutions} test execution{model.totalExecutions === 1 ? '' : 's'}</strong>: {model.passedExecutions} passed, {model.failedExecutions} failed, {model.brokenExecutions} broken
+          The window had <strong>{model.totalExecutions} test execution{model.totalExecutions === 1 ? '' : 's'}</strong>: {model.passedExecutions} passed, {model.failedExecutions} failed, {model.brokenExecutions} broken
           {model.evaluatedExecutions > 0 ? <> ({Math.round(model.passRate)}% of {model.evaluatedExecutions} evaluated)</> : null}.
-          {' '}<span className="text-[var(--color-text-muted)]">No regression vs. the prior in-window run.</span>
         </>
       ),
-      cta: { label: 'Compare runs', onClick: () => toast('Run comparison — coming in Phase 2', { icon: '⇆' }) },
     })
   }
 
-  const verdictCtas = {
-    primary:
-      verdict === 'INSUFFICIENT' || verdict === 'PENDING'
-        ? { label: 'Resume schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) } as IssueRowSpec['cta']
-        : { label: 'Email this view', onClick: () => toast('Email compose modal — coming in Phase 2', { icon: '✉️' }) } as IssueRowSpec['cta'],
-    secondary: [
-      days < 90
-        ? { label: 'Widen window to 90d', onClick: () => setDays(90) } as IssueRowSpec['cta']
-        : null,
-      { label: 'Email this view', onClick: () => toast('Email compose modal — coming in Phase 2', { icon: '✉️' }) } as IssueRowSpec['cta'],
-    ].filter((c): c is IssueRowSpec['cta'] => c !== null),
-  }
+  // The verdict's one real action: widen the window (gone at 90 days, the widest).
+  const verdictCtas: NonNullable<IssueRowSpec['cta']>[] =
+    days < 90 ? [{ label: 'Widen window to 90d', onClick: () => setDays(90) }] : []
 
   // The two KPI sparklines draw the window's real per-day series (OD-1); the
   // other three cells had only decoration and now carry none.
   const kpiSeries = kpiSparkSeries(model.cadenceCells)
-  const totalEvidence = TRENDS_STAGES.reduce((s, x) => s + x.evidence, 0)
   // Dashboard summary delta — used by KPI 1 when we have a baseline.
   const passRateDelta = (() => {
     const prev = (dashSummary?.avg_pass_rate_7d?.trend ?? null) as number | null
@@ -1648,10 +1377,6 @@ export default function TrendsPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Customize
-          </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
@@ -1659,20 +1384,6 @@ export default function TrendsPage() {
             options={suiteOptions}
             allLabel="All suites"
           />
-          <GhostBtn
-            onClick={() => toast('Export PDF — coming in Phase 2', { icon: '📄' })}
-            title="Export this trends view as a PDF"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export PDF
-          </GhostBtn>
-          <PrimaryBtn
-            onClick={() => toast('Email compose modal — coming in Phase 2', { icon: '✉️' })}
-            title="Email this trends view to the project recipients"
-          >
-            <Mail className="h-3.5 w-3.5" />
-            Email report
-          </PrimaryBtn>
         </div>
       </header>
 
@@ -1685,112 +1396,103 @@ export default function TrendsPage() {
         ctas={verdictCtas}
       />
 
-      <TrendsRibbon totalEvidence={totalEvidence} confidencePct={91} />
-
-      {analyticsView.widgetIds.includes('trends_kpis') && (
-        <section aria-label="Trend metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-          <KpiCell
-            Icon={TrendingUp}
-            label="Pass rate"
-            value={`${model.passRate.toFixed(1)}%`}
-            tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
-            meta={model.daysWithRuns < 2
-              ? <>single data point · no delta available</>
-              : passRateDelta != null
-                ? <>{passRateDelta > 0 ? '↑' : passRateDelta < 0 ? '↓' : '·'} {Math.abs(Math.round(passRateDelta))}pp vs prev window</>
-                : <>{model.daysWithRuns} active days</>
-            }
-            spark={
-              <Sparkline
-                series={kpiSeries.passRate}
-                label="Pass rate per day"
-                domain={PERCENT_DOMAIN}
-                format={formatPercent}
-                tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
-              />
-            }
-            isFirst
-          />
-          <KpiCell
-            Icon={Calendar}
-            label="Days with runs"
-            value={
-              <>
-                {model.daysWithRuns}
-                <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {model.windowDays}</span>
-              </>
-            }
-            tone={model.daysWithRuns < model.windowDays * 0.5 ? 'bad' : model.daysWithRuns < model.windowDays * 0.7 ? 'warn' : 'good'}
-            meta={
-              model.daysWithRuns < model.windowDays * 0.5
-                ? <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% — schedule may be paused</>
-                : <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% of window</>
-            }
-          />
-          <KpiCell
-            Icon={BarChart3}
-            label="Executions"
-            value={model.totalExecutions}
-            meta={<>{model.passedExecutions} passed · {model.failedExecutions} failed · {model.brokenExecutions} broken · {model.skippedExecutions} skipped</>}
-            spark={
-              <Sparkline
-                series={kpiSeries.executions}
-                label="Executions per day"
-                // A count starts at zero, as Overview draws the same measure:
-                // on its own [min, max] a 100-to-104 week filled the cell (R1 F1).
-                domain={countDomain(kpiSeries.executions)}
-                tone="accent"
-              />
-            }
-          />
-          <KpiCell
-            Icon={Layers}
-            label="Suites"
-            value={suites.length}
-            tone="accent"
-            meta={
-              suites
-                .filter(s => (s.passed + s.failed + s.skipped) > 0)
-                .slice(0, 4)
-                .map(s => s.suite_name)
-                .join(', ') || '—'
-            }
-          />
-          <KpiCell
-            Icon={Clock}
-            label="Last run"
-            value={lastRunRel}
-            tone={
-              !model.lastRunIso ? 'neutral'
-              : model.lastRunIso === utcDayIso() ? 'good'
-              : (now - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
-              : 'warn'
-            }
-            meta={
-              previousRunRel
-                ? <>previous run was {previousRunGapDays}d prior</>
-                : <>no prior run in window</>
-            }
-            isLast
-          />
-        </section>
-      )}
+      <section aria-label="Trend metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+        <KpiCell
+          Icon={TrendingUp}
+          label="Pass rate"
+          value={`${model.passRate.toFixed(1)}%`}
+          tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
+          meta={model.daysWithRuns < 2
+            ? <>single data point · no delta available</>
+            : passRateDelta != null
+              ? <>{passRateDelta > 0 ? '↑' : passRateDelta < 0 ? '↓' : '·'} {Math.abs(Math.round(passRateDelta))}pp vs prev window</>
+              : <>{model.daysWithRuns} active days</>
+          }
+          spark={
+            <Sparkline
+              series={kpiSeries.passRate}
+              label="Pass rate per day"
+              domain={PERCENT_DOMAIN}
+              format={formatPercent}
+              tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
+            />
+          }
+          isFirst
+        />
+        <KpiCell
+          Icon={Calendar}
+          label="Days with runs"
+          value={
+            <>
+              {model.daysWithRuns}
+              <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {model.windowDays}</span>
+            </>
+          }
+          tone={model.daysWithRuns < model.windowDays * 0.5 ? 'bad' : model.daysWithRuns < model.windowDays * 0.7 ? 'warn' : 'good'}
+          meta={
+            model.daysWithRuns < model.windowDays * 0.5
+              ? <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% — schedule may be paused</>
+              : <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% of window</>
+          }
+        />
+        <KpiCell
+          Icon={BarChart3}
+          label="Executions"
+          value={model.totalExecutions}
+          meta={<>{model.passedExecutions} passed · {model.failedExecutions} failed · {model.brokenExecutions} broken · {model.skippedExecutions} skipped</>}
+          spark={
+            <Sparkline
+              series={kpiSeries.executions}
+              label="Executions per day"
+              // A count starts at zero, as Overview draws the same measure:
+              // on its own [min, max] a 100-to-104 week filled the cell (R1 F1).
+              domain={countDomain(kpiSeries.executions)}
+              tone="accent"
+            />
+          }
+        />
+        <KpiCell
+          Icon={Layers}
+          label="Suites"
+          value={suites.length}
+          tone="accent"
+          meta={
+            suites
+              .filter(s => (s.passed + s.failed + s.skipped) > 0)
+              .slice(0, 4)
+              .map(s => s.suite_name)
+              .join(', ') || '—'
+          }
+        />
+        <KpiCell
+          Icon={Clock}
+          label="Last run"
+          value={lastRunRel}
+          tone={
+            !model.lastRunIso ? 'neutral'
+            : model.lastRunIso === utcDayIso() ? 'good'
+            : (now - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
+            : 'warn'
+          }
+          meta={
+            previousRunRel
+              ? <>previous run was {previousRunGapDays}d prior</>
+              : <>no prior run in window</>
+          }
+          isLast
+        />
+      </section>
 
       {/* One column below 1024 px (VIZ-106); from lg the design's 1.65fr | 1fr. */}
       <div className="grid gap-3.5 trends-body-grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-3.5 min-w-0">
           <CadenceHeatmap model={model} />
-          {analyticsView.widgetIds.includes('daily_breakdown') && (
-            <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
-          )}
-          {analyticsView.widgetIds.includes('pass_rate_trend') && (
-            <PassRateTrend trend={trend} model={model} days={days} />
-          )}
+          <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
+          <PassRateTrend trend={trend} model={model} days={days} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <SchedulePausedCallout model={model} />
-          <SuitePassRates suites={suites} />
-          <RecommendedActions recs={recs} />
+          <SuitePassRates suites={suites} days={days} />
         </div>
       </div>
 
@@ -1804,20 +1506,6 @@ export default function TrendsPage() {
           </PageSuiteTargetContext.Provider>
         </Suspense>
       </SectionErrorBoundary>
-
-      <ProvenanceFooter totalEvidence={totalEvidence + (flakyCount > 0 ? 1 : 0)} refreshedAt={refreshedAt} />
-
-      {showPicker && (
-        <WidgetPicker
-          page="trends"
-          enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
     </PageShell>
   )
 }
-
-// Phase-2 imports kept referenced.
-void ChevronRight; void AlertTriangle
