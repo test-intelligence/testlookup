@@ -244,4 +244,37 @@ describe('AgentConfigPanel', () => {
     expect(screen.getByText(/Could not load agent configurations/)).toBeInTheDocument()
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
+
+  // UX redesign P6: the agent tabs are the `Tabs` primitive, on the panel's own
+  // state (rendered here with no router at all: nothing reads or writes ?tab=).
+  it('the agent tabs are the Tabs primitive: one per agent, keyed by agent id, the panel\'s own state', async () => {
+    await mockConfigs([
+      view('agent.summary.v1'),
+      view('agent.triage.v1', { source: 'project', config_version: 3 }),
+      view('agent.root_cause_analysis.v1'),
+    ])
+    render(<AgentConfigPanel projectId="proj-1" />)
+    const bar = screen.getByRole('tablist', { name: 'Configurable agents' })
+    expect(bar).toHaveAttribute('data-tabs')
+    expect(bar).toHaveClass('flex-wrap')
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((t) => t.getAttribute('data-tab'))).toEqual(['agent.summary.v1', 'agent.triage.v1', 'agent.root_cause_analysis.v1'])
+    fireEvent.click(tabs[2])
+    expect(screen.getAllByRole('tab')[2]).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: 'Root cause analysis configuration' })).toBeInTheDocument()
+  })
+
+  it('marks the tab of a stored configuration that no longer validates, and keeps its version beside the name', async () => {
+    await mockConfigs([
+      view('agent.summary.v1'),
+      view('agent.triage.v1', { source: 'project', config_version: 2, valid: false, errors: ['timeout too long'] }),
+    ])
+    render(<AgentConfigPanel projectId="proj-1" />)
+    const [summary, triage] = screen.getAllByRole('tab')
+    expect(summary.querySelector('[data-invalid-config]')).toBeNull()
+    const invalid = triage.querySelector('[data-invalid-config]') as HTMLElement
+    expect(invalid).toHaveTextContent('Triage')
+    expect(invalid).toHaveStyle({ color: 'var(--gate-no-go)' })
+    expect(triage).toHaveTextContent('Triagev2')
+  })
 })

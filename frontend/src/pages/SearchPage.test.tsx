@@ -5,6 +5,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SearchPage from './SearchPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/types/search'
 import { useReleaseStore } from '@/store/releaseStore'
 
@@ -174,6 +175,25 @@ describe('SearchPage', () => {
     for (const gone of [/Queries today/i, /Zero-result rate/i, /Latency p95/i, /target ≤ 5%/, /no data/i]) {
       expect(screen.queryByText(gone)).toBeNull()
     }
+  })
+
+  // UX redesign P6: the page template's header, not a page-made heading.
+  it('renders the template header: one compact h1, the search help topic, the old crumb as its subtitle', async () => {
+    mockGetIndexStatus.mockResolvedValue(makeIndexStatus({
+      document_count: 76,
+      last_indexed_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    }))
+    renderAt('/search')
+
+    const header = await waitFor(() => {
+      const el = document.querySelector('[data-page-header]') as HTMLElement
+      expect(el).toHaveTextContent('76 items indexed')
+      return el
+    })
+    expectTemplateHeader('Search', '/search')
+    expect(header).toHaveTextContent('Find tests, runs, suites, defects, releases across One · 76 items indexed · fresh 5m ago')
+    // The search box is the hero below the header, not a header action.
+    expect(header.querySelector('input')).toBeNull()
   })
 
   // UX P2: the "Retrieval workflow" ribbon showed four invented stages

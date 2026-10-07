@@ -33,4 +33,19 @@ describe('SettingsPage (the /settings index)', () => {
     // No card grid: one list per group.
     expect(container.querySelectorAll('[data-settings-index] section ul')).toHaveLength(SETTINGS_GROUPS.length)
   })
+
+  it('marks the grouped lists as the page’s one primary content (P6 fold budget)', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
+    const primaries = container.querySelectorAll('[data-primary]')
+    expect(primaries).toHaveLength(1)
+    expect(primaries[0]).toHaveAttribute('data-settings-index')
+    // Below the header, never around it.
+    const header = container.querySelector('[data-page-header]') as Element
+    expect(header.compareDocumentPosition(primaries[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(primaries[0].contains(header)).toBe(false)
+  })
 })

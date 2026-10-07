@@ -667,6 +667,41 @@ describe('DefectsPage — the page template (P3)', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Resolved/ }))
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('checkout done1')
+    localStorage.removeItem('tl.defects.tab')
+  })
+
+  // ── UX redesign P6: the status filter is the `Tabs` primitive ──
+  it('the status filter is the Tabs primitive: a tab per status with its count; its state is local, never ?tab=', async () => {
+    localStorage.removeItem('tl.defects.tab')
+    await renderWith([defect('open1'), defect('open2'), defect('done1', { resolution_status: 'RESOLVED', resolved_at: ago(1) })])
+    const filter = screen.getByRole('tablist', { name: 'Status filter' })
+    expect(filter).toHaveAttribute('data-tabs')
+    const tabs = within(filter).getAllByRole('tab')
+    expect(tabs.map((t) => t.getAttribute('data-tab'))).toEqual(['ALL', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'])
+    // The count beside each label (0 is shown).
+    expect(tabs.map((t) => t.querySelector('[data-tab-count]')?.textContent)).toEqual(['3', '2', '0', '1', '0'])
+    expect(within(filter).getByRole('tab', { name: /^All/, selected: true })).toBeInTheDocument()
+
+    fireEvent.click(within(filter).getByRole('tab', { name: /^Open/ }))
+    expect(within(filter).getByRole('tab', { name: /^Open/, selected: true })).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: 'Defects' })).getAllByRole('row')).toHaveLength(3)
+    // Remembered for the next visit, and the URL's ?tab= stays the section tabs'.
+    expect(localStorage.getItem('tl.defects.tab')).toBe('OPEN')
+    expect(location()).toBe('')
+    expect(screen.getByRole('tab', { name: 'Where defects live', selected: true })).toBeInTheDocument()
+    localStorage.removeItem('tl.defects.tab')
+  })
+
+  it('opens on the status remembered from the last visit, whatever the section tab in ?tab=', async () => {
+    localStorage.setItem('tl.defects.tab', 'RESOLVED')
+    await renderWith([defect('open1'), defect('done1', { resolution_status: 'RESOLVED', resolved_at: ago(1) })], '?tab=jira')
+    const filter = screen.getByRole('tablist', { name: 'Status filter' })
+    expect(within(filter).getByRole('tab', { name: /^Resolved/, selected: true })).toBeInTheDocument()
+    const table = screen.getByRole('table', { name: 'Defects' })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(table).toHaveTextContent('checkout done1')
+    expect(screen.getByRole('tab', { name: 'Jira bridge', selected: true })).toBeInTheDocument()
+    localStorage.removeItem('tl.defects.tab')
   })
 
   it('an empty queue says how to fill it in the table (the old verdict lede\'s links), and the banner is PENDING', async () => {

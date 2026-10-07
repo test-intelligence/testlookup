@@ -6,6 +6,12 @@
  * expansion that pushed every card below it down the page. The two header
  * controls that only said "(planned)" (Export schedule, Calendar view) are
  * gone: what is not built is not rendered (P2).
+ *
+ * UX redesign P6 (the fold budget, `02-design-spec.md` §2): above the list,
+ * one toolbar row (the counted status filter and search) and ONE
+ * StatusBanner (`ReleaseHealthBanner`) instead of a verdict band beside a KPI
+ * strip; the band's lede, the release's top blockers and the four count cards
+ * are in the collapsed "Release health · this week" disclosure under the list.
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -34,8 +40,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { useModalFocus } from '@/hooks/useModalFocus'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
-import VerdictBand from '@/components/releases/VerdictBand'
-import KpiStrip from '@/components/releases/KpiStrip'
+import { ReleaseHealthBanner, ReleaseHealthDetails } from '@/components/releases/ReleaseHealth'
 import ReleaseCard from '@/components/releases/ReleaseCard'
 import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from '@/components/releases/RightRail'
 
@@ -746,8 +751,8 @@ export default function ReleasesPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
 
-  // Derive the renderer-ready shape once and reuse across the verdict band,
-  // KPIs, list, and right-rail panels. Pure — no side effects, no extra
+  // Derive the renderer-ready shape once and reuse across the health banner
+  // and its disclosure, the list, and the right-rail panels. Pure — no side effects, no extra
   // network calls — so it's cheap to recompute on every render.
   const derived = useMemo(() => releases.map(deriveRelease), [releases])
   const stageCounts = useMemo(() => computeStageCounts(derived), [derived])
@@ -764,7 +769,7 @@ export default function ReleasesPage() {
     }
     return xs
   }, [derived, statusFilter, search])
-  // The verdict band highlights the in-progress release with the nearest
+  // The health banner highlights the in-progress release with the nearest
   // upcoming due date — that's the "what ships next" answer the QA lead
   // wants the page to surface first.
   const highlightedRelease = useMemo(() => {
@@ -881,13 +886,12 @@ export default function ReleasesPage() {
           ) : undefined}
         />
 
-        {/* Top strip — verdict band + KPIs */}
-        {!isLoading && (
-          <div className="grid gap-3.5 mb-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 2fr)' }}>
-            <VerdictBand highlighted={highlightedRelease} inProgressReleases={inProgressReleases} />
-            <KpiStrip releases={derived} />
-          </div>
-        )}
+        {/* The template (§2, UX redesign P6): header · ONE toolbar row (the
+            counted status filter + search) · ONE StatusBanner · the list.
+            The verdict band and the KPI strip that stood side by side here
+            pushed the list to 466 px; the banner carries the band's sentence
+            and the most important counts, and the rest is in the "Release
+            health" disclosure under the list. */}
 
         {/* Counted segmented filter bar */}
         {!isLoading && (
@@ -930,6 +934,21 @@ export default function ReleasesPage() {
           </div>
         )}
 
+        {/* Release health in one line: the release that ships next, its
+            gate, and the counts that matter most (all releases, not the
+            filtered list). "Open" is the list's drill-down (the side panel);
+            on a release's own page the release is already the page. */}
+        {!isLoading && (
+          <div className="mb-3.5">
+            <ReleaseHealthBanner
+              highlighted={highlightedRelease}
+              inProgressReleases={inProgressReleases}
+              releases={derived}
+              onOpen={releaseId ? undefined : openPanel}
+            />
+          </div>
+        )}
+
         {/* Body grid — release list + right rail */}
         {isLoading ? (
           <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
@@ -949,57 +968,61 @@ export default function ReleasesPage() {
           />
         ) : (
           <div className="grid gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
-            {/* Left — release cards (on a release's own page: its card and its detail) */}
-            <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
-              {filteredDerived.length === 0 ? (
-                <div
-                  className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
-                  style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
-                >
-                  <span>No releases match these filters.</span>
-                  <button
-                    type="button"
-                    onClick={() => { setStatusFilter('all'); setSearch('') }}
-                    className="text-[var(--color-accent)] hover:underline"
+            {/* Left — release cards (on a release's own page: its card and its
+                detail), then the release health detail, collapsed. */}
+            <div className="flex flex-col gap-3.5 min-w-0">
+              <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
+                {filteredDerived.length === 0 ? (
+                  <div
+                    className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
+                    style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
                   >
-                    Clear filters
-                  </button>
-                </div>
-              ) : releaseId ? (
-                filteredDerived.map(r => (
-                  <div key={r.id} data-release-page="">
-                    <ReleaseCard release={r} />
-                    {/* The release's own page: its detail is the page, not a drill-down. */}
-                    <div
-                      className="mt-2 rounded-xl border p-4"
-                      style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                    <span>No releases match these filters.</span>
+                    <button
+                      type="button"
+                      onClick={() => { setStatusFilter('all'); setSearch('') }}
+                      className="text-[var(--color-accent)] hover:underline"
                     >
-                      {r.source.description && (
-                        <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
-                      )}
-                      <div className="flex justify-end gap-2 mb-3">
-                        <button
-                          onClick={() => openEdit(r.source)}
-                          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteRelease(r.id)}
-                          className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      <ReleaseDetailPanel releaseId={r.id} />
-                    </div>
+                      Clear filters
+                    </button>
                   </div>
-                ))
-              ) : (
-                filteredDerived.map(r => (
-                  <ReleaseCard key={r.id} release={r} onClick={() => openPanel(r.id)} />
-                ))
-              )}
+                ) : releaseId ? (
+                  filteredDerived.map(r => (
+                    <div key={r.id} data-release-page="">
+                      <ReleaseCard release={r} />
+                      {/* The release's own page: its detail is the page, not a drill-down. */}
+                      <div
+                        className="mt-2 rounded-xl border p-4"
+                        style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                      >
+                        {r.source.description && (
+                          <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
+                        )}
+                        <div className="flex justify-end gap-2 mb-3">
+                          <button
+                            onClick={() => openEdit(r.source)}
+                            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteRelease(r.id)}
+                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        <ReleaseDetailPanel releaseId={r.id} />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  filteredDerived.map(r => (
+                    <ReleaseCard key={r.id} release={r} onClick={() => openPanel(r.id)} />
+                  ))
+                )}
+              </div>
+              <ReleaseHealthDetails highlighted={highlightedRelease} releases={derived} />
             </div>
 
             {/* Right — derived panels */}

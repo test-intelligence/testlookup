@@ -12,90 +12,15 @@
  * first).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). The page has
- * no visual-spec fixtures, so its answers are here.
+ * no visual-spec fixtures: its answers are `TEST_CASES` in
+ * `fixtures-pages.ts` (shared with the fold budget, P6).
  */
 import { expect, test, type Page } from '@playwright/test'
-import type { ApiHandlers } from '../lib/production-pages'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { isoAgo, LAYOUT, PROJECT_ID } from '../visual/production/fixtures'
+import { TEST_CASES, TEST_CASES_SUITE_IDS as SUITE_IDS } from '../visual/production/fixtures-pages'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
-
-const STATUSES = ['active', 'draft', 'review_requested', 'approved', 'active', 'under_review', 'active', 'draft'] as const
-const CASES = STATUSES.map((status, i) => ({
-  id: `0000000${i}-aaaa-4000-8000-00000000000${i}`,
-  project_id: PROJECT_ID,
-  title: `Checkout case ${i + 1}: the cart survives a refresh`,
-  test_type: 'functional',
-  priority: ['critical', 'high', 'medium', 'low'][i % 4],
-  severity: 'major',
-  suite_name: i % 2 ? 'Auth' : 'Checkout',
-  test_suite_id: null,
-  status,
-  version: 1,
-  is_automated: i % 3 === 0,
-  automation_status: i % 3 === 0 ? 'automated' : 'manual',
-  ai_generated: false,
-  source: 'managed',
-  allowed_actions: ['deprecate'],
-  created_at: isoAgo(40 + i),
-  updated_at: isoAgo(2 + i),
-}))
-
-const page = <T>(items: T[], size = 25) => ({ items, total: items.length, page: 1, size, pages: items.length ? 1 : 0 })
-
-/** The suites list (by name) and the first-class suites (with ids) the Suites tab links to. */
-const SUITE_IDS: Record<string, string> = {
-  Checkout: '5a000000-0000-4000-8000-000000000001',
-  Auth: '5a000000-0000-4000-8000-000000000002',
-}
-const SUITES = Object.keys(SUITE_IDS).map((name, i) => ({
-  suite_name: name,
-  test_count: 4,
-  passed_count: 3,
-  failed_count: 1,
-  last_run_at: isoAgo(1),
-  last_run_id: null,
-  pass_rate: 75,
-  run_count: 3 + i,
-  total_executions: 12,
-  total_passed: 9,
-  total_failed: 3,
-  total_skipped: 0,
-  total_broken: 0,
-}))
-
-const TEST_CASES: ApiHandlers = [
-  ...LAYOUT,
-  ['/api/v1/test-management/cases', ({ url }) => {
-    const status = url.searchParams.get('status')
-    const size = Number(url.searchParams.get('size') ?? 25)
-    return page(status ? CASES.filter((c) => c.status === status) : CASES, size)
-  }],
-  ['/api/v1/test-management/audit', () => page([], 5)],
-  ['/api/v1/test-management/cases/evidence-gaps', () => ({ items: [], total: 0 })],
-  ['/api/v1/canonical-test-cases/orphaned', () => page([])],
-  ['/api/v1/test-management/suites', () => SUITES],
-  ['/api/v1/suites', () => ({
-    items: Object.entries(SUITE_IDS).map(([name, id]) => ({
-      id,
-      project_id: PROJECT_ID,
-      name,
-      description: null,
-      is_default: false,
-      tags: null,
-      test_case_count: 4,
-      created_at: isoAgo(60),
-      updated_at: null,
-    })),
-    total: 2,
-  })],
-  ['/api/v1/auth/users', () => []],
-  [`/api/v1/projects/${PROJECT_ID}/members`, () => []],
-  ['/api/v1/test-management/strategies', () => []],
-  ['/api/v1/test-management/plans', () => page([])],
-]
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Test Case Management', level: 1 })
 

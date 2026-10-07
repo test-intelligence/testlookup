@@ -3,7 +3,10 @@
  * design_handoff_deep_investigation/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb + suite filter + "Run Deep Analysis" CTA.
+ *   Header  → the template's `PageHeader` (UX redesign P6: compact, **?** =
+ *             the failure-analysis topic's "the path a failure takes"); the
+ *             old chip crumb is its one-line subtitle; the focused run's suite
+ *             badge, the suite filter and "Run Deep Analysis" share its row.
  *   Verdict → 1.65fr | 1fr split. Variants READY / NO_FAILURES / NO_SOURCES
  *             / RUNNING / FAILED. Left: pulsing eyebrow → 26 px headline
  *             → lede → 4 input facets (Failures eligible · Scope ·
@@ -44,7 +47,9 @@ import GaugeBar from '@/components/charts/GaugeBar'
 import type { GaugeBands } from '@/components/charts/gaugeBar.model'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageHeader from '@/components/ui/PageHeader'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useFailureClusters, useDeepFindings, usePipelineStatus } from '@/hooks/useDeepInvestigation'
 import { useDecisionTrail } from '@/hooks/useDecisionTrail'
 import { useIntegrationStatus } from '@/hooks/useIntegrationHealth'
@@ -65,6 +70,9 @@ import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { formatRunWhen, shortAgo } from '@/utils/formatters'
 import { isPipelineInProgress } from '@/types/agent'
+
+/** The page's help topic (the header's **?**): `topic#anchor` for the route. */
+const HELP_TOPIC = helpTopicParam('/deep-investigate')
 
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'READY' | 'NO_FAILURES' | 'NO_SOURCES' | 'RUNNING' | 'FAILED' | 'PENDING'
@@ -240,18 +248,15 @@ function testResultsSource(hasRuns: boolean): EvidenceSource {
 
 // ── Atoms ────────────────────────────────────────────────────────────────
 function PrimaryBtn({
-  children, onClick, title, disabled, large,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean; large?: boolean }) {
+  children, onClick, title, disabled,
+}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={clsx(
-        'inline-flex items-center gap-1.5 font-medium rounded-md transition-colors disabled:opacity-50',
-        large ? 'px-4 py-2 text-[14px]' : 'px-3 py-1.5 text-[13px]',
-      )}
+      className="inline-flex items-center gap-1.5 font-medium rounded-md transition-colors disabled:opacity-50 px-3 py-1.5 text-[13px]"
       style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
       onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
@@ -1611,65 +1616,54 @@ export default function DeepInvestigationPage() {
   }
   const onOpenPastRun = (rid: string) => navigate(focusHref(rid))
 
+  // The crumb the old header drew as chips, as the compact header's one line
+  // (its full text in the line's tooltip when it is cut).
+  const subtitle = [
+    `Semantic clustering & multi-source root cause for ${projectLabel}`,
+    suiteLabel ? `Suite ${suiteLabel}` : null,
+    `${model.eligibleFailures} failures ready`,
+    `${model.preScanClusters} likely cluster${model.preScanClusters === 1 ? '' : 's'}`,
+    model.lastRunAgeHours != null ? `last analysis ${model.lastRunAgeHours}h ago` : null,
+  ].filter(Boolean).join(' · ')
+  const focusedSuite = model.focusedRun
+    ? model.focusedRun.primary_suite_name ?? model.focusedRun.suite_names?.[0] ?? null
+    : null
+
   return (
     <PageShell>
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Deep Investigation
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Semantic clustering &amp; multi-source root cause for</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {suiteLabel && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
-              </>
+      <PageHeader
+        compact
+        title="Deep Investigation"
+        subtitle={subtitle}
+        helpTopic={HELP_TOPIC}
+        actions={
+          <div data-page-toolbar="" className="flex flex-wrap items-center gap-2">
+            {/* The focused run's suite, clickable — same target as the recent-runs rows below.
+                It was a chip in the crumb; a link cannot ride in the one-line subtitle. */}
+            {model.focusedRun && focusedSuite && (
+              <SuiteBadge
+                primary={model.focusedRun.primary_suite_name}
+                all={model.focusedRun.suite_names}
+                linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+              />
             )}
-            {model.focusedRun && (
-              <>
-                <span aria-hidden>·</span>
-                {/* Header suite chip is clickable too — same target as
-                    the past-investigations rows below. */}
-                <SuiteBadge
-                  primary={model.focusedRun.primary_suite_name}
-                  all={model.focusedRun.suite_names}
-                  linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
-                />
-              </>
-            )}
-            <span aria-hidden>·</span>
-            <span>{model.eligibleFailures} failures ready</span>
-            <span aria-hidden>·</span>
-            <span>{model.preScanClusters} likely cluster{model.preScanClusters === 1 ? '' : 's'}</span>
-            {model.lastRunAgeHours != null && (
-              <>
-                <span aria-hidden>·</span>
-                <span>last analysis {model.lastRunAgeHours}h ago</span>
-              </>
-            )}
+            <SuiteFilterSelect
+              value={selectedSuite}
+              onChange={setSelectedSuite}
+              options={suiteOptions}
+              allLabel="All suites"
+            />
+            <PrimaryBtn
+              onClick={onRunAll}
+              disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES' || !runId}
+              title={isQaEngineer ? 'Trigger a deep investigation now' : 'QA Engineer role required'}
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Run Deep Analysis
+            </PrimaryBtn>
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <SuiteFilterSelect
-            value={selectedSuite}
-            onChange={setSelectedSuite}
-            options={suiteOptions}
-            allLabel="All suites"
-          />
-          <PrimaryBtn
-            large
-            onClick={onRunAll}
-            disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES' || !runId}
-            title={isQaEngineer ? 'Trigger a deep investigation now' : 'QA Engineer role required'}
-          >
-            <Bot className="h-4 w-4" />
-            Run Deep Analysis
-          </PrimaryBtn>
-        </div>
-      </header>
+        }
+      />
 
       <VerdictCard
         model={model}

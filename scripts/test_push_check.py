@@ -640,3 +640,31 @@ class TestTheCheckListMatchesCI:
         assert checks["backend: full test suite"].slow
         assert checks["frontend: production build"].slow
         assert not checks["backend: ruff"].slow
+
+
+class TestTheGateRunsCIsScriptSelfTests:
+    """UX redesign P2's DEVELOPER_GUIDE guard count passed this gate and failed
+    CI: CI's "Self-test the quality-gate script" step runs five script test
+    files, and this gate ran none of them (P6)."""
+
+    def test_the_gate_runs_the_files_ci_runs(self):
+        workflow = (push_check.REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        line = next(
+            ln for ln in workflow.splitlines()
+            if "python -m pytest" in ln and "test_quality_gate.py" in ln
+        )
+        ci_files = tuple(tok for tok in line.split() if tok.endswith(".py"))
+        assert ci_files == push_check.GATE_SELF_TESTS, (
+            "ci.yml's self-test step and push_check.GATE_SELF_TESTS name different files"
+        )
+
+    def test_it_is_registered_from_scripts_and_before_the_slow_suites(self):
+        checks = push_check.build_checks()
+        names = [c.name for c in checks]
+        check = checks[names.index("repo: gate self-tests")]
+        assert check.cwd == push_check.REPO / "scripts", "CI runs them from scripts/"
+        for f in push_check.GATE_SELF_TESTS:
+            assert f in check.cmd
+        assert "no:testlookup" in check.cmd, "the installed reporter plugin crashes without ci_context"
+        assert not check.slow
+        assert names.index("repo: gate self-tests") < names.index("backend: full test suite")

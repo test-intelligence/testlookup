@@ -2,8 +2,8 @@
  * FK3-1 (integrator): the Failures page holds THREE rows hosts reading the one
  * `rows` URL key — the failure groups (`[error_signature]`), the drill ladder
  * (`[suite]`, `[suite, status]`, `[status]`, `[test, status]`) and the
- * project-wide scatter (`[test]`). Mounted together, as `FailuresAdvancedSections`
- * does, with the real hook and routing: every "View rows" opens exactly ONE
+ * project-wide scatter (`[test]`). Mounted together (they shared a page as one
+ * composite until UX redesign P3), with the real hook and routing: every "View rows" opens exactly ONE
  * panel, its opener's, and so does every pasted link.
  */
 import { act, render } from '@testing-library/react'

@@ -30,10 +30,10 @@
  * run" for categories the data never named).
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, Check, ChevronRight, Copy as CopyIcon,
-  FileDown, GitCompare, Package, RefreshCw,
+  AlertTriangle, ArrowRight, Check, Copy as CopyIcon,
+  RefreshCw,
   ShieldCheck, Stethoscope,
   TicketCheck, UserRound, Wrench, XCircle,
 } from 'lucide-react'
@@ -41,7 +41,6 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
-import SuiteBadge from '@/components/ui/SuiteBadge'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import Disclosure from '@/components/ui/Disclosure'
 import AISuggestion from '@/components/ai/AISuggestion'
@@ -52,7 +51,6 @@ import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
-import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { onboardingService } from '@/services/onboardingService'
 import type {
@@ -65,7 +63,7 @@ import type {
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { computeRunOutcome } from '@/utils/runOutcome'
 import GaugeBar from '@/components/charts/GaugeBar'
-import { downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
+import { readReportVersion } from './run/runActions'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
@@ -195,79 +193,6 @@ function alignStages(raw: PipelineStage[]): (PipelineStage | null)[] {
     // alias the second key in pairs (cluster/failure_clustering, triage/defect_triage, …)
   }
   return PIPELINE_ORDER.map((slot) => byKey.get(slot) ?? byKey.get(slot.split('_')[0]) ?? null)
-}
-
-// ── Header ──────────────────────────────────────────────────────────────────
-// The standalone page's header: Refresh · PDF · Evidence · Compare · View
-// Test Cases (CTA). (The persona tabs were removed in P4.) On the Run page
-// these actions live in its one PageHeader's overflow menu instead.
-function Header({
-  run,
-  onRefresh,
-  onPdf,
-  onEvidence,
-  refreshing,
-}: {
-  run: RunIntelligence['run']
-  onRefresh: () => void
-  onPdf: () => void
-  onEvidence: () => void
-  refreshing: boolean
-}) {
-  const completedAt = run.end_time ? new Date(run.end_time) : null
-  return (
-    <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-      <div className="min-w-0">
-        <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]">
-          Run Intelligence
-        </h1>
-        <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-          <span>Build <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.build_number}</code></span>
-          <span aria-hidden>·</span>
-          <span>Branch <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.branch || 'unknown'}</code></span>
-          <span aria-hidden>·</span>
-          <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
-          {completedAt && (
-            <>
-              <span aria-hidden>·</span>
-              <span>Completed {completedAt.toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <GhostBtn onClick={onRefresh} disabled={refreshing} title="Re-fetch intelligence and refresh stage data">
-          <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
-          Refresh
-        </GhostBtn>
-        <GhostBtn onClick={onPdf} title="Export Executive PDF">
-          <FileDown className="h-3.5 w-3.5" />
-          PDF
-        </GhostBtn>
-        <GhostBtn onClick={onEvidence} title="Download evidence bundle (zip)">
-          <Package className="h-3.5 w-3.5" />
-          Evidence
-        </GhostBtn>
-        <Link
-          to={`/runs/compare?left=${run.id}`}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
-          style={{ borderColor: 'var(--color-border)' }}
-        >
-          <GitCompare className="h-3.5 w-3.5" /> Compare
-        </Link>
-        <Link
-          to={`/runs/${run.id}`}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
-          style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
-        >
-          View test cases <ChevronRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-    </header>
-  )
 }
 
 function GhostBtn({
@@ -1620,69 +1545,3 @@ export function RunDecisionReport({ runId }: { runId: string }) {
  * The standalone host of the body (not routed since P4:
  * `/runs/:runId/intelligence` redirects to the Run page's Analysis tab).
  */
-export default function RunIntelligencePage() {
-  const { runId } = useParams<{ runId: string }>()
-  // `/intelligence` redirects to `/runs` since P4 (D2): go there directly.
-  useProjectChangeRedirect('/runs', Boolean(runId))
-
-  const [searchParams] = useSearchParams()
-  const selectedReportVersion = readReportVersion(searchParams)
-  const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null, selectedReportVersion)
-  const [refreshing, setRefreshing] = useState(false)
-
-  async function handleRefresh() {
-    if (!runId) return
-    setRefreshing(true)
-    try {
-      const { runIntelligenceService } = await import('@/services/runIntelligenceService')
-      await runIntelligenceService.refreshIntelligence(runId)
-      await refresh()
-      toast.success('Intelligence refreshed')
-    } catch {
-      toast.error('Failed to refresh intelligence')
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  if (isLoading) return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-  if (isError || !intelligence) {
-    return (
-      <EmptyState
-        icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
-        title="Failed to load Run Intelligence"
-        description="Could not fetch AI analysis data for this run."
-      />
-    )
-  }
-
-  const { run } = intelligence
-  return (
-    <main
-      className="mx-auto"
-      style={{
-        maxWidth: 1600,
-        padding: '24px 28px 80px',
-      }}
-    >
-      <Header
-        run={run}
-        onRefresh={handleRefresh}
-        onPdf={() => void downloadRunPdf(run.id)}
-        onEvidence={() => void downloadRunEvidenceBundle(run.id)}
-        refreshing={refreshing}
-      />
-
-      <div className="mb-4">
-        <RunDecisionReport runId={run.id} />
-      </div>
-
-      <RunIntelligenceBody runId={runId ?? run.id} reportVersion={selectedReportVersion} />
-
-      {/* Narrow-viewport notice (no mobile layout is built) */}
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2">
-        Wider screen needed for the full intelligence layout. Some sections may overflow on narrow viewports.
-      </div>
-    </main>
-  )
-}

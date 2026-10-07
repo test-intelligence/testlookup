@@ -15,8 +15,9 @@
  *   KPIs    → `KpiStrip` ("Defect KPIs"): Open · P0 / P1 open · MTTR ·
  *             Escape rate · Oldest open P0 (its one real gauge).
  *   PRIMARY → the defects table (`data-primary`): Key · Title · Severity ·
- *             Status · Jira · Age · Actions, filtered by the status tabs and
- *             the search in its header. A row does not expand (its one action
+ *             Status · Jira · Age · Actions, filtered by the status tabs (the
+ *             `Tabs` primitive since P6; state in localStorage and saved
+ *             views, not `?tab=`) and the search in its header. A row does not expand (its one action
  *             opens the Jira ticket), so there is no row drill-down to move.
  *   Tabs    → `?tab=`: "Where defects live" (open defects by component,
  *             severity stacked) · "Jira bridge".
@@ -46,7 +47,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bug, ExternalLink, Plus, Search, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -370,6 +370,12 @@ function pickVerdict(model: QueueModel): Verdict {
 }
 
 // ── The status filter (the table's, in its header) ───────────────────────
+/**
+ * The table's status filter: the `Tabs` primitive (UX redesign P6), each tab
+ * with its count. Its state stays the page's own — remembered in
+ * localStorage and kept by a saved view — not `?tab=`, which belongs to the
+ * section tabs under the table.
+ */
 function StatusTabs({
   active, onChange, counts,
 }: {
@@ -377,44 +383,8 @@ function StatusTabs({
   onChange: (s: StatusKey) => void
   counts: Record<StatusKey, number>
 }) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Status filter"
-      className="flex items-center gap-0 p-0.5 rounded-md"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      {STATUS_TABS.map(({ id, label }) => {
-        const on = active === id
-        return (
-          <button
-            key={id}
-            role="tab"
-            type="button"
-            aria-selected={on}
-            onClick={() => onChange(id)}
-            className={clsx(
-              'inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[12.5px] font-medium rounded-sm transition-colors',
-              on
-                ? 'bg-[var(--color-btn-primary-bg)] text-white shadow-[var(--shadow-sm)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {label}
-            <span
-              className="text-[10.5px] tabular-nums px-1 py-px rounded"
-              style={{
-                background: on ? 'rgba(255,255,255,0.18)' : 'var(--color-bg-card)',
-                color: on ? 'white' : 'var(--color-text-secondary)',
-              }}
-            >
-              {counts[id]}
-            </span>
-          </button>
-        )
-      })}
-    </div>
-  )
+  const items: TabItem<StatusKey>[] = STATUS_TABS.map(({ id, label }) => ({ id, label, count: counts[id] }))
+  return <Tabs items={items} value={active} onChange={onChange} ariaLabel="Status filter" />
 }
 
 // ── "How queue health is computed" (a Disclosure below the table) ─────────

@@ -27,10 +27,10 @@
  * timeline and AI report), plus the live-runs list this page also asks for.
  */
 import { expect, test, type Page } from '@playwright/test'
-import type { ApiHandlers } from '../lib/production-pages'
 import { MAIN, networkQuiet, openRollout } from '../lib/rollout'
 import { RUN_ID } from '../visual/production/fixtures'
-import { AI_REPORT_SUMMARY, RUN, RUN_PAGE } from '../visual/production/fixtures-run'
+import { AI_REPORT_SUMMARY, RUN } from '../visual/production/fixtures-run'
+import { agentsHandlers } from '../visual/production/fixtures-pages'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -38,18 +38,7 @@ const FOLD_BUDGET_PX = 300
 /** Every POST to the trigger, by body. */
 const triggered: unknown[] = []
 
-const AGENTS: ApiHandlers = [
-  ...RUN_PAGE,
-  ['/api/v1/agents/active-runs', () => ({ active_runs: [] })],
-  [
-    '/api/v1/agents/pipelines/trigger',
-    ({ route }) => {
-      triggered.push(route.request().postDataJSON())
-      return { message: 'queued', task_id: 'task-1', run_id: RUN_ID }
-    },
-    'POST',
-  ],
-]
+const AGENTS = agentsHandlers(triggered)
 
 const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
 const ready = (p: Page) => report(p).getByText(AI_REPORT_SUMMARY)

@@ -1,6 +1,6 @@
 /**
  * The failure groups + systemic clusters section (VIZ-504), on Failure
- * analysis. OWNER: FK3. Mounted by `FailuresAdvanced` (lazy, near the reader);
+ * analysis. OWNER: FK3. Mounted lazily by the Failures page's Groups tab;
  * it reads no flag (Phase D, S5: the advanced charts are on everywhere).
  *
  * Two tabs (`@radix-ui/react-tabs`):

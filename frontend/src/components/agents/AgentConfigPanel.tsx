@@ -19,6 +19,7 @@ import { useAgentConfigs, refreshAgentGovernance } from '@/hooks/useAgentGoverna
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { agentLabel, saveErrorLines } from '@/utils/agentConfig'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import type { AgentMode } from '@/types/investigator'
 import type {
   AgentConfigDocument,
@@ -385,6 +386,22 @@ function AgentConfigForm({
   )
 }
 
+/**
+ * One agent's tab: its name — in the no-go colour when the stored
+ * configuration no longer validates (the form then says why) — and, once the
+ * project has saved one, the configuration's version.
+ */
+function agentTab(c: AgentConfigView): TabItem {
+  const name = agentLabel(c.agent_id)
+  return {
+    id: c.agent_id,
+    label: c.valid ? name : <span data-invalid-config="" style={{ color: 'var(--gate-no-go)' }}>{name}</span>,
+    badge: c.source === 'project'
+      ? <span className="text-[var(--color-text-faint)]">v{c.config_version}</span>
+      : undefined,
+  }
+}
+
 export default function AgentConfigPanel({ projectId }: { projectId: string }) {
   const { configs, tools, isLoading, error, mutate } = useAgentConfigs(projectId)
   const [selected, setSelected] = useState<string | null>(null)
@@ -413,32 +430,16 @@ export default function AgentConfigPanel({ projectId }: { projectId: string }) {
         <p className="text-sm text-[var(--color-text-muted)]">No configurable agents are registered.</p>
       ) : (
         <>
-          <div role="tablist" aria-label="Configurable agents" className="flex flex-wrap gap-1">
-            {configs.map((c) => {
-              const isActive = c.agent_id === active.agent_id
-              return (
-                <button
-                  key={c.agent_id}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setSelected(c.agent_id)}
-                  className={clsx(
-                    'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                    isActive ? 'font-semibold' : 'hover:bg-[var(--color-bg-hover)]',
-                  )}
-                  style={{
-                    background: isActive ? 'var(--color-bg-secondary)' : 'var(--color-bg)',
-                    borderColor: isActive ? 'var(--color-accent)' : 'var(--color-border)',
-                    color: c.valid ? 'var(--color-text)' : 'var(--gate-no-go)',
-                  }}
-                >
-                  {agentLabel(c.agent_id)}
-                  {c.source === 'project' && <span className="ml-1 text-[var(--color-text-faint)]">v{c.config_version}</span>}
-                </button>
-              )
-            })}
-          </div>
+          {/* The `Tabs` primitive (UX redesign P6) on the panel's own state: the
+              panel sits on /settings/ai-agents among other cards, so its agent is
+              not the page's `?tab=`. */}
+          <Tabs
+            items={configs.map((c) => agentTab(c))}
+            value={active.agent_id}
+            onChange={setSelected}
+            ariaLabel="Configurable agents"
+            className="flex-wrap"
+          />
           <AgentConfigForm
             // Re-seed the form when the agent or the saved version changes.
             key={`${active.agent_id}:${active.config_version}`}

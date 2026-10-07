@@ -11,7 +11,7 @@
  */
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 
@@ -200,7 +200,23 @@ const MOCK_SCORING_MODEL: ScoringModel = {
   ],
 }
 
-import RunIntelligencePage, { RunDecisionReport, RunIntelligenceBody } from './RunIntelligencePage'
+import { RunDecisionReport, RunIntelligenceBody } from './RunIntelligencePage'
+
+/**
+ * What the retired standalone page (`/runs/:id/intelligence`, a redirect since
+ * P4) rendered under its own header: the decision report, then the analysis
+ * body. Both live on the Run page now (Evidence and Analysis tabs); these
+ * tests keep exercising them through the same route shape.
+ */
+function RunIntelligencePage() {
+  const { runId = '' } = useParams<{ runId: string }>()
+  return (
+    <>
+      <RunDecisionReport runId={runId} />
+      <RunIntelligenceBody runId={runId} />
+    </>
+  )
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -511,25 +527,6 @@ describe('RunIntelligencePage', () => {
     expect(document.querySelector('.animate-spin') ?? screen.queryByText(/loading/i)).toBeTruthy()
   })
 
-  it('still renders the run header when intelligence_available is false', async () => {
-    // RunIntelligencePage doesn't gate on ``intelligence_available`` itself —
-    // that gate lives on the AgentWorkflowPage path. The page still renders
-    // the run header + supplied data; just verify it doesn't crash.
-    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, intelligence_available: false } })
-
-    render(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    // Build number from MOCK_INTELLIGENCE.run is a stable signal that
-    // top-of-page rendering succeeded.
-    expect(screen.getAllByText(/42/).length).toBeGreaterThan(0)
-  })
-
   it('renders NO_GO banner with risk score', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
 
@@ -694,38 +691,6 @@ describe('RunIntelligencePage', () => {
   })
 
   // P4 (D2): `/intelligence` redirects to `/runs`, so the page goes there directly.
-  it('returns to the runs list when the project changes', async () => {
-    mockHooks({ intelligence: MOCK_INTELLIGENCE })
-
-    const { rerender } = render(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-          <Route path="/runs" element={<div>Runs List</div>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect((await screen.findAllByText(/No-Go/i)).length).toBeGreaterThan(0)
-
-    mockProjectState.activeProjectId = 'proj-2'
-    mockProjectState.activeProject = { id: 'proj-2', name: 'Project Two' }
-
-    rerender(
-      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
-        <Routes>
-          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-          <Route path="/runs" element={<div>Runs List</div>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(await screen.findByText(/Runs List/i)).toBeInTheDocument()
-  })
-
-  // P2: Hold / Override / Approve-with-conditions were saved only to this
-  // browser's localStorage (no gate-decision endpoint), so a "decision" nobody
-  // else could see. The controls are not rendered until they persist.
   it('renders no Hold / Override / Approve / Undo controls on the verdict', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderRunIntel()

@@ -18,129 +18,14 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
 import { expect, test, type Page } from '@playwright/test'
-import type { ApiHandlers } from '../lib/production-pages'
 import { MAIN, SHELL_BASE, expectInventory, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { LAYOUT, PROJECT_ID, isoAgo } from '../visual/production/fixtures'
+import { PROJECT_ID } from '../visual/production/fixtures'
+import { flakyHandlers } from '../visual/production/fixtures-pages'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
 
 const P = PROJECT_ID
-
-const RECOMMENDATIONS = ['QUARANTINE', 'INVESTIGATE', 'MONITOR', 'INVESTIGATE', 'QUARANTINE', 'MONITOR'] as const
-
-/** Twelve flaky tests, the first three recommended for quarantine or investigation. */
-const ENTRIES = Array.from({ length: 12 }, (_, i) => ({
-  test_fingerprint: `fp-${String(i).padStart(2, '0')}`,
-  test_name: `test_checkout_flow_${i}`,
-  suite_name: i % 2 === 0 ? 'Checkout' : 'Payments',
-  failure_rate: 0.6 - i * 0.04,
-  total_runs: 30,
-  failed_runs: 18 - i,
-  flaky_since: isoAgo(20 - i),
-  last_failure_at: isoAgo(i % 3),
-  quarantine_recommendation: RECOMMENDATIONS[i % RECOMMENDATIONS.length],
-  stabilization_actions: ['Wait for the network to settle before asserting'],
-  impact_score: 90 - i * 5,
-  status_history: ['PASSED', 'FAILED', 'PASSED', 'FAILED', 'PASSED', 'PASSED', 'FAILED', 'PASSED'],
-  flaky_confidence_low: 0.4,
-  flaky_confidence_high: 0.7,
-  flaky_likely_cause: i === 0 ? 'Timing: a wait races the response' : null,
-}))
-
-const COACH = { project_id: P, total_flaky: 9, quarantine_candidates: 4, entries: ENTRIES }
-
-function quarantineRow(i: number, status: string, fingerprint = `fp-q${i}`) {
-  return {
-    id: `00000000-0000-4000-8000-0000000003${String(i).padStart(2, '0')}`,
-    project_id: P,
-    test_fingerprint: fingerprint,
-    test_name: `test_quarantine_${i}`,
-    suite_name: 'Checkout',
-    status,
-    detection_method: 'flip_rate',
-    flip_rate: 0.3,
-    flip_window_size: 10,
-    pass_count: 7,
-    fail_count: 3,
-    detected_at: isoAgo(6),
-    last_failure_at: isoAgo(1),
-    proposed_at: isoAgo(5),
-    approved_at: null,
-    approved_by_user_id: null,
-    rejected_at: null,
-    rejected_by_user_id: null,
-    quarantine_start: null,
-    quarantine_expires_at: null,
-    quarantine_duration_days: 14,
-    recheck_at: null,
-    rationale: null,
-    reviewer_notes: status === 'REJECTED' ? 'Real regression, not a flake' : null,
-    owner_user_id: null,
-    owner_name: 'QA Lead',
-    defect_id: null,
-    defect_jira_key: null,
-    defect_jira_url: null,
-    defect_external_status: null,
-    defect_external_status_conflict: false,
-    sla_days: null,
-    stale_at: null,
-    stale: false,
-    consecutive_passes: 0,
-    ready_to_promote: false,
-    created_at: isoAgo(6),
-    updated_at: isoAgo(1),
-  }
-}
-
-/** The first detected test already has a live proposal; one more is quarantined; two are settled. */
-const LIVE = [
-  quarantineRow(1, 'PROPOSED', 'fp-00'),
-  quarantineRow(2, 'PROPOSED'),
-  quarantineRow(3, 'QUARANTINED'),
-]
-const SETTLED = [quarantineRow(4, 'RELEASED'), quarantineRow(5, 'REJECTED')]
-
-const STATS = {
-  detected: 0,
-  proposed: 2,
-  approved: 0,
-  quarantined: 1,
-  recheck_scheduled: 0,
-  re_quarantined: 0,
-  released: 1,
-  rejected: 1,
-  expired: 0,
-  total_live: 3,
-}
-
-/**
- * Fresh state per test: a proposal made in one test never leaks into the
- * next. `proposals` records every POST /quarantine body.
- */
-function flakyHandlers(proposals: unknown[] = []): ApiHandlers {
-  const live = [...LIVE]
-  return [
-    ...LAYOUT,
-    [`/api/v1/projects/${P}/flaky-coach`, () => COACH],
-    ['/api/v1/quarantine/stats', () => ({ ...STATS, proposed: live.filter((r) => r.status === 'PROPOSED').length })],
-    [
-      '/api/v1/quarantine',
-      ({ url }) => (url.searchParams.get('live_only') === 'true' ? live : [...live, ...SETTLED]),
-    ],
-    [
-      '/api/v1/quarantine',
-      ({ route }) => {
-        const body = route.request().postDataJSON() as { test_fingerprint: string; test_name: string }
-        proposals.push(body)
-        const row = { ...quarantineRow(9, 'PROPOSED', body.test_fingerprint), test_name: body.test_name }
-        live.push(row)
-        return row
-      },
-      'POST',
-    ],
-  ]
-}
 
 const ready = (p: Page) => p.locator('[data-page-header] h1')
 

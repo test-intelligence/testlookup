@@ -26,7 +26,8 @@ export default function SettingsPage() {
         subtitle="Your account, the project, its integrations and the AI"
         helpTopic={helpTopicParam('/settings')}
       />
-      <div className="grid gap-4 xl:grid-cols-2" data-settings-index="">
+      {/* The page's one primary content (the template's `data-primary`, P6 fold budget). */}
+      <div className="grid gap-4 xl:grid-cols-2" data-settings-index="" data-primary="">
         {groups.map((group) => (
           <section key={group.id} aria-labelledby={`settings-group-${group.id}`} className="card !p-0 overflow-hidden">
             <h2

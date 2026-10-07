@@ -1,13 +1,14 @@
 /**
- * R1B-9, the composites' side: Coverage, Failures and Suite detail each hide a
+ * R1B-9, the composites' side: Coverage and Suite detail each hide a
  * failed Wave 3 block behind the SHARED boundary, so the failure is logged
  * under the page's name and reported, and the page around it stays whole.
+ * (Failures had a composite too until P3 put each section in a tab of its
+ * own; P6 deleted it.)
  */
 import { act, render } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CoverageAdvanced from './CoverageAdvanced'
-import FailuresAdvanced from './FailuresAdvanced'
 import SuiteDetailAdvanced from './SuiteDetailAdvanced'
 import QuietSectionBoundary from './QuietSectionBoundary'
 
@@ -19,7 +20,6 @@ const gone = vi.hoisted(() => () => ({
   },
 }))
 vi.mock('./CoverageAdvancedSections', gone)
-vi.mock('./FailuresAdvancedSections', gone)
 vi.mock('./SuiteDetailAdvancedSections', gone)
 
 let consoleError: ReturnType<typeof vi.spyOn>
@@ -32,7 +32,6 @@ afterEach(() => consoleError.mockRestore())
 describe('the composites hide a failed block through QuietSectionBoundary', () => {
   it.each([
     ['coverage', <CoverageAdvanced key="c" days={7} suiteFilter={null} />],
-    ['failures', <FailuresAdvanced key="f" days={7} suiteFilter={null} />],
     ['suite-detail', <SuiteDetailAdvanced key="s" days={7} suiteName="Auth" />],
   ] as [string, ReactElement][])('%s: nothing in its place, the page whole, the failure logged and reported', async (label, composite) => {
     const { container } = render(
