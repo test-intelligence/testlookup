@@ -8,12 +8,15 @@
  * toggle, Admin in its footer, the Help menu before the bell, the theme and
  * presentation controls moved into the account menu, and the section tabs
  * above a multi-page section's pages (Trends · Coverage · Explorer on
- * `/trends`). Any other change at desktop width fails here. The drawer's own
+ * `/trends`), and once more for P5: on a settings page the "Back to Settings"
+ * bar is gone and the page sits in the settings layout (its grouped sub-nav,
+ * loaded lazily: the case waits for it). Any other change at desktop width
+ * fails here. The drawer's own
  * styling lives ONLY in `max-lg:` utilities, which apply below 1024 px, so
  * they are removed before the comparison. `AppLayout.drawer.test.tsx` covers
  * the narrow shell itself.
  */
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppLayout from './AppLayout'
@@ -134,8 +137,10 @@ describe('AppLayout at 1024 px and above: the shell origin/main shipped', () => 
     delete (window as { matchMedia?: unknown }).matchMedia
   })
 
-  it.each(['/overview', '/trends', '/settings/profile'])('%s: elements, attributes and desktop classes are unchanged', (path) => {
+  it.each(['/overview', '/trends', '/settings/profile'])('%s: elements, attributes and desktop classes are unchanged', async (path) => {
     const { container } = renderShell(path)
+    // The settings layout is a lazy chunk: the shape is the one a user sees once it is in.
+    if (path.startsWith('/settings')) await screen.findByRole('navigation', { name: 'Settings' })
     const root = container.firstElementChild
     if (!root) throw new Error('AppLayout rendered nothing')
     expect(desktopShape(root).join('\n')).toMatchSnapshot()

@@ -366,14 +366,138 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
               "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
-        <nav aria-label="Breadcrumb" class="mb-4">
-          <a class="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 rounded" data-discover="true" href="/settings">
-            <svg aria-hidden="true" class="lucide lucide-arrow-left h-3.5 w-3.5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m12 19-7-7 7-7">
-              <path d="M19 12H5">
-            "Back to Settings"
-        <div>
-          "Page"
+        <div class="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]" data-settings-layout="">
+          <nav aria-label="Settings" class="lg:sticky lg:top-0 lg:self-start">
+            <div class="space-y-4">
+              <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="index" href="/settings">
+                "All settings"
+              <div data-settings-group="account">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "Account"
+                <ul class="space-y-px">
+                  <li>
+                    <a aria-current="page" class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors bg-[var(--color-bg-secondary)] font-medium text-[var(--color-text)]" data-discover="true" data-settings-item="profile" href="/settings/profile">
+                      "Profile"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-notifications" href="/settings/my-notifications">
+                      "My notifications"
+              <div data-settings-group="project">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "Project"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="projects" href="/projects">
+                      "Projects"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="members" href="/users?tab=project-members">
+                      "Members & access"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ownership" href="/ownership">
+                      "Ownership"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="api-keys" href="/settings/api-keys">
+                      "Streaming API keys"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="retention" href="/settings/retention">
+                      "Retention & purge"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="project-data" href="/settings/project-data">
+                      "Project data"
+              <div data-settings-group="release-governance">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "Release governance"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="policies" href="/policies">
+                      "Gate policies"
+              <div data-settings-group="integrations">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "Integrations"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integrations" href="/settings/integrations">
+                      "Jira, Splunk, OCP, Slack, Teams"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="github" href="/settings/github">
+                      "GitHub"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="gitlab" href="/settings/gitlab">
+                      "GitLab"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="webhooks" href="/settings/webhooks">
+                      "Outbound webhooks"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="email" href="/settings/notifications">
+                      "Email (SMTP) & channels"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="digests" href="/settings/digests">
+                      "Digests & views"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integration-health" href="/settings/integration-health">
+                      "Integration health"
+              <div data-settings-group="ai">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "AI"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-config" href="/settings/ai">
+                      "AI configuration"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-agents" href="/settings/ai-agents">
+                      "AI agents"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="workflows" href="/agents/workflows">
+                      "Workflow editor"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="pipeline-runs" href="/agents">
+                      "Pipeline runs"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="agent-activity" href="/settings/agent-activity">
+                      "Agent activity"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-eval" href="/settings/ai-eval">
+                      "AI evaluation"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="billing" href="/settings/billing">
+                      "LLM cost budget"
+              <div data-settings-group="security">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "Security & access"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="users" href="/users">
+                      "Users"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="sso" href="/settings/sso">
+                      "SSO & identity"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="mfa-policy" href="/settings/mfa-policy">
+                      "MFA & lockout"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="audit" href="/settings/audit">
+                      "Audit dashboard"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="activity" href="/activity">
+                      "Activity log"
+              <div data-settings-group="system">
+                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  "System"
+                <ul class="space-y-px">
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="storage" href="/settings/storage">
+                      "Data & storage"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="performance" href="/settings/performance">
+                      "Performance"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="feature-flags" href="/settings/feature-flags">
+                      "Feature flags"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="seed-data" href="/settings/seed-data">
+                      "Seed data"
+          <div class="min-w-0" data-settings-content="">
+            <div>
+              "Page"
         <div class="sr-only" data-chart-announcer="polite" role="status">
         <div aria-atomic="true" aria-live="assertive" class="sr-only" data-chart-announcer="assertive">"
 `;
