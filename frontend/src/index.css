@@ -4,14 +4,6 @@
    preserved without rewriting it into CSS @theme. */
 @config "../tailwind.config.js";
 
-/* Slide animation for the running-stage progress bar in the AgentWorkflowPage
-   subway cards. A 35%-wide gradient sweeps the 2px-tall track at the bottom
-   of the card. Tailwind doesn't ship this keyframe out of the box. */
-@keyframes testlookup-slide {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(420%); }
-}
-
 /* Pulse halo for the dashboard verdict-card eyebrow dot. Scales an outer
    box-shadow ring out from the dot. Honors prefers-reduced-motion. */
 @keyframes testlookup-pulse {

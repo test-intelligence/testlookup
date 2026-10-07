@@ -347,7 +347,7 @@ export interface BaselineDiff {
   suites_impacted_delta: number
   current_suite_count: number
   baseline_suite_count: number
-  // Phase 2 Epic 3: commit/config drift
+  // Epic 3: commit/config drift
   commit_range: CommitRange | null
   config_drift: ConfigDriftEntry[]
   selection_reason: string

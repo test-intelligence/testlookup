@@ -77,7 +77,6 @@ const SUB_PAGES = [
   '/settings/profile',
   '/settings/project-data',
   '/settings/retention',
-  '/settings/seed-data',
   '/settings/sso',
   '/settings/storage',
   '/settings/webhooks',

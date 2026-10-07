@@ -95,7 +95,7 @@ function PlanningCallout({ releaseName }: { releaseName: string }) {
       <div className="flex items-center gap-2 shrink-0">
         {/* BUG-006: these two were styled exactly like the working controls
             beside them and only raised a toast AFTER the click. A control that
-            looks available and then says "coming in next iteration" spends the
+            looks available and then says "not built yet" spends the
             user's attention to deliver nothing; disabled-with-a-reason spends
             none. The label carries the state visibly rather than hiding it in
             a title, because a hover tooltip does not exist on touch. */}

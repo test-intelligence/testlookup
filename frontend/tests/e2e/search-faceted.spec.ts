@@ -6,8 +6,8 @@ import { mockJson } from './apiMock';
  * Faceted global search (Tier-2). SearchPage auto-runs a browse query on mount,
  * then the scope chips (All / Tests / Runs / Suites / Defects / Flaky /
  * Releases) re-run GET /api/v1/search/global with an `entity_types` filter, and
- * each result row navigates to its entity. The mode chips (Hybrid / Keyword /
- * Semantic) feed the provenance footer.
+ * each result row navigates to its entity. Only the Keyword mode chip is
+ * selectable (Hybrid / Semantic are disabled).
  *
  * index-status + entity-counts (chip counts) and the global search are all
  * mocked; the global mock branches on the `entity_types` query param so a
@@ -96,18 +96,18 @@ test.describe('Faceted search', () => {
     await expect(page).toHaveURL(new RegExp(`/runs/${RID}$`), { timeout: 8000 });
   });
 
-  test('the provenance footer describes the retrieval that actually ran', async ({ page }) => {
+  test('the page describes the retrieval that actually runs', async ({ page }) => {
     await mockSearch(page);
     await page.goto('/search');
 
-    // This test used to assert only that the footer's LABEL changed when the
-    // mode chip changed -- which it did, while the request was identical every
-    // time. It passed, and in passing it pinned five false claims in place:
-    // an embedding model, a ranker version, k=20 and a semantic ratio, none of
-    // which global search uses (it is SQL ILIKE), plus a k that contradicted
-    // the page's own page size. Assert the substance, not the label.
-    await expect(page.getByText('Keyword retrieval', { exact: true }))
-      .toBeVisible({ timeout: 10000 });
+    // This test used to assert the provenance footer's label -- a footer that
+    // once named an embedding model, a ranker version, k=20 and a semantic
+    // ratio, none of which global search uses (it is SQL ILIKE). UX P2 removed
+    // the footer (its "Ranking trail" button was a stub); the verdict lede now
+    // names exactly the fields the ILIKE matches. Assert the substance.
+    await expect(page.getByTestId('search-matched-fields'))
+      .toContainText('Case-insensitive substring match on test names', { timeout: 10000 });
+    await expect(page.getByRole('button', { name: /Ranking trail/ })).toHaveCount(0);
 
     for (const fiction of ['nomic-embed-text', 'ranker v1', 'k=20', 'semantic ratio']) {
       await expect(page.getByText(fiction, { exact: false }))

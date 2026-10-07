@@ -13,6 +13,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import Disclosure from '@/components/ui/Disclosure'
 import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
 import { buildReleaseWorkflow } from '@/components/workflow/workflowPresets'
 import { useReleases, useRelease } from '@/hooks/useReleases'
@@ -467,16 +468,6 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         ))}
       </div>
 
-      <WorkflowTimeline
-        title="Release workflow"
-        subtitle="Phase progress, linked runs, and release readiness"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
-      />
-
       {/* Tier 1 item 4 — Compliance export pack for audit reviewers. */}
       <CompliancePackPanel releaseId={releaseId} releaseName={detail.name} />
 
@@ -686,6 +677,19 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
           )
         })()}
       </div>
+
+      {/* Phase progress / linked runs / readiness as a stage flow — the same
+          data as the sections above, collapsed at the end. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Release workflow"
+          subtitle="Phase progress, linked runs, and release readiness"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   )
 }

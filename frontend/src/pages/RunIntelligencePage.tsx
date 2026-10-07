@@ -25,10 +25,9 @@
  *     Right → AI confidence (gaps + checks) + Failure category mix +
  *             Provenance footer with Decision-trail link.
  *
- * Out of scope (Phase 2 — README §"Out of Scope"):
+ * Not built (README §"Out of Scope"):
  *   - Mobile (<768 px) — shows a "wider screen" notice
- *   - Stage drawer body  — button wires up; drawer body shipped later
- *   - Decision-trail modal body — opens existing DecisionTrailDrawer
+ *   - Stage drawer — pipeline stages are display-only
  *   - Print styles — server-side PDF renderer handles export
  *   - i18n beyond key structure
  *
@@ -40,8 +39,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, Bot, Check, ChevronRight, Copy as CopyIcon,
-  FileDown, FileText, GitCompare, Layers, Package, RefreshCw,
+  AlertTriangle, ArrowRight, Check, ChevronRight, Copy as CopyIcon,
+  FileDown, GitCompare, Package, RefreshCw,
   ShieldAlert, ShieldCheck, ShieldQuestion, Stethoscope,
   TicketCheck, TriangleAlert, UserRound, Wrench, XCircle,
 } from 'lucide-react'
@@ -77,30 +76,6 @@ type Persona = 'executive' | 'developer' | 'manager'
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
 
 const PERSONA_KEY = 'tl.runIntel.persona'
-
-// User-recorded decisions live under ``tl.runIntel.decision.<runId>`` so a
-// refresh / re-navigate keeps the panel in sync until the backend gate-
-// decision endpoint lands. Per-run key avoids one run's decision leaking
-// into another. Cleared on Undo.
-const DECISION_KEY_PREFIX = 'tl.runIntel.decision.'
-
-type DecisionAction = 'HOLD' | 'OVERRIDE' | 'APPROVE_CONDITIONS'
-
-interface UserDecision {
-  action: DecisionAction
-  /** Gate that the action implies — what the panel renders. */
-  gate: Gate
-  /** Short label used in the "Decision recorded" lede line. */
-  label: string
-  /** ISO timestamp when the decision was recorded locally. */
-  at: string
-}
-
-const ACTION_TO_GATE: Record<DecisionAction, { gate: Gate; label: string }> = {
-  HOLD:               { gate: 'NO_GO',          label: 'Held by you' },
-  OVERRIDE:           { gate: 'GO',             label: 'Override applied by you' },
-  APPROVE_CONDITIONS: { gate: 'CONDITIONAL_GO', label: 'Approved with conditions by you' },
-}
 
 // ── Verdict theming ─────────────────────────────────────────────────────────
 const GATE_THEME: Record<Gate, {
@@ -634,20 +609,19 @@ function StageCell({ num, slot, stage, isLast }: { num: number; slot: string; st
     : 'var(--color-border)'
 
   return (
-    <button
-      type="button"
-      tabIndex={0}
+    <div
+      role="group"
       aria-label={`Stage ${num}: ${name}, ${status}`}
+      data-testid="pipeline-stage"
       title={status === 'skipped' ? (stage?.skipped_reason || 'Skipped') : `${name} · ${dur}`}
       className={clsx(
-        'relative text-left transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
+        'relative text-left',
         status === 'skipped' && 'opacity-55',
       )}
       style={{
         padding: '10px 8px',
         borderRight: isLast ? '0' : '1px solid var(--color-border)',
       }}
-      onClick={() => { /* TODO: open stage drawer (Phase 2) */ }}
     >
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-[10px] font-semibold tabular-nums text-[var(--color-text-faint)]">
@@ -677,7 +651,7 @@ function StageCell({ num, slot, stage, isLast }: { num: number; slot: string; st
       <div className="absolute left-0 right-0 bottom-0 h-0.5" style={{ background: 'var(--color-border)' }}>
         <i className="block h-full" style={{ width: status === 'skipped' ? '0%' : '100%', background: trackFill }} />
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -833,6 +807,8 @@ function SuiteChip({ suite }: { suite: string }) {
 }
 
 // ── Body: What failed ──────────────────────────────────────────────────────
+const MAX_FAILURE_BLOCKS = 3
+
 function WhatFailedCard({
   clusters,
   runId,
@@ -898,9 +874,13 @@ function WhatFailedCard({
     )
   }
 
+  const shown = clusters.slice(0, MAX_FAILURE_BLOCKS)
   return (
-    <CardShell title="What failed" rightSlot={<span>{clusters.length} of {clusters.length} failure{clusters.length === 1 ? '' : 's'} shown</span>}>
-      {clusters.slice(0, 3).map((c) => (
+    <CardShell
+      title="What failed"
+      rightSlot={<span>{shown.length} of {clusters.length} failure{clusters.length === 1 ? '' : 's'} shown</span>}
+    >
+      {shown.map((c) => (
         <FailureBlock
           key={c.cluster_id}
           cluster={c}
@@ -909,9 +889,9 @@ function WhatFailedCard({
           onDecisionTrail={onDecisionTrail}
         />
       ))}
-      {clusters.length > 3 && (
+      {clusters.length > shown.length && (
         <div className="px-4 py-2.5 text-[12px] text-[var(--color-text-muted)] border-t" style={{ borderColor: 'var(--color-border)' }}>
-          + {clusters.length - 3} more failure{clusters.length - 3 === 1 ? '' : 's'} not shown
+          + {clusters.length - shown.length} more failure{clusters.length - shown.length === 1 ? '' : 's'} not shown
         </div>
       )}
     </CardShell>
@@ -945,7 +925,7 @@ function FailureBlock({
         <span className="font-mono text-[13px] text-[var(--color-text)] font-medium truncate">
           {cluster.label}
         </span>
-        <ProductBugPill criticality={cluster.criticality_level} />
+        <CriticalityPill criticality={cluster.criticality_level} />
       </div>
       <div className="flex flex-wrap gap-3.5 text-[12px] text-[var(--color-text-muted)] mb-2.5">
         <span>{cluster.size} test{cluster.size === 1 ? '' : 's'} in cluster</span>
@@ -991,18 +971,22 @@ function FailureBlock({
   )
 }
 
-function ProductBugPill({ criticality }: { criticality: string | null }) {
-  const tone =
-    criticality === 'CRITICAL' || criticality === 'HIGH' ? 'bug' :
-    'neutral'
-  const bg = tone === 'bug' ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'var(--color-bg-secondary)'
-  const fg = tone === 'bug' ? 'var(--status-failed)' : 'var(--color-text-faint)'
+// The cluster carries a criticality level, not a failure classification, so
+// the pill names the criticality it was given — and is absent when the
+// cluster was never scored.
+function CriticalityPill({ criticality }: { criticality: FailureClusterIntel['criticality_level'] }) {
+  if (!criticality) return null
+  const severe = criticality === 'CRITICAL' || criticality === 'HIGH'
+  const bg = severe ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'var(--color-bg-secondary)'
+  const fg = severe ? 'var(--status-failed)' : 'var(--color-text-faint)'
+  const pretty = criticality.charAt(0) + criticality.slice(1).toLowerCase()
   return (
     <span
+      data-testid="cluster-criticality"
       className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
       style={{ background: bg, color: fg, letterSpacing: 'var(--tracking-wide)' }}
     >
-      Product bug
+      {pretty} criticality
     </span>
   )
 }
@@ -1152,6 +1136,8 @@ function AIConfidenceCard({
   hasBaseline,
   llmUsed,
   fallbackUsed,
+  criticalityScored,
+  riskAssessed,
   generatedBy,
 }: {
   confidencePct: number
@@ -1160,6 +1146,10 @@ function AIConfidenceCard({
   hasBaseline: boolean
   llmUsed: boolean
   fallbackUsed: boolean
+  /** At least one failure cluster carries a criticality level. */
+  criticalityScored: boolean
+  /** The release_risk stage completed, or the decision has a composite risk. */
+  riskAssessed: boolean
   /** provenance.generated_by — which engine produced the recommendation. */
   generatedBy?: string | null
 }) {
@@ -1187,9 +1177,10 @@ function AIConfidenceCard({
   if (toolCount > 0)             passedChecks.push(`${toolCount} tool${toolCount === 1 ? '' : 's'} invoked`)
   if (evidenceCount > 0)         passedChecks.push(`${evidenceCount} evidence`)
   if (hasBaseline)               passedChecks.push('Baseline available')
-  // Always-on indicators that the deep pipeline ran
-  passedChecks.push('Criticality scoring')
-  passedChecks.push('Release risk assessment')
+  // Only claimed when the data shows the step produced something: a scored
+  // cluster, and a completed release_risk stage or a computed composite risk.
+  if (criticalityScored)         passedChecks.push('Criticality scoring')
+  if (riskAssessed)              passedChecks.push('Release risk assessment')
 
   return (
     <CardShell
@@ -1394,44 +1385,6 @@ export default function RunIntelligencePage() {
   const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
   const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
 
-  // User decision (Approve with conditions / Hold / Override) — held
-  // locally until the gate-decision backend endpoint lands. Persists per-
-  // run so a refresh keeps the panel in sync; clears on Undo.
-  const loadPersistedDecision = (id: typeof runId): UserDecision | null => {
-    if (!id) return null
-    try {
-      const raw = localStorage.getItem(DECISION_KEY_PREFIX + id)
-      return raw ? (JSON.parse(raw) as UserDecision) : null
-    } catch {
-      return null
-    }
-  }
-  const [userDecision, setUserDecision] = useState<UserDecision | null>(() =>
-    loadPersistedDecision(runId),
-  )
-  // Re-load the persisted per-run decision whenever the runId changes. Synced
-  // during render via previous-value tracking rather than a setState-in-effect.
-  const [prevDecisionRunId, setPrevDecisionRunId] = useState(runId)
-  if (prevDecisionRunId !== runId) {
-    setPrevDecisionRunId(runId)
-    setUserDecision(loadPersistedDecision(runId))
-  }
-
-  function recordUserDecision(action: DecisionAction): void {
-    if (!runId) return
-    const { gate, label } = ACTION_TO_GATE[action]
-    const next: UserDecision = { action, gate, label, at: new Date().toISOString() }
-    setUserDecision(next)
-    try { localStorage.setItem(DECISION_KEY_PREFIX + runId, JSON.stringify(next)) } catch { /* ignore */ }
-    toast.success(`${label} — recorded on this run`)
-  }
-  function clearUserDecision(): void {
-    if (!runId) return
-    setUserDecision(null)
-    try { localStorage.removeItem(DECISION_KEY_PREFIX + runId) } catch { /* ignore */ }
-    toast('Decision cleared', { icon: '↩' })
-  }
-
   // Fetch the persona-specific summary when not in Executive mode — drives
   // the lede override in the verdict card. Hook is null for Executive so
   // SWR doesn't fire.
@@ -1582,12 +1535,6 @@ export default function RunIntelligencePage() {
         ledeOverride={ledeForPersona}
         affectedSuite={terminalBackedVerdict ? undefined : affected_suites[0]?.suite}
         dimensions={terminalBackedVerdict ? [] : runDimensionScores}
-        userDecision={decisionTrust.allowsLocalDecision || !hasDecisionReportEnvelope ? userDecision : null}
-        allowActions={decisionTrust.allowsLocalDecision || !hasDecisionReportEnvelope}
-        onHold={() => recordUserDecision('HOLD')}
-        onOverride={() => recordUserDecision('OVERRIDE')}
-        onApprove={() => recordUserDecision('APPROVE_CONDITIONS')}
-        onUndoDecision={clearUserDecision}
       />
 
       <PipelineRibbon
@@ -1639,6 +1586,11 @@ export default function RunIntelligencePage() {
             hasBaseline={hasBaseline}
             llmUsed={llmUsed}
             fallbackUsed={fallbackUsed}
+            criticalityScored={failure_clusters.some((c) => c.criticality_level != null)}
+            riskAssessed={
+              pipeline_stages.some((s) => s.stage_name.toLowerCase() === 'release_risk' && stageStatus(s) === 'done')
+              || typeof decisionForVerdict?.composite_risk === 'number'
+            }
             generatedBy={provenance?.generated_by}
           />
           <FailureCategoryCard breakdown={category_breakdown} />
@@ -1671,7 +1623,7 @@ export default function RunIntelligencePage() {
         />
       )}
 
-      {/* Mobile fallback notice — design Phase 2 */}
+      {/* Narrow-viewport notice (no mobile layout is built) */}
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2">
         Wider screen needed for the full intelligence layout. Some sections may overflow on narrow viewports.
       </div>
@@ -1681,38 +1633,22 @@ export default function RunIntelligencePage() {
 
 // ── Verdict + Dimensions composed (so the meter and grid share gate state) ─
 function VerdictCardWithDimensions({
-  decision, ledeOverride, affectedSuite, dimensions, userDecision,
-  allowActions, onHold, onOverride, onApprove, onUndoDecision,
+  decision, ledeOverride, affectedSuite, dimensions,
 }: {
   decision: ReleaseDecisionIntel | null
   ledeOverride?: string
   affectedSuite?: string
   dimensions: DimensionScore[]
-  /** When set, the user has recorded a local decision via one of the
-   *  action buttons. We render the panel as if the gate were the
-   *  decision's gate, and surface an "Undo" affordance. */
-  userDecision: UserDecision | null
-  allowActions: boolean
-  onHold: () => void
-  onOverride: () => void
-  onApprove: () => void
-  onUndoDecision: () => void
 }) {
-  // When the user has recorded a decision, that wins for display purposes.
-  // The underlying ``decision`` (model-computed gate) still feeds blocker
-  // count + risk score so the user sees what the system said *before* they
-  // overrode it.
-  const baseGate = gateOf(decision)
-  const gate: Gate = userDecision?.gate ?? baseGate
+  // Hold / Override / Approve-with-conditions controls are not rendered:
+  // there is no gate-decision endpoint to persist them, and a decision kept
+  // only in this browser's localStorage is not a decision anyone else sees.
+  const gate: Gate = gateOf(decision)
   const t = GATE_THEME[gate]
   const rawScore = decision?.composite_risk ?? decision?.risk_score
   const score = typeof rawScore === 'number' ? Math.round(rawScore) : null
   const blockerCount = decision?.blocking_issues?.length ?? 0
-  const userLede = userDecision
-    ? `${userDecision.label} on ${new Date(userDecision.at).toLocaleString()}.`
-    : null
-  const lede = userLede
-    ?? ledeOverride
+  const lede = ledeOverride
     ?? decision?.reasoning
     ?? (gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
 
@@ -1777,36 +1713,6 @@ function VerdictCardWithDimensions({
             </div>
           )}
 
-          {decision && allowActions && <div className="flex flex-wrap gap-2 mt-3.5">
-            {/* "Hold release" only makes sense when the gate isn't already a clean GO.
-                A 100% pass (GO) is auto-approved and ready to ship — there's nothing
-                for the user to hold. */}
-            {gate !== 'GO' && (
-              <button
-                type="button"
-                onClick={onHold}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
-                style={{ color: 'var(--status-broken)', borderColor: 'color-mix(in srgb, var(--status-broken) 40%, transparent)', background: 'color-mix(in srgb, var(--status-broken) 8%, transparent)' }}
-              >
-                <TriangleAlert className="h-3.5 w-3.5" />
-                Hold release
-              </button>
-            )}
-            <GhostBtn onClick={onOverride} title="Override the gate decision (requires sign-off)">
-              Override gate
-            </GhostBtn>
-            <GhostBtn onClick={onApprove} title="Approve and ship with documented conditions">
-              Approve with conditions
-            </GhostBtn>
-            {userDecision && (
-              <GhostBtn
-                onClick={onUndoDecision}
-                title="Clear the recorded decision and revert to the system-computed gate"
-              >
-                Undo decision
-              </GhostBtn>
-            )}
-          </div>}
         </div>
 
         <div className="flex flex-col gap-3.5 py-1">
@@ -1825,7 +1731,3 @@ function VerdictCardWithDimensions({
     </section>
   )
 }
-
-// Silence eslint for icons reserved for Phase 2 (stage drawer body / future
-// recommended-actions enrichment).
-void Bot; void FileText; void Layers; void TicketCheck;

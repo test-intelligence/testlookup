@@ -47,8 +47,11 @@ vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => {
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
+// UX redesign P2: the page no longer reads a saved widget selection. The mock
+// stays so the test below can hand it an EMPTY selection and prove that a
+// reintroduced gate would be caught (it would hide the KPIs and the panel).
 const analyticsControls = vi.hoisted(() => ({
-  widgetIds: ['defect_kpis', 'defect_category_bar'],
+  widgetIds: [] as string[],
 }))
 
 vi.mock('@/hooks/useAnalyticsView', () => ({
@@ -68,10 +71,10 @@ vi.mock('@/store/projectStore', () => ({
 
 describe('DefectsPage', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = ['defect_kpis', 'defect_category_bar']
+    analyticsControls.widgetIds = []
   })
 
-  it('renders the defect workflow strip above the defect table', async () => {
+  it('renders the verdict, the KPIs and the defect table', async () => {
     const { useDefects } = await import('@/hooks/useMetrics')
 
     ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -100,17 +103,20 @@ describe('DefectsPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Defect Workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Defect Intake/i)).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Defect queue verdict' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Defect KPIs' })).toBeInTheDocument()
+    expect(screen.getByText('All defects')).toBeInTheDocument()
     // ``Defects`` appears in multiple places (page header, table caption,
     // KPI labels) — use ``getAllByText`` to assert presence without
     // tying to a specific surface.
     expect(screen.getAllByText(/Defects/i).length).toBeGreaterThan(0)
   })
 
-  it('removes the category panel when its saved widget is deselected', async () => {
+  it('shows every section whatever a saved widget selection says (no Customize)', async () => {
+    // A saved selection used to gate the KPIs and the category panel, and with
+    // the picker gone nothing could ever bring a hidden section back.
     const { useDefects } = await import('@/hooks/useMetrics')
-    analyticsControls.widgetIds = ['defect_kpis']
+    analyticsControls.widgetIds = []
     ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         items: [{
@@ -131,7 +137,9 @@ describe('DefectsPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Defects' })).toBeInTheDocument()
-    expect(screen.queryByText('Where defects live')).not.toBeInTheDocument()
+    expect(screen.getByText('Where defects live')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Defect KPIs' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
   })
 
   // Regression: the Jira bridge card was static chrome. It rendered a green
@@ -267,7 +275,7 @@ describe('DefectsPage — saying that the release filter does not apply', () => 
     useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
     renderPage()
 
-    await screen.findByText(/Defect Workflow/i)
+    await screen.findByRole('heading', { name: 'Defects' })
     expect(screen.queryByText('All releases')).toBeNull()
   })
 })
@@ -352,5 +360,167 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
     await renderWith([p0('d1', 4)])
     const meter = screen.getByRole('meter', { name: 'Queue health' })
     expect(meter.getAttribute('aria-valuetext')).toMatch(/^\d+ of 100, (Healthy|At risk|Blocked)$/)
+  })
+})
+
+// ── UX redesign P2: anything not built is not rendered. The workflow ribbon
+// (invented "6 / 5 evidence"), the provenance footer ("3 tools", a toast-only
+// "Decision trail"), the recommended-actions card (invented @release-qa /
+// @releng / @team-* handles) and every toast-only CTA are gone. ────────────
+describe('DefectsPage — renders only what it really does (P2)', () => {
+  const DAY = 86_400_000
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString()
+
+  /** An open P0: unowned (the backend has no owner) and, by default, unlinked. */
+  const p0 = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    test_name: `checkout ${id}`,
+    suite_name: 'Payments',
+    failure_category: 'PRODUCT_BUG',
+    ai_confidence_score: 92,
+    resolution_status: 'OPEN',
+    created_at: ago(2),
+    ...extra,
+  })
+
+  async function renderWith(items: Record<string, unknown>[]) {
+    const { useDefects } = await import('@/hooks/useMetrics')
+    ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items, total: items.length, pages: 1 },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/defects']}>
+        <Routes>
+          <Route path="/defects" element={<DefectsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('region', { name: 'Defect queue verdict' })
+  }
+
+  it('has no workflow ribbon, provenance footer or recommended actions', async () => {
+    await renderWith([p0('d1'), p0('d2', { jira_ticket_id: 'ACME-1' })])
+    expect(screen.queryByRole('region', { name: 'Defect workflow' })).toBeNull()
+    expect(screen.queryByText(/Defect workflow/i)).toBeNull()
+    expect(screen.queryByText(/^compact$/i)).toBeNull()
+    expect(screen.queryByText(/evidence/i)).toBeNull()
+    expect(screen.queryByText(/3 tools/)).toBeNull()
+    expect(screen.queryByText(/Provenance/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
+    expect(screen.queryByText('Recommended actions')).toBeNull()
+  })
+
+  it('invents no owner handles and no deploy state', async () => {
+    await renderWith([p0('d1'), p0('d2')])
+    for (const handle of [/@release-qa/, /@releng/, /@team-/, /@dev\b/]) {
+      expect(screen.queryByText(handle)).toBeNull()
+    }
+    expect(screen.queryByText(/currently armed/i)).toBeNull()
+  })
+
+  it('renders no toast-only CTA in the verdict, its issue rows or the table rows', async () => {
+    await renderWith([p0('d1'), p0('d2')])
+    for (const name of [
+      /Triage/i, /^Assign/i, /Open bridge/i, /Open release dashboard/i, /Link Jira/i, /^Hold$/i, /^Link$/,
+    ]) {
+      expect(screen.queryByRole('button', { name }), String(name)).toBeNull()
+    }
+    // With P0s open the verdict has no real action to offer: no button at all.
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    expect(within(verdict).queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('keeps the verdict\'s real action — New defect — when no P0 is open', async () => {
+    await renderWith([p0('d1', { failure_category: 'FLAKY' })])
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    expect(within(verdict).getByRole('button', { name: 'New defect' })).toBeInTheDocument()
+  })
+
+  it('offers "Open in Jira" only for a row with a safe ticket URL — no stub for the rest', async () => {
+    await renderWith([
+      p0('linked', { jira_ticket_id: 'ACME-7', jira_ticket_url: 'https://acme.atlassian.net/browse/ACME-7' }),
+      p0('id-only', { jira_ticket_id: 'ACME-8' }),
+      p0('unlinked'),
+      p0('unsafe', { jira_ticket_id: 'ACME-9', jira_ticket_url: 'javascript:alert(1)' }),
+    ])
+    const open = screen.getAllByRole('link', { name: /^Open .+ in Jira$/ })
+    expect(open).toHaveLength(1)
+    expect(open[0]).toHaveAccessibleName('Open ACME-7 in Jira')
+    expect(open[0]).toHaveAttribute('href', 'https://acme.atlassian.net/browse/ACME-7')
+    expect(open[0]).toHaveAttribute('target', '_blank')
+    // Every row's Actions cell (the last one) holds nothing clickable except
+    // that single link.
+    const table = screen.getByRole('table')
+    const bodyRows = within(table).getAllByRole('row').slice(1)
+    expect(bodyRows).toHaveLength(4)
+    const actionCells = bodyRows.map(r => r.querySelectorAll('td')[6])
+    expect(actionCells.flatMap(c => [...c.querySelectorAll('button')])).toHaveLength(0)
+    expect(actionCells.flatMap(c => [...c.querySelectorAll('a')])).toHaveLength(1)
+  })
+
+  // The backend has no owner field: every row read "Unassigned", every open
+  // P0 counted as unowned, and a 20 % "Ownership" dimension scored that
+  // absence as a measurement.
+  it('claims nothing about owners: no Owner column, no Unassigned, no Ownership dimension', async () => {
+    await renderWith([p0('d1'), p0('d2'), p0('d3', { failure_category: 'FLAKY' })])
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByRole('columnheader').map(h => h.textContent?.replace(/[↕↑↓]/g, '').trim()))
+      .toEqual(['Key', 'Title', 'Severity', 'Status', 'Jira', 'Age', 'Actions'])
+    expect(screen.queryByText(/unassigned/i)).toBeNull()
+    expect(screen.queryByLabelText(/unassigned/i)).toBeNull()
+    expect(screen.queryByText(/unowned/i)).toBeNull()
+    expect(screen.queryByText(/no owner/i)).toBeNull()
+    expect(screen.queryByText('Ownership')).toBeNull()
+  })
+
+  it('weighs the composite over the three real dimensions, re-normalised to 0-100', async () => {
+    // P0 open (unlinked) + P0 resolved in 2 days (linked) + P2 open (linked)
+    // + P3 closed (unlinked, no resolved_at).
+    const created = ago(10)
+    const resolved = new Date(new Date(created).getTime() + 2 * DAY).toISOString()
+    await renderWith([
+      p0('a'),
+      p0('b', { jira_ticket_id: 'ACME-1', resolution_status: 'RESOLVED', created_at: created, resolved_at: resolved }),
+      p0('c', { jira_ticket_id: 'ACME-2', failure_category: 'INFRA' }),
+      p0('d', { failure_category: 'FLAKY', resolution_status: 'CLOSED' }),
+    ])
+    const p0Throughput = 50            // 1 of 2 P0s resolved
+    const jiraCoverage = 50            // 2 of 4 linked
+    const fixVelocity = 100 - (2 / 7) * 100   // MTTR 2 d on the 7-day scale
+    const expected = Math.round(
+      (p0Throughput * 0.35 + jiraCoverage * 0.25 + fixVelocity * 0.20) / (0.35 + 0.25 + 0.20),
+    )
+    expect(expected).toBe(55)
+    const meter = screen.getByRole('meter', { name: 'Queue health' })
+    expect(meter).toHaveAttribute('aria-valuenow', String(expected))
+    // The tiles show the re-normalised weights, which sum to 100 %.
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    for (const [label, pct] of [['P0 throughput', '44%'], ['Jira coverage', '31%'], ['Fix velocity', '25%']]) {
+      const tile = within(verdict).getByText(label).parentElement
+      expect(tile, label).toHaveTextContent(`${label}${pct}`)
+    }
+  })
+
+  // `EVG-####` was a hash of the row id dressed as a ticket number.
+  it('keys a linked row by its Jira id and an unlinked one by its own id prefix — no EVG-', async () => {
+    await renderWith([
+      p0('1a2b3c4d-0000-4000-8000-000000000001', { jira_ticket_id: 'ACME-42' }),
+      p0('9f8e7d6c-0000-4000-8000-000000000002'),
+    ])
+    const bodyRows = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    const keys = bodyRows.map(r => r.querySelectorAll('td')[0].textContent?.trim())
+    expect(keys.sort()).toEqual(['9f8e7d6c', 'ACME-42'])
+    expect(document.body.textContent).not.toMatch(/EVG-/)
+  })
+
+  it('states the unlinked count and the P0 state without claims it cannot back', async () => {
+    // Two unlinked defects, one created 20 days ago: "from this week" was false,
+    // and nothing on the page knows an auto-link rule or what closed today.
+    await renderWith([p0('a1'), p0('a2', { created_at: ago(20) })])
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    expect(verdict).toHaveTextContent('2 defects have no Jira ticket — they exist only in TestLookup.')
+    expect(verdict).toHaveTextContent('All open or in progress.')
+    expect(verdict.textContent).not.toMatch(/this week|auto-link|closed today/)
   })
 })

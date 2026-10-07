@@ -39,8 +39,11 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: () => ({ data: { items: [] }, isLoading: false }),
 }))
+// P2: the page no longer reads a widget selection. The hook stays mocked with
+// a saved EMPTY selection (a user who once unticked everything): it must not
+// hide a section.
 const analyticsControls = vi.hoisted(() => ({
-  widgetIds: ['coverage_kpis', 'pass_rate_by_suite'],
+  widgetIds: [] as string[],
 }))
 
 vi.mock('@/hooks/useAnalyticsView', () => ({
@@ -64,10 +67,13 @@ const LAZY_TIMEOUT = 10_000
 
 describe('CoveragePage', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    analyticsControls.widgetIds = []
   })
 
-  it('renders the coverage workflow strip above the suite breakdown', async () => {
+  // P2: the 4-stage "Coverage workflow" ribbon was invented (fixed stages and
+  // an evidence count spread across them: "the rest get 1 each so users see the
+  // workflow ran end-to-end") and is gone.
+  it('renders the verdict and the suite breakdown, and no invented workflow ribbon', async () => {
     const { useCoverage } = await import('@/hooks/useMetrics')
 
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -95,19 +101,21 @@ describe('CoveragePage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Coverage Workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Coverage Snapshot/i)).toBeInTheDocument()
-    expect(screen.getByText(/Test Coverage/i)).toBeInTheDocument()
-
-    // US-15.1 honesty fix: the ribbon used to render a hardcoded
-    // "85% confidence". Coverage has no AI confidence - it now shows the
-    // deterministic composite score under its real name.
-    expect(screen.queryByText(/85% confidence/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/% confidence/i)).not.toBeInTheDocument()
-    expect(screen.getAllByText(/% coverage score/i).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Coverage verdict' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Suite coverage breakdown' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Coverage workflow' })).toBeNull()
+    expect(screen.queryByText(/Coverage Workflow/i)).toBeNull()
+    expect(screen.queryByText(/Coverage Snapshot|Suite Breadth|Coverage Risk|Coverage Actions/)).toBeNull()
+    expect(screen.queryByText(/evidence/i)).toBeNull()
+    expect(screen.queryByText(/% coverage score/i)).toBeNull()
+    // US-15.1: no invented confidence anywhere.
+    expect(screen.queryByText(/% confidence/i)).toBeNull()
   })
 
-  it('removes the suite panel when its saved widget is deselected', async () => {
+  // P2: the widget picker is gone, so a selection saved with it (here: none
+  // ticked) must not keep hiding a section forever.
+  it('renders every section whatever widget selection was saved', async () => {
     const { useCoverage } = await import('@/hooks/useMetrics')
     analyticsControls.widgetIds = []
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -125,13 +133,15 @@ describe('CoveragePage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
-    expect(screen.queryByText('Suite coverage breakdown')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Coverage metrics' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Suite coverage breakdown' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Customize/ })).toBeNull()
   })
 
   it('Export button triggers a CSV download with the in-window coverage data', async () => {
-    // Regression for the toast placeholder ("Export coverage CSV —
-    // coming in Phase 2"). Now wires through to a real CSV with the
-    // summary KPIs, per-suite breakdown, and daily cadence trend.
+    // Regression for the old toast placeholder (it promised the export for
+    // a later release). Now wires through to a real CSV with the summary
+    // KPIs, per-suite breakdown, and daily cadence trend.
     const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
 
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -268,9 +278,8 @@ describe('buildCoverageCsv', () => {
   })
 
   it('renders the compare-to-previous-window panel when the CTA is clicked', async () => {
-    // Regression: the CTA used to toast "Window comparison — coming in
-    // Phase 2". Now it toggles an inline strip computed from a double-
-    // window trend fetch.
+    // Regression: the CTA used to raise a "not built yet" toast. Now it
+    // toggles an inline strip computed from a double-window trend fetch.
     const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
 
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -631,7 +640,7 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
     suites: [{ suite_name: 'Payments', unique_tests: 6, passed: 48, failed: 2, skipped: 1, pass_rate: 96 }],
   }
   beforeEach(async () => {
-    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    analyticsControls.widgetIds = []
     const { useCoverage } = await import('@/hooks/useMetrics')
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: coverage, isLoading: false })
   })
@@ -683,7 +692,7 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
       ]),
     { timeout: LAZY_TIMEOUT })
     expect(container.querySelector('[data-catalogue-section]')).toBeNull()
-    // After the body grid, before the provenance footer.
+    // After the body grid (the provenance footer that followed it is gone, P2).
     expect((container.querySelector('.body-grid') as HTMLElement).compareDocumentPosition(advanced)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
@@ -696,7 +705,7 @@ describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', ()
   // The rows' grid is measured too (F-18): a desktop card unless a test narrows it.
   let gridWidth = 800
   beforeEach(() => {
-    analyticsControls.widgetIds = ['coverage_kpis', 'pass_rate_by_suite']
+    analyticsControls.widgetIds = []
     gridWidth = 800
     // The rows' grid reports `gridWidth`; every other measured element (the bars) reports `barWidth`.
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
@@ -874,5 +883,117 @@ describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', ()
     expect(within(card).getByRole('row', { name: 'Auth: 610 passed, 38 failed, 12 skipped' })).toBeInTheDocument()
     const results = await axe.run(card, { rules: { 'color-contrast': { enabled: false } } })
     expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([])
+  })
+})
+
+// P2 "remove the noise" (UX redesign): anything not built is not rendered.
+// Every control below only raised a not-built toast; every value below was
+// invented. Each test fails if its item comes back.
+describe('CoveragePage P2: no stubs, no invented values', () => {
+  beforeEach(async () => {
+    analyticsControls.widgetIds = []
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 30 })
+  })
+
+  type Suite = { suite_name: string; unique_tests: number; passed: number; failed: number; skipped: number; pass_rate: number }
+
+  async function renderCoverage(suites: Suite[], trend: TrendPoint[] = [], daysWithRuns = 1) {
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    const total = suites.reduce((n, x) => n + x.passed + x.failed + x.skipped, 0)
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 18, suite_count: suites.length, total_executions: total, avg_pass_rate: 80, days_with_runs: daysWithRuns },
+        suites,
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    const view = render(
+      <MemoryRouter initialEntries={['/coverage']}>
+        <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    return view
+  }
+
+  // A failing suite, an untagged group and a 1-of-30-day cadence: every issue
+  // row (and the untagged callout) that once carried a stub renders.
+  const NOISY: Suite[] = [
+    { suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 },
+    { suite_name: 'Unknown Suite', unique_tests: 3, passed: 5, failed: 0, skipped: 0, pass_rate: 100 },
+  ]
+
+  it('has none of the not-built controls: issue rows, verdict, untagged callout, header', async () => {
+    await renderCoverage(NOISY)
+    // The rows themselves stay: they state real data.
+    expect(screen.getByText(/executions un-tagged/)).toBeInTheDocument()
+    expect(screen.getByText(/had executions\./)).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Untagged executions' })).toBeInTheDocument()
+    for (const name of [
+      /Fix tagging/, /^Schedule/, /Configure schedule/, /Apply suite labels/, /Open runner config/,
+      /Decision trail/, /Customize/, /^Open$/,
+    ]) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+    // The real actions stay.
+    expect(screen.getByRole('button', { name: /Triage/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open triage queue' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Compare to previous window' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export/ })).toBeInTheDocument()
+  })
+
+  it('renders no recommended-actions card and no provenance footer', async () => {
+    await renderCoverage(NOISY)
+    expect(screen.queryByRole('region', { name: 'Recommended actions' })).toBeNull()
+    expect(screen.queryByText(/routed by role/)).toBeNull()
+    expect(screen.queryByText('Provenance')).toBeNull()
+    expect(screen.queryByText(/coverage analyzer v1/)).toBeNull()
+    expect(screen.queryByText(/evidence item/)).toBeNull()
+  })
+
+  it('shows the real Unique tests number with no invented delta', async () => {
+    await renderCoverage(NOISY)
+    const kpis = screen.getByRole('region', { name: 'Coverage metrics' })
+    const cell = within(kpis).getByText('Unique tests').closest('div.flex.flex-col') as HTMLElement
+    expect(cell).toHaveTextContent(/^Unique tests18$/)
+    expect(within(kpis).queryByText(/no change/)).toBeNull()
+    expect(within(kpis).queryByText(/vs prev/)).toBeNull()
+  })
+
+  it('draws the Total executions delta only when it is measured, and says what it compares', async () => {
+    // One trend day: no halves to compare, so no delta at all (it read "no change").
+    await renderCoverage(NOISY, [{ date: utcDayIso(), passed: 10, failed: 0, skipped: 0, broken: 0, pass_rate: 100 }])
+    let cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('div.flex.flex-col') as HTMLElement
+    expect(cell).toHaveTextContent(/^Total executions55$/)
+    cleanup()
+    // Earlier half 10, later half 15: +50%, the later half against the earlier one.
+    await renderCoverage(NOISY, [
+      { date: shiftDayIso(utcDayIso(), -3), passed: 10, failed: 0, skipped: 0, broken: 0, pass_rate: 100 },
+      { date: utcDayIso(), passed: 15, failed: 0, skipped: 0, broken: 0, pass_rate: 100 },
+    ])
+    cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('div.flex.flex-col') as HTMLElement
+    expect(cell).toHaveTextContent('+50% · later vs earlier half of window')
+  })
+
+  it('links "View all suites" and the breakdown footer to the suites list, not a nameless suite page', async () => {
+    await renderCoverage(NOISY)
+    expect(screen.getByRole('link', { name: /View all suites/ })).toHaveAttribute('href', '/suites')
+    expect(screen.getByRole('link', { name: /Browse suites/ })).toHaveAttribute('href', '/suites')
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).not.toBe('/coverage/suite')
+    }
+  })
+
+  it('counts every untagged group the breakdown draws', async () => {
+    await renderCoverage([
+      ...NOISY,
+      { suite_name: '', unique_tests: 1, passed: 2, failed: 0, skipped: 0, pass_rate: 100 },
+    ])
+    const card = screen.getByRole('region', { name: 'Suite coverage breakdown' })
+    const untaggedRows = within(card).getAllByRole('row', { name: /^Untagged group:/ })
+    expect(untaggedRows).toHaveLength(2)
+    expect(card).toHaveTextContent(`Showing 1 suite + ${untaggedRows.length} untagged groups`)
   })
 })

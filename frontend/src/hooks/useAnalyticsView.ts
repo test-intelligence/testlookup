@@ -45,7 +45,7 @@ export interface AnalyticsViewResult {
   removeInstance: (instanceId: string) => void
   /** Duplicate an instance with a new UUID. */
   duplicateInstance: (instanceId: string) => void
-  /** Replace all instances with a new template-ID selection (used by WidgetPicker). */
+  /** Replace all instances with a new template-ID selection. */
   setWidgets: (ids: string[]) => Promise<void>
   /** Reset to page defaults. */
   resetToDefaults: () => void

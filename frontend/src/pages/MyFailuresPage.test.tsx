@@ -295,4 +295,29 @@ describe('MyFailuresPage', () => {
     // The router renders RUN PAGE for /runs/:rid/tests/:cid.
     expect(await screen.findByText('RUN PAGE')).toBeInTheDocument()
   })
+
+  // P2 item 7: an unknown severity fell through to the passed green, so an
+  // unclassified failure read as "fine".
+  it('draws an unknown severity as a muted ring, never in the passed color', async () => {
+    const base = {
+      suite_name: 'S', status: 'FAILED', error_message: null,
+      created_at: new Date().toISOString(), test_run_id: 'run-1', build_number: null,
+      project_id: 'p1', project_name: 'P1',
+      class_name: null, failure_category: null, duration_ms: null,
+    }
+    mockList.mockResolvedValue(makeResponse([
+      { ...base, id: 'u1', test_name: 'test_unknown', severity: null, navigation_url: '/runs/run-1/tests/u1' },
+      { ...base, id: 'c1', test_name: 'test_critical', severity: 'critical', navigation_url: '/runs/run-1/tests/c1' },
+    ]))
+    renderPage()
+    await screen.findByText('test_unknown')
+    const [unknown, critical] = screen.getAllByTestId('severity-dot')
+    expect(unknown).toHaveAttribute('data-severity', 'unknown')
+    expect(unknown.getAttribute('style')).not.toContain('--status-passed')
+    expect(unknown.style.background).toBe('transparent')
+    expect(unknown).toHaveAttribute('title', 'Severity unknown')
+    // A known severity keeps its color.
+    expect(critical).toHaveAttribute('data-severity', 'critical')
+    expect(critical.style.background).toBe('var(--status-failed)')
+  })
 })

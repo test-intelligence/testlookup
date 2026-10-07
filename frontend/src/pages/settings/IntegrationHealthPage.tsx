@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
+import Disclosure from '@/components/ui/Disclosure';
 import { buildIntegrationHealthWorkflow } from '@/components/workflow/workflowPresets';
 import {
   useHealthTrends,
@@ -69,16 +70,6 @@ export default function IntegrationHealthPage() {
             {probing ? 'Probing...' : 'Probe All Now'}
           </button>
         }
-      />
-
-      <WorkflowTimeline
-        title="Health workflow"
-        subtitle="Probe providers, validate payloads, and roll up the tenant health picture"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
       />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
@@ -174,6 +165,19 @@ export default function IntegrationHealthPage() {
           )}
         </>
       )}
+
+      {/* The probe → validate → roll-up stage flow, built from the statuses
+          above: collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Health workflow"
+          subtitle="Probe providers, validate payloads, and roll up the tenant health picture"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   );
 }

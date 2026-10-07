@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
@@ -116,10 +116,24 @@ describe('ReleaseGatePage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Release decision flow/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/CONDITIONAL GO/i).length).toBeGreaterThan(0)
+    // P2 item 3: the decision flow is a collapsed "How this was decided"
+    // disclosure at the bottom of the page — below the override section —
+    // and renders nothing until opened.
+    const toggle = await screen.findByRole('button', { name: 'How this was decided' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/Release decision flow/i)).toBeNull()
+    const override = screen.getByText('QA Lead Override')
+    expect(override.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(toggle)
+    expect(screen.getByText(/Release decision flow/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Policy Evaluation/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Release Decision/i).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/CONDITIONAL GO/i).length).toBeGreaterThan(0)
+    // P2 item 9: the timeline no longer prints the literal word "compact"
+    // beside its title (an implementation detail, not information; the prop
+    // that drove it is gone).
+    expect(screen.queryByText(/^compact$/i)).toBeNull()
   })
 
   it('stays stable when the release council transitions from loading to loaded', async () => {
@@ -189,7 +203,7 @@ describe('ReleaseGatePage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Release decision flow/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'How this was decided' })).toBeInTheDocument()
     expect(screen.getAllByText(/^GO$/i).length).toBeGreaterThan(0)
   })
 

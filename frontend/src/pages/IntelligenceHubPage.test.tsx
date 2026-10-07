@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import IntelligenceHubPage from './IntelligenceHubPage'
+import { useTimeWindowStore } from '@/store/timeWindowStore'
 
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
@@ -48,13 +49,17 @@ describe('IntelligenceHubPage', () => {
     expect(screen.getByText('/100')).toBeInTheDocument()
     // Runs table is present with the redesigned title
     expect(screen.getByText(/Recent runs analyzed/i)).toBeInTheDocument()
-    // Specific run rows show up — they appear both in the table cell and in
-    // the activity feed, so getAllByText is the right query.
+    // Specific run rows show up in the table.
     expect(screen.getAllByText('#42').length).toBeGreaterThan(0)
     expect(screen.getAllByText('#41').length).toBeGreaterThan(0)
     // Spend panel is per-project (real /llm-usage meter) — in All-Projects
     // mode it asks the user to narrow scope instead of faking numbers.
     expect(screen.getByText(/Select a project to see its LLM spend/i)).toBeInTheDocument()
+    // UX redesign P2: the search box names what it matches (build number,
+    // branch, job); it promised commit and PR search it never did.
+    const search = screen.getByRole('searchbox', { name: 'Search runs' })
+    expect(search).toHaveAttribute('placeholder', 'Search by build number, branch or job…')
+    expect(search.getAttribute('placeholder')).not.toMatch(/commit|PR/)
   })
 
   // ── US-15.1 honesty fix ────────────────────────────────────────────────
@@ -160,5 +165,82 @@ describe('IntelligenceHubPage', () => {
     // A brand-new project genuinely has nothing — do not imply otherwise.
     await renderEmptyWindow()
     expect(await screen.findByText('No runs in this window')).toBeInTheDocument()
+  })
+
+  // ── P2: nothing that is not built is rendered ─────────────────────────────
+  async function renderWithRuns(
+    data: { items: unknown[]; total?: number },
+    entry = '/intelligence',
+  ) {
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/intelligence" element={<IntelligenceHubPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return useRuns as ReturnType<typeof vi.fn>
+  }
+  const RUN = { id: 'run-1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 120, broken_tests: 0, skipped_tests: 0, total_tests: 120, pass_rate: 100, branch: 'main', project_name: 'Project One', created_at: '2026-04-03T15:00:00Z', duration_ms: 492000 }
+
+  it('renders no toast-only header buttons, insights stub or synthesized activity feed', async () => {
+    await renderWithRuns({ items: [RUN] })
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Analyze new run/i })).toBeNull()
+    expect(screen.queryByText(/0 insights/i)).toBeNull()
+    expect(screen.queryByText(/Cross-run AI insights/i)).toBeNull()
+    expect(screen.queryByText(/Recent activity/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /View (all|full activity log)/i })).toBeNull()
+    // The real header action stays.
+    expect(screen.getByRole('button', { name: /Compare runs/i })).toBeInTheDocument()
+  })
+
+  // ── P2: the 50-run cap is stated, not hidden ──────────────────────────────
+  it('says the verdict is computed from the latest 50 when the window holds more', async () => {
+    const items = Array.from({ length: 50 }, (_, i) => ({ ...RUN, id: `run-${i}`, build_number: String(i) }))
+    await renderWithRuns({ items, total: 180 })
+    const note = await screen.findByTestId('intelligence-runs-cap')
+    expect(note).toHaveTextContent('Showing the latest 50 runs of 180 in this window')
+    expect(screen.getByText(/of the latest 50/)).toBeInTheDocument()
+  })
+
+  it('states no cap when every run in the window was loaded', async () => {
+    await renderWithRuns({ items: [RUN], total: 1 })
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(screen.queryByTestId('intelligence-runs-cap')).toBeNull()
+  })
+
+  // ── P2: the window follows the global time-window store ───────────────────
+  it('fetches the window the global store holds, snapped to 24h / 7d / 30d', async () => {
+    useTimeWindowStore.setState({ days: 7 })
+    const useRuns = await renderWithRuns({ items: [RUN] })
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(useRuns).toHaveBeenLastCalledWith(expect.objectContaining({ days: 7, size: 50 }))
+    expect(screen.getByText(/Pipeline health · Last 7d/)).toBeInTheDocument()
+  })
+
+  it('snaps a store value this page does not offer (14d) to the nearest option', async () => {
+    useTimeWindowStore.setState({ days: 14 })
+    const useRuns = await renderWithRuns({ items: [RUN] })
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(useRuns).toHaveBeenLastCalledWith(expect.objectContaining({ days: 7 }))
+  })
+
+  it('lets a ?range= deep link win over the store', async () => {
+    useTimeWindowStore.setState({ days: 30 })
+    const useRuns = await renderWithRuns({ items: [RUN] }, '/intelligence?range=24h')
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(useRuns).toHaveBeenLastCalledWith(expect.objectContaining({ days: 1 }))
+  })
+
+  it('writes a picked range to the global store', async () => {
+    useTimeWindowStore.setState({ days: 30 })
+    await renderWithRuns({ items: [RUN] })
+    await screen.findByText(/Recent runs analyzed/i)
+    fireEvent.change(screen.getByDisplayValue('Last 30d'), { target: { value: '24h' } })
+    expect(useTimeWindowStore.getState().days).toBe(1)
   })
 })

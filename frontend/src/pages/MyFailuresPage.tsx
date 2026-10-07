@@ -49,12 +49,14 @@ function relativeAge(iso: string): string {
   return `${d}d ago`
 }
 
-function severityDot(severity: string | null | undefined): string {
+/** `null` color = severity not known: drawn as a hollow, muted ring. It used
+ *  to fall through to the passed green, which read as "this failure is fine". */
+function severityDot(severity: string | null | undefined): string | null {
   const s = (severity || '').toLowerCase()
   if (s === 'blocker' || s === 'critical') return 'var(--status-failed)'  // red
   if (s === 'major' || s === 'high')        return 'var(--status-broken)' // amber
   if (s === 'minor' || s === 'low')         return '#9198a1' // slate
-  return 'var(--status-passed)'                                            // unknown → green-ish
+  return null
 }
 
 export default function MyFailuresPage() {
@@ -351,7 +353,16 @@ function FailureRow({
       className="cursor-pointer hover:bg-[var(--color-bg-secondary)]/60 transition-colors"
     >
       <td className="px-4 py-3">
-        <span className="inline-block h-2 w-2 rounded-full" style={{ background: dot }} aria-hidden />
+        <span
+          data-testid="severity-dot"
+          data-severity={dot ? (item.severity || '').toLowerCase() : 'unknown'}
+          className="inline-block h-2 w-2 rounded-full"
+          style={dot
+            ? { background: dot }
+            : { background: 'transparent', border: '1px solid var(--color-text-faint)' }}
+          title={dot ? `Severity: ${item.severity}` : 'Severity unknown'}
+          aria-hidden
+        />
       </td>
       <td className="px-4 py-3">
         <div className="text-[var(--color-text)] font-medium truncate max-w-[360px]" title={item.test_name}>

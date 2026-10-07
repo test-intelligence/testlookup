@@ -63,7 +63,6 @@ interface WorkflowTimelineProps {
   title?: string
   subtitle?: string
   stageOrder?: string[]
-  compact?: boolean
   showInspector?: boolean
   showEventFeed?: boolean
   className?: string
@@ -549,7 +548,6 @@ export default function WorkflowTimeline({
   title = 'Workflow Progress',
   subtitle,
   stageOrder,
-  compact = false,
   showInspector = false,
   showEventFeed = false,
   className,
@@ -631,9 +629,7 @@ export default function WorkflowTimeline({
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div className="flex items-center gap-2">
-              {title && <p className="text-sm font-semibold text-[var(--color-text)]">{title}</p>}
-              {compact && <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">compact</span>}
-            </div>
+              {title && <p className="text-sm font-semibold text-[var(--color-text)]">{title}</p>}            </div>
             {subtitle && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
           </div>
           <div className="flex items-center gap-2 text-xs">

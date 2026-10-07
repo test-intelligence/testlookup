@@ -200,6 +200,16 @@ describe('ReleasesPage', () => {
     expect(screen.queryByText('Persisted Project Release')).not.toBeInTheDocument()
     expect(document.getElementById('phase-phase-target')).toHaveTextContent('Target phase')
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' }))
+
+    // P2 item 3: the release workflow timeline is a collapsed "Pipeline"
+    // disclosure at the bottom of the detail, after Linked Test Runs.
+    const pipeline = screen.getByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Release workflow')).toBeNull()
+    const linked = screen.getByRole('heading', { name: /Linked Test Runs/ })
+    expect(linked.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText('Release workflow')).toBeInTheDocument()
   })
 
   it('retries the routed release request after a transient detail failure', async () => {

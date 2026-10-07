@@ -1,5 +1,108 @@
 # Changelog
 
+## Unreleased - UX redesign P2: remove the noise — nothing fake, nothing unbuilt
+
+Phase P2 of the UI/UX redesign. The rule: **anything not built is not
+rendered**, and a number on screen is a measurement or it is not shown. Every
+item was located in the current code before removal
+(`docs/viz-work/p2-inventory.md`). Each removal has a test asserting it is
+gone, and every fixed bug has a test of the property it now holds. At least
+one change per page was mutation-checked.
+
+- **87 "Phase 2 / coming soon / next iteration" lines are gone.** These were
+  toast-only buttons, stub menu items, card links to nothing, and the comments
+  that kept them company. They were on Trends, Coverage, Runs, Defects,
+  Failures, Deep Investigation, Search, Test Management, Run Intelligence, the
+  Intelligence hub and the AI pipeline. The new `frontend.no-unbuilt-stubs`
+  quality-gate guard holds the count at zero, comments included.
+- **Fabricated values removed:**
+  - **Invented confidence, evidence and tool counts:**
+    - Trends: the 91% confidence and per-stage 95/88/90%.
+    - Runs: evidence `stages*7`, `+7` and "3 tools".
+    - Defects: evidence 6/5 and `5 + total`.
+    - Coverage: a made-up evidence split.
+    - Failures: `evidence: 1`.
+  - **Invented owners and deploy state:** `@team-checkout`, `@release-qa`,
+    `@releng` and "Auto-deploy is currently armed".
+  - **Tiles that were always "—":** mean time to fix on Overview and
+    Failures, the three null Search index tiles, and the Live "Cost" tile.
+  - **Failures pills and placeholder:** the always-on "Hard regression / Not
+    flaky" pills are replaced by one pill from real data ("Flaky" from the
+    flaky list, else "Repeat failure", else none). The placeholder stack-trace
+    `<pre>` is gone.
+  - **Defects:**
+    - Every row said Unassigned because there is no owner field. The
+      "unassigned" counts and a 20% "Ownership" score were built on it. All of
+      that is removed; the health score re-weights over its three real
+      dimensions.
+    - `EVG-####` keys were a hash of the row id. Rows now show the Jira id, or
+      the defect's own id.
+    - Copy removed: "none closed today", "from this week", and "the auto-link
+      rule is missing them".
+  - **Deep Investigation:**
+    - An unscored cluster got 0.7 confidence and a severity band; it now reads
+      "unscored", and the average covers scored clusters only.
+    - A past-investigations table invented cluster, defect, confidence and
+      cost values; it is now "Recent runs", with investigation data only for
+      the focused run.
+    - Also gone: "N suites" (it was the cluster count), "since <commit>" (it
+      was the run id), `@team-` cluster owners, a capped "affected" count, and
+      a "Last analysis" that read days as hours.
+  - **Search:** a "Suggested for you · ~47 candidates" panel
+    (`min(total, 47)`) and a query-syntax card for syntax nothing parses.
+  - **Trends:** "Suite pass rates · today" showed for every window; it now
+    names the window. A "no regression vs the prior run" sentence was fixed
+    text. "Schedule appears paused" now appears only when the gap reaches
+    today.
+  - **Coverage:** "no change · vs prev Nd" appeared when nothing was measured
+    and compared the wrong halves. "Unique tests" carried an always-empty
+    delta.
+  - **Overview:** "Verdict generated just now" was the render time; it now
+    says the window the verdict covers.
+- **Decorative workflow ribbons removed** from Overview, Runs, Failures,
+  Defects, Trends, Coverage, Search, Live, Deep Investigation and Value
+  metrics. So were the ten `workflowPresets` builders behind them.
+  - Run Intelligence's pipeline ribbon shows real stage data, so it stays; its
+    dead buttons are no longer buttons.
+  - The eight timelines with real data (Release gate, Releases, Digests,
+    Integration health, Audit, AI eval, Getting started, AI pipeline) move to
+    a collapsed **How this was decided / Pipeline** section at the bottom.
+- **Stub-bearing blocks removed:** `ProvenanceFooter` and `RecommendedActions`
+  on Runs, Failures, Defects, Trends, Coverage, Search and Deep Investigation.
+  Run Intelligence keeps both, because there they are real.
+- **Duplicates removed:**
+  - Overview: the reason cards, the strip under the trend, and the bottom
+    pending banner.
+  - Value metrics: the legacy "Triage Time Saved" hero (D5).
+  - Intelligence hub: its activity panel, the "0 insights" panel and the
+    toast-only header buttons.
+- **Customize removed** from Overview, Failures, Trends, Coverage and Defects
+  (D6). Its widget gates are removed too, so a saved selection can no longer
+  hide a section for good.
+- **Misreporting fixed:**
+  - Run Intelligence:
+    - "N of N shown" now says how many are shown.
+    - The pill shows the cluster's real criticality.
+    - A check shows as passed only when it ran.
+    - Hold / Override / Approve, which were saved only in this browser, are
+      hidden until they persist.
+  - Intelligence hub:
+    - It follows the global time window.
+    - It says when it shows only the latest 50 runs.
+    - Its search box names what it searches.
+  - My Failures: an unknown severity is no longer shown green.
+  - SuiteCases: "Last seen" was a run-id prefix; it is now a link to that run.
+  - Value metrics: the headline says it is always the last 30 days.
+  - Live: "12s ago ago" now reads "12s ago".
+- **Dead code:**
+  - `AgentWorkflowPage` (1,777 lines) and its test, plus the CSS only it used.
+  - `WidgetPicker`, the AI pipeline's `ModeTabs`, and the ten
+    `workflowPresets` builders.
+  - Seed data is development-only, like its Settings card. The route stays,
+    and a production build redirects it to Settings.
+- **Text:** "RunScope AI" → TestLookup. WorkflowTimeline's literal "compact"
+  tag and its prop are gone.
+
 ## Unreleased - UX redesign P1: the shell — a flat sidebar, section tabs, Help, and the account menu
 
 Phase P1 of the UI/UX redesign (`docs/ux-review-2026-10-06/03-implementation-plan.md`).

@@ -53,7 +53,8 @@ for (const theme of THEMES) {
     const passRate = sectionFrame(page, 'trends-pass-rate', 'Pass rate trend')
     await expectDrawn(passRate, 'pass rate')
     await waitForCharts(passRate)
-    const suites = cardByHeading(page, 'Suite pass rates · today')
+    // UX redesign P2: the title says the window it shows (it said "· today" for every window).
+    const suites = cardByHeading(page, 'Suite pass rates — last 14 days')
     await expect(suites.getByText('Payments', { exact: true })).toBeVisible()
 
     await visualRegion(page, 'trends-verdict', theme, landmark(page, 'Trend verdict'))

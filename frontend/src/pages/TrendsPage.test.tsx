@@ -69,7 +69,6 @@ vi.mock('@/hooks/useMetrics', () => ({
   useTrendData: vi.fn(),
   useDashboardSummary: vi.fn(),
   useCoverage: vi.fn(),
-  useFlakyTests: vi.fn(),
 }))
 
 vi.mock('@/hooks/useRuns', () => ({
@@ -81,8 +80,11 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: vi.fn(() => ({ options: ['Checkout'], isLoading: false })),
 }))
 
+// P2: the page no longer reads a widget selection. The hook stays mocked with
+// a saved EMPTY selection (a user who once unticked everything): it must not
+// hide a section.
 const analyticsControls = vi.hoisted(() => ({
-  widgetIds: ['trends_kpis', 'daily_breakdown', 'pass_rate_trend'],
+  widgetIds: [] as string[],
 }))
 
 vi.mock('@/hooks/useAnalyticsView', () => ({
@@ -123,13 +125,15 @@ function cadenceRows(): string[][] {
 
 describe('TrendsPage', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
   })
 
-  it('renders the trend workflow strip above the charts', async () => {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+  // P2: the 3-stage "Trends workflow" ribbon was invented (fixed stages, fixed
+  // evidence counts, a hard-coded 91% confidence) and is gone.
+  it('renders the verdict and the charts, and no invented workflow ribbon', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
 
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -150,7 +154,6 @@ describe('TrendsPage', () => {
         suites: [{ suite_name: 'Checkout', unique_tests: 2, passed: 34, failed: 3, skipped: 1, pass_rate: 91 }],
       },
     })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
@@ -161,13 +164,20 @@ describe('TrendsPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Trends workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Trend capture/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/Trends/i).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: 'Trends' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Trend verdict' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Trends workflow' })).toBeNull()
+    expect(screen.queryByText(/Trends workflow/i)).toBeNull()
+    expect(screen.queryByText(/Trend capture|Signal comparison|Report delivery/)).toBeNull()
+    expect(screen.queryByText(/91% confidence/)).toBeNull()
+    expect(screen.queryByText(/evidence items/)).toBeNull()
   })
 
-  it('removes deselected trend panels from the rendered layout', async () => {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+  // P2: the widget picker is gone, so a selection saved with it (here: none
+  // ticked) must not keep hiding a section forever.
+  it('renders every section whatever widget selection was saved', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     analyticsControls.widgetIds = []
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -176,7 +186,6 @@ describe('TrendsPage', () => {
     })
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
@@ -186,8 +195,10 @@ describe('TrendsPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Trends' })).toBeInTheDocument()
-    expect(screen.queryByText('Daily breakdown')).not.toBeInTheDocument()
-    expect(screen.queryByText('Pass rate trend')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Trend metrics' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Customize/ })).toBeNull()
   })
 
   // Regression: the headline pass rate used to divide by every execution,
@@ -196,7 +207,7 @@ describe('TrendsPage', () => {
   // Two figures for one window on two pages. The denominator is now the
   // backend's: passed + failed + broken.
   it('excludes skips from the headline pass rate, matching the API and /overview', async () => {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
 
     // The ground-truth fixture: one day, 60 executions, 6 of them skipped.
@@ -216,7 +227,6 @@ describe('TrendsPage', () => {
         suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
       },
     })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
@@ -238,7 +248,7 @@ describe('TrendsPage', () => {
   // Regression: test executions were labelled "runs" — a 6-run window read
   // "31 / 60 runs". Same wording defect #643 fixed on the dashboard.
   it('calls test executions executions, not runs', async () => {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
 
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -256,7 +266,6 @@ describe('TrendsPage', () => {
         suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
       },
     })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
@@ -277,7 +286,7 @@ describe('TrendsPage', () => {
   // on the page rendered a day early west of Greenwich — the heatmap, the
   // daily-breakdown axis and the "scheduler paused since …" narrative included.
   it('labels the window in the same calendar frame the API buckets in', async () => {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     const { formatDayIso, shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
 
@@ -293,7 +302,6 @@ describe('TrendsPage', () => {
         suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
       },
     })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
@@ -304,7 +312,7 @@ describe('TrendsPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByText(/Trends workflow/i)
+    await screen.findByRole('heading', { name: 'Trends' })
     // The cell the cadence strip marks as today must BE today, not the day
     // before (the strip's table is where a reader gets the per-day truth).
     const rows = cadenceRows()
@@ -326,13 +334,13 @@ describe('TrendsPage', () => {
 // only BROKEN failures, a day of only skips, a clean day, and a 6-day silence.
 describe('TrendsPage on the chart kit', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
   })
 
   async function renderWindow(trend: unknown[]) {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
@@ -345,7 +353,6 @@ describe('TrendsPage on the chart kit', () => {
         ],
       },
     })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     render(
       <MemoryRouter initialEntries={['/trends']}>
@@ -538,7 +545,7 @@ describe('TrendsPage on the chart kit', () => {
   it('has no per-suite micro-bar: a suite row is the name and its rate', async () => {
     const { trend } = await windowFixture()
     await renderWindow(trend)
-    const suites = screen.getByRole('heading', { name: 'Suite pass rates · today' }).closest('div.rounded-xl') as HTMLElement
+    const suites = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
     const row = within(suites).getByText('Payments', { exact: true }).parentElement as HTMLElement
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
@@ -550,7 +557,7 @@ describe('TrendsPage on the chart kit', () => {
 // page's own responsive rework.
 describe('TrendsPage rollout (Wave 2.6)', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = ['trends_kpis', 'daily_breakdown', 'pass_rate_trend']
+    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
     catalogue.props.length = 0
@@ -562,7 +569,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     const metrics = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     const { useSuiteOptions } = await import('@/hooks/useSuiteOptions')
-    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, metrics.useFlakyTests, useRuns, useSuiteOptions]) {
+    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, useRuns, useSuiteOptions]) {
       ;(hook as ReturnType<typeof vi.fn>).mockClear()
     }
   })
@@ -583,12 +590,11 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
   }
 
   async function renderTrends(trend: unknown[]) {
-    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
-    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     const view = render(
       <MemoryRouter initialEntries={['/trends']}>
@@ -610,7 +616,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     const { useRuns } = await import('@/hooks/useRuns')
     const { useSuiteOptions } = await import('@/hooks/useSuiteOptions')
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
-    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, metrics.useFlakyTests, useSuiteOptions]) {
+    for (const hook of [metrics.useTrendData, metrics.useDashboardSummary, metrics.useCoverage, useSuiteOptions]) {
       const calls = (hook as ReturnType<typeof vi.fn>).mock.calls
       expect(calls.length).toBeGreaterThan(0)
       expect(new Set(calls.map((call) => call[0]))).toEqual(new Set([14]))
@@ -674,11 +680,11 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: null })
     fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
     expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: 'Checkout' })
-    // Below the body grid, above the provenance line.
+    // Below the body grid (the provenance line that followed it is gone, P2).
     const grid = document.querySelector('.trends-body-grid') as HTMLElement
     const stub = screen.getByTestId('trends-catalogue')
     expect(grid.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(stub.compareDocumentPosition(screen.getByText('Provenance')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByText('Provenance')).toBeNull()
   })
 
   // R1-1: the section chunk failing to load, or the section throwing, is the
@@ -692,35 +698,9 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
       expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Trends' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
-      expect(screen.getByText('Provenance')).toBeInTheDocument()
     } finally {
       spy.mockRestore()
     }
-  })
-
-  // R2-4: at 375 px the three steps shared one row: the ordinals were drawn
-  // over the titles, "comparison" ran into the next check icon and the counts
-  // were cut to "1 e...". At 640 a third of the row still cut every count
-  // (measured). One step per row below lg; the three columns, each but the
-  // last with its divider, from lg up (the desktop shell: unchanged).
-  it('the workflow ribbon stacks its steps below lg and keeps three columns from lg up', async () => {
-    await renderTrends(await activeDays(3))
-    const ribbon = screen.getByRole('region', { name: 'Trends workflow' })
-    const steps = within(ribbon).getAllByRole('button', { name: /^Stage \d/ })
-    expect(steps).toHaveLength(3)
-    const grid = steps[0].parentElement as HTMLElement
-    const classes = grid.className.split(/\s+/)
-    expect(classes).toEqual(expect.arrayContaining(['grid', 'grid-cols-1', 'lg:grid-cols-3']))
-    // No column rule that applies below lg.
-    expect(grid.style.gridTemplateColumns).toBe('')
-    expect(classes.filter((c) => /^grid-cols-/.test(c))).toEqual(['grid-cols-1'])
-    // The dividers are columns' dividers: from lg up only, never on the last step.
-    steps.forEach((step, i) => {
-      expect(step.style.borderRight).toBe('')
-      const stepClasses = step.className.split(/\s+/)
-      expect(stepClasses.includes('lg:border-r')).toBe(i < steps.length - 1)
-      expect(stepClasses.some((c) => c === 'border-r' || c === 'border')).toBe(false)
-    })
   })
 
   // The catalogue gets the window the page SHOWS (snapped to its options),
@@ -750,11 +730,131 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     expect(screen.queryByText(/Wider screen needed/)).toBeNull()
   })
 
-  // P1 (2026-10-04): the header's own Views button opens its actions, before Customize.
-  it('has the Views button in the header, before Customize', async () => {
+  // P1 (2026-10-04): the header's own Views button opens its actions. P2: the
+  // Customize button that followed it (the widget picker) is gone, so the
+  // window picker comes next.
+  it('has the Views button in the header and no Customize button', async () => {
     await renderTrends(await activeDays(3))
     const trigger = document.querySelector('[data-saved-views-trigger]')
     expect(trigger?.textContent).toBe('Views')
-    expect(trigger?.nextElementSibling?.textContent).toContain('Customize')
+    expect(trigger?.nextElementSibling?.getAttribute('role')).toBe('tablist')
+    expect(screen.queryByRole('button', { name: /Customize/ })).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// P2 "remove the noise" (UX redesign): anything not built is not rendered.
+// Every control below only raised a not-built toast; every value below was
+// invented. Each test fails if its item comes back.
+describe('TrendsPage P2: no stubs, no invented values', () => {
+  beforeEach(async () => {
+    analyticsControls.widgetIds = []
+    frames.stacked.length = 0
+    frames.timeSeries.length = 0
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 14 })
+  })
+
+  type Suite = { suite_name: string; unique_tests: number; passed: number; failed: number; skipped: number; pass_rate: number }
+
+  async function renderWith(trend: unknown[], suites: Suite[] = [
+    { suite_name: 'Checkout', unique_tests: 6, passed: 40, failed: 10, skipped: 5, pass_rate: 80 },
+  ]) {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Trends' })
+  }
+
+  /** `back` days before today, as a UTC day. */
+  async function dayBack(back: number) {
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    return shiftDayIso(utcDayIso(), -back)
+  }
+
+  /** One day with runs per `backs` entry. */
+  async function daysWithRuns(backs: number[]) {
+    return Promise.all(backs.map(async (back) => ({
+      date: await dayBack(back), passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90,
+    })))
+  }
+
+  it('has none of the not-built controls: header, verdict, issue rows, schedule callout', async () => {
+    // A trailing 10-day silence: the schedule callout and the gap issue row both render.
+    await renderWith(await daysWithRuns([10, 11, 12, 13]))
+    expect(screen.getByRole('heading', { name: 'Schedule appears paused' })).toBeInTheDocument()
+    for (const name of [
+      /Export PDF/, /Email report/, /Email this view/, /Resume schedule/, /Resume nightly/,
+      /View schedule/, /Compare runs/, /Decision trail/, /Customize/,
+    ]) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+      expect(screen.queryByRole('link', { name })).toBeNull()
+    }
+    // The cadence gap strip offered to "pin a note", a feature that does not exist.
+    expect(screen.queryByText(/pin a note/)).toBeNull()
+    // The one real verdict action stays: widening the window.
+    expect(screen.getByRole('button', { name: 'Widen window to 90d' })).toBeInTheDocument()
+  })
+
+  it('renders no recommended-actions card and no provenance footer', async () => {
+    await renderWith(await daysWithRuns([1, 2, 3]))
+    expect(screen.queryByRole('heading', { name: 'Recommended actions' })).toBeNull()
+    expect(screen.queryByText(/routed by role/)).toBeNull()
+    expect(screen.queryByText(/today's failures/)).toBeNull()
+    expect(screen.queryByText('Provenance')).toBeNull()
+    expect(screen.queryByText(/2 tools/)).toBeNull()
+    expect(screen.queryByText(/trends analyzer v1/)).toBeNull()
+  })
+
+  it('titles the suite pass rates by the window it reads, never "today" or "single day"', async () => {
+    await renderWith(await daysWithRuns([1, 2, 3]))
+    expect(screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' })).toBeInTheDocument()
+    expect(screen.queryByText(/Suite pass rates · today/)).toBeNull()
+    expect(screen.queryByText('Single day')).toBeNull()
+    expect(screen.queryByText(/No delta available — single day of data/)).toBeNull()
+    // The window it reads is the window picked: the coverage read and the title move together.
+    fireEvent.click(screen.getByRole('tab', { name: '90d' }))
+    expect(screen.getByRole('heading', { name: 'Suite pass rates — last 90 days' })).toBeInTheDocument()
+    const { useCoverage } = await import('@/hooks/useMetrics')
+    const calls = (useCoverage as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[calls.length - 1][0]).toBe(90)
+    fireEvent.click(screen.getByRole('tab', { name: '24h' }))
+    expect(screen.getByRole('heading', { name: 'Suite pass rates — last 24 hours' })).toBeInTheDocument()
+  })
+
+  it('says how many suites the card shows when it shows fewer than there are', async () => {
+    const suites = Array.from({ length: 8 }, (_, i) => ({
+      suite_name: `S${i}`, unique_tests: 1, passed: 9, failed: 1, skipped: 0, pass_rate: 90,
+    }))
+    await renderWith(await daysWithRuns([1, 2, 3]), suites)
+    const card = screen.getByRole('heading', { name: /^Suite pass rates/ }).closest('div.rounded-xl') as HTMLElement
+    const rows = within(card).getAllByText(/^S\d$/)
+    expect(rows).toHaveLength(6)
+    expect(card).toHaveTextContent(`${rows.length} of 8 suites`)
+  })
+
+  it('calls an older silence a past gap, not a paused schedule', async () => {
+    // Runs on the last 3 days; a 9-day silence before them.
+    await renderWith(await daysWithRuns([0, 1, 2, 12, 13]))
+    expect(screen.getByRole('heading', { name: 'Run gap in this window' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
+    expect(screen.queryByText(/hasn't fired since/)).toBeNull()
+    expect(screen.queryByText(/appears paused since/)).toBeNull()
+    expect(screen.getByText(/the longest silence ran from/)).toBeInTheDocument()
+  })
+
+  it("states the window's executions as the window's, with no invented regression claim", async () => {
+    await renderWith(await daysWithRuns([1, 2, 3]))
+    expect(screen.getByText((_, el) => el?.classList.contains('issue-body') === true && /^The window had 30 test executions: 27 passed, 3 failed, 0 broken/.test(el.textContent ?? ''))).toBeInTheDocument()
+    expect(screen.queryByText(/The latest active day had/)).toBeNull()
+    expect(screen.queryByText(/No regression vs\. the prior in-window run/)).toBeNull()
   })
 })

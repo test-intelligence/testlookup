@@ -2,48 +2,37 @@
  * Search — hero-first redesign per design_handoff_search/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (workspace · index counts) + Saved-searches +
- *             Index-settings buttons.
+ *   Header  → title + crumb (workspace · index counts).
  *   Hero    → SearchCommandBar — large autofocused input + ⌘K kbd + Search
- *             button, with mode chips (Hybrid / Keyword / Semantic) and
+ *             button, with mode chips (only Keyword is available) and
  *             scope chips (All · Tests · Runs · Suites · Defects · Flaky ·
  *             Releases) each carrying an item-count badge.
- *   Verdict → 1.4fr | 1fr split. Left: "Index ready" tag + headline
- *             "N items indexed across K entity types" + lede with syntax
- *             hint. Right: 4 stats (Index freshness · Latency p95 ·
- *             Queries today · Zero-result rate).
- *   Ribbon  → slim 4-stage workflow: Query capture · Retrieval mode ·
- *             Ranking · Drill into result.
+ *   Verdict → "Index ready" tag + headline "N items indexed across K entity
+ *             types" + a lede naming exactly which fields are matched, and
+ *             the index-freshness stat.
  *   Body    → 1.65fr | 1fr.
- *     Left  → Recent searches · Saved searches (⌘1-⌘3) · Suggested for you.
- *     Right → Query syntax cheat sheet · Index health (per entity).
- *   Footer → Provenance strip: retrieval config + ranker version.
+ *     Left  → Recent searches · Saved searches (⌘1-⌘3, only when some exist).
+ *     Right → Index health (per entity).
  *
- * Out of scope (Phase 2 — README §14 / §13 cut-line):
- *   - Typeahead preview under the input (debounced 180ms).
- *   - Suggested-for-you backend (currently static 3-row fallback).
- *   - Per-entity pendingEmbedCount / `Embedding` pill — backend doesn't
- *     expose it; we degrade to `Live` for every entity with > 0 docs.
- *   - Clear-history confirmation modal (button currently confirms inline).
+ * Global search is a case-insensitive substring match (SQL ILIKE in
+ * global_search_service.py). There is no field:value syntax, no ranking
+ * model and no query-volume metric, so the page claims none of them.
  *
- * Data: deep-links via querystring (`?q=…&mode=…&scope=…`). Submits route
- * through `searchService.globalSearch` when scope is `all`, or
- * `searchService.search` when scoped to tests (the existing test-only
- * endpoint). Recent + Saved searches persist to localStorage until
- * server-side endpoints land. Suggested-for-you is a static 3-row
- * placeholder until the recommendation service ships.
+ * Data: deep-links via querystring (`?q=…&mode=…&scope=…`). Every submit
+ * goes through `searchService.globalSearch`, narrowed by `entity_types`
+ * when a scope chip is picked. Recent + Saved searches persist to
+ * localStorage.
  */
 import {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, Bookmark, ChevronRight, Clock, Command, Database,
-  History as HistoryIcon, KeyRound, Layers, Lightbulb, ListChecks, Package,
-  Search as SearchIcon, Settings, ShieldCheck, Sparkles, TestTube, X, Zap,
+  AlertTriangle, Bookmark, ChevronRight, Database,
+  History as HistoryIcon, Layers, Package,
+  Search as SearchIcon, ShieldCheck, TestTube, X, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { useNow } from '@/hooks/useNow'
@@ -114,13 +103,6 @@ interface SavedSearch {
   scope: EntityScope
   resultCount?: number
   slot: 1 | 2 | 3
-}
-
-interface SuggestedSearch {
-  id: string
-  query: string
-  rationale: string
-  candidateCount: number
 }
 
 // ── Local storage keys + helpers ────────────────────────────────────────
@@ -210,35 +192,6 @@ function writeSaved(s: SavedSearch[]) {
 }
 
 // ── Atoms ────────────────────────────────────────────────────────────────
-function GhostBtn({
-  children, onClick, title, asChildLink, disabled,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  title?: string
-  asChildLink?: string
-  disabled?: boolean
-}) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
-  if (asChildLink) {
-    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className={cls}
-      style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {children}
-    </button>
-  )
-}
-
 function PrimaryBtn({
   children, onClick, title, disabled, type,
 }: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean; type?: 'button' | 'submit' }) {
@@ -310,7 +263,7 @@ function SearchCommandBar({
           autoFocus
           aria-label="Search across the workspace"
           aria-keyshortcuts="Meta+K"
-          placeholder='Search tests, runs, suites, defects, releases — try "checkout flake last 7d" or "status:failed owner:@team-pay"'
+          placeholder="Search test names, suites, error messages, build numbers, branches, jobs, Jira IDs, releases…"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
@@ -429,17 +382,14 @@ function Chip({
 }
 
 // ── Verdict ribbon ──────────────────────────────────────────────────────
+// The three tiles that used to sit beside freshness (Latency p95, Queries
+// today, Zero-result rate) had no metric behind them and were always "—".
 function VerdictRibbon({
-  totalItems, typeCount, indexStatus, queriesToday, queriesDelta, zeroResultPct, latencyP95Ms,
+  totalItems, typeCount, indexStatus,
 }: {
   totalItems: number
   typeCount: number
   indexStatus: IndexStatus | null
-  /** ``null`` until a real query-volume metric exists — see the call site. */
-  queriesToday: number | null
-  queriesDelta: number | null
-  zeroResultPct: number | null
-  latencyP95Ms: number | null
 }) {
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const freshAge = indexStatus?.last_indexed_at
@@ -451,23 +401,13 @@ function VerdictRibbon({
     : `${Math.round(freshAge / 3600)}h`
   const streaming = freshAge != null && freshAge < 30
 
-  const zeroResultTone =
-    zeroResultPct == null ? 'neutral'
-    : zeroResultPct > 10 ? 'bad'
-    : zeroResultPct > 5  ? 'warn'
-    : 'good'
-  const zeroResultColor = zeroResultTone === 'bad' ? 'var(--status-failed)'
-    : zeroResultTone === 'warn' ? 'var(--status-broken)'
-    : zeroResultTone === 'good' ? 'var(--status-passed)'
-    : 'var(--color-text)'
-
   const tagPulse = indexStatus?.status === 'healthy'
   return (
     <section
       aria-label="Index verdict"
       className="relative rounded-xl border overflow-hidden grid gap-0 mb-3.5"
       style={{
-        gridTemplateColumns: '1.4fr 1fr',
+        gridTemplateColumns: 'minmax(0, 1fr) auto',
         background: 'var(--color-bg-card)',
         borderColor: 'var(--color-border)',
       }}
@@ -490,170 +430,39 @@ function VerdictRibbon({
         <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
           {Intl.NumberFormat().format(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
-        <p className="text-[13px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '64ch' }}>
-          Global search matches your text against names, titles and error messages across every
-          entity type, case-insensitively.
-          {' '}Filters apply before matching. Use <code className="font-mono text-[11.5px]">field:value</code> syntax to scope, e.g.{' '}
-          <code className="font-mono text-[11.5px]">status:failed owner:@team-pay last:7d</code>.
+        {/* Exactly the columns global_search_service.py matches with ILIKE. */}
+        <p className="text-[13px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
+          Case-insensitive substring match on test names, suite names, error messages and tags;
+          run build numbers, branches, jobs and tags; defect Jira IDs; flaky test names; and
+          release names and versions.
         </p>
       </div>
 
       <div
-        className="grid items-stretch"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', borderLeft: '1px solid var(--color-border)' }}
+        className="flex items-stretch"
+        style={{ borderLeft: '1px solid var(--color-border)' }}
       >
-        <VerdictStat label="Index freshness" value={freshLabel} sub={streaming ? 'streaming' : 'static'} isFirst />
-        <VerdictStat label="Latency p95" value={latencyP95Ms != null ? `${latencyP95Ms}` : '—'} sub="ms" />
-        <VerdictStat
-          label="Queries today"
-          value={
-            queriesToday != null
-              ? Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(queriesToday)
-              : '—'
-          }
-          sub={queriesDelta != null ? `${queriesDelta > 0 ? '+' : ''}${queriesDelta}%` : 'no data'}
-        />
-        <VerdictStat
-          label="Zero-result rate"
-          value={zeroResultPct != null ? `${zeroResultPct.toFixed(1)}%` : '—'}
-          sub="target ≤ 5%"
-          valueColor={zeroResultColor}
-          isLast
-        />
-      </div>
+        <VerdictStat label="Index freshness" value={freshLabel} sub={streaming ? 'streaming' : 'static'} />      </div>
     </section>
   )
 }
 
 function VerdictStat({
-  label, value, sub, valueColor, isFirst, isLast,
+  label, value, sub,
 }: {
   label: string
   value: React.ReactNode
   sub?: React.ReactNode
-  valueColor?: string
-  isFirst?: boolean
-  isLast?: boolean
 }) {
   return (
-    <div
-      className="flex flex-col justify-center gap-0.5"
-      style={{
-        padding: '14px 16px',
-        borderRight: isLast ? '0' : '1px solid var(--color-border)',
-        borderLeft: isFirst ? '0' : undefined,
-      }}
-    >
+    <div className="flex flex-col justify-center gap-0.5" style={{ padding: '14px 18px' }}>
       <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
         {label}
       </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 18, color: valueColor ?? 'var(--color-text)', letterSpacing: '-0.01em' }}>
+      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 18, color: 'var(--color-text)', letterSpacing: '-0.01em' }}>
         {value}
         {sub && <span className="text-[11px] font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
       </div>
-    </div>
-  )
-}
-
-// ── Workflow ribbon ─────────────────────────────────────────────────────
-type StageStatus = 'done' | 'active' | 'pending'
-
-interface RibbonStage {
-  num: number
-  name: string
-  description: string
-  status: StageStatus
-  Icon: typeof SearchIcon
-}
-
-function buildRibbon(hasQuery: boolean, isSearching: boolean): RibbonStage[] {
-  return [
-    {
-      num: 1, name: 'Query capture',
-      description: 'Parse text + field:value filters + scope.',
-      status: hasQuery ? 'done' : 'active',
-      Icon: SearchIcon,
-    },
-    {
-      num: 2, name: 'Retrieval mode',
-      description: 'Keyword substring match across entity types.',
-      status: hasQuery ? (isSearching ? 'active' : 'done') : 'pending',
-      Icon: ListChecks,
-    },
-    {
-      num: 3, name: 'Ranking',
-      description: 'Recency, ownership, severity weighting.',
-      status: hasQuery && !isSearching ? 'done' : 'pending',
-      Icon: Sparkles,
-    },
-    {
-      num: 4, name: 'Drill into result',
-      description: 'Open test, run, defect, or related items.',
-      status: 'pending',
-      Icon: ArrowRight,
-    },
-  ]
-}
-
-function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
-  const doneCount = stages.filter(s => s.status === 'done').length
-  return (
-    <section
-      aria-label="Search workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-1.5">
-          Retrieval workflow
-          <span className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>4 stages</span>
-        </h3>
-        <span className="text-[11.5px] text-[var(--color-text-muted)]">
-          {doneCount} of {stages.length} stages active
-        </span>
-      </div>
-      <div
-        className="grid rounded-md overflow-hidden"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', border: '1px solid var(--color-border)' }}
-      >
-        {stages.map((s, i) => <StageCell key={s.num} stage={s} isLast={i === stages.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  const Icon = stage.Icon
-  const ic = stage.status === 'done'
-    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)' }
-    : stage.status === 'active'
-      ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', fg: 'var(--color-accent)' }
-      : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
-  const trackFg = stage.status === 'done' ? 'var(--status-passed)'
-    : stage.status === 'active' ? 'var(--color-accent)'
-    : 'transparent'
-  return (
-    <div
-      className={clsx(
-        'relative flex items-start gap-2.5',
-        stage.status === 'pending' && 'opacity-80',
-      )}
-      style={{ padding: '10px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none mt-px"
-        style={{ width: 22, height: 22, background: ic.bg, color: ic.fg }}
-      >
-        <Icon className="h-3 w-3" />
-      </span>
-      <span className="flex flex-col gap-0.5 min-w-0 flex-1">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] leading-[1.4]">{stage.description}</span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: trackFg, opacity: trackFg === 'transparent' ? 0 : 0.7 }} />
     </div>
   )
 }
@@ -778,7 +587,7 @@ function RecentList({
             Your queries will appear here.
           </p>
           <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-            Try the suggestions on the right or start typing a search.
+            Start typing a search above.
           </p>
         </div>
       ) : (
@@ -813,14 +622,17 @@ function RecentList({
   )
 }
 
+// Nothing on this page creates a saved search any more (no bookmark control
+// exists), so the card renders only rows a browser already holds — never an
+// empty state pointing at a button that is not there.
 function SavedList({
-  rows, onPick, onUnsave, onManage,
+  rows, onPick, onUnsave,
 }: {
   rows: SavedSearch[]
   onPick: (r: SavedSearch) => void
   onUnsave: (id: string) => void
-  onManage: () => void
 }) {
+  if (rows.length === 0) return null
   return (
     <CardShell
       title={
@@ -829,84 +641,27 @@ function SavedList({
           Saved searches
         </span>
       }
-      rightSlot={
-        rows.length > 0 && (
-          <button
-            type="button"
-            onClick={onManage}
-            className="hover:underline"
-            style={{ color: 'var(--color-accent)' }}
-          >
-            Manage →
-          </button>
-        )
-      }
-    >
-      {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center">
-          <p className="text-[13px] m-0 mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-            No saved searches yet.
-          </p>
-          <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-            Save a query by clicking <Bookmark className="inline h-3 w-3 align-text-bottom" /> next to a result.
-          </p>
-        </div>
-      ) : (
-        <div>
-          {rows.map(r => (
-            <ListRow
-              key={r.id}
-              Icon={Bookmark}
-              iconBg="color-mix(in srgb, var(--status-broken) 14%, transparent)"
-              iconFg="var(--status-broken)"
-              query={r.label || r.query}
-              meta={
-                <>
-                  <strong className="text-[var(--color-text-secondary)] font-semibold">scope:</strong>{' '}{r.scope}
-                  {' · '}
-                  <strong className="text-[var(--color-text-secondary)] font-semibold">filter:</strong>{' '}
-                  <code className="font-mono text-[11px]" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--color-border)', borderRadius: 3, padding: '1px 5px' }}>{r.query}</code>
-                </>
-              }
-              trailing={<Kbd>⌘{r.slot}</Kbd>}
-              onClick={() => onPick(r)}
-              onSecondary={() => onUnsave(r.id)}
-              secondaryLabel={`Remove saved search "${r.label || r.query}"`}
-            />
-          ))}
-        </div>
-      )}
-    </CardShell>
-  )
-}
-
-function SuggestedList({ rows, onPick }: { rows: SuggestedSearch[]; onPick: (r: SuggestedSearch) => void }) {
-  if (rows.length === 0) return null
-  return (
-    <CardShell
-      title={
-        <span className="inline-flex items-center gap-2">
-          <Lightbulb className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          Suggested for you
-        </span>
-      }
-      rightSlot={<span>based on recent activity</span>}
     >
       <div>
         {rows.map(r => (
           <ListRow
             key={r.id}
-            Icon={Lightbulb}
-            iconBg="color-mix(in srgb, var(--status-passed) 14%, transparent)"
-            iconFg="var(--status-passed)"
-            query={r.query}
+            Icon={Bookmark}
+            iconBg="color-mix(in srgb, var(--status-broken) 14%, transparent)"
+            iconFg="var(--status-broken)"
+            query={r.label || r.query}
             meta={
               <>
-                <strong className="text-[var(--color-text-secondary)] font-semibold">~{r.candidateCount}</strong> candidates · {r.rationale}
+                <strong className="text-[var(--color-text-secondary)] font-semibold">scope:</strong>{' '}{r.scope}
+                {' · '}
+                <strong className="text-[var(--color-text-secondary)] font-semibold">filter:</strong>{' '}
+                <code className="font-mono text-[11px]" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--color-border)', borderRadius: 3, padding: '1px 5px' }}>{r.query}</code>
               </>
             }
-            trailing={<Kbd>↵</Kbd>}
+            trailing={<Kbd>⌘{r.slot}</Kbd>}
             onClick={() => onPick(r)}
+            onSecondary={() => onUnsave(r.id)}
+            secondaryLabel={`Remove saved search "${r.label || r.query}"`}
           />
         ))}
       </div>
@@ -915,41 +670,6 @@ function SuggestedList({ rows, onPick }: { rows: SuggestedSearch[]; onPick: (r: 
 }
 
 // ── Right rail ──────────────────────────────────────────────────────────
-function QuerySyntaxCard() {
-  const tokens: { token: string; desc: string }[] = [
-    { token: 'status:failed',    desc: 'runs / tests with status' },
-    { token: 'owner:@team-pay',  desc: 'scoped to team' },
-    { token: 'last:7d',          desc: 'time window (m, h, d, w)' },
-    { token: 'release:v2.4',     desc: 'tagged to release' },
-    { token: 'severity:P0',      desc: 'defects P0–P3' },
-    { token: 'stability:<0.6',   desc: 'flaky threshold' },
-    { token: '"exact phrase"',   desc: 'phrase match' },
-    { token: 'error:~timeout',   desc: 'fuzzy / semantic' },
-  ]
-  return (
-    <CardShell title="Query syntax" rightSlot={<span>field:value</span>}>
-      <div className="px-4 py-3 grid gap-1.5" style={{ gridTemplateColumns: '110px 1fr' }}>
-        {tokens.map((t, i) => (
-          <Fragment key={i}>
-            <code
-              className="font-mono text-[11px] px-1.5 py-0.5 rounded-sm self-center"
-              style={{
-                background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--color-accent) 18%, transparent)',
-                color: 'var(--color-accent)',
-                width: 'fit-content',
-              }}
-            >
-              {t.token}
-            </code>
-            <span className="text-[12px] text-[var(--color-text-secondary)] self-center">{t.desc}</span>
-          </Fragment>
-        ))}
-      </div>
-    </CardShell>
-  )
-}
-
 interface EntityHealth {
   entity: SearchEntityType
   label: string
@@ -1031,49 +751,6 @@ function IndexHealthCard({ rows }: { rows: EntityHealth[] }) {
   )
 }
 
-// ── Provenance footer ───────────────────────────────────────────────────
-// Every claim this used to make was false. It named an embedding model
-// (nomic-embed-text), a ranker version, a k of 20 and a semantic ratio of 0.5,
-// none of which exist: global search is SQL ILIKE. `k=20` also contradicted the
-// page's own RESULTS_PAGE_SIZE of 25. A provenance row exists to tell the
-// reader how much to trust the results above it, so a fabricated one is worse
-// than none. It now states only what the request actually did.
-function ProvenanceFooter(
-  { resultCount, typeCount, searchType }:
-  { resultCount: number; typeCount: number; searchType?: string },
-) {
-  const normalizedSearchType = searchType?.trim().toLowerCase()
-  const retrievalLabel = normalizedSearchType
-    ? `${normalizedSearchType.charAt(0).toUpperCase()}${normalizedSearchType.slice(1)}`
-    : 'Keyword'
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>{retrievalLabel} retrieval</span>
-        <span aria-hidden>·</span>
-        <span>case-insensitive substring match</span>
-        <span aria-hidden>·</span>
-        <span>{typeCount} entity type{typeCount === 1 ? '' : 's'}</span>
-        <span aria-hidden>·</span>
-        <span>{Intl.NumberFormat().format(resultCount)} match{resultCount === 1 ? '' : 'es'}</span>
-        <span aria-hidden>·</span>
-        <span>page size {RESULTS_PAGE_SIZE}</span>
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Ranking trail — coming in Phase 2', { icon: '🪪' })}
-      >
-        Ranking trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
-  )
-}
-
 // ── Shared shell ────────────────────────────────────────────────────────
 function CardShell({
   title, rightSlot, children,
@@ -1093,12 +770,6 @@ function CardShell({
       {children}
     </div>
   )
-}
-
-// React.Fragment locally so QuerySyntaxCard's grid template doesn't need an
-// imported alias.
-function Fragment({ children }: { children: React.ReactNode }) {
-  return <>{children}</>
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1409,19 +1080,6 @@ export default function SearchPage() {
     [indexStatus, entityCounts],
   )
 
-  // Static suggestions placeholder until the backend ships /search/suggested.
-  const suggested: SuggestedSearch[] = useMemo(() => {
-    if (recents.length > 0) return []
-    return [
-      { id: 's1', query: 'status:failed last:24h',         rationale: 'all failures in the last day',         candidateCount: Math.min(totalIndexed, 47) },
-      { id: 's2', query: 'stability:<0.6 owner:@team-pay', rationale: 'flaky tests owned by payments',         candidateCount: Math.min(totalIndexed, 12) },
-      { id: 's3', query: 'severity:P0 release:v2.4',       rationale: 'P0 defects tagged to the release',     candidateCount: Math.min(totalIndexed, 3) },
-    ]
-  }, [recents.length, totalIndexed])
-
-  const hasQuery = !!response && query.trim() !== ''
-  const ribbonStages = useMemo(() => buildRibbon(hasQuery, isSearching), [hasQuery, isSearching])
-
   const projectLabel = project?.name ?? 'All Projects'
 
   return (
@@ -1444,22 +1102,6 @@ export default function SearchPage() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <GhostBtn
-            onClick={() => toast('Saved-search manager — coming in Phase 2', { icon: '⭐' })}
-            title="Manage saved searches"
-          >
-            <Bookmark className="h-3.5 w-3.5" />
-            Saved searches
-          </GhostBtn>
-          <GhostBtn
-            onClick={() => toast('Index settings — coming in Phase 2', { icon: '⚙️' })}
-            title="Configure search index"
-          >
-            <Settings className="h-3.5 w-3.5" />
-            Index settings
-          </GhostBtn>
-        </div>
       </header>
 
       <SearchCommandBar
@@ -1478,18 +1120,7 @@ export default function SearchPage() {
         totalItems={totalIndexed}
         typeCount={6}
         indexStatus={indexStatus}
-        // No query-volume metric exists yet (a P2 backend ask). This used to
-        // pass ``recents.length * 24`` — the count of searches in *this
-        // browser's* localStorage times an arbitrary 24 — which rendered as a
-        // platform KPI beside a sub-label that already read "no data". The
-        // other three tiles degrade to an em dash; this one now does too.
-        queriesToday={null}
-        queriesDelta={null}
-        zeroResultPct={null}
-        latencyP95Ms={null}
       />
-
-      <WorkflowRibbon stages={ribbonStages} />
 
       {response?.result_status === 'partial' && (
         <div
@@ -1561,7 +1192,7 @@ export default function SearchPage() {
               <>
                 <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
                 <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-                  Broaden the scope, simplify the query, or check the syntax guide on the right.
+                  Broaden the scope or try a shorter part of the name.
                 </p>
               </>
             ) : (
@@ -1576,10 +1207,10 @@ export default function SearchPage() {
         </CardShell>
       )}
 
-      {/* Browse-mode helper grid — recent/saved/suggested + index health.
+      {/* Browse-mode helper grid — recent/saved searches + index health.
           Visible whenever no query is active, so a user landing at
-          /search with scope=all (browse mode) still sees the syntax
-          guide and Index Health alongside the auto-loaded results.
+          /search with scope=all (browse mode) still sees Index Health
+          alongside the auto-loaded results.
           Hidden once the user types a query so the screen focuses on
           their search results. */}
       {query.trim() === '' && (
@@ -1594,23 +1225,13 @@ export default function SearchPage() {
               rows={saved}
               onPick={(r) => handlePick(r.query, r.mode, r.scope)}
               onUnsave={handleUnsave}
-              onManage={() => toast('Saved-search manager — coming in Phase 2', { icon: '⭐' })}
             />
-            <SuggestedList rows={suggested} onPick={(r) => handlePick(r.query, 'keyword', 'all')} />
           </div>
           <div className="flex flex-col gap-3.5 min-w-0">
-            <QuerySyntaxCard />
             <IndexHealthCard rows={indexHealthRows} />
           </div>
         </div>
       )}
-
-      {/* Provenance footer always rendered */}
-      <ProvenanceFooter
-        resultCount={response?.total ?? 0}
-        typeCount={scope === 'all' ? 6 : 1}
-        searchType={response?.search_type}
-      />
 
       {isSearching && (
         <div className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] text-[var(--color-text-secondary)] bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-lg">
@@ -1673,6 +1294,3 @@ const ENTITY_PALETTE: Record<SearchEntityType, { bg: string; fg: string }> = {
   flaky_test: { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' },
   release:    { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' },
 }
-
-// Phase-2 imports kept referenced.
-void Clock; void KeyRound; void Command

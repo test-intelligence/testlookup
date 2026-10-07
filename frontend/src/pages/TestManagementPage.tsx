@@ -934,14 +934,14 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const navigate = useNavigate()
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
-  // Single-select today; multi-select chips with a popover are Phase 2 per
-  // README §6 "Select chip click opens a popover with checkboxes".
+  // Single-select chips (README §6's multi-select popover is not built).
+  // No owner filter: the chip was a disabled stub with a single "Anyone"
+  // option, so it is not rendered and the list is never owner-filtered.
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('')
   const [testType, setTestType] = useState('')
   const [priority, setPriority] = useState('')
   const [search, setSearch] = useState('')
-  const [ownerFilter, setOwnerFilter] = useState('')
   const [suiteFilter, setSuiteFilter] = useState('')
   const [savedView, setSavedView] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -999,11 +999,11 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       testType,
       priority,
       search,
-      ownerFilter,
+      ownerFilter: '',
       suiteFilter,
       includeAutomation,
     })
-  }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
+  }, [page, status, testType, priority, search, suiteFilter, includeAutomation])
 
   const {
     data,
@@ -1147,19 +1147,19 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const healthTone = healthScore >= 85 ? 'var(--status-passed)' : healthScore >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
 
   // ── Saved views (synthesised) ───────────────────────────────────────
-  type SavedViewId = 'my_drafts' | 'p0_p1' | 'unautomated'
+  // An "Unautomated" view used to sit here: it cleared every filter and
+  // applied none (there is no server-side automation filter), so it showed
+  // the whole library under a label that promised a subset. Removed.
   const SAVED_VIEWS: { id: SavedViewId; label: string }[] = [
     { id: 'my_drafts',   label: 'My drafts' },
     { id: 'p0_p1',       label: "My team's P0/P1" },
-    { id: 'unautomated', label: 'Unautomated' },
   ]
   const applySavedView = (id: SavedViewId) => {
     setSavedView(id)
     setPage(1)
     // Re-write filter state from the view definition.
-    if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
-    if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
-    if (id === 'unautomated') { setStatus(''); setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter(''); /* automation flag — Phase 2 server-side filter */ }
+    if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter('') }
+    if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter('') }
   }
 
   // ── Automation split ────────────────────────────────────────────────
@@ -1235,15 +1235,12 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         onTypeChange={(v) => { setTestType(v); setPage(1); setSavedView(null) }}
         priority={priority}
         onPriorityChange={(v) => { setPriority(v); setPage(1); setSavedView(null) }}
-        ownerFilter={ownerFilter}
-        onOwnerChange={(v) => { setOwnerFilter(v); setPage(1); setSavedView(null) }}
         suiteFilter={suiteFilter}
         onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
         suiteOptions={Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()}
         savedView={savedView}
         savedViews={SAVED_VIEWS}
         onSavedView={(v) => applySavedView(v.id)}
-        onSaveCurrent={() => toast('Save view — coming in Phase 2', { icon: '⭐' })}
         includeAutomation={includeAutomation}
         onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
@@ -1298,15 +1295,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                   title="Export to Excel"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5" /> Export
-                </button>
-                <button
-                  onClick={() => toast('Import CSV — coming in Phase 2', { icon: '📥' })}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
-                  style={{ borderColor: 'var(--color-border)' }}
-                >
-                  <Download className="h-3.5 w-3.5 rotate-180" /> Import CSV
-                </button>
-                {projectId && (
+                </button>                {projectId && (
                   <>
                     <button
                       onClick={() => setShowAiGen(true)}
@@ -1339,7 +1328,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 projectId={projectId}
                 onCreate={() => setShowCreate(true)}
                 onAiGenerate={() => setShowAiGen(true)}
-                onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setOwnerFilter(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
+                onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
               />
             ) : (
               <CasesTableBody
@@ -1401,14 +1390,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         <span className="flex items-center gap-1.5 flex-wrap">
           <span>Library refreshed {refreshedAt}</span>
         </span>
-        <button
-          type="button"
-          className="hover:underline inline-flex items-center gap-1"
-          style={{ color: 'var(--color-accent)' }}
-          onClick={() => toast('Knowledge graph viewer — coming in Phase 2', { icon: '🪪' })}
-        >
-          Knowledge graph <ChevronRight className="h-3 w-3" />
-        </button>
       </div>
 
       {showCreate && projectId && (
@@ -1647,6 +1628,8 @@ function VerdictStat({ label, value, sub, isFirst, isLast }: { label: string; va
 }
 
 // ── Filter bar ──────────────────────────────────────────────────────────
+type SavedViewId = 'my_drafts' | 'p0_p1'
+
 interface CasesFilterBarProps {
   searchInputRef: React.RefObject<HTMLInputElement | null>
   search: string
@@ -1657,15 +1640,12 @@ interface CasesFilterBarProps {
   onTypeChange: (v: string) => void
   priority: string
   onPriorityChange: (v: string) => void
-  ownerFilter: string
-  onOwnerChange: (v: string) => void
   suiteFilter: string
   onSuiteChange: (v: string) => void
   suiteOptions: string[]
   savedView: string | null
-  savedViews: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }[]
-  onSavedView: (v: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }) => void
-  onSaveCurrent: () => void
+  savedViews: { id: SavedViewId; label: string }[]
+  onSavedView: (v: { id: SavedViewId; label: string }) => void
   // "Show automation-ingested tests too" toggle — merges per-run TestCase
   // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
   includeAutomation: boolean
@@ -1686,15 +1666,12 @@ function CasesFilterBar({
   onTypeChange,
   priority,
   onPriorityChange,
-  ownerFilter,
-  onOwnerChange,
   suiteFilter,
   onSuiteChange,
   suiteOptions,
   savedView,
   savedViews,
   onSavedView,
-  onSaveCurrent,
   includeAutomation,
   onToggleAutomation,
 }: CasesFilterBarProps) {
@@ -1773,10 +1750,6 @@ function CasesFilterBar({
         { value: 'low', label: 'Low' },
       ]} onChange={onPriorityChange} />
 
-      <SelectChip label="Owner" value={ownerFilter} options={[
-        { value: '', label: 'Anyone' },
-      ]} onChange={onOwnerChange} disabled title="Owner filter — coming in Phase 2" />
-
       <SelectChip
         label="Suite"
         value={suiteFilter}
@@ -1813,28 +1786,17 @@ function CasesFilterBar({
           </button>
         )
       })}
-      <button
-        type="button"
-        onClick={onSaveCurrent}
-        className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
-        style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
-        title="Save current filters as a view"
-      >
-        + Save
-      </button>
     </div>
   )
 }
 
 function SelectChip({
-  label, value, options, onChange, disabled, title,
+  label, value, options, onChange,
 }: {
   label: string
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
-  disabled?: boolean
-  title?: string
 }) {
   const active = !!value
   return (
@@ -1844,13 +1806,10 @@ function SelectChip({
         background: active ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
         borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
         color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
-        opacity: disabled ? 0.55 : 1,
       }}
-      title={title}
     >
       <span className="font-medium mr-1">{label}:</span>
       <select
-        disabled={disabled}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={label}
@@ -2305,16 +2264,7 @@ function Legend({ color, label }: { color: string; label: string }) {
 function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   return (
-    <CasesCardShell title={`Review queue · ${rows.length}`} rightSlot={
-      <button
-        type="button"
-        onClick={() => toast('Review queue viewer — coming in Phase 2', { icon: '📥' })}
-        className="hover:underline"
-        style={{ color: 'var(--color-accent)' }}
-      >
-        View all →
-      </button>
-    }>
+    <CasesCardShell title={`Review queue · ${rows.length}`}>
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
           Caught up — review queue is empty.
@@ -2438,16 +2388,7 @@ function GeneratePath({ title, sub, onClick }: { title: string; sub: React.React
 
 function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] }) {
   return (
-    <CasesCardShell title="Strategy gaps" rightSlot={
-      <button
-        type="button"
-        onClick={() => toast('Strategy viewer — coming in Phase 2', { icon: '🪪' })}
-        className="hover:underline"
-        style={{ color: 'var(--color-accent)' }}
-      >
-        Open strategy →
-      </button>
-    }>
+    <CasesCardShell title="Strategy gaps">
       {gaps.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
           No gaps detected against current strategy.
@@ -2491,16 +2432,7 @@ interface RecentEvent { id: string; action?: string; actor_name?: string; entity
 function RecentActivityCard({ events }: { events: RecentEvent[] }) {
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   return (
-    <CasesCardShell title="Recent activity" rightSlot={
-      <button
-        type="button"
-        onClick={() => toast('Audit log viewer — coming in Phase 2', { icon: '📜' })}
-        className="hover:underline"
-        style={{ color: 'var(--color-accent)' }}
-      >
-        Audit log →
-      </button>
-    }>
+    <CasesCardShell title="Recent activity">
       {events.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
           No recent activity.

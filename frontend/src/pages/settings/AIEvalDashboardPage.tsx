@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
+import Disclosure from '@/components/ui/Disclosure';
 import { buildAIEvalWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type EvalGateResult,
@@ -124,16 +125,6 @@ export default function AIEvalDashboardPage() {
       <PageHeader
         title="AI Evaluation Dashboard"
         subtitle="Measure AI output quality: precision, recall, agreement, and drift over time."
-      />
-
-      <WorkflowTimeline
-        title="Evaluation workflow"
-        subtitle="Create datasets, run evaluations, compare with a baseline, and keep the gate honest"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
       />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
@@ -574,6 +565,19 @@ export default function AIEvalDashboardPage() {
           )}
         </>
       )}
+
+      {/* The dataset → evaluation → baseline → gate stage flow, built from the
+          data above: collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false}>
+        <WorkflowTimeline
+          title="Evaluation workflow"
+          subtitle="Create datasets, run evaluations, compare with a baseline, and keep the gate honest"
+          stages={workflow.stages}
+          events={workflow.events}
+          stageOrder={workflow.stageOrder}
+          showInspector
+        />
+      </Disclosure>
     </div>
   );
 }

@@ -107,8 +107,12 @@ def test_the_api_default_matches_the_frontend_store():
 
 
 def test_the_intelligence_page_default_matches_too():
-    """That page keeps its own URL-param default so deep-links stay shareable,
-    which is exactly why it can drift from the store unnoticed."""
+    """That page kept its own URL-param default ('30d') so deep-links stayed
+    shareable, which is exactly how it could drift from the store unnoticed.
+
+    Since the UX redesign P2 it has no default of its own: without a
+    ``?range=`` it follows the global store (snapped to its options), so it
+    cannot drift. Hold that shape, and that the old private default is gone."""
     from pathlib import Path
 
     page = (
@@ -121,7 +125,9 @@ def test_the_intelligence_page_default_matches_too():
     if not page.exists():  # pragma: no cover
         pytest.skip("frontend not present in this checkout")
     text = page.read_text(encoding="utf-8")
-    assert "params.get('range') ?? '30d'" in text
+    assert "params.get('range') ?? '30d'" not in text
+    assert "useTimeWindowStore(s => s.days)" in text
+    assert "snapToAllowed(storedDays, RANGE_DAYS)" in text
 
 
 def test_the_store_migration_reseeds_superseded_defaults():

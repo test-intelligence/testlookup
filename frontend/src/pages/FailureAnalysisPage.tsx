@@ -3,7 +3,7 @@
  * design_handoff_failure_analysis/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (project · window · updated) + Customize +
+ *   Header  → title + crumb (project · window · updated) + saved views +
  *             7d/14d/30d/90d window picker + Export + "Open triage queue" CTA.
  *   Verdict → 1.45fr | 1fr split. Five variants (REPEAT_FAILURE blocked /
  *             FLAKY at-risk / FIRST_TIME at-risk / RECOVERING info / STABLE
@@ -12,29 +12,18 @@
  *             44 px stability score + threshold-marked meter (red→amber→
  *             green) + 2×2 weighted dimension grid (Pass rate 35 % /
  *             Categorization 20 % / Flake-free 20 % / Time to fix 25 %).
- *   Ribbon  → slim 4-stage workflow strip with skip-aware variant: Flaky
- *             Detection skipped when there's no flake signal, rendered
- *             informational (not red).
- *   KPIs    → 5 cells: Repeat failures · Flaky tests (zero = good!) ·
- *             Uncategorized (≥50% warns) · Total executions · Mean time
- *             to fix.
+ *   KPIs    → 4 cells: Repeat failures · Flaky tests (zero = good!) ·
+ *             Uncategorized (≥50% warns) · Total executions.
  *   Body    → 1.65fr | 1fr.
- *     Left  → What's failing (assertion block + 14-cell run strip) +
+ *     Left  → What's failing (headline test + 14-cell run strip) +
  *             Failure-category distribution + Failure timeline.
  *     Right → Flakiness card (zero-state positive — the load-bearing
- *             reframe) + Recommended actions + Provenance footer.
- *
- * Out of scope (Phase 2 — README §"Out of Scope"):
- *   - <600 px mobile (bottom-fixed notice on narrow viewports)
- *   - Workflow stage drawer body
- *   - Decision-trail modal body
- *   - Print styles
+ *             reframe).
  *
  * Data: derives the verdict from existing useFlakyTests / useTopFailing /
- * useFailureCategories / useTrendData. The README proposes a dedicated
- * /api/projects/:id/failures and a runs sub-resource — neither exists
- * yet, so v1 fills the run strip from the trend tail and synthesizes
- * MTTF / lastGreenSha placeholders.
+ * useFailureCategories / useTrendData. There is no per-failure endpoint
+ * (stack traces, owners, mean time to fix), so the page shows none of those: the
+ * run strip is filled from the trend tail.
  *
  * Wired actions (US-2.4):
  *   - "Mute test" → manual quarantine proposal (POST /api/v1/quarantine,
@@ -55,8 +44,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
-  Download, FileText, GitBranch, GitCommit, LayoutGrid, Minus, Search, ShieldCheck,
+  AlertTriangle, Check, ChevronRight,
+  Download, GitBranch, GitCommit, Search, ShieldCheck,
   TestTube, TriangleAlert, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -67,13 +56,11 @@ import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useSuspects } from '@/hooks/useCommitAttribution'
 import CorrectClassificationModal, {
   CATEGORY_CHOICES,
 } from '@/components/ai/CorrectClassificationModal'
 import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
@@ -818,126 +805,6 @@ function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] })
   )
 }
 
-// ── Workflow ribbon ───────────────────────────────────────────────────────
-type StageDisplay = 'done' | 'skipped' | 'failed'
-
-interface RibbonStage {
-  num: number
-  name: string
-  status: StageDisplay
-  evidence: number
-  meta?: React.ReactNode
-}
-
-function buildRibbon(model: StabilityModel): RibbonStage[] {
-  // Flaky-detection skipped only when there's no flake signal AND we have
-  // failures in the window (meaning the stage couldn't run usefully).
-  // Otherwise it ran and returned 0 — that's a 'done' stage.
-  const flakyDetectionRan = model.flakyCount > 0 || model.failedRuns === 0
-  return [
-    {
-      num: 1, name: 'Flaky Detection',
-      status: flakyDetectionRan ? 'done' : 'skipped',
-      evidence: model.flakyCount,
-      meta: flakyDetectionRan
-        ? <>{model.flakyCount} evidence</>
-        : <span className="italic">Skipped · no flake signal</span>,
-    },
-    {
-      num: 2, name: 'Category Clustering',
-      status: 'done',
-      evidence: 1,
-      meta: model.totalCategorised === 0
-        ? <>0 evidence · <span style={{ color: 'var(--color-text-faint)' }}>no failures yet</span></>
-        : model.uncategorizedPct >= 50
-          ? <>1 evidence · <span style={{ color: 'var(--status-broken)', fontWeight: 600 }}>unknown cluster</span></>
-          : <>1 evidence · <span style={{ color: 'var(--status-passed)', fontWeight: 600 }}>{Math.round(100 - model.uncategorizedPct)}% confidence</span></>,
-    },
-    {
-      num: 3, name: 'Hotspot Ranking',
-      status: 'done',
-      evidence: 1,
-      meta: <>1 evidence · <span style={{ color: model.repeatFailures.length > 0 ? 'var(--status-failed)' : 'var(--status-passed)', fontWeight: 600 }}>{model.repeatFailures.length} repeat{model.repeatFailures.length === 1 ? '' : 's'}</span></>,
-    },
-    {
-      num: 4, name: 'Remediation Focus',
-      status: 'done',
-      evidence: 1,
-      meta: <>1 evidence</>,
-    },
-  ]
-}
-
-function CoverageRibbon({ stages }: { stages: RibbonStage[] }) {
-  const completed = stages.filter(s => s.status === 'done').length
-  const skipped   = stages.filter(s => s.status === 'skipped').length
-  const evidence  = stages.reduce((s, x) => s + (x.status === 'skipped' ? 0 : x.evidence), 0)
-  // Four cells across from 768 px; two by two below it. At 375 px a quarter (77 px) is narrower than a
-  // one-word stage name ("Categorization"), and the ribbon pushed the page sideways (Wave 3, X3).
-  const columns = useMinWidth(BODY_GRID_MIN_WIDTH) ? 4 : 2
-  return (
-    <section
-      aria-label="Failure analysis workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Failure analysis workflow · last analysis</h3>
-        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-          <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: 'var(--status-passed)' }} />
-          {completed} of {stages.length} stages completed
-          {skipped > 0 && <> · {skipped} skipped</>}
-          <> · {evidence} evidence item{evidence === 1 ? '' : 's'}</>
-        </div>
-      </div>
-      <div className="grid" data-ribbon-columns={columns} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
-        {stages.map((s, i) => (
-          <StageCell key={s.num} stage={s} isLast={i === stages.length - 1 || (i + 1) % columns === 0} />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)', fg: 'var(--status-passed)', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
-    : stage.status === 'failed'
-      ? { bg: 'var(--status-failed-soft)', fg: 'var(--status-failed)', icon: <XCircle className="h-2.5 w-2.5" strokeWidth={3} /> }
-      : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <Minus className="h-2.5 w-2.5" strokeWidth={3} /> }
-  const trackFg = stage.status === 'done' ? 'var(--status-passed)'
-    : stage.status === 'failed' ? 'var(--gate-no-go)'
-    : 'var(--color-text-muted)'
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}, ${stage.status}, ${stage.evidence} evidence`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className={clsx(
-        'relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
-        stage.status === 'skipped' && 'opacity-80',
-      )}
-      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none"
-        style={{ width: 18, height: 18, background: ic.bg, color: ic.fg }}
-      >
-        {ic.icon}
-      </span>
-      <span className="flex flex-col gap-px min-w-0">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">{stage.meta}</span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: trackFg, opacity: 0.7 }} />
-    </button>
-  )
-}
-
 // ── KPI strip ─────────────────────────────────────────────────────────────
 type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
 
@@ -1036,10 +903,13 @@ const NOT_RUN = 'not run'
 const RUN_STRIP_TEXT = { none: 'Not run' }
 
 function WhatsFailingCard({
-  topFailingTest, totalRuns, trend, onMute, muteDisabledReason,
+  topFailingTest, flakyEntry, totalRuns, trend, onMute, muteDisabledReason,
   onCreateJira, createJiraDisabledReason, onShowSuspects, showSuspectsDisabledReason,
 }: {
   topFailingTest: TopFailingItem | null
+  /** The headline test's own flaky-list entry, when the flake detector (or a
+   *  human triage) has flagged it. Drives the card's only status pill. */
+  flakyEntry: FlakyTestItem | null
   totalRuns: number
   trend: TrendPoint[]
   onMute: () => void
@@ -1123,8 +993,12 @@ function WhatsFailingCard({
               testFingerprint={topFailingTest.test_fingerprint}
             />
           )}
-          <Pill tone="bad">Hard regression</Pill>
-          <Pill tone="neutral">Not flaky</Pill>
+          {/* A status pill only when the data says so: the flaky list names
+              this test, or it failed in two or more runs (the page's own
+              "Repeat failures" rule). Otherwise no pill. */}
+          {flakyEntry
+            ? <Pill tone="warn">Flaky</Pill>
+            : topFailingTest.fail_count >= 2 && <Pill tone="bad">Repeat failure</Pill>}
         </div>
       }
     >
@@ -1144,7 +1018,6 @@ function WhatsFailingCard({
             <div className="text-[12px] text-[var(--color-text-muted)] mt-1 flex flex-wrap gap-x-3 gap-y-1">
               <span>Failed across <strong style={{ color: 'var(--color-text)' }}>{topFailingTest.fail_count}</strong> run{topFailingTest.fail_count === 1 ? '' : 's'}</span>
               <span>· of {totalRuns} total in window</span>
-              <span>· per-test owner data not yet available</span>
             </div>
             {topFailingTest.failure_step && (
               <div
@@ -1163,24 +1036,6 @@ function WhatsFailingCard({
             {topFailingTest.fail_count} failed
           </div>
         </div>
-
-        <pre
-          role="region"
-          aria-label="Recent failure summary"
-          className="font-mono text-[11.5px] m-0 whitespace-pre-wrap"
-          style={{
-            background: 'var(--color-bg)',
-            border: '1px solid var(--color-border)',
-            borderLeft: '2px solid color-mix(in srgb, var(--status-failed) 55%, transparent)',
-            borderRadius: 'var(--radius-sm)',
-            padding: '10px 12px',
-            color: 'var(--color-text-secondary)',
-          }}
-        >
-{`✗ ${topFailingTest.test_name}
-  Failed ${topFailingTest.fail_count} time${topFailingTest.fail_count === 1 ? '' : 's'} in the current window.
-  Per-failure stack traces will appear here when the failures endpoint lands.`}
-        </pre>
 
         <div className="flex items-center gap-2 mt-3">
           <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
@@ -1205,9 +1060,6 @@ function WhatsFailingCard({
         </div>
 
         <div className="flex flex-wrap gap-2 mt-3.5">
-          <GhostBtn onClick={() => toast('Run logs open in /runs — coming in Phase 2', { icon: '🪵' })}>
-            View run logs
-          </GhostBtn>
           <GhostBtn
             onClick={onMute}
             disabled={Boolean(muteDisabledReason)}
@@ -1932,143 +1784,6 @@ function FlakeMetaCell({ k, v, tone }: { k: string; v: string; tone: 'good' | 'n
   )
 }
 
-// ── Recommended actions ───────────────────────────────────────────────────
-interface RecRow {
-  role: 'dev' | 'qa' | 'rm'
-  Icon: typeof CodeIcon
-  label: string
-  body: React.ReactNode
-  dim?: boolean
-  cta?: { label: string; onClick: () => void }
-}
-
-function buildRecActions(
-  model: StabilityModel,
-  actions: { onCorrectClassification: () => void },
-): RecRow[] {
-  const recs: RecRow[] = []
-  const top = model.topFailingTest
-  if (top) {
-    recs.push({
-      role: 'dev',
-      Icon: CodeIcon,
-      label: `Developer · ${(top.test_name.split(/[./\\]/).pop() ?? top.test_name).slice(0, 40)}`,
-      body: (
-        <>
-          Investigate why <code>{top.test_name}</code> is failing — failed {top.fail_count} time{top.fail_count === 1 ? '' : 's'} in this window.
-          {' '}Bisect from the last green run if you have one.
-        </>
-      ),
-      cta: { label: 'Open', onClick: () => toast('Test detail — coming in Phase 2', { icon: '🔍' }) },
-    })
-  }
-  if (model.uncategorizedPct >= 50) {
-    recs.push({
-      role: 'qa',
-      Icon: ShieldCheck,
-      label: 'QA · clustering',
-      body: <>Correct the AI classification so future runs auto-route the failing tests instead of sitting in <em>Unknown</em>.</>,
-      cta: { label: 'Open', onClick: actions.onCorrectClassification },
-    })
-  }
-  recs.push({
-    role: 'rm',
-    Icon: Clock,
-    label: 'Release manager · gating',
-    dim: model.repeatFailures.length === 0,
-    body: model.repeatFailures.length > 0
-      ? <>Block deploys that include the failing test{model.repeatFailures.length === 1 ? '' : 's'} in their gate path until the regression is resolved.</>
-      : <>No deploy-gate action required — no repeat failures in this window.</>,
-    cta: model.repeatFailures.length > 0
-      ? { label: 'Open', onClick: () => toast('Release-gate editor — coming in Phase 2', { icon: '🚦' }) }
-      : undefined,
-  })
-  return recs
-}
-
-function RecommendedActions({ recs }: { recs: RecRow[] }) {
-  return (
-    <CardShell title="Recommended actions" rightSlot={<span>routed by role</span>}>
-      <div className="px-4 py-3.5 flex flex-col gap-2">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">Generated from the failing test and its history.</p>
-        {recs.map((r, i) => <RecActionRow key={i} rec={r} />)}
-      </div>
-    </CardShell>
-  )
-}
-
-function RecActionRow({ rec }: { rec: RecRow }) {
-  const palette = {
-    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
-    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
-  }[rec.role]
-  const Icon = rec.Icon
-  return (
-    <div
-      className={clsx('grid items-center gap-2.5 rounded-md border', rec.dim && 'opacity-60')}
-      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          {rec.label}
-        </div>
-        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
-          {rec.body}
-        </p>
-      </div>
-      {rec.cta ? (
-        <button
-          type="button"
-          onClick={rec.cta.onClick}
-          className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
-          style={{ borderColor: 'var(--color-border)' }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-          onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-        >
-          {rec.cta.label}
-        </button>
-      ) : (
-        <span className="text-[11px] text-[var(--color-text-faint)] px-2">—</span>
-      )}
-    </div>
-  )
-}
-
-// ── Provenance footer ─────────────────────────────────────────────────────
-function ProvenanceFooter({ model, refreshedAt }: { model: StabilityModel; refreshedAt: string }) {
-  const skippedStages = model.repeatFailures.length > 0 && model.flakyCount === 0 ? 1 : 0
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>failure analyzer v2</span>
-        <span aria-hidden>·</span>
-        <span>{model.totalRuns} executions analysed</span>
-        <span aria-hidden>·</span>
-        <span>{skippedStages} stage{skippedStages === 1 ? '' : 's'} skipped</span>
-        <span aria-hidden>·</span>
-        <span>last refreshed {refreshedAt}</span>
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
-  )
-}
-
 // ── Shared shell + pill ───────────────────────────────────────────────────
 function CardShell({
   title, rightSlot, children,
@@ -2256,7 +1971,6 @@ export default function FailureAnalysisPage() {
   const days = snapToAllowed(storedDays, WINDOWS) as Window
   const setDays = setStoredDays as (w: Window) => void
 
-  const [showPicker, setShowPicker] = useState(false)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
@@ -2267,7 +1981,6 @@ export default function FailureAnalysisPage() {
     suite: { names: suiteNames, set: setSelectedSuite },
     release: true,
   })
-  const analyticsView = useAnalyticsView('failures')
   const { options: suiteOptions } = useSuiteOptions(days)
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
@@ -2364,7 +2077,6 @@ export default function FailureAnalysisPage() {
     [flaky, categories, topFailing, trend],
   )
   const verdict = pickVerdict(model)
-  const ribbonStages = useMemo(() => buildRibbon(model), [model])
 
   // ── US-2.4 action state: mute-to-quarantine + classifier correction ──
   // Both actions target the page's headline failing test — the only test
@@ -2414,15 +2126,10 @@ export default function FailureAnalysisPage() {
     setCorrectionOpen(true)
   }, [project?.id, actionTarget])
 
-  const recs = useMemo(
-    () => buildRecActions(model, { onCorrectClassification: openCorrection }),
-    [model, openCorrection],
-  )
-
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
 
-  // Real arrival time of this view's payload. This provenance age used to be
-  // the literal '4h ago' for every project, however fresh the data was.
+  // Real arrival time of this view's payload (the header's "Updated …"). This
+  // age used to be the literal '4h ago' for every project, however fresh the data was.
   const fetchedAt = useDataFreshness(isLoading ? undefined : model)
 
   // ── CTA handlers ─────────────────────────────────────────────────────────
@@ -2741,10 +2448,6 @@ export default function FailureAnalysisPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Customize
-          </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
           <SuiteFilterSelect
             value={selectedSuite}
@@ -2777,86 +2480,72 @@ export default function FailureAnalysisPage() {
         topFailing={topFailing}
       />
 
-      <CoverageRibbon stages={ribbonStages} />
-
-      {analyticsView.widgetIds.includes('failures_kpis') && (
-        <section aria-label="Failure metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-          <KpiCell
-            Icon={TriangleAlert}
-            label="Repeat failures"
-            value={model.repeatFailures.length}
-            tone={model.repeatFailures.length > 0 ? 'bad' : 'good'}
-            meta={model.repeatFailures.length > 0
-              ? <>tests failing ≥ 2 runs · {model.repeatFailures.length} unresolved</>
-              : <>no test failed twice in this window</>
-            }
-            isFirst
-          />
-          <KpiCell
-            Icon={ShieldCheck}
-            label="Flaky tests"
-            value={model.flakyCount}
-            tone={model.flakyCount === 0 ? 'good' : model.flakyCount <= 2 ? 'warn' : 'bad'}
-            meta={model.flakyCount === 0
-              ? <>100% deterministic · positive signal</>
-              : <>{model.flakyCount} test{model.flakyCount === 1 ? '' : 's'} intermittent</>
-            }
-          />
-          <KpiCell
-            Icon={AlertTriangle}
-            label="Uncategorized"
-            value={model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%`}
-            tone={model.uncategorizedPct >= 80 ? 'bad' : model.uncategorizedPct >= 50 ? 'warn' : 'good'}
-            meta={model.totalCategorised === 0
-              ? <>no failures classified yet</>
-              : model.unknownCount > 0
-                ? <>{model.unknownCount} of {model.totalCategorised} failure{model.totalCategorised === 1 ? '' : 's'}</>
-                : <>classifier matched every failure</>
-            }
-          />
-          <KpiCell
-            label="Total executions"
-            value={model.totalRuns}
-            meta={<>{model.passedRuns} passed · {model.failedRuns} failed · {model.skippedRuns} skipped</>}
-          />
-          <KpiCell
-            label="Mean time to fix"
-            value={model.failedRuns === 0 ? '—' : '—'}
-            tone={model.failedRuns === 0 ? 'good' : 'warn'}
-            meta={model.failedRuns === 0
-              ? <>no open failures</>
-              : <>open since first detection</>
-            }
-            isLast
-          />
-        </section>
-      )}
+      <section aria-label="Failure metrics" className="grid grid-cols-2 xl:grid-cols-4 mb-3.5">
+        <KpiCell
+          Icon={TriangleAlert}
+          label="Repeat failures"
+          value={model.repeatFailures.length}
+          tone={model.repeatFailures.length > 0 ? 'bad' : 'good'}
+          meta={model.repeatFailures.length > 0
+            ? <>tests failing ≥ 2 runs · {model.repeatFailures.length} unresolved</>
+            : <>no test failed twice in this window</>
+          }
+          isFirst
+        />
+        <KpiCell
+          Icon={ShieldCheck}
+          label="Flaky tests"
+          value={model.flakyCount}
+          tone={model.flakyCount === 0 ? 'good' : model.flakyCount <= 2 ? 'warn' : 'bad'}
+          meta={model.flakyCount === 0
+            ? <>100% deterministic · positive signal</>
+            : <>{model.flakyCount} test{model.flakyCount === 1 ? '' : 's'} intermittent</>
+          }
+        />
+        <KpiCell
+          Icon={AlertTriangle}
+          label="Uncategorized"
+          value={model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%`}
+          tone={model.uncategorizedPct >= 80 ? 'bad' : model.uncategorizedPct >= 50 ? 'warn' : 'good'}
+          meta={model.totalCategorised === 0
+            ? <>no failures classified yet</>
+            : model.unknownCount > 0
+              ? <>{model.unknownCount} of {model.totalCategorised} failure{model.totalCategorised === 1 ? '' : 's'}</>
+              : <>classifier matched every failure</>
+          }
+        />
+        <KpiCell
+          label="Total executions"
+          value={model.totalRuns}
+          meta={<>{model.passedRuns} passed · {model.failedRuns} failed · {model.skippedRuns} skipped</>}
+          isLast
+        />
+      </section>
 
       <KindFilterChips byKind={byKind} value={kindFilter} onChange={setKindFilter} />
 
       <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
         <div className="flex flex-col gap-3.5 min-w-0">
-          {analyticsView.widgetIds.includes('top_failing_bar') && (
-            <WhatsFailingCard
-              topFailingTest={model.topFailingTest}
-              totalRuns={model.totalRuns}
-              trend={trend}
-              onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
-              muteDisabledReason={muteDisabledReason}
-              onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
-              createJiraDisabledReason={createJiraDisabledReason}
-              onShowSuspects={() => {
-                document
-                  .getElementById('suspects-panel')
-                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }}
-              showSuspectsDisabledReason={
-                latestFailedRun?.id
-                  ? null
-                  : 'No failed run in this window to attribute commits against.'
-              }
-            />
-          )}
+          <WhatsFailingCard
+            topFailingTest={model.topFailingTest}
+            flakyEntry={actionTargetFlakyEntry}
+            totalRuns={model.totalRuns}
+            trend={trend}
+            onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
+            muteDisabledReason={muteDisabledReason}
+            onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
+            createJiraDisabledReason={createJiraDisabledReason}
+            onShowSuspects={() => {
+              document
+                .getElementById('suspects-panel')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+            showSuspectsDisabledReason={
+              latestFailedRun?.id
+                ? null
+                : 'No failed run in this window to attribute commits against.'
+            }
+          />
           {/* Epic 8 US-8.2 — the bisect surface: ranked suspect commits for the
               latest failing run. Honest empty state when no commit range. */}
           <SuspectsPanel
@@ -2864,15 +2553,13 @@ export default function FailureAnalysisPage() {
             fingerprint={model.topFailingTest?.test_fingerprint ?? null}
             panelId="suspects-panel"
           />
-          {analyticsView.widgetIds.includes('failure_category_pie') && (
-            <FailureCategoryCard
-              categories={kindFilteredCategories}
-              totalFailures={model.failedRuns}
-              uncategorizedPct={model.uncategorizedPct}
-              onCorrect={openCorrection}
-              kindFilter={kindFilter}
-            />
-          )}
+          <FailureCategoryCard
+            categories={kindFilteredCategories}
+            totalFailures={model.failedRuns}
+            uncategorizedPct={model.uncategorizedPct}
+            onCorrect={openCorrection}
+            kindFilter={kindFilter}
+          />
           {comparing && (
             comparison ? (
               <ComparisonStrip
@@ -2894,27 +2581,13 @@ export default function FailureAnalysisPage() {
           <FailureTimeline trend={trend} days={days} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
-          {analyticsView.widgetIds.includes('flaky_leaderboard_table') && (
-            <FlakinessCard flaky={flaky} repeatFailures={model.repeatFailures} />
-          )}
-          <RecommendedActions recs={recs} />
+          <FlakinessCard flaky={flaky} repeatFailures={model.repeatFailures} />
         </div>
       </div>
 
       <PageSuiteTargetContext.Provider value={suiteTarget}>
         <FailuresAdvanced days={days} suiteFilter={suiteFilter} />
       </PageSuiteTargetContext.Provider>
-
-      <ProvenanceFooter model={model} refreshedAt={refreshedAt} />
-
-      {showPicker && (
-        <WidgetPicker
-          page="failures"
-          enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
@@ -3011,7 +2684,3 @@ function normaliseList<T>(raw: unknown): T[] {
   }
   return []
 }
-
-// Keep a few Phase-2 imports referenced so re-introducing them doesn't trip
-// unused-imports.
-void FileText; void TestTube

@@ -1,10 +1,8 @@
 /**
  * /overview in presentation mode (VIZ-106, R2-13): the KPI values and their
  * changes stay whole at room size ("8m 32s" broke at its space, "+4.2%" broke
- * under its triangle), and the coverage strip under the trend shows its
- * values at the room's size too (they stayed at desk size while the same
- * numbers above were 40 px). Desk mode is measured alongside: none of it
- * applies there.
+ * under its triangle). Desk mode is measured alongside: none of it applies
+ * there. (The coverage strip under the trend was removed in the UX redesign P2.)
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
@@ -22,7 +20,7 @@ async function seedPresentation(page: Page, enabled: boolean) {
   )
 }
 
-/** Each KPI card's value and change, and each coverage-strip value: text, size, and how many lines it takes. */
+/** Each KPI card's value and change: text, size, and how many lines it takes. */
 function measure(page: Page) {
   return page.evaluate(() => {
     const lines = (el: Element) => {
@@ -54,15 +52,8 @@ function measure(page: Page) {
       kpiGrid.querySelectorAll('[title="Relative change vs the previous period of the same length"]'),
       read,
     )
-    const strip = ['Automation coverage', 'Avg run duration'].map((label) => {
-      // The strip's card (`rounded-md`), not the KPI card of the same name above it.
-      const card = Array.from(document.querySelectorAll('#main-content .rounded-md > div:first-child')).find(
-        (d) => d.textContent === label,
-      )?.parentElement as HTMLElement
-      return { label, ...read((card.lastElementChild as HTMLElement).firstElementChild as HTMLElement) }
-    })
     const columns = getComputedStyle(kpiGrid).gridTemplateColumns.split(' ').length
-    return { values, deltas, strip, columns }
+    return { values, deltas, columns }
   })
 }
 
@@ -70,7 +61,9 @@ for (const width of [640, 1280, 1920]) {
   test.describe(`Overview at ${width} px`, () => {
     test.use({ viewport: { width, height: 1400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-    test('presentation mode: every KPI value and change on one line, the strip’s values at the room’s size', async ({ page }) => {
+    // UX redesign P2: the coverage strip under the KPIs (an always-"—" MTTF tile
+    // and an inferred last green run) was removed; only the KPI grid is measured.
+    test('presentation mode: every KPI value and change on one line', async ({ page }) => {
       await seedPresentation(page, true)
       await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
       await expect(page.locator('html')).toHaveAttribute('data-presentation', 'on')
@@ -80,20 +73,15 @@ for (const width of [640, 1280, 1920]) {
       for (const d of m.deltas) expect(d.lines, `KPI change "${d.text}"`).toBe(1)
       // At xl, four cards a row in the room (six at the desk); below xl the desk's columns hold.
       if (width >= 1280) expect(m.columns, 'four KPI cards a row in the room').toBe(4)
-      for (const s of m.strip) {
-        expect(s.size, `${s.label} "${s.text}"`).toBeGreaterThanOrEqual(36)
-        expect(s.lines, `${s.label} "${s.text}"`).toBe(1)
-      }
       await expectNoHorizontalOverflow(page, `Overview, presentation, ${width}`)
     })
 
-    test('desk mode: the KPI grid and the strip are as they were (six columns, 18 px strip values)', async ({ page }) => {
+    test('desk mode: the KPI grid is as it was (six columns)', async ({ page }) => {
       await seedPresentation(page, false)
       await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready })
       await expect(page.locator('html')).not.toHaveAttribute('data-presentation', 'on')
       const m = await measure(page)
       expect(m.columns).toBe(width >= 1280 ? 6 : 3)
-      for (const s of m.strip) expect(s.size, s.label).toBe(18)
     })
   })
 }

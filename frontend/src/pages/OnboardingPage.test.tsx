@@ -68,10 +68,19 @@ describe('OnboardingPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Activation workflow/i)).toBeInTheDocument()
+    expect((await screen.findAllByText(/Upload Run/i)).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Create Project/i).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/Upload Run/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/Setup Progress/i)).toBeInTheDocument()
+
+    // P2 item 3: the activation workflow is a collapsed "Pipeline" disclosure
+    // at the bottom of the page, after the steps; nothing renders until opened.
+    const pipeline = screen.getByRole('button', { name: 'Pipeline' })
+    expect(pipeline).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/Activation workflow/i)).toBeNull()
+    const lastStep = screen.getAllByText(/Upload Run/i)[0]
+    expect(lastStep.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(pipeline)
+    expect(screen.getByText(/Activation workflow/i)).toBeInTheDocument()
   })
 
   it('breaks the progress count into completed vs skipped, not the folded percentage', async () => {

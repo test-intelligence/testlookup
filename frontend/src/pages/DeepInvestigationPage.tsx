@@ -3,48 +3,37 @@
  * design_handoff_deep_investigation/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb + History + Configure + "Run Deep Analysis" CTA.
+ *   Header  → title + crumb + suite filter + "Run Deep Analysis" CTA.
  *   Verdict → 1.65fr | 1fr split. Variants READY / NO_FAILURES / NO_SOURCES
  *             / RUNNING / FAILED. Left: pulsing eyebrow → 26 px headline
- *             → lede → 4 input facets (Failures eligible · Time window ·
- *             Evidence sources · Pre-scan signal) → CTA row (Run on all ·
- *             Run on selection · Dry run + ⌘⏎ helper). Right: Estimate
- *             card with $cost · ~time + per-stage breakdown + budget bar.
- *   Ribbon  → slim 4-stage workflow with one-sentence description + input/
- *             output pills per stage (Failure clustering · Root cause ·
- *             Evidence synthesis · Defect triage). State drives status icon.
- *   KPIs    → 5 tiles with sparklines: Eligible failures (with severity
- *             distribution bar) · Likely clusters · Last analysis · Avg
- *             cluster confidence · Spend MTD.
+ *             → lede → 4 input facets (Failures eligible · Scope ·
+ *             Evidence sources · Pre-scan signal) → "Run on all" CTA.
+ *             Right: Cost & time card (last run's actual cost, a workload
+ *             heuristic, the real budget bar).
+ *   Cockpit → AI-1 Investigator cockpit.
+ *   KPIs    → 5 tiles: Eligible failures · Likely clusters · Last analysis
+ *             · Avg cluster confidence · Spend MTD.
  *   Body    → 1.65fr | 1fr.
- *     Left  → Proposed clusters preview (3 candidates with confidence,
- *             services, owners) + Past investigations table.
- *     Right → Evidence sources card · Model routing card · Run settings card.
- *   Footer → Provenance line + Decision-trail link.
+ *     Left  → Proposed clusters preview + Recent runs table.
+ *     Right → Evidence sources card · Model routing card.
  *
- * Out of scope (Phase 2 — README §11 + §"Out of scope" implications):
- *   - Pre-scan endpoint — synthesised client-side from existing
- *     useFailureClusters (members + cohesion_score) of the focused run.
- *   - Per-stage cost estimate — no server-side price book; the estimate
- *     card shows the real cost of the focused run's last investigation
- *     (decision trail) plus a workload/time heuristic, never $-rates.
- *   - ⌘⏎ shortcut wiring (helper text shown; no key listener yet).
- *   - Cluster detail page (`/investigations/:runId/clusters/:clusterId`).
+ * Pre-scan is synthesised client-side from useFailureClusters (members +
+ * cohesion_score) of the focused run; there is no pre-scan endpoint.
  *
  * Data: derives every rendered field from useRuns (focused run picker),
- * useFailureClusters, useDeepFindings, deepInvestigationService.getPipelineStatus,
+ * useFailureClusters, useDeepFindings, usePipelineStatus,
  * useIntegrationStatus (evidence-source health), useProjectUsage/useProjectQuota
- * (spend + budget), and useDecisionTrail (per-stage model routing + actual cost).
- * Run settings persist to localStorage. Synthesis paths are tagged with
- * `coming in Phase 2` toasts on the relevant CTAs.
+ * (spend + budget), and useDecisionTrail (per-stage model routing, actual
+ * cost and when the last analysis finished). The page has no time window of
+ * its own: the failures it counts are the focused run's (or, with no run
+ * focused, the latest runs'), and `windowLabel` names exactly that.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BarChart3, Bot, Check,
-  ChevronRight, Clock, Database, DollarSign, ExternalLink, FileText,
-  GitBranch, History, KeyRound, Layers, Mail, MessageSquare, Play, Plug,
-  Search, Server, Settings, ShieldCheck, Sparkles, Target, XCircle, Zap,
+  AlertCircle, Bot, Clock, Database, DollarSign, FileText,
+  GitBranch, KeyRound, Layers, Mail, MessageSquare, Play, Plug,
+  Server, ShieldCheck, Sparkles, Target,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -249,65 +238,7 @@ function testResultsSource(hasRuns: boolean): EvidenceSource {
   }
 }
 
-// ── Run settings (persists to localStorage) ──────────────────────────────
-type WindowChoice = '6h' | '24h' | '7d'
-interface RunSettings {
-  window: WindowChoice
-  cosineThreshold: number
-  autoDraftDefects: boolean
-  autoCreateJira: boolean
-  costCapDollars: number
-}
-const DEFAULT_SETTINGS: RunSettings = {
-  window: '24h',
-  cosineThreshold: 0.72,
-  autoDraftDefects: true,
-  autoCreateJira: false,
-  costCapDollars: 2,
-}
-const SETTINGS_KEY = 'tl.deep.settings'
-
-function loadSettings(): RunSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY)
-    if (!raw) return DEFAULT_SETTINGS
-    const parsed = JSON.parse(raw) as Partial<RunSettings>
-    return { ...DEFAULT_SETTINGS, ...parsed }
-  } catch {
-    return DEFAULT_SETTINGS
-  }
-}
-
 // ── Atoms ────────────────────────────────────────────────────────────────
-function GhostBtn({
-  children, onClick, title, asChildLink, disabled,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  title?: string
-  asChildLink?: string
-  disabled?: boolean
-}) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
-  if (asChildLink) {
-    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className={cls}
-      style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {children}
-    </button>
-  )
-}
-
 function PrimaryBtn({
   children, onClick, title, disabled, large,
 }: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean; large?: boolean }) {
@@ -337,13 +268,16 @@ interface DeepModel {
   // whole run through every consumer.
   focusedRun: TestRun | null
   eligibleFailures: number
+  /** What the failure count covers: the focused run, or the latest runs. */
   windowLabel: string
-  windowSinceCommit: string | null
+  /** When the focused run was created (compact), for the Scope facet. */
+  windowSince: string | null
   evidenceSources: EvidenceSource[]
   evidenceConnected: number
   evidenceTotal: number
   preScanClusters: number
-  preScanAvgConfidence: number
+  /** Mean confidence of the SCORED proposed clusters; null when none is scored. */
+  preScanAvgConfidence: number | null
   proposedClusters: ProposedCluster[]
   pastInvestigations: PastRun[]
   lastRunAgeHours: number | null
@@ -368,11 +302,12 @@ interface ProposedCluster {
   representativeError: string
   failures: number
   testCount: number
-  members: number
-  membersByService: string
-  ownerLabel: string
-  confidence: number
-  severity: 'P0' | 'P1' | 'P2' | 'P3'
+  /** The first service the cluster's AI finding names; null without one. */
+  affectedService: string | null
+  /** 0-1; null when neither the finding nor the cluster carries a score. */
+  confidence: number | null
+  /** Derived from a real score only; null for an unscored cluster. */
+  severity: 'P0' | 'P1' | 'P2' | 'P3' | null
   isFlaky: boolean
   rationale: string
   /** US-15.1: true when `rationale` is a real AI finding's root cause rather
@@ -399,12 +334,17 @@ interface PastRun {
   whenRel: string
   whenAbs: string
   failures: number
-  clusters: number
-  defects: number
-  avgConf: number
-  cost: number
-  status: 'complete' | 'running' | 'failed'
-  failedAtStage?: string
+  /** The four columns below are known only for the FOCUSED run (its
+   *  clusters, findings, decision-trail cost and pipeline status); every
+   *  other row is null and renders "—". They used to be invented:
+   *  failures/12 clusters, failures/14 defects, 0.75 + (i % 4) * 0.03
+   *  confidence, $0.30 + failures * $0.005, and every fifth row "Failed at
+   *  clustering" (a hard-coded demo row). */
+  clusters: number | null
+  findings: number | null
+  avgConf: number | null
+  cost: number | null
+  status: 'complete' | 'running' | 'failed' | null
 }
 
 interface EstimateRow {
@@ -429,13 +369,12 @@ function severityFromConfidence(c: number): ProposedCluster['severity'] {
 }
 
 function buildModel({
-  clusters, findings, pipelineStatus, settings, recentRuns, focusedRun,
+  clusters, findings, pipelineStatus, recentRuns, focusedRun,
   evidenceSources, usage, quota, trail,
 }: {
   clusters: FailureCluster[]
   findings: DeepFinding[]
   pipelineStatus: { status: string; stage_summary?: { completed: number; failed: number; skipped: number; pending: number } } | null
-  settings: RunSettings
   recentRuns: TestRun[]
   focusedRun: TestRun | null
   evidenceSources: EvidenceSource[]
@@ -456,11 +395,11 @@ function buildModel({
     // confidence_score arrives as either a 0-1 fraction or a 0-100 percent
     // depending on the producer. Normalise to 0-1 — everything downstream
     // (severity bands, the trust chrome) assumes a fraction, and a raw 91
-    // used to render as "9100%".
-    const rawConf = finding?.confidence_score ?? c.cohesion_score ?? 0.7
-    const conf = rawConf > 1 ? rawConf / 100 : rawConf
-    const sev = severityFromConfidence(conf)
-    const owner = (finding?.affected_services?.[0] ?? c.label.split(/\s/)[0] ?? 'unowned').toLowerCase()
+    // used to render as "9100%". A cluster with neither score is UNSCORED:
+    // it used to get an invented 0.7 (a "P1 likely" band it never earned).
+    const rawConf = finding?.confidence_score ?? c.cohesion_score ?? null
+    const conf = rawConf == null ? null : rawConf > 1 ? rawConf / 100 : rawConf
+    const sev = conf == null ? null : severityFromConfidence(conf)
     return {
       id: c.cluster_id,
       rank: i + 1,
@@ -468,9 +407,7 @@ function buildModel({
       representativeError: c.representative_error ?? '',
       failures: c.size,
       testCount: c.member_test_ids.length,
-      members: Math.min(5, c.size),
-      membersByService: finding?.affected_services?.[0] ?? '—',
-      ownerLabel: `@team-${owner}`,
+      affectedService: finding?.affected_services?.[0] ?? null,
       confidence: conf,
       severity: sev,
       isFlaky: /flak/i.test(finding?.failure_category ?? ''),
@@ -482,28 +419,30 @@ function buildModel({
     }
   })
 
-  const preScanAvgConfidence = proposedClusters.length > 0
-    ? proposedClusters.reduce((s, c) => s + c.confidence, 0) / proposedClusters.length
-    : 0
+  // Averages the scored clusters only; an unscored cluster is not a 0.
+  const scoredConfidences = proposedClusters
+    .map(c => c.confidence)
+    .filter((c): c is number => c != null)
+  const preScanAvgConfidence = scoredConfidences.length > 0
+    ? scoredConfidences.reduce((s, c) => s + c, 0) / scoredConfidences.length
+    : null
 
-  // Past investigations — derive from recent runs that completed (or
-  // failed) a deep pipeline. We don't have a dedicated endpoint, so we
-  // use the recent-runs list; the focused run's pipeline status is real.
-  const pastInvestigations: PastRun[] = recentRuns.slice(0, 6).map((r, i) => {
+  // Recent runs — the run picker. There is no investigations endpoint, so
+  // only the focused run carries investigation data (see PastRun).
+  const trailCost = trail && trail.total_cost_usd > 0 ? trail.total_cost_usd : null
+  const pastInvestigations: PastRun[] = recentRuns.slice(0, 6).map((r) => {
     const ageMs = Date.now() - new Date(r.created_at).getTime()
     const ageH = Math.max(0, Math.floor(ageMs / 3600000))
     const ageRel = ageH < 1 ? 'just now'
       : ageH < 24 ? `${ageH}h ago`
       : ageH < 48 ? 'Yesterday'
       : `${Math.floor(ageH / 24)}d ago`
-    const isFocus = focusedRun && r.id === focusedRun.id
+    const isFocus = Boolean(focusedRun && r.id === focusedRun.id)
     const status: PastRun['status'] = isFocus && pipelineStatus
       ? (isPipelineInProgress(pipelineStatus.status) ? 'running'
          : pipelineStatus.status === 'failed' ? 'failed'
          : 'complete')
-      : i % 6 === 4
-        ? 'failed'  // demo: surface a "failed at clustering" row per spec §4.7
-        : 'complete'
+      : null
     return {
       runId: r.id,
       runIdLabel: r.id.slice(0, 8),
@@ -515,24 +454,28 @@ function buildModel({
       // distinguishable; shared compact format with /live + /agents.
       whenAbs: formatRunWhen(r.created_at),
       failures: r.failed_tests ?? 0,
-      clusters: status === 'failed' ? 0 : isFocus ? clusters.length : Math.max(1, Math.round((r.failed_tests ?? 0) / 12)),
-      defects: status === 'failed' ? 0 : isFocus ? findings.length : Math.max(1, Math.round((r.failed_tests ?? 0) / 14)),
-      avgConf: status === 'failed' ? 0 : isFocus ? preScanAvgConfidence : 0.75 + (i % 4) * 0.03,
-      cost: status === 'failed' ? 0.05 : 0.30 + (r.failed_tests ?? 0) * 0.005,
+      clusters: isFocus ? clusters.length : null,
+      findings: isFocus ? findings.length : null,
+      avgConf: isFocus ? preScanAvgConfidence : null,
+      cost: isFocus ? trailCost : null,
       status,
-      failedAtStage: status === 'failed' ? 'clustering' : undefined,
     }
   })
 
-  const lastSuccessful = pastInvestigations.find(p => p.status === 'complete')
-  const lastRunAgeHours = lastSuccessful
-    ? (() => {
-        const m = lastSuccessful.whenRel.match(/(\d+)/)
-        return m ? Number(m[1]) : null
-      })()
+  // Last analysis = the focused run's completed deep pipeline (decision
+  // trail). This used to read the first "complete" row of the invented
+  // table above, and parsed its age from the RUN's "3d ago" label — so a
+  // three-day-old run read "3h ago".
+  const lastAnalysisDone = trail?.pipeline_status === 'completed'
+  const lastRunAgeHours = lastAnalysisDone && trail?.completed_at
+    ? Math.max(0, Math.floor((Date.now() - new Date(trail.completed_at).getTime()) / 3600000))
     : null
-  const lastRunSummary = lastSuccessful
-    ? `${lastSuccessful.clusters} cluster${lastSuccessful.clusters === 1 ? '' : 's'} · ${lastSuccessful.defects} defect${lastSuccessful.defects === 1 ? '' : 's'} · $${lastSuccessful.cost.toFixed(2)}`
+  const lastRunSummary = lastAnalysisDone
+    ? [
+        `${clusters.length} cluster${clusters.length === 1 ? '' : 's'}`,
+        `${findings.length} finding${findings.length === 1 ? '' : 's'}`,
+        ...(trailCost != null ? [`$${trailCost.toFixed(2)}`] : []),
+      ].join(' · ')
     : null
 
   // Workload breakdown — real counts per stage. There is no server-side
@@ -547,9 +490,13 @@ function buildModel({
   // Time estimate: 0.5 min base + 0.05 min/failure clustering + 1 min/cluster RCA
   const estimateMinutes = 0.5 + eligibleFailures * 0.05 + proposedClusters.length * 1.0
 
-  // Severity distribution from the focused failures (proxy via cluster severity).
+  // Severity distribution of the SCORED proposed clusters (an unscored one
+  // has no severity).
   const sevCounts = proposedClusters.reduce(
-    (acc, c) => { acc[c.severity.toLowerCase() as 'p0' | 'p1' | 'p2' | 'p3']++; return acc },
+    (acc, c) => {
+      if (c.severity) acc[c.severity.toLowerCase() as 'p0' | 'p1' | 'p2' | 'p3']++
+      return acc
+    },
     { p0: 0, p1: 0, p2: 0, p3: 0 },
   )
 
@@ -565,11 +512,15 @@ function buildModel({
   return {
     focusedRun,
     eligibleFailures,
-    windowLabel: settings.window,
-    // Backend's TestRun model doesn't carry commit_hash directly today;
-    // synthesise from the run id when present so the verdict facet reads
-    // sensibly. Drop the fallback once `TestRun.commit_hash` lands.
-    windowSinceCommit: focusedRun ? focusedRun.id.slice(0, 7) : null,
+    // The page's real scope (it has no time window): eligibleFailures above
+    // counts the focused run, or the latest runs when none is focused. This
+    // used to read a "6h / 24h / 7d" setting that was never sent anywhere.
+    windowLabel: focusedRun
+      ? (focusedRun.run_seq != null ? `Run #${focusedRun.run_seq}` : `run ${focusedRun.id.slice(0, 8)}`)
+      : `latest ${recentRuns.length} run${recentRuns.length === 1 ? '' : 's'}`,
+    // A focused run's creation time. (This was "since <commit>", where the
+    // "commit" was the first 7 characters of the run's UUID.)
+    windowSince: focusedRun?.created_at ? formatRunWhen(focusedRun.created_at) : null,
     evidenceSources,
     evidenceConnected: evidenceSources.filter(s => s.status === 'live').length,
     evidenceTotal: evidenceSources.length,
@@ -582,7 +533,7 @@ function buildModel({
     spendMtdDollars,
     spendBudgetDollars,
     spendSoftWarnPct,
-    lastRunCostDollars: trail && trail.total_cost_usd > 0 ? trail.total_cost_usd : null,
+    lastRunCostDollars: trailCost,
     estimateBreakdown,
     estimateMinutes,
     severityCounts: { ...sevCounts },
@@ -603,15 +554,13 @@ function pickVerdict(model: DeepModel, pipelineStatus: { status: string } | null
 
 // ── Verdict card ────────────────────────────────────────────────────────
 function VerdictCard({
-  model, verdict, headline, lede, onRunAll, onRunSelection, onDryRun, isQaEngineer,
+  model, verdict, headline, lede, onRunAll, isQaEngineer,
 }: {
   model: DeepModel
   verdict: Verdict
   headline: React.ReactNode
   lede: React.ReactNode
   onRunAll: () => void
-  onRunSelection: () => void
-  onDryRun: () => void
   isQaEngineer: boolean
 }) {
   const t = VERDICT_THEME[verdict]
@@ -654,16 +603,18 @@ function VerdictCard({
 
         {/* Input facets */}
         <div className="grid gap-2.5 mb-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          {/* The sub-line used to say "N suites" where N was the number of
+              proposed clusters. */}
           <FacetTile
             label="Failures eligible"
-            value={`${model.eligibleFailures} / ${model.eligibleFailures}`}
-            sub={`${model.windowLabel} window · ${model.severityCounts.p0 + model.severityCounts.p1 + model.severityCounts.p2 + model.severityCounts.p3 || 1} suite${(model.severityCounts.p0 + model.severityCounts.p1 + model.severityCounts.p2 + model.severityCounts.p3) === 1 ? '' : 's'}`}
+            value={model.eligibleFailures}
+            sub={`in ${model.windowLabel}`}
             tone="bad"
           />
           <FacetTile
-            label="Time window"
+            label="Scope"
             value={model.windowLabel}
-            sub={model.windowSinceCommit ? <>since <code className="font-mono text-[11px]">{model.windowSinceCommit}</code></> : 'rolling'}
+            sub={model.windowSince ?? 'no run focused'}
             tone="neutral"
           />
           <FacetTile
@@ -677,7 +628,9 @@ function VerdictCard({
           <FacetTile
             label="Pre-scan signal"
             value={model.preScanClusters > 0 ? `${model.preScanClusters} clusters` : '—'}
-            sub={model.preScanClusters > 0 ? `avg conf ${model.preScanAvgConfidence.toFixed(2)}` : 'run analysis'}
+            sub={model.preScanClusters === 0 ? 'run analysis'
+              : model.preScanAvgConfidence != null ? `avg conf ${model.preScanAvgConfidence.toFixed(2)}`
+              : 'unscored'}
             tone={model.preScanClusters > 0 ? 'good' : 'neutral'}
           />
         </div>
@@ -692,18 +645,6 @@ function VerdictCard({
             <Play className="h-3.5 w-3.5" />
             Run on all {model.eligibleFailures} failure{model.eligibleFailures === 1 ? '' : 's'}
           </PrimaryBtn>
-          <GhostBtn onClick={onRunSelection} disabled={!isQaEngineer || model.eligibleFailures === 0}>
-            Run on selection
-          </GhostBtn>
-          <GhostBtn onClick={onDryRun} disabled={!isQaEngineer || model.eligibleFailures === 0}>
-            Dry run
-          </GhostBtn>
-          <span className="text-[11.5px] text-[var(--color-text-faint)] ml-1">
-            Or press <kbd
-              className="px-1.5 py-px rounded font-mono text-[10.5px]"
-              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-            >⌘⏎</kbd>
-          </span>
         </div>
       </div>
 
@@ -816,164 +757,6 @@ function EstimateCard({ model }: { model: DeepModel }) {
   )
 }
 
-// ── Workflow ribbon ─────────────────────────────────────────────────────
-type StageStatus = 'done' | 'active' | 'pending' | 'failed'
-
-interface RibbonStage {
-  num: number
-  name: string
-  status: StageStatus
-  description: string
-  pills: { label: string; tone?: 'accent' | 'good' | 'warn' | 'neutral' }[]
-}
-
-function buildRibbon(model: DeepModel, pipelineStatus: { status: string; stage_summary?: { completed: number; failed: number; skipped: number; pending: number } } | null): RibbonStage[] {
-  const running = isPipelineInProgress(pipelineStatus?.status)
-  const failed  = pipelineStatus?.status === 'failed'
-  const stageStatus = (idx: number): StageStatus => {
-    if (failed) return idx === 0 ? 'failed' : 'pending'
-    if (running) return idx === 0 ? 'active' : 'pending'
-    if (model.proposedClusters.length > 0 && idx === 0) return 'active'
-    return 'pending'
-  }
-  return [
-    {
-      num: 1, name: 'Failure clustering',
-      status: stageStatus(0),
-      description: "Embed each failure's error, stack, and test path; group by semantic similarity.",
-      pills: [
-        { label: `${model.eligibleFailures} input`, tone: 'neutral' },
-        { label: `${model.proposedClusters.length} proposed`, tone: 'accent' },
-        { label: `${model.preScanAvgConfidence.toFixed(2)} conf`, tone: 'good' },
-      ],
-    },
-    {
-      num: 2, name: 'Root cause analysis',
-      status: stageStatus(1),
-      description: 'Walk the stack, correlate with recent commits, and rank likely causes.',
-      pills: [
-        { label: 'git, logs, traces', tone: 'neutral' },
-        { label: `${model.proposedClusters.length} traces`, tone: 'neutral' },
-      ],
-    },
-    {
-      num: 3, name: 'Evidence synthesis',
-      status: stageStatus(2),
-      description: 'Bundle the smoking gun: failing test, commit, log span, screenshot, telemetry.',
-      pills: [
-        { label: `~${model.proposedClusters.length} packs`, tone: 'neutral' },
-        { label: '~6 artifacts each', tone: 'neutral' },
-      ],
-    },
-    {
-      num: 4, name: 'Defect triage',
-      status: stageStatus(3),
-      description: 'Draft defects with severity, owner, and Jira mapping for human review.',
-      pills: [
-        { label: `~${model.proposedClusters.length} drafts`, tone: 'neutral' },
-        { label: 'human-in-loop', tone: 'warn' },
-      ],
-    },
-  ]
-}
-
-function WorkflowRibbon({ stages, model }: { stages: RibbonStage[]; model: DeepModel }) {
-  return (
-    <section
-      aria-label="Investigation workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '14px 16px 16px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <div>
-          <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-1.5">
-            Investigation workflow
-            <span className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>4 stages</span>
-          </h3>
-          <p className="text-[11.5px] text-[var(--color-text-muted)] m-0 mt-0.5">
-            Cluster → trace cause → synthesize evidence → draft defects.
-          </p>
-        </div>
-        <span className="text-[11.5px] text-[var(--color-text-muted)]">
-          {model.lastRunSummary
-            ? <>Last full run: {model.lastRunAgeHours ?? '—'}h ago · {model.lastRunSummary}</>
-            : <>No prior run yet</>
-          }
-        </span>
-      </div>
-      <div
-        className="grid rounded-md overflow-hidden"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', border: '1px solid var(--color-border)' }}
-      >
-        {stages.map((s, i) => <StageCell key={s.num} stage={s} isLast={i === stages.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)',         fg: 'var(--status-passed)',                icon: <Check className="h-3 w-3" strokeWidth={3} /> }
-    : stage.status === 'active'
-      ? { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',           fg: 'var(--color-accent)',   icon: <Sparkles className="h-3 w-3" strokeWidth={2.5} /> }
-      : stage.status === 'failed'
-        ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',          fg: 'var(--status-failed)',               icon: <XCircle className="h-3 w-3" strokeWidth={2.5} /> }
-        : { bg: 'var(--color-bg-secondary)',     fg: 'var(--color-text-muted)', icon: <Clock className="h-3 w-3" strokeWidth={2.5} /> }
-  const trackFg = stage.status === 'done' ? 'var(--status-passed)'
-    : stage.status === 'active' ? 'var(--color-accent)'
-    : stage.status === 'failed' ? 'var(--gate-no-go)'
-    : 'var(--color-text-muted)'
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}, ${stage.status}`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className={clsx(
-        'relative flex items-start gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
-        stage.status === 'pending' && 'opacity-80',
-      )}
-      style={{ padding: '10px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none mt-px"
-        style={{ width: 22, height: 22, background: ic.bg, color: ic.fg }}
-      >
-        {ic.icon}
-      </span>
-      <span className="flex flex-col gap-1 min-w-0 flex-1">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] leading-[1.4]">{stage.description}</span>
-        <span className="flex flex-wrap gap-1 mt-1">
-          {stage.pills.map((p, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center px-1.5 py-px rounded-sm text-[10px] font-medium"
-              style={{
-                background: p.tone === 'accent' ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)'
-                  : p.tone === 'good' ? 'color-mix(in srgb, var(--status-passed) 10%, transparent)'
-                  : p.tone === 'warn' ? 'color-mix(in srgb, var(--status-broken) 10%, transparent)'
-                  : 'var(--color-bg-secondary)',
-                color: p.tone === 'accent' ? 'var(--color-accent)'
-                  : p.tone === 'good' ? 'var(--status-passed)'
-                  : p.tone === 'warn' ? 'var(--status-broken)'
-                  : 'var(--color-text-muted)',
-                border: '1px solid var(--color-border)',
-              }}
-            >
-              {p.label}
-            </span>
-          ))}
-        </span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: trackFg, opacity: 0.7 }} />
-    </button>
-  )
-}
-
 // ── KPI strip ───────────────────────────────────────────────────────────
 type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
 
@@ -1058,10 +841,13 @@ const dollars = (v: number) => `$${v.toFixed(2)}`
 export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
   const sev = model.severityCounts
   const clusterTotal = sev.p0 + sev.p1 + sev.p2 + sev.p3
-  const severitySplit = (['p0', 'p1', 'p2', 'p3'] as const)
-    .filter((key) => sev[key] > 0)
-    .map((key) => `${sev[key]} ${key.toUpperCase()}`)
-    .join(' · ')
+  const unscoredClusters = model.proposedClusters.filter(c => c.confidence == null).length
+  const severitySplit = [
+    ...(['p0', 'p1', 'p2', 'p3'] as const)
+      .filter((key) => sev[key] > 0)
+      .map((key) => `${sev[key]} ${key.toUpperCase()}`),
+    ...(unscoredClusters > 0 ? [`${unscoredClusters} unscored`] : []),
+  ].join(' · ')
   const severityGauge = clusterTotal > 0 ? (
     <>
       <GaugeBar
@@ -1080,10 +866,15 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
       <div className="mt-1 text-[10.5px] tabular-nums text-[var(--color-text-secondary)]">{severitySplit}</div>
     </>
   ) : undefined
+  // An average exists only when analysis proposed a cluster AND at least one
+  // of them carries a real score.
+  const avgConfidence = model.preScanClusters > 0 ? model.preScanAvgConfidence : null
   const hasClusters = model.preScanClusters > 0
+  const scoredBelowTarget = model.proposedClusters
+    .filter(c => c.confidence != null && c.confidence < CONFIDENCE_TARGET.value).length
   const confidenceGauge = (
     <GaugeBar
-      value={model.preScanClusters > 0 ? model.preScanAvgConfidence : null}
+      value={avgConfidence}
       domain={CONFIDENCE_DOMAIN}
       tone={CONFIDENCE_BANDS}
       target={CONFIDENCE_TARGET}
@@ -1110,7 +901,7 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
         label="Eligible failures"
         value={model.eligibleFailures}
         tone={model.eligibleFailures > 0 ? 'bad' : 'good'}
-        meta={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel} window</>}
+        meta={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel}</>}
         isFirst
       />
       <KpiCell
@@ -1118,7 +909,7 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
         label="Likely clusters"
         value={model.preScanClusters}
         tone="accent"
-        meta={<>pre-scan · avg conf {hasClusters ? model.preScanAvgConfidence.toFixed(2) : '—'}</>}
+        meta={<>pre-scan · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
         spark={severityGauge}
       />
       <KpiCell
@@ -1132,9 +923,11 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
       <KpiCell
         Icon={Target}
         label="Avg cluster confidence"
-        value={hasClusters ? model.preScanAvgConfidence.toFixed(2) : '—'}
-        tone={!hasClusters ? 'neutral' : model.preScanAvgConfidence >= 0.8 ? 'good' : model.preScanAvgConfidence >= 0.7 ? 'warn' : 'bad'}
-        meta={<>target ≥ 0.7 · {model.proposedClusters.filter(c => c.confidence < 0.7).length} below</>}
+        value={avgConfidence != null ? avgConfidence.toFixed(2) : '—'}
+        tone={avgConfidence == null ? 'neutral' : avgConfidence >= 0.8 ? 'good' : avgConfidence >= 0.7 ? 'warn' : 'bad'}
+        meta={hasClusters && avgConfidence == null
+          ? <>no proposed cluster has a score</>
+          : <>target ≥ 0.7 · {scoredBelowTarget} below</>}
         spark={confidenceGauge}
       />
       <KpiCell
@@ -1153,7 +946,7 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
 }
 
 // ── Proposed clusters preview ───────────────────────────────────────────
-function ProposedClustersCard({ model, onOpenCluster, focusedRunId }: { model: DeepModel; onOpenCluster: (id: string) => void; focusedRunId: string | null }) {
+function ProposedClustersCard({ model, focusedRunId }: { model: DeepModel; focusedRunId: string | null }) {
   if (model.proposedClusters.length === 0) {
     return (
       <CardShell title="Proposed clusters" rightSlot={<span>0 candidates</span>}>
@@ -1180,7 +973,7 @@ function ProposedClustersCard({ model, onOpenCluster, focusedRunId }: { model: D
     >
       <div className="px-4 py-3.5 flex flex-col gap-2">
         {model.proposedClusters.map(c => (
-          <ClusterRow key={c.id} cluster={c} onOpen={() => onOpenCluster(c.id)} />
+          <ClusterRow key={c.id} cluster={c} />
         ))}
       </div>
       <div
@@ -1204,18 +997,21 @@ function ProposedClustersCard({ model, onOpenCluster, focusedRunId }: { model: D
   )
 }
 
-function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () => void }) {
-  const sevPalette: Record<ProposedCluster['severity'], { bg: string; bd: string; fg: string }> = {
+function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
+  const sevPalette: Record<NonNullable<ProposedCluster['severity']>, { bg: string; bd: string; fg: string }> = {
     P0: { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',   bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',   fg: 'var(--status-failed)' },
     P1: { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)',  bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',  fg: 'var(--status-broken)' },
     P2: { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',  bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',  fg: 'var(--color-accent)' },
     P3: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
   }
-  const sev = sevPalette[cluster.severity]
+  // An unscored cluster earns no severity band: neutral chrome, "unscored".
+  const sev = cluster.severity
+    ? sevPalette[cluster.severity]
+    : { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' }
   return (
     <div
       className="grid items-start gap-3 rounded-md border"
-      style={{ gridTemplateColumns: '36px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+      style={{ gridTemplateColumns: '36px 1fr', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
     >
       <span
         aria-hidden
@@ -1231,7 +1027,7 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
             className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold uppercase"
             style={{ background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg, letterSpacing: 'var(--tracking-wide)' }}
           >
-            {cluster.isFlaky ? 'flaky' : `${cluster.severity} likely`}
+            {cluster.isFlaky ? 'flaky' : cluster.severity ? `${cluster.severity} likely` : 'unscored'}
           </span>
           <span className="text-[10.5px] text-[var(--color-text-muted)]">
             {cluster.failures} failure{cluster.failures === 1 ? '' : 's'} · {cluster.testCount} test{cluster.testCount === 1 ? '' : 's'}
@@ -1246,7 +1042,7 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
             bare
             className="mt-1"
             label="root cause"
-            confidence={Math.round(cluster.confidence * 100)}
+            confidence={cluster.confidence != null ? Math.round(cluster.confidence * 100) : null}
             confidenceBasis={cluster.confidenceBasis}
             provenance={cluster.origin ? { modeUsed: ORIGIN_LABELS[cluster.origin] } : null}
           >
@@ -1257,29 +1053,25 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
         ) : (
           <p className="text-[12px] m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
             {cluster.rationale}
-            {' '}Cluster cohesion{' '}
-            <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? 'var(--status-passed)' : cluster.confidence >= 0.65 ? 'var(--status-broken)' : 'var(--status-failed)' }}>
-              {cluster.confidence.toFixed(2)}
-            </strong>. No AI finding recorded for this cluster yet.
+            {cluster.confidence != null ? (
+              <>
+                {' '}Cluster cohesion{' '}
+                <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? 'var(--status-passed)' : cluster.confidence >= 0.65 ? 'var(--status-broken)' : 'var(--status-failed)' }}>
+                  {cluster.confidence.toFixed(2)}
+                </strong>.
+              </>
+            ) : <> No cohesion score.</>}
+            {' '}No AI finding recorded for this cluster yet.
           </p>
         )}
-        <div className="flex items-center gap-2 mt-1.5 text-[10.5px] text-[var(--color-text-muted)]">
-          <span aria-hidden className="inline-flex items-center gap-0.5">
-            {Array.from({ length: cluster.members }).map((_, i) => (
-              <i key={i} className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: sev.fg }} />
-            ))}
-          </span>
-          <span>{cluster.members} affected · {cluster.membersByService} · {cluster.ownerLabel}</span>
-        </div>
+        {/* Only the service the AI finding names. This line used to add an
+            invented "@team-<word>" owner handle and "N affected" capped at 5. */}
+        {cluster.affectedService && (
+          <div className="mt-1.5 text-[10.5px] text-[var(--color-text-muted)]">
+            service <code className="font-mono">{cluster.affectedService}</code>
+          </div>
+        )}
       </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="text-[11.5px] font-medium px-2.5 py-1 rounded-md self-start"
-        style={{ background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)', color: 'var(--color-accent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)' }}
-      >
-        Open cluster →
-      </button>
     </div>
   )
 }
@@ -1288,8 +1080,8 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
 function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId: string) => void }) {
   return (
     <CardShell
-      title="Past investigations"
-      rightSlot={<span>last 30 days</span>}
+      title="Recent runs"
+      rightSlot={<span>latest {rows.length} · investigation data for the focused run</span>}
     >
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -1303,7 +1095,7 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
               <Th label="Run" />
               <Th label="Failures" align="right" />
               <Th label="Clusters" align="right" />
-              <Th label="Defects" align="right" />
+              <Th label="Findings" align="right" />
               <Th label="Avg conf" align="right" />
               <Th label="Cost" align="right" />
               <Th label="Status" />
@@ -1313,7 +1105,7 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
             {rows.length === 0 && (
               <tr>
                 <td colSpan={8} className="text-center py-8 text-[var(--color-text-muted)]">
-                  No past investigations.
+                  No runs yet.
                 </td>
               </tr>
             )}
@@ -1326,12 +1118,15 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
 }
 
 function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
-  const confColor = row.avgConf >= 0.8 ? 'var(--status-passed)' : row.avgConf >= 0.6 ? 'var(--status-broken)' : row.avgConf > 0 ? 'var(--status-failed)' : 'var(--color-text-faint)'
+  const confColor = row.avgConf == null ? 'var(--color-text-faint)' : row.avgConf >= 0.8 ? 'var(--status-passed)' : row.avgConf >= 0.6 ? 'var(--status-broken)' : 'var(--status-failed)'
   const statusPalette = row.status === 'complete'
     ? { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)', fg: 'var(--status-passed)', label: 'Complete' }
     : row.status === 'running'
       ? { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', fg: 'var(--color-accent)', label: 'Running' }
-      : { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: row.failedAtStage ? `Failed at ${row.failedAtStage}` : 'Failed' }
+      : row.status === 'failed'
+        ? { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: 'Failed' }
+        : null
+  const unknown = <span className="text-[var(--color-text-faint)]">—</span>
   return (
     <tr
       style={{ borderBottom: '1px solid var(--color-border)' }}
@@ -1365,27 +1160,33 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
         </span>
       </td>
       <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.failures}</td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.clusters}</td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.defects}</td>
+      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.clusters ?? unknown}</td>
+      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.findings ?? unknown}</td>
       <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>
-        <span className="inline-flex items-center gap-1.5" style={{ color: confColor }}>
-          <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-          {row.avgConf > 0 ? row.avgConf.toFixed(2) : '—'}
-        </span>
+        {row.avgConf == null ? unknown : (
+          <span className="inline-flex items-center gap-1.5" style={{ color: confColor }}>
+            <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
+            {row.avgConf.toFixed(2)}
+          </span>
+        )}
       </td>
-      <td className="text-right tabular-nums font-mono text-[11.5px]" style={{ padding: '10px 12px' }}>${row.cost.toFixed(2)}</td>
+      <td className="text-right tabular-nums font-mono text-[11.5px]" style={{ padding: '10px 12px' }}>
+        {row.cost == null ? unknown : `$${row.cost.toFixed(2)}`}
+      </td>
       <td style={{ padding: '10px 12px' }}>
-        <span
-          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
-          style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
-        >
-          <i
-            aria-hidden
-            className={clsx(row.status === 'running' && 'animate-pulse')}
-            style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }}
-          />
-          {statusPalette.label}
-        </span>
+        {statusPalette == null ? unknown : (
+          <span
+            className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
+            style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
+          >
+            <i
+              aria-hidden
+              className={clsx(row.status === 'running' && 'animate-pulse')}
+              style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }}
+            />
+            {statusPalette.label}
+          </span>
+        )}
       </td>
     </tr>
   )
@@ -1436,11 +1237,9 @@ function EvidenceSourcesCard({
               ? { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)' }
               : { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' }
           return (
-            <button
+            <div
               key={src.id}
-              type="button"
-              onClick={() => toast(`${src.name} settings — coming in Phase 2`, { icon: '⚙️' })}
-              className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+              className="grid items-center gap-2.5 rounded-md border text-left"
               style={{ gridTemplateColumns: '24px 1fr auto', padding: '8px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
             >
               <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: src.toneBg, color: src.toneFg }}>
@@ -1456,7 +1255,7 @@ function EvidenceSourcesCard({
               >
                 {src.detail}
               </span>
-            </button>
+            </div>
           )
         })}
       </div>
@@ -1477,19 +1276,7 @@ function ModelRoutingCard({
 }: { trail: DecisionTrailResponse | undefined; isLoading: boolean }) {
   const stages = (trail?.stages ?? []).filter(s => s.analysis_mode || s.execution_path)
   return (
-    <CardShell
-      title="Model routing"
-      rightSlot={
-        <button
-          type="button"
-          onClick={() => toast('Model selector — coming in Phase 2', { icon: '🤖' })}
-          className="hover:underline"
-          style={{ color: 'var(--color-accent)' }}
-        >
-          Swap →
-        </button>
-      }
-    >
+    <CardShell title="Model routing">
       {isLoading ? (
         <div className="px-4 py-5 flex justify-center"><LoadingSpinner size="sm" /></div>
       ) : stages.length === 0 ? (
@@ -1526,144 +1313,6 @@ function ModelRoutingCard({
         </div>
       )}
     </CardShell>
-  )
-}
-
-// ── Right rail: Run settings ─────────────────────────────────────────────
-function RunSettingsCard({
-  settings, onChange,
-}: { settings: RunSettings; onChange: (s: Partial<RunSettings>) => void }) {
-  return (
-    <CardShell title="Run settings" rightSlot={<span>persists locally</span>}>
-      <div className="px-4 py-3 flex flex-col gap-2.5">
-        <SettingsRow label="Time window">
-          <div className="flex items-center gap-0 p-0.5 rounded-md" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-            {(['6h', '24h', '7d'] as const).map(w => {
-              const on = settings.window === w
-              return (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => onChange({ window: w })}
-                  className={clsx(
-                    'px-2.5 py-0.5 text-[11.5px] font-medium tabular-nums rounded-sm transition-colors',
-                    on
-                      ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {w}
-                </button>
-              )
-            })}
-          </div>
-        </SettingsRow>
-
-        <SettingsRow label="Clustering threshold">
-          <span className="font-mono text-[11.5px] tabular-nums text-[var(--color-text-secondary)]">{settings.cosineThreshold.toFixed(2)} cosine</span>
-        </SettingsRow>
-
-        <SettingsRow label="Auto-draft defects">
-          <Toggle on={settings.autoDraftDefects} onChange={(v) => onChange({ autoDraftDefects: v })} />
-        </SettingsRow>
-
-        <SettingsRow
-          label="Auto-create Jira tickets"
-          sub="requires Jira connection"
-        >
-          <Toggle on={settings.autoCreateJira} onChange={(v) => onChange({ autoCreateJira: v })} />
-        </SettingsRow>
-
-        <SettingsRow label="Cost cap per run">
-          <span className="font-mono text-[11.5px] tabular-nums text-[var(--color-text-secondary)]">${settings.costCapDollars.toFixed(2)}</span>
-        </SettingsRow>
-      </div>
-    </CardShell>
-  )
-}
-
-function SettingsRow({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <div>
-        <div className="text-[12px] text-[var(--color-text-secondary)]">{label}</div>
-        {sub && <div className="text-[10.5px] text-[var(--color-text-muted)]">{sub}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-pressed={on}
-      onClick={() => onChange(!on)}
-      className="relative inline-flex items-center rounded-full transition-colors"
-      style={{
-        width: 28,
-        height: 16,
-        background: on ? 'var(--color-accent)' : 'var(--color-bg-secondary)',
-        border: '1px solid var(--color-border)',
-      }}
-    >
-      <span
-        aria-hidden
-        className="absolute rounded-full bg-white"
-        style={{
-          width: 10, height: 10,
-          top: 2,
-          left: on ? 14 : 2,
-          transition: 'left 150ms ease-out',
-        }}
-      />
-    </button>
-  )
-}
-
-// ── Provenance footer ────────────────────────────────────────────────────
-function ProvenanceFooter({ runId, model }: { runId: string | null; model: DeepModel }) {
-  const lastRun = model.pastInvestigations[0]
-  const ratio = lastRun && lastRun.failures > 0 && lastRun.clusters > 0
-    ? `${lastRun.failures}→${lastRun.clusters}`
-    : '—'
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>investigation pipeline v2</span>
-        <span aria-hidden>·</span>
-        <span>4 stages</span>
-        <span aria-hidden>·</span>
-        <span>failure→cluster ratio {ratio}</span>
-        <span aria-hidden>·</span>
-        <span>runner local</span>
-        {lastRun && (
-          <>
-            <span aria-hidden>·</span>
-            <span>last ID <code className="font-mono text-[11.5px]">{lastRun.runIdLabel}</code></span>
-          </>
-        )}
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => runId
-          ? toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })
-          : toast('Run an investigation first to see the decision trail', { icon: 'ℹ️' })
-        }
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
   )
 }
 
@@ -1706,11 +1355,9 @@ export default function DeepInvestigationPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
 
-  const [settings, setSettings] = useState<RunSettings>(loadSettings)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   const { options: suiteOptions } = useSuiteOptions(0)
-  useEffect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) }, [settings])
 
   // Recent runs to populate the past-investigations table + auto-pick a focus.
   const { data: recentRuns, isLoading: runsLoading, isValidating: runsValidating } = useRuns({ page: 1, size: 6, days: 0, ...(pageSuiteFilter && { suite_name: pageSuiteFilter }) })
@@ -1799,13 +1446,12 @@ export default function DeepInvestigationPage() {
 
   const model = useMemo(
     () => buildModel({
-      clusters, findings, pipelineStatus, settings, recentRuns: recentItems, focusedRun,
+      clusters, findings, pipelineStatus, recentRuns: recentItems, focusedRun,
       evidenceSources, usage, quota, trail: decisionTrail,
     }),
-    [clusters, findings, pipelineStatus, settings, recentItems, focusedRun, evidenceSources, usage, quota, decisionTrail],
+    [clusters, findings, pipelineStatus, recentItems, focusedRun, evidenceSources, usage, quota, decisionTrail],
   )
   const verdict = pickVerdict(model, pipelineStatus)
-  const ribbonStages = useMemo(() => buildRibbon(model, pipelineStatus), [model, pipelineStatus])
 
   if (!project && !isAllProjects) {
     return (
@@ -1824,17 +1470,27 @@ export default function DeepInvestigationPage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   // Verdict copy ────────────────────────────────────────────────────────
+  // "stage N of M" from the pipeline's own stage summary (it said "of 4",
+  // the count of the deleted ribbon's invented stages).
+  const stageSummary = pipelineStatus?.stage_summary
+  const stageTotal = stageSummary
+    ? stageSummary.completed + stageSummary.failed + stageSummary.skipped + stageSummary.pending
+    : 0
+  const stageProgress = stageSummary && stageTotal > 0
+    ? <> · stage {Math.min(stageTotal, stageSummary.completed + stageSummary.skipped + 1)} of {stageTotal}</>
+    : null
   const headline: React.ReactNode = (() => {
     const t = VERDICT_THEME[verdict]
     if (verdict === 'NO_FAILURES') return <>Nothing to investigate</>
     if (verdict === 'NO_SOURCES')  return <span style={{ color: t.gateText }}>Cannot run — connect at least one evidence source</span>
-    if (verdict === 'RUNNING')     return <><span style={{ color: t.gateText }}>Investigation running</span> · stage {(pipelineStatus?.stage_summary?.completed ?? 0) + 1} of 4</>
+    if (verdict === 'RUNNING')     return <><span style={{ color: t.gateText }}>Investigation running</span>{stageProgress}</>
     if (verdict === 'FAILED')      return <><span style={{ color: t.gateText }}>Last run failed</span> — retry from last successful stage</>
     if (verdict === 'PENDING')     return <>Run analysis to discover clusters</>
     return (
       <>
+        {/* "across N suites" here counted the proposed clusters, not suites. */}
         <span style={{ color: t.gateText }}>{model.eligibleFailures} failure{model.eligibleFailures === 1 ? '' : 's'}</span>
-        {' '}across {model.severityCounts.p0 + model.severityCounts.p1 + model.severityCounts.p2 + model.severityCounts.p3 || '?'} suite{(model.severityCounts.p0 + model.severityCounts.p1 + model.severityCounts.p2 + model.severityCounts.p3) === 1 ? '' : 's'}
+        {' '}in {model.windowLabel}
         {' '}— {model.preScanClusters} cluster{model.preScanClusters === 1 ? '' : 's'} proposed
       </>
     )
@@ -1842,11 +1498,11 @@ export default function DeepInvestigationPage() {
 
   const lede: React.ReactNode = (() => {
     if (verdict === 'NO_FAILURES')
-      return <>Last analysis ran {model.lastRunAgeHours ?? '—'}h ago and there have been no new failures since. Nothing to investigate.</>
+      return <>No failures in {model.windowLabel}. Nothing to investigate.</>
     if (verdict === 'NO_SOURCES')
       return <>No evidence sources connected. Connect at least one of git history, application logs, or test results before running deep analysis.</>
     if (verdict === 'RUNNING')
-      return <>The deep-analysis pipeline is processing. Watch the workflow ribbon below for stage-by-stage progress.</>
+      return <>The deep-analysis pipeline is processing. Model routing on the right fills in as each stage records the engine it used.</>
     if (verdict === 'FAILED')
       return <>The previous run halted before producing clusters. Retrying from the last successful stage skips the work that already completed.</>
     if (verdict === 'PENDING')
@@ -1856,7 +1512,7 @@ export default function DeepInvestigationPage() {
     return (
       <>
         Pre-scan groups the {model.eligibleFailures} eligible failures into {model.preScanClusters} candidate clusters.
-        {' '}The largest is <strong className="text-[var(--color-text)]">{top.name}</strong> ({top.failures} failures, confidence {top.confidence.toFixed(2)}).
+        {' '}The largest is <strong className="text-[var(--color-text)]">{top.name}</strong> ({top.failures} failures{top.confidence != null ? `, confidence ${top.confidence.toFixed(2)}` : ', unscored'}).
         {' '}Deep analysis will walk the stack, fetch commits + telemetry, and confirm or split these.
       </>
     )
@@ -1870,12 +1526,6 @@ export default function DeepInvestigationPage() {
     } catch {
       toast.error('Trigger failed')
     }
-  }
-  const onRunSelection = () => toast('Failure picker — coming in Phase 2', { icon: '🎯' })
-  const onDryRun = () => toast(`Dry run: ${model.eligibleFailures} failures · ${model.preScanClusters} clusters · ~${model.estimateMinutes.toFixed(1)} min`, { icon: '🧪' })
-  const onOpenCluster = (clusterId: string) => {
-    if (!runId) return
-    toast(`Cluster detail (${clusterId.slice(0, 6)}…) — coming in Phase 2`, { icon: '🔍' })
   }
   const onOpenPastRun = (rid: string) => navigate(`/deep-investigate/${rid}`)
 
@@ -1921,20 +1571,6 @@ export default function DeepInvestigationPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <GhostBtn
-            onClick={() => toast('Investigation history view — coming in Phase 2', { icon: '🕒' })}
-            title="Browse all past investigations"
-          >
-            <History className="h-3.5 w-3.5" />
-            History
-          </GhostBtn>
-          <GhostBtn
-            onClick={() => toast('Configure modal — coming in Phase 2', { icon: '⚙️' })}
-            title="Configure investigation defaults"
-          >
-            <Settings className="h-3.5 w-3.5" />
-            Configure
-          </GhostBtn>
           <SuiteFilterSelect
             value={selectedSuite}
             onChange={setSelectedSuite}
@@ -1959,12 +1595,8 @@ export default function DeepInvestigationPage() {
         headline={headline}
         lede={lede}
         onRunAll={onRunAll}
-        onRunSelection={onRunSelection}
-        onDryRun={onDryRun}
         isQaEngineer={isQaEngineer}
       />
-
-      <WorkflowRibbon stages={ribbonStages} model={model} />
 
       {/* AI-1 Investigator cockpit — hypothesis-loop agent (shadow mode).
           Project scope mirrors the spend/budget panels: the active project,
@@ -1975,7 +1607,7 @@ export default function DeepInvestigationPage() {
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
-          <ProposedClustersCard model={model} onOpenCluster={onOpenCluster} focusedRunId={runId ?? null} />
+          <ProposedClustersCard model={model} focusedRunId={runId ?? null} />
           <PastInvestigations rows={model.pastInvestigations} onOpen={onOpenPastRun} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1985,14 +1617,8 @@ export default function DeepInvestigationPage() {
             isError={integrationsError}
           />
           <ModelRoutingCard trail={decisionTrail} isLoading={!!runId && trailLoading} />
-          <RunSettingsCard
-            settings={settings}
-            onChange={(s) => setSettings(prev => ({ ...prev, ...s }))}
-          />
         </div>
       </div>
-
-      <ProvenanceFooter runId={runId ?? null} model={model} />
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
@@ -2001,5 +1627,3 @@ export default function DeepInvestigationPage() {
   )
 }
 
-// Phase-2 imports kept referenced.
-void BarChart3; void ChevronRight; void ExternalLink; void Search; void Zap; void AlertTriangle

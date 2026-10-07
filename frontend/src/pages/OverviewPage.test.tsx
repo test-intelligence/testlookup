@@ -44,8 +44,10 @@ const valueKpiState: { metrics: ValueMetrics | undefined } = { metrics: undefine
 vi.mock('@/hooks/useValueMetrics', () => ({
   useValueMetricsKpi: () => valueKpiState,
 }))
-// KPI cards render only for widget ids in the active view, so tests that
-// assert on a card must opt it in. Mutable so each test can choose.
+// P2: the page no longer reads the saved widget selection — the seven KPI
+// cards always render. The hook stays mocked with an EMPTY selection, so a
+// re-introduced `widgetIds` gate would hide every card and fail the KPI tests;
+// one test below also hands it a narrow selection explicitly.
 const analyticsViewState: { widgetIds: string[] } = { widgetIds: [] }
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
@@ -158,7 +160,6 @@ describe('OverviewPage', () => {
   // true at once.
 
   it('renders a KPI trend as a percentage, not a bare count', async () => {
-    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi']
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -183,9 +184,9 @@ describe('OverviewPage', () => {
     )
 
     // The +400 must carry its unit; without it this reads as 400 executions.
-    // findAllByText, not findByText: the coverage micro-strip renders the same
-    // trend with the same unit, so a singular query throws on two matches —
-    // which would fail this test for the OPPOSITE of the reason it exists.
+    // findAllByText, not findByText: a singular query throws if another
+    // surface ever repeats the trend — which would fail this test for the
+    // OPPOSITE of the reason it exists.
     expect((await screen.findAllByText(/\+400%/)).length).toBeGreaterThan(0)
     expect(screen.queryByText(/▲ \+400$/)).not.toBeInTheDocument()
     // Downward trends too — the sign is already in the number.
@@ -196,7 +197,6 @@ describe('OverviewPage', () => {
     // Found by mutation: changing the flat branch from '0%' back to '0' passed
     // every other test here. An unchanged metric is still a percentage, and a
     // bare "0" beside a count reads as "zero runs", not "no change".
-    analyticsViewState.widgetIds = ['total_executions_kpi']
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -230,7 +230,6 @@ describe('OverviewPage', () => {
 
   it('states what the trend is measured against', async () => {
     // A percentage with no baseline is still ambiguous: 400% of what, since when?
-    analyticsViewState.widgetIds = ['total_executions_kpi']
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -254,8 +253,7 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    // The KPI badge is the one carrying the explanatory title; the micro-strip
-    // renders the same percentage without one.
+    // The KPI badge is the one carrying the explanatory title.
     const badges = await screen.findAllByText(/\+400%/)
     const titled = badges.filter((el) => el.getAttribute('title'))
     expect(titled.length).toBeGreaterThan(0)
@@ -297,7 +295,7 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findAllByText(/Quality workflow/i)
+    await screen.findByRole('region', { name: 'Release readiness' })
     expect(screen.queryByText('Eng-hours saved')).toBeNull()
     expect(screen.queryByText(/View value metrics/i)).toBeNull()
   })
@@ -315,11 +313,11 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findAllByText(/Quality workflow/i)
+    await screen.findByRole('region', { name: 'Release readiness' })
     expect(screen.queryByText('Eng-hours saved')).toBeNull()
   })
 
-  it('renders the quality workflow strip above dashboard metrics', async () => {
+  it('leads with the readiness verdict, with no "Quality workflow" ribbon beside it (P2)', async () => {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
 
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -352,14 +350,22 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    // ``Quality workflow`` appears in both the workflow strip and the
-    // dashboard widget header, so use getAllByText for the presence check.
-    expect((await screen.findAllByText(/Quality workflow/i)).length).toBeGreaterThan(0)
+    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
     expect(screen.getByText(/^Dashboard$/i)).toBeInTheDocument()
-    const workflowHeading = screen.getByRole('heading', { name: 'Quality workflow', level: 3 })
-    expect(workflowHeading.closest('.card')?.parentElement).toHaveClass(
+    // The ribbon's four invented stages (and the heading that named it) are
+    // gone, and the verdict no longer shares a two-column row with it.
+    expect(screen.queryByText(/Quality workflow/i)).toBeNull()
+    for (const stage of ['Quality Snapshot', 'Readiness Check', 'Trend Analysis', 'Action Focus']) {
+      expect(screen.queryByRole('link', { name: `Open ${stage}` }), stage).toBeNull()
+    }
+    expect(verdictCard.parentElement).not.toHaveClass(
       'xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.55fr)]',
     )
+    // It says what the verdict IS generated from: the readiness band.
+    expect(within(verdictCard).getByText(/release-readiness band/)).toBeInTheDocument()
+    // ...and the window it covers, not "generated just now" (the render time).
+    expect(verdictCard).toHaveTextContent(/Verdict for the last \d+ days, from the release-readiness band/)
+    expect(verdictCard.textContent).not.toMatch(/just now/)
     // The page renders the verdict via ``gateLabel`` — ``GREEN`` readiness
     // maps to "Go". Match the rendered label rather than the raw backend
     // colour to stay aligned with the verdict-led redesign.
@@ -388,7 +394,7 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findAllByText(/Quality workflow/i)).not.toHaveLength(0)
+    expect(await screen.findByRole('region', { name: 'Release readiness' })).toBeInTheDocument()
     expect(consoleError).not.toHaveBeenCalledWith(
       expect.stringContaining("Cannot read properties of undefined (reading 'length')"),
     )
@@ -462,7 +468,7 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findAllByText(/Quality workflow/i)
+    await screen.findByRole('region', { name: 'Release readiness' })
     // Fabricated ribbon literals must be gone (the dashboard has no real
     // per-run cost / evidence-count / stage-duration signal to report).
     expect(screen.queryByText(/\$0\.31/)).toBeNull()
@@ -474,6 +480,80 @@ describe('OverviewPage', () => {
     expect(screen.queryByRole('button', { name: /Run quality workflow/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /View evidence/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+  })
+
+  // ── P2: remove the noise ────────────────────────────────────────────────
+  const ALL_KPIS = [
+    'Total executions', 'Avg pass rate', 'Active defects', 'Flaky tests',
+    'New failures · 24h', 'Infra-caused failures', 'Avg run duration',
+  ]
+
+  it('renders all seven KPI cards whatever the saved widget selection, and offers no Customize (P2)', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    // A saved selection of one card used to hide the other six, forever once
+    // the picker that wrote it was gone.
+    analyticsViewState.widgetIds = ['total_executions_kpi']
+    try {
+      render(
+        <MemoryRouter initialEntries={['/overview']}>
+          <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+        </MemoryRouter>,
+      )
+      await screen.findByRole('region', { name: 'Release readiness' })
+      for (const label of ALL_KPIS) expect(screen.getByText(label), label).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
+      expect(screen.queryByRole('dialog')).toBeNull()
+    } finally {
+      analyticsViewState.widgetIds = []
+    }
+  })
+
+  it('drops the blocks that repeated the KPI row: reason cards and the coverage strip with its "—" MTTF tile (P2)', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
+    // The verdict's three reason cards (each a KPI card again).
+    expect(screen.queryByText('Sample size')).toBeNull()
+    expect(within(verdictCard).queryByText('New failures · 24h')).toBeNull()
+    // The coverage micro-strip: executions, avg duration (both KPI cards), an
+    // inferred "last green run", and a Mean time to fix that was always "—".
+    for (const gone of [/Automation coverage/i, /Last green run/i, /Mean time to fix/i]) {
+      expect(screen.queryByText(gone), String(gone)).toBeNull()
+    }
+    expect(screen.queryByText(/needs ≥ 3 fixes/)).toBeNull()
+    // Each KPI label once — no second block repeating it.
+    expect(screen.getAllByText('Avg run duration')).toHaveLength(1)
+  })
+
+  it('shows no second "no executions" banner under the page when the window is empty (P2)', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 0 },
+        avg_pass_rate_7d: { value: 0 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    // The verdict already says it (PENDING lede), and so does the empty-window notice.
+    expect(await screen.findByText(/No test executions in the last \d+ days/)).toBeInTheDocument()
+    expect(screen.queryByText(/readiness, KPIs, and blockers will assess once data lands/)).toBeNull()
   })
 })
 
@@ -517,8 +597,9 @@ describe('OverviewPage — executions are not runs', () => {
   //     SAMPLE SIZE   60 runs / 30 days      <- a 6-run project, 60 executions
   //
   // A reader weighing a No-Go verdict was told the evidence base was ~7x
-  // larger than it was. The MicroStrip compounded it by printing the relative
-  // trend as an absolute: "702 runs · +680 this period" for +680%.
+  // larger than it was. The coverage strip (removed in P2) compounded it by
+  // printing the relative trend as an absolute: "702 runs · +680 this period"
+  // for +680%.
 
   beforeEach(() => {
     valueKpiState.metrics = undefined
@@ -549,39 +630,43 @@ describe('OverviewPage — executions are not runs', () => {
     )
   }
 
-  /** The verdict's "Sample size" card, as a single string. */
-  function sampleSizeCardText(): string {
-    const label = screen.getByText('Sample size')
-    const card = label.parentElement
-    if (!card) throw new Error('Sample size card has no container')
-    return card.textContent ?? ''
+  /**
+   * The verdict's statement of its sample, as a single string. P2 removed the
+   * "Sample size" reason card (the Total executions KPI is the same number);
+   * the verdict's lede is where the verdict itself states its sample now.
+   */
+  async function verdictSampleText(): Promise<string> {
+    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
+    return within(verdictCard).getByText(/quality gates passed/).textContent ?? ''
   }
 
   it('does not describe the execution count as a run count', async () => {
     await renderWithExecutions(60)
-    // Scoped to the card on purpose: a page-wide queryByText(/60 runs/) passes
-    // whatever the card says, because the value and its unit are separate
-    // elements. That version of this guard survived mutation.
+    // Scoped to the verdict's sentence on purpose: a page-wide
+    // queryByText(/60 runs/) passes whatever it says, because values and units
+    // can sit in separate elements. That version of this guard survived mutation.
     //
     // A plain substring check, not a regex: two successive attempts to write
     // /runs?/ landed a literal backspace and then a literal backslash in
     // the pattern. Both could never match, so `.not.toMatch` passed
     // unconditionally and the sibling assertion below was doing all the work.
-    expect(sampleSizeCardText().toLowerCase()).not.toContain('run')
+    expect((await verdictSampleText()).toLowerCase()).not.toContain('run')
   })
 
   it('names the unit it is actually counting', async () => {
     await renderWithExecutions(60)
-    const text = sampleSizeCardText()
+    const text = await verdictSampleText()
     expect(text).toMatch(/60/)
     expect(text).toMatch(/execution/i)
   })
 
-  it('renders the coverage trend as a percentage, not a count of runs', async () => {
+  it('renders the execution trend as a percentage, not a count of runs', async () => {
     await renderWithExecutions(702, 680)
-    // "+680 this period" reads as 680 more runs; it means the count grew 680%.
-    expect(screen.queryByText(/\+680 this period/)).not.toBeInTheDocument()
-    expect(screen.getByText(/\+680% this period/)).toBeInTheDocument()
+    // "+680 this period" read as 680 more runs; it means the count grew 680%.
+    // The strip that printed it is gone (P2); the KPI card carries the trend.
+    expect(screen.queryByText(/this period/)).not.toBeInTheDocument()
+    const card = screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement
+    expect(within(card).getByText(/\+680%/)).toBeInTheDocument()
   })
 })
 
@@ -672,9 +757,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
 
   beforeEach(() => {
     valueKpiState.metrics = undefined
-    analyticsViewState.widgetIds = [
-      'total_executions_kpi', 'avg_pass_rate_kpi', 'new_failures_kpi',
-    ]
   })
 
   async function renderOneDayOfData() {
@@ -1056,7 +1138,6 @@ describe('OverviewPage — sparklines and meter on the chart kit', () => {
 
   beforeEach(() => {
     valueKpiState.metrics = undefined
-    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi', 'new_failures_kpi']
     // The window is the last 30 UTC days ending "today": pin today to the
     // fixture's newest day. Only `Date` is faked; the render's timers run.
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -1162,7 +1243,6 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
 
   beforeEach(() => {
     valueKpiState.metrics = undefined
-    analyticsViewState.widgetIds = ['total_executions_kpi']
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-08-16T12:00:00Z'))
   })
@@ -1209,18 +1289,11 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     expect(passRate.className).not.toMatch(/text-\[26px\]/)
   })
 
-  it('presentation mode (R2-13): the coverage strip’s values on the stat token, and no value or change breaks across lines', async () => {
-    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi']
+  it('presentation mode (R2-13): no KPI value or change breaks across lines', async () => {
     await renderPage()
     const PRESENTING = '[[data-presentation=on]_&]:'
-    // The strip under the trend: 18 px at the desk on `--text-stat-sm` (18 px), so the
-    // room's 40 px reaches "4437" and "8m 32s" there as it does in the KPI cards above.
-    for (const label of ['Automation coverage', 'Avg run duration']) {
-      const card = screen.getByText(label).parentElement as HTMLElement
-      const value = (card.lastElementChild as HTMLElement).firstElementChild as HTMLElement
-      expect(value.style.fontSize, label).toBe('var(--text-stat-sm)')
-      expect(value.className.split(/\s+/), label).toContain(`${PRESENTING}whitespace-nowrap`)
-    }
+    // (The coverage strip this test also covered was removed in P2: each of its
+    // tiles repeated a KPI card, or was always "—".)
     // The KPI cards: the value and its change each stay whole, and the change drops
     // under the value instead of breaking; the grid takes four columns in the room.
     const card = screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement

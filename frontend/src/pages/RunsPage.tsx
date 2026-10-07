@@ -7,41 +7,33 @@
  *             All-pages toggle + window select + status select.
  *   Verdict → 1.45fr | 1fr split. Variants BROKEN / MIXED / HEALTHY / PENDING.
  *             Left: pulsing eyebrow → 26 px headline → lede → 3 issue rows
- *             → CTAs (Bisect from last green / Open intelligence / Hold deploys).
+ *             → CTAs (Bisect from last green / Open intelligence).
  *             Right: 44 px composite pipeline-health score (red→amber→green
  *             gradient + 33/66 ticks + marker dot) + 2×2 weighted dimension
  *             grid (Build success 40 % / Signature diversity 15 % / Fix
  *             velocity 25 % / Metadata coverage 20 %).
- *   Ribbon  → slim 4-stage workflow with skip-aware variant: Release context
- *             skipped when no release tag is attached, rendered informational.
  *   KPIs    → 5 cells with sparklines: Builds failed · Unique failures ·
  *             Avg pass rate · Last green build · Red streak.
+ *   Table   → Runs table, full width (selectable, per-row Intel/Trigger/Deep/
+ *             Compare, bulk-action sub-header).
  *   Body    → 1.65fr | 1fr.
  *     Left  → Signature cluster card (groups runs by `passed,failed,total`
- *             tuple, surfaces the dominant cluster + outliers) → Runs table
- *             (selectable, per-row Intel/Trigger/Deep, bulk-action sub-header).
- *     Right → Last-green callout (bisect target) → 14-day build velocity
- *             grid → Recommended actions (Developer / QA / Release manager).
- *   Footer → Provenance line + decision-trail link.
+ *             tuple, surfaces the dominant cluster + outliers).
+ *     Right → Last-green callout (bisect target) → 14-day build velocity.
  *
- * Out of scope (Phase 2 — README §"Open questions" + §13 step 7 caveats):
- *   - Bisect modal body (button wires up; modal is later).
- *   - Run-comparison modal body.
- *   - Decision-trail modal body — link wires up to existing toast for now.
- *   - Backend-computed signature: currently grouped client-side by the
- *     `(passed, failed, total)` tuple per README §12 q1 fallback.
+ * The signature is grouped client-side by the `(passed, failed, total)` tuple
+ * per README §12 q1 fallback.
  *
- * Data: derives every section from existing useRuns(...) + runsService. CTAs
- * that need new endpoints (bisect, hold deploys, run-comparison) emit toast
- * placeholders. Per-row Trigger / Deep + bulk-trigger preserve the existing
- * agentService.bulkTriggerPipelines call.
+ * Data: derives every section from existing useRuns(...) + runsService. Bisect
+ * navigates to /runs/compare; per-row Trigger / Deep + bulk-trigger use the
+ * existing agentService calls. UX redesign P2: a control renders only when it
+ * does something real.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight,
-  Clock, Code as CodeIcon, GitBranch, GitCompare, Layers, Search, ShieldCheck,
-  Sparkles, Stethoscope, TrendingUp, Upload, Wrench, XCircle, Zap,
+  AlertCircle, AlertTriangle, BarChart3, Clock, GitBranch, GitCompare, Layers,
+  Search, Sparkles, Stethoscope, TrendingUp, Upload, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -752,110 +744,6 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
   )
 }
 
-// ── Workflow ribbon ───────────────────────────────────────────────────────
-type StageDisplay = 'done' | 'skipped'
-
-interface RibbonStage {
-  num: number
-  name: string
-  status: StageDisplay
-  meta: React.ReactNode
-}
-
-function buildRibbon(model: PipelineModel): RibbonStage[] {
-  const totalEvidence = model.totalRuns
-  return [
-    {
-      num: 1, name: 'Run ingestion', status: 'done',
-      meta: <>{model.totalRuns} build{model.totalRuns === 1 ? '' : 's'} · {totalEvidence} evidence</>,
-    },
-    {
-      num: 2, name: 'Failure detection', status: 'done',
-      meta: <>{model.failedRuns} failure{model.failedRuns === 1 ? '' : 's'} · {model.failedRuns} evidence</>,
-    },
-    {
-      num: 3, name: 'Intelligence handoff', status: 'done',
-      meta: model.primaryCluster
-        ? <>1 cluster routed · {model.primaryCluster.members.length} evidence</>
-        : <>0 clusters routed · 0 evidence</>,
-    },
-    {
-      // README §4.4: Release context skipped when no run carries a release tag.
-      num: 4, name: 'Release context',
-      status: model.totalRuns > 0 && model.metadataCoveragePct < 50 ? 'skipped' : 'done',
-      meta: model.metadataCoveragePct < 50
-        ? <span className="italic">no release tag on any build</span>
-        : <>{Math.round(model.metadataCoveragePct)}% coverage</>,
-    },
-  ]
-}
-
-function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
-  const completed = stages.filter(s => s.status === 'done').length
-  const evidence = stages.filter(s => s.status === 'done').length * 7
-  return (
-    <section
-      aria-label="Run workflow"
-      className="rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
-    >
-      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
-        <div>
-          <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-1.5">
-            Run workflow
-            <span className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>compact</span>
-          </h3>
-          <p className="text-[11.5px] text-[var(--color-text-muted)] m-0 mt-0.5">
-            Ingest builds, detect failures, hand off intelligence, keep release context visible.
-          </p>
-        </div>
-        <span className="text-[11.5px] text-[var(--color-text-muted)]">
-          {completed} of {stages.length} stages · {evidence} evidence items
-        </span>
-      </div>
-      <div
-        className="grid rounded-md overflow-hidden"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', border: '1px solid var(--color-border)' }}
-      >
-        {stages.map((s, i) => <StageCell key={s.num} stage={s} isLast={i === stages.length - 1} />)}
-      </div>
-    </section>
-  )
-}
-
-function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
-  const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)', fg: 'var(--status-passed)', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
-    : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <ChevronRight className="h-2.5 w-2.5" strokeWidth={3} /> }
-  return (
-    <button
-      type="button"
-      tabIndex={0}
-      aria-label={`Stage ${stage.num}: ${stage.name}, ${stage.status}`}
-      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
-      className={clsx(
-        'relative flex items-start gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
-        stage.status === 'skipped' && 'opacity-80',
-      )}
-      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-full flex-none mt-px"
-        style={{ width: 18, height: 18, background: ic.bg, color: ic.fg }}
-      >
-        {ic.icon}
-      </span>
-      <span className="flex flex-col gap-px min-w-0">
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
-        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">{stage.meta}</span>
-      </span>
-      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
-        {String(stage.num).padStart(2, '0')}
-      </span>
-    </button>
-  )
-}
-
 // ── KPI strip + sparkline primitives ─────────────────────────────────────
 type KpiTone = 'good' | 'warn' | 'bad' | 'neutral'
 
@@ -1533,11 +1421,7 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
       <div className="flex flex-wrap gap-2 mt-3">
         <PrimaryBtn onClick={onBisect}>
           <GitBranch className="h-3.5 w-3.5" /> Start bisect
-        </PrimaryBtn>
-        <GhostBtn onClick={() => toast('Diff against HEAD — coming in Phase 2', { icon: '⇆' })}>
-          Diff against HEAD
-        </GhostBtn>
-      </div>
+        </PrimaryBtn>      </div>
     </section>
   )
 }
@@ -1578,156 +1462,6 @@ export function BuildVelocityCard({ cells, redStreak }: { cells: DayStripCell[];
         />
       </div>
     </CardShell>
-  )
-}
-
-// ── Recommended actions ──────────────────────────────────────────────────
-interface RecRow {
-  role: 'dev' | 'qa' | 'rm'
-  Icon: typeof CodeIcon
-  label: string
-  who?: string
-  body: React.ReactNode
-  cta: { label: string; onClick: () => void; dim?: boolean }
-}
-
-function buildRecActions(model: PipelineModel, onBisect: () => void): RecRow[] {
-  const recs: RecRow[] = []
-  const lastGreenSha = model.lastGreen ? model.lastGreen.id.slice(0, 7) : null
-  if (model.primaryCluster && lastGreenSha) {
-    recs.push({
-      role: 'dev',
-      Icon: CodeIcon,
-      label: 'Developer',
-      who: '@team-checkout',
-      body: (
-        <>
-          Bisect from <code>{lastGreenSha}</code> → HEAD.
-          {' '}The failing test signature is <code>{shortSignatureLabel(model.primaryCluster)}</code>.
-        </>
-      ),
-      cta: { label: 'Start', onClick: onBisect },
-    })
-  }
-  if (model.primaryCluster && model.primaryCluster.members.length >= 2) {
-    recs.push({
-      role: 'qa',
-      Icon: ShieldCheck,
-      label: 'QA',
-      who: '@release-qa',
-      body: <>Confirm the cluster is one root cause, not {model.primaryCluster.members.length} incidents. Don't open new bugs per build.</>,
-      cta: { label: 'Triage cluster', onClick: () => toast('Cluster triage — coming in Phase 2', { icon: '🔍' }) },
-    })
-  }
-  if (model.failedRuns > 0) {
-    recs.push({
-      role: 'rm',
-      Icon: Wrench,
-      label: 'Release manager',
-      who: '@releng',
-      body: <>Hold deploys touching the affected suite until a green build appears. Auto-deploy is currently armed.</>,
-      cta: { label: 'Hold', onClick: () => toast('Hold-deploys editor — coming in Phase 2', { icon: '🚦' }) },
-    })
-  }
-  return recs
-}
-
-function RecommendedActions({ recs }: { recs: RecRow[] }) {
-  return (
-    <CardShell title="Recommended actions" rightSlot={<span>routed by signature</span>}>
-      <div className="px-4 py-3.5 flex flex-col gap-2">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">Generated from the failure signature.</p>
-        {recs.length === 0 ? (
-          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
-            No recommendations — pipeline is healthy.
-          </p>
-        ) : (
-          recs.map((r, i) => <RecActionRow key={i} rec={r} />)
-        )}
-      </div>
-    </CardShell>
-  )
-}
-
-function RecActionRow({ rec }: { rec: RecRow }) {
-  const palette = {
-    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
-    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
-  }[rec.role]
-  const Icon = rec.Icon
-  return (
-    <div
-      className={clsx('grid items-center gap-2.5 rounded-md border', rec.cta.dim && 'opacity-60')}
-      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          {rec.label}
-          {rec.who && (
-            <span
-              className="font-mono text-[11px] text-[var(--color-text-secondary)] px-1.5 py-px rounded-sm"
-              style={{ background: 'var(--color-bg-secondary)', textTransform: 'none', letterSpacing: 0 }}
-            >
-              {rec.who}
-            </span>
-          )}
-        </div>
-        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
-          {rec.body}
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={rec.cta.onClick}
-        className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
-        style={{ borderColor: 'var(--color-border)' }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-      >
-        {rec.cta.label}
-      </button>
-    </div>
-  )
-}
-
-// ── Provenance footer ────────────────────────────────────────────────────
-function ProvenanceFooter(
-  { totalEvidence, signature, refreshedAt }:
-  { totalEvidence: number; signature: string | null; refreshedAt: string },
-) {
-  return (
-    <div
-      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-    >
-      <span className="flex items-center gap-1.5 flex-wrap">
-        <span>Provenance</span>
-        <span aria-hidden>·</span>
-        <span>runs ingestion v1</span>
-        <span aria-hidden>·</span>
-        <span>{totalEvidence} evidence items · 3 tools</span>
-        <span aria-hidden>·</span>
-        <span>refreshed {refreshedAt}</span>
-        {signature && (
-          <>
-            <span aria-hidden>·</span>
-            <span>cluster <code className="font-mono text-[11.5px]">{signature}</code></span>
-          </>
-        )}
-      </span>
-      <button
-        type="button"
-        className="hover:underline inline-flex items-center gap-1"
-        style={{ color: 'var(--color-accent)' }}
-        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
-      >
-        Decision trail <ArrowRight className="h-3 w-3" />
-      </button>
-    </div>
   )
 }
 
@@ -1846,11 +1580,10 @@ export default function RunsPage() {
     ...(statusFilter && { status: statusFilter }),
     ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
   })
-  // Provenance rows must report when this client actually received the
-  // payload. Both of this page's rows previously rendered a hardcoded
-  // "refreshed just now", so a tab left open overnight still claimed the
-  // numbers above it were seconds old -- the #893 defect, in the element whose
-  // entire job is trustworthiness.
+  // The header's "refreshed" note must report when this client actually
+  // received the payload. It previously rendered a hardcoded "refreshed just
+  // now", so a tab left open overnight still claimed the numbers above it were
+  // seconds old -- the #893 defect.
   const fetchedAt = useDataFreshness(data)
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const runs = useMemo<TestRun[]>(() => (data?.items ?? []) as TestRun[], [data?.items])
@@ -1872,7 +1605,6 @@ export default function RunsPage() {
   }, [sortedRuns, tablePage])
   const model = useMemo(() => buildPipelineModel(runs), [runs])
   const verdict = pickVerdict(model)
-  const ribbonStages = useMemo(() => buildRibbon(model), [model])
   const sigLabel = model.primaryCluster ? shortSignatureLabel(model.primaryCluster) : null
 
   // Bisect navigation — shared by every "Bisect" / "Start bisect" /
@@ -1913,13 +1645,6 @@ export default function RunsPage() {
     }
     navigate(href)
   }
-
-  // Not memoised — buildRecActions captures the latest ``handleBisect``
-  // closure (which depends on render-time state via ``model``). The
-  // function returns a small fixed array per render; memoisation here
-  // would require tracking handleBisect identity, which is more code
-  // than the equality saves.
-  const recs = buildRecActions(model, handleBisect)
 
   if (!project && !isAllProjects) {
     return (
@@ -2071,7 +1796,6 @@ export default function RunsPage() {
           {' '}<span className="text-[var(--color-text-muted)]">Run intelligence once, triage at the cluster level instead of {model.primaryCluster.members.length} times.</span>
         </>
       ),
-      cta: { label: 'Open cluster', onClick: () => toast('Cluster detail — coming in Phase 2', { icon: '🧬' }) },
     })
   }
   if (model.hasMissingMetadata) {
@@ -2084,7 +1808,6 @@ export default function RunsPage() {
           {' '}<span className="text-[var(--color-text-muted)]">Cannot tell which feature branch broke things.</span>
         </>
       ),
-      cta: { label: 'Fix reporter', onClick: () => toast('Reporter docs — coming in Phase 2', { icon: '📖' }) },
     })
   }
 
@@ -2096,7 +1819,6 @@ export default function RunsPage() {
       runs[0]
         ? { label: `Open intelligence · #${runs[0].build_number}`, onClick: () => navigate(`/runs/${runs[0].id}/intelligence`) } as IssueRowSpec['cta']
         : null,
-      { label: 'Hold deploys', onClick: () => toast('Hold-deploys editor — coming in Phase 2', { icon: '🚦' }) } as IssueRowSpec['cta'],
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
@@ -2218,18 +1940,14 @@ export default function RunsPage() {
         ctas={verdictCtas}
       />
 
-      <WorkflowRibbon stages={ribbonStages} />
-
       {/* KPI strip */}
       <RunKpiStrip model={model} />
 
-      {/* Runs table is now full-width — matches the VerdictCard /
-          WorkflowRibbon / KPI strip widths above it. Layout updated
-          2026-05-15: the previous 1.65fr / 1fr grid cramped the table
-          into ~60% of the screen and stacked Last Green / Velocity /
-          Recommended Actions vertically in the right rail. Users
-          asked for the table to breathe and the three context cards
-          to sit parallel to the Failure signature analysis instead. */}
+      {/* Runs table is full-width — matches the VerdictCard / KPI strip
+          widths above it. Layout updated 2026-05-15: the previous
+          1.65fr / 1fr grid cramped the table into ~60% of the screen.
+          Users asked for the table to breathe and the context cards to
+          sit parallel to the Failure signature analysis instead. */}
       <div className="mb-3.5">
         <RunsTable
           runs={tableRuns}
@@ -2265,12 +1983,8 @@ export default function RunsPage() {
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <LastGreenCallout model={model} onBisect={handleBisect} />
-          <BuildVelocityCard cells={model.velocityCells} redStreak={model.redStreak} />
-          <RecommendedActions recs={recs} />
-        </div>
+          <BuildVelocityCard cells={model.velocityCells} redStreak={model.redStreak} />        </div>
       </div>
-
-      <ProvenanceFooter totalEvidence={model.totalRuns + model.failedRuns + (model.primaryCluster ? 7 : 0)} signature={sigLabel} refreshedAt={refreshedAt} />
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.

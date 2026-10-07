@@ -2249,6 +2249,26 @@ def _frontend_all_projects_literal() -> list[Violation]:
     return violations
 
 
+_UNBUILT_STUB_RE = re.compile(r"phase[ _-]?2|coming soon|next iteration", re.IGNORECASE)
+
+
+def _frontend_no_unbuilt_stubs() -> list[Violation]:
+    """UX redesign P2: anything not built is not rendered. 87 lines of the
+    frontend once promised a "Phase 2" / "coming soon" / "next iteration"
+    feature: toast-only buttons, stub menu items, and the comments that kept
+    them company. They were all removed; this keeps the count at zero, in
+    comments too (a stub's comment is how the next one gets copied in).
+    Test files are exempt: a test may assert the phrase is absent."""
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src"
+    for path in iter_files(root, (".ts", ".tsx")):
+        if ".test." in path.name:
+            continue
+        for ln, text in grep_lines(path, _UNBUILT_STUB_RE):
+            violations.append(Violation(path, ln, f"unbuilt-feature stub: {text.strip()[:80]}"))
+    return violations
+
+
 _AXIOS_CREATE_RE = re.compile(r"\baxios\.create\s*\(")
 _AXIOS_OWNER = "frontend/src/services/api.ts"
 
@@ -6042,6 +6062,12 @@ GUARDS: list[Guard] = [
         description="Literal 'all' assigned to project_id — never send to backend.",
         check=_frontend_all_projects_literal,
         fix_hint="Use `activeProjectId === ALL_PROJECTS_ID` guard and pass `null` to the API.",
+    ),
+    Guard(
+        name="frontend.no-unbuilt-stubs",
+        description="No 'Phase 2' / 'coming soon' / 'next iteration' stubs or their comments in frontend/src.",
+        check=_frontend_no_unbuilt_stubs,
+        fix_hint="Do not render what is not built: drop the control (or its CTA row) and its comment.",
     ),
     Guard(
         name="backend.project-scope-guard-placement",

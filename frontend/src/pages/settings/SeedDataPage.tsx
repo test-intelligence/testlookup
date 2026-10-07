@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Navigate } from 'react-router-dom'
+import { SETTINGS_ROOT } from '@/components/layout/settingsRoutes'
 import { Database, Loader2, Plus, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -7,7 +9,19 @@ import { useSeedStatus } from '@/hooks/useSeedStatus'
 
 type SeedAction = 'load' | 'reset' | 'delete' | null
 
+/**
+ * Development builds only, like its card on the Settings page (UX redesign P2):
+ * loading or deleting demo data is not an action for a production install. The
+ * route stays (routes are never deleted); a production build sends it to
+ * Settings.
+ */
 export default function SeedDataPage() {
+  // A redirect, not a back control (that one belongs to AppLayout's bar).
+  if (!import.meta.env.DEV) return <Navigate to={SETTINGS_ROOT} replace />
+  return <SeedDataPageBody />
+}
+
+function SeedDataPageBody() {
   const { seeded, isLoading: loading, isError, refresh } = useSeedStatus()
   const [running, setRunning] = useState<SeedAction>(null)
   const [lastOutput, setLastOutput] = useState<string | null>(null)

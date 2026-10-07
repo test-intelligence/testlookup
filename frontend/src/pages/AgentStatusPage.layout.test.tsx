@@ -158,12 +158,12 @@ describe('AgentStatusPage layout — report first, stages collapsible', () => {
 
     const toggle = screen.getByRole('button', { name: /hide stages/i })
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Classic workflow timeline')).toBeInTheDocument()
+    expect(screen.getByText('Raw stage cards')).toBeInTheDocument()
 
     fireEvent.click(toggle)
 
     await waitFor(() => {
-      expect(screen.queryByText('Classic workflow timeline')).toBeNull()
+      expect(screen.queryByText('Raw stage cards')).toBeNull()
     })
     // Collapsing the mechanism must not take the conclusion with it.
     expect(screen.getAllByText(/DB timeout regression/i).length).toBeGreaterThan(0)
@@ -171,8 +171,32 @@ describe('AgentStatusPage layout — report first, stages collapsible', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /show stages/i }))
     await waitFor(() => {
-      expect(screen.getByText('Classic workflow timeline')).toBeInTheDocument()
+      expect(screen.getByText('Raw stage cards')).toBeInTheDocument()
     })
+  })
+
+  // P2: the Live · Debug · Audit · Compare bar is gone (Audit and Compare were
+  // "not built yet" placeholder text; Live pointed at the strip above).
+  it('renders no Audit / Compare (or any) workflow-mode tabs', async () => {
+    await renderWithPipeline()
+    expect(screen.queryByRole('tab', { name: /Audit/i })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Compare/i })).toBeNull()
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.queryByText(/coming in the next\s+iteration/i)).toBeNull()
+  })
+
+  // P2 item 3: the real-data timeline sits in a collapsed "Pipeline"
+  // disclosure at the bottom of the page.
+  it('puts the workflow timeline in a collapsed "Pipeline" disclosure below the stage detail', async () => {
+    await renderWithPipeline()
+    const toggle = screen.getByRole('button', { name: 'Pipeline' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Workflow Progress')).toBeNull()
+    expect(precedes(screen.getByText('Raw stage cards'), toggle)).toBe(true)
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Workflow Progress')).toBeInTheDocument()
   })
 
   it('still shows the report expanded by default', async () => {

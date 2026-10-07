@@ -3,7 +3,7 @@ import { Suspense, useCallback, useMemo, useState } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
+  AlertTriangle, ArrowRight, CheckCircle, Clock, TrendingUp,
 } from 'lucide-react'
 import Sparkline from '@/components/charts/Sparkline'
 import GaugeBar, { type GaugeTone } from '@/components/charts/GaugeBar'
@@ -11,9 +11,7 @@ import { dayWindow } from '@/components/charts/dayStrip.model'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ScopedLink from '@/components/ui/ScopedLink'
 import DataUnavailable from '@/components/ui/DataUnavailable'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
 import { useRuns } from '@/hooks/useRuns'
@@ -313,7 +311,6 @@ function KpiCard({ label, value, unit, delta, tone, series, sparkDomain, sparkFo
 interface VerdictCardProps {
   verdict: Verdict
   newFailures24h: number
-  newFailuresDelta: number
   totalExecutions: number
   windowDays: number
   generatedLabel: string
@@ -323,7 +320,7 @@ interface VerdictCardProps {
 }
 
 function VerdictCard({
-  verdict, newFailures24h, newFailuresDelta, totalExecutions, windowDays,
+  verdict, newFailures24h, totalExecutions, windowDays,
   generatedLabel, passRate, passRateBasisLabel,
 }: VerdictCardProps) {
   const t = VERDICT_THEME[verdict]
@@ -341,36 +338,19 @@ function VerdictCard({
     <>All quality gates passed across {totalExecutions} test execution{totalExecutions === 1 ? '' : 's'} in the last {windowDays} days. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
   )
 
-  const reason1Tone: SparkTone = newFailures24h > 0 ? 'bad' : 'neutral'
-  const reason2Tone: SparkTone = verdict === 'NO_GO' ? 'bad'
-    : verdict === 'CONDITIONAL' ? 'warn'
-    : verdict === 'GO' ? 'good'
-    : 'neutral'
-
-  const reason1Value = verdict === 'PENDING' ? '—' : `${newFailures24h}`
-  const reason1Sub = verdict === 'PENDING'
-    ? '(no data)'
-    : (newFailuresDelta === 0 ? '(unchanged)'
-       : newFailuresDelta > 0 ? `(was ${Math.max(newFailures24h - newFailuresDelta, 0)})`
-       : `(▼ ${Math.abs(newFailuresDelta)})`)
-
-  const reason2Value = verdict === 'PENDING' ? '—' : `${passRatePct}%`
   // F-067: name the POPULATION, not just "weighted". /overview counts every
   // execution and the Summary Report counts each distinct test once — 81.0%
   // vs 83.3% on the same window. Both are right; showing which is which is
   // what stops them reading as a contradiction. Falls back to the old copy
-  // when the API omits it (a cached pre-#588 payload).
-  const reason2Sub = verdict === 'PENDING'
-    ? '(awaiting runs)'
-    : `${passRateBasisLabel || 'weighted'} · ${windowDays}d`
-  const reason3Value = `${totalExecutions}`
-  // `total_executions_7d` counts TEST EXECUTIONS, not runs. Calling it runs
-  // overstated the sample by the average tests-per-run: measured live at
-  // "702 runs" against 104 real runs, and "60 runs" for a 6-run project.
-  const reason3Sub = `test executions / ${windowDays} days`
+  // when the API omits it (a cached pre-#588 payload). It used to sit in the
+  // "Pass rate" reason card, which P2 removed with its two siblings (each
+  // repeated a KPI card); the basis is the one fact only it carried, so it
+  // now sits under the pass rate it qualifies.
+  const passRateBasis = `${passRateBasisLabel || 'weighted'} · ${windowDays}d`
 
   return (
-    <div
+    <section
+      aria-label="Release readiness"
       className="relative flex flex-col gap-3.5 rounded-xl border overflow-hidden"
       style={{
         background: `${t.glow}, var(--color-bg-card)`,
@@ -440,200 +420,22 @@ function VerdictCard({
             tone={t.meterTone}
             format={(v) => `${v}%`}
           />
+          {verdict !== 'PENDING' && (
+            <div className="text-[11px] text-[var(--color-text-muted)] tabular-nums" data-testid="verdict-pass-rate-basis">
+              {passRateBasis}
+            </div>
+          )}
         </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2.5">
-        <ReasonCard label="New failures · 24h" value={reason1Value} sub={reason1Sub} tone={reason1Tone} />
-        <ReasonCard label="Pass rate" value={reason2Value} sub={reason2Sub} tone={reason2Tone} />
-        <ReasonCard label="Sample size" value={reason3Value} sub={reason3Sub} tone="neutral" />
       </div>
 
       <div className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
         <Clock className="h-3.5 w-3.5" />
         <span>
-          Verdict generated {generatedLabel} by{' '}
-          <span className="font-medium text-[var(--color-text-secondary)]">Quality workflow</span>
+          Verdict {generatedLabel}, from the{' '}
+          <span className="font-medium text-[var(--color-text-secondary)]">release-readiness band</span>
         </span>
       </div>
-    </div>
-  )
-}
-
-function ReasonCard({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: SparkTone }) {
-  const valueColor = tone === 'bad' ? 'var(--status-failed)'
-    : tone === 'warn' ? 'var(--status-skipped)'
-    : tone === 'good' ? 'var(--status-passed)'
-    : 'var(--color-text)'
-  return (
-    <div
-      className="rounded-md px-3 py-2.5 border"
-      style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'var(--color-border)' }}
-    >
-      <div
-        className="text-[11px] uppercase text-[var(--color-text-muted)]"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        {label}
-      </div>
-      <div className="text-[14px] font-semibold mt-1 tabular-nums" style={{ color: valueColor }}>
-        {value}{' '}
-        <small className="text-[12px] font-medium text-[var(--color-text-muted)]">{sub}</small>
-      </div>
-    </div>
-  )
-}
-
-// ── Workflow ribbon ──────────────────────────────────────────────────────
-type RibbonStageState = 'done' | 'warn' | 'pending' | 'running'
-
-interface RibbonStage {
-  name: string
-  desc: string
-  state: RibbonStageState
-  pillText: string
-  pillTone: 'accent' | 'red'
-  /**
-   * Route the card navigates to when clicked. The cards were styled as
-   * ``cursor-pointer`` + ``tabIndex={0}`` for months but had no handler —
-   * users reported the panels "show nothing." Each stage now drills into
-   * the page that owns the underlying evidence.
-   */
-  linkTo: string
-}
-
-function buildRibbonStages(
-  summary: DashboardSummary | undefined,
-  totalExecutions: number,
-  days: number,
-): RibbonStage[] {
-  const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
-  const passRateRaw = (summary?.avg_pass_rate_7d?.value as number | undefined) ?? 0
-  const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
-  const flaky = (summary?.flaky_test_count?.value as number | undefined) ?? 0
-  const defects = (summary?.active_defects?.value as number | undefined) ?? 0
-
-  if (totalExecutions <= 0) {
-    return [
-      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', linkTo: '/runs' },
-      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', linkTo: '/release-gate' },
-      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', linkTo: '/trends' },
-      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', linkTo: '/failures' },
-    ]
-  }
-
-  const actionCount = newFailures + flaky
-  // Pill text is a short, REAL status token per stage (no fabricated evidence
-  // counts / stage durations — the dashboard has no per-stage timing or
-  // evidence-count signal to report).
-  return [
-    {
-      name: 'Quality Snapshot',
-      state: 'done',
-      desc: `Capture current state — ${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'} / ${defects} active defect${defects === 1 ? '' : 's'}`,
-      pillText: `${totalExecutions} execution${totalExecutions === 1 ? '' : 's'}`,
-      pillTone: 'accent',
-      linkTo: '/runs',
-    },
-    {
-      name: 'Readiness Check',
-      state: verdict === 'GO' ? 'done' : 'warn',
-      desc: `Assess release fitness — ${Math.round(passRateRaw)}% pass rate over ${days}d`,
-      pillText: gateLabel(verdict),
-      pillTone: verdict === 'GO' ? 'accent' : 'red',
-      linkTo: '/release-gate',
-    },
-    {
-      name: 'Trend Analysis',
-      state: 'done',
-      desc: totalExecutions < 3
-        // The sparse branch called executions "days", the other called them
-        // "runs". They are neither.
-        ? `Sparse data — ${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'} vs ${days}-day baseline`
-        : `${totalExecutions} test executions vs ${days}-day baseline`,
-      pillText: `${days}d baseline`,
-      pillTone: 'accent',
-      linkTo: '/trends',
-    },
-    {
-      name: 'Action Focus',
-      state: 'done',
-      desc: actionCount > 0
-        ? `${actionCount} action${actionCount === 1 ? '' : 's'} queued — ${[
-            newFailures > 0 ? `fix ${newFailures} failure${newFailures === 1 ? '' : 's'}` : '',
-            flaky > 0 ? `${flaky} flake` : '',
-          ].filter(Boolean).join(', ')}`
-        : 'No actions required',
-      pillText: actionCount > 0 ? `${actionCount} to fix` : 'clear',
-      pillTone: actionCount > 0 ? 'red' : 'accent',
-      linkTo: '/failures',
-    },
-  ]
-}
-
-function ChevronArrow() {
-  return (
-    <svg width={18} height={28} viewBox="0 0 18 28" aria-hidden className="shrink-0">
-      <path
-        d="M3 4 L13 14 L3 24"
-        stroke="var(--color-border-light)"
-        strokeWidth={1.5}
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function StageCard({ stage }: { stage: RibbonStage }) {
-  const badge = stage.state === 'done'
-    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)', glyph: '✓' }
-    : stage.state === 'warn'
-      ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'var(--status-skipped)', glyph: '!' }
-      : stage.state === 'running'
-        ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', fg: 'var(--color-accent)', glyph: '·' }
-        : { bg: 'rgba(255,255,255,0.04)', fg: 'var(--color-text-faint)', glyph: '◯' }
-
-  const pill = stage.pillTone === 'red'
-    ? { bg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)', fg: 'var(--status-failed)' }
-    : { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', fg: 'var(--color-accent)' }
-
-  return (
-    <Link
-      to={stage.linkTo}
-      aria-label={`Open ${stage.name}`}
-      className="flex flex-col gap-1.5 rounded-md px-3 py-2.5 transition-all duration-150 cursor-pointer hover:-translate-y-px focus:-translate-y-px focus:outline-none no-underline"
-      style={{
-        background: 'var(--color-bg)',
-        border: '1px solid var(--color-border)',
-        minHeight: 92,
-        minWidth: 168,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      <div className="flex items-center gap-1.5">
-        <span
-          className="h-4 w-4 rounded-full inline-flex items-center justify-center"
-          style={{ background: badge.bg, color: badge.fg, fontSize: 10, fontWeight: 700, lineHeight: 1 }}
-        >
-          {badge.glyph}
-        </span>
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)]">{stage.name}</span>
-      </div>
-      <p className="text-[11px] m-0 text-[var(--color-text-muted)]" style={{ lineHeight: 1.35 }}>
-        {stage.desc}
-      </p>
-      <div className="flex items-center mt-auto text-[11px] text-[var(--color-text-muted)]">
-        <span
-          className="rounded-full px-1.5 py-px font-medium"
-          style={{ background: pill.bg, color: pill.fg, fontSize: 10.5 }}
-        >
-          {stage.pillText}
-        </span>
-      </div>
-    </Link>
+    </section>
   )
 }
 
@@ -769,58 +571,6 @@ function BlockersPanel({
   )
 }
 
-// ── Coverage micro-strip ─────────────────────────────────────────────────
-function MicroStrip({ summary, days }: { summary: DashboardSummary | undefined; days: number }) {
-  const total = (summary?.total_executions_7d?.value as number | undefined) ?? 0
-  const totalDelta = summary?.total_executions_7d?.trend ?? 0
-  const avgDuration = summary?.avg_duration_ms?.value as number | undefined
-  const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
-  const lastGreen = total > 0 && newFailures === 0 ? '< 24h ago' : '—'
-
-  const cards: Array<{ k: string; v: string; small: string }> = [
-    // Two units were wrong here at once, both already fixed elsewhere on this
-    // page and both missed in this strip:
-    //   * `total_executions_7d` counts TEST EXECUTIONS, not runs — "702 runs"
-    //     against 104 real runs on the live dashboard.
-    //   * `trend` is a RELATIVE PERCENTAGE, so "+680 this period" read as 680
-    //     more runs when it meant the count grew by 680%. Same defect
-    //     `deltaFromMetric` carries a comment about ("▲ +400" next to "150").
-    { k: 'Automation coverage', v: `${total}`,
-      small: `test executions · ${typeof totalDelta === 'number' ? `${totalDelta > 0 ? '+' : ''}${totalDelta}%` : '0%'} this period` },
-    { k: 'Last green run',      v: lastGreen,  small: total > 0 ? `over last ${days}d` : 'awaiting runs' },
-    { k: 'Mean time to fix',    v: '—',        small: 'needs ≥ 3 fixes to compute' },
-    { k: 'Avg run duration',    v: avgDuration ? formatDuration(avgDuration) : '—',
-      small: avgDuration ? 'avg · all runs' : 'needs ≥ 3 timed runs' },
-  ]
-
-  return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
-      {cards.map((c) => (
-        <div
-          key={c.k}
-          className="flex flex-col gap-1 rounded-md px-3.5 py-2.5"
-          style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-        >
-          <div
-            className="text-[11px] uppercase text-[var(--color-text-muted)]"
-            style={{ letterSpacing: 'var(--tracking-wider)' }}
-          >
-            {c.k}
-          </div>
-          <div className="text-[18px] font-semibold tabular-nums text-[var(--color-text)]">
-            {/* The value on `--text-stat-sm` (18 px, the size it always had),
-                which presentation mode raises: the same numbers the KPI cards
-                above show at room size were left at desk size here (R2-13).
-                Kept whole there ("8m 32s" must not break at the space). */}
-            <span className={PRESENTING_NOWRAP} style={{ fontSize: 'var(--text-stat-sm)' }}>{c.v}</span>{' '}
-            <small className="text-[11px] font-medium text-[var(--color-text-muted)]">{c.small}</small>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 // ── Helpers for KPI strip data ───────────────────────────────────────────
 /** Compact hours: 1 decimal under 100h, whole hours above (US-12.2 KPI). */
 function formatHoursSaved(h: number): string {
@@ -888,7 +638,6 @@ export default function OverviewPage() {
   const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, TIME_OPTIONS)
   const setDays = setStoredDays
-  const [showPicker, setShowPicker] = useState(false)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // P1: this page's saved views (the top-bar release, the window, the suite).
@@ -915,7 +664,6 @@ export default function OverviewPage() {
   // the moment the user dismisses, without a reload.
   const [, bumpGuideDismissed] = useState(0)
   const guideDismissed = isFirstRunGuideDismissed(activeProjectId)
-  const analyticsView = useAnalyticsView('dashboard')
 
   // `error` is read, not just `data`/`isLoading`: without it a failed fetch is
   // indistinguishable from an empty window, and the page below asserts the
@@ -1015,7 +763,6 @@ export default function OverviewPage() {
   const activeDefects = metricNumber(summary?.active_defects)
   const flaky = metricNumber(summary?.flaky_test_count)
   const newFailures = metricNumber(summary?.new_failures_24h)
-  const newFailuresDelta = summary?.new_failures_24h?.trend ?? 0
   const avgDurationMs = summary?.avg_duration_ms?.value as number | undefined
 
   // Infra-caused failure share (AI-classified failure-kind triad, US-9.2).
@@ -1026,7 +773,9 @@ export default function OverviewPage() {
   const infraPct = kindTotal > 0 ? Math.round((infraKindCount / kindTotal) * 100) : null
 
   const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
-  const generatedLabel = totalExecutions > 0 ? 'just now' : `awaiting data · last ${days} days`
+  // The window the verdict covers, not "just now": that was the render time,
+  // not when the (cacheable) summary behind it was computed.
+  const generatedLabel = totalExecutions > 0 ? `for the last ${days} days` : `awaiting data · last ${days} days`
   const lastRunLabel = trendData.length > 0
     ? dayTimeAgo(trendData[trendData.length - 1].date)
     : '—'
@@ -1034,11 +783,6 @@ export default function OverviewPage() {
     : verdict === 'CONDITIONAL' ? 'var(--status-skipped)'
     : verdict === 'NO_GO' ? 'var(--gate-no-go)'
     : 'var(--color-text-faint)'
-
-  const ribbonStages = useMemo(
-    () => buildRibbonStages(summary, totalExecutions, days),
-    [summary, totalExecutions, days],
-  )
 
   // First-run: a project (or the whole instance) that has NEVER had a run gets
   // a getting-started guide instead of a zeroed-out dashboard. Dismissible
@@ -1092,13 +836,6 @@ export default function OverviewPage() {
   // A count line needs two days that HAD runs: the zeros filled in for quiet
   // days are real, but a line of them around one day of data is not a trend.
   const countSeries = (series: number[]) => (daysWithData >= 2 ? series : undefined)
-
-  const activeWidgets = new Set(analyticsView.widgetIds)
-  const kpiOrder = [
-    'total_executions_kpi', 'avg_pass_rate_kpi', 'active_defects_kpi',
-    'flaky_tests_kpi', 'new_failures_kpi', 'infra_failures_kpi', 'avg_duration_kpi',
-  ]
-  const kpiVisible = kpiOrder.filter((id) => activeWidgets.has(id))
 
   if (!project && !isAllProjects) {
     return (
@@ -1177,17 +914,6 @@ export default function OverviewPage() {
               ))}
             </select>
           </label>
-          <button
-            type="button"
-            onClick={() => setShowPicker(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-          >
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Customize
-          </button>
           <div
             className="flex items-center gap-0.5 p-0.5 rounded-md"
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
@@ -1252,175 +978,127 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* Top row — Verdict + Workflow ribbon */}
-      <div className="grid grid-cols-1 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.55fr)] gap-4">
-        {summaryLoading && !summary ? (
-          <div className="card flex items-center justify-center min-h-[260px]">
-            <LoadingSpinner />
-          </div>
-        ) : (
-          <SectionErrorBoundary message="Failed to load release readiness">
-            <VerdictCard
-              verdict={verdict}
-              newFailures24h={newFailures}
-              newFailuresDelta={typeof newFailuresDelta === 'number' ? newFailuresDelta : 0}
-              totalExecutions={totalExecutions}
-              windowDays={days}
-              generatedLabel={generatedLabel}
-              passRate={passRate}
-              passRateBasisLabel={summary?.avg_pass_rate_7d?.basis_label}
-            />
-          </SectionErrorBoundary>
-        )}
-
-        <SectionErrorBoundary message="Failed to load workflow ribbon">
-          <div className="card" style={{ padding: '16px 18px 14px' }}>
-            <div className="flex items-start justify-between gap-2.5">
-              <div>
-                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Quality workflow</h3>
-                <div className="flex flex-wrap items-center gap-2.5 text-[12px] text-[var(--color-text-muted)] mt-0.5">
-                  <span
-                    className="inline-flex items-center gap-1.5"
-                    style={{ color: totalExecutions > 0 ? 'var(--status-passed)' : 'var(--color-text-muted)' }}
-                  >
-                    <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ background: totalExecutions > 0 ? 'var(--status-passed)' : 'var(--color-text-faint)' }}
-                      aria-hidden
-                    />
-                    {totalExecutions > 0 ? 'Completed' : 'Awaiting'}
-                  </span>
-                  <span>· {ribbonStages.length} stages</span>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex items-center gap-1.5 overflow-x-auto pb-1">
-              {ribbonStages.map((stage, i) => (
-                <div key={stage.name} className="flex items-center gap-1.5 shrink-0">
-                  <StageCard stage={stage} />
-                  {i < ribbonStages.length - 1 && <ChevronArrow />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </SectionErrorBoundary>
-      </div>
-
-      {/* KPI strip */}
-      {(kpiVisible.length > 0 || hoursSaved30d != null) && (
-        // Presentation mode: four cards a row at xl, not six. A 40 px "8m 32s"
-        // and its change do not fit a sixth of the row at 1280 (R2-13).
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 [[data-presentation=on]_&]:xl:grid-cols-4 gap-2.5">
-            {activeWidgets.has('total_executions_kpi') && (
-              <KpiCard
-                label="Total executions"
-                value={`${totalExecutions}`}
-                tone="neutral"
-                days={days}
-                series={countSeries(totalSeries)}
-                emptyMsg={sparklineHint(daysWithData)}
-                delta={deltaFromMetric(summary?.total_executions_7d)}
-                linkTo="/runs"
-                linkLabel="View runs"
-              />
-            )}
-            {activeWidgets.has('avg_pass_rate_kpi') && (
-              <KpiCard
-                label="Avg pass rate"
-                value={`${Math.round(passRate)}`}
-                unit="%"
-                tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'}
-                days={days}
-                series={passRateSeries}
-                sparkDomain={PASS_RATE_DOMAIN}
-                sparkFormat={formatSparkPercent}
-                emptyMsg={sparklineHint(measuredPassDays)}
-                delta={deltaFromMetric(summary?.avg_pass_rate_7d, true)}
-              />
-            )}
-            {activeWidgets.has('active_defects_kpi') && (
-              <KpiCard
-                label="Active defects"
-                value={`${activeDefects}`}
-                tone={activeDefects === 0 ? 'good' : 'bad'}
-                days={days}
-                emptyMsg={activeDefects === 0 ? `${days}d · no open defects` : `${days}d · count only`}
-                delta={deltaFromMetric(summary?.active_defects)}
-                linkTo="/defects"
-                linkLabel="View defects"
-              />
-            )}
-            {activeWidgets.has('flaky_tests_kpi') && (
-              <KpiCard
-                label="Flaky tests"
-                value={`${flaky}`}
-                tone={flaky === 0 ? 'warn' : 'bad'}
-                days={days}
-                emptyMsg={flaky === 0 ? `${days}d · no flake events captured` : `${days}d · count only`}
-                delta={deltaFromMetric(summary?.flaky_test_count, true)}
-                linkTo="/flaky-coach"
-                linkLabel="Open flaky coach"
-              />
-            )}
-            {activeWidgets.has('new_failures_kpi') && (
-              <KpiCard
-                label="New failures · 24h"
-                value={`${newFailures}`}
-                tone={newFailures === 0 ? 'good' : 'bad'}
-                days={days}
-                series={countSeries(failedSeries)}
-                emptyMsg={sparklineHint(daysWithData)}
-                delta={deltaFromMetric(summary?.new_failures_24h)}
-                linkTo="/failures"
-                linkLabel="View failures"
-              />
-            )}
-            {activeWidgets.has('infra_failures_kpi') && (
-              <KpiCard
-                label="Infra-caused failures"
-                value={infraPct == null ? '—' : `${infraPct}`}
-                unit={infraPct == null ? undefined : '%'}
-                tone={infraPct == null ? 'neutral' : infraPct === 0 ? 'good' : infraPct >= 30 ? 'bad' : 'warn'}
-                days={days}
-                emptyMsg={infraPct == null
-                  ? `${days}d · no analyzed failures`
-                  : `AI-classified · ${infraKindCount} of ${kindTotal} failure${kindTotal === 1 ? '' : 's'}`}
-                linkTo="/failures"
-                linkLabel="View failures"
-              />
-            )}
-            {activeWidgets.has('avg_duration_kpi') && (
-              <KpiCard
-                label="Avg run duration"
-                value={avgDurationMs ? formatDuration(avgDurationMs) : '—'}
-                tone="neutral"
-                days={days}
-                emptyMsg={avgDurationMs ? `${days}d · avg only` : 'Needs ≥ 3 timed runs'}
-              />
-            )}
-            {/* US-12.2 — Eng-hours saved. Only rendered when the hours-saved
-                model reports available=true; otherwise omitted (no dash-card). */}
-            {hoursSaved30d != null && valueMetrics && (
-              <KpiCard
-                label="Eng-hours saved"
-                value={formatHoursSaved(hoursSaved30d)}
-                unit="h"
-                tone="good"
-                days={days}
-                emptyMsg={`30d · ≈ ${valueMetrics.headline.fte_equivalent_30d.toFixed(1)} FTE · estimated`}
-                // The last card on this page the release filter does not
-                // reach, and deliberately so: the headline is an explicit
-                // 30-day figure, so scoping it to a three-day hotfix would
-                // produce a number its own label contradicts.
-                badge={
-                  <AllReleasesBadge reason="Engineering hours saved is a rolling 30-day figure, which a single release does not divide cleanly." />
-                }
-                linkTo="/value-metrics"
-                linkLabel="View value metrics"
-              />
-            )}
+      {/* Top row — the release-readiness verdict, the full width of the page.
+          (The "Quality workflow" ribbon beside it showed four invented stages
+          re-stating the verdict's and the KPIs' numbers; P2 removed it.) */}
+      {summaryLoading && !summary ? (
+        <div className="card flex items-center justify-center min-h-[260px]">
+          <LoadingSpinner />
         </div>
+      ) : (
+        <SectionErrorBoundary message="Failed to load release readiness">
+          <VerdictCard
+            verdict={verdict}
+            newFailures24h={newFailures}
+            totalExecutions={totalExecutions}
+            windowDays={days}
+            generatedLabel={generatedLabel}
+            passRate={passRate}
+            passRateBasisLabel={summary?.avg_pass_rate_7d?.basis_label}
+          />
+        </SectionErrorBoundary>
       )}
+
+      {/* KPI strip: the seven dashboard KPIs, always (the widget picker that
+          could hide them is gone). Presentation mode: four cards a row at xl,
+          not six. A 40 px "8m 32s" and its change do not fit a sixth of the
+          row at 1280 (R2-13). */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 [[data-presentation=on]_&]:xl:grid-cols-4 gap-2.5">
+        <KpiCard
+          label="Total executions"
+          value={`${totalExecutions}`}
+          tone="neutral"
+          days={days}
+          series={countSeries(totalSeries)}
+          emptyMsg={sparklineHint(daysWithData)}
+          delta={deltaFromMetric(summary?.total_executions_7d)}
+          linkTo="/runs"
+          linkLabel="View runs"
+        />
+        <KpiCard
+          label="Avg pass rate"
+          value={`${Math.round(passRate)}`}
+          unit="%"
+          tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'}
+          days={days}
+          series={passRateSeries}
+          sparkDomain={PASS_RATE_DOMAIN}
+          sparkFormat={formatSparkPercent}
+          emptyMsg={sparklineHint(measuredPassDays)}
+          delta={deltaFromMetric(summary?.avg_pass_rate_7d, true)}
+        />
+        <KpiCard
+          label="Active defects"
+          value={`${activeDefects}`}
+          tone={activeDefects === 0 ? 'good' : 'bad'}
+          days={days}
+          emptyMsg={activeDefects === 0 ? `${days}d · no open defects` : `${days}d · count only`}
+          delta={deltaFromMetric(summary?.active_defects)}
+          linkTo="/defects"
+          linkLabel="View defects"
+        />
+        <KpiCard
+          label="Flaky tests"
+          value={`${flaky}`}
+          tone={flaky === 0 ? 'warn' : 'bad'}
+          days={days}
+          emptyMsg={flaky === 0 ? `${days}d · no flake events captured` : `${days}d · count only`}
+          delta={deltaFromMetric(summary?.flaky_test_count, true)}
+          linkTo="/flaky-coach"
+          linkLabel="Open flaky coach"
+        />
+        <KpiCard
+          label="New failures · 24h"
+          value={`${newFailures}`}
+          tone={newFailures === 0 ? 'good' : 'bad'}
+          days={days}
+          series={countSeries(failedSeries)}
+          emptyMsg={sparklineHint(daysWithData)}
+          delta={deltaFromMetric(summary?.new_failures_24h)}
+          linkTo="/failures"
+          linkLabel="View failures"
+        />
+        <KpiCard
+          label="Infra-caused failures"
+          value={infraPct == null ? '—' : `${infraPct}`}
+          unit={infraPct == null ? undefined : '%'}
+          tone={infraPct == null ? 'neutral' : infraPct === 0 ? 'good' : infraPct >= 30 ? 'bad' : 'warn'}
+          days={days}
+          emptyMsg={infraPct == null
+            ? `${days}d · no analyzed failures`
+            : `AI-classified · ${infraKindCount} of ${kindTotal} failure${kindTotal === 1 ? '' : 's'}`}
+          linkTo="/failures"
+          linkLabel="View failures"
+        />
+        <KpiCard
+          label="Avg run duration"
+          value={avgDurationMs ? formatDuration(avgDurationMs) : '—'}
+          tone="neutral"
+          days={days}
+          emptyMsg={avgDurationMs ? `${days}d · avg only` : 'Needs ≥ 3 timed runs'}
+        />
+        {/* US-12.2 — Eng-hours saved. Only rendered when the hours-saved
+            model reports available=true; otherwise omitted (no dash-card). */}
+        {hoursSaved30d != null && valueMetrics && (
+          <KpiCard
+            label="Eng-hours saved"
+            value={formatHoursSaved(hoursSaved30d)}
+            unit="h"
+            tone="good"
+            days={days}
+            emptyMsg={`30d · ≈ ${valueMetrics.headline.fte_equivalent_30d.toFixed(1)} FTE · estimated`}
+            // The last card on this page the release filter does not
+            // reach, and deliberately so: the headline is an explicit
+            // 30-day figure, so scoping it to a three-day hotfix would
+            // produce a number its own label contradicts.
+            badge={
+              <AllReleasesBadge reason="Engineering hours saved is a rolling 30-day figure, which a single release does not divide cleanly." />
+            }
+            linkTo="/value-metrics"
+            linkLabel="View value metrics"
+          />
+        )}
+      </div>
 
       {/* VIZ-408: the pass-rate trend (which replaced the Execution trend
           card, OD-4) beside the status donut; Top failing and Failure
@@ -1449,37 +1127,12 @@ export default function OverviewPage() {
         <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
       </SectionErrorBoundary>
 
-      {/* Coverage micro-strip */}
-      <SectionErrorBoundary message="Failed to load coverage strip">
-        <MicroStrip summary={summary} days={days} />
-      </SectionErrorBoundary>
-
       {/* Recent activity (epic ACT). Inside its own error boundary and on its
           own SWR key: the panel must never be able to take /overview down or
           hold up its first paint. */}
       <SectionErrorBoundary message="Failed to load recent activity">
         <RecentActivityPanel days={days} />
       </SectionErrorBoundary>
-
-      {/* Pending banner — kept for users on legacy widget layouts that disabled
-          the new sections; mirrors the verdict-card empty state in plain text. */}
-      {totalExecutions === 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-md text-[12px] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-          <HelpCircle className="h-4 w-4" />
-          <span>
-            No test executions{suiteLabel ? ` for ${suiteLabel}` : ''} in the last {days} days — readiness, KPIs, and blockers will assess once data lands.
-          </span>
-        </div>
-      )}
-
-      {showPicker && (
-        <WidgetPicker
-          page="dashboard"
-          enabledIds={analyticsView.widgetIds}
-          onSave={(ids) => { void analyticsView.setWidgets(ids) }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
     </div>
   )
 }

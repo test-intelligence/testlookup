@@ -377,7 +377,9 @@ export default function SuiteCasesPage() {
                 <th className="px-4 py-2 font-medium">Class</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Source</th>
-                <th className="px-4 py-2 font-medium">Last seen</th>
+                {/* The row carries the latest run's id, not a timestamp, so
+                    this column names the run rather than claiming a date. */}
+                <th className="px-4 py-2 font-medium">Latest run</th>
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
@@ -428,8 +430,17 @@ export default function SuiteCasesPage() {
                     <td className="px-4 py-2 text-[var(--color-text-muted)]">{c.class_name ?? '—'}</td>
                     <td className="px-4 py-2"><StatusPill status={c.status} /></td>
                     <td className="px-4 py-2 text-[var(--color-text-muted)]">{c.source}</td>
-                    <td className="px-4 py-2 text-[var(--color-text-muted)] font-mono text-xs">
-                      {c.last_seen_run_id ? c.last_seen_run_id.slice(0, 8) : '—'}
+                    <td className="px-4 py-2 text-[var(--color-text-muted)] text-xs">
+                      {c.last_seen_run_id ? (
+                        <Link
+                          to={`/runs/${c.last_seen_run_id}`}
+                          onClick={e => e.stopPropagation()}
+                          title={`Open run ${c.last_seen_run_id}`}
+                          className="hover:text-[var(--color-accent)] hover:underline"
+                        >
+                          run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
+                        </Link>
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <div className="inline-flex items-center gap-1">

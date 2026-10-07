@@ -8,9 +8,8 @@
  * themes (e.g. emerald-300 text on a pale surface).
  *
  * Fix: the pass-rate helper, WS-status badge, LIVE badge, pass/fail
- * bars, session status/failed cells, workflow subway cards, and the
- * pipeline-events feed all resolve their success/warning/failure tone
- * through ``--status-passed`` / ``--status-broken`` / ``--status-failed``
+ * bars, session status/failed cells and the pipeline-events feed all
+ * resolve their success/warning/failure tone through ``--status-passed`` / ``--status-broken`` / ``--status-failed``
  * (and the -bg/-bd variants) instead of raw palette classes.
  *
  * Strategy: pull the page source via Vite's ``?raw`` import (no Node
@@ -34,7 +33,9 @@ describe('LiveExecutionPage — palette tokens (regression)', () => {
     expect(pageSource).toMatch(/bg-\[var\(--status-failed\)\]/)
     // Idle/stale badge surface uses the -bg / -bd variants.
     expect(pageSource).toMatch(/bg-\[var\(--status-broken-bg\)\]/)
-    expect(pageSource).toMatch(/border-\[var\(--status-failed-bd\)\]/)
+    // (The failed-bd border lived on the workflow subway cards, deleted in
+    // UX P2; the idle badge carries the -bd variant now.)
+    expect(pageSource).toMatch(/border-\[var\(--status-broken-bd\)\]/)
   })
 
   it('no longer hard-codes the converted raw palette classes', () => {
