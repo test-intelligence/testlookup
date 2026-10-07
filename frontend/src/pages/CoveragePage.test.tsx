@@ -1,5 +1,5 @@
 import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import axe from 'axe-core'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -65,6 +65,23 @@ vi.mock('@/store/projectStore', () => ({
 // suite's load, and more than 5 s with coverage on (seen twice), so 10 s here.
 const LAZY_TIMEOUT = 10_000
 
+/** P3: the verdict, its score, its dimensions and the gaps are in a collapsed disclosure below the table. */
+function openScore() {
+  fireEvent.click(screen.getByRole('button', { name: /How this score is computed/ }))
+}
+
+/** P3: every header action beyond Views is in the ⋯ menu; picks one item. */
+function pickFromMenu(name: string | RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
+
+/** The ⋯ menu's items, as their names, with the menu left open. */
+function menuItems(): string[] {
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  return screen.getAllByRole('menuitem').map((item) => item.textContent ?? '')
+}
+
 describe('CoveragePage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = []
@@ -102,8 +119,14 @@ describe('CoveragePage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Test Coverage' })).toBeInTheDocument()
+    // P3: the verdict is in the score disclosure, collapsed until asked for.
+    expect(screen.queryByRole('region', { name: 'Coverage verdict' })).toBeNull()
+    openScore()
     expect(screen.getByRole('region', { name: 'Coverage verdict' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Suite coverage breakdown' })).toBeInTheDocument()
+    // UX redesign P4: each suite name opens the suite's own page (by name, resolved to its id).
+    const breakdown = screen.getByRole('region', { name: 'Suite coverage breakdown' })
+    expect(within(breakdown).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/coverage/suite?name=Payments')
     expect(screen.queryByRole('region', { name: 'Coverage workflow' })).toBeNull()
     expect(screen.queryByText(/Coverage Workflow/i)).toBeNull()
     expect(screen.queryByText(/Coverage Snapshot|Suite Breadth|Coverage Risk|Coverage Actions/)).toBeNull()
@@ -197,7 +220,9 @@ describe('CoveragePage', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: /Export/i }))
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    // P3: Export is in the header's ⋯ menu.
+    pickFromMenu('Export CSV')
 
     expect(clickSpy).toHaveBeenCalledTimes(1)
     const csv = blobInputs.filter((p): p is string => typeof p === 'string').join('')
@@ -317,7 +342,9 @@ describe('buildCoverageCsv', () => {
     // Before click: comparison strip must not render.
     expect(screen.queryByLabelText(/Coverage comparison/i)).toBeNull()
 
-    fireEvent.click(await screen.findByRole('button', { name: /Compare to previous window/i }))
+    // P3: the toggle is the header's ⋯ menu item (it was the verdict card's button).
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    pickFromMenu('Compare to previous window')
 
     // Strip renders with the three cells. Pass rate prior = 11/20 = 55%;
     // current = 19/20 = 95%; delta = +40%. ``Total executions`` /
@@ -331,9 +358,10 @@ describe('buildCoverageCsv', () => {
     expect(stripText).toContain('55.0%')
     expect(stripText).toMatch(/↑\s*40\.0%/)
 
-    // Toggle off — strip disappears, CTA text flips back.
-    fireEvent.click(screen.getByRole('button', { name: /Hide comparison/i }))
+    // Toggle off — strip disappears, the item's words flip back.
+    pickFromMenu('Hide comparison')
     expect(screen.queryByLabelText(/Coverage comparison/i)).toBeNull()
+    expect(menuItems()).toContain('Compare to previous window')
   })
 
   it('does not invent a prior period by splitting sparse current-window rows', async () => {
@@ -361,7 +389,8 @@ describe('buildCoverageCsv', () => {
         <Routes><Route path="/coverage" element={<CoveragePage />} /></Routes>
       </MemoryRouter>,
     )
-    fireEvent.click(await screen.findByRole('button', { name: /Compare to previous window/i }))
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    pickFromMenu('Compare to previous window')
 
     const strip = await screen.findByLabelText(/Coverage comparison/i)
     expect(strip.textContent).toContain('vs prior 0')
@@ -594,6 +623,8 @@ describe('CoveragePage — verdict meter and cadence strip', () => {
     })
     renderPage()
 
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    openScore()
     const meter = await screen.findByRole('meter', { name: 'Coverage health score' })
     const score = Number(meter.getAttribute('aria-valuenow'))
     expect(score).toBeGreaterThan(0)
@@ -618,6 +649,10 @@ describe('CoveragePage — verdict meter and cadence strip', () => {
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
     renderPage()
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    // The disclosure's header says so too: no score.
+    expect(screen.getByRole('button', { name: /How this score is computed/ })).toHaveTextContent('Pending · no score yet')
+    openScore()
     expect(await screen.findByRole('img', { name: 'Coverage health score: not measured' })).toBeInTheDocument()
     expect(screen.queryByRole('meter', { name: 'Coverage health score' })).toBeNull()
   })
@@ -684,11 +719,10 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
       expect(found).not.toBeNull()
       return found as HTMLElement
     }, { timeout: LAZY_TIMEOUT })
-    // Not near the reader yet: placeholders (the heatmap section's own, once its module loads), no section, no request.
+    // Not near the reader yet: the map's placeholder, no section, no request.
     await waitFor(() =>
       expect([...advanced.querySelectorAll('[data-lazy-section]')].map((el) => el.getAttribute('data-lazy-section'))).toEqual([
         'coverage-map',
-        'heatmap-suite_environment',
       ]),
     { timeout: LAZY_TIMEOUT })
     expect(container.querySelector('[data-catalogue-section]')).toBeNull()
@@ -696,6 +730,12 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
     expect((container.querySelector('.body-grid') as HTMLElement).compareDocumentPosition(advanced)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
+    // P3: in the Coverage map tab (the default), which renders the map alone
+    // (`sections`): the heatmap is not rendered at all, not merely hidden.
+    const scope = advanced.closest('[data-coverage-scope]') as HTMLElement
+    expect(scope).toHaveAttribute('data-coverage-scope', 'map')
+    expect(scope.className).not.toMatch(/:hidden/)
+    expect(container.querySelector('[data-lazy-section^="heatmap-"], [data-catalogue-section^="heatmap-"]')).toBeNull()
   })
 })
 
@@ -927,21 +967,24 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
 
   it('has none of the not-built controls: issue rows, verdict, untagged callout, header', async () => {
     await renderCoverage(NOISY)
-    // The rows themselves stay: they state real data.
-    expect(screen.getByText(/executions un-tagged/)).toBeInTheDocument()
-    expect(screen.getByText(/had executions\./)).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Untagged executions' })).toBeInTheDocument()
+    // P3: the verdict's issue rows are gone with the card; the facts they
+    // stated stay on the page: the untagged executions (the callout and the
+    // suites tile) and the 1-of-30-day cadence (the Run cadence tile).
+    expect(screen.queryByText(/executions un-tagged/)).toBeNull()
+    expect(screen.getByRole('region', { name: 'Untagged executions' })).toHaveTextContent("5 of 55 executions (9%) didn't carry a suite label")
+    const kpis = within(screen.getByRole('region', { name: 'Coverage metrics' }))
+    expect(kpis.getByText('Test suites').closest('[data-metric-card]')).toHaveTextContent('+ 1 untagged')
+    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('1 / 30 days')
+    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('Schedule may be paused')
     for (const name of [
       /Fix tagging/, /^Schedule/, /Configure schedule/, /Apply suite labels/, /Open runner config/,
       /Decision trail/, /Customize/, /^Open$/,
     ]) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
-    // The real actions stay.
-    expect(screen.getByRole('button', { name: /Triage/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Open triage queue' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Compare to previous window' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Export/ })).toBeInTheDocument()
+    // The real actions stay, in the header's ⋯ menu (P3).
+    expect(menuItems()).toEqual(['Compare to previous window', 'Export CSV', 'Open triage queue', 'View all suites'])
+    expect(screen.getByRole('menuitem', { name: 'Open triage queue' })).toHaveAttribute('href', '/failures?days=30')
   })
 
   it('renders no recommended-actions card and no provenance footer', async () => {
@@ -956,7 +999,7 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
   it('shows the real Unique tests number with no invented delta', async () => {
     await renderCoverage(NOISY)
     const kpis = screen.getByRole('region', { name: 'Coverage metrics' })
-    const cell = within(kpis).getByText('Unique tests').closest('div.flex.flex-col') as HTMLElement
+    const cell = within(kpis).getByText('Unique tests').closest('[data-metric-card]') as HTMLElement
     expect(cell).toHaveTextContent(/^Unique tests18$/)
     expect(within(kpis).queryByText(/no change/)).toBeNull()
     expect(within(kpis).queryByText(/vs prev/)).toBeNull()
@@ -965,7 +1008,7 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
   it('draws the Total executions delta only when it is measured, and says what it compares', async () => {
     // One trend day: no halves to compare, so no delta at all (it read "no change").
     await renderCoverage(NOISY, [{ date: utcDayIso(), passed: 10, failed: 0, skipped: 0, broken: 0, pass_rate: 100 }])
-    let cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('div.flex.flex-col') as HTMLElement
+    let cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('[data-metric-card]') as HTMLElement
     expect(cell).toHaveTextContent(/^Total executions55$/)
     cleanup()
     // Earlier half 10, later half 15: +50%, the later half against the earlier one.
@@ -973,14 +1016,18 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
       { date: shiftDayIso(utcDayIso(), -3), passed: 10, failed: 0, skipped: 0, broken: 0, pass_rate: 100 },
       { date: utcDayIso(), passed: 15, failed: 0, skipped: 0, broken: 0, pass_rate: 100 },
     ])
-    cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('div.flex.flex-col') as HTMLElement
-    expect(cell).toHaveTextContent('+50% · later vs earlier half of window')
+    cell = within(screen.getByRole('region', { name: 'Coverage metrics' })).getByText('Total executions').closest('[data-metric-card]') as HTMLElement
+    // The compact tile words the direction ("Up") and its judgement ("(better)", more executions).
+    expect(cell).toHaveTextContent('Up 50% · later vs earlier half of window')
+    expect(cell.querySelector('[data-trend-judgement]')).toHaveTextContent('(better)')
   })
 
   it('links "View all suites" and the breakdown footer to the suites list, not a nameless suite page', async () => {
     await renderCoverage(NOISY)
-    expect(screen.getByRole('link', { name: /View all suites/ })).toHaveAttribute('href', '/suites')
     expect(screen.getByRole('link', { name: /Browse suites/ })).toHaveAttribute('href', '/suites')
+    // P3: "View all suites" is a ⋯ menu item.
+    menuItems()
+    expect(screen.getByRole('menuitem', { name: 'View all suites' })).toHaveAttribute('href', '/suites')
     for (const link of screen.getAllByRole('link')) {
       expect(link.getAttribute('href')).not.toBe('/coverage/suite')
     }
@@ -995,5 +1042,193 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     const untaggedRows = within(card).getAllByRole('row', { name: /^Untagged group:/ })
     expect(untaggedRows).toHaveLength(2)
     expect(card).toHaveTextContent(`Showing 1 suite + ${untaggedRows.length} untagged groups`)
+  })
+})
+
+// P3 (UX redesign, the page template): header (filters, Views, ⋯) · KPI strip
+// · the suite table (`data-primary`) beside Run cadence · the score
+// disclosure · the page's tabs (Coverage map · Env × release heatmap, in
+// `?tab=`). Every section was moved, none rebuilt.
+describe('CoveragePage P3: the page template', () => {
+  beforeEach(async () => {
+    analyticsControls.widgetIds = []
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 30 })
+    // An observer that never reports a section near: the Wave 3 sections stay placeholders (no chunk, no request).
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  type Suite = { suite_name: string; unique_tests: number; passed: number; failed: number; skipped: number; pass_rate: number }
+  const SUITES: Suite[] = [
+    { suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 },
+    { suite_name: 'Auth', unique_tests: 4, passed: 32, failed: 3, skipped: 0, pass_rate: 91 },
+  ]
+
+  /** The router's location, rendered so a test can read the URL the page writes. */
+  function Location() {
+    const location = useLocation()
+    return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+  }
+
+  async function renderAt(path: string, suites: Suite[] = SUITES) {
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    const total = suites.reduce((n, x) => n + x.passed + x.failed + x.skipped, 0)
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 10, suite_count: suites.length, total_executions: total, avg_pass_rate: 85, days_with_runs: 20 },
+        suites,
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    const view = render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes><Route path="/coverage" element={<><CoveragePage /><Location /></>} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    return view
+  }
+
+  const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  const tab = (name: string) => within(screen.getByRole('tablist', { name: 'Coverage views' })).getByRole('tab', { name })
+
+  it('puts the one primary content (the suite table) before the page tab bar and the disclosure', async () => {
+    await renderAt('/coverage')
+    const primary = document.querySelectorAll('[data-primary]')
+    expect(primary).toHaveLength(1)
+    expect(primary[0]).toHaveAttribute('aria-label', 'Suite coverage breakdown')
+    expect(within(primary[0] as HTMLElement).getByRole('table', { name: 'Suites' })).toBeInTheDocument()
+    expect(follows(screen.getByRole('region', { name: 'Coverage metrics' }), primary[0])).toBe(true)
+    const tablists = screen.getAllByRole('tablist')
+    expect(tablists.map((t) => t.getAttribute('aria-label'))).toEqual(['Coverage views'])
+    const disclosures = document.querySelectorAll('[data-disclosure]')
+    expect(disclosures).toHaveLength(1)
+    for (const later of [...tablists, ...disclosures]) expect(follows(primary[0], later)).toBe(true)
+    expect(document.querySelectorAll('[data-kpi-strip] [data-metric-card="compact"]')).toHaveLength(5)
+    // No verdict card above the table (its score is the disclosure's).
+    expect(screen.queryByRole('region', { name: 'Coverage verdict' })).toBeNull()
+  })
+
+  it('has the suite filter, the window picker and Views in the header, every other action in ⋯, and the help ?', async () => {
+    await renderAt('/coverage')
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const toolbar = header.querySelector('[data-page-toolbar]') as HTMLElement
+    const suite = within(toolbar).getByDisplayValue('All suites')
+    const windows = within(toolbar).getByRole('radiogroup', { name: 'Time window' })
+    const views = toolbar.querySelector('[data-saved-views-trigger]') as HTMLElement
+    expect(views).toHaveTextContent('Views')
+    expect(follows(suite, windows) && follows(windows, views)).toBe(true)
+    expect(within(windows).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(header).getByRole('button', { name: 'Help: Test Coverage' })).toHaveAttribute('data-help-topic', 'dashboards')
+    // No page-level button outside the header's ⋯ (the verdict card's two and the header's two moved in).
+    for (const name of [/^Export/, /Compare to previous window/, /Open triage queue/, /View all suites/]) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+      expect(screen.queryByRole('link', { name })).toBeNull()
+    }
+    expect(menuItems()).toEqual(['Compare to previous window', 'Export CSV', 'Open triage queue', 'View all suites'])
+  })
+
+  it('keeps the score collapsed: its header states the verdict and the score; it opens to the meter, the dimensions and the gaps', async () => {
+    await renderAt('/coverage')
+    const toggle = screen.getByRole('button', { name: /How this score is computed/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.textContent).toMatch(/(Healthy|At risk|Blocked) · health \d+ \/ 100$/)
+    expect(screen.queryByRole('region', { name: 'Coverage gaps' })).toBeNull()
+    openScore()
+    const verdict = screen.getByRole('region', { name: 'Coverage verdict' })
+    expect(within(verdict).getByRole('meter', { name: 'Coverage health score' })).toBeInTheDocument()
+    for (const dim of ['Pass rate', 'Tag quality', 'Run cadence', 'Suite breadth']) expect(within(verdict).getByText(dim)).toBeInTheDocument()
+    expect(within(verdict).getByRole('region', { name: 'Coverage gaps' })).toBeInTheDocument()
+    expect(verdict).toHaveClass('grid-cols-1', 'lg:grid-cols-[1.45fr_1fr]')
+  })
+
+  it.each([
+    ['/coverage', 'map', 'Coverage map'],
+    ['/coverage?tab=map', 'map', 'Coverage map'],
+    ['/coverage?tab=heatmap', 'heatmap', 'Env × release heatmap'],
+    ['/coverage?tab=nope', 'map', 'Coverage map'],
+  ] as const)('%s selects the %s tab and renders its section alone', async (path, id, label) => {
+    // An observer that never reports the section near: it stays its placeholder (no request).
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    onTestFinished(() => {
+      vi.unstubAllGlobals()
+    })
+    const { container } = await renderAt(path)
+    expect(tab(label)).toHaveAttribute('aria-selected', 'true')
+    const panel = container.querySelector('[data-tab-panel]') as HTMLElement
+    expect(panel).toHaveAttribute('data-tab-panel', id)
+    expect(panel).toHaveAttribute('data-coverage-scope', id)
+    // Composition, not concealment (`sections`): no CSS hides the other tab's section; it is not rendered.
+    expect(panel.className).not.toMatch(/:hidden/)
+    await waitFor(() => expect(panel.querySelector('[data-coverage-advanced]')).not.toBeNull(), { timeout: LAZY_TIMEOUT })
+    const own = id === 'map' ? 'coverage-map' : 'heatmap-suite_environment'
+    await waitFor(
+      () => expect([...panel.querySelectorAll('[data-lazy-section]')].map((el) => el.getAttribute('data-lazy-section'))).toEqual([own]),
+      { timeout: LAZY_TIMEOUT },
+    )
+    expect(container.querySelectorAll('[data-lazy-section]')).toHaveLength(1)
+  })
+
+  it('a tab click writes ?tab=, the default clears it, and the panel remounts', async () => {
+    const { container } = await renderAt('/coverage')
+    const before = container.querySelector('[data-tab-panel]')
+    fireEvent.click(tab('Env × release heatmap'))
+    expect(screen.getByTestId('location')).toHaveTextContent('/coverage?tab=heatmap')
+    const after = container.querySelector('[data-tab-panel]')
+    expect(after).not.toBe(before)
+    fireEvent.click(tab('Coverage map'))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/coverage$/)
+  })
+
+  it('flags each suite\'s own gap in the table: no passing run, too few runs; a suite with neither, and the untagged group, carry none', async () => {
+    const { container } = await renderAt('/coverage', [
+      { suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 },
+      { suite_name: 'Broken', unique_tests: 2, passed: 0, failed: 6, skipped: 0, pass_rate: 0 },
+      { suite_name: 'Tiny', unique_tests: 1, passed: 2, failed: 0, skipped: 0, pass_rate: 100 },
+      { suite_name: 'Unknown Suite', unique_tests: 1, passed: 1, failed: 0, skipped: 0, pass_rate: 100 },
+    ])
+    const table = within(container.querySelector('[data-primary]') as HTMLElement).getByRole('table', { name: 'Suites' })
+    // A fifth column, only because a suite has a gap.
+    expect((table as HTMLElement).style.gridTemplateColumns).toBe('fit-content(240px) minmax(0, 1fr) 64px 76px auto')
+    const flagOf = (name: RegExp) => {
+      const row = within(table).getByRole('row', { name })
+      expect(within(row).getAllByRole('cell')).toHaveLength(5)
+      return row.querySelector('[data-suite-gap]')
+    }
+    expect(flagOf(/^Payments:/)).toBeNull()
+    expect(flagOf(/^Broken:/)).toHaveTextContent('No passing run')
+    expect(flagOf(/^Broken:/)).toHaveAttribute('title', 'No passing run in 30d — blocks regression baseline')
+    expect(flagOf(/^Broken:/)).toHaveAttribute('data-suite-gap', 'bad')
+    expect(flagOf(/^Tiny:/)).toHaveTextContent('Too few runs')
+    expect(flagOf(/^Tiny:/)).toHaveAttribute('data-suite-gap', 'warn')
+    expect(flagOf(/^Untagged group:/)).toBeNull()
+  })
+
+  it('draws no gap column when no suite has a gap', async () => {
+    const { container } = await renderAt('/coverage')
+    const table = within(container.querySelector('[data-primary]') as HTMLElement).getByRole('table', { name: 'Suites' }) as HTMLElement
+    expect(table.style.gridTemplateColumns).toBe('fit-content(240px) minmax(0, 1fr) 64px 76px')
+    expect(table.querySelector('[data-suite-gap]')).toBeNull()
+  })
+
+  it('states the cadence strip\'s reading as its title\'s tooltip, not a paragraph', async () => {
+    await renderAt('/coverage')
+    const card = screen.getByRole('region', { name: 'Run cadence' })
+    expect(within(card).getByRole('heading', { name: /^Run cadence/ })).toHaveAttribute('title', expect.stringMatching(/^Each cell is a day/))
+    expect(card).not.toHaveTextContent('Empty cells are missed windows')
   })
 })

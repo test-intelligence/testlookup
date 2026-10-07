@@ -1374,8 +1374,13 @@ echo ""
 # 2026-08-15 the new image crash-looped on a bad DB credential for its whole
 # life and the deploy still printed "Health check passed" and exited 0.
 # So ask the cluster which pods are actually broken before trusting HTTP.
+# Terminating is not broken: it is a pod of the ReplicaSet being REPLACED,
+# shutting down gracefully (a Celery worker finishing its task can take
+# minutes). On 2026-10-07 an old worker-ai pod still Terminating 80 s after a
+# clean rollout marked the deploy DEGRADED; a crash-looping NEW pod is
+# CrashLoopBackOff / Error / Pending, which this still catches.
 NOT_READY=$(kubectl -n "$NAMESPACE" get pods --no-headers 2>/dev/null \
-  | awk '$3 != "Running" && $3 != "Completed" { print "  " $1 "  " $3 "  restarts=" $4 }' || echo "")
+  | awk '$3 != "Running" && $3 != "Completed" && $3 != "Terminating" { print "  " $1 "  " $3 "  restarts=" $4 }' || echo "")
 if [ -n "$NOT_READY" ]; then
   DEPLOY_DEGRADED=true
   warn "Pods not in a healthy state:"

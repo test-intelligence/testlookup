@@ -18,6 +18,8 @@
 import { describe, expect, it } from 'vitest'
 
 import source from './TestManagementPage.tsx?raw'
+// UX redesign P4 item 7: the library-health copy is the Insights drawer's card.
+import insightsSource from './test-management/InsightsPanel.tsx?raw'
 
 function destructuredCaseRolls(): string[] {
   return [...source.matchAll(/const\s*\{([^{}]+)\}\s*=\s*useTestCases\(/g)].map(match => match[1])
@@ -67,7 +69,9 @@ describe('TestManagementPage refresh wiring', () => {
 describe('library health copy', () => {
   it('pluralises the case count', () => {
     // Rendered "1 cases" for a single authored case.
-    expect(source).toContain("case{p.totalCases === 1 ? '' : 's'}")
-    expect(source).not.toMatch(/\{p\.totalCases\}<\/strong> cases/)
+    expect(insightsSource).toContain("case{p.totalCases === 1 ? '' : 's'}")
+    expect(insightsSource).not.toMatch(/\{p\.totalCases\}<\/strong> cases/)
+    // The health banner's count is labelled singular for one case too.
+    expect(source).toContain("label: authoredTotal === 1 ? 'Case' : 'Cases'")
   })
 })

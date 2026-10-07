@@ -90,7 +90,7 @@ describe('FirstRunGuide', () => {
   it('links to the key first-insight destinations', () => {
     renderGuide()
     expect(screen.getByRole('link', { name: /failure analysis/i })).toHaveAttribute('href', '/failures')
-    expect(screen.getByRole('link', { name: /flaky coach/i })).toHaveAttribute('href', '/flaky-coach')
+    expect(screen.getByRole('link', { name: /flaky coach/i })).toHaveAttribute('href', '/flaky')
     // The "Release gate" button is the release-risk gate feature (the Sidebar's
     // "Release Gate" → /release-gate, a role-open route), NOT the management-only
     // Releases-workflow CRUD page at /releases. Regression: it linked to

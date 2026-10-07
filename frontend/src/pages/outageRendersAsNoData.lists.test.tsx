@@ -50,7 +50,6 @@ vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.
 import { useMostRecentRun, useRuns } from '@/hooks/useRuns'
 import { useReleases } from '@/hooks/useReleases'
 import { summaryReportService } from '@/services/summaryReportService'
-import IntelligenceHubPage from './IntelligenceHubPage'
 import ReleasesPage from './ReleasesPage'
 import RunsPage from './RunsPage'
 import SummaryReportPage from './SummaryReportPage'
@@ -80,15 +79,6 @@ describe('an outage is not an empty list', () => {
 
     expect(screen.getByTestId('runs-data-unavailable')).toBeInTheDocument()
     expect(screen.queryByText(/No runs in the window/i)).toBeNull()
-  })
-
-  it('Intelligence hub, and it does not go looking further back', () => {
-    vi.mocked(useRuns).mockReturnValue(failed(SERVER_500) as never)
-    renderPage(<IntelligenceHubPage />)
-
-    expect(screen.getByTestId('intelligence-data-unavailable')).toHaveTextContent('HTTP 500')
-    expect(screen.queryByText(/No runs in this window/i)).toBeNull()
-    expect(vi.mocked(useMostRecentRun)).not.toHaveBeenCalledWith(true)
   })
 
   it('Releases', () => {

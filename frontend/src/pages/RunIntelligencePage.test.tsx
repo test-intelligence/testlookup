@@ -10,7 +10,8 @@
  * - Executive summary text from layer1
  */
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { useEffect, type ReactNode } from 'react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 
@@ -27,7 +28,9 @@ const {
   mockUseRunIntelligence,
   mockUseRunModeSummary,
   mockUseScoringModel,
+  mockUseDecisionReportVersions,
 } = vi.hoisted(() => ({
+  mockUseDecisionReportVersions: vi.fn(),
   mockUseRunIntelligence: vi.fn(),
   mockUseRunModeSummary: vi.fn(),
   mockUseScoringModel: vi.fn(),
@@ -40,6 +43,7 @@ vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => {
     useRunIntelligence: mockUseRunIntelligence,
     useRunModeSummary: mockUseRunModeSummary,
     useScoringModel: mockUseScoringModel,
+    useDecisionReportVersions: mockUseDecisionReportVersions,
   }
 })
 
@@ -196,7 +200,7 @@ const MOCK_SCORING_MODEL: ScoringModel = {
   ],
 }
 
-import RunIntelligencePage from './RunIntelligencePage'
+import RunIntelligencePage, { RunDecisionReport, RunIntelligenceBody } from './RunIntelligencePage'
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -215,6 +219,7 @@ function mockHooks(overrides?: {
     isLoading: false,
     isError: false,
   })
+  mockUseDecisionReportVersions.mockReturnValue({ versions: [], isLoading: false, isError: false })
   mockUseScoringModel.mockReturnValue({
     scoringModel: MOCK_SCORING_MODEL,
     isLoading: false,
@@ -230,6 +235,11 @@ function renderRunIntel() {
     </MemoryRouter>,
   )
 }
+
+// UX redesign P4: the score's working and the evidence are collapsed
+// Disclosures below What failed; their content is not rendered until opened.
+const openScore = () => fireEvent.click(screen.getByRole('button', { name: /^How this score is computed/ }))
+const openEvidence = () => fireEvent.click(screen.getByRole('button', { name: /^Evidence behind the verdict/ }))
 
 describe('RunIntelligencePage', () => {
   beforeEach(() => {
@@ -389,10 +399,11 @@ describe('RunIntelligencePage', () => {
     )
     expect(screen.getAllByText(/^Go$/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('Terminal verified rationale.').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('tab', { name: 'Developer' }))
-    expect(screen.getAllByText('Terminal verified rationale.').length).toBeGreaterThan(0)
+    // P4 removed the persona tabs: there is no Developer view to switch to.
+    expect(screen.queryByRole('tab', { name: 'Developer' })).toBeNull()
     expect(screen.queryByText('Developer summary')).toBeNull()
     expect(screen.queryByText(/PaymentSuite suite/)).toBeNull()
+    openScore()
     expect(screen.getByText(/Dimension scores will appear/)).toBeInTheDocument()
   })
 
@@ -449,6 +460,7 @@ describe('RunIntelligencePage', () => {
         <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
       </MemoryRouter>,
     )
+    openScore()
     // The header is page markup: its number is the dash.
     const meter = screen.getByText('Composite risk score').parentElement
     expect(within(meter as HTMLElement).getByText('—')).toBeInTheDocument()
@@ -532,6 +544,13 @@ describe('RunIntelligencePage', () => {
     // The verdict label is rendered as "No-Go" (kebab case) per the
     // verdict redesign; the underscore enum value is internal-only.
     expect(screen.getAllByText(/No-Go/i).length).toBeGreaterThan(0)
+    // P4: the verdict is one StatusBanner line (NO-GO pill, risk in a fact)...
+    const banner = document.querySelector('[data-status-banner]') as HTMLElement
+    expect(banner).toHaveAttribute('data-status-banner', 'no_go')
+    expect(within(banner).getByText('68/100')).toBeInTheDocument()
+    // ...and the meter that reads it is in "How this score is computed".
+    expect(screen.queryByRole('meter', { name: 'Composite risk score' })).toBeNull()
+    openScore()
     // Risk score is rendered as two sibling text nodes — the score and
     // "/ 100" with a space — so test each separately.
     expect(screen.getByText('68')).toBeInTheDocument()
@@ -556,6 +575,8 @@ describe('RunIntelligencePage', () => {
         <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
       </MemoryRouter>,
     )
+    expect(document.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'pending')
+    openScore()
     const header = screen.getByText('Composite risk score').parentElement as HTMLElement
     expect(within(header).getByText('—')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Composite risk score: not measured' })).toBeInTheDocument()
@@ -594,6 +615,9 @@ describe('RunIntelligencePage', () => {
     )
 
     expect(screen.getByText(/DB Timeouts/i)).toBeInTheDocument()
+    expect(screen.getByText('8 tests in cluster')).toBeInTheDocument()
+    // The category card (8 infrastructure failures) is in the Evidence disclosure.
+    openEvidence()
     expect(screen.getAllByText(/8 failures/i).length).toBeGreaterThan(0)
   })
 
@@ -611,8 +635,9 @@ describe('RunIntelligencePage', () => {
     // The detailed "workflow progress" strip + helper copy were folded into
     // the pipeline ribbon during the verdict-led redesign. Verify the
     // pipeline stage from MOCK_INTELLIGENCE renders so we still have a
-    // signal that the timeline area exists.
-    expect(screen.getAllByText(/summary/i).length).toBeGreaterThan(0)
+    // signal that the timeline area exists. (P4: inside the Evidence disclosure.)
+    openEvidence()
+    expect(screen.getByRole('group', { name: /^Stage \d+: Summary, done$/ })).toBeInTheDocument()
   })
 
   it('renders CONDITIONAL_GO banner correctly', async () => {
@@ -668,14 +693,15 @@ describe('RunIntelligencePage', () => {
     expect(goText.length).toBeGreaterThan(0)
   })
 
-  it('returns to the intelligence hub when the project changes', async () => {
+  // P4 (D2): `/intelligence` redirects to `/runs`, so the page goes there directly.
+  it('returns to the runs list when the project changes', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
 
     const { rerender } = render(
       <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
         <Routes>
           <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-          <Route path="/intelligence" element={<div>Intelligence Hub</div>} />
+          <Route path="/runs" element={<div>Runs List</div>} />
         </Routes>
       </MemoryRouter>,
     )
@@ -689,12 +715,12 @@ describe('RunIntelligencePage', () => {
       <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
         <Routes>
           <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
-          <Route path="/intelligence" element={<div>Intelligence Hub</div>} />
+          <Route path="/runs" element={<div>Runs List</div>} />
         </Routes>
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Intelligence Hub/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Runs List/i)).toBeInTheDocument()
   })
 
   // P2: Hold / Override / Approve-with-conditions were saved only to this
@@ -800,7 +826,8 @@ describe('RunIntelligencePage', () => {
       },
     })
     renderRunIntel()
-    await screen.findByText('AI confidence')
+    openEvidence()
+    await screen.findByRole('heading', { name: 'AI confidence' })
     expect(screen.queryByText('Criticality scoring')).toBeNull()
     expect(screen.queryByText('Release risk assessment')).toBeNull()
   })
@@ -824,7 +851,8 @@ describe('RunIntelligencePage', () => {
       },
     })
     renderRunIntel()
-    await screen.findByText('AI confidence')
+    openEvidence()
+    await screen.findByRole('heading', { name: 'AI confidence' })
     expect(screen.getByText('Criticality scoring')).toBeInTheDocument()
     expect(screen.getByText('Release risk assessment')).toBeInTheDocument()
   })
@@ -833,6 +861,7 @@ describe('RunIntelligencePage', () => {
   it('renders pipeline stages as display-only cells, not dead buttons', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderRunIntel()
+    openEvidence()
     const stage = await screen.findByRole('group', { name: /^Stage 8: Summary, done$/ })
     expect(stage.tagName).not.toBe('BUTTON')
     expect(screen.queryByRole('button', { name: /^Stage \d+:/ })).toBeNull()
@@ -848,7 +877,8 @@ describe('RunIntelligencePage', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findByText('AI confidence')
+    openEvidence()
+    await screen.findByRole('heading', { name: 'AI confidence' })
     expect(screen.getAllByTestId('ai-suggested-badge').length).toBeGreaterThan(0)
     // A confidence never renders without its calibration basis.
     expect(screen.getByTestId('ai-basis-chip')).toHaveTextContent('estimated')
@@ -880,9 +910,166 @@ describe('RunIntelligencePage', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findByText('AI confidence')
+    openEvidence()
+    await screen.findByRole('heading', { name: 'AI confidence' })
     expect(screen.getByTestId('ai-fallback-notice')).toHaveTextContent(
       /The LLM was unavailable.*rules engine/i,
     )
+  })
+})
+
+// ── UX redesign P4: the body the Run page's Analysis tab hosts ──────────────
+describe('RunIntelligenceBody — the page template (P4)', () => {
+  beforeEach(() => {
+    mockCompleteStep.mockReset()
+    mockCompleteStep.mockResolvedValue(undefined)
+    mockProjectState.activeProjectId = 'proj-1'
+  })
+
+  function renderBody(afterPrimary?: ReactNode) {
+    return render(
+      <MemoryRouter initialEntries={['/runs/run-abc?tab=analysis']}>
+        <Routes>
+          <Route path="/runs/:runId" element={<RunIntelligenceBody runId="run-abc" afterPrimary={afterPrimary} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('orders verdict banner -> What failed (the primary content) -> host section -> the two collapsed disclosures', () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    const { container } = renderBody(<section aria-label="Host section">host</section>)
+    const banner = container.querySelector('[data-status-banner]') as HTMLElement
+    const primaries = container.querySelectorAll('[data-primary]')
+    expect(primaries).toHaveLength(1)
+    const primary = primaries[0] as HTMLElement
+    expect(within(primary).getByText('What failed')).toBeInTheDocument()
+    const host = screen.getByRole('region', { name: 'Host section' })
+    const disclosures = Array.from(container.querySelectorAll('[data-disclosure]'))
+    expect(disclosures.map((d) => d.querySelector('button')?.textContent)).toEqual([
+      expect.stringMatching(/^How this score is computed/),
+      expect.stringMatching(/^Evidence behind the verdict/),
+    ])
+    const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(banner, primary)).toBe(true)
+    expect(follows(primary, host)).toBe(true)
+    for (const d of disclosures) {
+      expect(follows(host, d)).toBe(true)
+      expect(d).toHaveAttribute('data-open', 'false')
+    }
+    // No tab bar of its own (the persona tabs were removed).
+    expect(screen.queryByRole('tablist')).toBeNull()
+  })
+
+  it('draws nothing of the score or the evidence until its disclosure is opened', () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderBody()
+    expect(screen.queryByText('Composite risk score')).toBeNull()
+    expect(screen.queryByRole('group', { name: /^Stage \d+:/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'AI confidence' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Failure category' })).toBeNull()
+    openScore()
+    expect(screen.getByText('Composite risk score')).toBeInTheDocument()
+    openEvidence()
+    expect(screen.getByRole('heading', { name: 'AI confidence' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Test outcome' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Recommended actions' })).toBeInTheDocument()
+  })
+
+  it('states the verdict in the banner: gate and action, risk, blockers, confidence, and the first blocker by name', () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderBody()
+    const verdict = screen.getByRole('region', { name: 'Release verdict' })
+    expect(within(verdict).getByText('No-Go')).toBeInTheDocument()
+    expect(within(verdict).getByText('ship blocked')).toBeInTheDocument()
+    const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+    expect(facts).toEqual(['Risk 68/100', 'Blocking issues 1', 'AI confidence 88%'])
+    expect(within(verdict).getByText(/Resolve DB connection pool exhaustion/)).toBeInTheDocument()
+    expect(within(verdict).getByText('High user impact with product bugs detected.')).toBeInTheDocument()
+  })
+
+  it('opens the decision trail from the banner', () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderBody()
+    fireEvent.click(within(screen.getByRole('region', { name: 'Release verdict' })).getByRole('button', { name: /Decision trail/ }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('shows only the failure categories the data names: no "None detected this run" placeholder rows', () => {
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, category_breakdown: { INFRASTRUCTURE: 8 } as unknown as typeof MOCK_INTELLIGENCE.category_breakdown } })
+    renderBody()
+    openEvidence()
+    const card = screen.getByRole('heading', { name: 'Failure category' }).closest('div.overflow-hidden') as HTMLElement
+    expect(within(card).getByText('Infrastructure')).toBeInTheDocument()
+    expect(within(card).queryByText('None detected this run')).toBeNull()
+    expect(within(card).queryByText('Flaky')).toBeNull()
+    expect(within(card).queryByText('Test Data')).toBeNull()
+  })
+
+  it('keeps the host section when the analysis fails to load', () => {
+    mockHooks({ isError: true })
+    renderBody(<section aria-label="Host section">host</section>)
+    expect(screen.getByText('Failed to load Run Intelligence')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Host section' })).toBeInTheDocument()
+  })
+})
+
+describe('RunDecisionReport — the Evidence tab\'s decision report (P4)', () => {
+  it('renders the verified report and writes a chosen version to ?report_version= without dropping ?tab=', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1, status: 'complete', generated_at: '2026-08-11T19:00:00Z',
+      metrics: {}, failure_clusters: [], deep_findings: {}, flaky_findings: [], test_health_findings: [],
+      release_decision: { recommendation: 'NO_GO', risk_score: 80, reasoning: 'Verified.' },
+      quality_review: { missing_or_failed_specialists: [], contradictions: [], gap_report: null, refined_report: null, requires_human_review: false },
+      source_stages: ['decision_report'], evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = { status: 'passed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-1', status: 'published', verification_status: 'passed', at: '2026-08-11T19:01:00Z',
+    }
+    intelligence.structured_summary.decision_report = { report_id: 'report-2', report_version: 2, status: 'published', generated_at: '2026-08-12T19:00:00Z' }
+    mockHooks({ intelligence })
+    mockUseDecisionReportVersions.mockReturnValue({
+      versions: [
+        { report_id: 'report-2', report_version: 2, status: 'published', generated_at: '2026-08-12T19:00:00Z' },
+        { report_id: 'report-1', report_version: 1, status: 'published', generated_at: '2026-08-11T19:00:00Z' },
+      ],
+      isLoading: false,
+      isError: false,
+    })
+    let search = ''
+    function Probe() {
+      const current = useLocation().search
+      useEffect(() => {
+        search = current
+      })
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc?tab=evidence']}>
+        <Routes>
+          <Route path="/runs/:runId" element={<><RunDecisionReport runId="run-abc" /><Probe /></>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('heading', { name: 'Decision intelligence' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Decision report version'), { target: { value: '1' } })
+    const params = new URLSearchParams(search)
+    expect(params.get('report_version')).toBe('1')
+    expect(params.get('tab')).toBe('evidence')
+  })
+
+  it('renders nothing for a run with no decision report envelope', () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    const { container } = render(
+      <MemoryRouter>
+        <RunDecisionReport runId="run-abc" />
+      </MemoryRouter>,
+    )
+    expect(container).toBeEmptyDOMElement()
   })
 })

@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { cloneElement, isValidElement, useEffect, type ReactElement, type ReactNode } from 'react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { REDUCED_MOTION_QUERY } from '@/components/charts/motion'
-import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
+import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import type { Release } from '@/types/releases'
 
 import ReleaseGatePage from './ReleaseGatePage'
@@ -118,13 +118,16 @@ describe('ReleaseGatePage', () => {
 
     expect(screen.getAllByText(/CONDITIONAL GO/i).length).toBeGreaterThan(0)
     // P2 item 3: the decision flow is a collapsed "How this was decided"
-    // disclosure at the bottom of the page — below the override section —
-    // and renders nothing until opened.
+    // disclosure at the bottom of the page — below the verdict card (and its
+    // Override control) and the tabs (P4 item 6) — and renders nothing until
+    // opened.
     const toggle = await screen.findByRole('button', { name: 'How this was decided' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText(/Release decision flow/i)).toBeNull()
-    const override = screen.getByText('QA Lead Override')
+    const override = screen.getByRole('button', { name: 'Override decision' })
     expect(override.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const tabs = screen.getByRole('tablist', { name: 'Release gate sections' })
+    expect(tabs.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     fireEvent.click(toggle)
     expect(screen.getByText(/Release decision flow/i)).toBeInTheDocument()
@@ -507,6 +510,8 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       }),
     )
   })
+  // UX redesign P4 item 6: the group (and the cluster list below it) is the
+  // Context tab's body, so every load here opens that tab.
   async function renderWith(decision: ReleaseCouncilDecision, waitForChart = true) {
     const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
     const { useRuns } = await import('@/hooks/useRuns')
@@ -516,7 +521,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
     render(
       <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
-        <MemoryRouter initialEntries={['/release-gate/run-1']}>
+        <MemoryRouter initialEntries={['/release-gate/run-1?tab=context']}>
           <Routes>
             <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
           </Routes>
@@ -547,7 +552,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     markup: stableMarkup(card()),
   })
 
-  it('the group comes AFTER the recommendation card and the evidence, outside the card, above the cluster list', async () => {
+  it('the group comes AFTER the recommendation card (and its blockers) and the tab bar, outside the card, above the cluster list', async () => {
     await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }))
     const section = group() as HTMLElement
     expect(section).toBeTruthy()
@@ -555,7 +560,10 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     expect(section.contains(card())).toBe(false)
     const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
     expect(follows(card(), section)).toBe(true)
-    expect(follows(screen.getByRole('heading', { name: 'Blocking Issues' }), section)).toBe(true)
+    // The evidence the verdict stands on is in the card, above the charts.
+    expect(within(screen.getByRole('list', { name: 'Top blockers' })).getByText('Checkout down')).toBeInTheDocument()
+    expect(follows(screen.getByRole('list', { name: 'Top blockers' }), section)).toBe(true)
+    expect(follows(screen.getByRole('tablist', { name: 'Release gate sections' }), section)).toBe(true)
     expect(follows(section, screen.getByRole('heading', { name: 'Linked Failure Clusters' }))).toBe(true)
     // The cluster share, from the STORED clusters, says so.
     expect(section.querySelector('[data-catalogue-section="gate-clusters"] [data-gate-caption="stored"]')?.textContent).toMatch(
@@ -652,7 +660,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
       expect(card().textContent).toContain('NO GO')
       expect(screen.getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuenow', '60')
-      expect(screen.getByRole('heading', { name: 'QA Lead Override' })).toBeInTheDocument()
+      expect(within(card()).getByRole('button', { name: 'Override decision' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Linked Failure Clusters' })).toBeInTheDocument()
     } finally {
       spy.mockRestore()
@@ -663,25 +671,58 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     }
   })
 
-  // R2-8: the verdict stays next to what explains it (Decision Rationale, the
-  // Risk Dimension Breakdown the floor note points at); the Context group
-  // follows those, directly above the cluster list its share chart summarises,
-  // and is an h3 like every other gate section (an h2 put the four sections
-  // after it under "Context" in the outline).
-  it('the verdict, Decision Rationale and the dimension breakdown, THEN Context (an h3), then the cluster list', async () => {
+  // R2-8, re-cut by UX redesign P4 item 6: the verdict comes first; what
+  // explains it (Decision Rationale, the Risk Dimension Breakdown the floor
+  // note points at) is the Why tab, the default; the Context group is its own
+  // tab, directly above the cluster list its share chart summarises, and is an
+  // h3 like every other gate section (an h2 put the sections after it under
+  // "Context" in the outline).
+  it('Why (the default): the verdict, then Decision Rationale and the dimension breakdown — and no charts', async () => {
+    const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+      council: flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }),
+      isLoading: false, isError: false, refresh: vi.fn(),
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={['/release-gate/run-1']}>
+          <Routes>
+            <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByRole('meter', { name: 'Risk Score' })
+    expect(screen.getByRole('tab', { name: 'Why' })).toHaveAttribute('aria-selected', 'true')
+    const tabs = screen.getByRole('tablist', { name: 'Release gate sections' })
+    const rationale = rationaleHeading()
+    const breakdown = screen.getByText('Risk Dimension Breakdown')
+    expect(follows(card(), tabs)).toBe(true)
+    expect(follows(tabs, rationale)).toBe(true)
+    expect(follows(rationale, breakdown)).toBe(true)
+    expect(screen.getByRole('heading', { name: 'Blocking Issues' })).toBeInTheDocument()
+    // The charts are another tab's: neither their placeholder nor a request.
+    expect(group()).toBeNull()
+    expect(document.querySelector('[data-gate-context-pending]')).toBeNull()
+    expect(chartGet).not.toHaveBeenCalled()
+  })
+
+  it('Context: the verdict, the tab bar, THEN Context (an h3), then the cluster list', async () => {
     await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }))
+    expect(screen.getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true')
     const section = group() as HTMLElement
     const heading = within(section).getByRole('heading', { name: 'Context' })
     expect(heading.tagName).toBe('H3')
-    const rationale = rationaleHeading()
-    const breakdown = screen.getByText('Risk Dimension Breakdown')
+    const tabs = screen.getByRole('tablist', { name: 'Release gate sections' })
     const clusters = screen.getByRole('heading', { name: 'Linked Failure Clusters' })
-    const override = screen.getByRole('heading', { name: 'QA Lead Override' })
-    expect(follows(card(), rationale)).toBe(true)
-    expect(follows(rationale, breakdown)).toBe(true)
-    expect(follows(breakdown, section)).toBe(true)
+    const override = within(card()).getByRole('button', { name: 'Override decision' })
+    expect(follows(override, tabs)).toBe(true)
+    expect(follows(tabs, section)).toBe(true)
     expect(follows(section, clusters)).toBe(true)
-    expect(follows(clusters, override)).toBe(true)
+    // Why's sections are not drawn under Context.
+    expect(screen.queryByText('Risk Dimension Breakdown')).toBeNull()
     // Directly above: no other section heading between the group and the list.
     const between = Array.from(document.querySelectorAll('h2, h3')).filter(
       (h) => !section.contains(h) && follows(section, h) && follows(h, clusters),
@@ -711,7 +752,9 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
       expect(box).toHaveAttribute('aria-hidden', 'true')
       expect(box.style.minHeight).toBe(`${contextBodyHeight(both)}px`)
       expect(contextBodyHeight(true)).toBeGreaterThan(contextBodyHeight(false))
-      expect(follows(pending, screen.getByRole('heading', { name: 'QA Lead Override' }))).toBe(true)
+      expect(follows(card(), pending)).toBe(true)
+      // The cluster list below waits under the held place, so it does not jump.
+      if (both) expect(follows(pending, screen.getByRole('heading', { name: 'Linked Failure Clusters' }))).toBe(true)
     } finally {
       const actual = await vi.importActual<typeof import('@/components/reports/catalogue/GateCatalogue')>(
         '@/components/reports/catalogue/GateCatalogue',
@@ -720,9 +763,162 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     }
   })
 
-  it('stacks the recommendation card below sm and keeps the row from sm up', async () => {
+  it('stacks the recommendation row below sm and keeps the row from sm up', async () => {
     await renderWith(flooredDecision())
-    const classes = card().className.split(/\s+/)
+    const row = card().querySelector('[data-verdict-row]') as HTMLElement
+    const classes = row.className.split(/\s+/)
     expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-col', 'items-start', 'sm:flex-row', 'sm:items-center']))
+  })
+})
+
+// ── UX redesign P4 item 6: verdict first, then Why · Context · History ──────
+//
+// The verdict card (GO / NO-GO, pass rate, the top three blockers, Override)
+// is the page's primary content and comes before the tab bar and the
+// pipeline disclosure; each tab is reachable by `?tab=`; every link that went
+// to a page P4 merged into the run page now goes to its tab.
+
+describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
+  const BLOCKERS = ['Checkout down', 'Payment gateway timeout', 'Session cookie not cleared', 'Login 500 on retry']
+
+  function Where({ onChange }: { onChange: (where: string) => void }) {
+    const location = useLocation()
+    useEffect(() => onChange(location.pathname + location.search), [location, onChange])
+    return null
+  }
+
+  async function renderAt(url: string, decision: ReleaseCouncilDecision, refresh = vi.fn()) {
+    const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+      council: decision, isLoading: false, isError: false, refresh,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    const where = { current: '' }
+    const track = (next: string) => { where.current = next }
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[url]}>
+          <Where onChange={track} />
+          <Routes>
+            <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
+            <Route path="/runs/:runId" element={<p>run page</p>} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByRole('meter', { name: 'Risk Score' })
+    return where
+  }
+
+  const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  const primary = () => document.querySelector('[data-primary]') as HTMLElement
+
+  beforeEach(() => {
+    mockProjectState.activeProjectId = 'proj-1'
+    mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
+    chartGet.mockReset()
+  })
+
+  it('the verdict card is the one primary element, before the tab bar and the pipeline disclosure', async () => {
+    await renderAt('/release-gate/run-1', flooredDecision({ blocking_issues: BLOCKERS }))
+    expect(document.querySelectorAll('[data-primary]')).toHaveLength(1)
+    expect(primary()).toHaveTextContent('Recommendation')
+    expect(primary()).toHaveTextContent('NO GO')
+    expect(within(primary()).getByRole('meter', { name: 'Risk Score' })).toBeInTheDocument()
+    expect(primary()).toHaveTextContent('Pass rate: 44.4%')
+    const tablist = screen.getByRole('tablist', { name: 'Release gate sections' })
+    const disclosure = screen.getByRole('button', { name: 'How this was decided' }).closest('[data-disclosure]') as HTMLElement
+    expect(follows(primary(), tablist)).toBe(true)
+    expect(follows(primary(), disclosure)).toBe(true)
+    expect(follows(tablist, disclosure)).toBe(true)
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Why', 'Context', 'History0'])
+  })
+
+  it('lists the top three blockers in the card, and "N more in Why" opens Why', async () => {
+    const where = await renderAt('/release-gate/run-1?tab=history', flooredDecision({ blocking_issues: BLOCKERS }))
+    const list = within(primary()).getByRole('list', { name: 'Top blockers' })
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent?.replace(/^✕/, ''))).toEqual(BLOCKERS.slice(0, 3))
+    fireEvent.click(within(primary()).getByRole('button', { name: '1 more in Why →' }))
+    expect(screen.getByRole('tab', { name: 'Why' })).toHaveAttribute('aria-selected', 'true')
+    expect(where.current).toBe('/release-gate/run-1')
+    // Why has the full list.
+    const why = screen.getByRole('heading', { name: 'Blocking Issues' }).closest('.card') as HTMLElement
+    expect(within(why).getAllByRole('listitem')).toHaveLength(4)
+  })
+
+  it('a conditional verdict with no blockers lists its conditions for GO instead', async () => {
+    await renderAt('/release-gate/run-1', flooredDecision({
+      recommendation: 'CONDITIONAL_GO', blocking_issues: [], conditions_for_go: ['Approve smoke run'],
+    }))
+    expect(within(primary()).queryByRole('list', { name: 'Top blockers' })).toBeNull()
+    expect(within(within(primary()).getByRole('list', { name: 'Conditions for GO' })).getByText('Approve smoke run')).toBeInTheDocument()
+  })
+
+  it('Override opens in the card and applies through the service', async () => {
+    const override = vi.spyOn(releaseCouncilService, 'override').mockResolvedValue(flooredDecision())
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    await renderAt('/release-gate/run-1', flooredDecision(), refresh)
+    fireEvent.click(within(primary()).getByRole('button', { name: 'Override decision' }))
+    expect(within(primary()).getByRole('heading', { name: 'QA Lead Override' })).toBeInTheDocument()
+    fireEvent.click(within(primary()).getByRole('button', { name: 'GO' }))
+    fireEvent.change(within(primary()).getByRole('textbox', { name: 'Reason for override' }), { target: { value: 'Known flake' } })
+    fireEvent.click(within(primary()).getByRole('button', { name: 'Apply Override' }))
+    await waitFor(() => expect(override).toHaveBeenCalledWith('run-1', 'GO', 'Known flake'))
+    await waitFor(() => expect(refresh).toHaveBeenCalled())
+    override.mockRestore()
+  })
+
+  it.each([
+    ['why', 'Why', () => screen.getByRole('heading', { name: /^(Decision Rationale|AI Reasoning)$/ })],
+    ['context', 'Context', () => document.querySelector('[data-tab-panel="context"]')],
+    ['history', 'History', () => screen.getByText(/No overrides recorded for this decision/)],
+  ] as const)('?tab=%s selects %s and renders its section', async (id, label, section) => {
+    await renderAt(`/release-gate/run-1?tab=${id}`, flooredDecision())
+    expect(screen.getByRole('tab', { name: new RegExp(`^${label}`) })).toHaveAttribute('aria-selected', 'true')
+    expect(section()).toBeTruthy()
+    for (const other of ['why', 'context', 'history'].filter((t) => t !== id)) {
+      expect(document.querySelector(`[data-tab-panel="${other}"]`)).toBeNull()
+    }
+  })
+
+  it('History lists every override with its reason', async () => {
+    await renderAt('/release-gate/run-1?tab=history', flooredDecision({
+      override_audit: [{
+        timestamp: '2026-09-01T10:00:00Z', actor_name: 'Dana', before_recommendation: 'NO_GO',
+        after_recommendation: 'GO', reason: 'Known infra flake',
+      } as ReleaseCouncilDecision['override_audit'][number]],
+    }))
+    expect(screen.getByRole('tab', { name: 'History1' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('heading', { name: 'Override History (1)' })).toBeInTheDocument()
+    expect(screen.getByText('Known infra flake')).toBeInTheDocument()
+    expect(screen.getByText('by Dana')).toBeInTheDocument()
+  })
+
+  it("links to the run page's Analysis tab, never to the URLs P4 merged away", async () => {
+    await renderAt('/release-gate/run-1?tab=context', flooredDecision({
+      cluster_insights: [{
+        id: 'c1', cluster_id: 'c1', label: 'Timeouts', size: 3, representative_error: null,
+        member_test_ids: [], cohesion_score: null, criticality_level: null, dimension_scores: [],
+      }] as unknown as ReleaseCouncilDecision['cluster_insights'],
+    }))
+    expect(screen.getByRole('link', { name: /Run analysis/ })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
+    expect(screen.getByRole('link', { name: 'Details →' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
+    const hrefs = Array.from(document.querySelectorAll('a[href]')).map((a) => a.getAttribute('href') ?? '')
+    expect(hrefs.filter((h) => /\/intelligence\b|\/deep-investigate\//.test(h))).toEqual([])
+  })
+
+  it("a quick-look decision sends \"Run deep investigation\" to the run's Analysis tab", async () => {
+    const where = await renderAt('/release-gate/run-1', flooredDecision({ synthesized: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run deep investigation' }))
+    expect(where.current).toBe('/runs/run-1?tab=analysis')
+  })
+
+  it('moves PDF and Share into the header overflow menu', async () => {
+    await renderAt('/release-gate/run-1', flooredDecision())
+    expect(screen.queryByRole('button', { name: /^PDF$/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: /Export PDF/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Share report/ })).toBeInTheDocument()
   })
 })

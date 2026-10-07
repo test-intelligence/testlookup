@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
-  Clock, Activity, AlertTriangle, Calendar, FolderTree,
+  Clock, Activity, AlertTriangle, FolderTree,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
@@ -13,7 +13,7 @@ import { useSuites } from '@/hooks/useSuites'
 import { useSuiteTrend } from '@/hooks/useSuiteTrend'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
-import type { SuiteDetailSummary } from '@/types/analytics'
+import type { SuiteDetailRun, SuiteDetailSummary, SuiteDetailTestCase } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 import type { SuiteTrendPoint } from '@/hooks/useSuiteTrend'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
@@ -27,6 +27,8 @@ import {
 } from '@/components/charts/stackedColumnModel'
 import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
 import SuiteDetailAdvanced from '@/components/reports/catalogue/SuiteDetailAdvanced'
+import { FlakyPill, LastStatusBadge, PassRateBar, RecentRunsTable } from './suite/SuiteParts'
+import { formatSuiteDate, formatSuiteDuration } from './suite/format'
 
 const PERIODS = [
   { label: '1d',  days: 1 },
@@ -87,50 +89,322 @@ const PASS_RATE_POINT_NOTE = 'One point per day with runs · a day without runs 
  */
 export const SUITE_CHART_HEIGHT = 240
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── The body's data ───────────────────────────────────────────────────────────
 
-function PassRateBar({ rate }: { rate: number }) {
-  const color = rate >= 90 ? 'var(--status-passed)' : rate >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
+/**
+ * One suite's reads for a window: the analytics roll-up (summary, per-test
+ * rows, recent runs) and the per-day trend. Both the full body and the suite
+ * page's Charts tab read through here; SWR shares the requests with any other
+ * caller of the same suite and window.
+ */
+function useSuiteBody(suiteName: string, days: number) {
+  const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
+
+  // Per-day trend (run_count + passed/failed/skipped) for the same time
+  // window. Owned by the new ``suite_history_service`` so every page
+  // shows the same numbers. Keyed on (suiteName, activeProjectId, days) so
+  // the chart refreshes in lockstep with the days selector and the active
+  // project, without driving state from an effect.
+  const { points: trendPoints } = useSuiteTrend(suiteName || null, days)
+  const trendHasRuns = trendPoints.some((p) => p.run_count > 0)
+
+  const summary: Partial<SuiteDetailSummary> = data?.summary ?? {}
+  const testCases: SuiteDetailTestCase[] = data?.test_cases ?? []
+  const recentRuns: SuiteDetailRun[] = data?.recent_runs ?? []
+
+  // Run-level aggregates (unique_tests / total_executions / recent_runs) are
+  // populated even when the SDK shipped a TestNG/JUnit run without per-test
+  // rows (e.g. JUnit XML with <testsuite tests=…> but no <testcase> elements,
+  // or a live session whose Redis buffer evicted before persistence). The
+  // page used to gate the *entire* view on ``testCases.length`` and fall
+  // through to "No data for this suite" — hiding the real totals that every
+  // other surface (/test-management, /reports/summary) shows. We now bail
+  // only when there is genuinely nothing to summarise, and let the per-test
+  // table render its own inline explanation when only the per-test detail
+  // is missing.
+  const hasAnyData =
+    (summary.unique_tests ?? 0) > 0
+    || (summary.total_executions ?? 0) > 0
+    || recentRuns.length > 0
+    || trendHasRuns
+
+  return { isLoading, error, summary, testCases, recentRuns, trendPoints, trendHasRuns, hasAnyData }
+}
+
+type SuiteBody = ReturnType<typeof useSuiteBody>
+
+/** Loading, a failed read, or a window with nothing in it; otherwise `children`. */
+function SuiteBodyState({ body, days, children }: { body: SuiteBody; days: number; children: ReactNode }) {
+  if (body.isLoading) {
+    return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+  }
+  if (body.error) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
+        title="Failed to load suite details"
+        description="Check the console for errors or try again"
+      />
+    )
+  }
+  if (!body.hasAnyData) {
+    return (
+      <EmptyState
+        icon={<Layers className="h-8 w-8" />}
+        title="No data for this suite"
+        description={`No test executions found in the last ${days} days`}
+      />
+    )
+  }
+  return <>{children}</>
+}
+
+// ── Sections ──────────────────────────────────────────────────────────────────
+
+function SuiteKpiCards({ summary }: { summary: Partial<SuiteDetailSummary> }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-[var(--color-bg-hover)] rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${Math.min(rate, 100)}%`, backgroundColor: color }}
-        />
-      </div>
-      <span className="text-xs font-mono font-semibold w-12 text-right" style={{ color }}>
-        {Number(rate).toFixed(1)}%
-      </span>
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {[
+        {
+          label: 'Unique Tests', value: summary.unique_tests ?? 0,
+          color: 'text-[var(--color-text)]', icon: <Layers className="h-4 w-4" />,
+        },
+        {
+          label: 'Total Executions', value: summary.total_executions ?? 0,
+          color: 'text-[var(--color-text-secondary)]', icon: <Activity className="h-4 w-4" />,
+        },
+        {
+          label: 'Passed', value: summary.passed ?? 0,
+          color: 'text-[var(--status-passed)]', icon: <CheckCircle2 className="h-4 w-4" />,
+        },
+        {
+          label: 'Failed', value: summary.failed ?? 0,
+          color: 'text-[var(--status-failed)]', icon: <XCircle className="h-4 w-4" />,
+        },
+        {
+          label: 'Pass Rate',
+          value: `${Number(summary.pass_rate ?? 0).toFixed(1)}%`,
+          color: Number(summary.pass_rate ?? 0) >= 90 ? 'text-[var(--status-passed)]'
+               : Number(summary.pass_rate ?? 0) >= 70 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]',
+          icon: <SkipForward className="h-4 w-4" />,
+        },
+        {
+          label: 'Avg Duration', value: formatSuiteDuration(summary.avg_duration_ms),
+          color: 'text-[var(--color-accent)]', icon: <Clock className="h-4 w-4" />,
+        },
+      ].map(({ label, value, color, icon }) => (
+        <div key={label} className="card py-3">
+          <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] mb-1">
+            {icon}
+            <p className="text-xs uppercase tracking-wider">{label}</p>
+          </div>
+          {/* The metric value on the stat token (VIZ-106): 24 px like the
+              `text-2xl` it replaces, with the same 4:3 line height, so no
+              pixel moves — and presentation mode raises it with the rest. */}
+          <p className={clsx('text-[length:var(--text-stat-lg)] leading-[calc(2/1.5)] font-bold tabular-nums', color)}>{value}</p>
+        </div>
+      ))}
     </div>
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s = (status || '').toUpperCase()
-  const cls =
-    s === 'PASSED'  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] ring-[var(--status-passed-bd)]' :
-    s === 'FAILED'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] ring-[var(--status-failed-bd)]' :
-    s === 'BROKEN'  ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] ring-[var(--status-broken-bd)]' :
-    s === 'SKIPPED' ? 'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] ring-[var(--status-skipped-bd)]' :
-                      'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/20'
+/**
+ * The run history and the per-day pass rate. `primary`: the suite page's
+ * Charts tab marks the run history as the tab's primary content (the page
+ * template's `data-primary`).
+ */
+function SuiteTrendCharts({
+  days,
+  trendPoints,
+  primary = false,
+}: {
+  days: number
+  trendPoints: readonly SuiteTrendPoint[]
+  primary?: boolean
+}) {
+  // Both charts read the one per-day series, so their days always line up.
+  const historyModel = useMemo(() => runHistoryModel(trendPoints), [trendPoints])
+  const passRateModel = useMemo(() => suitePassRateModel(trendPoints), [trendPoints])
+
+  // Run history — per-day executions of this suite by status, on the chart
+  // kit (VIZ-104). The caller hides it when no day in the window had a run,
+  // so an empty suite does not show a row of zero columns. The run-by-run
+  // pass rates stay in the "Recent runs" table.
+  const history = (
+    <StackedColumnChartFrame
+      title={`Run history — last ${days} days`}
+      takeaway={`${trendPoints.reduce((a, p) => a + p.run_count, 0)} runs · ${trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions`}
+      headingLevel={3}
+      state={readyState(trendPoints)}
+      model={historyModel}
+      height={SUITE_CHART_HEIGHT}
+      bucketNoun="day"
+    />
+  )
+
   return (
-    <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset', cls)}>
-      {s}
-    </span>
+    <>
+      {primary ? <div data-primary="">{history}</div> : history}
+
+      {/* Pass rate PER DAY (OD-4): the kit's time series over the same
+          days, with its gap semantics — a day nobody ran is a gap.
+
+          The common cadence (nightly on weekdays, every other day) leaves
+          no two adjacent days with a rate, so the chart is a row of dots
+          under a legend that shows a line (R2 F7). The dots stay apart:
+          joining them across a day without runs would draw a trend
+          through a day nobody measured, and Trends does not either (the
+          kit keeps `connectNulls` off, and a no-run day and a skips-only
+          day are the same `null` to it). The takeaway says what a point
+          is instead, where a sighted reader sees it.
+
+          The catalogue's additions (VIZ-408, plan 2.2): the trend overlays
+          and the local zoom. No "apply as window": this page's window is
+          its own `?days`, not the global one. No `rateTarget` either: the
+          page has no target of its own to draw. */}
+      <div data-catalogue-section="suite-pass-rate">
+        <TimeSeriesChartFrame
+          title={`Pass rate trend — last ${days} days`}
+          takeaway={PASS_RATE_POINT_NOTE}
+          headingLevel={3}
+          state={readyState(trendPoints)}
+          model={passRateModel}
+          height={SUITE_CHART_HEIGHT}
+          trendAnalysis
+          zoom
+        />
+      </div>
+    </>
   )
 }
 
-function fmt(ms: number | null | undefined) {
-  if (!ms) return '—'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  return `${(ms / 60_000).toFixed(1)}m`
+function SuiteTestCasesTable({
+  testCases,
+  summary,
+}: {
+  testCases: readonly SuiteDetailTestCase[]
+  summary: Partial<SuiteDetailSummary>
+}) {
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
+        Test Cases ({testCases.length})
+      </h3>
+      {testCases.length === 0 ? (
+        <div className="rounded border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-4 py-3 text-sm text-[var(--status-broken)]">
+          <p className="font-medium">
+            {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+          </p>
+          <p className="mt-1 text-xs text-[var(--status-broken)]/80">
+            This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
+            the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
+            or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
+          </p>
+        </div>
+      ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th className="th text-left">Test Name</th>
+              <th className="th text-left">Class</th>
+              <th className="th text-right">Runs</th>
+              <th className="th text-right text-[var(--status-passed)]">Passed</th>
+              <th className="th text-right text-[var(--status-failed)]">Failed</th>
+              <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
+              <th className="th min-w-[160px]">Pass Rate</th>
+              <th className="th text-right">Avg Duration</th>
+              <th className="th">Last Status</th>
+              <th className="th text-right">Last Run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {testCases.map((tc) => (
+              <tr key={tc.test_fingerprint} className="table-row">
+                <td className="td max-w-[260px]">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-[var(--color-text)] truncate" title={tc.test_name}>
+                      {tc.test_name}
+                    </span>
+                    {tc.is_flaky && <FlakyPill />}
+                  </div>
+                  {tc.last_error && (
+                    <p className="text-xs text-[var(--status-failed)]/70 truncate mt-0.5" title={tc.last_error}>
+                      {tc.last_error}
+                    </p>
+                  )}
+                </td>
+                <td className="td text-[var(--color-text-muted)] text-xs max-w-[180px] truncate" title={tc.class_name ?? ''}>
+                  {tc.class_name ?? '—'}
+                </td>
+                <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">{tc.total_executions}</td>
+                <td className="td text-right tabular-nums text-[var(--status-passed)]">{tc.passed}</td>
+                <td className="td text-right tabular-nums text-[var(--status-failed)]">{tc.failed}</td>
+                <td className="td text-right tabular-nums text-[var(--status-skipped)]">{tc.skipped}</td>
+                <td className="td w-44">
+                  <PassRateBar rate={Number(tc.pass_rate ?? 0)} />
+                </td>
+                <td className="td text-right tabular-nums text-[var(--color-text-muted)] text-xs">
+                  {formatSuiteDuration(tc.avg_duration_ms)}
+                </td>
+                <td className="td">
+                  <LastStatusBadge status={tc.last_status ?? 'UNKNOWN'} />
+                </td>
+                <td className="td text-right text-xs text-[var(--color-text-muted)]">
+                  {formatSuiteDate(tc.last_run_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      )}
+    </div>
+  )
 }
 
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+// ── Bodies ────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything the former `/coverage/suite` page showed under its header, for one
+ * suite and window: KPI cards, the run history and per-day pass rate, the
+ * Wave 3 sections, the per-test table and the recent runs.
+ */
+export function SuiteDetailBody({ suiteName, days }: { suiteName: string; days: number }) {
+  const body = useSuiteBody(suiteName, days)
+  return (
+    <SuiteBodyState body={body} days={days}>
+      <SuiteKpiCards summary={body.summary} />
+
+      {body.trendHasRuns && <SuiteTrendCharts days={days} trendPoints={body.trendPoints} />}
+
+      {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite
+          lazy-loads each section when it is near (no flag since Phase D). */}
+      <SuiteDetailAdvanced days={days} suiteName={suiteName} />
+
+      <SuiteTestCasesTable testCases={body.testCases} summary={body.summary} />
+
+      {body.recentRuns.length > 0 && <RecentRunsTable runs={body.recentRuns} />}
+    </SuiteBodyState>
+  )
+}
+
+/**
+ * The suite page's Charts tab (UX redesign P4): the run history, the per-day
+ * pass rate and the Wave 3 sections (test x run heatmap, test scatter). The
+ * page's own header carries the KPIs, its Tests tab the per-test rows and its
+ * Runs tab the recent runs, so none of them is repeated here.
+ */
+export function SuiteChartsPanel({ suiteName, days }: { suiteName: string; days: number }) {
+  const body = useSuiteBody(suiteName, days)
+  return (
+    <SuiteBodyState body={body} days={days}>
+      <div className="space-y-4" data-suite-charts="">
+        {body.trendHasRuns && <SuiteTrendCharts days={days} trendPoints={body.trendPoints} primary />}
+        <SuiteDetailAdvanced days={days} suiteName={suiteName} />
+      </div>
+    </SuiteBodyState>
+  )
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -166,18 +440,6 @@ export default function SuiteDetailPage() {
     setSearchParams(params, { replace: true })
   }
 
-  const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
-
-  // Per-day trend (run_count + passed/failed/skipped) for the same time
-  // window. Owned by the new ``suite_history_service`` so every page
-  // shows the same numbers. Keyed on (suiteName, activeProjectId, days) so
-  // the chart refreshes in lockstep with the days selector and the active
-  // project, without driving state from an effect.
-  const { points: trendPoints } = useSuiteTrend(suiteName || null, days)
-  // Both charts read the one per-day series, so their days always line up.
-  const historyModel = useMemo(() => runHistoryModel(trendPoints), [trendPoints])
-  const passRateModel = useMemo(() => suitePassRateModel(trendPoints), [trendPoints])
-  const trendHasRuns = trendPoints.some((p) => p.run_count > 0)
   // The reverse-direction link to the catalog needs a TestSuite *id*,
   // but the analytics page only knows the name (from the URL). Use the
   // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
@@ -209,26 +471,6 @@ export default function SuiteDetailPage() {
       />
     )
   }
-
-  const summary: Partial<SuiteDetailSummary> = data?.summary ?? {}
-  const testCases: TestCaseRow[] = data?.test_cases  ?? []
-  const recentRuns: RunRow[]     = data?.recent_runs ?? []
-
-  // Run-level aggregates (unique_tests / total_executions / recent_runs) are
-  // populated even when the SDK shipped a TestNG/JUnit run without per-test
-  // rows (e.g. JUnit XML with <testsuite tests=…> but no <testcase> elements,
-  // or a live session whose Redis buffer evicted before persistence). The
-  // page used to gate the *entire* view on ``testCases.length`` and fall
-  // through to "No data for this suite" — hiding the real totals that every
-  // other surface (/test-management, /reports/summary) shows. We now bail
-  // only when there is genuinely nothing to summarise, and let the per-test
-  // table render its own inline explanation when only the per-test detail
-  // is missing.
-  const hasAnyData =
-    (summary.unique_tests ?? 0) > 0
-    || (summary.total_executions ?? 0) > 0
-    || recentRuns.length > 0
-    || trendHasRuns
 
   const periodSelector = (
     <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
@@ -284,276 +526,7 @@ export default function SuiteDetailPage() {
         actions={headerActions}
       />
 
-      {isLoading ? (
-        <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
-      ) : error ? (
-        <EmptyState
-          icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
-          title="Failed to load suite details"
-          description="Check the console for errors or try again"
-        />
-      ) : !hasAnyData ? (
-        <EmptyState
-          icon={<Layers className="h-8 w-8" />}
-          title="No data for this suite"
-          description={`No test executions found in the last ${days} days`}
-        />
-      ) : (
-        <>
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {[
-              {
-                label: 'Unique Tests', value: summary.unique_tests ?? 0,
-                color: 'text-[var(--color-text)]', icon: <Layers className="h-4 w-4" />,
-              },
-              {
-                label: 'Total Executions', value: summary.total_executions ?? 0,
-                color: 'text-[var(--color-text-secondary)]', icon: <Activity className="h-4 w-4" />,
-              },
-              {
-                label: 'Passed', value: summary.passed ?? 0,
-                color: 'text-[var(--status-passed)]', icon: <CheckCircle2 className="h-4 w-4" />,
-              },
-              {
-                label: 'Failed', value: summary.failed ?? 0,
-                color: 'text-[var(--status-failed)]', icon: <XCircle className="h-4 w-4" />,
-              },
-              {
-                label: 'Pass Rate',
-                value: `${Number(summary.pass_rate ?? 0).toFixed(1)}%`,
-                color: Number(summary.pass_rate ?? 0) >= 90 ? 'text-[var(--status-passed)]'
-                     : Number(summary.pass_rate ?? 0) >= 70 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]',
-                icon: <SkipForward className="h-4 w-4" />,
-              },
-              {
-                label: 'Avg Duration', value: fmt(summary.avg_duration_ms),
-                color: 'text-[var(--color-accent)]', icon: <Clock className="h-4 w-4" />,
-              },
-            ].map(({ label, value, color, icon }) => (
-              <div key={label} className="card py-3">
-                <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] mb-1">
-                  {icon}
-                  <p className="text-xs uppercase tracking-wider">{label}</p>
-                </div>
-                {/* The metric value on the stat token (VIZ-106): 24 px like the
-                    `text-2xl` it replaces, with the same 4:3 line height, so no
-                    pixel moves — and presentation mode raises it with the rest. */}
-                <p className={clsx('text-[length:var(--text-stat-lg)] leading-[calc(2/1.5)] font-bold tabular-nums', color)}>{value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Run history — per-day executions of this suite by status, on the
-              chart kit (VIZ-104). Hidden when no day in the window had a run,
-              so an empty suite does not show a row of zero columns. The run-
-              by-run pass rates stay in the "Recent runs" table below. */}
-          {trendHasRuns && (
-            <StackedColumnChartFrame
-              title={`Run history — last ${days} days`}
-              takeaway={`${trendPoints.reduce((a, p) => a + p.run_count, 0)} runs · ${trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions`}
-              headingLevel={3}
-              state={readyState(trendPoints)}
-              model={historyModel}
-              height={SUITE_CHART_HEIGHT}
-              bucketNoun="day"
-            />
-          )}
-
-          {/* Pass rate PER DAY (OD-4): the kit's time series over the same
-              days, with its gap semantics — a day nobody ran is a gap.
-
-              The common cadence (nightly on weekdays, every other day) leaves
-              no two adjacent days with a rate, so the chart is a row of dots
-              under a legend that shows a line (R2 F7). The dots stay apart:
-              joining them across a day without runs would draw a trend
-              through a day nobody measured, and Trends does not either (the
-              kit keeps `connectNulls` off, and a no-run day and a skips-only
-              day are the same `null` to it). The takeaway says what a point
-              is instead, where a sighted reader sees it.
-
-              The catalogue's additions (VIZ-408, plan 2.2): the trend overlays
-              and the local zoom. No "apply as window": this page's window is
-              its own `?days`, not the global one. No `rateTarget` either: the
-              page has no target of its own to draw. */}
-          {trendHasRuns && (
-            <div data-catalogue-section="suite-pass-rate">
-              <TimeSeriesChartFrame
-                title={`Pass rate trend — last ${days} days`}
-                takeaway={PASS_RATE_POINT_NOTE}
-                headingLevel={3}
-                state={readyState(trendPoints)}
-                model={passRateModel}
-                height={SUITE_CHART_HEIGHT}
-                trendAnalysis
-                zoom
-              />
-            </div>
-          )}
-
-          {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite
-              lazy-loads each section when it is near (no flag since Phase D). */}
-          <SuiteDetailAdvanced days={days} suiteName={suiteName} />
-
-          {/* Test Cases Table */}
-          <div className="card">
-            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
-              Test Cases ({testCases.length})
-            </h3>
-            {testCases.length === 0 ? (
-              <div className="rounded border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-4 py-3 text-sm text-[var(--status-broken)]">
-                <p className="font-medium">
-                  {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
-                </p>
-                <p className="mt-1 text-xs text-[var(--status-broken)]/80">
-                  This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
-                  the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
-                  or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
-                </p>
-              </div>
-            ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="th text-left">Test Name</th>
-                    <th className="th text-left">Class</th>
-                    <th className="th text-right">Runs</th>
-                    <th className="th text-right text-[var(--status-passed)]">Passed</th>
-                    <th className="th text-right text-[var(--status-failed)]">Failed</th>
-                    <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
-                    <th className="th min-w-[160px]">Pass Rate</th>
-                    <th className="th text-right">Avg Duration</th>
-                    <th className="th">Last Status</th>
-                    <th className="th text-right">Last Run</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {testCases.map((tc) => (
-                    <tr key={tc.test_fingerprint} className="table-row">
-                      <td className="td max-w-[260px]">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-[var(--color-text)] truncate" title={tc.test_name}>
-                            {tc.test_name}
-                          </span>
-                          {tc.is_flaky && (
-                            <span className="flex-shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-[var(--status-flaky-bg)] text-[var(--status-flaky)] ring-1 ring-inset ring-[var(--status-flaky-bd)]">
-                              <AlertTriangle className="h-3 w-3" />
-                              Flaky
-                            </span>
-                          )}
-                        </div>
-                        {tc.last_error && (
-                          <p className="text-xs text-[var(--status-failed)]/70 truncate mt-0.5" title={tc.last_error}>
-                            {tc.last_error}
-                          </p>
-                        )}
-                      </td>
-                      <td className="td text-[var(--color-text-muted)] text-xs max-w-[180px] truncate" title={tc.class_name ?? ''}>
-                        {tc.class_name ?? '—'}
-                      </td>
-                      <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">{tc.total_executions}</td>
-                      <td className="td text-right tabular-nums text-[var(--status-passed)]">{tc.passed}</td>
-                      <td className="td text-right tabular-nums text-[var(--status-failed)]">{tc.failed}</td>
-                      <td className="td text-right tabular-nums text-[var(--status-skipped)]">{tc.skipped}</td>
-                      <td className="td w-44">
-                        <PassRateBar rate={Number(tc.pass_rate ?? 0)} />
-                      </td>
-                      <td className="td text-right tabular-nums text-[var(--color-text-muted)] text-xs">
-                        {fmt(tc.avg_duration_ms)}
-                      </td>
-                      <td className="td">
-                        <StatusBadge status={tc.last_status ?? 'UNKNOWN'} />
-                      </td>
-                      <td className="td text-right text-xs text-[var(--color-text-muted)]">
-                        {fmtDate(tc.last_run_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            )}
-          </div>
-
-          {/* Recent Runs Table */}
-          {recentRuns.length > 0 && (
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <Calendar className="h-4 w-4 text-[var(--color-text-muted)]" />
-                <h3 className="text-sm font-semibold text-[var(--color-text)]">
-                  Recent Runs ({recentRuns.length})
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className="th text-left">Build</th>
-                      <th className="th text-right">Date</th>
-                      <th className="th text-right text-[var(--status-passed)]">Passed</th>
-                      <th className="th text-right text-[var(--status-failed)]">Failed</th>
-                      <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
-                      <th className="th min-w-[160px]">Pass Rate</th>
-                      <th className="th text-left">Run</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentRuns.map((r) => (
-                      <tr key={r.test_run_id} className="table-row">
-                        <td className="td font-mono text-[var(--color-text-secondary)] text-xs">{r.build_number ?? '—'}</td>
-                        <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(r.run_date)}</td>
-                        <td className="td text-right tabular-nums text-[var(--status-passed)]">{r.passed}</td>
-                        <td className="td text-right tabular-nums text-[var(--status-failed)]">{r.failed}</td>
-                        <td className="td text-right tabular-nums text-[var(--status-skipped)]">{r.skipped}</td>
-                        <td className="td w-44">
-                          <PassRateBar rate={Number(r.pass_rate ?? 0)} />
-                        </td>
-                        <td className="td">
-                          <button
-                            onClick={() => navigate(`/runs/${r.test_run_id}`)}
-                            className="text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
-                          >
-                            View run →
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      <SuiteDetailBody suiteName={suiteName} days={days} />
     </div>
   )
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface TestCaseRow {
-  test_fingerprint: string
-  test_name: string
-  class_name: string | null
-  total_executions: number
-  passed: number
-  failed: number
-  skipped: number
-  pass_rate: number
-  avg_duration_ms: number | null
-  last_status: string | null
-  last_error: string | null
-  last_run_at: string | null
-  is_flaky: boolean
-}
-
-interface RunRow {
-  test_run_id: string
-  build_number: string | null
-  run_date: string | null
-  passed: number
-  failed: number
-  skipped: number
-  pass_rate: number
 }

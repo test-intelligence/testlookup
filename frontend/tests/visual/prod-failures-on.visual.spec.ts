@@ -11,6 +11,8 @@
  * The page with its three sections is taller than 4000 px: a 1280 x 6000
  * viewport (the shell scrolls `#main-content`, so the height only sets how
  * much is on screen; nothing scrolls, every section is near at load).
+ * UX redesign P3: the three sections are tabs of the page (Groups · By suite
+ * · Scatter); each is captured with its own tab open.
  * Lands WITH its PNGs (`visual-baselines.yml`, Linux only).
  */
 import { expect, test } from '@playwright/test'
@@ -38,10 +40,11 @@ for (const theme of THEMES) {
     const groupsFrame = sectionFrame(page, 'failures-groups', 'Failures grouped by error message')
     const ladder = sectionFrame(page, 'failures-drill', 'Results by suite')
     const scatter = sectionFrame(page, 'scatter-project', 'Test duration vs failure rate')
+    // UX redesign P3: each section is a tab of the page (Groups, the default · By suite · Scatter); each
+    // region is captured with its tab open, the regions and their names unchanged.
+    const sectionTab = (name: string) =>
+      page.getByRole('tablist', { name: 'Failure analysis sections' }).getByRole('tab', { name, exact: true })
     await expectDrawn(groupsFrame, 'groups')
-    await expectDrawn(ladder, 'ladder')
-    await expectDrawn(scatter, 'scatter')
-    await expect(scatter.locator('[data-chart-type="scatter"]')).toHaveAttribute('data-chart-status', 'ready')
     await expectNoErrorFrame(page)
 
     await visualRegion(page, 'failures-on-groups', theme, groups)
@@ -52,10 +55,20 @@ for (const theme of THEMES) {
     await expect(groups.locator('[data-clusters-list]')).toBeVisible()
     await visualRegion(page, 'failures-on-clusters', theme, groups)
 
+    await sectionTab('By suite').click()
+    await mountEverySection(page, api)
+    await expectDrawn(ladder, 'ladder')
+    await expectNoErrorFrame(page)
     await visualRegion(page, 'failures-on-drill', theme, section(page, 'failures-drill'))
+    await sectionTab('Scatter').click()
+    await mountEverySection(page, api)
+    await expectDrawn(scatter, 'scatter')
+    await expect(scatter.locator('[data-chart-type="scatter"]')).toHaveAttribute('data-chart-status', 'ready')
+    await expectNoErrorFrame(page)
     await visualRegion(page, 'failures-on-scatter', theme, section(page, 'scatter-project'))
 
-    // The leaf (Payments, failed) and its rows panel, from a shared link and the keyboard.
+    // The leaf (Payments, failed) and its rows panel, from a shared link and the keyboard. The link names no
+    // tab: the page opens By suite (the ladder's) by itself.
     await page.goto('/failures?drill=suite~payments&drill=status~failed')
     await bringNear(page, 'failures-drill')
     await expect(section(page, 'failures-drill')).toHaveAttribute('data-drill-level', 'tests')

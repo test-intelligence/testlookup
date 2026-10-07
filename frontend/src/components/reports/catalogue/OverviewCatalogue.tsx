@@ -9,6 +9,10 @@
  *   headline row  Pass rate trend (release markers) | Status breakdown donut
  *   lazy row      Top failing tests                 | Failure categories
  *
+ * `rows` picks which of the two rows render (default both). Home (UX redesign
+ * P3) draws the headline row as its primary content and the lazy row in its
+ * "Top failing" tab: two mounts of this one chunk.
+ *
  * Where the numbers come from, and why:
  *
  *   - The trend and the donut are drawn from the day series the page ALREADY
@@ -90,7 +94,18 @@ export interface OverviewCatalogueProps {
   filtersApplied: boolean
   /** The page's unfiltered existence probe: `null` while it has not answered. */
   everHadRun: boolean | null
+  /**
+   * Which rows to draw (a composition choice, UX redesign P3): `headline`
+   * (trend + donut), `breakdown` (the lazy row: top failing + failure
+   * categories), or `all` (both, the default). A row left out is not
+   * rendered at all, so it asks for nothing; a row drawn is drawn exactly as
+   * in `all`.
+   */
+  rows?: OverviewCatalogueRows
 }
+
+/** The rows `OverviewCatalogue` can draw: one of its two, or both. */
+export type OverviewCatalogueRows = 'headline' | 'breakdown' | 'all'
 
 /** The headline row's plot height: the Execution-trend card's, which the trend replaces. */
 export const OVERVIEW_HEADLINE_HEIGHT = 260
@@ -148,6 +163,7 @@ export default function OverviewCatalogue({
   suiteFilter,
   filtersApplied,
   everHadRun,
+  rows = 'all',
 }: OverviewCatalogueProps) {
   // The days that HAD runs, dated by their UTC day (a payload date may carry a time).
   const points = useMemo(
@@ -155,46 +171,53 @@ export default function OverviewCatalogue({
     [window],
   )
 
+  const headline = rows !== 'breakdown'
+  const breakdown = rows !== 'headline'
+
   return (
     <>
-      <div className="grid grid-cols-1 xl:[grid-template-columns:minmax(0,1.6fr)_minmax(0,1fr)] gap-4">
-        <div data-catalogue-section="overview-trend" className="min-w-0">
-          <PassRateTrend
-            days={days}
-            window={window}
-            points={points}
-            loading={trendsLoading}
-            filtersApplied={filtersApplied}
-            everHadRun={everHadRun}
-          />
+      {headline && (
+        <div className="grid grid-cols-1 xl:[grid-template-columns:minmax(0,1.6fr)_minmax(0,1fr)] gap-4">
+          <div data-catalogue-section="overview-trend" className="min-w-0">
+            <PassRateTrend
+              days={days}
+              window={window}
+              points={points}
+              loading={trendsLoading}
+              filtersApplied={filtersApplied}
+              everHadRun={everHadRun}
+            />
+          </div>
+          <div data-catalogue-section="overview-donut" className="min-w-0">
+            <StatusDonut
+              days={days}
+              points={points}
+              loading={trendsLoading}
+              filtersApplied={filtersApplied}
+              everHadRun={everHadRun}
+            />
+          </div>
         </div>
-        <div data-catalogue-section="overview-donut" className="min-w-0">
-          <StatusDonut
-            days={days}
-            points={points}
-            loading={trendsLoading}
-            filtersApplied={filtersApplied}
-            everHadRun={everHadRun}
-          />
-        </div>
-      </div>
+      )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="min-w-0">
-          <LazySection minHeight={OVERVIEW_BREAKDOWN_HEIGHT + FRAME_CHROME_PX} label="overview-top-failing">
-            <div data-catalogue-section="overview-top-failing">
-              <TopFailing days={days} suiteFilter={suiteFilter} everHadRun={everHadRun} />
-            </div>
-          </LazySection>
+      {breakdown && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="min-w-0">
+            <LazySection minHeight={OVERVIEW_BREAKDOWN_HEIGHT + FRAME_CHROME_PX} label="overview-top-failing">
+              <div data-catalogue-section="overview-top-failing">
+                <TopFailing days={days} suiteFilter={suiteFilter} everHadRun={everHadRun} />
+              </div>
+            </LazySection>
+          </div>
+          <div className="min-w-0">
+            <LazySection minHeight={OVERVIEW_BREAKDOWN_HEIGHT + FRAME_CHROME_PX} label="overview-categories">
+              <div data-catalogue-section="overview-categories">
+                <FailureCategories days={days} categories={categories} everHadRun={everHadRun} />
+              </div>
+            </LazySection>
+          </div>
         </div>
-        <div className="min-w-0">
-          <LazySection minHeight={OVERVIEW_BREAKDOWN_HEIGHT + FRAME_CHROME_PX} label="overview-categories">
-            <div data-catalogue-section="overview-categories">
-              <FailureCategories days={days} categories={categories} everHadRun={everHadRun} />
-            </div>
-          </LazySection>
-        </div>
-      </div>
+      )}
     </>
   )
 }

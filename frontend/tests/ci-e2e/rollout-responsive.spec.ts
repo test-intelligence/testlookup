@@ -46,6 +46,15 @@ interface RoutePage {
   handlers: ApiHandlers
   /** Chart frames drawn once every section is mounted. */
   frames: number
+  /** A step after the load, before anything is measured (e.g. opening a disclosure). */
+  open?: (page: Page) => Promise<void>
+}
+
+/** Summary's trend is in a collapsed disclosure (UX redesign P3): open it. */
+async function openSummaryTrend(page: Page) {
+  const toggle = page.getByRole('button', { name: /^Trend/ })
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 }
 
 const PAGES: RoutePage[] = [
@@ -57,23 +66,38 @@ const PAGES: RoutePage[] = [
     handlers: OVERVIEW_ON,
     frames: 4,
   },
+  // UX redesign P3: the catalogue's sections are in the page's tabs, so each
+  // tab is a load: Volume (the default) draws the hero and the daily
+  // breakdown; By suite the hero, the suite series and Compare (VIZ-605: with
+  // nothing chosen it is a frame that says so); Durations and Heatmap the
+  // hero and their one section. Phase D S3/S4: the page asks no flag.
   {
     name: 'Trends',
     path: '/trends',
     ready: (p) => landmark(p, 'Trend metrics'),
-    // Phase D S3/S4: the catalogue and its heatmap mount unconditionally; the
-    // page asks no flag.
     handlers: TRENDS_ON,
-    // + Compare (VIZ-605): with nothing chosen it is a frame that says so.
-    frames: 6,
+    frames: 2,
   },
+  { name: 'Trends, By suite', path: '/trends?tab=by-suite', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 3 },
+  { name: 'Trends, Durations', path: '/trends?tab=durations', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
+  { name: 'Trends, Heatmap', path: '/trends?tab=heatmap', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
+  // UX redesign P3: Summary draws the suite bars (its primary); the trend is
+  // in the collapsed "Trend" disclosure, so it is a second load with it open.
+  // No donut and no "Failures by test" (deleted). Phase D S2: no flag.
   {
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
-    // Phase D S2: the catalogue mounts unconditionally; the page asks no flag.
     handlers: SUMMARY_REPORT_ON,
-    frames: 4,
+    frames: 1,
+  },
+  {
+    name: 'Summary, Trend opened',
+    path: '/reports/summary',
+    ready: (p) => p.getByText('Total tests', { exact: true }),
+    handlers: SUMMARY_REPORT_ON,
+    open: openSummaryTrend,
+    frames: 2,
   },
   {
     name: 'Suite detail',
@@ -86,7 +110,8 @@ const PAGES: RoutePage[] = [
   },
   {
     name: 'Release gate',
-    path: `/release-gate/${RUN_ID}`,
+    // UX redesign P4 item 6: the gate's charts are its Context tab.
+    path: `/release-gate/${RUN_ID}?tab=context`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     // Phase D S2: the Context group mounts unconditionally; the page asks no flag.
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
@@ -96,15 +121,20 @@ const PAGES: RoutePage[] = [
 
 const WIDTHS = [375, 640, 768] as const
 
-/** Scroll `#main-content` to the end a screen at a time, so every lazy section mounts; then back to the top. */
+/**
+ * Scroll `#main-content` to the end a screen at a time, so every lazy section
+ * mounts; then back to the top. A HIDDEN placeholder is another tab's section
+ * (UX redesign P3: a Trends tab hides the catalogue sections it does not
+ * show): it never mounts, by design, so it is not waited for.
+ */
 async function mountEverySection(page: Page, api: Parameters<typeof networkQuiet>[1]) {
-  for (let i = 0; i < 40 && (await page.locator('[data-lazy-section]').count()) > 0; i++) {
+  for (let i = 0; i < 40 && (await page.locator('[data-lazy-section]:visible').count()) > 0; i++) {
     await page.locator(MAIN).evaluate((main) => {
       main.scrollTop += main.clientHeight
     })
     await networkQuiet(page, api)
   }
-  await expect(page.locator('[data-lazy-section]'), 'a lazy section never mounted').toHaveCount(0)
+  await expect(page.locator('[data-lazy-section]:visible'), 'a lazy section never mounted').toHaveCount(0)
   await page.locator(MAIN).evaluate((main) => {
     main.scrollTop = 0
   })
@@ -116,6 +146,7 @@ for (const report of PAGES) {
       await page.setViewportSize({ width, height: 900 })
       const { api, errors } = await openRollout(page, report.path, { handlers: report.handlers, ready: report.ready })
       await networkQuiet(page, api)
+      if (report.open) await report.open(page)
       await mountEverySection(page, api)
       await expect(page.locator('[data-chart-frame]'), `${report.name}: frames`).toHaveCount(report.frames)
       // Every frame reaches a terminal state before it is measured.

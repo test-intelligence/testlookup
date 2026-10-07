@@ -21,6 +21,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { cardAround, type ApiHandlers } from '../lib/production-pages'
 import {
+  belowMainFold,
   expectDrawn,
   expectInventory,
   expectNoErrorFrame,
@@ -48,7 +49,11 @@ import {
 import { expectNoBlockingViolations } from '../lib/axe-gate'
 
 const P = PROJECT_ID
-const PATH = `/release-gate/${RUN_ID}`
+// UX redesign P4 item 6: the Context group (and the cluster list below it) is
+// the Context tab's body, below the verdict card; the page opens on Why, which
+// draws no chart (`fold-release-gate.spec.ts` proves that load asks neither
+// the run nor chart-data). Every load here opens Context by its URL.
+const PATH = `/release-gate/${RUN_ID}?tab=context`
 const ready = (p: Page) => p.getByRole('meter', { name: 'Risk Score' })
 
 /** The five releases compared for the run in 2026.09: its own first, then the newest four with runs. */
@@ -59,11 +64,15 @@ const releaseQuery = (ids: readonly string[]) =>
     .map((id) => `release_id=${id}`)
     .join('&')}`
 
-/** The shell and the gate's own reads, plus the run read once and one chart-data; the release list is the cached one. */
+/**
+ * The shell and the gate's own reads, plus the run read once and one
+ * chart-data; the release list is the cached one. No `scoring-model`: the
+ * Risk Dimension Breakdown that reads it is the Why tab's (UX redesign P4), so
+ * a load on Context never asks for it.
+ */
 const inventoryOn = (ids: readonly string[] | null) => [
   ...SHELL_BASE,
   `GET /api/v1/release-readiness/${RUN_ID}`,
-  'GET /api/v1/scoring-model',
   `GET /api/v1/runs?project_id=${P}&page=1&size=1`,
   'GET /api/v1/settings/ai',
   `GET /api/v1/runs/${RUN_ID}`,
@@ -261,18 +270,44 @@ function assertClean(unhandled: string[], errors: string[]) {
   expect(errors, 'uncaught page errors').toEqual([])
 }
 
-// 400 px tall, not SHORT_VIEWPORT's 600: the UX redesign P2 moved the
-// "Release decision flow" timeline from above the comparison to a collapsed
-// section at the bottom, so at 600 px the comparison is already near at load
-// (measured: mounted at 600 and 500; 292 px below the fold at 400). The proof
-// needs it beyond the near margin, which a 400 px screen still gives.
-test.describe('Release gate, a short screen (1280 x 400)', () => {
-  test.use({ viewport: { width: 1280, height: 400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+/**
+ * The stored decision with three blocking issues (the verdict card lists
+ * them), over `releaseGateOn`'s own answer, which is otherwise unchanged.
+ */
+function withBlockers(handlers: ApiHandlers): ApiHandlers {
+  const readiness = /^\/api\/v1\/release-readiness\/[^/]+$/
+  const stored = handlers.find(([matcher]) => matcher instanceof RegExp && matcher.source === readiness.source)
+  if (!stored) throw new Error('releaseGateOn no longer answers release-readiness')
+  return [
+    [
+      readiness,
+      (request) => ({
+        ...(stored[1](request) as object),
+        blocking_issues: ['Checkout down in 3 suites', 'Payment gateway timeout', 'Session cookie not cleared'],
+      }),
+    ],
+    ...handlers,
+  ]
+}
+
+// 300 px tall, and a decision whose verdict card lists three blockers. The
+// history of this height: UX redesign P2 moved the "Release decision flow"
+// timeline to a collapsed section at the bottom (at 600 and 500 px the
+// comparison was near at load; 292 px below the fold at 400). P4 then made the
+// page verdict-first with the comparison in the Context tab, directly under
+// the verdict card and the tab bar, so at 400 px it was near at load again.
+// The proof needs it beyond the near margin (> 250 px below the fold), which
+// this screen gives: measured 318 px (the DISTANCE line).
+test.describe('Release gate, a short screen (1280 x 300)', () => {
+  test.use({ viewport: { width: 1280, height: 300 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: neither the run nor chart-data is asked until the comparison is near, and both before it is visible', async ({
     page,
   }) => {
-    const { api, errors } = await openGate(page, releaseGateOn({ clusters: GATE_CLUSTERS }))
+    const { api, errors } = await openGate(page, withBlockers(releaseGateOn({ clusters: GATE_CLUSTERS })))
+    await networkQuiet(page, api)
+    const placeholder = page.locator('[data-lazy-section="gate-releases"]')
+    if ((await placeholder.count()) === 1) console.log(`DISTANCE gate-releases ${await belowMainFold(page, placeholder)} px below the fold`)
     const asked = () => requestsTo(api, `/api/v1/runs/${RUN_ID}`).length + requestsTo(api, CHART_DATA_PATH).length
     await proveLazyMount(page, api, { label: 'gate-releases', section: 'gate-releases', asked, before: 0 })
     await expect.poll(asked).toBe(2)

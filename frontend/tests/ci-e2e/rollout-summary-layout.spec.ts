@@ -13,10 +13,13 @@
  * were. `SummaryCatalogueShell.test.tsx` holds the markup equal in jsdom; this
  * proves the browser lays it out alike.
  *
- * The viewport is short (600 px) so that the lazy trend under the headline
- * row stays its placeholder through the swap: what moves when the TREND
- * mounts and draws is the trend's own height (its frame grows from the
- * loading state to the drawn one), not the swap's, and is not measured here.
+ * UX redesign P3: the primary content is the results-by-suite frame alone
+ * (`part="suites"`), so the swap is that one frame's. The status donut is
+ * gone (the KPI row has its counts), "Failures by test" was deleted (§5: a
+ * duplicate of the Top failing tests table), and the trend is in a collapsed
+ * "Trend" disclosure: it is not rendered at all through the swap, at any
+ * screen height. (The 480 px viewport was chosen when the trend sat under the
+ * headline row and had to stay its lazy placeholder; it is kept.)
  *
  * And at 375 px both tables scroll sideways inside their card, so each
  * scroller is a named, focusable region (axe `scrollable-region-focusable`).
@@ -32,7 +35,8 @@ const ready = (p: Page) => p.getByText('Total tests', { exact: true })
 /** The section chunk's module (the dev server's `.tsx`, a build's hashed `.js`); NOT `SummaryCatalogueShell`. */
 const SECTION_CHUNK = /\/SummaryCatalogue(\.tsx|-[\w-]+\.js)(\?.*)?$/
 
-const FRAMES = ['Status breakdown', 'Results by suite', 'Failures by test'] as const
+// UX redesign P3: the suite bars alone (no donut; "Failures by test" deleted, §5).
+const FRAMES = ['Results by suite'] as const
 
 interface Box {
   x: number
@@ -89,7 +93,7 @@ async function holdSectionChunk(page: Page) {
   return state
 }
 
-/** The trend below the screen has not asked yet: the shell and the report's own reads. */
+/** The trend (collapsed) has not asked: the shell and the report's own reads. */
 const inventoryHeld = [
   ...SHELL_BASE,
   `GET /api/v1/reports/summary?project_id=${PROJECT_ID}&days=30&mode=latest`,
@@ -101,7 +105,7 @@ const inventoryHeld = [
 
 for (const width of [1024, 1280, 1440, 1920]) {
   test.describe(`Summary, the swap at ${width} px`, () => {
-    test.use({ viewport: { width, height: 600 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+    test.use({ viewport: { width, height: 480 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
     test('the real frames land exactly in the stand-in’s boxes: titles, takeaways and both tables stay put', async ({ page }) => {
       const chunk = await holdSectionChunk(page)
@@ -111,19 +115,19 @@ for (const width of [1024, 1280, 1440, 1920]) {
       })
       // The chunk is asked for (the preload) and held: the page draws its stand-in.
       await expect.poll(() => chunk.asked).toBeGreaterThan(0)
-      await expect(page.locator('[data-summary-catalogue-shell="headline"]')).toBeVisible()
-      await expect(page.locator('[data-summary-catalogue-shell="top-failing"]')).toBeVisible()
+      await expect(page.locator('[data-summary-catalogue-shell="suites"]')).toBeVisible()
+      await expect(page.locator('[data-summary-catalogue-shell]')).toHaveCount(1)
       await expect(page.locator('[data-catalogue-section]')).toHaveCount(0)
       const before = await layout(page, 'shell')
       for (const [name, box] of Object.entries(before)) expect(box, `stand-in: ${name}`).not.toBeNull()
 
       chunk.release()
       await expectDrawn(sectionFrame(page, 'summary-suites', 'Results by suite'), 'suites')
-      await expectDrawn(sectionFrame(page, 'summary-donut', 'Status breakdown'), 'donut')
-      await expectDrawn(sectionFrame(page, 'summary-top-failing', 'Failures by test'), 'failures')
       await expect(page.locator('[data-summary-catalogue-shell]')).toHaveCount(0)
-      // The trend is still its placeholder (it is below this screen), as it was in the stand-in.
-      await expect(page.locator('[data-lazy-section="summary-trend"]')).toHaveCount(1)
+      await expect(page.locator('[data-catalogue-section]')).toHaveCount(1)
+      // The trend is the closed disclosure's: not rendered, not even as its placeholder.
+      await expect(page.getByRole('button', { name: /^Trend/ })).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.locator('[data-lazy-section="summary-trend"]')).toHaveCount(0)
       expect(await layout(page, 'real'), 'the boxes after the swap').toEqual(before)
 
       // The preload asked for nothing the page did not already ask for (the trend has not mounted).

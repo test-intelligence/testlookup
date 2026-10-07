@@ -44,9 +44,6 @@ vi.mock('@/hooks/useMetrics', () => {
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
-vi.mock('@/hooks/useValueMetrics', () => ({
-  useValueMetricsKpi: () => ({ metrics: undefined }),
-}))
 vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useIntegrationsConfig')>()
   return { ...actual, useIntegrationsConfig: () => ({ config: undefined, error: undefined, isLoading: false }) }
@@ -79,6 +76,7 @@ vi.mock('@/hooks/useChartData', () => ({
 
 import { runsService } from '@/services/runsService'
 import { useReleaseStore } from '@/store/releaseStore'
+import { firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 import OverviewPage from './OverviewPage'
 
 const summaryTotal = vi.hoisted(() => ({ value: 0 }))
@@ -172,8 +170,24 @@ describe('Overview /runs requests (M22)', () => {
     renderPage()
     await settle()
 
-    expect(await screen.findByTestId('overview-empty-window')).toHaveTextContent(/No test runs yet/)
+    expect(sizes()).toEqual([100, 1])
+    // UX redesign P3: the guide alone — the page under it (and its "No test
+    // runs yet" notice) shows once the guide is dismissed.
     expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('overview-empty-window')).toBeNull()
+  })
+
+  it('says "No test runs yet" once the guide for a never-run project is dismissed', async () => {
+    summaryTotal.value = 0
+    serve({ windowed: [], lifetime: [] })
+    localStorage.setItem(firstRunDismissKey('proj-1'), '1')
+
+    renderPage()
+    await settle()
+
+    expect(sizes()).toEqual([100, 1])
+    expect(await screen.findByTestId('overview-empty-window')).toHaveTextContent(/No test runs yet/)
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
   })
 })
 
@@ -203,6 +217,9 @@ describe('Overview /runs requests once the catalogue has drawn (VIZ-408)', () =>
   it('reuses the page’s one probe for a project that never ran, and hands the sections "no"', async () => {
     summaryTotal.value = 0
     serve({ windowed: [], lifetime: [] })
+    // The guide dismissed: undismissed, a never-run project shows the guide
+    // alone (P3) and no section is drawn to hand anything to.
+    localStorage.setItem(firstRunDismissKey('proj-1'), '1')
 
     renderPage()
     await screen.findByRole('heading', { name: 'Top failing tests' }, { timeout: 10_000 })

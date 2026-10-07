@@ -1,10 +1,15 @@
 /**
- * The "Recent runs analyzed" table on `/intelligence` must show its values.
+ * The runs table must show its values.
  *
  * Regression for TL-2026-09-18-01-007 / BUG-005 (user-reported 2026-09-18 with
  * a screenshot: the Build column occupies a large empty band while the Pass
  * rate percentage is cut mid-glyph — `0'` and `1(` where `0%` and `100%`
- * belong).
+ * belong). It was the "Recent runs analyzed" table of `/intelligence`; UX
+ * redesign P4 (owner decision D2) retired that list into the Runs table
+ * (`/intelligence` redirects to `/runs`, its AI verdict is a column there), so
+ * the same geometry now holds the table that replaced it, on `/runs`. The
+ * table's fit at 1280 / 1440 is `fold-runs.spec.ts`; these are the two widths
+ * the defect was measured and reported at.
  *
  * `textContent` cannot see this defect: every value is present in the DOM and
  * only its *box* is wrong, so a rendering assertion passes while the user sees
@@ -105,16 +110,19 @@ type Geometry = {
   table: number
   container: number
   columns: number[]
+  /** The Build column's width (the runs table leads with a checkbox column). */
+  build: number
   passRateClient: number
-  passRateScroll: number
+  /** What the cell's content needs: its painted width plus the cell's own padding. */
+  passRateNeeds: number
 }
 
 /** Read the header widths and the pass-rate cell's clipping, from the browser. */
 async function measure(page: Page): Promise<Geometry> {
   return page.evaluate(() => {
-    const headers = [...document.querySelectorAll('th')]
+    const headers = [...document.querySelectorAll('[data-primary] th')]
     const buildTh = headers.find((th) => (th.textContent || '').trim().startsWith('Build'))
-    if (!buildTh) throw new Error('Recent runs analyzed table not found')
+    if (!buildTh) throw new Error('the runs table was not found')
     const row = buildTh.parentElement as HTMLTableRowElement
     const table = buildTh.closest('table') as HTMLTableElement
 
@@ -123,18 +131,25 @@ async function measure(page: Page): Promise<Geometry> {
       (th.textContent || '').toLowerCase().includes('pass rate'))
     const firstBodyRow = table.querySelector('tbody tr') as HTMLTableRowElement
     const passCell = firstBodyRow.children[passIndex] as HTMLTableCellElement
-    const meter = passCell.firstElementChild as HTMLElement
+    // The painted extent of everything in the cell (the hub's meter was a
+    // block whose scrollWidth said this; the runs table's value is an inline
+    // span, whose scrollWidth is 0 — a Range measures both).
+    const range = document.createRange()
+    range.selectNodeContents(passCell)
+    const style = getComputedStyle(passCell)
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
 
     const container = table.parentElement as HTMLElement
     return {
       table: table.getBoundingClientRect().width,
       container: container.getBoundingClientRect().width,
       columns: [...row.children].map((th) => th.getBoundingClientRect().width),
-      // clientWidth is the cell's visible content box; the meter's scrollWidth
-      // is what it actually needs. The cell sets `overflow-hidden`, so an
-      // excess here is a value the user cannot read.
+      build: buildTh.getBoundingClientRect().width,
+      // clientWidth is the cell's box (padding included); the content's
+      // painted width plus that padding is what it actually needs. An excess
+      // is a value cut off or spilling into the next column.
       passRateClient: passCell.clientWidth,
-      passRateScroll: meter ? meter.scrollWidth + 28 : 0, // + px-3.5 both sides
+      passRateNeeds: range.getBoundingClientRect().width + padding,
     }
   })
 }
@@ -144,24 +159,25 @@ const VIEWPORTS = [
   { name: '1920px (the width it was reported broken at)', width: 1920, height: 1080 },
 ]
 
-test.describe('Recent runs analyzed — column geometry', () => {
+test.describe('The runs table (was: Recent runs analyzed) — column geometry', () => {
   for (const vp of VIEWPORTS) {
     test(`shows the pass rate without clipping at ${vp.name}`, async ({ page }) => {
       await installApi(page)
       await seedAuth(page)
       await page.setViewportSize({ width: vp.width, height: vp.height })
-      await page.goto('/intelligence')
-      await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 20_000 })
+      await page.goto('/runs')
+      await expect(page.locator('[data-primary] table tbody tr').first()).toBeVisible({ timeout: 20_000 })
 
       const geo = await measure(page)
       // eslint-disable-next-line no-console
-      console.log(`GEO ${vp.width} table=${Math.round(geo.table)} container=${Math.round(geo.container)} cols=${geo.columns.map(Math.round).join(',')} passClient=${geo.passRateClient} passNeeds=${Math.round(geo.passRateScroll)}`)
+      console.log(`GEO ${vp.width} table=${Math.round(geo.table)} container=${Math.round(geo.container)} cols=${geo.columns.map(Math.round).join(',')} passClient=${geo.passRateClient} passNeeds=${Math.round(geo.passRateNeeds)}`)
 
+      expect(geo.passRateNeeds, 'the pass-rate value was measured, not an empty box').toBeGreaterThan(30)
       expect(
-        geo.passRateScroll,
-        'the pass-rate cell is narrower than the meter plus its percentage, so ' +
-          'the number is cut mid-glyph behind overflow-hidden',
-      ).toBeLessThanOrEqual(geo.passRateClient + 28)
+        geo.passRateNeeds,
+        'the pass-rate cell is narrower than its percentage, so the number is ' +
+          'cut mid-glyph (or spills into the next column)',
+      ).toBeLessThanOrEqual(geo.passRateClient + 1)
     })
   }
 
@@ -181,8 +197,8 @@ test.describe('Recent runs analyzed — column geometry', () => {
       await installApi(page)
       await seedAuth(page)
       await page.setViewportSize({ width: vp.width, height: vp.height })
-      await page.goto('/intelligence')
-      await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 20_000 })
+      await page.goto('/runs')
+      await expect(page.locator('[data-primary] table tbody tr').first()).toBeVisible({ timeout: 20_000 })
 
       const geo = await measure(page)
       const ratio = geo.table / geo.container
@@ -198,11 +214,11 @@ test.describe('Recent runs analyzed — column geometry', () => {
     await installApi(page)
     await seedAuth(page)
     await page.setViewportSize({ width: 1920, height: 1080 })
-    await page.goto('/intelligence')
-    await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 20_000 })
+    await page.goto('/runs')
+    await expect(page.locator('[data-primary] table tbody tr').first()).toBeVisible({ timeout: 20_000 })
 
     const geo = await measure(page)
-    const buildShare = geo.columns[0] / geo.table
+    const buildShare = geo.build / geo.table
     // eslint-disable-next-line no-console
     console.log(`GEO build share at 1920 = ${(buildShare * 100).toFixed(1)}%`)
 

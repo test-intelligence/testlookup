@@ -48,11 +48,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Inbox',
     icon: Inbox,
     to: '/my-failures',
+    // P4: one page, with its own tabs (Assigned to me · Approvals); /reviews redirects to it.
     owns: ['/my-failures', '/reviews'],
-    tabs: [
-      { to: '/my-failures', label: 'Assigned to me' },
-      { to: '/reviews', label: 'Approvals' },
-    ],
   },
   {
     id: 'runs',
@@ -60,12 +57,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: GitBranch,
     to: '/runs',
     section: 'INVESTIGATE',
+    // P4 (D2): the AI verdict is a column of the runs table; /intelligence redirects to /runs.
     owns: ['/runs', '/live', '/intelligence'],
     tabs: [
       { to: '/runs', label: 'History' },
       { to: '/live', label: 'Live' },
       { to: '/runs/compare', label: 'Compare' },
-      { to: '/intelligence', label: 'AI verdicts' },
     ],
   },
   {
@@ -85,13 +82,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
     id: 'flaky',
     label: 'Flaky tests',
     icon: HeartPulse,
-    to: '/flaky-coach',
+    // P4: one page, with its own tabs; /flaky-coach and /quarantine redirect to it.
+    to: '/flaky',
     section: 'INVESTIGATE',
-    owns: ['/flaky-coach', '/quarantine'],
-    tabs: [
-      { to: '/flaky-coach', label: 'Detected' },
-      { to: '/quarantine', label: 'Quarantine' },
-    ],
+    owns: ['/flaky', '/flaky-coach', '/quarantine'],
   },
   {
     id: 'trends',

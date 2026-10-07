@@ -191,10 +191,23 @@ function compareHeadline(report: SummaryReport, mode: 'latest' | 'window' = 'lat
   shell.unmount()
 }
 
-function compareTopFailing(report: SummaryReport, days = 30) {
-  const real = render(<SummaryCatalogue part="top-failing" report={report} days={days} mode="latest" />)
-  const shell = render(<SummaryCatalogueShell part="top-failing" report={report} days={days} mode="latest" />)
-  expectSameBox(realFrame('summary-top-failing'), shellFrame('Failures by test'), 'failures')
+/**
+ * One part alone (UX redesign P3: the page draws `suites` as its primary and
+ * `trend` in a disclosure): the part's own box (its root's classes) and the
+ * frame inside it, the real part beside the shell's.
+ */
+function comparePart(part: 'suites' | 'status', report: SummaryReport, mode: 'latest' | 'window' = 'latest', days = 30) {
+  const real = render(<SummaryCatalogue part={part} report={report} days={days} mode={mode} />)
+  const realRoot = real.container.firstElementChild as HTMLElement
+  const realParts = { ...realFrame(part === 'suites' ? 'summary-suites' : 'summary-donut') }
+  const realRootClass = realRoot.className
+  const realChildClass = (realRoot.firstElementChild as HTMLElement).className
+  const shell = render(<SummaryCatalogueShell part={part} report={report} days={days} mode={mode} />)
+  const shellRoot = shell.container.firstElementChild as HTMLElement
+  expect(shellRoot.className, `${part}: the part's box`).toBe(realRootClass)
+  expect((shellRoot.firstElementChild as HTMLElement).className, `${part}: the section's box`).toBe(realChildClass)
+  expect(shellRoot.children, `${part}: one section`).toHaveLength(1)
+  expectSameBox(realParts, shellFrame(part === 'suites' ? 'Results by suite' : 'Status breakdown'), part)
   real.unmount()
   shell.unmount()
 }
@@ -245,20 +258,46 @@ describe('SummaryCatalogueShell — the same boxes as the real frames', () => {
     act(() => usePresentationStore.getState().setEnabled(true))
     compareHeadline(makeReport())
     compareHeadline(makeReport({ suites: suites(30) }))
-    compareTopFailing(makeReport())
+    comparePart('suites', makeReport({ suites: suites(30) }))
+    comparePart('status', makeReport())
   })
 
-  it('top failing, under ten tests: the requested height', () => {
-    compareTopFailing(makeReport())
+  it('the suites part alone: its box and frame, for few, many and paged suites, in both modes', () => {
+    comparePart('suites', makeReport())
+    comparePart('suites', makeReport({ mode: 'window' }), 'window', 1)
+    comparePart('suites', makeReport({ suites: suites(50) }))
+    comparePart('suites', makeReport({ suites: suites(120) }))
+    comparePart('suites', makeReport({ suites: [] }))
   })
 
-  it('top failing, a tie at the 10th: the tied bars are kept and the footer says so', () => {
-    // 12 tests, the 10th and 11th tied (the visual fixture's shape).
-    compareTopFailing(makeReport({ top_failing_tests: failing([14, 11, 9, 8, 7, 6, 5, 4, 4, 3, 3, 1]) }))
+  it('the status part alone: its box and frame, drawn and empty', () => {
+    comparePart('status', makeReport())
+    comparePart('status', makeReport({ totals: { ...makeReport().totals, passed: 0, failed: 0, skipped: 0, broken: 0 } }))
   })
 
-  it('top failing, a tie past the cap', () => {
-    compareTopFailing(makeReport({ top_failing_tests: failing([9, 8, 7, 6, 5, 4, 3, 2, 1, ...Array(20).fill(1)]) }))
+  it('the trend part alone: the box the real part holds before its section is near', () => {
+    // Far from the reader the real trend is its LazySection placeholder: the shell must hold that same box.
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    try {
+      const real = render(<SummaryCatalogue part="trend" report={makeReport()} days={30} mode="latest" />)
+      const realRoot = real.container.firstElementChild as HTMLElement
+      const realBox = { root: realRoot.className, min: (realRoot.firstElementChild as HTMLElement).style.minHeight }
+      real.unmount()
+      render(<SummaryCatalogueShell part="trend" report={makeReport()} days={30} mode="latest" />)
+      const root = document.querySelector('[data-summary-catalogue-shell="trend"]') as HTMLElement
+      expect(root.getAttribute('aria-busy')).toBe('true')
+      expect(root.className).toBe(realBox.root)
+      expect(root.children).toHaveLength(1)
+      expect((root.firstElementChild as HTMLElement).style.minHeight).toBe(realBox.min)
+      expect(realBox.min).toBe(`${SUMMARY_TREND_HEIGHT + SUMMARY_TREND_CHROME_PX}px`)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

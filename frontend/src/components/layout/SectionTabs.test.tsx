@@ -24,21 +24,19 @@ function tabsAt(path: string): { labels: string[]; active: string | null } {
 
 describe('SectionTabs (UX redesign P1)', () => {
   it.each([
-    ['/runs', ['History', 'Live', 'Compare', 'AI verdicts'], 'History'],
-    ['/runs/r1', ['History', 'Live', 'Compare', 'AI verdicts'], 'History'],
-    ['/runs/compare', ['History', 'Live', 'Compare', 'AI verdicts'], 'Compare'],
-    ['/live', ['History', 'Live', 'Compare', 'AI verdicts'], 'Live'],
+    ['/runs', ['History', 'Live', 'Compare'], 'History'],
+    ['/runs/r1', ['History', 'Live', 'Compare'], 'History'],
+    ['/runs/compare', ['History', 'Live', 'Compare'], 'Compare'],
+    ['/live', ['History', 'Live', 'Compare'], 'Live'],
     ['/coverage', ['Trends', 'Coverage', 'Explorer'], 'Coverage'],
     ['/deep-investigate/r1', ['Failures', 'Defects', 'Root cause (AI)'], 'Root cause (AI)'],
-    ['/quarantine', ['Detected', 'Quarantine'], 'Quarantine'],
     ['/value-metrics', ['Summary', 'Value'], 'Value'],
-    ['/reviews', ['Assigned to me', 'Approvals'], 'Approvals'],
     ['/policies', ['Releases', 'Gate policies'], 'Gate policies'],
   ])('%s: the section tabs, with the page active', (path, labels, active) => {
     expect(tabsAt(path)).toEqual({ labels, active })
   })
 
-  it.each(['/overview', '/suites', '/coverage/suite', '/release-gate', '/search', '/settings/ai', '/docs'])(
+  it.each(['/overview', '/suites', '/coverage/suite', '/release-gate', '/search', '/settings/ai', '/docs', '/flaky', '/my-failures', '/reviews'])(
     '%s: a single-page place, or no place: no tabs',
     (path) => {
       render(

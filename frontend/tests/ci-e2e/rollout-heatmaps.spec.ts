@@ -17,6 +17,10 @@
  * harness cannot reach it on Coverage: a seeded `activeProjectId: 'all'` is
  * replaced by the project on load, even with two projects listed (B0.md);
  * the rule is unit-tested in `HeatmapSection.test.tsx` (mutation M10).
+ *
+ * UX redesign P3: each host's heatmap is in its own page tab (`?tab=heatmap`
+ * on both), so every test opens the page on that tab; the lazy proof holds
+ * inside it.
  */
 import { expect, test, type Page } from '@playwright/test'
 import { landmark, respond, TALL_VIEWPORT, type ApiHandlers, type ApiRequest } from '../lib/production-pages'
@@ -55,9 +59,12 @@ const RELEASE_TITLE = 'Suite pass rate by release'
 
 
 const openTrends = (page: Page, handlers = TRENDS_ON) =>
-  openRollout(page, '/trends', { handlers, ready: (p) => landmark(p, 'Trend metrics') })
+  openRollout(page, '/trends?tab=heatmap', { handlers, ready: (p) => landmark(p, 'Trend metrics') })
 const openCoverage = (page: Page, handlers = COVERAGE_ON, days?: number) =>
-  openRollout(page, '/coverage', { handlers, ready: (p) => landmark(p, 'Run cadence'), days })
+  openRollout(page, '/coverage?tab=heatmap', { handlers, ready: (p) => landmark(p, 'Run cadence'), days })
+/** A page tab (UX redesign P3). */
+const coverageTab = (page: Page, name: string) =>
+  page.getByRole('tablist', { name: 'Coverage views' }).getByRole('tab', { name, exact: true })
 
 /** The heatmap's keyboard surface in a section. */
 const keyboard = (page: Page, id: string) => section(page, id).locator('[data-chart-keyboard="heatmap"]')
@@ -182,8 +189,13 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
     const frame = sectionFrame(page, ENV.id, ENV.title)
     await section(page, ENV.id).scrollIntoViewIfNeeded()
     await expect(frame).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
-    await expectDrawn(sectionFrame(page, 'coverage-map', 'Test coverage map'), 'coverage map')
     await expect(page.getByText('planted heatmap failure')).toHaveCount(0)
+    // The map (its own tab since P3) still draws: the heatmap's error is the heatmap's alone.
+    await coverageTab(page, 'Coverage map').click()
+    await expectDrawn(sectionFrame(page, 'coverage-map', 'Test coverage map'), 'coverage map')
+    await coverageTab(page, 'Env × release heatmap').click()
+    await section(page, ENV.id).scrollIntoViewIfNeeded()
+    await expect(frame).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
     fail = false
     await frame.getByRole('button', { name: /retry/i }).click()
     await expectDrawn(frame, 'after Retry')
@@ -225,7 +237,7 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the heatmap sections, every impact (${theme}): idle, a cell focused, the rows panel open`, async ({ page }) => {
-      await openRollout(page, '/trends', { handlers: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics'), theme })
+      await openRollout(page, '/trends?tab=heatmap', { handlers: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics'), theme })
       await expectDrawn(sectionFrame(page, TRENDS.id, TRENDS.title), TRENDS.id)
       await expectNoBlockingViolations(page, theme, [], [`[data-catalogue-section="${TRENDS.id}"]`])
       await keyboard(page, TRENDS.id).focus()
@@ -242,7 +254,7 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
 test.describe('heatmaps, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  test('Trends: the heatmap read waits until the section is near, and goes out before it is visible', async ({ page }) => {
+  test('Trends: in its tab, the heatmap read waits until the section is near, and goes out before it is visible', async ({ page }) => {
     const { api, errors } = await openTrends(page)
     await proveLazyMount(page, api, {
       label: TRENDS.id,

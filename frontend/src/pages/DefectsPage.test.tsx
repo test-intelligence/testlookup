@@ -1,5 +1,5 @@
-import { render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DefectsPage from './DefectsPage'
@@ -69,6 +69,29 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
 
+/** The router's current query string, for the tab-URL tests. */
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.search}</output>
+}
+
+/** Render the page at `/defects<search>`, with the location probe beside it. */
+function renderDefects(search = '') {
+  return render(
+    <MemoryRouter initialEntries={[`/defects${search}`]}>
+      <Routes>
+        <Route path="/defects" element={<><DefectsPage /><LocationProbe /></>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+/** Open the "How queue health is computed" Disclosure (it renders nothing while closed). */
+function openHealthDetails() {
+  fireEvent.click(screen.getByRole('button', { name: /How queue health is computed/ }))
+  return screen.getByRole('meter', { name: 'Queue health' }).closest('[data-disclosure]') as HTMLElement
+}
+
 describe('DefectsPage', () => {
   beforeEach(() => {
     analyticsControls.widgetIds = []
@@ -137,7 +160,8 @@ describe('DefectsPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Defects' })).toBeInTheDocument()
-    expect(screen.getByText('Where defects live')).toBeInTheDocument()
+    // P3: the component breakdown is the default tab under the table (its card heading; the tab has the same words).
+    expect(screen.getByRole('heading', { name: 'Where defects live' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Defect KPIs' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
   })
@@ -147,13 +171,8 @@ describe('DefectsPage', () => {
   // "Webhook v2 · auto-link enabled" without ever reading integration state.
   // On a workspace with jira_enabled=false and no credential, the page told
   // the user their defects were syncing to a Jira that did not exist.
-  const renderWithDefects = () => render(
-    <MemoryRouter initialEntries={['/defects']}>
-      <Routes>
-        <Route path="/defects" element={<DefectsPage />} />
-      </Routes>
-    </MemoryRouter>,
-  )
+  // UX redesign P3: the Jira bridge card is the "Jira bridge" tab under the table.
+  const renderWithDefects = () => renderDefects('?tab=jira')
 
   it('does not claim a Jira connection when none is configured', async () => {
     const { useDefects } = await import('@/hooks/useMetrics')
@@ -303,9 +322,9 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
     return screen.findByRole('region', { name: 'Defect KPIs' })
   }
 
-  /** A KPI cell by its label: the label sits in the cell's first row. */
+  /** A KPI tile by its label (P3: a compact `MetricCard` of the `KpiStrip`). */
   function kpiCell(kpis: HTMLElement, label: string): HTMLElement {
-    const cell = within(kpis).getByText(label).closest('div')?.parentElement
+    const cell = within(kpis).getByText(label).closest('[data-metric-card]') as HTMLElement | null
     if (!cell) throw new Error(`no KPI cell labelled ${label}`)
     return cell
   }
@@ -322,7 +341,7 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
 
   it('deletes the four hard-coded glyphs', async () => {
     const kpis = await renderWith([p0('d1', 4)])
-    for (const label of ['Open defects', 'P0 / P1 open', 'Mean time to resolve', 'Escape rate']) {
+    for (const label of ['Open defects', 'P0 / P1 open', 'Time to resolve', 'Escape rate']) {
       const cell = kpiCell(kpis, label)
       expect(cell.querySelector('svg:not(.lucide)'), label).toBeNull()
       expect(cell.querySelector('polyline'), label).toBeNull()
@@ -353,11 +372,13 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
     const cell = kpiCell(kpis, 'Oldest open P0')
     expect(within(cell).queryByRole('meter')).toBeNull()
     expect(within(cell).queryByRole('img')).toBeNull()
-    expect(cell).toHaveTextContent('no open P0 in window')
+    expect(cell).toHaveTextContent('Oldest open P0—')
   })
 
-  it('draws the queue health as a named meter', async () => {
+  it('draws the queue health as a named meter (P3: in its Disclosure below the table, closed at load)', async () => {
     await renderWith([p0('d1', 4)])
+    expect(screen.queryByRole('meter', { name: 'Queue health' })).toBeNull()
+    openHealthDetails()
     const meter = screen.getByRole('meter', { name: 'Queue health' })
     expect(meter.getAttribute('aria-valuetext')).toMatch(/^\d+ of 100, (Healthy|At risk|Blocked)$/)
   })
@@ -431,10 +452,15 @@ describe('DefectsPage — renders only what it really does (P2)', () => {
     expect(within(verdict).queryAllByRole('button')).toHaveLength(0)
   })
 
-  it('keeps the verdict\'s real action — New defect — when no P0 is open', async () => {
+  // P3: "New defect" is the header's one primary action, whatever the queue holds; the banner does not
+  // repeat it (it was the verdict card's CTA when no P0 was open).
+  it('keeps the real action — New defect — as the header\'s one primary, not repeated in the verdict', async () => {
     await renderWith([p0('d1', { failure_category: 'FLAKY' })])
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    expect(within(header).getByRole('button', { name: 'New defect' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'New defect' })).toHaveLength(1)
     const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
-    expect(within(verdict).getByRole('button', { name: 'New defect' })).toBeInTheDocument()
+    expect(within(verdict).queryAllByRole('button')).toHaveLength(0)
   })
 
   it('offers "Open in Jira" only for a row with a safe ticket URL — no stub for the rest', async () => {
@@ -492,14 +518,19 @@ describe('DefectsPage — renders only what it really does (P2)', () => {
       (p0Throughput * 0.35 + jiraCoverage * 0.25 + fixVelocity * 0.20) / (0.35 + 0.25 + 0.20),
     )
     expect(expected).toBe(55)
+    // The banner states the composite; the meter and its tiles are in the Disclosure (P3).
+    expect(screen.getByRole('region', { name: 'Defect queue verdict' })).toHaveTextContent(`Queue health ${expected}/100`)
+    const details = openHealthDetails()
     const meter = screen.getByRole('meter', { name: 'Queue health' })
     expect(meter).toHaveAttribute('aria-valuenow', String(expected))
     // The tiles show the re-normalised weights, which sum to 100 %.
-    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
     for (const [label, pct] of [['P0 throughput', '44%'], ['Jira coverage', '31%'], ['Fix velocity', '25%']]) {
-      const tile = within(verdict).getByText(label).parentElement
+      const tile = within(details).getByText(label).parentElement
       expect(tile, label).toHaveTextContent(`${label}${pct}`)
     }
+    // Three dimensions, three columns: no empty fourth cell (the old 2 x 2 grid).
+    const grid = within(details).getByText('P0 throughput').closest('.grid') as HTMLElement
+    expect(grid.style.gridTemplateColumns).toBe('repeat(3, minmax(0, 1fr))')
   })
 
   // `EVG-####` was a hash of the row id dressed as a ticket number.
@@ -517,13 +548,135 @@ describe('DefectsPage — renders only what it really does (P2)', () => {
   it('states the unlinked count and the P0 state without claims it cannot back', async () => {
     // Two unlinked defects, one created 20 days ago: "from this week" was false,
     // and nothing on the page knows an auto-link rule or what closed today.
+    // P3: the verdict card's issue rows and lede are the one-line banner's facts.
     await renderWith([p0('a1'), p0('a2', { created_at: ago(20) })])
     const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
-    expect(verdict).toHaveTextContent('2 defects have no Jira ticket — they exist only in TestLookup.')
-    expect(verdict).toHaveTextContent('All open or in progress.')
-    expect(verdict.textContent).not.toMatch(/this week|auto-link|closed today/)
-    // The lede: the unlinked P0 count with the right verb, and no reason for it.
-    expect(verdict).toHaveTextContent('2 have no Jira ticket.')
+    expect(verdict.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'no_go')
+    expect(verdict).toHaveTextContent('Release blocked · 2 P0 blocking release')
+    // The unlinked count, and how many of them are P0s — and no reason for it.
+    const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+    expect(facts).toContain('No Jira ticket 2 (2 P0)')
+    // A P0 is open, so its age is the fact, not this week's movement.
+    expect(facts.some((f) => /^Oldest open P0 a2 · 20d$/.test(f ?? ''))).toBe(true)
+    expect(verdict.textContent).not.toMatch(/this week|auto-link|closed today/i)
     expect(verdict.textContent).not.toMatch(/bridge missed/)
+  })
+
+  it('with no P0 open, the banner states this week\'s net change instead of an oldest P0', async () => {
+    await renderWith([p0('f1', { failure_category: 'FLAKY' }), p0('f2', { failure_category: 'FLAKY', created_at: ago(20) })])
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+    // One created this week (2 days ago), none resolved this week: +1.
+    expect(facts).toContain('Net this week +1')
+    expect(facts.some((f) => /Oldest open P0/.test(f ?? ''))).toBe(false)
+  })
+})
+
+// ── UX redesign P3: the page template (02-design-spec.md §2) ─────────────
+describe('DefectsPage — the page template (P3)', () => {
+  const DAY = 86_400_000
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString()
+  const defect = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    test_name: `checkout ${id}`,
+    suite_name: 'Payments',
+    failure_category: 'PRODUCT_BUG',
+    ai_confidence_score: 92,
+    resolution_status: 'OPEN',
+    created_at: ago(2),
+    ...extra,
+  })
+
+  async function renderWith(items: Record<string, unknown>[], search = '') {
+    const { useDefects } = await import('@/hooks/useMetrics')
+    ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items, total: items.length, pages: 1 },
+      isLoading: false,
+    })
+    mockIntegrationsConfig.mockReturnValue({ config: undefined, error: new Error('403'), isLoading: false })
+    const view = renderDefects(search)
+    await screen.findByRole('region', { name: 'Defect queue verdict' })
+    return view
+  }
+
+  const location = () => screen.getByTestId('location').textContent
+
+  it('puts the defects table first: after one banner and one KPI strip, before the section tabs and the Disclosure', async () => {
+    const { container } = await renderWith([defect('a'), defect('b', { failure_category: 'FLAKY' })])
+    const primaries = container.querySelectorAll('[data-primary]')
+    expect(primaries).toHaveLength(1)
+    const primary = primaries[0] as HTMLElement
+    expect(within(primary).getByRole('table', { name: 'Defects' })).toBeInTheDocument()
+    // The status filter is the table's: inside the primary content, beside the search.
+    const statusFilter = screen.getByRole('tablist', { name: 'Status filter' })
+    expect(primary).toContainElement(statusFilter)
+    expect(primary).toContainElement(screen.getByRole('searchbox', { name: 'Search defects' }))
+    // Every other tab bar and every Disclosure follows the table.
+    const after = [
+      ...Array.from(container.querySelectorAll('[role="tablist"]')).filter((el) => !primary.contains(el)),
+      ...Array.from(container.querySelectorAll('[data-disclosure]')),
+    ]
+    expect(after).toHaveLength(2)
+    for (const el of after) {
+      expect(primary.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING, el.outerHTML.slice(0, 80)).toBeTruthy()
+    }
+    // Above it: ONE banner, then ONE strip of five KPI tiles; no verdict card and no meter above the fold.
+    const banner = screen.getByRole('region', { name: 'Defect queue verdict' })
+    const kpis = screen.getByRole('region', { name: 'Defect KPIs' })
+    expect(container.querySelectorAll('[data-status-banner]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-kpi-strip]')).toHaveLength(1)
+    expect(kpis.querySelectorAll('[data-metric-card]')).toHaveLength(5)
+    expect(banner.compareDocumentPosition(kpis) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(kpis.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByRole('meter', { name: 'Queue health' })).toBeNull()
+    // The shared compact header with the help **?** (the defects anchor's topic).
+    const header = container.querySelector('[data-page-header]') as HTMLElement
+    expect(header).toHaveAttribute('data-compact', 'true')
+    expect(within(header).getByRole('button', { name: 'Help: Defects' })).toHaveAttribute('data-help-topic', 'failure-analysis')
+  })
+
+  it('"Where defects live" is the default tab; ?tab=jira selects the Jira bridge', async () => {
+    await renderWith([defect('a')])
+    expect(screen.getByRole('tab', { name: 'Where defects live', selected: true })).toBeInTheDocument()
+    expect(screen.getByRole('tabpanel', { name: 'Where defects live' })).toHaveTextContent('open by component')
+    expect(screen.queryByText(/Jira bridge ·/)).toBeNull()
+  })
+
+  it('?tab=jira renders the Jira bridge card in its tab', async () => {
+    await renderWith([defect('a')], '?tab=jira')
+    expect(screen.getByRole('tab', { name: 'Jira bridge', selected: true })).toBeInTheDocument()
+    const panel = screen.getByRole('tabpanel', { name: 'Jira bridge' })
+    expect(within(panel).getByText('Unknown')).toBeInTheDocument()
+    expect(within(panel).getByText('Linked defects')).toBeInTheDocument()
+    expect(screen.queryByText('Where defects live', { selector: 'h3' })).toBeNull()
+  })
+
+  it('picking a tab writes ?tab= (the default has the clean URL) and swaps the card', async () => {
+    await renderWith([defect('a')])
+    fireEvent.click(screen.getByRole('tab', { name: 'Jira bridge' }))
+    expect(location()).toBe('?tab=jira')
+    expect(screen.getByRole('tabpanel', { name: 'Jira bridge' })).toHaveTextContent('Linked defects')
+    fireEvent.click(screen.getByRole('tab', { name: 'Where defects live' }))
+    expect(location()).toBe('')
+  })
+
+  it('the status filter still filters the table from the table header', async () => {
+    await renderWith([defect('open1'), defect('done1', { resolution_status: 'RESOLVED', resolved_at: ago(1) })])
+    const table = screen.getByRole('table', { name: 'Defects' })
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+    fireEvent.click(screen.getByRole('tab', { name: /Resolved/ }))
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(table).toHaveTextContent('checkout done1')
+  })
+
+  it('an empty queue says how to fill it in the table (the old verdict lede\'s links), and the banner is PENDING', async () => {
+    await renderWith([])
+    const verdict = screen.getByRole('region', { name: 'Defect queue verdict' })
+    expect(verdict.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'pending')
+    expect(verdict).toHaveTextContent('Queue health —')
+    const table = screen.getByRole('table', { name: 'Defects' })
+    expect(table).toHaveTextContent('No defects in this project yet')
+    expect(within(table).getByRole('link', { name: 'review your assigned failures' })).toHaveAttribute('href', '/my-failures')
+    expect(within(table).getByRole('link', { name: 'run an AI investigation' })).toHaveAttribute('href', '/deep-investigate')
   })
 })

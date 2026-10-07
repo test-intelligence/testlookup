@@ -19,7 +19,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import SuiteDetailPage, { SUITE_CHART_HEIGHT } from './SuiteDetailPage'
+import SuiteDetailPage, { SUITE_CHART_HEIGHT, SuiteChartsPanel } from './SuiteDetailPage'
+import { useSuiteDetail } from '@/hooks/useMetrics'
 
 const mockGetSuiteTrend = vi.fn()
 
@@ -316,5 +317,80 @@ describe('SuiteDetailPage — Wave 3 advanced sections', () => {
     expect(advanced).toHaveAttribute('data-suite', 'Auth')
     const table = screen.getByRole('heading', { level: 3, name: /^Test Cases/ })
     expect(advanced.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+// ── UX redesign P4: the body, extracted ─────────────────────────────────────
+//
+// `/coverage/suite` redirects to the suite page's Charts tab, which renders
+// `SuiteChartsPanel`: the charts and the Wave 3 sections of this body, and
+// none of what the suite page shows elsewhere (its KPI strip, its Tests tab's
+// per-test rows, its Runs tab's recent runs).
+
+describe('SuiteChartsPanel — the suite page Charts tab', () => {
+  beforeEach(() => {
+    mockGetSuiteTrend.mockReset()
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
+  })
+
+  function renderPanel(days = 30) {
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter>
+          <SuiteChartsPanel suiteName="Auth" days={days} />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  it('the run history (the primary content), the per-day pass rate and the Wave 3 sections, for its suite and window', async () => {
+    renderPanel(14)
+    const history = frameOf(await screen.findByRole('heading', { level: 3, name: 'Run history — last 14 days' }))
+    expect(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 14 days' })).toBeInTheDocument()
+    const primaries = document.querySelectorAll('[data-primary]')
+    expect(primaries).toHaveLength(1)
+    expect(primaries[0]).toContainElement(history)
+    const advanced = screen.getByTestId('suite-advanced')
+    expect(advanced).toHaveAttribute('data-days', '14')
+    expect(advanced).toHaveAttribute('data-suite', 'Auth')
+    expect(mockGetSuiteTrend).toHaveBeenCalledWith('Auth', expect.anything(), 14)
+  })
+
+  it('none of the body the suite page shows in its other places: no KPI cards, per-test table or recent runs', async () => {
+    renderPanel()
+    await screen.findByRole('heading', { level: 3, name: /^Run history/ })
+    expect(screen.queryByText('Unique Tests')).toBeNull()
+    expect(screen.queryByRole('heading', { name: /^Test Cases/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: /^Recent Runs/ })).toBeNull()
+    // No page chrome: the suite page has the one header.
+    expect(document.querySelector('[data-page-header]')).toBeNull()
+    expect(screen.queryByRole('button', { name: '7d' })).toBeNull()
+  })
+
+  it('a window with nothing in it: the empty state, no chart', async () => {
+    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: [] })
+    const original = vi.mocked(useSuiteDetail).getMockImplementation()
+    vi.mocked(useSuiteDetail).mockReturnValue({
+      data: { summary: { unique_tests: 0, total_executions: 0, passed: 0, failed: 0, pass_rate: 0, avg_duration_ms: null }, test_cases: [], recent_runs: [] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useSuiteDetail>)
+    try {
+      renderPanel()
+      expect(await screen.findByText('No data for this suite')).toBeInTheDocument()
+      expect(screen.queryByTestId('suite-advanced')).toBeNull()
+      expect(document.querySelector('[data-primary]')).toBeNull()
+    } finally {
+      if (original) vi.mocked(useSuiteDetail).mockImplementation(original)
+    }
+  })
+
+  it('the full page still renders the whole body (KPI cards, per-test table, recent runs)', async () => {
+    renderPage()
+    await screen.findByRole('heading', { level: 3, name: /^Run history/ })
+    expect(screen.getByText('Unique Tests')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^Test Cases/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Recent Runs (2)' })).toBeInTheDocument()
+    expect(document.querySelector('[data-primary]')).toBeNull()
   })
 })

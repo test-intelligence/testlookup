@@ -77,6 +77,16 @@ async function installApi(page: Page) {
         ai_disclaimer_version: '2026-09-12.v1',
       }])
     }
+    // UX redesign P4 (D4): /reviews redirects to Inbox › Approvals, which also
+    // reads the assigned failures (the other tab's count), the quarantine
+    // proposals and the test-case review queue. Empty, in their real shapes.
+    if (path === '/api/v1/me/assigned-failures') {
+      return json(route, { items: [], total: 0, page: 1, size: 25, pages: 0, unresolved_total: 0 })
+    }
+    if (path === '/api/v1/quarantine') return json(route, [])
+    if (path === '/api/v1/test-management/cases') {
+      return json(route, { items: [], total: 0, page: 1, size: 50, pages: 0 })
+    }
     return json(route, {})
   })
 }
@@ -131,6 +141,9 @@ test.describe('hermetic keyboard and landmark journeys', () => {
     test(`${path} has no serious or critical automated accessibility violations`, async ({ page }) => {
       await page.goto(path)
       await expect(page.getByRole('main')).toBeVisible()
+      // P4 (D4): /reviews is Inbox › Approvals now. Wait for its queues, so the
+      // scan sees the tabs, the source filter and the drawn tables, not a spinner.
+      if (path === '/reviews') await expect(page.getByTestId('review-row')).toBeVisible()
 
       const result = await new AxeBuilder({ page }).analyze()
       const blocking = result.violations.filter(

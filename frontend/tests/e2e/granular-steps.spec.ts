@@ -173,12 +173,12 @@ test.describe.skip('Granular steps — Allure failing-step snapshot', () => {
   });
 
   test('opening a failed test shows the Steps panel with the failing step + assertion', async ({ page }) => {
-    // Open the test-case detail page directly.
-    await page.goto(`/runs/${RUN_ID}/tests/${FAIL_ID}`);
+    // Open the test-case detail page directly, on its Steps tab (UX redesign P4).
+    await page.goto(`/runs/${RUN_ID}/tests/${FAIL_ID}?tab=steps`);
 
-    // Page title + the "Steps" section heading render.
+    // Page title + the selected "Steps" tab render.
     await expect(page.getByRole('heading', { name: 'test_checkout' })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole('heading', { name: 'Steps', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /^Steps/ })).toHaveAttribute('aria-selected', 'true');
 
     // Step tree: the passing parent and the nested failing child are both shown.
     await expect(page.getByText('open cart')).toBeVisible();
@@ -206,7 +206,7 @@ test.describe.skip('Granular steps — Allure failing-step snapshot', () => {
       });
     });
 
-    await page.goto(`/runs/${RUN_ID}/tests/${FAIL_ID}`);
+    await page.goto(`/runs/${RUN_ID}/tests/${FAIL_ID}?tab=steps`);
     await expect(page.getByRole('heading', { name: 'test_checkout' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('No granular steps captured for this test.')).toBeVisible();
   });

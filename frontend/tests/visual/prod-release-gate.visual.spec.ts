@@ -16,6 +16,12 @@
  * `prod-release-gate-on`'s). The cluster card now sits below the group, past
  * 2400 px, so its load uses `TALL_VIEWPORT` (the shell scrolls inside
  * `#main-content`, so the height changes no pixel of a region).
+ *
+ * UX redesign P4 item 6 (verdict first): `gate-risk-gauge` is the verdict
+ * card, which now also lists the top blockers and carries the policy line and
+ * Override; the page opens on the Why tab, which draws no chart, so that load
+ * waits for nothing else. The Context group and the cluster card are the
+ * Context tab's body: the cluster card's load opens `?tab=context`.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -56,7 +62,9 @@ for (const theme of THEMES) {
     await expect(card).toContainText('Recommendation')
     // The kit ring draws its number as HTML; the meter carries the reading.
     await expect(card.getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuenow', '60')
-    await contextDrawn(page, false)
+    // P4: Why is the default tab; nothing is drawn below the card at load.
+    await expect(page.getByRole('tab', { name: 'Why' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('[data-catalogue-section]')).toHaveCount(0)
 
     await visualRegion(page, 'gate-risk-gauge', theme, card)
     assertHermetic(api, errors)
@@ -69,7 +77,7 @@ test.describe('the cluster card, below the Context group', () => {
 
   for (const theme of THEMES) {
     test(`release gate cluster card — ${theme}`, async ({ page }) => {
-      const { api, errors } = await openProductionPage(page, `/release-gate/${RUN_ID}`, {
+      const { api, errors } = await openProductionPage(page, `/release-gate/${RUN_ID}?tab=context`, {
         theme,
         now: NOW,
         me: USER,

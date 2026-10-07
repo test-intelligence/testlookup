@@ -62,9 +62,9 @@ test('a viewer: 10 places, no Releases, no Admin', async ({ page }) => {
 
 test('? > Help for this page opens the Failures topic beside the page, and Open in full docs goes to it', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/failures', { handlers: FAILURES_ON, ready })
-  await page.getByRole('button', { name: 'Help' }).click()
+  await page.getByRole('button', { name: 'Help', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Help for this page' }).click()
-  const help = page.locator('[data-help-topic="failure-analysis"]')
+  const help = page.locator('div[data-help-topic="failure-analysis"]')
   await expect(help).toBeVisible()
   await expect(help.getByRole('heading', { name: 'The path a failure takes' })).toBeVisible()
   // Beside the page, not over it: the page is still Failures, still on screen.

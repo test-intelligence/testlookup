@@ -1,5 +1,210 @@
 # Changelog
 
+## Unreleased - UX redesign P4: one page per job
+
+Phase P4 of the UI/UX redesign. Pages that split one job across several
+routes are merged. Every old URL still works: it redirects to the tab that
+now holds its content, and keeps its query string.
+
+| Old URL | Now |
+|---|---|
+| `/runs/:id/intelligence`, `/deep-investigate/:id` | `/runs/:id?tab=analysis` |
+| `/agents/run/:id` | `/runs/:id?tab=evidence` |
+| `/intelligence` | `/runs` (owner decision D2) |
+| `/flaky-coach` | `/flaky` |
+| `/quarantine` | `/flaky?tab=quarantined` |
+| `/reviews` | `/my-failures?tab=approvals` (owner decision D4) |
+| `/coverage/suite?name=X` | `/suites/:id?tab=charts` (the suite found by name) |
+
+- **Run page** (`/runs/:id`): tabs **Tests** · **Analysis** · **Changes** ·
+  **Evidence**.
+  - Tests is the default: the run's counts as filter chips, then the
+    tests, failed and broken first. The table used to re-sort each page by
+    name, which buried the failures.
+  - A test opens in a side panel beside the list, with "Open full page" and
+    Previous / Next failure. Ctrl/⌘-click opens the full page.
+  - Analysis holds the run's AI verdict and Deep Investigation's clusters;
+    Evidence holds the verified decision report and the AI report.
+  - Each tab has its own error boundary, so one broken section fails alone.
+  - The test table starts 233 px down (no primary content before); the
+    page is 1,977 → 1,892 px tall.
+- **Runs list:** an **AI verdict** column replaces the Intelligence list and
+  the separate "Intel" link.
+  - It shows each run's intelligence verdict, at most three requests at a
+    time, "—" with the reason when a run has none.
+  - It links to the run's Analysis tab.
+  - The table now fits its card at 1280 px (it overflowed by 6 px).
+- **Test case page:** the error, stack trace and AI root cause now come
+  first, starting at 217 px; the stack trace used to start at 822 px. Then
+  tabs History · Steps · Details. The page is 2,356 → 1,877 px tall.
+- **Suite page** (`/suites/:id`): tabs **Tests** · **Runs** · **Charts**.
+  - Each test in the catalog gains its pass rate, executions, last result,
+    a Flaky pill and its last error. Move and bulk Move stay.
+  - `/suites` gains pass rate, last run, executions, failing and owner
+    columns (one project selected).
+  - Suite names on Coverage and Trends now open the suite's page.
+- **Flaky tests** (`/flaky`): tabs **Detected** · **Proposed** ·
+  **Quarantined** · **History**, with counts.
+  - Detected is one table: its tiles became filter chips, and each row can
+    "Propose quarantine".
+  - The page is 1,182 → 852 px tall.
+- **Inbox** (`/my-failures`): tabs **Assigned to me** · **Approvals**.
+  - Approvals gathers AI reports, quarantine proposals and test-case
+    approvals, filtered by source. In All Projects it asks for a project.
+  - Rows are two lines (74 → 52 px).
+- **Release gate:** verdict first.
+  - The card (verdict, pass rate, top three blockers, Override) sits at
+    85 px.
+  - Then tabs Why · Context · History. The pipeline is in a collapsed
+    section.
+  - The page is 2,177 → 961 px tall, and the charts load only when Context
+    is opened.
+- **Test Cases:** 8 tabs → **Cases** · **Suites** · **Plans** ·
+  **Approvals** · **More ▾**.
+  - The right rail is an Insights drawer, and the two generators are
+    options in AI Generate.
+  - The library health is a one-line banner whose pill says HEALTHY,
+    NEEDS ATTENTION or AT RISK. `StatusBanner` gained `pillLabel`; "At
+    risk" used to show as FAILING.
+- **Copy:** the quarantine dialog and its toast send people to Flaky tests ›
+  Proposed, not `/quarantine`.
+- **Tables that ran past their cards (found reading P4's baselines):** three
+  tables fitted on Windows but were 50-250 px too wide on CI's font. Each
+  hid its row actions off the right edge.
+  - **Runs** (1,040 px in a 974 px card at 1280 px): the suite now sits
+    under its run number in the Build column, since "Run #N" counts per
+    suite. The Tests counts wrap between their two groups.
+  - **A suite's tests** (1,230 px, too wide at 1440 px as well): the headers
+    may wrap. The last error truncates without widening its column. The
+    latest run is the row's Run action, named by its id ("↗ run 1a2b3c4d").
+    The source moved under the status.
+  - **The suites list:** names and owners stay on one line ("All Tests" had
+    wrapped mid-name), and the description truncates instead.
+  - `tests/lib/rollout.ts` gained `primaryOverflow`, which measures the
+    page's primary content against its own box and logs each column's
+    width. `fold-runs` and `fold-suite` assert it at 1280 and 1440, under
+    DejaVu Sans as well.
+- **Bundle:** the suite-by-name redirect now loads lazily. Loaded eagerly,
+  its suite lookup carried the suites service into the eager bundle, which
+  went to 180,218 B gzip, over the 180,000 budget. It is now 179,384 B.
+- **KPI strips (found in P3's second baselines run):**
+  - P3's 4 rem floor for a tile's sparkline was too much at the desk. At
+    1280 px on CI's font, Trends' pass-rate sparkline and Summary's
+    "weighted 82.8%" dropped below their values, and the strips grew from
+    100 px to 132 px and 120 px.
+  - The floor is now 3 rem, and a text note wraps inside its own box.
+  - `kpi-labels.spec.ts` now also fails when a sparkline or note drops a
+    line at 1280 or 1440 px. Restoring the 4 rem floor makes it fail on
+    exactly those two tiles.
+  - In presentation mode a card inside a link did not stretch with its row
+    (152 / 120 px tiles side by side). Compact cards and Home's KPI links
+    now fill the row, and the presentation spec checks one height per row.
+- **Deleted:** the Intelligence list page (`IntelligenceHubPage`), its three
+  tests, its fixture and its four baselines. Its LLM usage meter is still on
+  Deep Investigation and Settings › Billing.
+- **Tests:**
+  - New hermetic fold specs: run, suite, flaky, inbox, release gate, test
+    cases, test case.
+  - Tab, `?tab=` and side-panel unit tests on every merged page.
+  - The redirect tests (`legacyRedirects.test.tsx`).
+  - The error-state ratchet: Flaky tests reports a failed load
+    (known-silent 27 → 26).
+
+## Unreleased - UX redesign P3: the page template on the eight heaviest pages
+
+Phase P3 of the UI/UX redesign. Home, Runs, Failures, Defects, Trends,
+Coverage, Reports › Summary and Reports › Value now follow one template:
+
+- a compact header (**?** help, at most one primary and one secondary button,
+  everything else in **⋯**);
+- one toolbar (the shared window picker);
+- **either** a one-line status banner **or** a strip of at most five KPI
+  tiles;
+- then the page's **primary content**, one table or one hero chart, starting
+  within 300 px of the top. Secondary sections sit in tabs (`?tab=`), long
+  tails in collapsed sections, and drill-downs in side panels.
+
+Measured at 1440 x 900 on the hermetic fixtures:
+
+| Page | Page height | Primary content starts at |
+|---|---|---|
+| Home | 1,734 → 1,204 px | 570 → 260 px |
+| Runs | 1,748 → 1,145 px | 652 → 248 px |
+| Failures | 3,530 → 1,826 px | 784 → 278 px |
+| Defects | 1,330 → 1,312 px | 627 → 278 px |
+| Trends | 3,686 → 1,733 px | 1,231 → 254 px |
+| Coverage | 2,059 → 1,350 px | 607 → 254 px |
+| Summary | 2,533 → 1,599 px | 484 → 298 px |
+| Value | 1,359 → 844 px | 344 → 283 px |
+
+- **Verdict cards become banners or KPI strips.** A score gauge and its
+  dimensions move to a collapsed "How this … is computed" section below the
+  primary content (on Defects this also removes the empty fourth tile).
+- **Tabs:**
+  - Home: Top failing · Activity (the feed loads when its tab opens).
+  - Failures: Groups · By suite · Scatter · Categories.
+  - Defects: Where defects live · Jira bridge.
+  - Trends: Volume · By suite · Durations · Heatmap.
+  - Coverage: Coverage map · Env × release heatmap.
+
+  A section in a closed tab is not rendered and asks nothing.
+- **Side panels:** Runs' failure signatures and Failures' suspects open beside
+  the page.
+- **Removed per the spec:**
+  - Home's Eng-hours, Infra-caused and Avg-duration tiles (their data lives on
+    Value, Failures and Runs).
+  - Home's blockers panel (folded into the banner).
+  - Summary's duplicate "Failures by test" chart and its status donut (their
+    counts are on the KPI row).
+  - Summary's trend moves into a collapsed section.
+  - Trends' "Widen window to 90d" (the picker does it).
+  - Value's "Release decisions" card (its two numbers are on Risky releases).
+- **Catalogue composition props** (choose which existing sections render;
+  never how they draw): `OverviewCatalogue rows`, `SummaryCatalogue part`
+  (`suites` / `status` / `trend`), `TrendsCatalogue sections` and
+  `CoverageAdvanced sections`. Without the prop, each renders what it did.
+- **Shared fixes:**
+  - The compact KPI tile's value uses the presentation stat token, so
+    presentation mode enlarges every KPI strip again (24 px at the desk,
+    40 px in the room).
+  - `PageHeader`'s **?** takes `topic#anchor`, so Defects' help opens on
+    "Promoting to a defect".
+- **Found reading the P3 baselines:**
+  - Failures: at 1280 px the Top failing table was wider than its card, and
+    its Jira and Suspects row actions were scrolled out of sight. The
+    failure-rate cell now wraps and the test column is narrower.
+    `fold-failures.spec.ts` checks the card at 1280 and 1440.
+  - Runs: the banner repeated the title's "3 of 4 builds failed" as a
+    "Failing builds" fact. The fact is removed.
+  - Presentation mode: the 40 px KPI value covered its own sparkline, and the
+    sparkline ran into the next tile. A tile's sparkline now takes the room
+    the value leaves and moves below the value when there is less than
+    4 rem. `rollout-overview-presentation.spec.ts` checks for overlap at
+    640, 1280 and 1920 px.
+  - KPI labels were cut on CI's Linux font ("MEAN TIME TO RESOL…"). They are
+    now Time to resolve, Defects grouped, Releases blocked and AI reports,
+    and each card's full name is its hover text. New `kpi-labels.spec.ts`
+    keeps every strip label whole, with 4 px to spare, on all eight pages
+    at 1280 and 1440.
+  - Summary: the average duration reads "8m 32s", as on the Dashboard,
+    instead of "512,400 ms".
+- **Dead code:** the Summary top-failing part and its adapter,
+  `useValueMetricsKpi`, and three unused Summary caption words.
+- **Homelab deploy (found deploying P2):** an old pod still Terminating after
+  a clean rollout (a Celery worker finishing its task) marked the deploy
+  DEGRADED and exited non-zero. The pod check now ignores Terminating and
+  still flags CrashLoopBackOff, Error and Pending, held by
+  `test_deploy_reports_failure_honestly.py`.
+- **Tests:**
+  - Each page has layout tests (primary content before any tab bar or
+    collapsed section), `?tab=` tests and side-panel tests.
+  - New hermetic `fold-<page>.spec.ts` for all eight pages (primary content
+    ≤ 300 px at 1440 x 900).
+  - Request inventories follow the tabs, and each tab is checked to request
+    when opened.
+  - Lazy-load proofs that the pages' new compactness had made vacuous use
+    shorter screens, with the measurements in their comments.
+
 ## Unreleased - UX redesign P2: remove the noise — nothing fake, nothing unbuilt
 
 Phase P2 of the UI/UX redesign. The rule: **anything not built is not

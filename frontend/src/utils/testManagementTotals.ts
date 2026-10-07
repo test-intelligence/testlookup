@@ -48,7 +48,9 @@ export interface CasesTotals {
 export function describeStatBasis(sampleSize: number, authoredTotal: number): string | null {
   if (!Number.isFinite(sampleSize) || !Number.isFinite(authoredTotal)) return null
   if (sampleSize <= 0 || authoredTotal <= sampleSize) return null
-  return `Rates below cover ${sampleSize} of ${authoredTotal} cases — the library-health sample, not the whole catalog.`
+  // Not "below": since UX redesign P4 the note sits under the health banner
+  // and in the Insights drawer, whose rates it qualifies.
+  return `The health rates cover ${sampleSize} of ${authoredTotal} cases — the library-health sample, not the whole catalog.`
 }
 
 export function deriveTestManagementTotals(args: {

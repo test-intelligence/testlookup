@@ -69,7 +69,6 @@ const REVIEWED: Record<string, ErrorState> = {
   TrendsPage: 'data-unavailable',
   DefectsPage: 'data-unavailable',
   RunsPage: 'data-unavailable',
-  IntelligenceHubPage: 'data-unavailable',
   ReleasesPage: 'data-unavailable',
   SummaryReportPage: 'data-unavailable',
   // VIZ-505: the discovery request that names the panels; each panel's own
@@ -78,11 +77,7 @@ const REVIEWED: Record<string, ErrorState> = {
 
   ActivityPage: 'own-error-ui',
   SuitesPage: 'own-error-ui',
-  SuiteDetailPage: 'own-error-ui',
-  RunIntelligencePage: 'own-error-ui',
   OwnershipEditorPage: 'own-error-ui',
-  QuarantinePage: 'own-error-ui',
-  ReviewsPage: 'data-unavailable',
   WorkflowEditorPage: 'data-unavailable',
   MyFailuresPage: 'own-error-ui',
   'settings/AIConfigPage': 'own-error-ui',
@@ -110,7 +105,9 @@ const REVIEWED: Record<string, ErrorState> = {
   DeepInvestigationPage: 'known-silent',
   ProjectsPage: 'known-silent',
   SearchPage: 'known-silent',
-  FlakyCoachPage: 'known-silent',
+  // UX redesign P4: Flaky tests (/flaky) replaces /flaky-coach + /quarantine;
+  // a failed load says so (DataUnavailable), FlakyTestsPage.test.tsx.
+  FlakyTestsPage: 'data-unavailable',
   ValueMetricsPage: 'data-unavailable',
   UserManagementPage: 'known-silent',
   OnboardingPage: 'known-silent', // useOnboardingStatus drops the SWR error
@@ -135,7 +132,7 @@ const REVIEWED: Record<string, ErrorState> = {
 }
 
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
-const KNOWN_SILENT_CEILING = 27
+const KNOWN_SILENT_CEILING = 26
 
 // Tolerant of spacing and quote style: a route written differently must not
 // fall out of the guard.

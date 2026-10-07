@@ -418,21 +418,107 @@ function suiteDetail() {
   }
 }
 
+// ── The suite page (/suites/:id) and the suites list (/suites), UX P4 ──────
+//
+// `/coverage/suite?name=Auth` now redirects to `/suites/<SUITE_ID>?tab=charts`
+// (resolved by name through `/api/v1/suites`), so the suite detail fixture
+// answers the suite page's own reads too: the suite, its catalog (canonical
+// cases; four share a fingerprint with the analytics rows above, one has never
+// run in the window), and the suites list's per-suite aggregates.
+
+export const SUITE_ID = '66666666-6666-4666-8666-666666666666'
+/** A second suite of the project: the default one, with no aggregates (its columns read "—"). */
+export const SECOND_SUITE_ID = '77777777-7777-4777-8777-777777777777'
+
+const SUITE_ROW = {
+  id: SUITE_ID,
+  project_id: PROJECT_ID,
+  name: SUITE,
+  description: 'Sign-in, sessions and tokens',
+  is_default: false,
+  tags: null,
+  test_case_count: 5,
+  created_at: '2026-02-01T00:00:00Z',
+  updated_at: null,
+}
+
+const SECOND_SUITE_ROW = {
+  ...SUITE_ROW,
+  id: SECOND_SUITE_ID,
+  name: 'All Tests',
+  description: null,
+  is_default: true,
+  test_case_count: 0,
+}
+
+/** The newest run of the suite (`suiteDetail().recent_runs[0]`). */
+const SUITE_LATEST_RUN_ID = '55555555-5555-4555-8555-100000000000'
+
+function suiteCatalog() {
+  const names = ['login succeeds', 'login rejects bad password', 'token refresh', 'logout clears session', 'password reset email']
+  const items = names.map((name, i) => ({
+    id: `88888888-8888-4888-8888-00000000000${i}`,
+    project_id: PROJECT_ID,
+    test_suite_id: SUITE_ID,
+    test_suite_name: SUITE,
+    // The last one never ran in the window: no analytics row shares its fingerprint.
+    test_fingerprint: i < 4 ? `fp-auth-${i}` : 'fp-auth-catalog-only',
+    test_name: name,
+    class_name: 'AuthSpec',
+    status: 'active',
+    source: i < 4 ? 'execution' : 'managed',
+    first_seen_run_id: i < 4 ? SUITE_LATEST_RUN_ID : null,
+    last_seen_run_id: i < 4 ? SUITE_LATEST_RUN_ID : null,
+    last_seen_test_case_id: null,
+    deleted_at_run_id: null,
+    managed_test_case_id: null,
+    review_tag: null,
+    tags: null,
+    run_count: i < 4 ? 20 : null,
+    created_at: '2026-02-01T00:00:00Z',
+    updated_at: null,
+  }))
+  return { items, total: items.length }
+}
+
+/** `GET /api/v1/test-management/suites`: one row per suite NAME (the default suite has none). */
+function suiteAggregates() {
+  return [
+    {
+      suite_name: SUITE,
+      test_count: 4,
+      passed_count: 3,
+      failed_count: 1,
+      last_run_at: isoAgo(0, 2),
+      last_run_id: SUITE_LATEST_RUN_ID,
+      pass_rate: 75,
+      run_count: 12,
+      total_executions: 80,
+      total_passed: 68,
+      total_failed: 10,
+      total_skipped: 0,
+      total_broken: 2,
+      owner_user_id: USER.id,
+      owner_email: USER.email,
+      owner_full_name: USER.full_name,
+      owner_is_fallback: false,
+    },
+  ]
+}
+
 export const SUITE_DETAIL: ApiHandlers = [
   ...LAYOUT,
   ['/api/v1/analytics/suite-detail', suiteDetail],
   [/^\/api\/v1\/test-management\/suites\/[^/]+\/trend$/, suiteTrend],
+  ['/api/v1/test-management/suites', suiteAggregates],
+  [/^\/api\/v1\/suites\/[^/]+\/test-cases$/, suiteCatalog],
+  [/^\/api\/v1\/suites\/[^/]+$/, (request) => (request.path.endsWith(SECOND_SUITE_ID) ? SECOND_SUITE_ROW : SUITE_ROW)],
   [
     '/api/v1/suites',
     () =>
       page([
-        {
-          id: '66666666-6666-4666-8666-666666666666',
-          project_id: PROJECT_ID,
-          name: SUITE,
-          description: null,
-          created_at: '2026-02-01T00:00:00Z',
-        },
+        SUITE_ROW,
+        SECOND_SUITE_ROW,
       ]),
   ],
 ]
@@ -443,7 +529,42 @@ export const VALUE_METRICS: ApiHandlers = [...LAYOUT, ['/api/v1/value-metrics', 
 
 // ── Runs (/runs) ───────────────────────────────────────────────────────────
 
-export const RUNS_PAGE: ApiHandlers = [...LAYOUT, ...RUNS]
+/**
+ * `GET /runs/{id}/intelligence` as the Runs table's AI-verdict column reads it
+ * (UX redesign P4, D2; `src/pages/runsList/aiVerdict.ts`): only the fields the
+ * column uses. By build, newest first: a No-Go awaiting review, a Conditional
+ * awaiting review (the widest cell), a reviewed Go, an analysis with no
+ * recommendation ("—"), and the rest never analysed ("—").
+ */
+function runVerdict(request: ApiRequest) {
+  const id = request.path.split('/')[4]
+  const i = runs().findIndex((run) => run.id === id)
+  const decided = (recommendation: string, state: string) => ({
+    intelligence_available: true,
+    structured_summary: null,
+    top_analyses: [],
+    release_decision: { recommendation, risk_score: 50, composite_risk: 50, blocking_issues: [], conditions_for_go: [], reasoning: '' },
+    requires_human_review: state === 'pending_review',
+    review: { state, message: '' },
+  })
+  if (i === 0) return decided('NO_GO', 'pending_review')
+  if (i === 1) return decided('CONDITIONAL_GO', 'pending_review')
+  if (i === 2) return decided('GO', 'accepted')
+  return {
+    intelligence_available: i === 3,
+    structured_summary: null,
+    top_analyses: [],
+    release_decision: null,
+    requires_human_review: false,
+    review: { state: 'not_applicable', message: '' },
+  }
+}
+
+export const RUNS_PAGE: ApiHandlers = [
+  ...LAYOUT,
+  ...RUNS,
+  [/^\/api\/v1\/runs\/[^/]+\/intelligence$/, runVerdict],
+]
 
 // ── Coverage and flaky tests (shared by Trends, Coverage, Failures) ────────
 
@@ -1086,25 +1207,6 @@ export const SUMMARY_REPORT: ApiHandlers = [
   ...LAYOUT,
   ['/api/v1/reports/summary', summaryReport],
   ['/api/v1/reports/summary/exports', () => []],
-]
-
-// ── Intelligence hub (/intelligence) ───────────────────────────────────────
-
-/**
- * The newest six builds only, so the runs table (the region around the
- * pass-rate meters, G8) stays short; they cover all three meter bands
- * (>= 80, 60-80, < 60).
- */
-function hubRuns(request: ApiRequest) {
-  const items = runs().slice(0, 6)
-  return { ...page(items, intParam(request, 'size', 50)), total: items.length }
-}
-
-export const INTELLIGENCE_HUB: ApiHandlers = [
-  ...LAYOUT,
-  ['/api/v1/runs', hubRuns],
-  [/^\/api\/v1\/projects\/[^/]+\/llm-usage$/, () => LLM_USAGE],
-  [/^\/api\/v1\/projects\/[^/]+\/llm-quota$/, () => LLM_QUOTA],
 ]
 
 // ── Coverage (/coverage) ───────────────────────────────────────────────────

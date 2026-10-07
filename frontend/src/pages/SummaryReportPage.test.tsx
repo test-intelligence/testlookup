@@ -6,7 +6,10 @@
  *   - "No executions in this window" empty state when totals are zero.
  *   - KPI tiles + per-suite table render when the API returns data.
  *   - Window chip + mode toggle re-fetch the data.
- *   - Export PDF button hits the service and triggers a download.
+ *   - Export PDF (in the header's ⋯ since UX redesign P3) hits the service
+ *     and triggers a download.
+ *   - The P3 page template: one merged KPI row, results by suite + the
+ *     per-suite table first, every export in ⋯.
  *
  * Data path: ``summaryReportService.get`` (mocked) feeds
  * ``useSummaryReport``; the page reads from ``useProjectStore`` for
@@ -136,6 +139,27 @@ function renderPage() {
     </SWRConfig>,
   )
 }
+
+/** The header's ⋯ items, in order (UX redesign P3: every export is in the overflow menu). */
+const EXPORT_ITEMS = [
+  'Export PDF',
+  'Export Excel',
+  'Export PDF in background',
+  'Export Excel in background',
+  'Analysis report (1d)',
+  'Analysis report (7d)',
+]
+
+/** Open the header's ⋯ once the report has data (the exports are enabled then), and pick `name`. */
+async function chooseExport(name: string) {
+  await screen.findByText('Total tests')
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  const item = screen.getByRole('menuitem', { name })
+  expect(item).toBeEnabled()
+  fireEvent.click(item)
+}
+
+const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
 
 describe('SummaryReportPage', () => {
   beforeEach(() => {
@@ -367,11 +391,8 @@ describe('SummaryReportPage', () => {
 
     renderPage()
 
-    // Wait for the export button to enable (it depends on hasData).
-    const button = await screen.findByRole('button', { name: /Export PDF/i })
-    await waitFor(() => expect(button).not.toBeDisabled())
-
-    fireEvent.click(button)
+    // The export is enabled once the report has data.
+    await chooseExport('Export PDF')
 
     await waitFor(() => {
       // Default window comes from the shared store
@@ -406,9 +427,7 @@ describe('SummaryReportPage — Export Excel (VIZ-607)', () => {
     })
 
     renderPage()
-    const button = await screen.findByRole('button', { name: /Export Excel/i })
-    await waitFor(() => expect(button).not.toBeDisabled())
-    fireEvent.click(button)
+    await chooseExport('Export Excel')
 
     await waitFor(() =>
       expect(mockDownloadXlsx).toHaveBeenCalledWith({ project_id: 'p1', days: DEFAULT_TIME_WINDOW_DAYS, mode: 'latest' }),
@@ -432,9 +451,7 @@ describe('SummaryReportPage — background export (VIZ-607)', () => {
     } as never)
 
     renderPage()
-    const button = await screen.findByRole('button', { name: /Export PDF/i })
-    await waitFor(() => expect(button).not.toBeDisabled())
-    fireEvent.click(button)
+    await chooseExport('Export PDF')
 
     await waitFor(() => expect(mockRequestExport).toHaveBeenCalledTimes(1))
     expect(mockRequestExport.mock.calls[0][0]).toMatchObject({ project_id: 'p1', format: 'pdf', background: false })
@@ -443,19 +460,26 @@ describe('SummaryReportPage — background export (VIZ-607)', () => {
     await waitFor(() => expect(mockListExports).toHaveBeenCalledWith('p1'))
   })
 
-  it('"In background" asks for the background even for a small report', async () => {
+  it('"Export Excel in background" asks for the background even for a small report', async () => {
+    // P3: the "In background" checkbox became one ⋯ item per format.
     mockGet.mockResolvedValue(makeReport())
     mockRequestExport.mockClear()
 
     renderPage()
-    const box = await screen.findByRole('checkbox', { name: /In background/i })
-    fireEvent.click(box)
-    const button = screen.getByRole('button', { name: /Export Excel/i })
-    await waitFor(() => expect(button).not.toBeDisabled())
-    fireEvent.click(button)
+    await chooseExport('Export Excel in background')
 
     await waitFor(() => expect(mockRequestExport).toHaveBeenCalledTimes(1))
     expect(mockRequestExport.mock.calls[0][0]).toMatchObject({ format: 'xlsx', background: true })
+  })
+
+  it('"Export PDF in background" too; the plain items do not', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    mockRequestExport.mockClear()
+
+    renderPage()
+    await chooseExport('Export PDF in background')
+    await waitFor(() => expect(mockRequestExport).toHaveBeenCalledTimes(1))
+    expect(mockRequestExport.mock.calls[0][0]).toMatchObject({ format: 'pdf', background: true })
   })
 })
 
@@ -611,9 +635,7 @@ describe('SummaryReportPage — release scope badge and PDF', () => {
     URL.revokeObjectURL = vi.fn()
 
     renderPage()
-    const button = await screen.findByRole('button', { name: /Export PDF/i })
-    await waitFor(() => expect(button).not.toBeDisabled())
-    fireEvent.click(button)
+    await chooseExport('Export PDF')
 
     await waitFor(() => expect(mockDownloadPdf).toHaveBeenCalled())
     const screenArgs = mockGet.mock.calls[mockGet.mock.calls.length - 1][0]
@@ -669,29 +691,129 @@ describe('SummaryReportPage — VIZ-106 responsive edits and metric tokens', () 
     }
   })
 
-  it('wraps the header action row below 1024 px only, rather than pushing the page sideways', async () => {
-    mockGet.mockResolvedValue(makeReport())
-    renderPage()
-    const exportButton = await screen.findByRole('button', { name: /Export PDF/ })
-    const classes = (exportButton.parentElement as HTMLElement).className.split(/\s+/)
-    expect(classes).toContain('max-lg:flex-wrap')
-    // Never at 1024 px and above: there the row must be the Wave 2.5 row, byte for
-    // byte (a plain `flex-wrap` moved the flag-off baselines by a pixel on Linux).
-    expect(classes).not.toContain('flex-wrap')
+})
+
+// ── UX redesign P3 (`02-design-spec.md` §2, §5 "Reports › Summary"): header
+// (Views · ⋯ with every export) · one toolbar · ONE merged KPI row · results
+// by suite with the per-suite table under it as the primary content. ────────
+describe('SummaryReportPage — the page template (P3)', () => {
+  beforeEach(() => {
+    mockGet.mockReset()
+    mockProjectStore.mockImplementation((selector) => selector({
+      activeProjectId: 'p1',
+      activeProject: { id: 'p1', name: 'GoogleProject' },
+    }))
+    try { localStorage.removeItem('summary-report.mode') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('sizes the metric values on the metric tokens of the same value (22 px stat-md, 18 px stat-sm), which presentation mode raises', async () => {
+  it('puts results by suite and the per-suite table first, under the KPI row', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()
-    const tile = (await screen.findByText('Total tests')).nextElementSibling as HTMLElement
-    expect(tile.textContent).toBe('200')
-    expect(tile.style.fontSize).toBe('var(--text-stat-md)')
-    expect(tile.className).not.toMatch(/text-\[22px\]/)
-    const count = screen.getByText('Evaluated').nextElementSibling as HTMLElement
-    expect(count.textContent).toBe('197')
-    // Not `--text-lg` (also 18 px): a UI size, which presentation mode leaves at the desk size.
-    expect(count.style.fontSize).toBe('var(--text-stat-sm)')
-    expect(count.className).not.toMatch(/text-\[18px\]/)
+    await screen.findByText('test_pay')
+    expect(document.querySelectorAll('[data-primary]')).toHaveLength(1)
+    const primary = document.querySelector('[data-primary]') as HTMLElement
+    // The suite chart (the stand-in or the real frame: the same heading) and the table under it.
+    const chart = within(primary).getByRole('heading', { level: 2, name: 'Results by suite' })
+    const table = within(primary).getByRole('region', { name: 'Per-suite breakdown table' })
+    expect(follows(chart, table)).toBe(true)
+    // Above it: the header, the toolbar, the KPI row. Below it: the top failing tests.
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
+    const kpis = screen.getByRole('region', { name: 'Summary KPIs' })
+    expect(follows(header, toolbar)).toBe(true)
+    expect(follows(toolbar, kpis)).toBe(true)
+    expect(follows(kpis, primary)).toBe(true)
+    expect(follows(primary, screen.getByRole('heading', { name: /^Top failing tests/ }))).toBe(true)
+    // Nothing tabbed or collapsed comes before it.
+    for (const later of document.querySelectorAll('[role="tablist"], [data-disclosure]')) {
+      expect(follows(primary, later)).toBe(true)
+    }
+  })
+
+  it('merges the six tiles and the counts strip into ONE row of five, dropping no number', async () => {
+    mockGet.mockResolvedValue(makeReport({
+      totals: { ...makeReport().totals, pass_rate_basis_label: 'per unique test' },
+    }))
+    renderPage()
+    const row = await screen.findByRole('region', { name: 'Summary KPIs' })
+    const tiles = Array.from(row.querySelectorAll('[data-metric-card]'), (tile) => tile.textContent)
+    expect(tiles).toEqual([
+      'Total tests200197 evaluated · 3 skipped (1.5%)',
+      'Pass %90.0%weighted 91.4%180 passed · per unique test',
+      'Fail %7.5%15 failed',
+      'Broken %1.0%2 broken',
+      'Flaky31.5% of total',
+    ])
+    // The counts strip is gone.
+    expect(screen.queryByText('Evaluated')).toBeNull()
+  })
+
+  it('keeps the counts strip\'s footer on screen: the run facts are the header\'s subtitle', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('Total tests')
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    expect(within(header).getByText(
+      `Runs in window: 4 · Avg / day: 0.57 · Avg duration: 12.3s · Latest run: ${new Date('2026-05-15T00:00:00+00:00').toLocaleString()}`,
+    )).toBeInTheDocument()
+    // And when the report was generated, at the toolbar's end.
+    const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
+    expect(toolbar).toHaveTextContent(`Generated ${new Date('2026-05-16T00:00:00+00:00').toLocaleString()}`)
+  })
+
+  it('states the average duration as a duration, as the Dashboard does ("8m 32s", not "512,400 ms")', async () => {
+    mockGet.mockResolvedValue(makeReport({ avg_duration_ms: 512_400.4 }))
+    renderPage()
+    await screen.findByText('Total tests')
+    const subtitle = (document.querySelector('[data-page-header]') as HTMLElement).querySelector('p') as HTMLElement
+    expect(subtitle.textContent).toContain('Avg duration: 8m 32s ·')
+    expect(subtitle.textContent).not.toMatch(/\d ms\b/)
+  })
+
+  it('no runs per day in latest mode (the server sends none): the subtitle leaves it out', async () => {
+    mockGet.mockResolvedValue(makeReport({ mode: 'latest', runs_per_day: null }))
+    renderPage()
+    await screen.findByText('Total tests')
+    const subtitle = (document.querySelector('[data-page-header]') as HTMLElement).querySelector('p') as HTMLElement
+    expect(subtitle.textContent).toMatch(/^Runs in window: 4 · Avg duration: 12.3s · Latest run: /)
+  })
+
+  it('header: the help topic, Views, and every export in ⋯', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('Total tests')
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    expect(within(header).getByRole('button', { name: 'Help: Summary Report' })).toHaveAttribute('data-help-topic', 'reports')
+    expect(within(header).queryByRole('button', { name: /Export|Analysis report/ })).toBeNull()
+    expect(within(header).queryByRole('checkbox')).toBeNull()
+    fireEvent.click(within(header).getByRole('button', { name: 'More actions' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(EXPORT_ITEMS)
+  })
+
+  it('no data: the report exports are disabled, the analysis reports are not', async () => {
+    mockGet.mockResolvedValue(makeReport({
+      totals: { ...makeReport().totals, total_test_cases: 0 },
+      suites: [],
+      top_failing_tests: [],
+    }))
+    renderPage()
+    await screen.findByText(/No executions in this window/i)
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    for (const name of EXPORT_ITEMS.slice(0, 4)) expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    for (const name of EXPORT_ITEMS.slice(4)) expect(screen.getByRole('menuitem', { name })).toBeEnabled()
+  })
+
+  it('one toolbar: the global WindowPicker with this report\'s windows, then the aggregation', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('Total tests')
+    const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
+    const picker = within(toolbar).getByRole('radiogroup', { name: 'Time window' })
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '30d', '90d'])
+    expect(within(toolbar).getByRole('radiogroup', { name: 'Aggregation mode' })).toBeInTheDocument()
+    // What each aggregation counts is its tooltip (§2: explanatory text is never a paragraph).
+    expect(within(toolbar).getByRole('radio', { name: 'Latest run per suite' })).toHaveAttribute('title', expect.stringMatching(/most recent run counts/))
   })
 })
 
@@ -707,63 +829,110 @@ describe('SummaryReportPage — the catalogue sections (VIZ-408)', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  /** Different totals per Aggregation mode, as the server sends them. */
+  /** Different suite counts per Aggregation mode, as the server sends them. */
   function servePerMode() {
     mockGet.mockImplementation(async (params: { mode: SummaryReportMode }) =>
       params.mode === 'latest'
-        ? makeReport({ mode: 'latest', totals: { ...makeReport().totals, passed: 149, failed: 20, broken: 7, skipped: 10 } })
+        ? makeReport({
+            mode: 'latest',
+            suites: makeReport().suites.map((row) => (row.suite_name === 'checkout-api' ? { ...row, passed: 60, failed: 21 } : row)),
+          })
         : makeReport({ mode: 'window' }),
     )
   }
 
-  const donutCount = (status: string) => {
-    const frame = screen.getByRole('heading', { level: 2, name: 'Status breakdown' }).closest('[data-chart-frame]') as HTMLElement
+  /** The suite bars' data table: suite -> its cells. */
+  const suiteRow = (suite: string) => {
+    const frame = screen.getByRole('heading', { level: 2, name: 'Results by suite' }).closest('[data-chart-frame]') as HTMLElement
     if (!within(frame).queryByRole('table', { name: /data table/i })) {
       fireEvent.click(within(frame).getByRole('button', { name: 'View as table' }))
     }
     const table = within(frame).getByRole('table', { name: /data table/i })
-    return (within(table).getByRole('rowheader', { name: status }).parentElement as HTMLElement).querySelector('td')?.textContent
+    return Array.from(
+      (within(table).getByRole('rowheader', { name: suite }).parentElement as HTMLElement).querySelectorAll('td'),
+      (td) => td.textContent,
+    ).join(' ')
   }
 
-  it('the four charts, each above the table it summarises', async () => {
+  const sectionIds = () =>
+    Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+
+  /** Wait for the section chunk: until it lands the page's stand-in carries the same heading. */
+  const sectionsLoaded = () =>
+    waitFor(() => expect(document.querySelector('[data-catalogue-section="summary-suites"]')).not.toBeNull(), { timeout: 10_000 })
+
+  it('the suite bars above the per-suite table they summarise; no donut; the trend collapsed and not asked', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()
-    // The first render loads the section's chunk (and the chart kit) for the first time;
-    // until it lands the page's stand-in carries the same headings, so wait for the sections.
-    await waitFor(
-      () => expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).not.toBeNull(),
-      { timeout: 10_000 },
-    )
-    const ids = Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
-    expect(ids).toEqual(['summary-donut', 'summary-suites', 'summary-trend', 'summary-top-failing'])
-    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
-    const section = (id: string) => document.querySelector(`[data-catalogue-section="${id}"]`) as Element
+    await sectionsLoaded()
+    // P3: the suite bars alone. The donut is gone (the KPI row has its counts), the
+    // trend is the closed disclosure's, and "Failures by test" was deleted (§5).
+    expect(sectionIds()).toEqual(['summary-suites'])
+    expect(screen.queryByRole('heading', { name: 'Status breakdown' })).toBeNull()
+    const primary = document.querySelector('[data-primary]') as HTMLElement
+    expect(within(primary).getByRole('heading', { level: 2, name: 'Results by suite' })).toBeInTheDocument()
     const perSuite = screen.getByRole('heading', { name: /Per-suite breakdown/ })
-    const topFailing = screen.getByRole('heading', { name: /^Top failing tests/ })
-    expect(follows(section('summary-trend'), perSuite)).toBe(true)
-    expect(follows(perSuite, section('summary-top-failing'))).toBe(true)
-    expect(follows(section('summary-top-failing'), topFailing)).toBe(true)
-    // The one new request, on the page's window.
-    expect(trendsCalls[trendsCalls.length - 1]).toBe(DEFAULT_TIME_WINDOW_DAYS)
+    const trend = screen.getByRole('button', { name: /^Trend/ })
+    expect(trend).toHaveAttribute('aria-expanded', 'false')
+    expect(follows(perSuite, trend)).toBe(true)
+    expect(follows(trend, screen.getByRole('heading', { name: /^Top failing tests/ }))).toBe(true)
+    // Closed: the trend's one request is not made.
+    expect(trendsCalls).toEqual([])
   })
 
-  it('the donut follows the Aggregation toggle (the latest totals in latest mode, then the window’s)', async () => {
+  it('the donut’s four counts are the KPI row’s, from the same totals', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    const row = await screen.findByRole('region', { name: 'Summary KPIs' })
+    await sectionsLoaded()
+    expect(row).toHaveTextContent('180 passed')
+    expect(row).toHaveTextContent('15 failed')
+    expect(row).toHaveTextContent('2 broken')
+    expect(row).toHaveTextContent('3 skipped')
+  })
+
+  it('opening "Trend" mounts the trend, which asks on the page’s window; closing it unmounts it', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await sectionsLoaded()
+    const toggle = screen.getByRole('button', { name: /^Trend/ })
+    expect(toggle).toHaveTextContent(`pass rate per day · ${DEFAULT_TIME_WINDOW_DAYS}d`)
+    fireEvent.click(toggle)
+    await waitFor(() => expect(document.querySelector('[data-catalogue-section="summary-trend"]')).not.toBeNull(), {
+      timeout: 10_000,
+    })
+    const disclosure = toggle.closest('[data-disclosure]') as HTMLElement
+    expect(within(disclosure).getByRole('heading', { level: 2, name: 'Pass rate trend' })).toBeInTheDocument()
+    expect(trendsCalls[trendsCalls.length - 1]).toBe(DEFAULT_TIME_WINDOW_DAYS)
+    fireEvent.click(toggle)
+    expect(document.querySelector('[data-catalogue-section="summary-trend"]')).toBeNull()
+  })
+
+  it('the suite bars follow the Aggregation toggle (the latest counts in latest mode, then the window’s)', async () => {
     servePerMode()
     renderPage()
-    await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
-    await waitFor(() => expect(donutCount('Passed')).toBe('149'))
-    expect(donutCount('Broken')).toBe('7')
+    await screen.findByRole('heading', { level: 2, name: 'Results by suite' }, { timeout: 10_000 })
+    await sectionsLoaded()
+    await waitFor(() => expect(suiteRow('checkout-api')).toMatch(/^60 21 /))
 
     fireEvent.click(screen.getByRole('radio', { name: /All runs in window/i }))
-    await waitFor(() => expect(donutCount('Passed')).toBe('180'))
-    expect(donutCount('Broken')).toBe('2')
+    await waitFor(() => expect(suiteRow('checkout-api')).toMatch(/^102 13 /))
   })
 
-  it('no failing-test chart when the window has no failures (the table says so already)', async () => {
+  it('no failing-test chart at all (P3): the Top failing tests table carries every row of it', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await sectionsLoaded()
+    expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Failures by test' })).toBeNull()
+    const table = screen.getByRole('region', { name: 'Top failing tests table' })
+    expect(within(table).getByRole('row', { name: /test_pay checkout-api CheckoutTests 8/ })).toBeInTheDocument()
+  })
+
+  it('a window with no failures says so in place of the table', async () => {
     mockGet.mockResolvedValue(makeReport({ top_failing_tests: [] }))
     renderPage()
-    await screen.findByRole('heading', { level: 2, name: 'Status breakdown' }, { timeout: 10_000 })
-    expect(document.querySelector('[data-catalogue-section="summary-top-failing"]')).toBeNull()
+    await screen.findByRole('heading', { level: 2, name: 'Results by suite' }, { timeout: 10_000 })
     expect(screen.getByText('No failures in this window.')).toBeInTheDocument()
   })
 })

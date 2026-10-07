@@ -45,20 +45,20 @@ beforeEach(() => {
 
 describe('ScopedLink', () => {
   it('warns before the click when the destination needs a project', () => {
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     expect(screen.getByText(/pick a project/)).toBeTruthy()
   })
 
   it('still renders a working link — it does not hide it', () => {
     // Hiding would remove the only path to the data for an admin browsing all
     // projects, who can resolve the scope on the destination itself.
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     const link = screen.getByRole('link', { name: /Open flaky coach/ })
-    expect(link.getAttribute('href')).toBe('/flaky-coach')
+    expect(link.getAttribute('href')).toBe('/flaky')
   })
 
   it('explains the extra step in the title', () => {
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     expect(
       screen.getByRole('link', { name: /Open flaky coach/ }).getAttribute('title'),
     ).toMatch(/one project at a time/)
@@ -76,20 +76,20 @@ describe('ScopedLink', () => {
 
   it('drops the qualifier once a project is pinned', () => {
     mocked.state.activeProjectId = A_PROJECT
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     expect(screen.queryByText(/pick a project/)).toBeNull()
   })
 
   it('warns when nothing is selected at all', () => {
     mocked.state.activeProjectId = null
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     expect(screen.getByText(/pick a project/)).toBeTruthy()
   })
 
   it('sees through a query string on the destination', () => {
     // Real call sites carry them. A scope check that silently fails to match
     // reads as "reachable", which is the original bug with an extra step.
-    renderLink('/flaky-coach?days=30')
+    renderLink('/flaky?days=30')
     expect(screen.getByText(/pick a project/)).toBeTruthy()
   })
 
@@ -131,7 +131,7 @@ describe('ScopedLink', () => {
   it('keeps the qualifier readable by a screen reader', () => {
     // "One more step before you see data" is exactly what a screen-reader user
     // needs BEFORE following a link, so it must not be aria-hidden.
-    renderLink('/flaky-coach')
+    renderLink('/flaky')
     const hint = screen.getByText(/pick a project/)
     expect(hint.getAttribute('aria-hidden')).toBeNull()
   })

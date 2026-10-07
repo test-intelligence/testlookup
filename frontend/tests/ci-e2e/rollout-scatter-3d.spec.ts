@@ -61,14 +61,18 @@ const scatter2d = (page: Page) => scatter(page).locator('[data-chart-type="scatt
 const view3d = (page: Page) => scatter(page).locator('[data-scatter-3d]')
 const toggle = (page: Page) => frame(page).locator('[data-scatter-view-toggle]')
 
-/** Opens Failures (no flag set), brings the scatter near and waits for the 2D chart; every three request is recorded. */
+/**
+ * Opens Failures on its Scatter tab (UX redesign P3: the scatter is a tab of
+ * its own, `?tab=scatter`), brings the scatter near and waits for the 2D
+ * chart; every three request is recorded.
+ */
 async function openFailures(page: Page) {
   const threeRequests: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (THREE_REQUEST.test(path)) threeRequests.push(path)
   })
-  const opened = await openRollout(page, '/failures', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict') })
+  const opened = await openRollout(page, '/failures?tab=scatter', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict') })
   await bringNear(page, SCATTER.id)
   await expectDrawn(frame(page), SCATTER.id)
   await expect(scatter2d(page)).toHaveAttribute('data-chart-status', 'ready')

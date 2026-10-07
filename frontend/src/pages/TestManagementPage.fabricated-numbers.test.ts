@@ -29,9 +29,18 @@ import { describe, expect, it } from 'vitest'
 import source from './TestManagementPage.tsx?raw'
 import evidenceSource from '@/components/testManagement/EvidenceGapLists.tsx?raw'
 
+// UX redesign P4 item 7: the right rail (the cards these checks are about) is
+// the Insights drawer, and the tab bodies moved to `./test-management/`; every
+// one of those files is scanned with the page.
+const siblings = import.meta.glob<string>('./test-management/*.tsx', { query: '?raw', import: 'default', eager: true })
+const siblingSource = Object.entries(siblings)
+  .filter(([path]) => !/\.test\.tsx$/.test(path))
+  .map(([, src]) => src)
+  .join('\n')
+
 /** Source with `//` and block comments stripped, so the prose ABOUT the removed
  *  fabrications (which deliberately quotes them) cannot satisfy a check. */
-const code = `${source}\n${evidenceSource}`
+const code = `${source}\n${evidenceSource}\n${siblingSource}`
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n')
   .filter((line) => !line.trim().startsWith('//'))

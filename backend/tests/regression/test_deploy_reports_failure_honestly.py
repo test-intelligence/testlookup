@@ -99,6 +99,21 @@ def test_pod_state_is_checked_not_only_the_ingress():
     )
 
 
+def test_the_pod_filter_ignores_a_replaced_pod_shutting_down_but_not_a_broken_one():
+    """2026-10-07: an old worker-ai pod still Terminating 80 s after a clean
+    rollout marked the deploy DEGRADED. Terminating is the ReplicaSet being
+    replaced shutting down gracefully; a broken NEW pod is CrashLoopBackOff,
+    Error or Pending. Read the awk filter's exclusions and apply them."""
+    src = _script()
+    line = re.search(r"NOT_READY=\$\(\s*kubectl[^\n]*get pods[^\n]*\n[^\n]*awk '([^']*)'", src)
+    assert line, "the NOT_READY awk filter moved; update this test with it"
+    healthy = set(re.findall(r'\$3 != "([A-Za-z]+)"', line.group(1)))
+    assert healthy == {"Running", "Completed", "Terminating"}, healthy
+    flagged = [s for s in ("Running", "Completed", "Terminating", "CrashLoopBackOff", "Error", "Pending", "ImagePullBackOff")
+               if s not in healthy]
+    assert flagged == ["CrashLoopBackOff", "Error", "Pending", "ImagePullBackOff"]
+
+
 def test_a_passing_ingress_check_does_not_override_unhealthy_pods():
     """The dangerous combination is 'pods broken' AND 'HTTP 200' — that is
     exactly what happened. The 200 must not be reported as unqualified success."""

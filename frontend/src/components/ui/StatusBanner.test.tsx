@@ -25,6 +25,18 @@ describe('StatusBanner', () => {
     expect(screen.getByRole('link', { name: /Open gate/ })).toHaveAttribute('href', '/release-gate')
   })
 
+  it('takes its own pill words when the state word would misname the verdict; the hue stays that of the state', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <StatusBanner state="fail" pillLabel="AT RISK" title="Library health 41/100" facts={[{ label: 'Cases', value: 3 }]} />
+      </MemoryRouter>,
+    )
+    const pill = container.querySelector('[data-banner-pill]') as HTMLElement
+    expect(pill).toHaveTextContent(/^AT RISK$/)
+    expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'fail')
+    expect(pill.style.color).toBe('var(--status-failed)')
+  })
+
   it('shows at most four facts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const view = render(
@@ -47,7 +59,9 @@ describe('KpiStrip + compact MetricCard', () => {
     )
     const strip = view.container.querySelector('[data-kpi-strip]') as HTMLElement
     expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
-    expect(strip.style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    // Fits the width (one row of five on a desktop page, fewer columns when
+    // presentation-sized tiles cannot fit), never a fixed count that overflows.
+    expect(strip.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(10rem, 1fr))')
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
@@ -61,7 +75,10 @@ describe('KpiStrip + compact MetricCard', () => {
         metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }}
       />,
     )
-    expect(screen.getByText('91.2%').className).toContain('text-2xl')
+    // The presentation-aware stat token (24 px at the desk, 40 px in the room),
+    // never a fixed `text-2xl` that presentation mode cannot raise.
+    expect(screen.getByText('91.2%').className).toContain('text-[length:var(--text-stat-lg)]')
+    expect(screen.getByText('91.2%').className).not.toContain('text-2xl')
     // Two spans, so a narrow tile truncates the change text and never "(worse)".
     expect(screen.getByText('Down 2.1 pp vs previous period')).toBeInTheDocument()
     expect(screen.getByText('(worse)')).toBeInTheDocument()

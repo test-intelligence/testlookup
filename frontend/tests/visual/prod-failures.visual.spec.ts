@@ -11,6 +11,14 @@
  * Phase D, S5: the Wave 3 sections mount unconditionally (no flag is asked),
  * so the page is opened with their answers (`FAILURES_ON`); they sit below
  * the body grid, so the four regions are the same pixels.
+ * UX redesign P3 (page template), same region names, new contents:
+ * `failures-verdict` is the one-line StatusBanner (the "Failure verdict"
+ * landmark); `failures-whats-failing` is the Top failing table, the run strip
+ * in its header (the What's-failing and Flakiness cards merged into it); the
+ * category card is the Categories tab, opened first; the timeline is a
+ * Disclosure, opened first. NEW region `failures-score`: the stability meter
+ * (G5) and its four dimensions left the verdict for the "How this score is
+ * computed" Disclosure, captured open.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -39,13 +47,27 @@ for (const theme of THEMES) {
       ready: (p) => landmark(p, 'Failure verdict'),
     })
 
-    const whatsFailing = cardByHeading(page, "What's failing")
+    const whatsFailing = cardByHeading(page, 'Top failing tests')
     await expect(whatsFailing.getByRole('img', { name: /^Run strip:/ })).toBeVisible()
-    const timeline = cardByHeading(page, 'Failure timeline')
 
     await visualRegion(page, 'failures-verdict', theme, landmark(page, 'Failure verdict'))
     await visualRegion(page, 'failures-whats-failing', theme, whatsFailing)
+
+    // The categories are a tab (P3): open it, then the two Disclosures below the tabs.
+    await page.getByRole('tablist', { name: 'Failure analysis sections' }).getByRole('tab', { name: 'Categories' }).click()
+    await expect(page).toHaveURL(/[?&]tab=categories(&|$)/)
+    const disclosure = (title: string) =>
+      page.locator('[data-disclosure]').filter({ has: page.getByRole('button', { name: new RegExp(`^${title}`) }) })
+    for (const title of ['Failure timeline', 'How this score is computed']) {
+      await disclosure(title).getByRole('button', { name: new RegExp(`^${title}`) }).click()
+      await expect(disclosure(title)).toHaveAttribute('data-open', 'true')
+    }
+    const timeline = disclosure('Failure timeline')
+    await expect(timeline.getByRole('img', { name: /^Failure timeline:/ })).toBeVisible()
     await visualRegion(page, 'failures-timeline', theme, timeline)
+    const score = disclosure('How this score is computed')
+    await expect(score.getByRole('meter', { name: 'Stability score' })).toBeVisible()
+    await visualRegion(page, 'failures-score', theme, score)
 
     // Every canonical bucket is drawn, empty ones too; the fixture's 36
     // failures land in three of them (LOCATOR has no bucket: Unknown).

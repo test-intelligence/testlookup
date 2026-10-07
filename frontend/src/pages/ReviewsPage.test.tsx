@@ -110,13 +110,17 @@ describe('ReviewsPage', () => {
     expect(hookState.lastState).toBe('pending_review')
     expect(screen.getAllByTestId('review-row')).toHaveLength(1)
     expect(screen.getByText('Awaiting review')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open report' })).toHaveAttribute('href', '/runs/run-1/intelligence')
+    // UX redesign P4: the run's Analysis tab, not the old /runs/:id/intelligence (which redirects there).
+    expect(screen.getByRole('link', { name: 'Open report' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
     expect(screen.getByText('AI-generated content. Verify before acting.')).toBeInTheDocument()
   })
 
-  it('switches the state filter from the tabs', () => {
+  it('switches the state filter from its chips', () => {
+    // P4: a filter of the queue (a radio group), no longer a tab bar: the
+    // queue sits inside Inbox › Approvals, whose tabs are the page's.
     renderPage()
-    fireEvent.click(screen.getByRole('tab', { name: 'Accepted' }))
+    expect(screen.getByRole('radio', { name: 'Pending' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('radio', { name: 'Accepted' }))
     expect(hookState.lastState).toBe('accepted')
   })
 

@@ -23,7 +23,13 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import pageSource from './SuiteDetailPage.tsx?raw'
+import detailSource from './SuiteDetailPage.tsx?raw'
+import partsSource from './suite/SuiteParts.tsx?raw'
+
+// UX redesign P4 moved the pass-rate bar, the status badge, the flaky pill and
+// the recent-runs table to `suite/SuiteParts.tsx` (the suite page's tabs draw
+// them too): the ratchet reads both files as the one page they were.
+const pageSource = `${detailSource}\n${partsSource}`
 
 // The exact families the `no-restricted-syntax` rule flags.
 const FLAGGED = /(text|bg|border|ring)-(emerald|green|red|amber|yellow|orange|purple|blue)-\d{2,3}/

@@ -176,20 +176,46 @@ interface RoutePage {
   ready: (page: Page) => ReturnType<Page['locator']>
   handlers: ApiHandlers
   frames: number
+  /** A step after the load, before anything is measured (e.g. opening a disclosure). */
+  open?: (page: Page) => Promise<void>
+}
+
+/** Summary's trend is in a collapsed disclosure (UX redesign P3): open it. */
+async function openSummaryTrend(page: Page) {
+  const toggle = page.getByRole('button', { name: /^Trend/ })
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 }
 
 const PAGES: RoutePage[] = [
   // Phase D S1: Overview asks no flag; its catalogue mounts unconditionally.
   { name: 'Overview', path: '/overview', ready: overviewReady, handlers: OVERVIEW_ON, frames: 4 },
-  // Phase D S3/S4: Trends asks no flag at all; the heatmap mounts unconditionally.
-  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 6 },
+  // Phase D S3/S4: Trends asks no flag at all. UX redesign P3: its catalogue
+  // sections are in its tabs, one load each: Volume (the default) draws the
+  // hero and the daily breakdown; By suite the hero, the suite series and
+  // Compare; Durations and Heatmap the hero and their one section.
+  { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
+  { name: 'Trends, By suite', path: '/trends?tab=by-suite', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 3 },
+  { name: 'Trends, Durations', path: '/trends?tab=durations', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
+  { name: 'Trends, Heatmap', path: '/trends?tab=heatmap', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
   // Phase D S2: Summary and Release gate ask no flag either (Suite detail: S3).
+  // UX redesign P3: Summary draws the suite bars (its primary); the trend is
+  // in the collapsed "Trend" disclosure, so it is a second load with it open.
+  // No donut and no "Failures by test" (deleted). Phase D S2: no flag.
   {
     name: 'Summary',
     path: '/reports/summary',
     ready: (p) => p.getByText('Total tests', { exact: true }),
     handlers: SUMMARY_REPORT_ON,
-    frames: 4,
+    frames: 1,
+  },
+  {
+    name: 'Summary, Trend opened',
+    path: '/reports/summary',
+    ready: (p) => p.getByText('Total tests', { exact: true }),
+    handlers: SUMMARY_REPORT_ON,
+    open: openSummaryTrend,
+    frames: 2,
   },
   {
     name: 'Suite detail',
@@ -200,8 +226,9 @@ const PAGES: RoutePage[] = [
     frames: 4,
   },
   {
+    // UX redesign P4 item 6: the gate's charts are its Context tab.
     name: 'Release gate',
-    path: `/release-gate/${RUN_ID}`,
+    path: `/release-gate/${RUN_ID}?tab=context`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
     frames: 2,
@@ -217,6 +244,10 @@ test.describe('presentation mode, every catalogue section drawn (1280 x 4000)', 
       const { api, errors } = await openRollout(page, report.path, { handlers: report.handlers, ready: report.ready })
       await expect(page.locator('html')).toHaveAttribute('data-presentation', 'on')
       await networkQuiet(page, api)
+      if (report.open) {
+        await report.open(page)
+        await networkQuiet(page, api)
+      }
       await expect(page.locator('[data-chart-frame]')).toHaveCount(report.frames)
       await expect
         // Compare (VIZ-605) with nothing chosen in the filter bar states it, by design: not-measured.

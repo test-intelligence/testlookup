@@ -69,6 +69,7 @@ describe('report routes — held to App.tsx', () => {
         '/release-gate',
         '/runs/compare',
         '/flaky-coach',
+        '/flaky',
       ].sort(),
     )
   })

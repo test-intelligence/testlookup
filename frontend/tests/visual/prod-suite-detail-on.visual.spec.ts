@@ -12,6 +12,9 @@
  * region with every flag off). S5: the scatter asks no flag either (the
  * Wave 3 test sets none), and its toolbar now always offers "View in 3D", so
  * `suite-on-scatter` and `suite-on-scatter-selected` gain that button.
+ * UX redesign P4: the URL redirects to the suite page's Charts tab
+ * (`/suites/<id>?tab=charts`), which renders these frames and sections
+ * unchanged; each region is the frame or section itself.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'

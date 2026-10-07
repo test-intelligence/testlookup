@@ -1,10 +1,37 @@
-import { useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRightLeft, BarChart3, ExternalLink, X } from 'lucide-react'
+/**
+ * The suite page, `/suites/:suiteId` (UX redesign P4: one page for one suite).
+ *
+ * It was two pages keyed differently — this catalog (by id) and the analytics
+ * at `/coverage/suite?name=` (by name) — that a reader had to hop between to
+ * answer "how is this suite doing, and which of its tests?". Now:
+ *
+ *   header (suite name, ?, ⋯) with the tabs Tests · Runs · Charts
+ *   toolbar: the global window
+ *   KPI strip: the window's tests, executions, pass rate, failed, avg duration
+ *   Tests (default): the catalog, each test with its pass rate, executions,
+ *     duration, latest result, flaky flag and last error — Move and the bulk
+ *     move kept (`suite/SuiteTestsTable`)
+ *   Runs: the suite's recent runs with this suite's counts in each
+ *   Charts: the run history, per-day pass rate, test x run heatmap and test
+ *     scatter — the former `/coverage/suite` charts (`SuiteChartsPanel`,
+ *     lazy: the Tests tab loads no chart code)
+ *
+ * `/coverage/suite?name=X` redirects here (`?tab=charts`), keeping its other
+ * parameters: an old link's `?days=` becomes the window (`useSuiteWindow`).
+ */
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { Activity, ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Layers, X, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
+import { useTabParam } from '@/components/ui/useTabParam'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
   refreshSuites,
@@ -14,7 +41,59 @@ import {
 } from '@/hooks/useSuites'
 import { useSuiteDetail } from '@/hooks/useMetrics'
 import { suitesService } from '@/services/suitesService'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
+import type { SuiteDetailTestCase } from '@/types/analytics'
 import type { CanonicalTestCase, TestSuite } from '@/types/suites'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
+import SuiteTestsTable from './suite/SuiteTestsTable'
+import { RecentRunsTable } from './suite/SuiteParts'
+import { formatSuiteDuration } from './suite/format'
+
+// The Charts tab's chart code (the kit's frames, the Wave 3 composite) loads
+// when the tab is first opened, not with the catalog.
+const SuiteChartsPanel = lazyWithRetry<{ suiteName: string; days: number }>(() =>
+  import('./SuiteDetailPage').then((m) => ({ default: m.SuiteChartsPanel })),
+)
+
+const SUITE_TABS = ['tests', 'runs', 'charts'] as const
+type SuiteTab = (typeof SUITE_TABS)[number]
+
+const TAB_LABEL: Record<SuiteTab, string> = { tests: 'Tests', runs: 'Runs', charts: 'Charts' }
+
+/**
+ * The analytics' per-test rows are capped (`analytics_service.get_suite_detail`,
+ * `LIMIT 200`, most failures first): at the cap, a catalog row without a match
+ * may have run but not made the cut, and the table says so.
+ */
+const SUITE_DETAIL_ROW_CAP = 200
+
+/**
+ * The page's window: the global one (`WindowPicker`). A link from the former
+ * `/coverage/suite` page may carry `?days=`; a valid one is adopted into the
+ * global window once and removed from the URL, so the picker and the data
+ * never disagree (that page's URL pinned the window over the picker, the
+ * 2026-05-19 bug). An invalid one (`?days=365`) is dropped.
+ */
+function useSuiteWindow(): number {
+  const [params, setParams] = useSearchParams()
+  const stored = useTimeWindowStore((s) => s.days)
+  const setStored = useTimeWindowStore((s) => s.setDays)
+  const raw = params.get('days')
+  const fromUrl = raw !== null && (DEFAULT_WINDOW_OPTIONS as readonly number[]).includes(Number(raw)) ? Number(raw) : null
+  useEffect(() => {
+    if (raw === null) return
+    if (fromUrl !== null) setStored(fromUrl)
+    setParams(
+      (current) => {
+        const out = new URLSearchParams(current)
+        out.delete('days')
+        return out
+      },
+      { replace: true },
+    )
+  }, [raw, fromUrl, setStored, setParams])
+  return fromUrl ?? snapToAllowed(stored, DEFAULT_WINDOW_OPTIONS)
+}
 
 interface MoveModalProps {
   canonical: CanonicalTestCase
@@ -214,35 +293,29 @@ function BulkMoveModal({
   )
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
-  deleted: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
-  needs_review: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
-}
-
-function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLOR[status] || 'bg-[var(--color-bg-hover)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/30'
-  return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ring-1 ring-inset ${cls}`}>
-      {status}
-    </span>
-  )
-}
-
 export default function SuiteCasesPage() {
   const { suiteId } = useParams<{ suiteId: string }>()
-  const navigate = useNavigate()
   const { hasRole } = usePermissions()
   const canEdit = hasRole('QA_ENGINEER')
+  const [tab, setTab] = useTabParam(SUITE_TABS, 'tests')
+  const days = useSuiteWindow()
 
   const { data: suite, isLoading: suiteLoading, error: suiteError } = useSuite(suiteId)
   const { data: casesData, isLoading: casesLoading } = useSuiteTestCases(suiteId)
   const { data: allSuites } = useSuites()
-  // Pull run-level aggregates for the same suite so the empty state can
-  // distinguish "this suite has truly never ingested anything" from
-  // "runs landed but per-test rows were not persisted" (the JUnit-XML
-  // run-summary / live-buffer-eviction case). Mirrors the wording used
-  // by ``/test-management?tab=Test+Suites`` and ``/coverage/suite``.
+  // The window's analytics for this suite (release-scoped like every result
+  // on the page): the KPI strip, the Tests tab's per-test columns and the
+  // Runs tab read the one response. The Charts tab asks the same key, so SWR
+  // sends it once.
+  const { data: detail, isLoading: detailLoading, error: detailError } = useSuiteDetail(suite?.name ?? null, days)
+  const cases = useMemo(() => casesData?.items ?? [], [casesData])
+  const catalogEmpty = casesData !== undefined && cases.length === 0
+  // Run-level aggregates for the same suite so an EMPTY catalog can tell
+  // "this suite has truly never ingested anything" from "runs landed but
+  // per-test rows were not persisted" (the JUnit-XML run-summary /
+  // live-buffer-eviction case). Mirrors the wording used by
+  // ``/test-management?tab=Test+Suites``. Asked only when the catalog is
+  // empty: a populated catalog needs no diagnosis.
   //
   // Deliberately NOT release-scoped. The comparison below is against an
   // unscoped list of test cases, and "did ingestion drop the per-test rows?"
@@ -250,7 +323,7 @@ export default function SuiteCasesPage() {
   // these totals would retract the warning whenever the reader happened to
   // have a release selected the suite has no runs in — the filter would hide
   // an ingestion bug instead of narrowing a result.
-  const { data: suiteSummary } = useSuiteDetail(suite?.name ?? null, 30, {
+  const { data: suiteSummary } = useSuiteDetail(catalogEmpty ? suite?.name ?? null : null, 30, {
     releaseScoped: false,
   })
   const runLevelExecutions = suiteSummary?.summary?.total_executions ?? 0
@@ -267,18 +340,27 @@ export default function SuiteCasesPage() {
     return allSuites.items.filter((s) => s.project_id === suite.project_id)
   }, [allSuites, suite])
 
+  const stats = useMemo(() => {
+    const byFingerprint = new Map<string, SuiteDetailTestCase>()
+    for (const row of detail?.test_cases ?? []) byFingerprint.set(row.test_fingerprint, row)
+    return byFingerprint
+  }, [detail])
+
   if (suiteLoading) return <LoadingSpinner size="lg" />
   if (suiteError || !suite) {
     return <EmptyState title="Suite not found" description="It may have been deleted." />
   }
 
-  const cases = casesData?.items ?? []
+  const summary = detail?.summary
+  const recentRuns = detail?.recent_runs ?? []
+  const windowHasRuns = (summary?.total_executions ?? 0) > 0 || recentRuns.length > 0
+  const statsCapped = (detail?.test_cases?.length ?? 0) >= SUITE_DETAIL_ROW_CAP
+  const noRunTitle = `Not run in the last ${days} days`
+
   // Hard cap mirrors the backend's BULK_LINK_MAX_IDS so the action bar
   // can disable / warn before the user fires a doomed request. Users
   // who hit this should split the selection.
   const BULK_LINK_MAX = 200
-  const allSelected = cases.length > 0 && cases.every((c) => selectedIds.has(c.id))
-  const someSelected = !allSelected && cases.some((c) => selectedIds.has(c.id))
 
   function toggleOne(id: string) {
     setSelectedIds((prev) => {
@@ -290,6 +372,7 @@ export default function SuiteCasesPage() {
   }
 
   function toggleAll() {
+    const allSelected = cases.length > 0 && cases.every((c) => selectedIds.has(c.id))
     if (allSelected) {
       setSelectedIds(new Set())
     } else {
@@ -301,182 +384,162 @@ export default function SuiteCasesPage() {
     setSelectedIds(new Set())
   }
 
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => navigate('/suites')}
-        className="mb-3 inline-flex items-center gap-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-      >
-        <ArrowLeft className="h-4 w-4" /> All suites
-      </button>
+  const tabs: TabItem<SuiteTab>[] = [
+    { id: 'tests', label: TAB_LABEL.tests, count: casesData ? cases.length : undefined },
+    { id: 'runs', label: TAB_LABEL.runs, count: detail ? recentRuns.length : undefined },
+    { id: 'charts', label: TAB_LABEL.charts },
+  ]
 
+  return (
+    <div className="space-y-4">
       <PageHeader
+        compact
         title={suite.is_default ? `${suite.name} (default)` : suite.name}
-        subtitle={suite.description ?? 'No description'}
-        actions={
-          // Pivot from catalog ("what tests live in this suite") to
-          // analytics ("how have those tests performed"). The two views
-          // are owned by different routes; this link is the one place
-          // a QA lead can hop between them without losing context. The
-          // analytics page reads ``?name=`` from the URL (see
-          // ``SuiteDetailPage``) — we pass the canonical suite name
-          // verbatim. Time window is picked up from the shared
-          // ``timeWindowStore`` on the destination page.
-          <Link
-            to={`/coverage/suite?name=${encodeURIComponent(suite.name)}`}
-            className="inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
-          >
-            <BarChart3 className="h-4 w-4" /> Open analytics
-          </Link>
-        }
+        subtitle={suite.description ?? undefined}
+        helpTopic={helpTopicParam('/suites')}
+        overflow={[{ label: 'All suites', href: '/suites', icon: <ArrowLeft className="h-4 w-4" /> }]}
+        tabs={<Tabs items={tabs} value={tab} onChange={setTab} ariaLabel="Suite sections" />}
       />
 
-      {casesLoading ? (
-        <LoadingSpinner />
-      ) : cases.length === 0 && (runLevelExecutions > 0 || runLevelUnique > 0) ? (
-        <div className="rounded border border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/5 px-4 py-3 text-sm text-[var(--status-broken)]">
-          <p className="font-medium">
-            {runLevelUnique || runLevelExecutions} test{(runLevelUnique || runLevelExecutions) === 1 ? '' : 's'} reported by recent runs, but per-test rows are missing for this suite.
-          </p>
-          <p className="mt-1 text-xs text-[var(--status-broken)]/80">
-            This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
-            the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
-            or the live buffer evicted before persistence. Re-run the suite to populate detail rows, or
-            {' '}
-            <Link to={`/coverage/suite?name=${encodeURIComponent(suite.name)}`} className="underline decoration-dotted underline-offset-2 hover:text-[var(--status-broken)]">
-              open analytics
-            </Link>
-            {' '}
-            to see the run-level totals.
-          </p>
-        </div>
-      ) : cases.length === 0 ? (
-        <EmptyState
-          title="No test cases in this suite"
-          description="Ingest a run that tags tests with this suite name, or move existing cases here from another suite."
-        />
-      ) : (
-        <div className="overflow-hidden rounded-lg ring-1 ring-[var(--color-border)]">
-          <table className="w-full divide-y divide-[var(--color-border)] text-sm">
-            <thead className="bg-[var(--color-bg-secondary)] text-left text-xs uppercase text-[var(--color-text-muted)]">
-              <tr>
-                {canEdit && (
-                  <th className="w-10 px-4 py-2">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      ref={(el) => { if (el) el.indeterminate = someSelected }}
-                      onChange={toggleAll}
-                      aria-label={allSelected ? 'Deselect all' : 'Select all'}
-                      className="h-4 w-4 cursor-pointer"
-                    />
-                  </th>
-                )}
-                <th className="px-4 py-2 font-medium">Test</th>
-                <th className="px-4 py-2 font-medium">Class</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Source</th>
-                {/* The row carries the latest run's id, not a timestamp, so
-                    this column names the run rather than claiming a date. */}
-                <th className="px-4 py-2 font-medium">Latest run</th>
-                <th className="px-4 py-2 font-medium" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {cases.map((c) => {
-                // Primary row click → canonical detail page (full run
-                // history). The per-run deep link is preserved as a
-                // small icon button so the "I just want the latest
-                // execution" path still takes one click. Rows derived
-                // from the legacy fallback path don't have a real
-                // canonical id mapped 1:1 (they use the TestCase.id as
-                // their row id — see ``list_legacy_suite_test_cases``),
-                // so we still offer the per-run jump for those.
-                const detailHref = `/canonical-test-cases/${c.id}`
-                const runHref = c.last_seen_run_id && c.last_seen_test_case_id
-                  ? `/runs/${c.last_seen_run_id}/tests/${c.last_seen_test_case_id}`
-                  : c.last_seen_run_id
-                    ? `/runs/${c.last_seen_run_id}`
-                    : null
-                const checked = selectedIds.has(c.id)
-                return (
-                  <tr
-                    key={c.id}
-                    onClick={() => navigate(detailHref)}
-                    className="cursor-pointer hover:bg-[var(--color-bg-secondary)]"
-                  >
-                    {canEdit && (
-                      <td className="px-4 py-2">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleOne(c.id)}
-                          onClick={e => e.stopPropagation()}
-                          aria-label={`Select ${c.test_name}`}
-                          className="h-4 w-4 cursor-pointer"
-                        />
-                      </td>
-                    )}
-                    <td className="px-4 py-2 font-medium text-[var(--color-text)]">
-                      <Link
-                        to={detailHref}
-                        onClick={e => e.stopPropagation()}
-                        className="hover:text-[var(--color-accent)] hover:underline"
-                      >
-                        {c.test_name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-[var(--color-text-muted)]">{c.class_name ?? '—'}</td>
-                    <td className="px-4 py-2"><StatusPill status={c.status} /></td>
-                    <td className="px-4 py-2 text-[var(--color-text-muted)]">{c.source}</td>
-                    <td className="px-4 py-2 text-[var(--color-text-muted)] text-xs">
-                      {c.last_seen_run_id ? (
-                        <Link
-                          to={`/runs/${c.last_seen_run_id}`}
-                          onClick={e => e.stopPropagation()}
-                          title={`Open run ${c.last_seen_run_id}`}
-                          className="hover:text-[var(--color-accent)] hover:underline"
-                        >
-                          run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <div className="inline-flex items-center gap-1">
-                        {runHref && (
-                          <Link
-                            to={runHref}
-                            onClick={e => e.stopPropagation()}
-                            title="Open latest run"
-                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-                          >
-                            <ExternalLink className="h-3 w-3" /> Run
-                          </Link>
-                        )}
-                        {canEdit && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setMoveTarget(c) }}
-                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-                          >
-                            <ArrowRightLeft className="h-3 w-3" /> Move
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* One toolbar row: the window every tab reads (the page is one suite, so no suite filter). */}
+      <div data-toolbar="" className="flex flex-wrap items-center gap-3">
+        <WindowPicker />
+      </div>
+
+      {/* The window's totals for the suite. Nothing ran in the window: no
+          strip (a row of zeros would read as a measured 0 %). */}
+      {(detailLoading || windowHasRuns) && (
+        <KpiStrip>
+          {[
+            <MetricCard
+              key="tests"
+              compact
+              title="Tests run"
+              hint="Unique tests that ran in the window (the Tests tab counts the whole catalog)"
+              icon={<Layers className="h-4 w-4" />}
+              loading={detailLoading}
+              metric={{ value: summary?.unique_tests ?? 0 }}
+            />,
+            <MetricCard
+              key="executions"
+              compact
+              title="Executions"
+              icon={<Activity className="h-4 w-4" />}
+              loading={detailLoading}
+              metric={{ value: summary?.total_executions ?? 0 }}
+            />,
+            <MetricCard
+              key="pass-rate"
+              compact
+              title="Pass rate"
+              hint="Passed over evaluated executions (skipped excluded)"
+              icon={<CheckCircle2 className="h-4 w-4" />}
+              loading={detailLoading}
+              metric={{ value: summary?.pass_rate != null ? `${Number(summary.pass_rate).toFixed(1)}%` : '—' }}
+            />,
+            <MetricCard
+              key="failed"
+              compact
+              title="Failed"
+              hint="Executions that failed or broke"
+              icon={<XCircle className="h-4 w-4" />}
+              loading={detailLoading}
+              metric={{ value: summary?.failed ?? 0 }}
+            />,
+            <MetricCard
+              key="duration"
+              compact
+              title="Avg duration"
+              icon={<Clock className="h-4 w-4" />}
+              loading={detailLoading}
+              metric={{ value: formatSuiteDuration(summary?.avg_duration_ms) }}
+            />,
+          ]}
+        </KpiStrip>
       )}
 
+      <div role="tabpanel" aria-label={TAB_LABEL[tab]} data-tab-panel={tab} className="min-w-0">
+        {tab === 'tests' && (
+          casesLoading ? (
+            <LoadingSpinner />
+          ) : cases.length === 0 && (runLevelExecutions > 0 || runLevelUnique > 0) ? (
+            <div className="rounded border border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/5 px-4 py-3 text-sm text-[var(--status-broken)]">
+              <p className="font-medium">
+                {runLevelUnique || runLevelExecutions} test{(runLevelUnique || runLevelExecutions) === 1 ? '' : 's'} reported by recent runs, but per-test rows are missing for this suite.
+              </p>
+              <p className="mt-1 text-xs text-[var(--status-broken)]/80">
+                This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
+                the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
+                or the live buffer evicted before persistence. Re-run the suite to populate detail rows, or
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => setTab('charts')}
+                  className="underline decoration-dotted underline-offset-2 hover:text-[var(--status-broken)]"
+                >
+                  open the Charts tab
+                </button>
+                {' '}
+                to see the run-level totals.
+              </p>
+            </div>
+          ) : cases.length === 0 ? (
+            <EmptyState
+              title="No test cases in this suite"
+              description="Ingest a run that tags tests with this suite name, or move existing cases here from another suite."
+            />
+          ) : (
+            <div className="space-y-2">
+              <SuiteTestsTable
+                cases={cases}
+                stats={stats}
+                noRunTitle={noRunTitle}
+                canEdit={canEdit}
+                selectedIds={selectedIds}
+                onToggleOne={toggleOne}
+                onToggleAll={toggleAll}
+                onMove={setMoveTarget}
+              />
+              {/* The run columns are the window's analytics: say when they
+                  could not be read, or cover only part of the catalog. */}
+              {detailError ? (
+                <p data-stats-note="" className="text-xs text-[var(--status-failed)]">
+                  Run statistics could not be loaded: the pass rate, executions, duration and latest result columns are empty.
+                </p>
+              ) : statsCapped ? (
+                <p data-stats-note="" className="text-xs text-[var(--color-text-muted)]">
+                  Run statistics cover the {SUITE_DETAIL_ROW_CAP} tests with the most failures in the last {days} days.
+                </p>
+              ) : null}
+            </div>
+          )
+        )}
+
+        {tab === 'runs' && (
+          detailLoading ? (
+            <LoadingSpinner />
+          ) : detailError ? (
+            <EmptyState title="Failed to load the suite's runs" description="Check the console for errors or try again" />
+          ) : recentRuns.length === 0 ? (
+            <EmptyState title="No runs in this window" description={`No run of this suite in the last ${days} days.`} />
+          ) : (
+            <RecentRunsTable runs={recentRuns} primary />
+          )
+        )}
+
+        {tab === 'charts' && (
+          <Suspense fallback={<div className="flex h-64 items-center justify-center"><LoadingSpinner size="lg" /></div>}>
+            <SuiteChartsPanel suiteName={suite.name} days={days} />
+          </Suspense>
+        )}
+      </div>
+
       {/* Sticky bulk-action bar — visible only when the user has at least
-          one row selected. Positioned at the bottom of the viewport so
-          long lists keep both the selection counter + action button
-          accessible without scrolling back up. */}
-      {canEdit && selectedIds.size > 0 && (
+          one row selected (on the Tests tab, where the rows are).
+          Positioned at the bottom of the viewport so long lists keep both
+          the selection counter + action button accessible without
+          scrolling back up. */}
+      {canEdit && tab === 'tests' && selectedIds.size > 0 && (
         <div
           role="region"
           aria-label="Bulk actions"
@@ -538,6 +601,6 @@ export default function SuiteCasesPage() {
           }}
         />
       )}
-    </>
+    </div>
   )
 }

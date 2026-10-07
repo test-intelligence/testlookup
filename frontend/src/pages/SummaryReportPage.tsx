@@ -1,7 +1,24 @@
 /**
  * Project Summary Report — consolidated view of every test suite for the
  * active project. Two aggregation modes (window / latest-per-suite) plus
- * a PDF export.
+ * PDF / Excel / HTML exports.
+ *
+ * The page template (UX redesign P3, `02-design-spec.md` §2, §5 "Reports ›
+ * Summary"), top to bottom:
+ *   Header  → title, Views (the one secondary action), and ⋯ with every
+ *             export: PDF, Excel, each "in background", the HTML analysis
+ *             reports (1d, 7d).
+ *   Toolbar → the global WindowPicker (24h / 7d / 30d / 90d), the
+ *             Aggregation toggle, the release-scope badge.
+ *   KPIs    → ONE row of five compact MetricCards (the old six tiles and the
+ *             counts strip merged: every count and rate is still on it), and
+ *             the window's run facts on one line under it.
+ *   Primary → the catalogue's results-by-suite bars and the per-suite table
+ *             under it (`data-primary`). No status donut: the KPI row
+ *             carries its counts.
+ *   Below   → the pass-rate trend in a collapsed "Trend" disclosure (asked
+ *             for only once opened), the top failing tests table, then the
+ *             background exports.
  *
  * Data: ``/api/v1/reports/summary`` via ``useSummaryReport``.
  * Export: ``/api/v1/reports/summary/pdf`` via ``summaryReportService.downloadPdf``.
@@ -11,11 +28,14 @@ import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
-import {
-  BarChart3, CheckCircle2, Clock, Download, FileText, Layers, ListChecks,
-  MinusCircle, TriangleAlert, XCircle, Zap,
-} from 'lucide-react'
+import { BarChart3, Download, FileText, Layers, TriangleAlert } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import WindowPicker from '@/components/ui/WindowPicker'
+import Disclosure from '@/components/ui/Disclosure'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
@@ -26,8 +46,9 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useSummaryReport, useSummaryReportScope } from '@/hooks/useSummaryReport'
 import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
-import type { SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
+import type { SummaryReport, SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
+import { formatDuration } from '@/utils/formatters'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
 import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
@@ -40,6 +61,10 @@ import type { SavedView } from '@/services/savedViewsService'
 const loadSummaryCatalogue = () => import('@/components/reports/catalogue/SummaryCatalogue')
 const SummaryCatalogue = lazyWithRetry(loadSummaryCatalogue)
 
+/** The page's help topic (the header's **?**). */
+const HELP_TOPIC = helpTopicParam('/reports/summary')
+
+/** The windows the report answers (the toolbar's WindowPicker offers these). */
 const DAYS_OPTIONS = [1, 7, 30, 90] as const
 /** Aggregation mode is page-local — different from the global window
  *  preference. Persisted here so the user's mode choice survives
@@ -101,19 +126,15 @@ export default function SummaryReportPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   // Window is a global preference — picking 24h here propagates to /live,
-  // /coverage, /trends, /runs, /failures, /overview, /my-failures.
-  // Snap to this page's allowed set so a value picked elsewhere (e.g. 14d
-  // on Live) maps to the nearest supported option here.
+  // /coverage, /trends, /runs, /failures, /overview, /my-failures. The
+  // toolbar's WindowPicker writes it; a value picked elsewhere (e.g. 14d on
+  // Live) is snapped to the nearest option here, as the picker snaps it.
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, DAYS_OPTIONS)
-  const setDays = setStoredDays
 
   // Aggregation mode is page-local (no other page has the concept).
   const [mode, setMode] = useState<SummaryReportMode>(() => loadStoredMode())
   const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null)
-  // VIZ-607: send the export to the background even when it is small.
-  const [inBackground, setInBackground] = useState(false)
   // Bumped when an export is queued, so the exports panel re-reads at once.
   const [exportsToken, setExportsToken] = useState(0)
   // US-7.5: on-demand download of the self-contained HTML analysis report
@@ -157,7 +178,9 @@ export default function SummaryReportPage() {
   const windowLabel = days === 1 ? '24h' : `${days}d`
 
   // VIZ-607: PDF (charts drawn by the server) or Excel (a sheet per part, native charts).
-  const handleDownload = async (format: 'pdf' | 'xlsx') => {
+  // `inBackground`: the "… in background" items, which send even a small report
+  // to the worker (the old "In background" checkbox, one menu item per format).
+  const handleDownload = async (format: 'pdf' | 'xlsx', inBackground = false) => {
     if (!project?.id) {
       toast.error('Select a single project before exporting.')
       return
@@ -234,8 +257,10 @@ export default function SummaryReportPage() {
     return (
       <>
         <PageHeader
+          compact
           title="Summary Report"
           subtitle="Consolidated pass / fail / skip / flaky across every test suite for the active project."
+          helpTopic={HELP_TOPIC}
         />
         <EmptyState
           title="Pick a single project"
@@ -250,7 +275,7 @@ export default function SummaryReportPage() {
   if (reportError && !data) {
     return (
       <>
-        <PageHeader title="Summary Report" subtitle={`Project: ${project.name}`} />
+        <PageHeader compact title="Summary Report" subtitle={`Project: ${project.name}`} helpTopic={HELP_TOPIC} />
         <DataUnavailable error={reportError} onRetry={() => void retryReport()} testId="summary-data-unavailable" />
       </>
     )
@@ -259,7 +284,7 @@ export default function SummaryReportPage() {
   if (isLoading && !data) {
     return (
       <>
-        <PageHeader title="Summary Report" subtitle={`Project: ${project.name}`} />
+        <PageHeader compact title="Summary Report" subtitle={`Project: ${project.name}`} helpTopic={HELP_TOPIC} />
         <div className="flex items-center justify-center py-16"><LoadingSpinner size="lg" /></div>
       </>
     )
@@ -270,105 +295,60 @@ export default function SummaryReportPage() {
   const topFailing = data?.top_failing_tests ?? []
   const hasData = totals != null && totals.total_test_cases > 0
 
+  // Header ⋯ (P3): every export. The page's one secondary action is Views.
+  const exportBusy = downloading !== null || !hasData
+  const exportItems: OverflowItem[] = [
+    {
+      label: downloading === 'pdf' ? 'Generating PDF…' : 'Export PDF',
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void handleDownload('pdf'),
+      disabled: exportBusy,
+    },
+    {
+      label: downloading === 'xlsx' ? 'Generating Excel…' : 'Export Excel',
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void handleDownload('xlsx'),
+      disabled: exportBusy,
+    },
+    // VIZ-607: generate the file on the server and say when it is ready (large reports always do).
+    {
+      label: 'Export PDF in background',
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void handleDownload('pdf', true),
+      disabled: exportBusy,
+    },
+    {
+      label: 'Export Excel in background',
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void handleDownload('xlsx', true),
+      disabled: exportBusy,
+    },
+    // US-7.5: the self-contained HTML analysis report digest emails attach.
+    ...(['1d', '7d'] as const).map((w): OverflowItem => ({
+      label: downloadingReport === w ? `Generating analysis report (${w})…` : `Analysis report (${w})`,
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void handleDownloadAnalysisReport(w),
+      disabled: downloadingReport !== null,
+    })),
+  ]
+
   return (
-    <>
+    <div className="space-y-4">
+      {/* The subtitle is the window's run facts (the project is the top bar's;
+          what each aggregation counts is the toggle's tooltip, §2). */}
       <PageHeader
+        compact
         title="Summary Report"
-        subtitle={`Project: ${project.name} · ${MODE_LABELS[mode].hint}`}
-        actions={
-          // Wraps below 1024 px only (VIZ-106): four controls in one unbreakable
-          // row pushed the page sideways on a phone. `max-lg:` and not a plain
-          // `flex-wrap`: on Linux fonts (DejaVu) the plain one re-laid this row
-          // at 1280 and moved everything under the header by a fraction of a
-          // pixel, which changed all four flag-off Summary baselines. At and
-          // above 1024 px the row is the Wave 2.5 row, led by the P1 Views button.
-          <div className="flex max-lg:flex-wrap items-center gap-2">
-            {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-            {/* The report's output LEAVES the tool (a PDF attached to a go/no-go
-                thread), so the badge states the release scope the SERVER
-                applied — `meta.scope.releases` — rather than what the client
-                asked for. */}
-            <SummaryScopeBadge meta={data?.meta} requestedReleaseId={scope.release_id ?? null} />
-            {(['1d', '7d'] as const).map(w => (
-              <button
-                key={w}
-                type="button"
-                onClick={() => handleDownloadAnalysisReport(w)}
-                disabled={downloadingReport !== null}
-                title={`Self-contained HTML analysis report for the last ${w === '1d' ? 'day' : '7 days'} — the same document digest emails attach.`}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  background: 'transparent',
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-text-muted)',
-                }}
-              >
-                <Download className="h-3.5 w-3.5" />
-                {downloadingReport === w ? 'Generating…' : `Analysis report (${w})`}
-              </button>
-            ))}
-            {(['pdf', 'xlsx'] as const).map((format) => (
-              <button
-                key={format}
-                type="button"
-                data-summary-export={format}
-                onClick={() => void handleDownload(format)}
-                disabled={downloading !== null || !hasData}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  background: hasData ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
-                  borderColor: hasData ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-                  color: hasData ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                }}
-              >
-                <Download className="h-3.5 w-3.5" />
-                {downloading === format ? 'Generating…' : format === 'pdf' ? 'Export PDF' : 'Export Excel'}
-              </button>
-            ))}
-            <label
-              className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)] cursor-pointer select-none"
-              title="Generate the file on the server and tell me when it is ready. Large reports always do."
-            >
-              <input
-                type="checkbox"
-                data-summary-export-background=""
-                checked={inBackground}
-                onChange={e => setInBackground(e.target.checked)}
-              />
-              In background
-            </label>
-          </div>
-        }
+        subtitle={data ? runFactsLine(data) : `Project: ${project.name}`}
+        helpTopic={HELP_TOPIC}
+        actions={viewsMenu ? <SavedViewsMenu {...viewsMenu} variant="ghost" /> : undefined}
+        overflow={exportItems}
       />
 
-      {/* VIZ-607: the reader's background exports (hidden while there are none). */}
-      <ReportExportsPanel projectId={project.id} refreshToken={exportsToken} />
-
-      {/* Filter row: window chips + mode toggle */}
-      <div className="flex items-center gap-3 flex-wrap mb-4">
-        <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider">Window</span>
-        <div role="radiogroup" aria-label="Time window" className="flex items-center gap-1.5">
-          {DAYS_OPTIONS.map(d => {
-            const active = days === d
-            return (
-              <button
-                key={d}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => setDays(d)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
-                style={{
-                  background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
-                  borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-                  color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                }}
-              >
-                {d === 1 ? '24h' : `${d}d`}
-              </button>
-            )
-          })}
-        </div>
+      {/* One toolbar row: the global window, the aggregation, and the release
+          scope the report covers. */}
+      <div className="flex items-center gap-3 flex-wrap" data-summary-toolbar="">
+        <WindowPicker options={DAYS_OPTIONS} />
         <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
         <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider">Aggregation</span>
         <div role="radiogroup" aria-label="Aggregation mode" className="flex items-center gap-1.5">
@@ -394,6 +374,10 @@ export default function SummaryReportPage() {
             )
           })}
         </div>
+        {/* The report's output LEAVES the tool (a PDF attached to a go/no-go
+            thread), so the badge states the release scope the SERVER applied —
+            `meta.scope.releases` — rather than what the client asked for. */}
+        <SummaryScopeBadge meta={data?.meta} requestedReleaseId={scope.release_id ?? null} />
         {data?.generated_at && (
           <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">
             Generated {fmtDateTime(data.generated_at)}
@@ -401,7 +385,7 @@ export default function SummaryReportPage() {
         )}
       </div>
 
-      {!hasData || totals == null ? (
+      {!hasData || totals == null || data == null ? (
         <EmptyState
           title="No executions in this window"
           description={`No test runs were recorded for ${project.name} in the last ${windowLabel}. Ingest a run or widen the window to populate this report.`}
@@ -409,79 +393,48 @@ export default function SummaryReportPage() {
         />
       ) : (
         <>
-          {/* Headline KPIs */}
-          <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
-            <KpiTile label="Total tests"   value={fmtInt(totals.total_test_cases)} icon={<ListChecks className="h-4 w-4" />} tone="neutral" />
-            {/* F-067: name the population. This report counts each distinct
-                test once ("per unique test", 83.3% on the measured window)
-                while /overview counts every execution ("per test execution",
-                81.0%). Same window, both correct — and indistinguishable
-                without the basis. Falls back to the old copy if the API omits
-                it (a cached pre-#778 payload). */}
-            <KpiTile label="Pass %"        value={fmtPct(totals.pass_rate_pct)}    icon={<CheckCircle2 className="h-4 w-4" />} tone="good"
-                     sub={totals.pass_rate_basis_label
-                       ? `${totals.pass_rate_basis_label} · weighted ${fmtPct(totals.weighted_pass_rate_pct)}`
-                       : `weighted ${fmtPct(totals.weighted_pass_rate_pct)}`} />
-            <KpiTile label="Fail %"        value={fmtPct(totals.fail_rate_pct)}    icon={<XCircle className="h-4 w-4" />} tone="bad" />
-            <KpiTile label="Skip %"        value={fmtPct(totals.skip_rate_pct)}    icon={<MinusCircle className="h-4 w-4" />} tone="warn" />
-            <KpiTile label="Broken %"      value={fmtPct(totals.broken_rate_pct)}  icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
-            <KpiTile label="Flaky"         value={fmtInt(data?.flaky_test_count)}   icon={<Zap className="h-4 w-4" />} tone="warn"
-                     sub={flakySubtitle(data?.flaky_rate_pct, data?.flaky_criteria, data?.flaky_test_count)}
-                     title={flakyCriteriaSentence(data?.flaky_criteria)} />
-          </section>
+          <SummaryKpis report={data} />
 
-          {/* Counts strip */}
-          <section className="card mb-5">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 text-sm">
-              <Count label="Passed"    value={totals.passed}   color="text-[var(--status-passed)]" />
-              <Count label="Failed"    value={totals.failed}   color="text-[var(--status-failed)]" />
-              <Count label="Skipped"   value={totals.skipped}  color="text-[var(--status-broken)]" />
-              <Count label="Broken"    value={totals.broken}   color="text-[var(--status-failed)]" />
-              <Count label="Evaluated" value={totals.evaluated} color="text-[var(--color-text)]" />
-            </div>
-            <div className="mt-3 pt-3 border-t border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] flex flex-wrap gap-x-4 gap-y-1">
-              <span className="inline-flex items-center gap-1"><Layers className="h-3 w-3" />Runs in window: <strong className="text-[var(--color-text)] tabular-nums">{fmtInt(data?.run_count)}</strong></span>
-              {data?.runs_per_day != null && (
-                <span>Avg / day: <strong className="text-[var(--color-text)] tabular-nums">{data.runs_per_day.toFixed(2)}</strong></span>
-              )}
-              <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />Avg duration: <strong className="text-[var(--color-text)] tabular-nums">{fmtInt(data?.avg_duration_ms)} ms</strong></span>
-              {data?.latest_run_at && (
-                <span>Latest run: <strong className="text-[var(--color-text)]">{fmtDateTime(data.latest_run_at)}</strong></span>
-              )}
-            </div>
-          </section>
-
-          {/* VIZ-408: the status donut and results by suite, then the
-              trend (lazy), above the table they summarise. Until their chunk
-              arrives the page draws the frames' boxes itself, from this report
-              and with no chart code, so the tables below never move (R1-2)
-              and the page's largest paint is not held for the charts. */}
-          {data && (
+          {/* The page's primary content: the catalogue's results-by-suite
+              bars with the per-suite table under it. Until the section chunk
+              arrives the page draws the frame's box itself, from this report
+              and with no chart code, so the table never moves (R1-2) and the
+              page's largest paint is not held for the charts.
+              No status donut (UX redesign P3, §5): its four counts — passed,
+              failed, broken, skipped, per unique test — are the KPI row's
+              tiles right above, from the same `totals`. */}
+          <div data-primary="">
             <SectionErrorBoundary message="Failed to load charts">
-              <Suspense fallback={<SummaryCatalogueShell part="headline" report={data} days={days} mode={mode} />}>
-                <SummaryCatalogue part="headline" report={data} days={days} mode={mode} />
+              <Suspense fallback={<SummaryCatalogueShell part="suites" report={data} days={days} mode={mode} />}>
+                <SummaryCatalogue part="suites" report={data} days={days} mode={mode} />
               </Suspense>
             </SectionErrorBoundary>
-          )}
 
-          {/* Per-suite breakdown */}
-          <section className="mb-5">
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
-              <Layers className="h-3.5 w-3.5" /> Per-suite breakdown
-              <span className="ml-1 text-[10px] font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
-            </h2>
-            <SuiteTable rows={suites} />
-          </section>
+            <section>
+              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+                <Layers className="h-3.5 w-3.5" /> Per-suite breakdown
+                <span className="ml-1 text-[10px] font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
+              </h2>
+              <SuiteTable rows={suites} />
+            </section>
+          </div>
 
-          {data && topFailing.length > 0 && (
-            <SectionErrorBoundary message="Failed to load charts">
-              <Suspense fallback={<SummaryCatalogueShell part="top-failing" report={data} days={days} mode={mode} />}>
-                <SummaryCatalogue part="top-failing" report={data} days={days} mode={mode} />
+          {/* The pass-rate trend, collapsed (§5): the one chart with a request
+              of its own (`/metrics/trends`), which it makes only once opened
+              and near the reader (its own lazy section). It counts
+              executions, not unique tests, and its caption says so. */}
+          <Disclosure title="Trend" summary={`pass rate per day · ${windowLabel}`}>
+            <SectionErrorBoundary message="Failed to load the trend">
+              <Suspense fallback={<SummaryCatalogueShell part="trend" report={data} days={days} mode={mode} />}>
+                <SummaryCatalogue part="trend" report={data} days={days} mode={mode} />
               </Suspense>
             </SectionErrorBoundary>
-          )}
+          </Disclosure>
 
-          {/* Top failing tests */}
+          {/* Top failing tests. P3 deleted the "Failures by test" bars above
+              this table (§5 "duplicate failing-tests chart"): they drew the
+              top ten of these same rows; the table lists every one, with its
+              suite, class and count. */}
           <section>
             <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
               <TriangleAlert className="h-3.5 w-3.5" /> Top failing tests
@@ -525,10 +478,14 @@ export default function SummaryReportPage() {
           </section>
         </>
       )}
-    </>
+
+      {/* VIZ-607: the reader's background exports (hidden while there are
+          none). Below the report: a finished export also says so in a toast
+          with its Download button. */}
+      <ReportExportsPanel projectId={project.id} refreshToken={exportsToken} />
+    </div>
   )
 }
-
 
 // ── small components ───────────────────────────────────────────────────────
 
@@ -602,49 +559,97 @@ function SummaryScopeBadge({
   )
 }
 
-function KpiTile({
-  label, value, icon, tone, sub, title,
-}: {
-  label: string
-  value: string
-  icon: React.ReactNode
-  tone: 'good' | 'bad' | 'warn' | 'neutral'
-  sub?: string
-  /** Hover/assistive explanation of how the figure was derived. */
-  title?: string
-}) {
-  const toneClasses: Record<typeof tone, string> = {
-    good:    'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)]',
-    bad:     'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)]',
-    warn:    'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)]',
-    neutral: 'bg-white/5 text-[var(--color-text)]',
-  }
+/**
+ * The report's headline numbers in ONE row (UX redesign P3, §5 "one merged KPI
+ * row"): the six tiles and the counts strip under them became five compact
+ * MetricCards, and nothing was dropped — every rate keeps its count beside it:
+ *
+ *   Total tests  the tests, evaluated, and skipped (count and rate)
+ *   Pass %       passed and the population (F-067: "per unique test" here,
+ *                while /overview counts executions); the weighted rate beside
+ *                the value
+ *   Fail %, Broken %   the rate and the count
+ *   Flaky        the count, the rate (or why it is 0), and the rule it applied
+ *                (BUG-007) on hover
+ *
+ * The counts strip's footer (the window's run facts) is the header's subtitle
+ * (`runFactsLine`); when the report was generated sits at the toolbar's end.
+ */
+function SummaryKpis({ report }: { report: SummaryReport }) {
+  const t = report.totals
+  // F-067: name the population. No basis if the API omits it (a cached pre-#778 payload).
+  const basis = t.pass_rate_basis_label?.trim()
+  const line = (text: string) => ({ trend_direction: 'none' as const, trend_text: text })
   return (
-    <div
-      className="card flex items-start justify-between gap-3"
-      role="status"
-      aria-live="polite"
-      title={title}
-    >
-      <div className="min-w-0 flex-1">
-        <p className="text-[10.5px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">{label}</p>
-        {/* `--text-stat-md` is 22 px: the same size, on the token presentation mode raises. */}
-        <p className="font-bold text-[var(--color-text)] tabular-nums leading-tight" style={{ fontSize: 'var(--text-stat-md)' }}>{value}</p>
-        {sub && <p className="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">{sub}</p>}
-      </div>
-      <div className={clsx('p-2 rounded-lg flex-shrink-0', toneClasses[tone])}>{icon}</div>
-    </div>
+    <section aria-label="Summary KPIs">
+      <KpiStrip>
+        <MetricCard
+          compact
+          title="Total tests"
+          icon={null}
+          metric={{
+            value: fmtInt(t.total_test_cases),
+            ...line(`${fmtInt(t.evaluated)} evaluated · ${fmtInt(t.skipped)} skipped (${fmtPct(t.skip_rate_pct)})`),
+          }}
+        />
+        <MetricCard
+          compact
+          title="Pass %"
+          icon={null}
+          metric={{ value: fmtPct(t.pass_rate_pct), ...line(`${fmtInt(t.passed)} passed${basis ? ` · ${basis}` : ''}`) }}
+          sparkline={
+            // Wraps inside its own box ("weighted" over "82.8%") rather than
+            // taking a line of its own under the value: at 1280 px on CI's
+            // font, one unbroken line put the strip 20 px taller.
+            <span data-summary-weighted="" className="block text-right text-[11px] leading-tight text-[var(--color-text-secondary)]">
+              weighted {fmtPct(t.weighted_pass_rate_pct)}
+            </span>
+          }
+        />
+        <MetricCard
+          compact
+          title="Fail %"
+          icon={null}
+          metric={{ value: fmtPct(t.fail_rate_pct), ...line(`${fmtInt(t.failed)} failed`) }}
+        />
+        <MetricCard
+          compact
+          title="Broken %"
+          icon={null}
+          metric={{ value: fmtPct(t.broken_rate_pct), ...line(`${fmtInt(t.broken)} broken`) }}
+        />
+        {/* The flaky rule (BUG-007) on hover: MetricCard itself takes no title. */}
+        <div className="min-w-0" title={flakyCriteriaSentence(report.flaky_criteria)} data-summary-flaky="">
+          <MetricCard
+            compact
+            title="Flaky"
+            icon={null}
+            metric={{
+              value: fmtInt(report.flaky_test_count),
+              ...line(flakySubtitle(report.flaky_rate_pct, report.flaky_criteria, report.flaky_test_count)),
+            }}
+          />
+        </div>
+      </KpiStrip>
+    </section>
   )
 }
 
-function Count({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div>
-      <p className="text-[10.5px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
-      {/* `--text-stat-sm` is 18 px: the same size, on the token presentation mode raises. */}
-      <p className={clsx('font-semibold tabular-nums leading-tight', color)} style={{ fontSize: 'var(--text-stat-sm)' }}>{value.toLocaleString()}</p>
-    </div>
-  )
+/**
+ * The window's run facts — the old counts strip's footer: runs in the window,
+ * runs per day (window mode only: the server sends none for "latest"), average
+ * duration, the latest run. The page header's subtitle carries them (P3): a
+ * line of their own under the KPI row put the primary content past the fold.
+ */
+function runFactsLine(report: SummaryReport): string {
+  return [
+    `Runs in window: ${fmtInt(report.run_count)}`,
+    report.runs_per_day != null ? `Avg / day: ${report.runs_per_day.toFixed(2)}` : null,
+    // A duration, not a count: "512,400 ms" read as a number to divide in
+    // your head; the Dashboard says "8m 32s" for the same mean.
+    `Avg duration: ${formatDuration(Math.round(report.avg_duration_ms))}`,
+    report.latest_run_at ? `Latest run: ${fmtDateTime(report.latest_run_at)}` : null,
+  ].filter((part): part is string => part !== null).join(' · ')
 }
 
 /**

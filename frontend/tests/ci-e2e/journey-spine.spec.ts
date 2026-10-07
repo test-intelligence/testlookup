@@ -1,8 +1,11 @@
 /**
  * The spine: one failure, carried across every hop of the product's core chain.
  *
- *   /runs  ->  /runs/:id  ->  /runs/:id/intelligence  ->  /reports/summary
+ *   /runs  ->  /runs/:id  ->  /runs/:id?tab=analysis  ->  /reports/summary
  *          ->  /release-gate/:id
+ *
+ * (UX redesign P4: the AI report is the Run page's Analysis tab;
+ * `/runs/:id/intelligence` only redirects there.)
  *
  * Gap G1 from the EXJ-2026-09-18 plan: **no test crosses more than one hop.**
  * Forty-five e2e specs and thirty-three live probes each stop at a single page,
@@ -212,6 +215,10 @@ async function installSpineApi(page: Page) {
       })
     }
     if (path === `/api/v1/runs/${RUN_ID}/attribution`) return json(route, { items: [], total: 0 })
+    // The Analysis tab also shows Deep Investigation's clusters for the run
+    // (lists, like the real endpoints: the catch-all's `{}` is not one).
+    if (path === `/api/v1/deep-investigate/${RUN_ID}/clusters`) return json(route, [])
+    if (path === `/api/v1/deep-investigate/${RUN_ID}/findings`) return json(route, [])
     if (path === '/api/v1/scoring-model') return json(route, { version: 1, dimensions: [] })
 
     // ── hop 4: the summary report counts it ────────────────────────────────
@@ -341,27 +348,21 @@ test.describe('journey spine', () => {
   })
 
   test('one failure survives every hop from the run list to the release gate', async ({ page }) => {
-    const apiPaths: string[] = []
-    page.on('request', (r) => {
-      const pth = new URL(r.url()).pathname
-      if (pth.startsWith('/api/v1/')) apiPaths.push(pth)
-    })
-    page.on('pageerror', (e) => console.log('DERR<<' + String(e.stack || e.message).slice(0, 700).split(String.fromCharCode(10)).join(' ~ ') + '>>'))
     // hop 1 — the run is listed
     await page.goto('/runs')
     // The run's own identity, not the page chrome: a heading only proves the
     // route rendered, and this chain is about the run travelling with it.
-    await expect(page.getByText('spine-001').first()).toBeVisible({ timeout: 15_000 })
+    // The table row's own selector names the build (UX redesign P3 removed the
+    // card and panel rows that also printed it).
+    await expect(page.getByRole('checkbox', { name: 'Select #spine-001' })).toBeVisible({ timeout: 15_000 })
 
     // hop 2 — the run's own page names the failing test
     await page.goto(`/runs/${RUN_ID}`)
     await expectFailureSurfaced(page, '/runs/:id')
 
-    // hop 3 — the AI report cites the same failure
-    await page.goto(`/runs/${RUN_ID}/intelligence`)
-    await page.waitForTimeout(4000)
-    console.log('DPATHS<<' + [...new Set(apiPaths)].join(' , ') + '>>')
-    await expectFailureSurfaced(page, '/runs/:id/intelligence')
+    // hop 3 — the AI report (the run's Analysis tab) cites the same failure
+    await page.goto(`/runs/${RUN_ID}?tab=analysis`)
+    await expect(page.getByRole('region', { name: 'What failed' })).toContainText(SPINE_FAILURE, { timeout: 15_000 })
 
     // hop 4 — the summary report counts it
     await page.goto('/reports/summary')
@@ -384,8 +385,8 @@ test.describe('journey spine', () => {
 
     await page.goto(`/runs/${RUN_ID}`)
     await expectFailureSurfaced(page, '/runs/:id')
-    await page.goto(`/runs/${RUN_ID}/intelligence`)
-    await expectFailureSurfaced(page, '/runs/:id/intelligence')
+    await page.goto(`/runs/${RUN_ID}?tab=analysis`)
+    await expectFailureSurfaced(page, '/runs/:id?tab=analysis')
     await page.goto(`/release-gate/${RUN_ID}`)
     await expectFailureSurfaced(page, '/release-gate/:id')
 

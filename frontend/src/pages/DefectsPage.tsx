@@ -1,25 +1,28 @@
 /**
- * Defects — verdict-led redesign per design_handoff_defects/README.md.
+ * Defects — the UX redesign's page template (P3, `02-design-spec.md` §2; the
+ * page has no §5 row), at 1440 x 900:
  *
- * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb + saved views + status tabs with counts +
- *             "+ New defect" CTA.
- *   Verdict → 1.65fr | 1fr split. Variants BLOCKED / AT_RISK / HEALTHY /
- *             PENDING. Left: pulsing eyebrow → 26 px headline → lede →
- *             issue rows (release blockers / Jira gaps).
- *             Right: 44 px composite queue-health score + weighted dimension
- *             grid (P0 throughput 35 / Jira coverage 25 / Fix velocity 20,
- *             re-normalised over their sum of 80 → 44 / 31 / 25 %). There is
- *             no Ownership dimension: the backend has no owner field.
- *   KPIs    → 5 cells with sparklines: Open · P0+P1 · MTTR · Escape rate ·
- *             Oldest open P0.
- *   Body    → 1.65fr | 1fr.
- *     Left  → Defects table (Key · Title · Severity · Status · Jira · Age ·
- *             Actions) wrapped in `.table-scroll` so the column
- *             never overflows. P0 rows get faint red row-bg, on hover deeper.
- *             The only row action is opening the linked Jira ticket.
- *     Right → Jira bridge card · Component breakdown (severity-stacked bars
- *             per suite).
+ *   Header  → `PageHeader` (compact, **?** = the failure-analysis topic's
+ *             "promoting to a defect"): Views (secondary) · "New defect"
+ *             (primary). No toolbar row: the page has no window and no suite
+ *             filter; its status filter belongs to the table and sits in the
+ *             table's header beside the search.
+ *   Verdict → `StatusBanner` in the "Defect queue verdict" landmark: the
+ *             queue state (Release blocked / At risk / Queue healthy /
+ *             Pending), the P0s, the defects with no Jira ticket, the queue
+ *             health score, this week's net change. "All releases" when a
+ *             release is picked in the top bar (defects are per project).
+ *   KPIs    → `KpiStrip` ("Defect KPIs"): Open · P0 / P1 open · MTTR ·
+ *             Escape rate · Oldest open P0 (its one real gauge).
+ *   PRIMARY → the defects table (`data-primary`): Key · Title · Severity ·
+ *             Status · Jira · Age · Actions, filtered by the status tabs and
+ *             the search in its header. A row does not expand (its one action
+ *             opens the Jira ticket), so there is no row drill-down to move.
+ *   Tabs    → `?tab=`: "Where defects live" (open defects by component,
+ *             severity stacked) · "Jira bridge".
+ *   Below   → Disclosure "How queue health is computed": the health meter and
+ *             its three weighted dimensions (the verdict card's right half; in
+ *             three columns, so the old 2 x 2 grid's empty cell is gone).
  *
  * UX redesign P2: a control renders only when it does something real, so
  * there are no Link-Jira / Assign / Triage buttons until those flows exist.
@@ -41,10 +44,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import {
-  AlertCircle, AlertTriangle, BarChart3, Bug, Clock, ExternalLink, Plus,
-  Search, ShieldCheck, TrendingUp, XCircle,
-} from 'lucide-react'
+import { Bug, ExternalLink, Plus, Search, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
@@ -52,6 +52,14 @@ import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageHeader from '@/components/ui/PageHeader'
+import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import Disclosure from '@/components/ui/Disclosure'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import GaugeBar from '@/components/charts/GaugeBar'
 import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
@@ -64,6 +72,10 @@ import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import type { SavedView } from '@/services/savedViewsService'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import type { DefectItem } from '@/types/analytics'
+
+/** The page's help topic (the header's **?**). */
+// Topic and section ("promoting to a defect"): PageHeader opens `topic#anchor`.
+const HELP_TOPIC = helpTopicParam('/defects')
 
 // ── Types & filters ──────────────────────────────────────────────────────
 type StatusKey = 'ALL' | 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'
@@ -81,72 +93,49 @@ type Severity = 'P0' | 'P1' | 'P2' | 'P3'
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'BLOCKED' | 'AT_RISK' | 'HEALTHY' | 'PENDING'
 
+/** The verdict's words and hues: the banner's title and state, and the health meter in its Disclosure. */
 interface VerdictTheme {
-  border: string
-  glow: string
-  bar: string
-  eyebrowText: string
-  gateText: string
+  label: string
+  /** The banner's state (its pill word and hue). */
+  banner: BannerState
   pillBg: string
   pillBd: string
   pillFg: string
   meter: string
-  label: string
-  pulse: boolean
 }
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   BLOCKED: {
-    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-no-go)',
-    eyebrowText: 'var(--status-failed)',
-    gateText:    'var(--status-failed)',
+    label:  'Release blocked',
+    banner: 'no_go',
     pillBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
     pillFg: 'var(--status-failed)',
     meter:  'var(--status-failed)',
-    label:  'Release blocked',
-    pulse:  true,
   },
   AT_RISK: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrowText: 'var(--status-broken)',
-    gateText:    'var(--status-broken)',
+    label:  'At risk',
+    banner: 'warn',
     pillBg: 'var(--gate-conditional-bg)',
     pillBd: 'var(--gate-conditional-border)',
     pillFg: 'var(--status-broken)',
     meter:  'var(--status-broken)',
-    label:  'At risk',
-    pulse:  true,
   },
   HEALTHY: {
-    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-go)',
-    eyebrowText: 'var(--status-passed)',
-    gateText:    'var(--status-passed)',
+    label:  'Queue healthy',
+    banner: 'ok',
     pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
     pillFg: 'var(--status-passed)',
     meter:  'var(--status-passed)',
-    label:  'Queue healthy',
-    pulse:  false,
   },
   PENDING: {
-    border: 'var(--color-border)',
-    glow:   'transparent',
-    bar:    'var(--color-border-light)',
-    eyebrowText: 'var(--color-text-muted)',
-    gateText:    'var(--color-text-secondary)',
+    label:  'Pending',
+    banner: 'pending',
     pillBg: 'var(--color-bg-secondary)',
     pillBd: 'var(--color-border)',
     pillFg: 'var(--color-text-muted)',
     meter:  'var(--color-text-muted)',
-    label:  'Pending',
-    pulse:  false,
   },
 }
 
@@ -380,26 +369,7 @@ function pickVerdict(model: QueueModel): Verdict {
   return 'AT_RISK'
 }
 
-// ── Atoms (shared shape with sibling redesigns) ──────────────────────────
-function PrimaryBtn({
-  children, onClick, title, disabled,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors disabled:opacity-50"
-      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
-    >
-      {children}
-    </button>
-  )
-}
-
+// ── The status filter (the table's, in its header) ───────────────────────
 function StatusTabs({
   active, onChange, counts,
 }: {
@@ -424,7 +394,7 @@ function StatusTabs({
             aria-selected={on}
             onClick={() => onChange(id)}
             className={clsx(
-              'inline-flex items-center gap-1.5 px-3 py-1 text-[13px] font-medium rounded-sm transition-colors',
+              'inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[12.5px] font-medium rounded-sm transition-colors',
               on
                 ? 'bg-[var(--color-btn-primary-bg)] text-white shadow-[var(--shadow-sm)]'
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -447,103 +417,14 @@ function StatusTabs({
   )
 }
 
-// ── Verdict card ─────────────────────────────────────────────────────────
-interface IssueRowSpec {
-  tone: 'bad' | 'warn' | 'info'
-  Icon: typeof XCircle
-  body: React.ReactNode
-}
-
-interface Cta { label: string; onClick: () => void }
-
-function VerdictCard({
-  model, verdict, summary, lede, issues, cta,
-}: {
-  model: QueueModel
-  verdict: Verdict
-  summary: React.ReactNode
-  lede: React.ReactNode
-  issues: IssueRowSpec[]
-  cta?: Cta
-}) {
-  const t = VERDICT_THEME[verdict]
+// ── "How queue health is computed" (a Disclosure below the table) ─────────
+// The verdict card's right half: the composite meter and its three weighted
+// dimensions, in three columns (the 2 x 2 grid left its fourth cell empty).
+function QueueHealthDetails({ model, verdict }: { model: QueueModel; verdict: Verdict }) {
   return (
-    <section
-      aria-label="Defect queue verdict"
-      aria-live="polite"
-      className="relative rounded-xl border overflow-hidden grid gap-6"
-      style={{
-        gridTemplateColumns: '1.65fr 1fr',
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-        marginBottom: 14,
-      }}
-    >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: t.bar,
-              animation: t.pulse ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-            }}
-            aria-hidden
-          />
-          Defect queue
-        </span>
-        <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
-          <span className="text-[var(--color-text-muted)] mx-2">·</span>
-          <span>{summary}</span>
-        </h2>
-        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-          {lede}
-        </p>
-
-        <div className="flex flex-col gap-2">
-          {issues.length === 0
-            ? <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">No outstanding issues — queue is clean.</p>
-            : issues.map((iss, i) => <IssueRow key={i} issue={iss} />)
-          }
-        </div>
-
-        {cta && (
-          <div className="flex flex-wrap gap-2 mt-3.5">
-            <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
-          </div>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
-        <HealthMeter model={model} verdict={verdict} />
-        <DimensionGrid dimensions={model.dimensions} />
-      </div>
-    </section>
-  )
-}
-
-function IssueRow({ issue }: { issue: IssueRowSpec }) {
-  const palette = {
-    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',           bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',           icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
-    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: 'var(--status-broken)' },
-    info: { bg: 'var(--color-accent-bg-soft)',    bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)',          icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
-  }[issue.tone]
-  const Icon = issue.Icon
-  return (
-    <div
-      className="grid gap-2.5 items-center rounded-md border"
-      style={{ gridTemplateColumns: '22px 1fr', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
-    >
-      <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="text-[13px] text-[var(--color-text)] leading-[1.4]">{issue.body}</div>
+    <div data-queue-health="" className="flex flex-col gap-3.5">
+      <HealthMeter model={model} verdict={verdict} />
+      <DimensionGrid dimensions={model.dimensions} />
     </div>
   )
 }
@@ -605,7 +486,7 @@ export function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Ve
 
 function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   return (
-    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${dimensions.length}, minmax(0, 1fr))` }}>
       {dimensions.map(d => <DimensionTile key={d.id} dim={d} />)}
     </div>
   )
@@ -638,56 +519,7 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
   )
 }
 
-// ── KPI strip + sparklines ───────────────────────────────────────────────
-type KpiTone = 'good' | 'warn' | 'bad' | 'neutral'
-
-function KpiCell({
-  Icon, label, value, sub, meta, tone = 'neutral', spark, isFirst, isLast,
-}: {
-  Icon?: typeof TrendingUp
-  label: string
-  value: React.ReactNode
-  sub?: React.ReactNode
-  meta?: React.ReactNode
-  tone?: KpiTone
-  spark?: React.ReactNode
-  isFirst?: boolean
-  isLast?: boolean
-}) {
-  const valueColor =
-    tone === 'good'   ? 'var(--status-passed)' :
-    tone === 'warn'   ? 'var(--status-broken)' :
-    tone === 'bad'    ? 'var(--status-failed)' :
-    'var(--color-text)'
-  return (
-    <div
-      className="flex flex-col gap-1"
-      style={{
-        padding: '14px 18px',
-        background: 'var(--color-bg-card)',
-        borderTop:    '1px solid var(--color-border)',
-        borderBottom: '1px solid var(--color-border)',
-        borderRight:  '1px solid var(--color-border)',
-        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
-        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
-        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
-        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
-        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
-      }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {Icon && <Icon className="h-3 w-3 opacity-70" />}
-        <span>{label}</span>
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
-        {value}
-        {sub && <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
-      </div>
-      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-      {spark && <div className="mt-1.5">{spark}</div>}
-    </div>
-  )
-}
+// ── KPI strip ────────────────────────────────────────────────────────────
 
 /**
  * How long the oldest open P0 has been open, on a one-week scale: the tone
@@ -697,12 +529,18 @@ const OLDEST_P0_DOMAIN = [0, 7] as const
 const OLDEST_P0_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [2, 5] }
 
 /**
- * The five defect KPIs. Owner decision OD-1 (Wave 2.5): a KPI glyph draws a
- * REAL series or a real scalar, or nothing. Four of these drew literal point
- * strings and fixed bars whatever the queue held; there is no defect history
- * to draw instead (`/analytics/defects` is a paged list with no window, and
- * `chart-data` has no defect metric), so they are gone. "Oldest open P0" is a
- * real number of days: it keeps a `GaugeBar`, drawn only when a P0 is open.
+ * The five defect KPIs (a `KpiStrip` of compact `MetricCard`s, UX redesign
+ * P3). Owner decision OD-1 (Wave 2.5): a KPI glyph draws a REAL series or a
+ * real scalar, or nothing. Four of these drew literal point strings and fixed
+ * bars whatever the queue held; there is no defect history to draw instead
+ * (`/analytics/defects` is a paged list with no window, and `chart-data` has
+ * no defect metric), so they are gone. "Oldest open P0" is a real number of
+ * days: it keeps a `GaugeBar` beside its value, drawn only when a P0 is open.
+ *
+ * Values only (P3): a tile with a caption line is ~99 px and put the table one
+ * pixel inside the fold budget. The captions that were data moved to the
+ * banner (this week's net change, the P0s blocking the release, the oldest
+ * open P0's key).
  */
 export function DefectKpiStrip({ model }: { model: QueueModel }) {
   const oldestP0Days = model.oldestP0 ? Math.floor(model.oldestP0.ageMs / 86400000) : null
@@ -713,74 +551,36 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
       domain={OLDEST_P0_DOMAIN}
       tone={OLDEST_P0_BANDS}
       size="sm"
+      width={88}
       label="Oldest open P0, days open on a one-week scale"
       valueText={`${oldestP0Days} ${oldestP0Days === 1 ? 'day' : 'days'} open`}
     />
   ) : undefined
   return (
-    <section aria-label="Defect KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-      <KpiCell
-        Icon={XCircle}
-        label="Open defects"
-        value={model.open + model.inProgress}
-        tone={model.open + model.inProgress > 0 ? 'bad' : 'good'}
-        meta={
-          model.weeklyAdded > 0 || model.weeklyClosed > 0
-            ? <><span style={{ color: model.weeklyAdded > model.weeklyClosed ? 'var(--status-failed)' : 'var(--status-passed)' }}>
-                {model.weeklyAdded - model.weeklyClosed >= 0 ? '+' : ''}{model.weeklyAdded - model.weeklyClosed}
-              </span> vs last week</>
-            : <>no movement this week</>
-        }
-        isFirst
-      />
-      <KpiCell
-        Icon={ShieldCheck}
-        label="P0 / P1 open"
-        value={`${model.p0Count}`}
-        sub={`/ ${model.p1Count}`}
-        tone={model.p0Count > 0 ? 'bad' : model.p1Count > 0 ? 'warn' : 'good'}
-        meta={model.p0Count > 0 ? <>{model.p0Count} blocking release</> : <>no release blockers</>}
-      />
-      <KpiCell
-        Icon={Clock}
-        label="Mean time to resolve"
-        value={model.mttrDays != null ? `${model.mttrDays.toFixed(1)}` : '—'}
-        sub={model.mttrDays != null ? 'd' : undefined}
-        tone={
-          model.mttrDays == null ? 'neutral'
-          : model.mttrDays <= 2 ? 'good'
-          : model.mttrDays <= 5 ? 'warn'
-          : 'bad'
-        }
-        meta={model.mttrDays != null ? <>over {model.resolved + model.closed} closed</> : <>no closures yet</>}
-      />
-      <KpiCell
-        Icon={BarChart3}
-        label="Escape rate"
-        value={`${escapeRate}`}
-        sub="%"
-        tone={escapeRate > 10 ? 'bad' : escapeRate > 5 ? 'warn' : 'good'}
-        meta={<>target ≤ 5% · last 30d</>}
-      />
-      <KpiCell
-        Icon={Bug}
-        label="Oldest open P0"
-        value={oldestP0Days != null ? `${oldestP0Days}` : '—'}
-        sub={oldestP0Days != null ? 'd' : undefined}
-        tone={
-          oldestP0Days == null ? 'good'
-          : oldestP0Days >= 5 ? 'bad'
-          : oldestP0Days >= 2 ? 'warn'
-          : 'good'
-        }
-        meta={
-          model.oldestP0
-            ? <><code className="font-mono text-[10.5px]">{model.oldestP0.keyLabel}</code> · {model.oldestP0.isUnlinked ? 'unlinked' : 'linked'}</>
-            : <>no open P0 in window</>
-        }
-        spark={oldestP0Gauge}
-        isLast
-      />
+    <section aria-label="Defect KPIs">
+      <KpiStrip>
+        {[
+          <MetricCard key="open" compact icon={null} title="Open defects" metric={{ value: model.open + model.inProgress }} />,
+          <MetricCard key="p0p1" compact icon={null} title="P0 / P1 open" metric={{ value: `${model.p0Count} / ${model.p1Count}` }} />,
+          <MetricCard
+            key="mttr"
+            compact
+            icon={null}
+            title="Time to resolve"
+            hint="Mean time to resolve, over the defects resolved"
+            metric={{ value: model.mttrDays != null ? `${model.mttrDays.toFixed(1)}d` : '—' }}
+          />,
+          <MetricCard key="escape" compact icon={null} title="Escape rate" metric={{ value: `${escapeRate}%` }} />,
+          <MetricCard
+            key="oldest"
+            compact
+            icon={null}
+            title="Oldest open P0"
+            metric={{ value: oldestP0Days != null ? `${oldestP0Days}d` : '—' }}
+            sparkline={oldestP0Gauge}
+          />,
+        ]}
+      </KpiStrip>
     </section>
   )
 }
@@ -789,13 +589,17 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
 type SortKey = 'age' | 'severity' | 'status'
 
 function DefectsTable({
-  rows, search, setSearch, sortKey, setSortKey,
+  rows, search, setSearch, sortKey, setSortKey, statusFilter, emptyQueue,
 }: {
   rows: DefectRow[]
   search: string
   setSearch: (s: string) => void
   sortKey: SortKey
   setSortKey: (k: SortKey) => void
+  /** The status tabs: the table's own filter, in its header beside the search. */
+  statusFilter: React.ReactNode
+  /** What the body says when the project has no defect at all (how to get one), instead of "no defects in this filter". */
+  emptyQueue?: React.ReactNode
 }) {
   const filtered = useMemo(() => {
     if (!search.trim()) return rows
@@ -832,24 +636,27 @@ function DefectsTable({
         </>
       }
       rightSlot={
-        <div
-          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border"
-          style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}
-        >
-          <Search className="h-3 w-3 text-[var(--color-text-muted)]" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search defects, Jira keys…"
-            className="bg-transparent text-[12px] text-[var(--color-text)] outline-none w-[260px]"
-            aria-label="Search defects"
-          />
-        </div>
+        <>
+          {statusFilter}
+          <div
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border"
+            style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}
+          >
+            <Search className="h-3 w-3 text-[var(--color-text-muted)]" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search defects, Jira keys…"
+              className="bg-transparent text-[12px] text-[var(--color-text)] outline-none w-[220px]"
+              aria-label="Search defects"
+            />
+          </div>
+        </>
       }
     >
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px]">
+        <table aria-label="Defects" className="w-full text-[12.5px]">
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
               <Th label="Key" />
@@ -865,7 +672,7 @@ function DefectsTable({
             {sorted.length === 0 && (
               <tr>
                 <td colSpan={7} className="text-center py-10 text-[var(--color-text-muted)]">
-                  {search.trim() ? 'No defects match the search.' : 'No defects in this filter.'}
+                  {search.trim() ? 'No defects match the search.' : emptyQueue ?? 'No defects in this filter.'}
                 </td>
               </tr>
             )}
@@ -1201,6 +1008,14 @@ function CardShell({
 // ── Page ─────────────────────────────────────────────────────────────────
 const TAB_KEY = 'tl.defects.tab'
 
+/** The sections under the table (`?tab=`): two small cards that sat beside it. */
+type SectionTab = 'components' | 'jira'
+const SECTION_TABS: readonly TabItem<SectionTab>[] = [
+  { id: 'components', label: 'Where defects live' },
+  { id: 'jira', label: 'Jira bridge' },
+]
+const SECTION_TAB_IDS: readonly SectionTab[] = SECTION_TABS.map(t => t.id)
+
 export default function DefectsPage() {
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1211,6 +1026,7 @@ export default function DefectsPage() {
     return saved && STATUS_TABS.some(t => t.id === saved) ? saved : 'ALL'
   })
   useEffect(() => { localStorage.setItem(TAB_KEY, activeTab) }, [activeTab])
+  const [sectionTab, setSectionTab] = useTabParam(SECTION_TAB_IDS, 'components')
 
   // P1: this page's saved views. Defects are project-wide (no release, no
   // window, no suite): a view keeps the status tab.
@@ -1275,153 +1091,124 @@ export default function DefectsPage() {
     )
   }
 
-  const projectLabel = project?.name ?? 'All Projects'
+  const theme = VERDICT_THEME[verdict]
 
   // Tab-filtered rows for the table
   const visibleRows = activeTab === 'ALL'
     ? model.rows
     : model.rows.filter(r => r.statusKey === activeTab)
 
-  // Verdict copy
+  // The banner's headline after the verdict word (short: the banner is one line).
   const summaryNode: React.ReactNode = (() => {
     if (verdict === 'PENDING') return <>queue empty</>
     if (verdict === 'HEALTHY') return <>{model.total} total · 0 P0 blocking</>
     if (verdict === 'BLOCKED') {
       const stale = model.rows.filter(r => r.severity === 'P0' && r.ageTone === 'bad').length
-      return <>{model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} blocking release · {stale} stale</>
+      return <>{model.p0Count} P0 blocking release · {stale} stale</>
     }
     return <>{model.open + model.inProgress} open · {model.p1Count + model.p2Count + model.p3Count} non-P0</>
   })()
 
-  const lede: React.ReactNode = (() => {
-    if (verdict === 'PENDING')
-      // Surface concrete next steps when the queue is empty but the
-      // project may still have failures worth triaging. Three explicit
-      // routes: review your failures on /my-failures, hand off
-      // to deep AI investigation, or create a defect manually.
-      return (
-        <>
-          No defects in this project yet. To populate the queue:
-          {' '}
-          <Link to="/my-failures" className="text-[var(--color-accent)] hover:underline">review your assigned failures</Link>
-          {', '}
-          <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run an AI investigation</Link>
-          {', or use the <strong>New defect</strong> button above to create one manually.'}
-        </>
-      )
-    if (verdict === 'HEALTHY')
-      return <>No P0 defects open and no Jira bridge gaps. Treat the queue as clean — focus on closing the long tail.</>
-    if (verdict === 'BLOCKED' && model.p0Count > 0) {
-      const samples = model.rows.filter(r => r.severity === 'P0').slice(0, 3).map(r => r.keyLabel).join(', ')
-      return (
-        <>
-          {model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} {samples ? <>(<code>{samples}</code>) </> : null}
-          are blocking the release.{' '}
-          {/* The count only: nothing here knows why a ticket is missing. */}
-          {model.unlinkedP0 > 0 ? `${model.unlinkedP0} ${model.unlinkedP0 === 1 ? 'has' : 'have'} no Jira ticket. ` : ''}
-          Triage P0s first, then close the bridge gaps.
-        </>
-      )
-    }
-    return <>The queue is moving but several signals need attention. Use the issue list below to prioritise.</>
-  })()
-
-  const issues: IssueRowSpec[] = []
-  if (model.p0Count > 0) {
-    issues.push({
-      tone: 'bad',
-      Icon: AlertCircle,
-      body: (
-        <>
-          <strong>{model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} blocking release.</strong>
-          {' '}<span className="text-[var(--color-text-muted)]">All open or in progress.</span>
-        </>
-      ),
-    })
-  }
-  if (model.unlinkedTotal > 0) {
-    issues.push({
-      tone: 'info',
-      Icon: AlertTriangle,
-      body: (
-        <>
-          {/* No "from this week" (the count is every unlinked defect in the
-              list) and no claim about an auto-link rule the page cannot see. */}
-          <strong>{model.unlinkedTotal} defect{model.unlinkedTotal === 1 ? ' has' : 's have'} no Jira ticket</strong>
-          {' '}— {model.unlinkedTotal === 1 ? 'it exists' : 'they exist'} only in TestLookup.
-        </>
-      ),
-    })
-  }
-
-  // The verdict's one real action. While P0s are open there is no triage
-  // flow to start, so the card shows no button rather than a stub.
-  const verdictCta: Cta | undefined = model.p0Count > 0
-    ? undefined
-    : { label: 'New defect', onClick: openIntake }
+  // The facts: the verdict card's issue rows and its lede, as numbers. The
+  // unlinked count with no reason for it (nothing here knows why a ticket is
+  // missing), no "this week" on an all-time count, no auto-link rule.
+  const netThisWeek = model.weeklyAdded - model.weeklyClosed
+  const bannerFacts: BannerFact[] = [
+    {
+      label: 'No Jira ticket',
+      value: <>{model.unlinkedTotal}{model.unlinkedP0 > 0 ? ` (${model.unlinkedP0} P0)` : ''}</>,
+    },
+    model.oldestP0
+      ? {
+          label: 'Oldest open P0',
+          value: <><code className="font-mono text-[12px]">{model.oldestP0.keyLabel}</code> · {model.oldestP0.ageLabel}</>,
+        }
+      : { label: 'Net this week', value: `${netThisWeek > 0 ? '+' : ''}${netThisWeek}` },
+    { label: 'Queue health', value: verdict === 'PENDING' ? '—' : `${model.composite}/100` },
+  ]
 
   return (
-    <PageShell>
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Defects
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Defect tracking & Jira integration for</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            <span aria-hidden>·</span>
-            <span>{model.open + model.inProgress} open</span>
-            {model.p0Count > 0 && (
-              <>
-                <span aria-hidden>·</span>
-                <span style={{ color: 'var(--status-failed)' }}>{model.p0Count} P0 blocking release</span>
-              </>
-            )}
-            {/* This line already says "blocking release", so a reader with one
-                selected in the header takes these counts as that release's.
-                They are the project's: `/analytics/defects` has no release
-                dimension, and a defect raised against an earlier release can
-                still be open now. */}
-            <AllReleasesBadge reason="Defects are tracked per project, not per release — one raised against an earlier release can still be open now. Whether a defect blocks a particular release is decided by the release gate." />
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />
-          <PrimaryBtn onClick={openIntake}>
-            <Plus className="h-3.5 w-3.5" />
-            New defect
-          </PrimaryBtn>
-        </div>
-      </header>
-
-      <VerdictCard
-        model={model}
-        verdict={verdict}
-        summary={summaryNode}
-        lede={lede}
-        issues={issues}
-        cta={verdictCta}
+    <PageShell className="space-y-4">
+      <PageHeader
+        compact
+        title="Defects"
+        helpTopic={HELP_TOPIC}
+        actions={
+          <>
+            {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
+            <button
+              type="button"
+              onClick={openIntake}
+              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-[13px]"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              New defect
+            </button>
+          </>
+        }
       />
+
+      <section aria-label="Defect queue verdict" aria-live="polite">
+        <StatusBanner
+          state={theme.banner}
+          title={
+            <span data-verdict={verdict} className="inline-flex flex-wrap items-baseline gap-x-1.5">
+              <span>{theme.label}</span>{' '}
+              <span aria-hidden="true" className="text-[var(--color-text-muted)]">·</span>{' '}
+              <span className="font-normal">{summaryNode}</span>{' '}
+              {/* The counts are the project's, whatever release the header has picked: `/analytics/defects` has
+                  no release dimension, and a defect raised against an earlier release can still be open now. */}
+              <AllReleasesBadge reason="Defects are tracked per project, not per release — one raised against an earlier release can still be open now. Whether a defect blocks a particular release is decided by the release gate." />
+            </span>
+          }
+          facts={bannerFacts}
+        />
+      </section>
 
       <DefectKpiStrip model={model} />
 
-      <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <DefectsTable
-            rows={visibleRows}
-            search={search}
-            setSearch={setSearch}
-            sortKey={sortKey}
-            setSortKey={setSortKey}
-          />
-        </div>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <JiraBridgeCard model={model} />
-          <ComponentBreakdown model={model} />
+      <section data-primary="" aria-label="All defects">
+        <DefectsTable
+          rows={visibleRows}
+          search={search}
+          setSearch={setSearch}
+          sortKey={sortKey}
+          setSortKey={setSortKey}
+          statusFilter={<StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />}
+          emptyQueue={model.total === 0 ? (
+            // Concrete next steps when the queue is empty but the project may
+            // still have failures worth triaging: review your failures, hand
+            // off to deep AI investigation, or create a defect manually.
+            <>
+              No defects in this project yet. To populate the queue:{' '}
+              <Link to="/my-failures" className="text-[var(--color-accent)] hover:underline">review your assigned failures</Link>
+              {', '}
+              <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run an AI investigation</Link>
+              {', or use '}<strong>New defect</strong>{' above to create one manually.'}
+            </>
+          ) : undefined}
+        />
+      </section>
+
+      <div data-defects-sections="">
+        <Tabs items={SECTION_TABS} value={sectionTab} onChange={setSectionTab} ariaLabel="Defect sections" />
+        <div
+          role="tabpanel"
+          aria-label={sectionTab === 'jira' ? 'Jira bridge' : 'Where defects live'}
+          data-tab-panel={sectionTab}
+          className="pt-3 grid gap-3.5"
+          style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}
+        >
+          {sectionTab === 'components' ? <ComponentBreakdown model={model} /> : <JiraBridgeCard model={model} />}
         </div>
       </div>
+
+      <Disclosure
+        title="How queue health is computed"
+        summary={verdict === 'PENDING' ? 'not measured' : `queue health ${model.composite} / 100`}
+      >
+        <QueueHealthDetails model={model} verdict={verdict} />
+      </Disclosure>
 
       {intakeOpen && intakeProjectId && (
         <DefectIntakeModal

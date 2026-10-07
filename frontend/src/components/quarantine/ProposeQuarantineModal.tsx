@@ -5,7 +5,7 @@
  *
  * Submission goes through the SAME audited flow as /failures: a manual
  * PROPOSED row via POST /api/v1/quarantine (QA_LEAD+), which then awaits
- * approval on /quarantine. The required reason lands in the proposal's
+ * approval under Flaky tests › Proposed (or the Inbox's Approvals). The required reason lands in the proposal's
  * rationale and the quarantine audit trail. The agent never submits —
  * a human reviews, types the reason, and clicks.
  */
@@ -50,8 +50,8 @@ export default function ProposeQuarantineModal({
       })
       toast.success(
         row.status === 'PROPOSED'
-          ? 'Quarantine proposal created — pending QA Lead approval on /quarantine.'
-          : `Quarantine request updated — now ${row.status} (see /quarantine).`,
+          ? 'Quarantine proposal created — pending QA Lead approval under Flaky tests › Proposed.'
+          : `Quarantine request updated — now ${row.status} (see Flaky tests).`,
         { duration: 8000 },
       )
       onClose()
@@ -84,7 +84,7 @@ export default function ProposeQuarantineModal({
         </h2>
         <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
           Proposes <code className="font-mono text-[11.5px]">{prefill.test_name}</code> for
-          quarantine. A QA Lead approves or rejects the proposal on /quarantine —
+          quarantine. A QA Lead approves or rejects it under Flaky tests › Proposed —
           nothing is muted until then.
         </p>
 

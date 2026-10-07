@@ -27,13 +27,20 @@ interface Props {
    */
   positiveDirection?: 'up' | 'down'
   /**
-   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `text-2xl` value,
+   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `--text-stat-lg` value
+   * (24 px at the desk, raised in presentation mode),
    * no icon block, the change line on one line, and `sparkline` beside the
    * value.
    */
   compact?: boolean
   /** A small inline chart beside the value (compact variant only). */
   sparkline?: ReactNode
+  /**
+   * The label's hover text (compact variant; default: the label). A compact
+   * label is one truncated line, so a strip's labels are kept short
+   * (`kpi-labels.spec.ts`) and the full name goes here.
+   */
+  hint?: string
 }
 
 const DIRECTION_WORD = { up: 'Up', down: 'Down', flat: 'No change' } as const
@@ -55,6 +62,7 @@ export default function MetricCard({
   positiveDirection = 'up',
   compact = false,
   sparkline,
+  hint,
 }: Props) {
   const dir = metric?.trend_direction
   const hasTrend = metric?.trend != null || Boolean(metric?.trend_text)
@@ -80,17 +88,34 @@ export default function MetricCard({
     const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
     const changeLine = [word, trendText].filter(Boolean).join(' ')
     return (
-      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0">
-        <p className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">{title}</p>
-        <div className="flex items-end justify-between gap-2">
+      // h-full: a card inside a link (KpiLink) fills the strip's row like a bare
+      // one does, so a row of tiles is one height when one of them grows.
+      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0 h-full">
+        <p title={hint ?? title} className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
+          {title}
+        </p>
+        {/* The aside (a sparkline, a hint) takes what the value leaves and is
+            capped to it; under 3rem it drops below the value instead. The room-
+            sized value (40 px) left a w-24 sparkline no room: drawn over the
+            value and out of the tile (P3 baseline, overview-presentation-kpis).
+            4rem was too much at the desk: on CI's DejaVu at 1280 px "88.0%"
+            left 60 px, and Trends' sparkline dropped a line (strip 100 -> 132). */}
+        <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
           {loading ? (
             <div className="h-7 w-20 animate-pulse rounded bg-[var(--color-bg-secondary)]">
               <span className="sr-only">Loading</span>
             </div>
           ) : (
-            <p className="whitespace-nowrap text-2xl font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
+            // The stat token, not `text-2xl`: the same 24 px at the desk, and
+            // presentation mode raises it (40 px) like every other metric value.
+            // `leading-[1.3333]` keeps text-2xl's 32 px line at the desk.
+            <p className="whitespace-nowrap text-[length:var(--text-stat-lg)] leading-[1.3333] font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
           )}
-          {sparkline && !loading && <div className="min-w-0 shrink">{sparkline}</div>}
+          {sparkline && !loading && (
+            <div data-metric-aside="" className="flex min-w-12 flex-1 justify-end [&>*]:max-w-full">
+              {sparkline}
+            </div>
+          )}
         </div>
         {hasTrend && !loading && (
           <p

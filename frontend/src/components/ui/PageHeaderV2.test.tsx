@@ -31,6 +31,15 @@ describe('PageHeader v2', () => {
     expect(useHelpStore.getState().topic).toBe('failure-analysis')
   })
 
+  it('helpTopic "topic#anchor" opens that topic on that section', () => {
+    renderHeader(<PageHeader title="Defects" helpTopic="failure-analysis#promoting-to-a-defect" />)
+    const button = screen.getByRole('button', { name: 'Help: Defects' })
+    expect(button).toHaveAttribute('data-help-topic', 'failure-analysis')
+    expect(button).toHaveAttribute('data-help-anchor', 'promoting-to-a-defect')
+    fireEvent.click(button)
+    expect(useHelpStore.getState()).toMatchObject({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
+  })
+
   it('overflow renders a ⋯ menu whose items act and close it', () => {
     const exportPdf = vi.fn()
     renderHeader(

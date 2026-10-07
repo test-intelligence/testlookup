@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
   Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
@@ -546,103 +546,45 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
   )
 }
 
-// ── Main page ──────────────────────────────────────────────────
+/// ── One pipeline's detail (the AI report + agent stages) ──────
 
-const MODE_BADGE: Record<string, { label: string; colour: string }> = {
-  llm:   { label: 'LLM Mode',   colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
-  ml:    { label: 'ML Mode',    colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
-  rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
-  auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
-}
-
-export default function AgentStatusPage() {
-  const { runId } = useParams<{ runId?: string }>()
-  const navigate = useNavigate()
-  // The selected pipeline is stored WITH the run it belongs to, and read back
-  // only when that run is still the one on screen.
-  //
-  // It used to be a bare id, reset on a project change and on a card click but
-  // never on a RUN change. The "Pipeline Runs" dropdown navigates to
-  // `/agents/run/:runId`, so `usePipelines(runId)` refetched correctly while
-  // every panel keyed on the id — `usePipelineStages`, `usePipelineTimeline`,
-  // the compute graph, the AI report — kept rendering the previous run's
-  // pipeline under the new run's header. That is the user-reported
-  // "selecting a run does not refresh the page" (2026-09-18).
-  //
-  // Derived rather than reset in an effect: an effect that calls setState on
-  // `runId` triggers a cascading render (and eslint rejects it), and it can
-  // only ever react *after* a render in which the stale id was still live.
-  // Pairing the id with its run makes the stale state unrepresentable instead.
-  // Clearing it was only HALF the fix, and the other half is BUG-011 (reported
-  // again 2026-09-19). Dropping the stale id left `selectedPipeline` null, so
-  // every panel on the right fell back to "Select a pipeline run to see agent
-  // stages" — the same placeholder for every run the user picked. Measured
-  // against the homelab: four different runs, four different pipeline lists on
-  // the left, and an identical empty panel on the right each time. Replacing
-  // the wrong pipeline with NO pipeline reads as "selecting a run changes
-  // nothing", which is what was reported, and it made a second click mandatory.
-  //
-  // So a run chosen in the dropdown now also picks that run's newest pipeline
-  // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2 or
-  // 13 pipelines on the homelab, so "the one pipeline" is not a safe assumption
-  // — newest-first is, and it matches what the "Run #N" label leads the reader
-  // to expect. A run with no pipelines keeps the placeholder, which is honest
-  // there: the left column explains the absence.
-  const [selection, setSelection] = useState<
-    { forRunId: string | undefined; pipelineId: string; testRunId: string } | null
-  >(null)
-  const selectionMatchesRoute = selection != null && selection.forRunId === runId
+/**
+ * One pipeline's detail: the AI report (the pipeline's headline output) and
+ * the agent stages behind it. The right column of this page, and — since the
+ * UX redesign P4 (`/agents/run/:runId` redirects there) — the AI report of
+ * the Run page's Evidence tab.
+ *
+ * Always mounted: with no pipeline it shows the placeholder (or a spinner
+ * while `waiting` for the run's pipeline list), and its hooks are asked with
+ * `null`, which fetches nothing. Mount it with `key={pipelineId}` so a newly
+ * picked pipeline opens with its report expanded.
+ */
+export function PipelineDetail({
+  pipelineId,
+  testRunId,
+  showLLMMetrics,
+  waiting = false,
+  defaultShowStages = true,
+}: {
+  pipelineId: string | null
+  /** The run the pipeline analysed: the AI report is keyed on the run. */
+  testRunId: string | null
+  showLLMMetrics: boolean
+  /** The pipeline is not known yet (its list is loading): a spinner, not the placeholder. */
+  waiting?: boolean
+  /** Agent Stages open on arrival (this page) or collapsed (the Run page). */
+  defaultShowStages?: boolean
+}) {
   // The AI report is shown by default (expanded) once a pipeline is selected —
   // it's the headline output of the pipeline, so users shouldn't have to click
   // "View AI report" to see it. The toggle still lets them collapse it. The
   // ``useRunSummary`` fetch below is gated on this, so default-true means the
   // report fetches as soon as a pipeline is picked.
   const [showSummary, setShowSummary] = useState(true)
-  // Agent Stages is collapsible (user request 2026-09-18). Expanded by default
-  // so the page is unchanged for anyone who does not touch the control.
-  const [showStages, setShowStages] = useState(true)
-  const { data: aiConfig } = useAIConfig()
-  // Recent runs feed the suite+build dropdown so users can browse pipelines
-  // across runs instead of only the one in the URL. Size matches the
-  // pagination convention applied elsewhere.
-  const { data: recentRunsList } = useRuns({ page: 1, size: 25 })
-  const recentRuns = recentRunsList?.items ?? []
-  const analysisMode = aiConfig?.analysis_mode ?? 'auto'
-  const showLLMMetrics = analysisMode !== 'rules' && analysisMode !== 'ml'
-
-  useProjectChangeRedirect('/agents', Boolean(runId))
-  useProjectChangeReset(() => {
-    setSelection(null)
-    // Stay expanded-by-default: the next pipeline the user picks shows its
-    // report without a click. (No pipeline is selected right after a reset, so
-    // nothing renders until then anyway.)
-    setShowSummary(true)
-  })
-
-  // Choosing a different run in the "Pipeline Runs" dropdown must clear the
-  // pipeline selected from the PREVIOUS run.
-  //
-  const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
-  // Sort descending by created_at client-side as a defensive guarantee
-  const pipelines = [...rawPipelines].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  )
-  // Only when a specific run is on the route. On `/agents` the list spans many
-  // runs, so there is no "this run's pipeline" to open and the placeholder is
-  // the correct first screen.
-  //
-  // Derived, not an effect: it cannot render a frame with the old run's
-  // pipeline, and an explicit card click still wins because clicking stores
-  // `forRunId: runId`, which makes `selectionMatchesRoute` true from then on.
-  const autoPipeline = runId ? pipelines[0] ?? null : null
-  const selectedPipeline = selectionMatchesRoute
-    ? selection.pipelineId
-    : autoPipeline?.id ?? null
-  const selectedRunId = selectionMatchesRoute
-    ? selection.testRunId
-    : autoPipeline?.test_run_id ?? null
-  const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(selectedPipeline)
-  const { data: timeline } = usePipelineTimeline(selectedPipeline)
+  // Agent Stages is collapsible (user request 2026-09-18).
+  const [showStages, setShowStages] = useState(defaultShowStages)
+  const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(pipelineId)
+  const { data: timeline } = usePipelineTimeline(pipelineId)
   const summaryStage = stages.find((stage) => stage.stage_name === 'summary')
   // Direction-C compute graph: map the backend's flat stage list into the
   // node/edge/decision shape the canvas expects. Derived purely from the
@@ -672,12 +614,277 @@ export default function AgentStatusPage() {
   if (canvasSelection === null && initialCanvasId != null) {
     setCanvasSelection(initialCanvasId)
   }
-  const { data: liveRuns = [] } = useActiveLiveRuns()
   const {
     data: summary,
     isLoading: summaryLoading,
     error: summaryError,
-  } = useRunSummary(showSummary ? selectedRunId : null)
+  } = useRunSummary(showSummary ? testRunId : null)
+
+  if (!pipelineId && waiting) {
+    // The auto-selected pipeline is not known until the list arrives.
+    // Without this the placeholder flashes on every dropdown change and
+    // the panel still looks like it is refusing to load.
+    return <div className="flex justify-center py-8"><LoadingSpinner /></div>
+  }
+  if (!pipelineId) {
+    return (
+      <div className="card flex flex-col items-center justify-center py-16 text-center">
+        <Bot className="w-12 h-12 text-[var(--color-text-faint)] mb-3" />
+        <p className="text-[var(--color-text-muted)]">Select a pipeline run to see agent stages</p>
+      </div>
+    )
+  }
+  if (stagesLoading) {
+    return <div className="flex justify-center py-8"><LoadingSpinner /></div>
+  }
+
+  return (
+    <>
+      {/* The AI report leads.
+          It is the pipeline's headline output — the reason `showSummary`
+          defaults to true — but it used to render BELOW the stage
+          detail, so a reader scrolled past the mechanism to reach the
+          conclusion. Requested by the user 2026-09-18; the layout now
+          matches the argument the code was already making. */}
+      <div className="flex items-center gap-3 mb-1">
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI Report</h3>
+        <button
+          onClick={() => setShowSummary(v => !v)}
+          aria-expanded={showSummary}
+          className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          {showSummary ? 'Hide report' : 'View AI report'}
+        </button>
+      </div>
+
+      {showSummary && (
+        <div className="card">
+          {summaryLoading ? (
+            <div className="flex justify-center py-4">
+              <LoadingSpinner size="sm" />
+            </div>
+          ) : summaryError ? (
+            <div className="space-y-1">
+              <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
+              </p>
+            </div>
+          ) : !summary ? (
+            <div className="space-y-1">
+              <p className="text-sm text-[var(--color-text-muted)]">No AI summary available yet.</p>
+              {summaryStage?.status === 'failed' && summaryStage.error && (
+                <p className="text-xs text-[var(--color-text-muted)]">{summaryStage.error}</p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* E8.5: the report's human-review status (E8.3 envelope). */}
+              <ReviewBanner envelope={summary} />
+              {summary.executive_panel ? (
+                <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
+              ) : (
+                <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
+                  <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
+                  <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
+                </div>
+              )}
+              <StructuredReportDetail markdown={summary.markdown_report} hasPanel={!!summary.executive_panel} />
+            </div>
+          )}
+        </div>
+      )}
+      {/* Agent Stages — the mechanism behind the report above, and
+          collapsible so the conclusion stays on screen on a laptop. */}
+      <div className="flex items-center gap-3 mb-1 mt-4">
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Agent Stages</h3>
+        <button
+          onClick={() => setShowStages(v => !v)}
+          aria-expanded={showStages}
+          className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
+        >
+          <ChevronRight
+            className={"h-3.5 w-3.5 transition-transform " + (showStages ? 'rotate-90' : '')}
+            aria-hidden
+          />
+          {showStages ? 'Hide stages' : 'Show stages'}
+        </button>
+      </div>
+
+      {showStages && (
+        <>
+      <ObservabilityPanel timeline={timeline} />
+
+      {/* Direction-C compute graph: 1750×560 canvas with absolute-
+          positioned nodes, SVG bezier edges, a decision diamond, and a
+          360px right rail. It used to sit under a Live · Debug · Audit ·
+          Compare tab bar, but only Debug (this canvas) had a body:
+          Audit and Compare were placeholder text and Live
+          pointed at the strip above. The bar is not rendered. */}
+      <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
+        {!canvasDescribesPipeline ? (
+          /* This canvas has fixed nodes for the offline/deep pipeline.
+             For an investigation pipeline it recognised none of the
+             stages and used to render nine placeholders as `pending`
+             beside a COMPLETED header — a picture of a pipeline that
+             never ran, hiding the one that did. Show the real stages
+             instead of a graph that does not describe them. */
+          <div className="px-6 py-5 space-y-3">
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              This pipeline&apos;s stages are not on the offline compute graph.
+              Showing the {stages.length} stage{stages.length === 1 ? '' : 's'} it
+              actually ran:
+            </p>
+            <ul className="space-y-1">
+              {stages.map((s) => (
+                <li
+                  key={s.stage_name}
+                  className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
+                >
+                  <span className="font-mono text-[13px]">{s.stage_name}</span>
+                  <span className="text-[var(--color-text-muted)]">{s.status}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="flex" style={{ height: 600 }}>
+            <ComputeCanvas
+              stages={computeGraph.stages}
+              decision={computeGraph.decision}
+              edges={computeGraph.edges}
+              selectedId={canvasSelection}
+              onSelect={setCanvasSelection}
+            />
+            <RightRail
+              selectedId={canvasSelection}
+              stages={computeGraph.stages}
+              decision={computeGraph.decision}
+            />
+          </div>
+        )}
+      </div>
+
+      <details className="card mt-4">
+        <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">
+          <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
+          Raw stage cards
+        </summary>
+        <div className="mt-4 space-y-2">
+          {stages.map((stage: AgentStageResult) => (
+            <StageCard key={stage.stage_name} stage={stage} showLLMMetrics={showLLMMetrics} />
+          ))}
+        </div>
+      </details>
+        </>
+      )}
+
+      {/* The chevron-flow timeline (real stages, skip reasons, event
+          history) — collapsed at the bottom of the page. */}
+      <Disclosure title="Pipeline" defaultOpen={false} className="mt-4">
+        <WorkflowTimeline
+          title="Workflow Progress"
+          subtitle="The agent pipeline path for this run, including skip reasons and event history."
+          stages={(timeline?.stages ?? stages) as AgentStageResult[]}
+          events={timeline?.events}
+          showInspector
+          showEventFeed
+        />
+      </Disclosure>
+    </>
+  )
+}
+
+// ── Main page ──────────────────────────────────────────────────
+
+const MODE_BADGE: Record<string, { label: string; colour: string }> = {
+  llm:   { label: 'LLM Mode',   colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
+  ml:    { label: 'ML Mode',    colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
+  rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
+  auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
+}
+
+export default function AgentStatusPage() {
+  // The run whose pipelines are listed: `?run=` (UX redesign P4 — the old
+  // `/agents/run/:runId` now redirects to the Run page's Evidence tab, so the
+  // picker below keeps the run in the query instead). `:runId` is still read
+  // for a page mounted on the old path.
+  const { runId: routeRunId } = useParams<{ runId?: string }>()
+  const [searchParams] = useSearchParams()
+  const runId = routeRunId ?? searchParams.get('run') ?? undefined
+  const navigate = useNavigate()
+  // The selected pipeline is stored WITH the run it belongs to, and read back
+  // only when that run is still the one on screen.
+  //
+  // It used to be a bare id, reset on a project change and on a card click but
+  // never on a RUN change. The "Pipeline Runs" dropdown navigates to
+  // a new run, so `usePipelines(runId)` refetched correctly while
+  // every panel keyed on the id — `usePipelineStages`, `usePipelineTimeline`,
+  // the compute graph, the AI report — kept rendering the previous run's
+  // pipeline under the new run's header. That is the user-reported
+  // "selecting a run does not refresh the page" (2026-09-18).
+  //
+  // Derived rather than reset in an effect: an effect that calls setState on
+  // `runId` triggers a cascading render (and eslint rejects it), and it can
+  // only ever react *after* a render in which the stale id was still live.
+  // Pairing the id with its run makes the stale state unrepresentable instead.
+  // Clearing it was only HALF the fix, and the other half is BUG-011 (reported
+  // again 2026-09-19). Dropping the stale id left `selectedPipeline` null, so
+  // every panel on the right fell back to "Select a pipeline run to see agent
+  // stages" — the same placeholder for every run the user picked. Measured
+  // against the homelab: four different runs, four different pipeline lists on
+  // the left, and an identical empty panel on the right each time. Replacing
+  // the wrong pipeline with NO pipeline reads as "selecting a run changes
+  // nothing", which is what was reported, and it made a second click mandatory.
+  //
+  // So a run chosen in the dropdown now also picks that run's newest pipeline
+  // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2 or
+  // 13 pipelines on the homelab, so "the one pipeline" is not a safe assumption
+  // — newest-first is, and it matches what the "Run #N" label leads the reader
+  // to expect. A run with no pipelines keeps the placeholder, which is honest
+  // there: the left column explains the absence.
+  const [selection, setSelection] = useState<
+    { forRunId: string | undefined; pipelineId: string; testRunId: string } | null
+  >(null)
+  const selectionMatchesRoute = selection != null && selection.forRunId === runId
+  const { data: aiConfig } = useAIConfig()
+  // Recent runs feed the suite+build dropdown so users can browse pipelines
+  // across runs instead of only the one in the URL. Size matches the
+  // pagination convention applied elsewhere.
+  const { data: recentRunsList } = useRuns({ page: 1, size: 25 })
+  const recentRuns = recentRunsList?.items ?? []
+  const analysisMode = aiConfig?.analysis_mode ?? 'auto'
+  const showLLMMetrics = analysisMode !== 'rules' && analysisMode !== 'ml'
+
+  useProjectChangeRedirect('/agents', Boolean(runId))
+  // The next pipeline the user picks shows its report without a click: the
+  // detail panel is keyed on the pipeline, so it remounts expanded.
+  useProjectChangeReset(() => setSelection(null))
+
+  // Choosing a different run in the "Pipeline Runs" dropdown must clear the
+  // pipeline selected from the PREVIOUS run.
+  //
+  const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
+  // Sort descending by created_at client-side as a defensive guarantee
+  const pipelines = [...rawPipelines].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  )
+  // Only when a specific run is on the route. On `/agents` the list spans many
+  // runs, so there is no "this run's pipeline" to open and the placeholder is
+  // the correct first screen.
+  //
+  // Derived, not an effect: it cannot render a frame with the old run's
+  // pipeline, and an explicit card click still wins because clicking stores
+  // `forRunId: runId`, which makes `selectionMatchesRoute` true from then on.
+  const autoPipeline = runId ? pipelines[0] ?? null : null
+  const selectedPipeline = selectionMatchesRoute
+    ? selection.pipelineId
+    : autoPipeline?.id ?? null
+  const selectedRunId = selectionMatchesRoute
+    ? selection.testRunId
+    : autoPipeline?.test_run_id ?? null
+  const { data: liveRuns = [] } = useActiveLiveRuns()
 
   const { isQaEngineer } = usePermissions()
   const [triggerInput, setTriggerInput] = useState('')
@@ -723,17 +930,15 @@ export default function AgentStatusPage() {
             {/* Pipeline picker: lets the user jump between recent runs by
                 test suite + build number. Each option is labelled
                 ``<suite> · #<build>`` so the user picks by attributes they
-                recognise, not the opaque run UUID. Selecting routes to
-                /agents/<id> so the page state and URL stay in sync. */}
+                recognise, not the opaque run UUID. Selecting keeps the run
+                in ``?run=`` so the page state and URL stay in sync (the old
+                ``/agents/run/:runId`` redirects to the Run page since P4). */}
             <label htmlFor="agent-field-0" className="text-xs text-[var(--color-text-muted)]">Test Suite &amp; Build:</label>
             <select id="agent-field-0"
               value={runId ?? ''}
               onChange={(e) => {
                 const id = e.target.value
-                // App.tsx mounts this page at both ``/agents`` and
-                // ``/agents/run/:runId`` — match the param form when
-                // navigating so the route resolves and useParams reads the id.
-                if (id) navigate(`/agents/run/${id}`)
+                if (id) navigate(`/agents?run=${encodeURIComponent(id)}`)
                 else navigate('/agents')
               }}
               className="text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-2 py-1 max-w-[320px] truncate"
@@ -883,9 +1088,9 @@ export default function AgentStatusPage() {
                 pipeline={p}
                 selected={selectedPipeline === p.id}
                 onSelect={() => {
+                  // The detail panel is keyed on the pipeline, so a newly
+                  // picked one opens with its AI report expanded.
                   setSelection({ forRunId: runId, pipelineId: p.id, testRunId: p.test_run_id })
-                  // Keep the AI report expanded by default when switching runs.
-                  setShowSummary(true)
                 }}
               />
             ))
@@ -894,174 +1099,13 @@ export default function AgentStatusPage() {
 
         {/* Stage detail */}
         <div className="lg:col-span-2 space-y-3">
-          {!selectedPipeline && runId && pipelinesLoading ? (
-            // The auto-selected pipeline is not known until the list arrives.
-            // Without this the placeholder flashes on every dropdown change and
-            // the panel still looks like it is refusing to load.
-            <div className="flex justify-center py-8"><LoadingSpinner /></div>
-          ) : !selectedPipeline ? (
-            <div className="card flex flex-col items-center justify-center py-16 text-center">
-              <Bot className="w-12 h-12 text-[var(--color-text-faint)] mb-3" />
-              <p className="text-[var(--color-text-muted)]">Select a pipeline run to see agent stages</p>
-            </div>
-          ) : stagesLoading ? (
-            <div className="flex justify-center py-8"><LoadingSpinner /></div>
-          ) : (
-            <>
-              {/* The AI report leads.
-                  It is the pipeline's headline output — the reason `showSummary`
-                  defaults to true — but it used to render BELOW the stage
-                  detail, so a reader scrolled past the mechanism to reach the
-                  conclusion. Requested by the user 2026-09-18; the layout now
-                  matches the argument the code was already making. */}
-              <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI Report</h3>
-                <button
-                  onClick={() => setShowSummary(v => !v)}
-                  aria-expanded={showSummary}
-                  className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  {showSummary ? 'Hide report' : 'View AI report'}
-                </button>
-              </div>
-
-              {showSummary && (
-                <div className="card">
-                  {summaryLoading ? (
-                    <div className="flex justify-center py-4">
-                      <LoadingSpinner size="sm" />
-                    </div>
-                  ) : summaryError ? (
-                    <div className="space-y-1">
-                      <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
-                      <p className="text-xs text-[var(--color-text-muted)]">
-                        {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
-                      </p>
-                    </div>
-                  ) : !summary ? (
-                    <div className="space-y-1">
-                      <p className="text-sm text-[var(--color-text-muted)]">No AI summary available yet.</p>
-                      {summaryStage?.status === 'failed' && summaryStage.error && (
-                        <p className="text-xs text-[var(--color-text-muted)]">{summaryStage.error}</p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {/* E8.5: the report's human-review status (E8.3 envelope). */}
-                      <ReviewBanner envelope={summary} />
-                      {summary.executive_panel ? (
-                        <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
-                      ) : (
-                        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
-                          <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
-                          <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
-                        </div>
-                      )}
-                      <StructuredReportDetail markdown={summary.markdown_report} hasPanel={!!summary.executive_panel} />
-                    </div>
-                  )}
-                </div>
-              )}
-              {/* Agent Stages — the mechanism behind the report above, and
-                  collapsible so the conclusion stays on screen on a laptop. */}
-              <div className="flex items-center gap-3 mb-1 mt-4">
-                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Agent Stages</h3>
-                <button
-                  onClick={() => setShowStages(v => !v)}
-                  aria-expanded={showStages}
-                  className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
-                >
-                  <ChevronRight
-                    className={"h-3.5 w-3.5 transition-transform " + (showStages ? 'rotate-90' : '')}
-                    aria-hidden
-                  />
-                  {showStages ? 'Hide stages' : 'Show stages'}
-                </button>
-              </div>
-
-              {showStages && (
-                <>
-              <ObservabilityPanel timeline={timeline} />
-
-              {/* Direction-C compute graph: 1750×560 canvas with absolute-
-                  positioned nodes, SVG bezier edges, a decision diamond, and a
-                  360px right rail. It used to sit under a Live · Debug · Audit ·
-                  Compare tab bar, but only Debug (this canvas) had a body:
-                  Audit and Compare were placeholder text and Live
-                  pointed at the strip above. The bar is not rendered. */}
-              <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
-                {!canvasDescribesPipeline ? (
-                  /* This canvas has fixed nodes for the offline/deep pipeline.
-                     For an investigation pipeline it recognised none of the
-                     stages and used to render nine placeholders as `pending`
-                     beside a COMPLETED header — a picture of a pipeline that
-                     never ran, hiding the one that did. Show the real stages
-                     instead of a graph that does not describe them. */
-                  <div className="px-6 py-5 space-y-3">
-                    <p className="text-sm text-[var(--color-text-secondary)]">
-                      This pipeline&apos;s stages are not on the offline compute graph.
-                      Showing the {stages.length} stage{stages.length === 1 ? '' : 's'} it
-                      actually ran:
-                    </p>
-                    <ul className="space-y-1">
-                      {stages.map((s) => (
-                        <li
-                          key={s.stage_name}
-                          className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
-                        >
-                          <span className="font-mono text-[13px]">{s.stage_name}</span>
-                          <span className="text-[var(--color-text-muted)]">{s.status}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="flex" style={{ height: 600 }}>
-                    <ComputeCanvas
-                      stages={computeGraph.stages}
-                      decision={computeGraph.decision}
-                      edges={computeGraph.edges}
-                      selectedId={canvasSelection}
-                      onSelect={setCanvasSelection}
-                    />
-                    <RightRail
-                      selectedId={canvasSelection}
-                      stages={computeGraph.stages}
-                      decision={computeGraph.decision}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <details className="card mt-4">
-                <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">
-                  <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
-                  Raw stage cards
-                </summary>
-                <div className="mt-4 space-y-2">
-                  {stages.map((stage: AgentStageResult) => (
-                    <StageCard key={stage.stage_name} stage={stage} showLLMMetrics={showLLMMetrics} />
-                  ))}
-                </div>
-              </details>
-                </>
-              )}
-
-              {/* The chevron-flow timeline (real stages, skip reasons, event
-                  history) — collapsed at the bottom of the page. */}
-              <Disclosure title="Pipeline" defaultOpen={false} className="mt-4">
-                <WorkflowTimeline
-                  title="Workflow Progress"
-                  subtitle="The agent pipeline path for this run, including skip reasons and event history."
-                  stages={(timeline?.stages ?? stages) as AgentStageResult[]}
-                  events={timeline?.events}
-                  showInspector
-                  showEventFeed
-                />
-              </Disclosure>
-            </>
-          )}
+          <PipelineDetail
+            key={selectedPipeline ?? 'none'}
+            pipelineId={selectedPipeline}
+            testRunId={selectedRunId}
+            showLLMMetrics={showLLMMetrics}
+            waiting={Boolean(runId) && pipelinesLoading}
+          />
         </div>
       </div>
     </div>

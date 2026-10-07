@@ -1,16 +1,22 @@
 /**
- * My Failures — the calling user's auto-assigned failures (migration 0080).
+ * Inbox (`/my-failures`, UX redesign P4 item 5, owner decision D4): what is
+ * waiting on the reader, in two tabs (`?tab=`):
  *
- * Reads from /api/v1/me/assigned-failures. Project scope is driven by the
- * project store (ALL_PROJECTS_ID = "all"). The page polls every 30s so new
- * ingests appear without a manual refresh.
+ *   Assigned to me (default) → the auto-assigned failures (migration 0080),
+ *       from /api/v1/me/assigned-failures, polled every 30 s. Toolbar: the
+ *       global `WindowPicker` (24h · 7d · 30d) and, for QA leads, the
+ *       Mine/Team scope (`?scope=team` on the same endpoint). One table, the
+ *       page's primary content (`data-primary`), two lines a row: test name
+ *       over its error · failing step · assignment reason; suite; run number
+ *       over its time and id; repeat count; age; Update status / Reassign.
+ *       Row click → the backend-provided `navigation_url`. (The Status column
+ *       and the static "Status: FAILED, BROKEN" chip are gone, §5.)
+ *   Approvals → AI reports (the old `/reviews`, which redirects here),
+ *       quarantine proposals and test-case approvals, filtered by source
+ *       (`inbox/ApprovalsTab.tsx`). It needs one project; in All Projects
+ *       mode it shows the project prompt. Its count is in the tab label.
  *
- * Layout:
- *   Header        → title + counts + filter chips (days + status hint)
- *   Empty state   → friendly "you're caught up" when total === 0
- *   Table         → severity dot, test name + suite, project · build, age,
- *                   error preview, row-click → /runs/:rid/tests/:cid
- *   Pagination    → standard Pagination component
+ * Project scope is driven by the project store (ALL_PROJECTS_ID = "all").
  */
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -18,9 +24,13 @@ import { AlertTriangle, CheckSquare, Clock, ExternalLink, Inbox, UserCog, X } fr
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import Tabs from '@/components/ui/Tabs'
+import WindowPicker from '@/components/ui/WindowPicker'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
+import { useTabParam } from '@/components/ui/useTabParam'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
 import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -33,9 +43,13 @@ import {
 } from '@/services/myFailuresService'
 import { mutate as swrMutate } from 'swr'
 import type { MyFailureItem, TriageStatus } from '@/types/myFailures'
+import ApprovalsTab, { ApprovalsCountBadge } from './inbox/ApprovalsTab'
+import ChipFilter from './inbox/ChipFilter'
 
 // Time-window chips. The backend allows 1-365; surface the most useful three.
 const DAYS_OPTIONS = [1, 7, 30] as const
+
+const INBOX_TABS = ['assigned', 'approvals'] as const
 
 function relativeAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime()
@@ -59,13 +73,19 @@ function severityDot(severity: string | null | undefined): string | null {
   return null
 }
 
+const TH = 'px-4 py-2.5 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider whitespace-nowrap'
+
 export default function MyFailuresPage() {
   const navigate = useNavigate()
+  const [tab, setTab] = useTabParam(INBOX_TABS, 'assigned')
   const user = useAuthStore(s => s.user)
   const { isQaLead } = usePermissions()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  // The Approvals queues belong to one project: their count is only asked for
+  // (and only shown) while one is active.
+  const singleProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
   // Reassignment modal state. ``reassignFor`` is the failure currently
   // being reassigned (null = modal closed). Only QA_LEAD+ ever sees
   // the button that opens this modal; the backend enforces the same
@@ -75,13 +95,12 @@ export default function MyFailuresPage() {
   // ``reassignFor`` — only one modal open at a time.
   const [triageFor, setTriageFor] = useState<MyFailureItem | null>(null)
 
-  // Time window comes from the shared user-level preference so a
-  // selection made on any other page (Summary, Live, Coverage, …)
-  // follows the user here. Snapped to this page's allowed set.
+  // Time window comes from the shared user-level preference (the toolbar's
+  // `WindowPicker` writes it), so a selection made on any other page
+  // (Summary, Live, Coverage, …) follows the user here. Snapped to this
+  // page's allowed set.
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, DAYS_OPTIONS)
-  const [page, setPage] = useState(1)
   const size = 25
 
   // Mine = caller's own assignments only (default).
@@ -109,169 +128,151 @@ export default function MyFailuresPage() {
   const canSeeTeam = isQaLead
   const effectiveScope: 'mine' | 'team' = canSeeTeam ? (scopeChoice ?? 'team') : 'mine'
 
+  // The page number belongs to one (window, scope): changing either starts
+  // again at page 1. Derived rather than reset in an effect.
+  const [paging, setPaging] = useState({ days, scope: effectiveScope, page: 1 })
+  const page = paging.days === days && paging.scope === effectiveScope ? paging.page : 1
+  const setPage = (next: number) => setPaging({ days, scope: effectiveScope, page: next })
+
   const { data, isLoading, error } = useMyFailures({ days, page, size, scope: effectiveScope })
 
   const scopeLabel = isAllProjects ? 'all your projects' : (project?.name ?? 'the selected project')
 
+  const subtitle =
+    tab === 'approvals'
+      ? singleProjectId
+        ? `AI reports, quarantine proposals and test-case reviews waiting for a decision in ${project?.name ?? 'the selected project'}.`
+        : 'Approvals belong to one project: pick it to see what is waiting for a decision.'
+      : user
+        ? effectiveScope === 'team'
+          // The tab reads "Assigned to me" but opens on the team inbox for
+          // leads, so the subtitle has to say whose failures these are.
+          ? `Every unresolved failure across ${scopeLabel}. Updated every 30 seconds.`
+          : `Failures assigned to you across ${scopeLabel}. Updated every 30 seconds.`
+        : 'Sign in to see your assigned failures.'
+
   return (
-    <>
+    <div className="space-y-4">
       <PageHeader
-        title="My Failures"
-        subtitle={
-          user
-            ? effectiveScope === 'team'
-              // The page is titled "My Failures" but opens on the team inbox for
-              // leads, so the subtitle has to say whose failures these are.
-              ? `Every unresolved failure across ${scopeLabel}. Updated every 30 seconds.`
-              : `Failures assigned to you across ${scopeLabel}. Updated every 30 seconds.`
-            : 'Sign in to see your assigned failures.'
+        compact
+        title="Inbox"
+        subtitle={subtitle}
+        // Approvals open the AI-report review section of the reports topic.
+        helpTopic={helpTopicParam(tab === 'approvals' ? '/reviews' : '/my-failures')}
+        tabs={
+          <Tabs
+            ariaLabel="Inbox"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: 'assigned', label: 'Assigned to me', count: data?.unresolved_total },
+              {
+                id: 'approvals',
+                label: 'Approvals',
+                badge: singleProjectId ? (
+                  <ApprovalsCountBadge projectId={singleProjectId} active={tab === 'approvals'} />
+                ) : undefined,
+              },
+            ]}
+          />
         }
       />
 
-      {/* Filter row */}
-      <div className="flex items-center gap-2.5 flex-wrap mb-3">
-        <span
-          className="inline-flex items-center gap-1.5 text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]"
-          style={{ letterSpacing: 'var(--tracking-wider)' }}
-        >
-          Window
-        </span>
-        <div role="radiogroup" aria-label="Time window" className="flex items-center gap-1.5">
-          {DAYS_OPTIONS.map(d => {
-            const active = days === d
-            return (
-              <button
-                key={d}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => { setStoredDays(d); setPage(1) }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
-                style={{
-                  background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
-                  borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-                  color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                }}
-              >
-                {d === 1 ? '24h' : `${d}d`}
-              </button>
-            )
-          })}
-        </div>
-        {canSeeTeam && (
-          <>
-            <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
-            <span
-              className="inline-flex items-center gap-1.5 text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]"
-              style={{ letterSpacing: 'var(--tracking-wider)' }}
-            >
-              Scope
-            </span>
-            <div role="radiogroup" aria-label="Scope" className="flex items-center gap-1.5">
-              {(['mine', 'team'] as const).map(opt => {
-                const active = effectiveScope === opt
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => { setScopeChoice(opt); setPage(1) }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors capitalize"
-                    style={{
-                      background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
-                      borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-                      color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                    }}
-                    title={
-                      opt === 'mine'
-                        ? "Only failures assigned to you"
-                        : "Every unresolved failure across the project (QA_LEAD/ADMIN)"
-                    }
-                  >
-                    {opt}
-                  </button>
-                )
-              })}
-            </div>
-          </>
-        )}
-        <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
-        <span className="text-[12px] text-[var(--color-text-muted)]">
-          Status: <code className="font-mono text-[11px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">FAILED, BROKEN</code>
-        </span>
-        {data?.unresolved_total !== undefined && (
-          <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">
-            {data.unresolved_total === 0
-              ? 'Nothing assigned'
-              : <><strong className="text-[var(--color-text)] tabular-nums">{data.unresolved_total}</strong> assigned</>}
-          </span>
-        )}
-      </div>
-
-      {/* Body */}
-      {isLoading && !data ? (
-        <div className="flex items-center justify-center py-16"><LoadingSpinner size="lg" /></div>
-      ) : error ? (
-        <div className="flex items-center gap-2 text-sm text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-3">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          Couldn’t load your failures. The inbox will retry automatically.
-        </div>
-      ) : !data || data.items.length === 0 ? (
-        <EmptyState
-          title={effectiveScope === 'team' ? 'No open team failures' : 'You’re caught up'}
-          description={
-            effectiveScope === 'team'
-              ? `No unresolved failures across ${scopeLabel} in the last ${
-                  days === 1 ? '24 hours' : `${days} days`
-                }. New failures land here as soon as runs are ingested.`
-              : `No failed or broken tests assigned to you in the last ${
-                  days === 1 ? '24 hours' : `${days} days`
-                }. New failures land here automatically when a test run is ingested.`
-          }
-          icon={<Inbox className="h-6 w-6" />}
-        />
+      {tab === 'approvals' ? (
+        <ApprovalsTab />
       ) : (
-        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-bg-secondary)]/80">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider w-2">{/* severity dot */}</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test Suite</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Run</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
-                <th
-                  className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider"
-                  title={`Failures of this test in the last ${days === 1 ? '24 hours' : `${days} days`}`}
-                >
-                  Failures
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Age</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider w-4">{/* open */}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {data.items.map(item => (
-                <FailureRow
-                  key={item.id}
-                  item={item}
-                  windowDays={days}
-                  canReassign={isQaLead}
-                  onOpen={() => navigate(item.navigation_url)}
-                  onReassign={() => setReassignFor(item)}
-                  onTriage={() => setTriageFor(item)}
+        <>
+          {/* Toolbar: one row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <WindowPicker options={DAYS_OPTIONS} />
+            {canSeeTeam && (
+              <>
+                <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
+                <ChipFilter
+                  label="Scope"
+                  value={effectiveScope}
+                  onChange={setScopeChoice}
+                  optionClassName="capitalize"
+                  options={[
+                    { id: 'mine', label: 'mine', title: 'Only failures assigned to you' },
+                    { id: 'team', label: 'team', title: 'Every unresolved failure across the project (QA_LEAD/ADMIN)' },
+                  ]}
                 />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </>
+            )}
+            {data?.unresolved_total !== undefined && (
+              <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">
+                {data.unresolved_total === 0
+                  ? 'Nothing assigned'
+                  : <><strong className="text-[var(--color-text)] tabular-nums">{data.unresolved_total}</strong> assigned</>}
+              </span>
+            )}
+          </div>
 
-      {data && data.pages > 1 && (
-        <div className="mt-3.5">
-          <Pagination page={page} pages={data.pages} total={data.total} onChange={setPage} />
-        </div>
+          {/* Body: the page's primary content */}
+          <section data-primary="" aria-label="Assigned failures" className="space-y-3">
+            {isLoading && !data ? (
+              <div className="flex items-center justify-center py-16"><LoadingSpinner size="lg" /></div>
+            ) : error ? (
+              <div className="flex items-center gap-2 text-sm text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-3">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Couldn’t load your failures. The inbox will retry automatically.
+              </div>
+            ) : !data || data.items.length === 0 ? (
+              <EmptyState
+                title={effectiveScope === 'team' ? 'No open team failures' : 'You’re caught up'}
+                description={
+                  effectiveScope === 'team'
+                    ? `No unresolved failures across ${scopeLabel} in the last ${
+                        days === 1 ? '24 hours' : `${days} days`
+                      }. New failures land here as soon as runs are ingested.`
+                    : `No failed or broken tests assigned to you in the last ${
+                        days === 1 ? '24 hours' : `${days} days`
+                      }. New failures land here automatically when a test run is ingested.`
+                }
+                icon={<Inbox className="h-6 w-6" />}
+              />
+            ) : (
+              <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+                <table className="w-full text-sm" aria-label="Assigned failures">
+                  <thead className="bg-[var(--color-bg-secondary)]/80">
+                    <tr>
+                      <th className={clsx(TH, 'w-2')}>{/* severity dot */}</th>
+                      <th className={TH}>Test</th>
+                      <th className={TH}>Test Suite</th>
+                      <th className={TH}>Run</th>
+                      <th
+                        className={clsx(TH, '!text-right')}
+                        title={`Failures of this test in the last ${days === 1 ? '24 hours' : `${days} days`}`}
+                      >
+                        Failures
+                      </th>
+                      <th className={TH}>Age</th>
+                      <th className={clsx(TH, 'w-4')}>{/* open */}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {data.items.map(item => (
+                      <FailureRow
+                        key={item.id}
+                        item={item}
+                        windowDays={days}
+                        canReassign={isQaLead}
+                        onOpen={() => navigate(item.navigation_url)}
+                        onReassign={() => setReassignFor(item)}
+                        onTriage={() => setTriageFor(item)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {data && data.pages > 1 && (
+              <Pagination page={page} pages={data.pages} total={data.total} onChange={setPage} />
+            )}
+          </section>
+        </>
       )}
 
       {triageFor && (
@@ -317,7 +318,7 @@ export default function MyFailuresPage() {
           }}
         />
       )}
-    </>
+    </div>
   )
 }
 
@@ -347,12 +348,21 @@ function FailureRow({
       : count >= 2
       ? 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken)]'
       : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
+  // The second line: what failed, where, and why it is the reader's. Each
+  // part keeps its own element (and the whole line its title) so a long
+  // error cuts off at the cell's edge instead of growing the row.
+  const detail = [
+    item.error_message,
+    item.last_failure_step ? `failed at: ${item.last_failure_step}` : null,
+    item.assignment_reason,
+  ].filter(Boolean).join(' · ')
+  const when = formatRunWhen(item.created_at)
   return (
     <tr
       onClick={onOpen}
       className="cursor-pointer hover:bg-[var(--color-bg-secondary)]/60 transition-colors"
     >
-      <td className="px-4 py-3">
+      <td className="px-4 py-2">
         <span
           data-testid="severity-dot"
           data-severity={dot ? (item.severity || '').toLowerCase() : 'unknown'}
@@ -364,46 +374,43 @@ function FailureRow({
           aria-hidden
         />
       </td>
-      <td className="px-4 py-3">
-        <div className="text-[var(--color-text)] font-medium truncate max-w-[360px]" title={item.test_name}>
+      <td className="px-4 py-2">
+        <div className="text-[var(--color-text)] font-medium truncate max-w-[460px]" title={item.test_name}>
           {item.test_name}
         </div>
-        {item.error_message && (
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[360px] font-mono">
-            {item.error_message}
-          </div>
-        )}
-        {item.last_failure_step && (
-          <div
-            className="text-[10.5px] text-[var(--color-text-faint)] truncate max-w-[360px]"
-            title={`Failed at step: ${item.last_failure_step}`}
-          >
-            failed at: <span className="font-mono text-[var(--color-text-muted)]">{item.last_failure_step}</span>
-          </div>
-        )}
-        {item.assignment_reason && (
-          <div
-            className="text-[10.5px] text-[var(--color-text-faint)] truncate max-w-[360px]"
-            title={`Assigned ${item.assignment_reason}`}
-          >
-            <span className="text-[var(--color-text-muted)]">{item.assignment_reason}</span>
+        {detail && (
+          <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[460px]" title={detail} data-row-detail="">
+            {item.error_message && <span className="font-mono">{item.error_message}</span>}
+            {item.last_failure_step && (
+              <span className="text-[var(--color-text-faint)]">
+                {item.error_message ? ' · ' : ''}failed at:{' '}
+                <span className="font-mono text-[var(--color-text-muted)]">{item.last_failure_step}</span>
+              </span>
+            )}
+            {item.assignment_reason && (
+              <span className="text-[var(--color-text-faint)]">
+                {item.error_message || item.last_failure_step ? ' · ' : ''}
+                <span className="text-[var(--color-text-muted)]">{item.assignment_reason}</span>
+              </span>
+            )}
           </div>
         )}
       </td>
-      <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] align-middle">
+      <td className="px-4 py-2 text-xs text-[var(--color-text-secondary)] align-middle">
         {item.suite_name ? (
           <span className="truncate max-w-[200px] inline-block align-middle" title={item.suite_name}>{item.suite_name}</span>
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
       </td>
-      <td className="px-4 py-3 text-[var(--color-text-secondary)] font-mono text-xs">
-        {/* Project name is now omitted because the user selects it in
-            the global project dropdown — surfacing it again per-row is
-            redundant. Run identifier is the human-readable, per-(project,
-            suite) incremental ``Run #N``; falls back to the raw SDK
-            build_number for pre-run_seq rows. The short test_run_id slug
-            is shown underneath as a copy/correlation aid. */}
+      <td className="px-4 py-2 text-[var(--color-text-secondary)] font-mono text-xs whitespace-nowrap">
+        {/* Project name is omitted because the user selects it in the global
+            project dropdown — surfacing it again per-row is redundant. Run
+            identifier is the human-readable, per-(project, suite) incremental
+            ``Run #N``; falls back to the raw SDK build_number for pre-run_seq
+            rows. Under it, on the same line: when the run was generated (so
+            same-numbered "Run #N" rows are distinguishable at a glance, as on
+            /live) and the short test_run_id slug as a copy/correlation aid. */}
         {item.run_seq != null ? (
           <span className="text-[var(--color-text)]">Run #{item.run_seq}</span>
         ) : item.build_number ? (
@@ -411,27 +418,14 @@ function FailureRow({
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
-        {/* When the run was generated — shown INLINE (matching /live and the
-            /agents live card) so same-numbered "Run #N" rows are distinguishable
-            at a glance, not only on hover. */}
-        {(() => {
-          const when = formatRunWhen(item.created_at)
-          return when ? (
-            <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">{when}</div>
-          ) : null
-        })()}
-        {item.test_run_id && (
+        {(when || item.test_run_id) && (
           <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">
-            {item.test_run_id.slice(0, 8)}
+            {when && <span>{when}</span>}
+            {item.test_run_id && <span>{when ? ' · ' : ''}{item.test_run_id.slice(0, 8)}</span>}
           </div>
         )}
       </td>
-      <td className="px-4 py-3">
-        <span className={clsx('text-[11px] px-2 py-0.5 rounded font-medium', statusBadgeClass(item.status))}>
-          {item.status}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-right">
+      <td className="px-4 py-2 text-right">
         <span
           className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium tabular-nums', countTone)}
           title={`Failed ${count} time${count === 1 ? '' : 's'} in the last ${windowLabel}`}
@@ -439,13 +433,13 @@ function FailureRow({
           × {count}
         </span>
       </td>
-      <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">
+      <td className="px-4 py-2 text-[var(--color-text-muted)] text-xs whitespace-nowrap">
         <span className="inline-flex items-center gap-1">
           <Clock className="h-3 w-3" />
           {relativeAge(item.created_at)}
         </span>
       </td>
-      <td className="px-4 py-3 text-right whitespace-nowrap">
+      <td className="px-4 py-2 text-right whitespace-nowrap">
         {/* Triage-status button — visible to anyone (the row is in their
             inbox, so they ARE the assignee). The backend independently
             enforces the assignee-or-manager rule. */}
@@ -473,12 +467,6 @@ function FailureRow({
       </td>
     </tr>
   )
-}
-
-function statusBadgeClass(status: string): string {
-  if (status === 'BROKEN') return 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]'
-  if (status === 'FAILED') return 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
-  return 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
 }
 
 

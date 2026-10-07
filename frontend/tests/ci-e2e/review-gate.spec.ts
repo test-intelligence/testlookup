@@ -108,6 +108,17 @@ async function installApi(
       return json(route, review(state, reasonCode, notes))
     }
 
+    // UX redesign P4 (D4): /reviews redirects to Inbox › Approvals, which also
+    // reads the assigned failures (the other tab's count), the quarantine
+    // proposals and the test-case review queue. Empty, in their real shapes.
+    if (path === '/api/v1/me/assigned-failures') {
+      return json(route, { items: [], total: 0, page: 1, size: 25, pages: 0, unresolved_total: 0 })
+    }
+    if (path === '/api/v1/quarantine') return json(route, [])
+    if (path === '/api/v1/test-management/cases') {
+      return json(route, { items: [], total: 0, page: 1, size: 50, pages: 0 })
+    }
+
     return json(route, {})
   })
 }
@@ -119,13 +130,17 @@ test.describe('hermetic human review gate', () => {
     await installApi(page, { onSettlement: (action, body) => settlements.push({ action, body }) })
 
     await page.goto('/reviews')
-    await expect(page.getByText('Awaiting review')).toBeVisible()
+    // P4 (D4): the review queue is Inbox › Approvals now; the old URL lands there.
+    await expect(page).toHaveURL(/\/my-failures\?tab=approvals$/)
+    await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('cell', { name: 'Awaiting review' })).toBeVisible()
     await page.getByTestId('review-accept').click()
     await page.getByTestId('review-notes').fill('Evidence checked')
     await page.getByTestId('review-confirm').click()
     await expect(page.getByTestId('review-row')).toHaveCount(0)
 
-    await page.getByRole('tab', { name: 'Accepted' }).click()
+    // The queue's state filter is a radio group since P4 (the Inbox's tabs are the page's).
+    await page.getByRole('radio', { name: 'Accepted' }).click()
     await expect(page.getByRole('cell', { name: 'Accepted' })).toBeVisible()
     expect(settlements).toEqual([{ action: 'accept', body: { notes: 'Evidence checked' } }])
   })
@@ -143,7 +158,7 @@ test.describe('hermetic human review gate', () => {
     await page.getByTestId('review-confirm').click()
     await expect(page.getByTestId('review-row')).toHaveCount(0)
 
-    await page.getByRole('tab', { name: 'Rejected' }).click()
+    await page.getByRole('radio', { name: 'Rejected' }).click()
     await expect(page.getByRole('cell', { name: 'Rejected' })).toBeVisible()
     await expect(page.getByText('Unsupported claim')).toBeVisible()
     expect(settlements).toEqual([{
@@ -161,7 +176,7 @@ test.describe('hermetic human review gate', () => {
     await page.getByTestId('review-confirm').click()
 
     await expect(page.getByText('The user who triggered this run cannot review its report.')).toBeVisible()
-    await expect(page.getByText('Awaiting review')).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'Awaiting review' })).toBeVisible()
     await expect(page.getByTestId('review-row')).toHaveCount(1)
   })
 
@@ -171,7 +186,7 @@ test.describe('hermetic human review gate', () => {
 
     await page.goto('/reviews')
     await expect(page.getByTestId('review-readonly-note')).toBeVisible()
-    await expect(page.getByText('Awaiting review')).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'Awaiting review' })).toBeVisible()
     await expect(page.getByTestId('review-accept')).toHaveCount(0)
     await expect(page.getByTestId('review-reject')).toHaveCount(0)
   })

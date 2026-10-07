@@ -79,3 +79,42 @@ describe('CoverageAdvanced (Coverage page, Wave 3)', () => {
     expect(flags.asked).toEqual([])
   })
 })
+
+describe('CoverageAdvanced — `sections` picks which sections render (UX redesign P3)', () => {
+  it('both listed (in either order): the same block as no prop, the map first', async () => {
+    render(<CoverageAdvanced days={14} suiteFilter={null} sections={['heatmap-suite_environment', 'coverage-map']} />)
+    const map = await screen.findByTestId('map', {}, { timeout: LAZY_TIMEOUT })
+    const heatmap = await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })
+    expect(map.compareDocumentPosition(heatmap) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('the map alone: the map, with the page scope; the heatmap section is never mounted', async () => {
+    render(<CoverageAdvanced days={14} suiteFilter="checkout" sections={['coverage-map']} />)
+    expect(await screen.findByTestId('map', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    await waitFor(() => expect(mounted.map[mounted.map.length - 1]).toEqual({ days: 14, suiteFilter: 'checkout' }))
+    expect(screen.queryByTestId('heatmap')).toBeNull()
+    expect(mounted.heatmap).toEqual([])
+  })
+
+  it('the heatmap alone: the environment / release heatmaps; the map is never mounted, not even as a placeholder', async () => {
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} sections={['heatmap-suite_environment']} />)
+    expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    expect(mounted.heatmap[mounted.heatmap.length - 1]).toEqual({ days: 30, suiteFilter: null, kinds: ['suite_environment', 'suite_release'] })
+    expect(container.querySelector('[data-lazy-section="coverage-map"]')).toBeNull()
+    expect(mounted.map).toEqual([])
+  })
+
+  it('none: an empty block, nothing mounted', async () => {
+    const { container } = render(<CoverageAdvanced days={30} suiteFilter={null} sections={[]} />)
+    await waitFor(() => expect(container.querySelector('[data-coverage-advanced]')).not.toBeNull(), { timeout: LAZY_TIMEOUT })
+    expect((container.querySelector('[data-coverage-advanced]') as HTMLElement).children).toHaveLength(0)
+    expect(mounted.map).toEqual([])
+    expect(mounted.heatmap).toEqual([])
+  })
+})

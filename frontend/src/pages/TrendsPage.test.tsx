@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
@@ -56,9 +56,12 @@ vi.mock('@/hooks/useReleases', () => ({
 }))
 
 // `throws`: the section's top level throws (or its chunk failed to load).
-const catalogue = vi.hoisted(() => ({ props: [] as { days: number; suiteFilter: unknown }[], throws: false }))
+const catalogue = vi.hoisted(() => ({
+  props: [] as { days: number; suiteFilter: unknown; sections?: readonly string[] }[],
+  throws: false,
+}))
 vi.mock('@/components/reports/catalogue/TrendsCatalogue', () => ({
-  default: (props: { days: number; suiteFilter: unknown }) => {
+  default: (props: { days: number; suiteFilter: unknown; sections?: readonly string[] }) => {
     catalogue.props.push(props)
     if (catalogue.throws) throw new Error('Failed to fetch dynamically imported module')
     return <div data-testid="trends-catalogue" />
@@ -117,6 +120,19 @@ function lastTimeSeries(): TimeSeriesProps & { model: NonNullable<TimeSeriesProp
   return props as TimeSeriesProps & { model: NonNullable<TimeSeriesProps['model']> }
 }
 
+/** P3: the verdict, its score and its dimensions are in a collapsed disclosure below the hero. */
+function openScore() {
+  fireEvent.click(screen.getByRole('button', { name: /How this score is computed/ }))
+}
+
+/** P3: the page's own tabs (Volume is the default). */
+function openTab(name: 'Volume' | 'By suite' | 'Durations' | 'Heatmap') {
+  fireEvent.click(within(screen.getByRole('tablist', { name: 'Trend views' })).getByRole('tab', { name }))
+}
+
+/** The shared window picker's option (`WindowPicker`: a radio group). */
+const windowOption = (label: string) => within(screen.getByRole('radiogroup', { name: 'Time window' })).getByRole('radio', { name: label })
+
 /** The run-cadence strip's sr-only table, one [day, state, marker] per cell. */
 function cadenceRows(): string[][] {
   const table = screen.getByRole('table', { name: /^Run cadence:/ })
@@ -165,6 +181,9 @@ describe('TrendsPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Trends' })).toBeInTheDocument()
+    // P3: the verdict is in the score disclosure, collapsed until asked for.
+    expect(screen.queryByRole('region', { name: 'Trend verdict' })).toBeNull()
+    openScore()
     expect(screen.getByRole('region', { name: 'Trend verdict' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Trends workflow' })).toBeNull()
@@ -240,7 +259,9 @@ describe('TrendsPage', () => {
     expect((await screen.findAllByText('57.4%')).length).toBeGreaterThan(0)
     // The pre-fix figure must not appear anywhere on the page.
     expect(screen.queryAllByText('51.7%')).toHaveLength(0)
-    // The narrative rounds, so the old 51.7% surfaced there as "52%".
+    // The narrative rounds, so the old 51.7% surfaced there as "52%" (in the
+    // score disclosure since P3).
+    openScore()
     expect(screen.queryByText(/headline 52% pass rate/)).not.toBeInTheDocument()
     expect(screen.getByText(/headline 57% pass rate/)).toBeInTheDocument()
   })
@@ -268,8 +289,9 @@ describe('TrendsPage', () => {
     })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
+    // The suite pass rates are the By suite tab's since P3.
     render(
-      <MemoryRouter initialEntries={['/trends']}>
+      <MemoryRouter initialEntries={['/trends?tab=by-suite']}>
         <Routes>
           <Route path="/trends" element={<TrendsPage />} />
         </Routes>
@@ -426,8 +448,9 @@ describe('TrendsPage on the chart kit', () => {
     // The only pictures in the strip are the two real sparklines.
     expect(within(kpis).getAllByRole('img')).toHaveLength(2)
     for (const label of ['Days with runs', 'Suites', 'Last run']) {
-      const cell = within(kpis).getByText(label).closest('div.flex.flex-col') as HTMLElement
-      // The label's lucide icon is the only svg left in the cell.
+      // P3: a compact KPI tile (`MetricCard`) per cell.
+      const cell = within(kpis).getByText(label).closest('[data-metric-card]') as HTMLElement
+      expect(cell).not.toBeNull()
       expect(cell.querySelector('svg:not(.lucide), [role="img"]')).toBeNull()
     }
   })
@@ -455,6 +478,7 @@ describe('TrendsPage on the chart kit', () => {
   it('draws the confidence score on the kit meter', async () => {
     const { trend } = await windowFixture()
     await renderWindow(trend)
+    openScore()
     const meter = screen.getByRole('meter', { name: 'Trend confidence' })
     expect(meter).toHaveAttribute('aria-valuemin', '0')
     expect(meter).toHaveAttribute('aria-valuemax', '100')
@@ -463,6 +487,9 @@ describe('TrendsPage on the chart kit', () => {
 
   it('shows a PENDING window as not measured on the meter, never a 0 score', async () => {
     await renderWindow([])
+    // The disclosure's header says so too: no score.
+    expect(screen.getByRole('button', { name: /How this score is computed/ })).toHaveTextContent('Pending · no score yet')
+    openScore()
     expect(screen.queryByRole('meter', { name: 'Trend confidence' })).toBeNull()
     expect(screen.getByRole('img', { name: 'Trend confidence: not measured' })).toBeInTheDocument()
   })
@@ -545,11 +572,14 @@ describe('TrendsPage on the chart kit', () => {
   it('has no per-suite micro-bar: a suite row is the name and its rate', async () => {
     const { trend } = await windowFixture()
     await renderWindow(trend)
+    openTab('By suite')
     const suites = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
     const row = within(suites).getByText('Payments', { exact: true }).parentElement as HTMLElement
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
     expect(row.children).toHaveLength(2)
+    // UX redesign P4: the name opens the suite's own page (by name, resolved to its id).
+    expect(within(suites).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/coverage/suite?name=Payments')
   })
 })
 
@@ -626,16 +656,16 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     expect(new Set(runCalls.map((call) => (call[0] as { days: number }).days))).toEqual(new Set([14]))
     // The shared preference is still reset, so other pages follow.
     expect(useTimeWindowStore.getState().days).toBe(14)
-    expect(screen.getByRole('tab', { name: '14d' })).toHaveAttribute('aria-selected', 'true')
+    expect(windowOption('14d')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('still follows the window picker after the reset', async () => {
     await renderTrends(await activeDays(3))
     const { useTrendData } = await import('@/hooks/useMetrics')
-    fireEvent.click(screen.getByRole('tab', { name: '90d' }))
+    fireEvent.click(windowOption('90d'))
     const calls = (useTrendData as ReturnType<typeof vi.fn>).mock.calls
     expect(calls[calls.length - 1][0]).toBe(90)
-    expect(screen.getByRole('tab', { name: '90d' })).toHaveAttribute('aria-selected', 'true')
+    expect(windowOption('90d')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('the pass-rate frame offers the trend overlays, the brush and the release markers', async () => {
@@ -664,26 +694,31 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
 
   it('at 7 days with fewer than 7 days with runs, offers the overlays disabled with the reason', async () => {
     await renderTrends(await activeDays(4))
-    fireEvent.click(screen.getByRole('tab', { name: '7d' }))
+    fireEvent.click(windowOption('7d'))
     const section = document.querySelector('[data-catalogue-section="trends-pass-rate"]') as HTMLElement
     const toggles = [...section.querySelectorAll('[data-trend-toggle]')]
     expect(toggles.length).toBeGreaterThan(0)
     for (const toggle of toggles) expect(toggle).toHaveAttribute('aria-disabled', 'true')
     expect(section.querySelector('[data-trend-disabled-reason]')).toHaveTextContent('Needs at least 7 days with runs')
+    openTab('By suite')
     await screen.findByTestId('trends-catalogue')
     expect(lastCatalogue().days).toBe(7)
   })
 
-  it('mounts the catalogue with the page window and suite scope', async () => {
+  it('mounts the catalogue with the page window and suite scope, in its tab, after the hero', async () => {
     await renderTrends(await activeDays(3))
+    // P3: the catalogue is in the By suite, Durations and Heatmap tabs; the default tab (Volume) does not mount it.
+    expect(screen.queryByTestId('trends-catalogue')).toBeNull()
+    expect(catalogue.props).toEqual([])
+    openTab('By suite')
     await screen.findByTestId('trends-catalogue')
-    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: null })
+    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: null, sections: ['trends-multi-series', 'trends-compare'] })
     fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
-    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: 'Checkout' })
-    // Below the body grid (the provenance line that followed it is gone, P2).
-    const grid = document.querySelector('.trends-body-grid') as HTMLElement
+    expect(lastCatalogue()).toEqual({ days: 14, suiteFilter: 'Checkout', sections: ['trends-multi-series', 'trends-compare'] })
+    const hero = document.querySelector('[data-primary]') as HTMLElement
     const stub = screen.getByTestId('trends-catalogue')
-    expect(grid.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(stub.closest('[data-catalogue-scope]')).toHaveAttribute('data-catalogue-scope', 'by-suite')
+    expect(hero.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByText('Provenance')).toBeNull()
   })
 
@@ -695,6 +730,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       await renderTrends(await activeDays(3))
+      openTab('By suite')
       expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Trends' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
@@ -708,18 +744,21 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
   // here, and the charts must say 30 like every other number on the page.
   it('hands the catalogue the snapped page window, not the raw stored one', async () => {
     await renderTrends(await activeDays(3))
+    openTab('Durations')
     await screen.findByTestId('trends-catalogue')
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
     act(() => useTimeWindowStore.getState().setDays(45))
-    expect(screen.getByRole('tab', { name: '30d' })).toHaveAttribute('aria-selected', 'true')
+    expect(windowOption('30d')).toHaveAttribute('aria-checked', 'true')
     expect(lastCatalogue().days).toBe(30)
   })
 
-  it('is one column below 1024 px: the body grid and the verdict card are fluid, with no fixed columns', async () => {
+  it('is one column below 1024 px: the By suite grid and the score disclosure are fluid, with no fixed columns', async () => {
     await renderTrends(await activeDays(3))
-    const grid = document.querySelector('.trends-body-grid') as HTMLElement
-    expect(grid).toHaveClass('grid-cols-1', 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]')
+    openTab('By suite')
+    const grid = (await screen.findByTestId('trends-catalogue')).closest('[data-catalogue-scope]')?.parentElement as HTMLElement
+    expect(grid).toHaveClass('grid-cols-1', 'lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)]')
     expect(grid.style.gridTemplateColumns).toBe('')
+    openScore()
     const verdict = screen.getByRole('region', { name: 'Trend verdict' })
     expect(verdict).toHaveClass('grid-cols-1', 'lg:grid-cols-[1.45fr_1fr]')
     expect(verdict.style.gridTemplateColumns).toBe('')
@@ -731,13 +770,24 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
   })
 
   // P1 (2026-10-04): the header's own Views button opens its actions. P2: the
-  // Customize button that followed it (the widget picker) is gone, so the
-  // window picker comes next.
-  it('has the Views button in the header and no Customize button', async () => {
+  // Customize button that followed it (the widget picker) is gone. P3: the
+  // header's right side is the page's one filter row: the suite, the shared
+  // window picker, then Views (the one secondary button), and nothing else.
+  it('has the suite filter, the window picker and the Views button in the header, and no Customize button', async () => {
     await renderTrends(await activeDays(3))
-    const trigger = document.querySelector('[data-saved-views-trigger]')
-    expect(trigger?.textContent).toBe('Views')
-    expect(trigger?.nextElementSibling?.getAttribute('role')).toBe('tablist')
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const toolbar = header.querySelector('[data-page-toolbar]') as HTMLElement
+    const trigger = toolbar.querySelector('[data-saved-views-trigger]') as HTMLElement
+    expect(trigger.textContent).toBe('Views')
+    const suite = within(toolbar).getByDisplayValue('All suites')
+    const windows = within(toolbar).getByRole('radiogroup', { name: 'Time window' })
+    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(suite, windows) && follows(windows, trigger)).toBe(true)
+    expect(within(windows).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '14d', '30d', '90d'])
+    // The help ? opens the page's docs topic.
+    expect(within(header).getByRole('button', { name: 'Help: Trends' })).toHaveAttribute('data-help-topic', 'dashboards')
+    // No ⋯ menu: the page has no action beyond Views.
+    expect(header.querySelector('[data-overflow-trigger]')).toBeNull()
     expect(screen.queryByRole('button', { name: /Customize/ })).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
@@ -800,8 +850,10 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
     }
     // The cadence gap strip offered to "pin a note", a feature that does not exist.
     expect(screen.queryByText(/pin a note/)).toBeNull()
-    // The one real verdict action stays: widening the window.
-    expect(screen.getByRole('button', { name: 'Widen window to 90d' })).toBeInTheDocument()
+    // P3: the verdict's one real action (widening the window) was the window
+    // picker's 90d again; the picker stays, the duplicate is gone.
+    expect(screen.queryByRole('button', { name: /Widen/ })).toBeNull()
+    expect(windowOption('90d')).toHaveAttribute('aria-checked', 'false')
   })
 
   it('renders no recommended-actions card and no provenance footer', async () => {
@@ -816,17 +868,18 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
 
   it('titles the suite pass rates by the window it reads, never "today" or "single day"', async () => {
     await renderWith(await daysWithRuns([1, 2, 3]))
+    openTab('By suite')
     expect(screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' })).toBeInTheDocument()
     expect(screen.queryByText(/Suite pass rates · today/)).toBeNull()
     expect(screen.queryByText('Single day')).toBeNull()
     expect(screen.queryByText(/No delta available — single day of data/)).toBeNull()
     // The window it reads is the window picked: the coverage read and the title move together.
-    fireEvent.click(screen.getByRole('tab', { name: '90d' }))
+    fireEvent.click(windowOption('90d'))
     expect(screen.getByRole('heading', { name: 'Suite pass rates — last 90 days' })).toBeInTheDocument()
     const { useCoverage } = await import('@/hooks/useMetrics')
     const calls = (useCoverage as ReturnType<typeof vi.fn>).mock.calls
     expect(calls[calls.length - 1][0]).toBe(90)
-    fireEvent.click(screen.getByRole('tab', { name: '24h' }))
+    fireEvent.click(windowOption('24h'))
     expect(screen.getByRole('heading', { name: 'Suite pass rates — last 24 hours' })).toBeInTheDocument()
   })
 
@@ -835,6 +888,7 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
       suite_name: `S${i}`, unique_tests: 1, passed: 9, failed: 1, skipped: 0, pass_rate: 90,
     }))
     await renderWith(await daysWithRuns([1, 2, 3]), suites)
+    openTab('By suite')
     const card = screen.getByRole('heading', { name: /^Suite pass rates/ }).closest('div.rounded-xl') as HTMLElement
     const rows = within(card).getAllByText(/^S\d$/)
     expect(rows).toHaveLength(6)
@@ -848,13 +902,173 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
     expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
     expect(screen.queryByText(/hasn't fired since/)).toBeNull()
     expect(screen.queryByText(/appears paused since/)).toBeNull()
-    expect(screen.getByText(/the longest silence ran from/)).toBeInTheDocument()
+    // The callout states the past silence's dates (the verdict's issue row
+    // that said it again went with the verdict card, P3).
+    expect(screen.getByText(/No executions landed from/)).toBeInTheDocument()
   })
 
   it("states the window's executions as the window's, with no invented regression claim", async () => {
     await renderWith(await daysWithRuns([1, 2, 3]))
-    expect(screen.getByText((_, el) => el?.classList.contains('issue-body') === true && /^The window had 30 test executions: 27 passed, 3 failed, 0 broken/.test(el.textContent ?? ''))).toBeInTheDocument()
+    // P3: the Executions tile states them (the verdict's issue row repeated it).
+    const tile = within(screen.getByRole('region', { name: 'Trend metrics' })).getByText('Executions').closest('[data-metric-card]') as HTMLElement
+    expect(tile).toHaveTextContent('30')
+    expect(tile).toHaveTextContent('27 passed · 3 failed · 0 broken · 0 skipped')
     expect(screen.queryByText(/The latest active day had/)).toBeNull()
     expect(screen.queryByText(/No regression vs\. the prior in-window run/)).toBeNull()
+  })
+})
+
+// P3 (UX redesign, the page template): header · KPI strip · the hero (the
+// pass-rate trend, `data-primary`) · the score disclosure · the page's tabs
+// (Volume · By suite · Durations · Heatmap, in `?tab=`). Every chart was
+// moved, none rebuilt.
+describe('TrendsPage P3: the page template', () => {
+  beforeEach(async () => {
+    frames.stacked.length = 0
+    frames.timeSeries.length = 0
+    catalogue.props.length = 0
+    catalogue.throws = false
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 14 })
+  })
+
+  /** The router's location, rendered so a test can read the URL the page writes. */
+  function Location() {
+    const location = useLocation()
+    return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+  }
+
+  async function renderAt(path: string) {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    const trend = [1, 2, 3, 4].map((back) => ({
+      date: shiftDayIso(utcDayIso(), -back), passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90,
+    }))
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { summary: {}, suites: [{ suite_name: 'Checkout', unique_tests: 6, passed: 40, failed: 10, skipped: 5, pass_rate: 80 }] },
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes><Route path="/trends" element={<><TrendsPage /><Location /></>} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Trends' })
+  }
+
+  const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  it('puts the one primary content (the pass-rate hero) before the page tab bar and the disclosure', async () => {
+    await renderAt('/trends')
+    const primary = document.querySelectorAll('[data-primary]')
+    expect(primary).toHaveLength(1)
+    expect(within(primary[0] as HTMLElement).getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+    // After the header and the KPI strip.
+    expect(follows(screen.getByRole('region', { name: 'Trend metrics' }), primary[0])).toBe(true)
+    const tablists = screen.getAllByRole('tablist')
+    expect(tablists.map((t) => t.getAttribute('aria-label'))).toEqual(['Trend views'])
+    const disclosures = document.querySelectorAll('[data-disclosure]')
+    expect(disclosures).toHaveLength(1)
+    for (const later of [...tablists, ...disclosures]) expect(follows(primary[0], later)).toBe(true)
+    // Five compact KPI tiles at most, in one strip.
+    const strip = within(screen.getByRole('region', { name: 'Trend metrics' }))
+    expect(strip.getAllByText(/^(Pass rate|Days with runs|Executions|Suites|Last run)$/)).toHaveLength(5)
+    expect(document.querySelectorAll('[data-kpi-strip] [data-metric-card="compact"]')).toHaveLength(5)
+  })
+
+  it('keeps the score collapsed: its header states the verdict and the score, and it opens to the meter and the dimensions', async () => {
+    await renderAt('/trends')
+    const toggle = screen.getByRole('button', { name: /How this score is computed/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.textContent).toMatch(/Trend (healthy|mixed|declining) · confidence \d+ \/ 100|Insufficient data · confidence \d+ \/ 100/)
+    expect(screen.queryByRole('meter', { name: 'Trend confidence' })).toBeNull()
+    openScore()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('meter', { name: 'Trend confidence' })).toBeInTheDocument()
+    for (const dim of ['Data coverage', 'Sample size', 'Variance stability', 'Tag quality']) {
+      expect(within(screen.getByRole('region', { name: 'Trend verdict' })).getByText(dim)).toBeInTheDocument()
+    }
+  })
+
+  it('opens on Volume with a clean URL: the cadence strip, the daily breakdown, and no catalogue', async () => {
+    await renderAt('/trends')
+    expect(within(screen.getByRole('tablist', { name: 'Trend views' })).getByRole('tab', { name: 'Volume' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Run cadence — last 14 days' })).toBeInTheDocument()
+    // P3: the cadence explainer is the title's tooltip, not a paragraph on the page.
+    expect(screen.getByRole('heading', { name: 'Run cadence — last 14 days' })).toHaveAttribute('title', expect.stringMatching(/^Each cell is one day\./))
+    expect(screen.queryByText(/the schedule, the runner, or someone with a manual trigger/)).toBeNull()
+    expect(screen.queryByTestId('trends-catalogue')).toBeNull()
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/trends$/)
+  })
+
+  it.each([
+    ['volume', 'Volume'],
+    ['by-suite', 'By suite'],
+    ['durations', 'Durations'],
+    ['heatmap', 'Heatmap'],
+  ] as const)('?tab=%s selects %s and renders its section', async (id, label) => {
+    await renderAt(`/trends?tab=${id}`)
+    expect(within(screen.getByRole('tablist', { name: 'Trend views' })).getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true')
+    const panel = document.querySelector('[data-tab-panel]') as HTMLElement
+    expect(panel).toHaveAttribute('data-tab-panel', id)
+    if (id === 'volume') {
+      expect(within(panel).getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+      expect(within(panel).queryByTestId('trends-catalogue')).toBeNull()
+      return
+    }
+    // The catalogue, scoped to this tab's sections.
+    const stub = await within(panel).findByTestId('trends-catalogue')
+    expect(stub.closest('[data-catalogue-scope]')).toHaveAttribute('data-catalogue-scope', id)
+    // Daily breakdown is Volume's alone; the suite pass rates card is By suite's alone.
+    expect(within(panel).queryByRole('heading', { name: 'Daily breakdown' })).toBeNull()
+    const suiteCard = within(panel).queryByRole('heading', { name: 'Suite pass rates — last 14 days' })
+    if (id === 'by-suite') expect(suiteCard).toBeInTheDocument()
+    else expect(suiteCard).toBeNull()
+  })
+
+  it('an unknown ?tab= reads as Volume', async () => {
+    await renderAt('/trends?tab=nope')
+    expect(within(screen.getByRole('tablist', { name: 'Trend views' })).getByRole('tab', { name: 'Volume' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+  })
+
+  it('a tab click writes ?tab=, and Volume clears it', async () => {
+    await renderAt('/trends')
+    openTab('Heatmap')
+    expect(screen.getByTestId('location')).toHaveTextContent('/trends?tab=heatmap')
+    expect(await screen.findByTestId('trends-catalogue')).toBeInTheDocument()
+    openTab('Volume')
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/trends$/)
+    expect(screen.queryByTestId('trends-catalogue')).toBeNull()
+  })
+
+  // Each tab renders the catalogue with its own sections (`sections`): a
+  // section another tab owns is not rendered, so it never asks (the e2e
+  // proves the requests). No CSS hides anything any more.
+  it.each([
+    ['by-suite', ['trends-multi-series', 'trends-compare']],
+    ['durations', ['trends-duration']],
+    ['heatmap', ['trends-heatmap']],
+  ] as const)('the %s tab renders the catalogue with exactly its sections', async (id, sections) => {
+    await renderAt(`/trends?tab=${id}`)
+    const scope = (await screen.findByTestId('trends-catalogue')).closest('[data-catalogue-scope]') as HTMLElement
+    expect(catalogue.props[catalogue.props.length - 1].sections).toEqual(sections)
+    // Composition, not concealment: the wrapper hides no section.
+    expect(scope.className).not.toMatch(/:hidden/)
+  })
+
+  it('remounts the catalogue per tab: Durations then Heatmap are two mounts, never one hidden', async () => {
+    await renderAt('/trends?tab=durations')
+    const first = await screen.findByTestId('trends-catalogue')
+    openTab('Heatmap')
+    const second = await screen.findByTestId('trends-catalogue')
+    expect(second).not.toBe(first)
+    expect(second.closest('[data-catalogue-scope]')).toHaveAttribute('data-catalogue-scope', 'heatmap')
+    expect(catalogue.props[catalogue.props.length - 1].sections).toEqual(['trends-heatmap'])
+    expect(document.querySelectorAll('[data-testid="trends-catalogue"]')).toHaveLength(1)
   })
 })

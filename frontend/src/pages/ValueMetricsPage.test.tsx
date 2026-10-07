@@ -14,6 +14,10 @@
  *   - Assumptions editor: PUT sends only the changed fields; client-side
  *     bounds (0 < x <= 480) block out-of-range saves; the source badge flips
  *     after a successful save; permission-denied hides the editor.
+ *   - UX redesign P3 (page template): header with the shared WindowPicker
+ *     (7d/30d/90d/365d) · one-line hero · one strip of five counters · the
+ *     monthly chart as the primary content · Model breakdown and Model
+ *     assumptions in disclosures under it.
  */
 import { cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -153,6 +157,20 @@ const methodologyFixture = {
   research_notes: ['Median manual triage time sourced from internal QA benchmarks.'],
 }
 
+/** Open a disclosure by its title (its button also reads the summary). */
+async function openDisclosure(title: string) {
+  const button = await screen.findByRole('button', { name: new RegExp(`^${title}`) })
+  expect(button).toHaveAttribute('aria-expanded', 'false')
+  fireEvent.click(button)
+  expect(button).toHaveAttribute('aria-expanded', 'true')
+  return button
+}
+
+/** A counter card in the strip, by its title. */
+function counterCard(title: string): HTMLElement {
+  return screen.getByText(title).closest('[data-metric-card]') as HTMLElement
+}
+
 async function renderPage() {
   const { default: ValueMetricsPage } = await import('./ValueMetricsPage')
   return render(
@@ -174,6 +192,11 @@ async function renderPage() {
 describe('ValueMetricsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // A disclosure remembers being opened (`persistKey`): start each test closed.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key?.startsWith('tl.disclosure.')) localStorage.removeItem(key)
+    }
     useTimeWindowStore.setState({ days: 30 })
     mockCanManage = true
     storeState.activeProjectId = 'proj-1'
@@ -210,11 +233,11 @@ describe('ValueMetricsPage', () => {
 
     await screen.findByText('42.5h')
     const note = screen.getByTestId('hours-saved-window-note')
-    expect(note).toHaveTextContent('Always the last 30 days: the window picker does not change this figure.')
+    expect(note).toHaveTextContent('Fixed 30-day figure: the window picker does not change it.')
 
     // Pick a 90-day window: the page refetches for 90 days, but the headline
     // still reads the API's fixed 30-day figure and still says so.
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('radio', { name: '90d' }))
     await waitFor(() => {
       expect(mockGet.mock.calls.some((call) => call[1] === 90)).toBe(true)
     })
@@ -228,7 +251,7 @@ describe('ValueMetricsPage', () => {
 
     expect(await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)).toBeInTheDocument()
     expect(screen.getByText('42.5h')).toBeInTheDocument()
-    expect(screen.getByText(/≈ 0\.8 FTE over the last 30 days/)).toBeInTheDocument()
+    expect(screen.getByText(/≈ 0\.8 FTE/)).toBeInTheDocument()
     expect(screen.getByText('How is this calculated?')).toBeInTheDocument()
   })
 
@@ -323,6 +346,7 @@ describe('ValueMetricsPage', () => {
   it('renders the honest model-count labels (duplicates absorbed, runs unblocked estimate)', async () => {
     await renderPage()
 
+    await openDisclosure('Model breakdown')
     expect(await screen.findByText(/Duplicate failures absorbed/i)).toBeInTheDocument()
     expect(screen.getByText(/Runs unblocked \(estimate\)/i)).toBeInTheDocument()
   })
@@ -330,6 +354,7 @@ describe('ValueMetricsPage', () => {
   it('PUTs only the changed assumption fields', async () => {
     await renderPage()
 
+    await openDisclosure('Model assumptions')
     const input = await screen.findByLabelText('Triage minutes per failure')
     fireEvent.change(input, { target: { value: '20' } })
     await act(async () => {
@@ -345,6 +370,7 @@ describe('ValueMetricsPage', () => {
   it('blocks out-of-range assumption values client-side (0 < x <= 480)', async () => {
     await renderPage()
 
+    await openDisclosure('Model assumptions')
     const input = await screen.findByLabelText('Triage minutes per failure')
 
     fireEvent.change(input, { target: { value: '0' } })
@@ -372,7 +398,9 @@ describe('ValueMetricsPage', () => {
   it('flips the source badge from Defaults to Customized after a successful save', async () => {
     await renderPage()
 
+    // The badge is the disclosure's summary: it reads while the editor is closed.
     expect(await screen.findByText('Defaults')).toBeInTheDocument()
+    await openDisclosure('Model assumptions')
 
     // The post-save revalidation returns the customized payload.
     mockGet.mockResolvedValue(baseMetrics({ assumptions_source: 'custom' }))
@@ -406,5 +434,114 @@ describe('ValueMetricsPage', () => {
 
     await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)
     expect(screen.queryByText('Model assumptions')).toBeNull()
+  })
+
+  // ── UX redesign P3: the page template ─────────────────────────────────────
+
+  it('lays the page out as the template: hero, one strip of five counters, then the monthly chart before every disclosure', async () => {
+    const { container } = await renderPage()
+
+    const chart = await screen.findByTestId('monthly-chart')
+    const primary = container.querySelector('[data-primary]') as HTMLElement
+    expect(primary).not.toBeNull()
+    expect(primary.contains(chart)).toBe(true)
+    // Above it: the hero, then the strip of five compact counters.
+    const hero = container.querySelector('[data-value-hero]') as HTMLElement
+    const strip = container.querySelector('[data-kpi-strip]') as HTMLElement
+    expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
+    expect(hero.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(strip.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Every secondary section (no tab bar here; two disclosures) comes after it.
+    expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(0)
+    const disclosures = Array.from(container.querySelectorAll('[data-disclosure]'))
+    expect(disclosures.map((d) => d.querySelector('button')?.textContent)).toEqual([
+      'Model breakdownlast 3 months',
+      'Model assumptionsDefaults',
+    ])
+    for (const d of disclosures) expect(primary.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The page's block gap is the template's (space-y-4).
+    expect((primary.parentElement as HTMLElement).className.split(/\s+/)).toContain('space-y-4')
+  })
+
+  it('folds "Defects promoted" into Defects grouped and drops the derived "Release decisions" (seven cards → five)', async () => {
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    expect(within(counterCard('Defects grouped')).getByText('12')).toBeInTheDocument()
+    expect(counterCard('Defects grouped')).toHaveTextContent('44 tests · 9 promoted to Jira')
+    expect(within(counterCard('Duplicates avoided')).getByText('5')).toBeInTheDocument()
+    expect(counterCard('Flaky tests found')).toHaveTextContent('2 recommended for quarantine')
+    // Blocked and conditional are both on this card: their sum needs no card of its own.
+    expect(counterCard('Releases blocked')).toHaveTextContent('1 conditional · 0 overridden')
+    expect(within(counterCard('AI reports')).getByText('7')).toBeInTheDocument()
+    expect(screen.queryByText(/^Release Decisions$/i)).toBeNull()
+    expect(screen.queryByText(/^Defects Promoted$/i)).toBeNull()
+  })
+
+  it('shows an empty counter as "—", never as a stark 0', async () => {
+    mockGet.mockResolvedValue(baseMetrics({ duplicate_tickets_avoided: 0 }))
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    expect(within(counterCard('Duplicates avoided')).getByText('—')).toBeInTheDocument()
+    expect(within(counterCard('Duplicates avoided')).queryByText('0')).toBeNull()
+  })
+
+  it('keeps Model breakdown collapsed until it is opened, and closes it again', async () => {
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    expect(screen.queryByTestId('model-breakdown')).toBeNull()
+    const button = await openDisclosure('Model breakdown')
+    const breakdown = screen.getByTestId('model-breakdown')
+    // The three months summed: auto_triaged 10 + 11 + 12.
+    expect(within(breakdown.querySelector('[data-metric-card]') as HTMLElement).getByText('33')).toBeInTheDocument()
+    expect(within(breakdown).getByText('Proxy estimate')).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(screen.queryByTestId('model-breakdown')).toBeNull()
+  })
+
+  it('keeps the assumptions editor collapsed until it is opened, and closes it again', async () => {
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    expect(screen.queryByTestId('assumptions-editor')).toBeNull()
+    const button = await openDisclosure('Model assumptions')
+    expect(screen.getByTestId('assumptions-editor')).toBeInTheDocument()
+    expect(screen.getByLabelText('Defect filing minutes')).toHaveValue(10)
+    fireEvent.click(button)
+    expect(screen.queryByTestId('assumptions-editor')).toBeNull()
+  })
+
+  it('offers 7d / 30d / 90d / 365d in the shared window picker, and a year asks for 365 days', async () => {
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    const picker = screen.getByRole('radiogroup', { name: 'Time window' })
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['7d', '30d', '90d', '365d'])
+    expect(within(picker).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(picker).getByRole('radio', { name: '365d' }))
+    await waitFor(() => expect(mockGet.mock.calls.some((call) => call[1] === 365)).toBe(true))
+    expect(useTimeWindowStore.getState().days).toBe(365)
+    // Export stays the header's one secondary action.
+    expect(screen.getByRole('link', { name: /Export/ })).toHaveAttribute('download')
+  })
+
+  it('says once that nothing has fired yet, with what fills each counter behind a disclosure', async () => {
+    mockGet.mockResolvedValue(baseMetrics({
+      defects_auto_grouped: 0,
+      duplicate_tickets_avoided: 0,
+      defects_promoted: 0,
+      flaky_tests_identified: 0,
+      risky_releases_blocked: 0,
+      releases_conditional: 0,
+      release_overrides: 0,
+    }))
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    expect(screen.queryByText(/the Flaky Coach scans history/)).toBeNull()
+    await openDisclosure('No value-generating activity yet for this window')
+    expect(screen.getByText(/the Flaky Coach scans history/)).toBeInTheDocument()
   })
 })

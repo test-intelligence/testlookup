@@ -74,7 +74,8 @@ const releaseList: ApiHandlers = [
 const trendsReady = (p: Page) => landmark(p, 'Trend metrics')
 const releaseSelect = (p: Page) => p.getByRole('combobox', { name: 'Filter by release' })
 const suiteSelect = (p: Page) => p.getByRole('combobox', { name: 'Test suite' })
-const windowTab = (p: Page, label: string) => p.getByRole('tablist', { name: 'Time window' }).getByRole('tab', { name: label, exact: true })
+// UX redesign P3: Trends' window is the shared `WindowPicker` (a radio group bound to the global window).
+const windowTab = (p: Page, label: string) => p.getByRole('radiogroup', { name: 'Time window' }).getByRole('radio', { name: label, exact: true })
 const viewsButton = (p: Page) => p.locator('[data-saved-views-trigger]')
 
 /** The first suite the Trends suite select offers (the fixture's own spelling). */
@@ -104,7 +105,7 @@ test('Trends: Views saves the top-bar release, the window and the suite, and ope
   await releaseSelect(page).selectOption(R)
   await windowTab(page, '30d').click()
   await suiteSelect(page).selectOption(suite)
-  await expect(windowTab(page, '30d')).toHaveAttribute('aria-selected', 'true')
+  await expect(windowTab(page, '30d')).toHaveAttribute('aria-checked', 'true')
 
   await viewsButton(page).click()
   const panel = page.locator('[data-saved-views-panel]')
@@ -134,7 +135,7 @@ test('Trends: Views saves the top-bar release, the window and the suite, and ope
   await viewsButton(page).click()
   await panel.locator('[data-saved-view-open]').filter({ hasText: 'Release watch' }).click()
   await expect(releaseSelect(page)).toHaveValue(R)
-  await expect(windowTab(page, '30d')).toHaveAttribute('aria-selected', 'true')
+  await expect(windowTab(page, '30d')).toHaveAttribute('aria-checked', 'true')
   await expect(suiteSelect(page)).toHaveValue(suite)
   await expect(page).toHaveURL(new RegExp(`[?&]release=${R}`))
   await networkQuiet(page, api)
@@ -200,7 +201,7 @@ test.describe('my default view', () => {
       ready: trendsReady,
     })
     await expect(releaseSelect(page)).toHaveValue(R)
-    await expect(windowTab(page, '30d')).toHaveAttribute('aria-selected', 'true')
+    await expect(windowTab(page, '30d')).toHaveAttribute('aria-checked', 'true')
     await expect(suiteSelect(page)).toHaveValue(SUITE_IN_FIXTURE)
     await expect(page.getByText(/Opened your default view "My default"/)).toBeVisible()
     await networkQuiet(page, api)
@@ -218,7 +219,7 @@ test.describe('my default view', () => {
     await networkQuiet(page, api)
     expect(requestsTo(api, '/api/v1/saved-views')).toEqual([`GET /api/v1/saved-views?project_id=${P}&page=trends`])
     await expect(releaseSelect(page)).toHaveValue(R_OTHER)
-    await expect(windowTab(page, '14d')).toHaveAttribute('aria-selected', 'true')
+    await expect(windowTab(page, '14d')).toHaveAttribute('aria-checked', 'true')
     await expect(suiteSelect(page)).toHaveValue('')
     await expect(page.getByText(/Opened your default view/)).toHaveCount(0)
     assertHermetic(api, errors)

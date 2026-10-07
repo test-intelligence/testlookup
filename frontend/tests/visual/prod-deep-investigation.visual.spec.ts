@@ -4,8 +4,10 @@
  * literal polylines, a target line and the spend-vs-budget bars, with
  * $18.42 of a $50 budget spent).
  *
- * The page auto-routes `/deep-investigate` to its newest run, so the spec
- * opens that run's URL directly: the same page, without a redirect race.
+ * The page focuses its newest run in `?run=` (UX redesign P4: the old
+ * `/deep-investigate/<run>` redirects to the Run page's Analysis tab), so
+ * the spec opens that run's `?run=` URL directly: the same page, without a
+ * redirect race.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -16,7 +18,7 @@ test.use(PINNED)
 
 for (const theme of THEMES) {
   test(`deep investigation regions — ${theme}`, async ({ page }) => {
-    const { api, errors } = await openProductionPage(page, `/deep-investigate/${RUN_ID}`, {
+    const { api, errors } = await openProductionPage(page, `/deep-investigate?run=${RUN_ID}`, {
       theme,
       now: NOW,
       me: USER,

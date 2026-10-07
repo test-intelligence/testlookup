@@ -13,6 +13,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectReviews } from '@/hooks/useReviews'
 import { reviewService } from '@/services/reviewService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import ChipFilter from './inbox/ChipFilter'
 import {
   REVIEW_REASON_CODES,
   REVIEW_REASON_LABEL,
@@ -24,12 +25,12 @@ import {
 
 const PAGE_SIZE = 25
 
-const TABS: { key: ReviewStateFilter; label: string }[] = [
-  { key: 'pending_review', label: 'Pending' },
-  { key: 'accepted', label: 'Accepted' },
-  { key: 'rejected', label: 'Rejected' },
-  { key: 'superseded', label: 'Superseded' },
-  { key: 'all', label: 'All' },
+const STATES: { id: ReviewStateFilter; label: string }[] = [
+  { id: 'pending_review', label: 'Pending' },
+  { id: 'accepted', label: 'Accepted' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'superseded', label: 'Superseded' },
+  { id: 'all', label: 'All' },
 ]
 
 const STATE_TONE: Record<Review['state'], string> = {
@@ -42,7 +43,10 @@ const STATE_TONE: Record<Review['state'], string> = {
 const formatWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—')
 
 /**
- * Review Queue — the human review gate (architecture E8.5, section 8.3).
+ * The active project's AI-report review queue (architecture E8.5, section
+ * 8.3): a state filter, the queue 25 rows a page, and each pending row's
+ * Accept / Reject. Inbox › Approvals renders it as its "AI reports" source
+ * (UX redesign P4, D4); the caller guarantees one project is active.
  *
  * Every AI-generated report is a draft until a person accepts it. QA leads
  * accept (the pipeline run becomes `passed`) or reject with a reason code (it
@@ -50,13 +54,11 @@ const formatWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString()
  * enforces the rest: API keys and synthetic accounts are refused, and nobody
  * settles a review of a run they triggered (separation of duties).
  */
-export default function ReviewsPage() {
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+export function ReviewsBody() {
   const { canAccessManagement: canSettle } = usePermissions()
-  const [tab, setTab] = useState<ReviewStateFilter>('pending_review')
+  const [state, setState] = useState<ReviewStateFilter>('pending_review')
   const [page, setPage] = useState(1)
-  const { reviews, isLoading, error, isError, refresh } = useProjectReviews(tab)
+  const { reviews, isLoading, error, isError, refresh } = useProjectReviews(state)
 
   const pages = Math.max(1, Math.ceil(reviews.length / PAGE_SIZE))
   const currentPage = Math.min(page, pages)
@@ -65,51 +67,18 @@ export default function ReviewsPage() {
     [reviews, currentPage],
   )
 
-  const header = (
-    <PageHeader
-      title="Review Queue"
-      subtitle="AI-generated reports are drafts until a person accepts them. Accepting marks the pipeline run passed; rejecting marks it failed."
-    />
-  )
-
-  if (isAllProjects) {
-    return (
-      <div className="space-y-4">
-        {header}
-        <ProjectRequiredEmptyState
-          icon={<ClipboardCheck className="h-10 w-10" />}
-          description="Reviews belong to one project. Pick the project whose AI reports you want to review."
-        />
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-4">
-      {header}
-
-      <div className="flex items-center gap-1 border-b border-[var(--color-border)]" role="tablist">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => {
-              setTab(t.key)
-              setPage(1)
-            }}
-            className={clsx(
-              'px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors',
-              tab === t.key
-                ? 'border-[var(--color-accent)] text-[var(--color-text)]'
-                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <div className="space-y-3">
+      <ChipFilter
+        label="State"
+        ariaLabel="Review state"
+        options={STATES}
+        value={state}
+        onChange={(next) => {
+          setState(next)
+          setPage(1)
+        }}
+      />
 
       {!canSettle && (
         <p className="text-xs text-[var(--color-text-muted)]" data-testid="review-readonly-note">
@@ -124,7 +93,7 @@ export default function ReviewsPage() {
           icon={<ClipboardCheck className="h-10 w-10" />}
           title="Nothing here"
           description={
-            tab === 'pending_review'
+            state === 'pending_review'
               ? 'No AI reports are awaiting review. A report joins this queue when its AI pipeline finishes.'
               : 'No reviews in this state yet.'
           }
@@ -155,6 +124,32 @@ export default function ReviewsPage() {
 
       {reviews[0]?.ai_disclaimer && (
         <p className="text-xs text-[var(--color-text-muted)]">{reviews[0].ai_disclaimer}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Review Queue, no longer routed (UX redesign P4, D4: `/reviews` redirects to
+ * Inbox › Approvals, which renders the same `ReviewsBody`).
+ */
+export default function ReviewsPage() {
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Review Queue"
+        subtitle="AI-generated reports are drafts until a person accepts them. Accepting marks the pipeline run passed; rejecting marks it failed."
+      />
+      {isAllProjects ? (
+        <ProjectRequiredEmptyState
+          icon={<ClipboardCheck className="h-10 w-10" />}
+          description="Reviews belong to one project. Pick the project whose AI reports you want to review."
+        />
+      ) : (
+        <ReviewsBody />
       )}
     </div>
   )
@@ -212,7 +207,8 @@ function ReviewRow({
         <td className="px-3 py-2 text-xs">
           {review.test_run_id ? (
             <Link
-              to={`/runs/${encodeURIComponent(review.test_run_id)}/intelligence`}
+              // P4: the run's Analysis tab (the old `/runs/:id/intelligence` redirects there).
+              to={`/runs/${encodeURIComponent(review.test_run_id)}?tab=analysis`}
               className="text-[var(--color-accent)] hover:underline"
             >
               Open report

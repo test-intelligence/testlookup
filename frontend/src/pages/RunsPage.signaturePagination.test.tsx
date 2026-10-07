@@ -1,11 +1,13 @@
 /**
  * The failure-signature table paginates.
  *
- * `SignatureClusterCard` rendered every member of the primary cluster plus every
- * outlier in one flat list. The card sits beside the scorecard in a fixed-height
- * row, so a window containing more than a handful of matching builds stretched
- * the page — and the cluster is *expected* to be large, since its whole premise
- * is "many builds share one signature".
+ * The failure-signature list (`SignatureClusters`, in the side panel since UX
+ * redesign P3; a card under the table before) once rendered every member of
+ * the primary cluster plus every outlier in one flat list. The card sat beside
+ * the scorecard in a fixed-height row, so a window containing more than a
+ * handful of matching builds stretched the page — and the cluster is
+ * *expected* to be large, since its whole premise is "many builds share one
+ * signature".
  *
  * Two behaviours worth pinning beyond "it slices":
  *
@@ -22,7 +24,7 @@ vi.mock('@/hooks/useRuns', () => ({ useRuns: () => ({ runs: [], isLoading: false
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: () => ({ options: [] }) }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: false }) }))
 
-import { SignatureClusterCard, SIGNATURE_ROWS_PER_PAGE } from './RunsPage'
+import { SignatureClusters, SIGNATURE_ROWS_PER_PAGE } from './RunsPage'
 
 function makeRun(i: number) {
   return {
@@ -47,7 +49,7 @@ function makeCluster(n: number) {
 function renderCard(memberCount: number) {
   return render(
     <MemoryRouter>
-      <SignatureClusterCard
+      <SignatureClusters
         primaryCluster={makeCluster(memberCount)}
         outlierClusters={[]}
         totalRuns={memberCount}
@@ -95,7 +97,7 @@ describe('failure-signature table pagination', () => {
   it('resets to page 1 when the cluster changes underneath the viewer', () => {
     const { rerender } = render(
       <MemoryRouter>
-        <SignatureClusterCard
+        <SignatureClusters
           primaryCluster={makeCluster(SIGNATURE_ROWS_PER_PAGE * 3)}
           outlierClusters={[]}
           totalRuns={SIGNATURE_ROWS_PER_PAGE * 3}
@@ -109,7 +111,7 @@ describe('failure-signature table pagination', () => {
     // Project switch / time-window change → a smaller cluster.
     rerender(
       <MemoryRouter>
-        <SignatureClusterCard
+        <SignatureClusters
           primaryCluster={makeCluster(SIGNATURE_ROWS_PER_PAGE + 1)}
           outlierClusters={[]}
           totalRuns={SIGNATURE_ROWS_PER_PAGE + 1}
@@ -124,7 +126,7 @@ describe('failure-signature table pagination', () => {
   it('never renders an empty table when the cluster shrinks', () => {
     const { rerender } = render(
       <MemoryRouter>
-        <SignatureClusterCard
+        <SignatureClusters
           primaryCluster={makeCluster(SIGNATURE_ROWS_PER_PAGE * 4)}
           outlierClusters={[]}
           totalRuns={SIGNATURE_ROWS_PER_PAGE * 4}
@@ -134,7 +136,7 @@ describe('failure-signature table pagination', () => {
     )
     rerender(
       <MemoryRouter>
-        <SignatureClusterCard
+        <SignatureClusters
           primaryCluster={makeCluster(2)}
           outlierClusters={[]}
           totalRuns={2}
@@ -148,7 +150,7 @@ describe('failure-signature table pagination', () => {
   it('still renders the empty state when there is no cluster', () => {
     render(
       <MemoryRouter>
-        <SignatureClusterCard
+        <SignatureClusters
           primaryCluster={null}
           outlierClusters={[]}
           totalRuns={0}

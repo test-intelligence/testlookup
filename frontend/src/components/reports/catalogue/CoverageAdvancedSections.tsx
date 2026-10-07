@@ -16,6 +16,7 @@ import { Suspense, type ReactElement } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import LazySection from './LazySection'
 import type { AdvancedSectionScope, HeatmapKind } from './sectionContracts'
+import type { CoverageSectionId } from './CoverageAdvanced'
 import { COVERAGE_HEATMAP_SECTION_HEIGHT, COVERAGE_MAP_SECTION_HEIGHT } from './CoverageAdvanced.model'
 
 const CoverageMapSection = lazyWithRetry(() => import('./CoverageMapSection'))
@@ -28,18 +29,27 @@ function Placeholder({ height }: { height: number }) {
   return <div aria-hidden="true" style={{ minHeight: height }} />
 }
 
-export default function CoverageAdvancedSections({ days, suiteFilter }: AdvancedSectionScope): ReactElement {
+export interface CoverageAdvancedSectionsProps extends AdvancedSectionScope {
+  /** The sections `CoverageAdvanced` was asked to render (it resolves the default: both). */
+  sections: readonly CoverageSectionId[]
+}
+
+export default function CoverageAdvancedSections({ days, suiteFilter, sections }: CoverageAdvancedSectionsProps): ReactElement {
   return (
     <div data-coverage-advanced="" className="mt-3.5 grid min-w-0 grid-cols-1 gap-3.5">
-      <LazySection label="coverage-map" minHeight={COVERAGE_MAP_SECTION_HEIGHT}>
-        <Suspense fallback={<Placeholder height={COVERAGE_MAP_SECTION_HEIGHT} />}>
-          <CoverageMapSection days={days} suiteFilter={suiteFilter} />
-        </Suspense>
-      </LazySection>
+      {sections.includes('coverage-map') && (
+        <LazySection label="coverage-map" minHeight={COVERAGE_MAP_SECTION_HEIGHT}>
+          <Suspense fallback={<Placeholder height={COVERAGE_MAP_SECTION_HEIGHT} />}>
+            <CoverageMapSection days={days} suiteFilter={suiteFilter} />
+          </Suspense>
+        </LazySection>
+      )}
       {/* FK1's section owns its LazySection: mounted bare, as its contract asks. */}
-      <Suspense fallback={<Placeholder height={COVERAGE_HEATMAP_SECTION_HEIGHT} />}>
-        <HeatmapSection days={days} suiteFilter={suiteFilter} kinds={COVERAGE_HEATMAP_KINDS} />
-      </Suspense>
+      {sections.includes('heatmap-suite_environment') && (
+        <Suspense fallback={<Placeholder height={COVERAGE_HEATMAP_SECTION_HEIGHT} />}>
+          <HeatmapSection days={days} suiteFilter={suiteFilter} kinds={COVERAGE_HEATMAP_KINDS} />
+        </Suspense>
+      )}
     </div>
   )
 }

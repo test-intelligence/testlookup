@@ -2,8 +2,6 @@ import useSWR, { mutate } from 'swr'
 import toast from 'react-hot-toast'
 import { valueMetricsService } from '@/services/valueMetricsService'
 import type { ValueMethodology, ValueMetrics } from '@/types/valueMetrics'
-import { ALL_PROJECTS_ID } from '@/store/projectStore'
-import { useActiveProjectId } from './useProjectScopedSWR'
 
 /**
  * Value-metrics fetch as an SWR hook.
@@ -40,31 +38,9 @@ export function useValueMetrics(projectId: string | undefined, days = 30, months
   }
 }
 
-/** Revalidate every cached value-metrics key (page + Overview KPI). */
+/** Revalidate every cached value-metrics key. */
 export function refreshValueMetrics() {
   return mutate((key: unknown) => Array.isArray(key) && key[0] === 'value-metrics')
-}
-
-/**
- * Project-scoped value-metrics fetch for the Overview KPI card (US-12.2).
- *
- * Uses the SAME SWR key shape as `useValueMetrics` (with its defaults
- * days=30 / months=6) so when both Overview and the Value Metrics page are
- * warm they dedupe to ONE fetch. Skips fetching entirely while no project is
- * selected (`activeProjectId === null`), mirroring useProjectScopedSWR.
- *
- * Deliberately NO error toast here: the Overview card is an optional
- * enrichment — on failure or insufficient data the card is simply omitted.
- */
-export function useValueMetricsKpi() {
-  const activeProjectId = useActiveProjectId()
-  const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
-  const { data } = useSWR<ValueMetrics>(
-    activeProjectId !== null ? ['value-metrics', projectId ?? '__all__', 30, 6] : null,
-    () => valueMetricsService.get(projectId, 30, 6),
-    { revalidateOnFocus: false },
-  )
-  return { metrics: data }
 }
 
 /**

@@ -142,7 +142,7 @@ function buildBlockers(release: Release, gate: DerivedGate): DerivedBlocker[] {
       severity: gate.flakePct > 3 ? 'red' : 'warn',
       title: `Flake rate ${gate.flakePct.toFixed(1)}% over cap`,
       context: 'flake budget',
-      action: { label: 'View flaky tests →', href: `/flaky-coach` },
+      action: { label: 'View flaky tests →', href: `/flaky` },
     })
   }
   return blockers
