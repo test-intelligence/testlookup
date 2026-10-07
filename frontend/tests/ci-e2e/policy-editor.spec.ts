@@ -181,8 +181,15 @@ test('the list: a compact header, New Policy, the policies as primary content', 
   await expect(primary.getByText('Checkout gate')).toBeVisible()
   await expect(primary.getByText('Project: Checkout · Created:', { exact: false })).toBeVisible()
   await expect(primary.getByText('System Default', { exact: false })).toBeVisible()
-  const top = await boxes(page, 0)
-  expect(top.primary.top).toBeLessThanOrEqual(300)
+  // The list has no form and no simulator (`boxes` needs both): its primary
+  // content's top, measured on its own.
+  const primaryTop = await page.evaluate((selector) => {
+    const main = document.querySelector(selector) as HTMLElement
+    main.scrollTop = 0
+    const primary = document.querySelector('[data-primary]') as HTMLElement
+    return Math.round(primary.getBoundingClientRect().top - main.getBoundingClientRect().top)
+  }, MAIN)
+  expect(primaryTop).toBeLessThanOrEqual(300)
   await page.getByRole('button', { name: 'New Policy' }).click()
   await expect(page.getByRole('heading', { name: 'New Policy', level: 1 })).toBeVisible()
   await networkQuiet(page, api)

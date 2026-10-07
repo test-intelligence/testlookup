@@ -213,7 +213,11 @@ def test_unowned_note_lists_reasons_and_total():
     assert "5 transitions" in note
     assert "2 unowned" in note
     assert "3 mixed ownership" in note
-    assert "Ownership" in note  # nudge toward the ownership editor
+    # Where to fix it: the rules on Ownership, a team's channel on Team
+    # channels (UX redesign P5 moved channels off the Ownership page).
+    assert "ownership rules on Ownership" in note
+    assert "Settings › Team channels" in note
+    assert "on the Ownership page" not in note
 
 
 def test_unowned_note_absent_when_nothing_fell_back():

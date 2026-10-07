@@ -33,7 +33,8 @@ const ITEMS = SETTINGS_GROUPS.flatMap((g) => g.items)
 describe('settings sub-nav: the routes it links to', () => {
   it('every item opens a routed page, behind the role its route asks for', () => {
     for (const item of ITEMS) {
-      if (item.requires === 'all') expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
+      // `engineer` items are on a route every role opens (the page itself tells a lower role why it cannot).
+      if (item.requires !== 'management') expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
       else expect(MANAGEMENT.has(item.to), `${item.id}: ${item.to} is a management route`).toBe(true)
     }
   })
@@ -57,22 +58,27 @@ describe('settings sub-nav: the routes it links to', () => {
 
 describe('settings sub-nav: who sees what', () => {
   it('a QA lead or admin sees all seven groups (§4), in order', () => {
-    const groups = settingsGroupsFor({ canAccessManagement: true, isDev: false })
+    const groups = settingsGroupsFor({ canAccessManagement: true, canOwnApiKeys: true, isDev: false })
     expect(groups.map((g) => g.label)).toEqual([
       'Account', 'Project', 'Release governance', 'Integrations', 'AI', 'Security & access', 'System',
     ])
   })
 
   it('a viewer sees their own pages and the AI pipeline pages anyone can open, nothing that would redirect them', () => {
-    const groups = settingsGroupsFor({ canAccessManagement: false, isDev: false })
+    const groups = settingsGroupsFor({ canAccessManagement: false, canOwnApiKeys: false, isDev: false })
     expect(groups.map((g) => [g.label, g.items.map((i) => i.id)])).toEqual([
       ['Account', ['profile', 'my-notifications']],
       ['AI', ['workflows', 'pipeline-runs']],
     ])
   })
 
+  it('a QA engineer also sees My API keys: the API lets them own keys (the Users page it lived on is QA lead+)', () => {
+    const groups = settingsGroupsFor({ canAccessManagement: false, canOwnApiKeys: true, isDev: false })
+    expect(groups[0].items.map((i) => i.id)).toEqual(['profile', 'my-notifications', 'my-api-keys'])
+  })
+
   it('seed data is listed in development builds only', () => {
-    const ids = (dev: boolean) => settingsGroupsFor({ canAccessManagement: true, isDev: dev }).flatMap((g) => g.items.map((i) => i.id))
+    const ids = (dev: boolean) => settingsGroupsFor({ canAccessManagement: true, canOwnApiKeys: true, isDev: dev }).flatMap((g) => g.items.map((i) => i.id))
     expect(ids(true)).toContain('seed-data')
     expect(ids(false)).not.toContain('seed-data')
   })

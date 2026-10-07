@@ -273,8 +273,10 @@ def render_unowned_note(fallback_counts: dict[str, int]) -> Optional[str]:
     )
     return (
         f"ℹ️ {total} transition{'s' if total != 1 else ''} without a team "
-        f"channel ({reasons}) — map teams to channels on the Ownership page "
-        f"to route these directly."
+        # UX redesign P5: rules stay on Ownership; a team's channel moved to
+        # its own page (Settings › Team channels). The note names both.
+        f"channel ({reasons}) — add ownership rules on Ownership and map teams "
+        f"to channels on Settings › Team channels to route these directly."
     )
 
 
@@ -294,8 +296,8 @@ async def send_to_team_channel(
     merged back into the default batch by the caller).
     """
     try:
-        # A team channel's webhook is set per project by a QA lead on the
-        # Ownership page, not by the operator, so it is never deployment-wide
+        # A team channel's webhook is set per project by a QA lead on
+        # Settings › Team channels, not by the operator, so it is never deployment-wide
         # and OFFLINE_NOTIFICATION_ALLOWED_HOSTS does not cover it (code review
         # of H10).
         if channel.channel_type == "slack":

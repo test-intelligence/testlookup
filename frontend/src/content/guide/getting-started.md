@@ -68,7 +68,7 @@ curl -X POST "$TESTLOOKUP_URL/api/v1/ingest/file" \
 
 ### Getting an API key
 
-**Settings → API keys**, or `POST /api/v1/keys`. The key is shown **once** — store it in your CI secret store immediately. Ingestion endpoints accept either an `X-API-Key` header or a normal signed-in session, so you can experiment from the browser before wiring CI.
+**Settings → Project → Streaming API keys**, or `POST /api/v1/keys`. The key is shown **once** — store it in your CI secret store immediately. Ingestion endpoints accept either an `X-API-Key` header or a normal signed-in session, so you can experiment from the browser before wiring CI.
 
 > **Warning.** Never commit an API key, paste it into a ticket, or put it in a build log. Treat it like a password. See [Security and privacy](/docs/security).
 

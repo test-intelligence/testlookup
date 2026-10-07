@@ -26,7 +26,7 @@ const STREAM_WRITE_SCOPE = 'stream:write'
  * keys" on the Users page (`MY_API_KEYS_HREF`).
  */
 const STREAMING_API_KEYS_TITLE = 'Streaming API keys'
-const MY_API_KEYS_HREF = '/users?tab=api-keys'
+const MY_API_KEYS_HREF = '/settings/my-api-keys'
 const HELP_TOPIC = helpTopicParam('/settings/api-keys')
 
 function formatDateTime(value: string | null): string {

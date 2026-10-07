@@ -5,7 +5,7 @@
  *   card, only a link to `/settings/github`.
  * - The two API-key surfaces are named apart: the project's "Streaming API
  *   keys" (`/settings/api-keys`, asked for with the project) and the user's
- *   own "My API keys" (a tab of `/users`, asked for without one). Each links
+ *   own "My API keys" (`/settings/my-api-keys`, asked for without one). Each links
  *   to the other.
  * - `/users` keeps its tab in `?tab=`: the settings sub-nav's "Members &
  *   access" opens Project access.
@@ -149,12 +149,13 @@ test('Streaming API keys: the project\'s keys, current in the sub-nav, linking t
   await expect(page.getByRole('cell', { name: 'ci-runner-prod' })).toBeVisible()
   expect(keysAsked).toContain(PROJECT_ID)
 
-  await page.getByRole('link', { name: 'My API keys' }).click()
-  await expect(page).toHaveURL(/\/users\?tab=api-keys$/)
-  await expect(page.getByRole('tab', { name: 'My API keys' })).toHaveAttribute('aria-selected', 'true')
+  // The page's own pointer (the sub-nav carries a link of the same name: take the page's).
+  await page.locator('#main-content [data-settings-content]').getByRole('link', { name: 'My API keys' }).click()
+  // P5 integration: the keys a person owns have their own Account page.
+  await expect(page).toHaveURL(/\/settings\/my-api-keys$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'My API keys' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'my-laptop-script' })).toBeVisible()
-  // No sub-nav item is 'My API keys' (the lead's call): the page's own entry, Users, is current.
-  await expect(page.locator('[data-settings-item="users"]')).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('[data-settings-item="my-api-keys"]')).toHaveAttribute('aria-current', 'page')
   // The user's own keys are asked for without a project.
   expect(keysAsked).toContain(null)
   // The tab's own pointer back (the sub-nav carries a link of the same name).

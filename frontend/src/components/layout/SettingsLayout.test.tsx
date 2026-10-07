@@ -9,7 +9,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsLayout from './SettingsLayout'
 
-const perms = vi.hoisted(() => ({ value: { canAccessManagement: true } }))
+const perms = vi.hoisted(() => ({ value: { canAccessManagement: true, canGenerateApiKeys: true } }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms.value }))
 
 function renderAt(entry: string) {
@@ -27,7 +27,7 @@ const current = (nav: HTMLElement) => Array.from(nav.querySelectorAll('[aria-cur
 
 describe('SettingsLayout', () => {
   beforeEach(() => {
-    perms.value = { canAccessManagement: true }
+    perms.value = { canAccessManagement: true, canGenerateApiKeys: true }
   })
 
   it('a QA lead or admin: All settings, then the seven groups, the page beside them', () => {
@@ -41,7 +41,7 @@ describe('SettingsLayout', () => {
   })
 
   it('a viewer: their own pages and the AI pipeline pages; no index link, nothing that would redirect them', () => {
-    perms.value = { canAccessManagement: false }
+    perms.value = { canAccessManagement: false, canGenerateApiKeys: false }
     const nav = renderAt('/settings/profile')
     expect(within(nav).queryByRole('link', { name: 'All settings' })).toBeNull()
     expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([

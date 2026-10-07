@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased - UX redesign P5: settings and admin in one place
+
+Phase P5 of the UI/UX redesign. Every settings and admin page now sits
+beside one grouped sub-nav, and the settings index is a set of compact lists.
+
+- **The settings layout:** a 220 px sub-nav beside every `/settings/*` page
+  and every admin page (Projects, Users, Ownership, Activity, Pipeline runs,
+  Workflow editor). It has the design spec's seven groups: Account, Project,
+  Release governance, Integrations, AI, Security & access, and System.
+  - Each role sees only the pages it can open.
+  - "All settings" at the top replaces the "Back to Settings" bar.
+  - The layout comes from the route, not from each page, so a new
+    settings page gets it without its author doing anything.
+  - `settingsNav.test.ts` fails if a routed settings page has no sub-nav
+    item, or if an item points somewhere its role cannot open.
+- **`/settings`** lists the groups one line per page (name and purpose)
+  instead of 22 cards.
+- **Notifications:**
+  - `/settings/notifications` is the admin page, "Email (SMTP) & channels".
+    It says whether Slack and Teams actually deliver.
+  - Personal preferences are on My notifications, which now says when they
+    failed to load instead of showing three empty channel cards.
+  - Team channels have their own page, `/settings/team-channels`, instead
+    of sitting at the bottom of Ownership. Each team is shown as routed,
+    paused or not routed.
+  - The Slack/Teams "unowned" note sends readers to Ownership for rules and
+    to Team channels for channels.
+- **GitHub** is configured in one place, `/settings/github`. The
+  Integrations card that wrote a global repo and token, read only by the
+  health probe, is gone.
+- **API keys, named apart:**
+  - **Streaming API keys** (`/settings/api-keys`): the project's keys, now
+    only the active project's.
+  - **My API keys** (`/settings/my-api-keys`, under Account): the keys you
+    own. It was a tab of Users, which only a QA lead can open, while the
+    API lets every QA engineer own keys. The old `/users?tab=api-keys`
+    redirects there.
+- **Releases:** a release's detail opens in a side panel with "Open full
+  page". Four "(planned)" buttons that did nothing are gone. Edit now opens
+  in All Projects, and the verdict no longer says "in planning" for a
+  release in progress.
+- **Gate policies:** the advanced sections are collapsed, and their summary
+  lines show the values. Weights that don't sum to 1.00 turn the summary
+  red. The simulator is a sticky right column at 1280 px and wider.
+- **Pipeline runs** (`/agents`): one run picker, the AI report full width,
+  and the stages in a collapsed section.
+- **Ownership and Team channels** ask for a project with the picker prompt,
+  as every single-project page does.
+- **16 settings pages** use the template header, with their help section.
+  Forms are two columns at 1280 px and wider.
+- **Help** opens each settings page's own section of the guide. The docs
+  name both API-key pages.
+- **Tests:** new e2e specs for notifications, integrations and keys,
+  two-column forms, the policy editor, the releases panel and pipeline runs.
+  There is a visual spec for the sub-nav and the index, and unit tests for
+  each page's changes.
+
 ## Unreleased - UX redesign P4: one page per job
 
 Phase P4 of the UI/UX redesign. Pages that split one job across several

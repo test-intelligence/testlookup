@@ -29,8 +29,8 @@ const LINK_IDLE = 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-h
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
   const { pathname, search } = useLocation()
-  const { canAccessManagement } = usePermissions()
-  const groups = settingsGroupsFor({ canAccessManagement, isDev: import.meta.env.DEV })
+  const { canAccessManagement, canGenerateApiKeys } = usePermissions()
+  const groups = settingsGroupsFor({ canAccessManagement, canOwnApiKeys: canGenerateApiKeys, isDev: import.meta.env.DEV })
   const active = activeSettingsItem(pathname, search, groups)
   const onIndex = pathname === SETTINGS_ROOT || pathname === `${SETTINGS_ROOT}/`
 

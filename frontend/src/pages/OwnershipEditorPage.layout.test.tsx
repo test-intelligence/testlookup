@@ -34,7 +34,8 @@ vi.mock('@/hooks/useOwnershipRules', () => ({
 const project = vi.hoisted(() => ({ id: 'proj-1' }))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (s: { activeProjectId: string }) => unknown) => selector({ activeProjectId: project.id })),
+  useProjectStore: vi.fn((selector: (s: { activeProjectId: string; projects: unknown[]; setActiveProject: () => void }) => unknown) =>
+    selector({ activeProjectId: project.id, projects: [], setActiveProject: () => {} })),
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
@@ -90,6 +91,8 @@ describe('OwnershipEditorPage after P5', () => {
     project.id = '__ALL__'
     renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Ownership' })).toBeInTheDocument()
-    expect(screen.getByText(/Select a project to manage ownership rules/)).toBeInTheDocument()
+    // The picker prompt (ProjectRequiredEmptyState), as every single-project page shows.
+    expect(screen.getByText('Select a project')).toBeInTheDocument()
+    expect(screen.getByText(/one project at a time/)).toBeInTheDocument()
   })
 })

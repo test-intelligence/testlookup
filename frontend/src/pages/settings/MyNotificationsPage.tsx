@@ -14,6 +14,7 @@ import { Bell, Mail, MessageSquare, Users, CheckCircle, XCircle, Send, Trash2, C
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import {
   useNotificationPreferences,
@@ -449,7 +450,7 @@ function HistoryPanel() {
 const CHANNELS: NotificationChannel[] = ['email', 'slack', 'teams']
 
 export default function MyNotificationsPage() {
-  const { data: preferences, mutate: reload, isLoading } = useNotificationPreferences()
+  const { data: preferences, mutate: reload, isLoading, error } = useNotificationPreferences()
 
   const prefByChannel = (ch: NotificationChannel) =>
     preferences?.find(p => p.channel === ch && p.project_id === null)
@@ -466,6 +467,10 @@ export default function MyNotificationsPage() {
         <div className="flex justify-center py-12">
           <LoadingSpinner size="lg" />
         </div>
+      ) : error && !preferences ? (
+        // A failed read is not "nothing set up": three empty channel cards
+        // would invite someone to re-enter what they already have.
+        <DataUnavailable error={error} onRetry={() => void reload()} testId="my-notifications-unavailable" />
       ) : (
         <>
           <div className="space-y-3">

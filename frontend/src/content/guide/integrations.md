@@ -13,7 +13,7 @@ Programmatic access, and which interface to reach for.
 
 Two credentials:
 
-- **API key** — for automation. Header `X-API-Key`. Create at **Settings → API keys** or `POST /api/v1/keys`. **Shown once** — store it immediately.
+- **API key** — for automation. Header `X-API-Key`. Create a project's at **Settings → Project → Streaming API keys**, your own at **Settings → Account → My API keys**, or `POST /api/v1/keys`. **Shown once** — store it immediately.
 - **Session / bearer token** — for interactive use, from signing in.
 
 Ingestion endpoints accept either, so you can try a call from a signed-in browser before wiring CI.

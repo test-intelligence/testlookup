@@ -15,7 +15,8 @@
 /** The settings index — "All settings", and where a page not for this build sends you. */
 export const SETTINGS_ROOT = '/settings'
 
-export type SettingsAccess = 'all' | 'management'
+/** `engineer`: QA engineer and above (`usePermissions().canGenerateApiKeys`), on a route every role can open. */
+export type SettingsAccess = 'all' | 'engineer' | 'management'
 
 export interface SettingsItem {
   /** Stable id: what tests select on (`data-settings-item`), never the label. */
@@ -43,8 +44,9 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     id: 'account',
     label: 'Account',
     items: [
-      { id: 'profile', label: 'Profile', description: 'Your name, password and personal API keys', to: '/settings/profile', requires: 'all' },
+      { id: 'profile', label: 'Profile', description: 'Your name, avatar, password and two-factor sign-in', to: '/settings/profile', requires: 'all' },
       { id: 'my-notifications', label: 'My notifications', description: 'What reaches you, and how', to: '/settings/my-notifications', requires: 'all' },
+      { id: 'my-api-keys', label: 'My API keys', description: 'Keys you own, for your own scripts and pipelines', to: '/settings/my-api-keys', requires: 'engineer' },
     ],
   },
   {
@@ -118,6 +120,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
 
 export interface SettingsViewer {
   canAccessManagement: boolean
+  /** QA engineer and above: may own API keys. */
+  canOwnApiKeys: boolean
   isDev: boolean
 }
 
@@ -126,7 +130,11 @@ export function settingsGroupsFor(viewer: SettingsViewer): SettingsGroup[] {
   return SETTINGS_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => (item.requires === 'all' || viewer.canAccessManagement) && (!item.devOnly || viewer.isDev),
+      (item) =>
+        (item.requires === 'all' ||
+          (item.requires === 'engineer' && viewer.canOwnApiKeys) ||
+          viewer.canAccessManagement) &&
+        (!item.devOnly || viewer.isDev),
     ),
   })).filter((group) => group.items.length > 0)
 }

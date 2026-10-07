@@ -381,6 +381,9 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
                   <li>
                     <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-notifications" href="/settings/my-notifications">
                       "My notifications"
+                  <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-api-keys" href="/settings/my-api-keys">
+                      "My API keys"
               <div data-settings-group="project">
                 <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
                   "Project"

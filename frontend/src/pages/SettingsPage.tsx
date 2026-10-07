@@ -15,8 +15,8 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { settingsGroupsFor, settingsItemHref } from '@/components/layout/settingsNav'
 
 export default function SettingsPage() {
-  const { canAccessManagement } = usePermissions()
-  const groups = settingsGroupsFor({ canAccessManagement, isDev: import.meta.env.DEV })
+  const { canAccessManagement, canGenerateApiKeys } = usePermissions()
+  const groups = settingsGroupsFor({ canAccessManagement, canOwnApiKeys: canGenerateApiKeys, isDev: import.meta.env.DEV })
 
   return (
     <div className="space-y-4">

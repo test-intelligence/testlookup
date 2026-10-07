@@ -54,6 +54,10 @@ const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
   // one project as Flaky Coach did. /reviews redirects to Inbox › Approvals,
   // which renders in every scope.
   '/flaky',
+  // UX redesign P5: ownership rules and team channels are per project; both
+  // pages show the picker prompt in All Projects (they had a line of text).
+  '/ownership',
+  '/settings/team-channels',
   '/settings/api-keys',
   '/settings/github',
   '/settings/gitlab',

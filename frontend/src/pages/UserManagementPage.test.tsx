@@ -4,9 +4,9 @@
  *  - The tabs live in `?tab=` (`Tabs` + `useTabParam`): the settings sub-nav
  *    links "Members & access" to `/users?tab=project-members`, which used to
  *    open the Users tab because the page kept its tab in local state.
- *  - The API-keys tab is the signed-in user's OWN keys (`GET /api/v1/keys`
- *    with no project is owner-only for every role), so it is "My API keys",
- *    named apart from the project's "Streaming API keys" (item 3).
+ *  - The signed-in user's own keys were a tab here; they are "My API keys" at
+ *    /settings/my-api-keys now (PersonalKeysPage.test.tsx), reachable by every
+ *    role that may own one. An old `?tab=api-keys` link lands there.
  *  - The template header (compact, help topic) replaces the hand-made <h1>.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
@@ -50,8 +50,13 @@ vi.mock('./ProjectMembersTab', () => ({
 import UserManagementPage from './UserManagementPage'
 
 function LocationProbe() {
-  const { search } = useLocation()
-  return <output data-testid="search">{search}</output>
+  const { pathname, search } = useLocation()
+  return (
+    <>
+      <output data-testid="path">{pathname}</output>
+      <output data-testid="search">{search}</output>
+    </>
+  )
 }
 
 function renderAt(url: string) {
@@ -96,10 +101,9 @@ describe('UserManagementPage — tabs in ?tab=', () => {
     expect(screen.queryByRole('combobox', { name: 'Filter by role' })).toBeNull()
   })
 
-  it('opens My API keys from ?tab=api-keys', () => {
+  it('an old ?tab=api-keys link lands on My API keys, its own page now', () => {
     renderAt('/users?tab=api-keys')
-    expect(tab('My API keys')).toHaveAttribute('aria-selected', 'true')
-    expect(document.querySelector('[data-my-api-keys-intro]')).not.toBeNull()
+    expect(screen.getByTestId('path').textContent).toBe('/settings/my-api-keys')
   })
 
   it('writes the chosen tab to the URL, and drops it for the default', () => {
@@ -118,37 +122,12 @@ describe('UserManagementPage — tabs in ?tab=', () => {
   })
 })
 
-describe('UserManagementPage — "My API keys"', () => {
-  it('names the tab "My API keys"; the old "API Keys" label is gone', () => {
+describe('UserManagementPage — no keys of its own', () => {
+  it('has no My API keys tab (the keys are on /settings/my-api-keys), and never asks for them', () => {
     renderAt('/users')
-    expect(tab('My API keys')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'My API keys' })).toBeNull()
     expect(screen.queryByRole('tab', { name: 'API Keys' })).toBeNull()
-  })
-
-  it('lists the signed-in user\'s own keys: the hook is called without a project', () => {
-    renderAt('/users?tab=api-keys')
-    expect(useApiKeysSpy).toHaveBeenCalled()
-    for (const call of useApiKeysSpy.mock.calls) expect(call[0]).toBeUndefined()
-  })
-
-  it('says whose keys they are and points to the project\'s Streaming API keys', () => {
-    renderAt('/users?tab=api-keys')
-    const intro = document.querySelector('[data-my-api-keys-intro]') as HTMLElement
-    expect(intro.textContent).toMatch(/API keys you own/)
-    expect(intro.textContent).toMatch(/acts as you/)
-    const link = within(intro).getByRole('link', { name: 'Streaming API keys' })
-    expect(link.getAttribute('href')).toBe('/settings/api-keys')
-    expect(screen.getByText(/You have no API keys/)).toBeInTheDocument()
-  })
-
-  it('generates "my" key in a dialog with name | expiry side by side', () => {
-    renderAt('/users?tab=api-keys')
-    fireEvent.click(screen.getByRole('button', { name: /generate key/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Generate my API key' })
-    const fields = dialog.querySelector('[data-create-key-fields]') as HTMLElement
-    expect(fields.className).toContain('grid-cols-2')
-    expect(within(fields).getByLabelText('Key name')).toBeInTheDocument()
-    expect(within(fields).getByLabelText('Expiry (days, optional)')).toBeInTheDocument()
+    expect(useApiKeysSpy).not.toHaveBeenCalled()
   })
 })
 

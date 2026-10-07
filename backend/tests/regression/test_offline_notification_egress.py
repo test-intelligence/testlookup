@@ -1189,7 +1189,7 @@ def test_a_digest_uses_the_allow_list_for_the_global_webhook_only(
 async def test_a_team_channel_is_not_covered_by_the_allow_list(
     docs_example_allow_listed, posted, channel
 ):
-    """A QA lead sets a team's webhook per project on the Ownership page. That
+    """A QA lead sets a team's webhook per project on Settings › Team channels. That
     is not the operator's decision either, so it gets residency alone."""
     from app.services import notification_routing as routing
 

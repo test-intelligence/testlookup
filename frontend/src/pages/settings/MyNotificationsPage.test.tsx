@@ -14,7 +14,6 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import MyNotificationsPage from './MyNotificationsPage'
-import { MyNotificationsPage as ReExported } from './NotificationsPage'
 import type { NotificationPreference } from '@/types/notifications'
 
 const settings = vi.hoisted(() => ({
@@ -30,9 +29,9 @@ vi.mock('@/services/appSettingsService', () => ({
   },
 }))
 
-const prefs = vi.hoisted(() => ({ data: [] as NotificationPreference[] }))
+const prefs = vi.hoisted(() => ({ data: [] as NotificationPreference[] | undefined, error: undefined as unknown }))
 vi.mock('@/hooks/useNotifications', () => ({
-  useNotificationPreferences: () => ({ data: prefs.data, mutate: vi.fn(), isLoading: false }),
+  useNotificationPreferences: () => ({ data: prefs.data, error: prefs.error, mutate: vi.fn(), isLoading: false }),
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
   invalidateNotifications: vi.fn(),
 }))
@@ -108,7 +107,13 @@ describe('MyNotificationsPage', () => {
     expect(screen.getByLabelText('Webhook URL')).toHaveAttribute('placeholder', expect.stringContaining('shared Slack channel'))
   })
 
-  it('App.tsx loads it through the admin module: the re-export is this page', () => {
-    expect(ReExported).toBe(MyNotificationsPage)
+  it('a failed read says so, instead of three empty channel cards to fill in again', () => {
+    prefs.data = undefined
+    prefs.error = Object.assign(new Error('Network Error'), { isAxiosError: true, code: 'ERR_NETWORK' })
+    const { container } = renderPage()
+    expect(screen.getByTestId('my-notifications-unavailable')).toBeInTheDocument()
+    expect(container.querySelector('[data-channel-card]')).toBeNull()
+    prefs.error = undefined
+    prefs.data = []
   })
 })

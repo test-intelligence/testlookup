@@ -24,7 +24,8 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (s: { activeProjectId: string }) => unknown) => selector({ activeProjectId: state.projectId })),
+  useProjectStore: vi.fn((selector: (s: { activeProjectId: string; projects: unknown[]; setActiveProject: () => void }) => unknown) =>
+    selector({ activeProjectId: state.projectId, projects: [], setActiveProject: () => {} })),
 }))
 vi.mock('@/hooks/useOwnershipRules', () => ({
   useOwnershipRules: () => ({ rules: state.rules, isLoading: false, isError: state.rulesError, refresh: vi.fn() }),
@@ -170,7 +171,9 @@ describe('TeamChannelsPage', () => {
   it('needs one project, as Ownership does', () => {
     state.projectId = '__ALL__'
     renderPage()
-    expect(screen.getByText(/Select a project to manage its team channels/)).toBeInTheDocument()
+    // The picker prompt (ProjectRequiredEmptyState), as every single-project page shows.
+    expect(screen.getByText('Select a project')).toBeInTheDocument()
+    expect(screen.getByText(/A team's channel is set per project/)).toBeInTheDocument()
     expect(screen.queryByRole('table')).toBeNull()
   })
 })

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import ScopedLink from '@/components/ui/ScopedLink';
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
@@ -105,9 +106,7 @@ export default function OwnershipEditorPage() {
     return (
       <div className="space-y-4">
         <PageHeader compact title={TITLE} helpTopic={HELP_TOPIC} />
-        <div className="text-center py-12 text-[var(--color-text-muted)]">
-          Select a project to manage ownership rules. Ownership maps tests and failure clusters to responsible teams.
-        </div>
+        <ProjectRequiredEmptyState description="Ownership maps tests and failure clusters to the teams responsible for them, one project at a time." />
       </div>
     );
   }
@@ -266,7 +265,7 @@ export default function OwnershipEditorPage() {
 
       <p data-team-channels-link="" className="text-sm text-[var(--color-text-muted)]">
         To send a team&apos;s alerts to its own Slack, Teams or email channel, use{' '}
-        <Link to="/settings/team-channels" className="text-[var(--color-accent)] hover:underline">Team channels</Link>.
+        <ScopedLink to="/settings/team-channels" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">Team channels</ScopedLink>.
       </p>
 
       {/* Help section */}

@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import ScopedLink from '@/components/ui/ScopedLink'
 import useSWR from 'swr'
 import { CheckCircle, XCircle, Send, Server, Eye, EyeOff, AlertTriangle, Megaphone, ChevronRight } from 'lucide-react'
 import { describeLoadError } from '@/utils/loadError'
@@ -25,8 +26,6 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { appSettingsService } from '@/services/appSettingsService'
 import type { IntegrationsConfigRead, SmtpConfigRead } from '@/services/appSettingsService'
 
-// App.tsx loads My notifications through this module's named export.
-export { default as MyNotificationsPage } from './MyNotificationsPage'
 
 const HELP_TOPIC = helpTopicParam('/settings/notifications')
 
@@ -501,13 +500,14 @@ function SharedChannelsCard() {
           <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-muted)]">
             A team&apos;s transition alerts sent to the team&apos;s own channel, per project
           </span>
-          <Link
+          <ScopedLink
             to="/settings/team-channels"
-            className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+            containerClassName="shrink-0"
+            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
           >
             Team channels
             <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
-          </Link>
+          </ScopedLink>
         </li>
       </ul>
     </section>

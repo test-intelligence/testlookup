@@ -24,7 +24,12 @@ Create, configure and delete. **Deletion is a soft delete** — rows remain but 
 
 ## API keys
 
-Issue and revoke at **Settings → API keys**. A key carries the permissions of the user who created it and is shown **once**. Revoke immediately on suspicion of exposure.
+There are two kinds, each with its own page:
+
+- **Streaming API keys** (**Settings → Project → Streaming API keys**): a project's keys, for CI to stream that project's results. An administrator sees every key bound to the project; anyone else sees the ones they own.
+- **My API keys** (**Settings → Account → My API keys**): the keys you own, for your own scripts and pipelines. Any QA engineer or above can own keys.
+
+A key carries the permissions of the user who created it, narrowed by its scopes, and is shown **once**. Revoke immediately on suspicion of exposure.
 
 ## AI configuration
 

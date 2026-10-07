@@ -14,6 +14,8 @@
  */
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import ScopedLink from '@/components/ui/ScopedLink'
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -124,9 +126,7 @@ export default function TeamChannelsPage() {
     return (
       <div className="space-y-4">
         {header}
-        <div className="text-center py-12 text-[var(--color-text-muted)]">
-          Select a project to manage its team channels. A team&apos;s channel is set per project.
-        </div>
+        <ProjectRequiredEmptyState description="A team's channel is set per project: pick the project whose teams you are routing." />
       </div>
     )
   }
@@ -175,7 +175,7 @@ export default function TeamChannelsPage() {
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-[var(--color-text-muted)]">
                   No teams yet. Teams come from the ownership rules:{' '}
-                  <Link to="/ownership" className="text-[var(--color-accent)] hover:underline">add a rule on Ownership</Link>.
+                  <ScopedLink to="/ownership" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">add a rule on Ownership</ScopedLink>.
                 </td>
               </tr>
             ) : (
@@ -242,7 +242,7 @@ export default function TeamChannelsPage() {
 
       <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
         A test&apos;s team is the one its{' '}
-        <Link to="/ownership" className="text-[var(--color-accent)] hover:underline">ownership rules</Link>{' '}
+        <ScopedLink to="/ownership" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">ownership rules</ScopedLink>{' '}
         name; a cluster goes to the team that owns more than half of its tests. A team without a channel, a paused one, an
         unowned test and a cluster of mixed ownership go out through each person&apos;s own{' '}
         <Link to="/settings/my-notifications" className="text-[var(--color-accent)] hover:underline">notification settings</Link>{' '}
