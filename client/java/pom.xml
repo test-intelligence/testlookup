@@ -22,9 +22,9 @@
         <!-- 2.18.8: GHSA-r7wm-3cxj-wff9, CVE-2026-54512/54513 (core + databind).
              2.18.10: CVE-2026-68497 (databind; Trivy fs HIGH, 2026-09-29).
              2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01). -->
-        <jackson.version>2.18.11</jackson.version>
+        <jackson.version>2.22.3</jackson.version>
         <junit5.version>5.11.0</junit5.version>
-        <testng.version>7.10.2</testng.version>
+        <testng.version>7.12.0</testng.version>
     </properties>
 
     <dependencies>
@@ -80,7 +80,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <version>3.16.0</version>
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
@@ -90,14 +90,14 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.3.1</version>
+                <version>3.6.0</version>
             </plugin>
 
             <!-- Build a fat JAR with all dependencies for easy drop-in usage -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
