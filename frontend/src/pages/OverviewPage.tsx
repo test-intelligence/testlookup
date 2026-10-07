@@ -148,7 +148,7 @@ function KpiLink({ to, children }: { to: string; children: ReactNode }) {
     <ScopedLink
       to={to}
       containerClassName="min-w-0"
-      className="block w-full min-w-0 rounded-xl transition-shadow hover:ring-1 hover:ring-[var(--color-border-light)]"
+      className="block h-full w-full min-w-0 rounded-xl transition-shadow hover:ring-1 hover:ring-[var(--color-border-light)]"
     >
       {children}
     </ScopedLink>

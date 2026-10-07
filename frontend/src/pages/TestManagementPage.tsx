@@ -1042,7 +1042,9 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     <div className="space-y-3">
       <StatusBanner
         state={bannerState}
-        title={isEmptyCatalog ? 'No authored test cases yet' : `Library health ${healthScore}/100 · ${healthTag}`}
+        // The tag is the pill ("AT RISK", not the state's "FAILING"); the title the score.
+        pillLabel={isEmptyCatalog ? undefined : healthTag.toUpperCase()}
+        title={isEmptyCatalog ? 'No authored test cases yet' : `Library health ${healthScore}/100`}
         facts={[
           { label: authoredTotal === 1 ? 'Case' : 'Cases', value: authoredTotal },
           { label: 'Awaiting review', value: reviewCount },

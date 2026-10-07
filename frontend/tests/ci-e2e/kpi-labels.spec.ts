@@ -2,7 +2,10 @@
  * UX redesign P3, the page template's KPI strip (`KpiStrip` of compact
  * `MetricCard`s), hermetic: on every page that has one, at the two desktop
  * widths, no tile's label is cut short ("MEAN TIME TO RESOL…" in the P3
- * baseline `defects-kpis`) and no value or sparkline runs out of its tile.
+ * baseline `defects-kpis`), no value or sparkline runs out of its tile, and
+ * no sparkline or note drops a line under its value (the strip stays one row
+ * of values: the second P3 baseline run showed Trends' and Summary's strips
+ * grow 20-32 px when it did).
  *
  * A compact label is one truncated line by design (a narrower window must not
  * grow the strip); this spec holds the labels the pages actually use to fit,
@@ -79,6 +82,8 @@ function readTiles(page: Page) {
         width: [Math.ceil(textWidth(label)), label.clientWidth],
         valueOut: out(value),
         asideOut: out(aside),
+        // On a line of its own, under the value (fine in the room, not at the desk).
+        asideBelow: !!value && !!aside && aside.top >= value.bottom - 1,
       }
     })
   }, LABEL_MARGIN_PX)
@@ -97,6 +102,9 @@ for (const width of [1280, 1440]) {
       expect(tiles.length, 'a strip of tiles').toBeGreaterThan(0)
       expect(tiles.filter((t) => t.cut).map((t) => t.label), 'labels cut short').toEqual([])
       expect(tiles.filter((t) => t.valueOut || t.asideOut).map((t) => t.label), 'tiles drawing outside themselves').toEqual([])
+      // At the desk a tile is one line of value: an aside that drops a line grows
+      // the strip (Trends 100 -> 132 px on CI's font with a 4rem floor).
+      expect(tiles.filter((t) => t.asideBelow).map((t) => t.label), 'asides dropped under their value').toEqual([])
     })
   }
 }

@@ -10,10 +10,15 @@
  * arrival, burying the failures among the passes. Unsorted, the page keeps a
  * stable failures-first order (also for the live-buffer fallback, whose
  * order is the stream's); a column header still sorts by that column.
+ *
+ * A row opens its test in a side panel beside the list (plan P4 item 2): the
+ * test case body (`TestCaseBody`, compact), "Open full page", and the
+ * previous / next failure on this page, so a triager walks the failures
+ * without losing the list. Ctrl / ⌘-click opens the full page instead.
  */
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ChevronRight, ListTree, Loader2, RotateCcw } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ChevronLeft, ChevronRight, ExternalLink, ListTree, Loader2, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import { mutate } from 'swr'
@@ -21,6 +26,8 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SidePanel from '@/components/ui/SidePanel'
+import TestCaseBody from '@/pages/testCase/TestCaseBody'
 import { KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 import AttributionVerdictBadge from '@/components/failures/AttributionVerdictBadge'
 import { useRunAttribution, useTestCases } from '@/hooks/useRuns'
@@ -111,6 +118,8 @@ export default function RunTestsTab({
 }) {
   const navigate = useNavigate()
   const [recoveringLive, setRecoveringLive] = useState(false)
+  /** The test open in the side panel (a row of this page). */
+  const [openTestId, setOpenTestId] = useState<string | null>(null)
 
   // Roadmap Phase 4 verdicts, keyed by test case for O(1) lookup in the row
   // renderer. Deliberately non-blocking: the table renders with or without
@@ -136,6 +145,13 @@ export default function RunTestsTab({
     () => (sortKey ? sorted : [...sorted].sort((a, b) => Number(isFailing(b.status)) - Number(isFailing(a.status)))),
     [sorted, sortKey],
   )
+  const openTest = rows.find((tc) => tc.id === openTestId) ?? null
+  // The failures on this page, in the table's order: what Previous / Next walk.
+  const failingIds = rows.filter((tc) => isFailing(tc.status)).map((tc) => tc.id)
+  const failingIndex = openTestId ? failingIds.indexOf(openTestId) : -1
+  // From a passing test, Next goes to the first failure.
+  const prevFailure = failingIndex > 0 ? failingIds[failingIndex - 1] : null
+  const nextFailure = failingIndex === -1 ? (failingIds[0] ?? null) : (failingIds[failingIndex + 1] ?? null)
 
   async function handleRecoverLive() {
     if (recoveringLive) return
@@ -342,8 +358,13 @@ export default function RunTestsTab({
                 {rows.map((tc) => (
                   <tr
                     key={tc.id}
-                    className="table-row"
-                    onClick={() => navigate(`/runs/${runId}/tests/${tc.id}`)}
+                    className={clsx('table-row', tc.id === openTestId && 'bg-[var(--color-bg-secondary)]')}
+                    aria-selected={tc.id === openTestId || undefined}
+                    data-test-row={tc.id}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey) navigate(`/runs/${runId}/tests/${tc.id}`)
+                      else setOpenTestId(tc.id)
+                    }}
                   >
                     <td className="td max-w-[280px]">
                       <div className="flex items-center gap-2">
@@ -411,6 +432,49 @@ export default function RunTestsTab({
           </>
         )}
       </section>
+
+      <SidePanel
+        open={openTest !== null}
+        onClose={() => setOpenTestId(null)}
+        title={openTest?.test_name ?? 'Test'}
+        width={640}
+        footer={
+          openTest && (
+            <div className="flex items-center gap-2" data-test-panel-nav="">
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-1 text-xs disabled:opacity-50"
+                disabled={!prevFailure}
+                onClick={() => prevFailure && setOpenTestId(prevFailure)}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" /> Previous failure
+              </button>
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-1 text-xs disabled:opacity-50"
+                disabled={!nextFailure}
+                onClick={() => nextFailure && setOpenTestId(nextFailure)}
+              >
+                Next failure <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+              {failingIndex >= 0 && (
+                <span className="text-xs tabular-nums text-[var(--color-text-muted)]">
+                  {failingIndex + 1} of {failingIds.length} failures on this page
+                </span>
+              )}
+              <Link
+                to={`/runs/${runId}/tests/${openTest.id}`}
+                className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+              >
+                Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </div>
+          )
+        }
+      >
+        {/* Keyed: a new test starts on its own History tab, with its own data. */}
+        {openTest && <TestCaseBody key={openTest.id} runId={runId} testId={openTest.id} compact />}
+      </SidePanel>
     </div>
   )
 }

@@ -175,7 +175,7 @@ export default function CaseApprovals() {
       ) : null}
 
       <p className="text-xs text-[var(--color-text-muted)]">
-        <Link to="/test-management?tab=Reviews" className="text-[var(--color-accent)] hover:underline">
+        <Link to="/test-management?tab=approvals" className="text-[var(--color-accent)] hover:underline">
           Open the review queue in Test cases
         </Link>{' '}
         for the case editor and its AI quality review.

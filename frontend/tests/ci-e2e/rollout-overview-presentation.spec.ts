@@ -73,7 +73,12 @@ function measure(page: Page) {
       return overlaps || outside ? `${(card.textContent ?? '').trim().slice(0, 24)}: overlaps ${overlaps}, outside ${outside}` : null
     }).filter(Boolean)
     const asides = strip.querySelectorAll('[data-metric-aside]').length
-    return { values, changes, columns, collisions, asides }
+    // The tiles of the first row, their heights: one row is one height (a card
+    // inside a link did not stretch with its row).
+    const cards = Array.from(strip.querySelectorAll('[data-metric-card="compact"]'), (c) => c.getBoundingClientRect())
+    const firstRowTop = Math.min(...cards.map((r) => r.top))
+    const rowHeights = cards.filter((r) => Math.abs(r.top - firstRowTop) < 1).map((r) => Math.round(r.height))
+    return { values, changes, columns, collisions, asides, rowHeights }
   })
 }
 
@@ -92,6 +97,7 @@ for (const width of [640, 1280, 1920]) {
       for (const d of m.changes) expect(d.lines, `KPI change "${d.text}"`).toBe(1)
       expect(m.asides, 'the fixture draws three sparklines').toBe(3)
       expect(m.collisions, 'no sparkline over its value or out of its tile').toEqual([])
+      expect(new Set(m.rowHeights).size, `one height per row: ${m.rowHeights}`).toBe(1)
       // One row of five on a desktop page; at 640 px the room-sized tiles
       // cannot fit five across, so the strip wraps (and nothing scrolls sideways).
       if (width >= 1280) expect(m.columns, 'one row of five tiles').toBe(5)

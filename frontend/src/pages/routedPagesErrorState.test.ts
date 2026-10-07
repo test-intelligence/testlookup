@@ -105,10 +105,9 @@ const REVIEWED: Record<string, ErrorState> = {
   DeepInvestigationPage: 'known-silent',
   ProjectsPage: 'known-silent',
   SearchPage: 'known-silent',
-  // UX redesign P4: Flaky tests (/flaky) replaces /flaky-coach + /quarantine.
-  // Until it is built it renders FlakyCoachPage unchanged, so it inherits
-  // that page's state (known-silent); the merged page is reclassified.
-  FlakyTestsPage: 'known-silent',
+  // UX redesign P4: Flaky tests (/flaky) replaces /flaky-coach + /quarantine;
+  // a failed load says so (DataUnavailable), FlakyTestsPage.test.tsx.
+  FlakyTestsPage: 'data-unavailable',
   ValueMetricsPage: 'data-unavailable',
   UserManagementPage: 'known-silent',
   OnboardingPage: 'known-silent', // useOnboardingStatus drops the SWR error
@@ -133,7 +132,7 @@ const REVIEWED: Record<string, ErrorState> = {
 }
 
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
-const KNOWN_SILENT_CEILING = 27
+const KNOWN_SILENT_CEILING = 26
 
 // Tolerant of spacing and quote style: a route written differently must not
 // fall out of the guard.

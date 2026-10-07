@@ -598,7 +598,10 @@ function SummaryKpis({ report }: { report: SummaryReport }) {
           icon={null}
           metric={{ value: fmtPct(t.pass_rate_pct), ...line(`${fmtInt(t.passed)} passed${basis ? ` · ${basis}` : ''}`) }}
           sparkline={
-            <span className="whitespace-nowrap text-[11px] text-[var(--color-text-secondary)]">
+            // Wraps inside its own box ("weighted" over "82.8%") rather than
+            // taking a line of its own under the value: at 1280 px on CI's
+            // font, one unbroken line put the strip 20 px taller.
+            <span data-summary-weighted="" className="block text-right text-[11px] leading-tight text-[var(--color-text-secondary)]">
               weighted {fmtPct(t.weighted_pass_rate_pct)}
             </span>
           }

@@ -73,7 +73,7 @@ function HealthStat({ label, value, sub }: { label: string; value: ReactNode; su
  * The library-health breakdown behind the Cases tab's banner: the score and
  * its inputs (the banner carries the score and four facts). The empty-catalog
  * explanation lives here too: a panel of zeros reads exactly like a failed
- * fetch (user report 2026-05-15), so it says WHY there is nothing to grade.
+ * load (user report 2026-05-15), so it says WHY there is nothing to grade.
  */
 export function LibraryHealthCard(p: LibraryHealth) {
   const isEmptyCatalog = p.totalCases === 0

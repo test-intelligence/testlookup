@@ -197,9 +197,9 @@ describe('MetricCard', () => {
     )
     const aside = container.querySelector('[data-metric-aside]') as HTMLElement
     expect(aside).toContainElement(screen.getByTestId('spark'))
-    // Grows into the room left (flex-1), never under 4rem (min-w-16), and caps its child to that room.
-    expect(aside.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex-1', 'min-w-16', '[&>*]:max-w-full']))
-    // The row wraps: under 4rem left, the aside takes a line of its own.
+    // Grows into the room left (flex-1), never under 3rem (min-w-12), and caps its child to that room.
+    expect(aside.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex-1', 'min-w-12', '[&>*]:max-w-full']))
+    // The row wraps: under 3rem left, the aside takes a line of its own.
     expect((aside.parentElement as HTMLElement).className.split(/\s+/)).toContain('flex-wrap')
   })
 })

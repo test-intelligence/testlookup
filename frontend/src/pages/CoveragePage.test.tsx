@@ -124,6 +124,9 @@ describe('CoveragePage', () => {
     openScore()
     expect(screen.getByRole('region', { name: 'Coverage verdict' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Suite coverage breakdown' })).toBeInTheDocument()
+    // UX redesign P4: each suite name opens the suite's own page (by name, resolved to its id).
+    const breakdown = screen.getByRole('region', { name: 'Suite coverage breakdown' })
+    expect(within(breakdown).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/coverage/suite?name=Payments')
     expect(screen.queryByRole('region', { name: 'Coverage workflow' })).toBeNull()
     expect(screen.queryByText(/Coverage Workflow/i)).toBeNull()
     expect(screen.queryByText(/Coverage Snapshot|Suite Breadth|Coverage Risk|Coverage Actions/)).toBeNull()

@@ -88,14 +88,18 @@ export default function MetricCard({
     const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
     const changeLine = [word, trendText].filter(Boolean).join(' ')
     return (
-      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0">
+      // h-full: a card inside a link (KpiLink) fills the strip's row like a bare
+      // one does, so a row of tiles is one height when one of them grows.
+      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0 h-full">
         <p title={hint ?? title} className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
           {title}
         </p>
         {/* The aside (a sparkline, a hint) takes what the value leaves and is
-            capped to it; under 4rem it drops below the value instead. The room-
+            capped to it; under 3rem it drops below the value instead. The room-
             sized value (40 px) left a w-24 sparkline no room: drawn over the
-            value and out of the tile (P3 baseline, overview-presentation-kpis). */}
+            value and out of the tile (P3 baseline, overview-presentation-kpis).
+            4rem was too much at the desk: on CI's DejaVu at 1280 px "88.0%"
+            left 60 px, and Trends' sparkline dropped a line (strip 100 -> 132). */}
         <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
           {loading ? (
             <div className="h-7 w-20 animate-pulse rounded bg-[var(--color-bg-secondary)]">
@@ -108,7 +112,7 @@ export default function MetricCard({
             <p className="whitespace-nowrap text-[length:var(--text-stat-lg)] leading-[1.3333] font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
           )}
           {sparkline && !loading && (
-            <div data-metric-aside="" className="flex min-w-16 flex-1 justify-end [&>*]:max-w-full">
+            <div data-metric-aside="" className="flex min-w-12 flex-1 justify-end [&>*]:max-w-full">
               {sparkline}
             </div>
           )}

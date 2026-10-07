@@ -30,19 +30,26 @@ const MAX_FACTS = 4
  */
 export default function StatusBanner({
   state,
+  pillLabel,
   title,
   facts,
   action,
   className,
 }: {
   state: BannerState
+  /**
+   * The pill's words when the state's own word would misname the verdict: a
+   * library health "At risk" is not a FAILING build. The hue stays the state's.
+   */
+  pillLabel?: string
   /** Optional words after the pill, e.g. the release name. */
   title?: ReactNode
   facts: readonly BannerFact[]
   action?: { label: string; href?: string; onClick?: () => void }
   className?: string
 }) {
-  const { word, hue } = BANNER_STATES[state]
+  const { word: stateWord, hue } = BANNER_STATES[state]
+  const word = pillLabel ?? stateWord
   if (import.meta.env.DEV && facts.length > MAX_FACTS) {
     console.warn(`StatusBanner: ${facts.length} facts given; it shows at most ${MAX_FACTS}.`)
   }

@@ -578,6 +578,8 @@ describe('TrendsPage on the chart kit', () => {
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
     expect(row.children).toHaveLength(2)
+    // UX redesign P4: the name opens the suite's own page (by name, resolved to its id).
+    expect(within(suites).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/coverage/suite?name=Payments')
   })
 })
 

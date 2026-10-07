@@ -47,6 +47,7 @@
  */
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { suiteHrefByName } from '@/routing/suiteHref'
 import {
   BarChart3, Calendar, Download, GitCompare, Layers, ListChecks, ShieldCheck, TestTube, TrendingUp,
 } from 'lucide-react'
@@ -805,7 +806,14 @@ function SuiteRow({
         fontStyle: untagged ? 'italic' : 'normal',
         fontSize: 12.5,
       }}>
-        <span className="truncate" title={untagged ? undefined : suite.suite_name}>{untagged ? 'Untagged' : suite.suite_name}</span>
+        {untagged ? (
+          <span className="truncate">Untagged</span>
+        ) : (
+          // The suite's own page (UX redesign P4): its tests, runs and charts.
+          <Link to={suiteHrefByName(suite.suite_name)} className="truncate hover:underline" title={suite.suite_name} style={{ color: 'inherit' }}>
+            {suite.suite_name}
+          </Link>
+        )}
         <span
           className="text-[9.5px] uppercase font-sans border rounded-sm px-1 py-0.5 flex-none"
           style={{ color: 'var(--color-text-faint)', borderColor: 'var(--color-border)', letterSpacing: 'var(--tracking-wide)' }}

@@ -25,6 +25,18 @@ describe('StatusBanner', () => {
     expect(screen.getByRole('link', { name: /Open gate/ })).toHaveAttribute('href', '/release-gate')
   })
 
+  it('takes its own pill words when the state word would misname the verdict; the hue stays that of the state', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <StatusBanner state="fail" pillLabel="AT RISK" title="Library health 41/100" facts={[{ label: 'Cases', value: 3 }]} />
+      </MemoryRouter>,
+    )
+    const pill = container.querySelector('[data-banner-pill]') as HTMLElement
+    expect(pill).toHaveTextContent(/^AT RISK$/)
+    expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'fail')
+    expect(pill.style.color).toBe('var(--status-failed)')
+  })
+
   it('shows at most four facts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const view = render(

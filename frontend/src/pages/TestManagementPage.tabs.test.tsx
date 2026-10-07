@@ -170,7 +170,11 @@ describe('Test Cases — five tabs (P4 item 7)', () => {
   it('the health banner carries the library verdict and four facts, singular for one case', () => {
     renderAt('/test-management')
     const banner = document.querySelector('[data-status-banner]') as HTMLElement
-    expect(banner).toHaveTextContent(/Library health \d+\/100 · (Healthy|Needs attention|At risk)/)
+    expect(banner).toHaveTextContent(/Library health \d+\/100/)
+    // The pill names the library verdict in its own words: "AT RISK" was shown
+    // as the state's "FAILING", a word for builds, not for a test library.
+    const pill = banner.querySelector('[data-banner-pill]') as HTMLElement
+    expect(pill.textContent).toMatch(/^(HEALTHY|NEEDS ATTENTION|AT RISK)$/)
     const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
     expect(facts).toEqual(['Cases 3', 'Awaiting review 1', 'Automated 33%', 'Stale drafts 0'])
   })

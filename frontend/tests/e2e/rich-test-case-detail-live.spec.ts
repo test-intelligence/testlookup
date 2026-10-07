@@ -25,7 +25,8 @@ test.describe('Rich test-case detail — deployed Allure contract', () => {
   test('renders source metadata, nested steps, attachments, and redacted parameters', async ({ page }) => {
     test.skip(!richRunId || !richTestId, 'Set E2E_RICH_RUN_ID and E2E_RICH_TEST_ID to a seeded Allure case')
 
-    await page.goto(`/runs/${richRunId}/tests/${richTestId}`)
+    // UX redesign P4: the enriched details are the Details tab, the steps the Steps tab.
+    await page.goto(`/runs/${richRunId}/tests/${richTestId}?tab=details`)
 
     await expect(page.getByRole('heading', { name: /rich_detail_production_validation_/ })).toBeVisible()
     const detailRegion = page.getByRole('region', { name: 'Enriched test case details' })
@@ -37,6 +38,7 @@ test.describe('Rich test-case detail — deployed Allure contract', () => {
     await expect(detailRegion.getByText('2.29.0', { exact: true })).toBeVisible()
     await expect(detailRegion.getByRole('link', { name: 'Epic contract' })).toBeVisible()
 
+    await page.getByRole('tab', { name: /^Steps/ }).click()
     await expect(page.getByText('Authenticate as administrator', { exact: true })).toBeVisible()
     await expect(page.getByText('Open rich test case detail', { exact: true })).toBeVisible()
     await expect(page.getByText('Verify sparse fields remain optional', { exact: true })).toBeVisible()
@@ -70,6 +72,7 @@ test.describe('Rich test-case detail — deployed Allure contract', () => {
     await row.getByText(richTestName as string, { exact: true }).click()
     await expect(page).toHaveURL(new RegExp(`/runs/${richRunId}/tests/${richTestId}$`))
     await expect(page.getByRole('heading', { name: richTestName as string, exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Details' }).click()
     await expect(page.getByRole('region', { name: 'Enriched test case details' })).toBeVisible()
   })
 
@@ -79,11 +82,12 @@ test.describe('Rich test-case detail — deployed Allure contract', () => {
       'Set E2E_RICH_SPARSE_RUN_ID and E2E_RICH_SPARSE_TEST_ID to a seeded sparse Allure case',
     )
 
-    await page.goto(`/runs/${sparseRunId}/tests/${sparseTestId}`)
+    await page.goto(`/runs/${sparseRunId}/tests/${sparseTestId}?tab=details`)
 
     await expect(page.getByRole('heading', { name: /rich_detail_sparse_validation_/ })).toBeVisible()
     await expect(page.getByText('test-case-detail v1', { exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Steps', exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: /^Steps/ }).click()
+    await expect(page.getByRole('tab', { name: /^Steps/ })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByText('No granular steps captured for this test.', { exact: true })).toBeVisible()
     await expect(page.getByText('Test case not found', { exact: true })).toHaveCount(0)
   })

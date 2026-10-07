@@ -55,6 +55,8 @@
  * endpoints — none exist yet, so the page reads the existing trend tail and
  * derives the remaining signals (variance, gap detection) deterministically.
  */
+import { suiteHrefByName } from '@/routing/suiteHref'
+import { Link } from 'react-router-dom'
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import {
   BarChart3, Calendar, Clock, Layers, Search, TrendingUp,
@@ -943,12 +945,15 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
       className={clsx('grid items-center gap-3', !isLast && 'pb-2.5 mb-2.5')}
       style={{ gridTemplateColumns: '1fr auto', borderBottom: !isLast ? '1px dashed var(--color-border)' : '0', paddingTop: 8 }}
     >
-      <span
-        className="font-mono text-[12.5px] truncate"
+      {/* The suite's own page (UX redesign P4): its tests, runs and charts. */}
+      <Link
+        to={suiteHrefByName(suite.suite_name)}
+        className="font-mono text-[12.5px] truncate hover:underline"
+        title={suite.suite_name}
         style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
       >
         {suite.suite_name}
-      </span>
+      </Link>
       <span className="text-right">
         <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
         <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {evaluated} evaluated</div>

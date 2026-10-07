@@ -1209,25 +1209,6 @@ export const SUMMARY_REPORT: ApiHandlers = [
   ['/api/v1/reports/summary/exports', () => []],
 ]
 
-// ── Intelligence hub (/intelligence) ───────────────────────────────────────
-
-/**
- * The newest six builds only, so the runs table (the region around the
- * pass-rate meters, G8) stays short; they cover all three meter bands
- * (>= 80, 60-80, < 60).
- */
-function hubRuns(request: ApiRequest) {
-  const items = runs().slice(0, 6)
-  return { ...page(items, intParam(request, 'size', 50)), total: items.length }
-}
-
-export const INTELLIGENCE_HUB: ApiHandlers = [
-  ...LAYOUT,
-  ['/api/v1/runs', hubRuns],
-  [/^\/api\/v1\/projects\/[^/]+\/llm-usage$/, () => LLM_USAGE],
-  [/^\/api\/v1\/projects\/[^/]+\/llm-quota$/, () => LLM_QUOTA],
-]
-
 // ── Coverage (/coverage) ───────────────────────────────────────────────────
 
 export const COVERAGE: ApiHandlers = [...LAYOUT, ...RUNS, ...ANALYTICS]
