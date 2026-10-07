@@ -522,5 +522,8 @@ describe('DefectsPage — renders only what it really does (P2)', () => {
     expect(verdict).toHaveTextContent('2 defects have no Jira ticket — they exist only in TestLookup.')
     expect(verdict).toHaveTextContent('All open or in progress.')
     expect(verdict.textContent).not.toMatch(/this week|auto-link|closed today/)
+    // The lede: the unlinked P0 count with the right verb, and no reason for it.
+    expect(verdict).toHaveTextContent('2 have no Jira ticket.')
+    expect(verdict.textContent).not.toMatch(/bridge missed/)
   })
 })

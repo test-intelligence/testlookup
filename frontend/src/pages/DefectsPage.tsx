@@ -1317,7 +1317,8 @@ export default function DefectsPage() {
         <>
           {model.p0Count} P0 defect{model.p0Count === 1 ? '' : 's'} {samples ? <>(<code>{samples}</code>) </> : null}
           are blocking the release.{' '}
-          {model.unlinkedP0 > 0 ? `${model.unlinkedP0} have no Jira ticket — the bridge missed them. ` : ''}
+          {/* The count only: nothing here knows why a ticket is missing. */}
+          {model.unlinkedP0 > 0 ? `${model.unlinkedP0} ${model.unlinkedP0 === 1 ? 'has' : 'have'} no Jira ticket. ` : ''}
           Triage P0s first, then close the bridge gaps.
         </>
       )
