@@ -25,6 +25,8 @@ export const REPORT_ROUTES = [
   '/release-gate',
   '/runs/compare',
   '/flaky-coach',
+  // UX redesign P4: Flaky tests, which /flaky-coach now redirects to.
+  '/flaky',
 ] as const
 
 export type ReportRoute = (typeof REPORT_ROUTES)[number]

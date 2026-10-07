@@ -23,6 +23,7 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/failures': { topic: 'failure-analysis' },
   '/defects': { topic: 'failure-analysis', anchor: 'promoting-to-a-defect' },
   '/deep-investigate': { topic: 'failure-analysis', anchor: 'the-path-a-failure-takes' },
+  '/flaky': { topic: 'flaky' },
   '/flaky-coach': { topic: 'flaky' },
   '/quarantine': { topic: 'flaky', anchor: 'quarantine-is-a-recommendation-not-an-action' },
   '/trends': { topic: 'dashboards' },

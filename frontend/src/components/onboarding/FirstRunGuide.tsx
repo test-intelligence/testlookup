@@ -137,7 +137,7 @@ export default function FirstRunGuide({
         <Link to="/failures" className="btn-secondary text-sm inline-flex items-center gap-1.5">
           Failure analysis <ArrowRight className="h-3.5 w-3.5" />
         </Link>
-        <ScopedLink to="/flaky-coach" className="btn-ghost text-sm inline-flex items-center gap-1.5">
+        <ScopedLink to="/flaky" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Flaky coach <ArrowRight className="h-3.5 w-3.5" />
         </ScopedLink>
         <Link to="/release-gate" className="btn-ghost text-sm inline-flex items-center gap-1.5">

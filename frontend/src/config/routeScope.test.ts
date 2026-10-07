@@ -51,10 +51,10 @@ describe('routeScope', () => {
       // /agents/workflows joined in E3.4: workflow definitions and their
       // evaluation evidence are project-scoped.
       '/agents/workflows',
-      '/flaky-coach',
-      // /reviews joined in E8.5: the review queue is listed per project, so
-      // All Projects mode renders the picker prompt instead of a queue.
-      '/reviews',
+      // UX redesign P4: Flaky tests (/flaky) replaces /flaky-coach. /reviews
+      // left the list: it redirects to Inbox › Approvals, whose tab still
+      // asks for one project in All Projects mode (the page itself does not).
+      '/flaky',
       '/settings/api-keys',
       '/settings/github',
       '/settings/gitlab',
@@ -68,8 +68,8 @@ describe('normalizeRoutePath', () => {
   it('ignores a query string', () => {
     // Real call sites carry them — `/test-management?tab=Test+Suites`. Matching
     // raw would miss every parameterised link.
-    expect(normalizeRoutePath('/flaky-coach?days=30')).toBe('/flaky-coach')
-    expect(routeScope('/flaky-coach?days=30')).toBe('single-project')
+    expect(normalizeRoutePath('/flaky?days=30')).toBe('/flaky')
+    expect(routeScope('/flaky?days=30')).toBe('single-project')
   })
 
   it('ignores a fragment', () => {
@@ -80,12 +80,12 @@ describe('normalizeRoutePath', () => {
   })
 
   it('adds a missing leading slash', () => {
-    expect(normalizeRoutePath('flaky-coach')).toBe('/flaky-coach')
-    expect(routeScope('flaky-coach')).toBe('single-project')
+    expect(normalizeRoutePath('flaky')).toBe('/flaky')
+    expect(routeScope('flaky')).toBe('single-project')
   })
 
   it('drops a trailing slash without eating the root', () => {
-    expect(normalizeRoutePath('/flaky-coach/')).toBe('/flaky-coach')
+    expect(normalizeRoutePath('/flaky/')).toBe('/flaky')
     expect(normalizeRoutePath('/')).toBe('/')
   })
 
@@ -106,17 +106,17 @@ describe('isRouteReachable', () => {
 
   it('refuses a single-project route while All Projects is active', () => {
     // The reported bug, as one assertion.
-    expect(isRouteReachable('/flaky-coach', ALL_PROJECTS_ID)).toBe(false)
+    expect(isRouteReachable('/flaky', ALL_PROJECTS_ID)).toBe(false)
   })
 
   it('refuses a single-project route when nothing is selected', () => {
     // The store promotes null to the sentinel on read, but a component can
     // observe the pre-hydration value. Answering "reachable" there produces
     // exactly the dead end this registry exists to prevent.
-    expect(isRouteReachable('/flaky-coach', null)).toBe(false)
+    expect(isRouteReachable('/flaky', null)).toBe(false)
   })
 
   it('allows a single-project route once one project is pinned', () => {
-    expect(isRouteReachable('/flaky-coach', A_PROJECT)).toBe(true)
+    expect(isRouteReachable('/flaky', A_PROJECT)).toBe(true)
   })
 })

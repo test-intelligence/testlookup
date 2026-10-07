@@ -284,7 +284,7 @@ describe('route scope registry — held to the code', () => {
     // Anchors the App.tsx parsing itself: if the route table or the lazy-import
     // shape changes, every check above quietly starts iterating an empty map,
     // and this is the assertion that notices.
-    expect(routes.get('/flaky-coach')).toBe('pages/FlakyCoachPage')
+    expect(routes.get('/activity')).toBe('pages/ActivityPage')
     expect(routes.get('/settings/retention')).toBe('pages/settings/RetentionPage')
   })
 })

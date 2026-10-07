@@ -50,8 +50,10 @@ export type RouteScope =
 const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
   '/activity',
   '/agents/workflows',
-  '/flaky-coach',
-  '/reviews',
+  // UX redesign P4: /flaky-coach redirects to /flaky (Flaky tests), which needs
+  // one project as Flaky Coach did. /reviews redirects to Inbox › Approvals,
+  // which renders in every scope.
+  '/flaky',
   '/settings/api-keys',
   '/settings/github',
   '/settings/gitlab',

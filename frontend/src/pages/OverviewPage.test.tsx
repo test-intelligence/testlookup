@@ -1365,7 +1365,7 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     expect(destinations).toEqual([
       ['Total executions', '/runs'],
       ['New failures · 24h', '/failures'],
-      ['Flaky tests', '/flaky-coach'],
+      ['Flaky tests', '/flaky'],
       ['Active defects', '/defects'],
     ])
   })

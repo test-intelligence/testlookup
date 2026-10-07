@@ -26,7 +26,7 @@ const STEP_LINKS: Record<string, string> = {
   upload_run: '/runs',
   connect_jira: '/settings/integrations',
   connect_telemetry: '/settings/integrations',
-  view_intelligence: '/intelligence',
+  view_intelligence: '/runs',
 }
 
 function StepCard({
@@ -263,7 +263,7 @@ export default function OnboardingPage() {
       {status?.is_complete && (
         <div className="flex justify-center pt-4">
           <button
-            onClick={() => navigate('/intelligence')}
+            onClick={() => navigate('/runs')}
             className="btn-primary flex items-center gap-2 text-sm"
           >
             <Brain className="h-4 w-4" />

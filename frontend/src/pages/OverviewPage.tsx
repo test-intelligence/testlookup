@@ -745,7 +745,7 @@ export default function OverviewPage() {
             sparkline={spark('New failures · 24h', failedSeries, daysWithData, newFailures === 0 ? 'good' : 'bad')}
           />
         </KpiLink>
-        <KpiLink to="/flaky-coach">
+        <KpiLink to="/flaky">
           <MetricCard
             compact
             icon={null}

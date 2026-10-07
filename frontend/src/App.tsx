@@ -1,5 +1,15 @@
 import { type ComponentType, lazy as reactLazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import {
+  AgentRunRedirect,
+  DeepInvestigationRunRedirect,
+  FlakyCoachRedirect,
+  IntelligenceRedirect,
+  QuarantineRedirect,
+  ReviewsRedirect,
+  RunIntelligenceRedirect,
+  SuiteByNameRedirect,
+} from '@/routing/legacyRedirects'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -23,7 +33,6 @@ const RunsPage = lazy(() => import('@/pages/RunsPage'))
 const RunDetailPage = lazy(() => import('@/pages/RunDetailPage'))
 const TestCasePage = lazy(() => import('@/pages/TestCasePage'))
 const CoveragePage = lazy(() => import('@/pages/CoveragePage'))
-const SuiteDetailPage = lazy(() => import('@/pages/SuiteDetailPage'))
 const SuitesPage = lazy(() => import('@/pages/SuitesPage'))
 const SuiteCasesPage = lazy(() => import('@/pages/SuiteCasesPage'))
 const CanonicalDetailPage = lazy(() => import('@/pages/CanonicalDetailPage'))
@@ -53,13 +62,11 @@ const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
 const WorkflowEditorPage = lazy(() => import('@/pages/WorkflowEditorPage'))
 const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))
 const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
-const RunIntelligencePage = lazy(() => import('@/pages/RunIntelligencePage'))
 const TestManagementPage = lazy(() => import('@/pages/TestManagementPage'))
 const LiveExecutionPage = lazy(() => import('@/pages/LiveExecutionPage'))
 const ReleasesPage = lazy(() => import('@/pages/ReleasesPage'))
 const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'))
-const FlakyCoachPage = lazy(() => import('@/pages/FlakyCoachPage'))
-const IntelligenceHubPage = lazy(() => import('@/pages/IntelligenceHubPage'))
+const FlakyTestsPage = lazy(() => import('@/pages/FlakyTestsPage'))
 const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
 const DocsPage = lazy(() => import('@/pages/DocsPage'))
 const ValueMetricsPage = lazy(() => import('@/pages/ValueMetricsPage'))
@@ -69,8 +76,6 @@ const ProfilePage = lazy(() => import('@/pages/settings/ProfilePage'))
 const SeedDataPage = lazy(() => import('@/pages/settings/SeedDataPage'))
 const FeatureFlagsPage = lazy(() => import('@/pages/settings/FeatureFlagsPage'))
 const BillingPage = lazy(() => import('@/pages/settings/BillingPage'))
-const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
-const ReviewsPage = lazy(() => import('@/pages/ReviewsPage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
 const GitLabIntegrationPage = lazy(() => import('@/pages/settings/GitLabIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
@@ -125,14 +130,15 @@ const appRoutes: AppRoute[] = [
   // another page.
   { path: 'docs/:docId', component: DocsPage },
   { path: 'value-metrics', component: ValueMetricsPage },
-  { path: 'intelligence', component: IntelligenceHubPage },
+  // UX redesign P4: the old URLs of merged pages redirect (routing/legacyRedirects).
+  { path: 'intelligence', component: IntelligenceRedirect },
   { path: 'runs', component: RunsPage },
   { path: 'runs/compare', component: RunComparePage },
   { path: 'runs/:runId', component: RunDetailPage },
-  { path: 'runs/:runId/intelligence', component: RunIntelligencePage },
+  { path: 'runs/:runId/intelligence', component: RunIntelligenceRedirect },
   { path: 'runs/:runId/tests/:testId', component: TestCasePage },
   { path: 'coverage', component: CoveragePage },
-  { path: 'coverage/suite', component: SuiteDetailPage },
+  { path: 'coverage/suite', component: SuiteByNameRedirect },
   { path: 'suites', component: SuitesPage },
   { path: 'suites/:suiteId', component: SuiteCasesPage },
   { path: 'canonical-test-cases/:canonicalId', component: CanonicalDetailPage },
@@ -148,15 +154,16 @@ const appRoutes: AppRoute[] = [
   // a direct URL renders the page's own "switch mode" guidance instead of 404.
   { path: 'chat', component: ChatPage },
   { path: 'agents', component: AgentStatusPage },
-  { path: 'agents/run/:runId', component: AgentStatusPage },
+  { path: 'agents/run/:runId', component: AgentRunRedirect },
   { path: 'agents/workflows', component: WorkflowEditorPage },
   { path: 'deep-investigate', component: DeepInvestigationPage },
-  { path: 'deep-investigate/:runId', component: DeepInvestigationPage },
+  { path: 'deep-investigate/:runId', component: DeepInvestigationRunRedirect },
   { path: 'release-gate', component: ReleaseGatePage },
   { path: 'release-gate/:runId', component: ReleaseGatePage },
-  { path: 'flaky-coach', component: FlakyCoachPage },
-  { path: 'quarantine', component: QuarantinePage },
-  { path: 'reviews', component: ReviewsPage },
+  { path: 'flaky', component: FlakyTestsPage },
+  { path: 'flaky-coach', component: FlakyCoachRedirect },
+  { path: 'quarantine', component: QuarantineRedirect },
+  { path: 'reviews', component: ReviewsRedirect },
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
   { path: 'my-failures', component: MyFailuresPage },

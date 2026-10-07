@@ -69,7 +69,6 @@ const REVIEWED: Record<string, ErrorState> = {
   TrendsPage: 'data-unavailable',
   DefectsPage: 'data-unavailable',
   RunsPage: 'data-unavailable',
-  IntelligenceHubPage: 'data-unavailable',
   ReleasesPage: 'data-unavailable',
   SummaryReportPage: 'data-unavailable',
   // VIZ-505: the discovery request that names the panels; each panel's own
@@ -78,11 +77,7 @@ const REVIEWED: Record<string, ErrorState> = {
 
   ActivityPage: 'own-error-ui',
   SuitesPage: 'own-error-ui',
-  SuiteDetailPage: 'own-error-ui',
-  RunIntelligencePage: 'own-error-ui',
   OwnershipEditorPage: 'own-error-ui',
-  QuarantinePage: 'own-error-ui',
-  ReviewsPage: 'data-unavailable',
   WorkflowEditorPage: 'data-unavailable',
   MyFailuresPage: 'own-error-ui',
   'settings/AIConfigPage': 'own-error-ui',
@@ -110,7 +105,10 @@ const REVIEWED: Record<string, ErrorState> = {
   DeepInvestigationPage: 'known-silent',
   ProjectsPage: 'known-silent',
   SearchPage: 'known-silent',
-  FlakyCoachPage: 'known-silent',
+  // UX redesign P4: Flaky tests (/flaky) replaces /flaky-coach + /quarantine.
+  // Until it is built it renders FlakyCoachPage unchanged, so it inherits
+  // that page's state (known-silent); the merged page is reclassified.
+  FlakyTestsPage: 'known-silent',
   ValueMetricsPage: 'data-unavailable',
   UserManagementPage: 'known-silent',
   OnboardingPage: 'known-silent', // useOnboardingStatus drops the SWR error

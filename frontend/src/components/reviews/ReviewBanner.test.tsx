@@ -37,7 +37,7 @@ describe('ReviewBanner', () => {
     expect(banner).toHaveAttribute('data-review-state', 'pending_review')
     expect(screen.getByText('Draft: awaiting human review')).toBeInTheDocument()
     expect(screen.getByText('AI-generated content. Verify before acting.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Open review queue/ })).toHaveAttribute('href', '/reviews')
+    expect(screen.getByRole('link', { name: /Open review queue/ })).toHaveAttribute('href', '/my-failures?tab=approvals')
   })
 
   it('shows an accepted report as reviewed, without the draft link', () => {

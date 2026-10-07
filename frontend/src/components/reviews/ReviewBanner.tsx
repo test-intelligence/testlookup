@@ -74,7 +74,7 @@ export default function ReviewBanner({
       </div>
       {review.state === 'pending_review' && (
         <ScopedLink
-          to="/reviews"
+          to="/my-failures?tab=approvals"
           containerClassName="ml-auto shrink-0"
           className="text-xs font-medium text-[var(--color-accent)] hover:underline"
         >
