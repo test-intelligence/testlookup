@@ -25,6 +25,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { SWRConfig } from 'swr'
 
 import type { RetentionPolicy } from '@/types/retention'
+import { helpTopicParam } from '@/components/help/helpTopics'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
 
@@ -78,8 +79,10 @@ vi.mock('react-hot-toast', () => ({
 }))
 
 // Lightweight stand-ins for shared UI so the test stays hermetic.
+// Forwards the template props the page must pass (UX redesign P5).
 vi.mock('@/components/ui/PageHeader', () => ({
-  default: ({ title }: { title: string }) => createElement('h1', null, title),
+  default: ({ title, compact, helpTopic }: { title: string; compact?: boolean; helpTopic?: string }) =>
+    createElement('h1', { 'data-compact': compact ? 'true' : 'false', 'data-help-topic': helpTopic }, title),
 }))
 vi.mock('@/components/ui/LoadingSpinner', () => ({ default: () => createElement('div', null, 'loading') }))
 vi.mock('@/components/ui/EmptyState', () => ({
@@ -457,6 +460,41 @@ describe('RetentionPage', () => {
     })
     await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
     expect(screen.getByText('Customized')).toBeTruthy()
+  })
+
+  // ── The settings page template (UX redesign P5) ─────────────────────────
+  function expectCompactHeader() {
+    const heading = screen.getByRole('heading', { level: 1, name: 'Retention & Purge' })
+    expect(heading).toHaveAttribute('data-compact', 'true')
+    expect(heading).toHaveAttribute('data-help-topic', helpTopicParam('/settings/retention'))
+  }
+
+  it('uses the compact header with the route help topic on the policy page', async () => {
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    expectCompactHeader()
+    // The full content column: the max-w-3xl cap is gone, and the policy form
+    // keeps its two-column field grid.
+    expect(container.querySelector('.max-w-3xl')).toBeNull()
+    expect(dayInput('raw_events_days').closest('.grid')).toHaveClass('sm:grid-cols-2')
+  })
+
+  it('uses the same header in All-Projects mode and in the load-error state', async () => {
+    const { ALL_PROJECTS_ID } = await import('@/store/projectStore')
+    storeState.activeProjectId = ALL_PROJECTS_ID
+    storeState.activeProject = null
+    const first = await renderPage()
+    await screen.findByText('Select a project')
+    expectCompactHeader()
+    first.unmount()
+
+    storeState.activeProjectId = 'proj-1'
+    storeState.activeProject = { id: 'proj-1', name: 'Checkout' }
+    mockGet.mockRejectedValue(new Error('network down'))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText(/Could not load the retention policy/)).toBeTruthy())
+    expectCompactHeader()
   })
 
   it('renders the last_purge summary (when, mode, counts)', async () => {

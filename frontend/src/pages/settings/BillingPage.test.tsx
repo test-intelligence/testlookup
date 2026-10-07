@@ -32,6 +32,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import BillingPage from './BillingPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type {
   BillingOverviewProject,
   BillingOverviewResponse,
@@ -190,5 +191,13 @@ describe('the quota form is bounded to what the backend accepts', () => {
     // Backend: soft_warn_threshold_pct = Field(100, ge=1, le=100). Bounds that
     // drift from the schema turn a typo into a 422 the user cannot act on.
     expect(pct, 'soft-warn input must carry the backend bounds').toBeTruthy()
+  })
+})
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic; the table needs no layout change', () => {
+    renderWith([project()])
+    expectTemplateHeader('LLM Cost Budget', '/settings/billing')
+    expect(screen.getByRole('table')).toBeInTheDocument()
   })
 })

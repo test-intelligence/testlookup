@@ -2,16 +2,17 @@
  * ReleaseCard — the always-visible card per release. Four state variants:
  *
  *   in_progress: identity + gate cluster + 4-segment pass/fail bar + phase pipeline + blocker rows
- *   planning:    identity + phase pipeline (all idle) + dashed empty bar with 2 CTAs
+ *   planning:    identity + phase pipeline (all idle) + a dashed "no phases scoped yet" note
  *   released:    identity + gate snapshot (no progress bar, no blockers)
  *   cancelled:   identity only, muted
  *
- * Cards are buttons so the whole surface is clickable — selecting one opens
- * the inline detail panel (the existing ``ReleaseDetailPanel``).
+ * On the list the whole card is clickable — selecting one opens the release's
+ * detail (``ReleaseDetailPanel``) in a side panel. On a release's own page
+ * the card has no ``onClick``: the detail is already the page.
  */
 import { clsx } from 'clsx'
 import { useNow } from '@/hooks/useNow'
-import { Clock, CheckCircle2, Sparkles, Copy, BadgeCheck, ChevronRight } from 'lucide-react'
+import { Clock, CheckCircle2, BadgeCheck, ChevronRight } from 'lucide-react'
 import type { DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
 import PhasePipeline from './PhasePipeline'
@@ -80,41 +81,22 @@ function Dot({ color }: { color: string }) {
   return <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
 }
 
+/**
+ * A planned release with no phases. Says how to scope it with what exists
+ * (the release's detail has "Add Phase"). The two "(planned)" controls that
+ * sat here — Clone from …, Generate from PRD, disabled since BUG-006 — are
+ * gone: what is not built is not rendered (UX redesign P2/P5).
+ */
 function PlanningCallout({ releaseName }: { releaseName: string }) {
   return (
     <div
-      className="rounded-md border border-dashed p-3 flex items-center justify-between gap-3"
+      data-planning-callout=""
+      className="rounded-md border border-dashed p-3"
       style={{ borderColor: 'var(--color-border)' }}
     >
-      <div className="min-w-0">
-        <div className="text-[12.5px] font-medium text-[var(--color-text)]">No phases scoped yet</div>
-        <div className="text-[11.5px] text-[var(--color-text-muted)]">
-          Bootstrap {releaseName} from a previous release or a PRD upload.
-        </div>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {/* BUG-006: these two were styled exactly like the working controls
-            beside them and only raised a toast AFTER the click. A control that
-            looks available and then says "not built yet" spends the
-            user's attention to deliver nothing; disabled-with-a-reason spends
-            none. The label carries the state visibly rather than hiding it in
-            a title, because a hover tooltip does not exist on touch. */}
-        <button
-          type="button"
-          disabled
-          title="Not built yet. Scope this release by adding phases below."
-          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
-        >
-          <Copy className="h-3 w-3" /> Clone from … <span className="text-[10px]">(planned)</span>
-        </button>
-        <button
-          type="button"
-          disabled
-          title="Not built yet. Scope this release by adding phases below."
-          className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
-        >
-          <Sparkles className="h-3 w-3" /> Generate from PRD <span className="text-[10px]">(planned)</span>
-        </button>
+      <div className="text-[12.5px] font-medium text-[var(--color-text)]">No phases scoped yet</div>
+      <div className="text-[11.5px] text-[var(--color-text-muted)]">
+        Add {releaseName}&apos;s phases in its detail.
       </div>
     </div>
   )

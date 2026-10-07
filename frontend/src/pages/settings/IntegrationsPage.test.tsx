@@ -11,7 +11,7 @@
  * without a network layer.
  */
 import { createElement } from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { IntegrationsConfigRead } from '@/services/appSettingsService'
@@ -43,7 +43,7 @@ vi.mock('@/components/ui/LoadingSpinner', () => ({
   default: () => createElement('div', null, 'loading'),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children }: { children: React.ReactNode }) => createElement('a', null, children),
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => createElement('a', { href: to }, children),
 }))
 
 function baseConfig(overrides: Partial<IntegrationsConfigRead> = {}): IntegrationsConfigRead {
@@ -93,11 +93,13 @@ describe('IntegrationsPage', () => {
       jira_token_set: true,
       splunk_token_set: true,
       ocp_token_set: true,
+      // GitHub is no longer configured here (P5 item 3), so its stored token
+      // has no indicator on this page: three, not four.
       github_token_set: true,
     }))
     await renderPage()
 
-    await waitFor(() => expect(screen.getAllByText('(set)').length).toBe(4))
+    await waitFor(() => expect(screen.getAllByText('(set)').length).toBe(3))
   })
 
   it('uses the --status-passed theme token (not a raw palette green) for "(set)"', async () => {
@@ -116,5 +118,59 @@ describe('IntegrationsPage', () => {
 
     await waitFor(() => expect(screen.getByText('Jira')).toBeTruthy())
     expect(screen.queryByText('(set)')).toBeNull()
+  })
+})
+
+// UX redesign P5 item 3: GitHub is configured in one place, /settings/github.
+describe('IntegrationsPage — GitHub lives at /settings/github', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders no GitHub card: no GitHub heading, repository field or token field', async () => {
+    mockGet.mockResolvedValue(baseConfig({ github_repo: 'acme/web', github_token_set: true }))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Jira')).toBeTruthy())
+
+    expect(screen.queryByRole('heading', { name: 'GitHub' })).toBeNull()
+    expect(screen.queryByLabelText('Repository')).toBeNull()
+    expect(screen.queryByPlaceholderText('ghp_...')).toBeNull()
+    expect(screen.queryByDisplayValue('acme/web')).toBeNull()
+    expect(document.getElementById('integration-secret-3')).toBeNull()
+  })
+
+  it('points to the one place GitHub is configured', async () => {
+    mockGet.mockResolvedValue(baseConfig())
+    await renderPage()
+
+    const link = await screen.findByRole('link', { name: 'GitHub settings' })
+    expect(link.getAttribute('href')).toBe('/settings/github')
+  })
+
+  it('saves without a github_repo, leaving the stored value to the server-side merge', async () => {
+    mockGet.mockResolvedValue(baseConfig({ github_repo: 'acme/web' }))
+    mockUpdate.mockResolvedValue(baseConfig({ github_repo: 'acme/web' }))
+    await renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /save integrations/i }))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1))
+    const payload = mockUpdate.mock.calls[0][0] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('github_repo')
+    expect(payload).not.toHaveProperty('github_token')
+    expect(payload).toHaveProperty('jira_enabled')
+  })
+})
+
+// UX redesign P5 item 4: two columns of cards at >= 1280 px, not one max-w-2xl column.
+describe('IntegrationsPage — two-column form', () => {
+  it('lays the cards out in a grid that goes two-up at xl', async () => {
+    mockGet.mockResolvedValue(baseConfig())
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Jira')).toBeTruthy())
+
+    const form = document.querySelector('[data-integrations-form]') as HTMLElement
+    expect(form).not.toBeNull()
+    expect(form.className).toContain('xl:grid-cols-2')
+    expect(form.className).not.toMatch(/max-w-/)
   })
 })

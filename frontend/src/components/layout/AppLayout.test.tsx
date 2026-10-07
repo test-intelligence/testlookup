@@ -61,9 +61,12 @@ describe('AppLayout', () => {
     )
     expect(document.querySelector('[data-help-topic]')).toBeNull()
     act(() => openHelp('flaky'))
-    expect(await screen.findByRole('button', { name: 'Close help' })).toBeInTheDocument()
+    // The first open imports the drawer's whole module graph (react-markdown,
+    // Mermaid, every docs page): 1 s, findBy's default, timed out with five
+    // agents' suites running beside it. Loading, not behaviour, is what is slow.
+    expect(await screen.findByRole('button', { name: 'Close help' }, { timeout: 10_000 })).toBeInTheDocument()
     expect(document.querySelector('[data-help-topic="flaky"]')).not.toBeNull()
     act(() => useHelpStore.getState().close())
     expect(document.querySelector('[data-help-topic]')).toBeNull()
-  })
+  }, 20_000)
 })

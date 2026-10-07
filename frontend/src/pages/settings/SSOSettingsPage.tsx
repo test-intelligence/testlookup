@@ -13,6 +13,10 @@ import {
 } from '../../services/ssoService';
 import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
 import { formatCompactDateTime } from '@/utils/formatters'
+import PageHeader from '@/components/ui/PageHeader'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/sso')
 
 export default function SSOSettingsPage() {
   const [tab, setTab] = useState<SSOTab>('config');
@@ -125,13 +129,13 @@ export default function SSOSettingsPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">SSO & Identity Management</h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Configure SAML SSO, manage SCIM provisioning tokens, and monitor identity events.
-        </p>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        title="SSO & Identity Management"
+        subtitle="Configure SAML SSO, manage SCIM provisioning tokens, and monitor identity events."
+        helpTopic={HELP_TOPIC}
+      />
 
       {/* Tab navigation */}
       <div className="flex gap-1 border-b border-[var(--color-border)]">

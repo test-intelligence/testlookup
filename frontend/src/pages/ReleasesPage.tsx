@@ -1,11 +1,22 @@
+/**
+ * Releases (`/releases`) and one release's page (`/releases/:releaseId`).
+ *
+ * UX redesign P5 item 5: on the list, a release's detail is a drill-down in a
+ * side panel ("Open full page" goes to `/releases/:releaseId`), not an inline
+ * expansion that pushed every card below it down the page. The two header
+ * controls that only said "(planned)" (Export schedule, Calendar view) are
+ * gone: what is not built is not rendered (P2).
+ */
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
-  Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
+  CheckCircle2, ExternalLink, Package, Pencil, Plus, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import SidePanel from '@/components/ui/SidePanel'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { appMutate } from '@/utils/swrCacheMutate'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -345,11 +356,12 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
 
 // ── Release Detail Panel ────────────────────────────────────────────────────
 
-function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId }: {
-  releaseId: string
-  projectId: string
-  onEdit: (r: Release) => void
-}) {
+/**
+ * A release's detail: metrics, compliance packs, production outcome, phases,
+ * linked runs, and the collapsed pipeline. The same body in the side panel
+ * (`/releases`) and on the release's own page (`/releases/:releaseId`).
+ */
+function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
   const navigate = useNavigate()
   const { hash } = useLocation()
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
@@ -724,9 +736,13 @@ export default function ReleasesPage() {
     ? (routedRelease?.project_name ?? routedProjectName ?? 'the linked project')
     : (project?.name ?? 'this project')
 
+  const navigate = useNavigate()
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
-  const [expandedId, setExpandedId]   = useState<string | null>(releaseId ?? null)
+  // UX redesign P5 item 5: on the list a release opens in a side panel (a
+  // drill-down, §2), not inline under its card. Its own page,
+  // `/releases/:releaseId`, shows the same detail as the page itself.
+  const [panelId, setPanelId]         = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
 
@@ -771,13 +787,53 @@ export default function ReleasesPage() {
     try {
       await releasesService.delete(id)
       toast.success('Release deleted')
-      if (expandedId === id) setExpandedId(null)
+      if (panelId === id) setPanelId(null)
+      if (releaseId === id) {
+        navigate('/releases')
+        return
+      }
       refetch()
     } catch { toast.error('Failed to delete release') }
   }
 
+  function openEdit(source: Release) {
+    setEditRelease(source)
+    setShowModal(true)
+  }
+
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+
+  // The release in the side panel (list route only). Looked up in the
+  // unfiltered list, so a search that hides its card does not close it; a
+  // release that is gone (deleted) closes it.
+  const panelRelease = !releaseId && panelId ? derived.find(r => r.id === panelId) ?? null : null
+  const openPanel = (id: string) => setPanelId(id)
+  const closePanel = () => setPanelId(null)
+
+  // Editing needs the release's own project, not the picker's: an edit opened
+  // under "All projects" used to render nothing.
+  const modalProjectId = editRelease?.project_id ?? (isAllProjects ? null : projectId)
+  const releaseModal = showModal && modalProjectId ? (
+    <ReleaseModal
+      projectId={modalProjectId}
+      initial={editRelease}
+      onClose={() => { setShowModal(false); setEditRelease(undefined) }}
+      // Key off the release that was EDITED, not off the route.
+      //
+      // `refetch` is the list mutator. The detail data lives under
+      // ['release-detail', id] and is read by two different things: the
+      // routed /releases/:id view AND `ReleaseDetailPanel` in the side panel
+      // on the list route. Refreshing only the routed one fixes the first and
+      // leaves the second stale — including the name it passes to
+      // CompliancePackPanel — because that key is revalidateOnFocus:false with
+      // no interval and the panel does not unmount while the modal is open.
+      onSaved={() => Promise.all([
+        refetch(),
+        editRelease ? appMutate(['release-detail', editRelease.id]) : Promise.resolve(),
+      ])}
+    />
+  ) : null
 
   // M21: an outage used to render "No releases yet" and a create-release CTA.
   if (pageError && releases.length === 0) {
@@ -797,31 +853,16 @@ export default function ReleasesPage() {
 
   return (
     <>
-      {showModal && projectId && !isAllProjects && (
-        <ReleaseModal
-          projectId={projectId}
-          initial={editRelease}
-          onClose={() => { setShowModal(false); setEditRelease(undefined) }}
-          // Key off the release that was EDITED, not off the route.
-          //
-          // `refetch` is the list mutator. The detail data lives under
-          // ['release-detail', id] and is read by two different things: the
-          // routed /releases/:id view AND `ReleaseDetailPanel` inside an
-          // expanded row on the list route. Refreshing only the routed one
-          // fixes the first and leaves the second stale — including the name
-          // it passes to CompliancePackPanel — because that key is
-          // revalidateOnFocus:false with no interval and the panel does not
-          // unmount while the modal is open.
-          onSaved={() => Promise.all([
-            refetch(),
-            editRelease ? appMutate(['release-detail', editRelease.id]) : Promise.resolve(),
-          ])}
-        />
-      )}
+      {/* The edit/create dialog sits above the page; while the side panel is
+          open it is rendered inside the panel instead (below), so it is not
+          drawn under the panel's backdrop. */}
+      {!panelRelease && releaseModal}
 
       <div className="w-full pb-10">
         <PageHeader
+          compact
           title="Releases"
+          helpTopic={helpTopicParam('/releases')}
           subtitle={
             releaseId
               ? `${stageCounts.all} active across ${scopeName}`
@@ -830,38 +871,14 @@ export default function ReleasesPage() {
                 : `${stageCounts.all} active across ${scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
-          actions={
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* BUG-006: sat in the page header beside working actions and
-                  only toasted after the click. Disabled with the reason on the
-                  control itself, so the cost is paid before the click rather
-                  than after it. */}
-              <button
-                type="button"
-                disabled
-                title="Not built yet."
-                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
-              >
-                <Calendar className="h-3.5 w-3.5" /> Export schedule <span className="text-[10px]">(planned)</span>
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Not built yet. The release list below is the current view."
-                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
-              >
-                <Calendar className="h-3.5 w-3.5" /> Calendar view <span className="text-[10px]">(planned)</span>
-              </button>
-              {!isAllProjects && !releaseId && (
-                <button
-                  onClick={() => { setEditRelease(undefined); setShowModal(true) }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
-                >
-                  <Plus className="h-4 w-4" /> New release
-                </button>
-              )}
-            </div>
-          }
+          actions={!isAllProjects && !releaseId ? (
+            <button
+              onClick={() => { setEditRelease(undefined); setShowModal(true) }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
+            >
+              <Plus className="h-4 w-4" /> New release
+            </button>
+          ) : undefined}
         />
 
         {/* Top strip — verdict band + KPIs */}
@@ -932,8 +949,8 @@ export default function ReleasesPage() {
           />
         ) : (
           <div className="grid gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
-            {/* Left — release cards */}
-            <div className="flex flex-col gap-2.5 min-w-0">
+            {/* Left — release cards (on a release's own page: its card and its detail) */}
+            <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
               {filteredDerived.length === 0 ? (
                 <div
                   className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
@@ -948,59 +965,107 @@ export default function ReleasesPage() {
                     Clear filters
                   </button>
                 </div>
+              ) : releaseId ? (
+                filteredDerived.map(r => (
+                  <div key={r.id} data-release-page="">
+                    <ReleaseCard release={r} />
+                    {/* The release's own page: its detail is the page, not a drill-down. */}
+                    <div
+                      className="mt-2 rounded-xl border p-4"
+                      style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                    >
+                      {r.source.description && (
+                        <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
+                      )}
+                      <div className="flex justify-end gap-2 mb-3">
+                        <button
+                          onClick={() => openEdit(r.source)}
+                          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteRelease(r.id)}
+                          className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <ReleaseDetailPanel releaseId={r.id} />
+                    </div>
+                  </div>
+                ))
               ) : (
                 filteredDerived.map(r => (
-                  <div key={r.id}>
-                    <ReleaseCard
-                      release={r}
-                      onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
-                    />
-                    {/* Inline detail panel — release detail URLs initialize
-                        this expansion while list clicks keep the same flow. */}
-                    {expandedId === r.id && (
-                      <div
-                        className="mt-2 rounded-xl border p-4"
-                        style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
-                      >
-                        {r.source.description && (
-                          <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
-                        )}
-                        <div className="flex justify-end gap-2 mb-3">
-                          <button
-                            onClick={() => { setEditRelease(r.source); setShowModal(true) }}
-                            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => deleteRelease(r.id)}
-                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                        <ReleaseDetailPanel
-                          releaseId={r.id}
-                          projectId={r.source.project_id || projectId || ''}
-                          onEdit={src => { setEditRelease(src); setShowModal(true) }}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  <ReleaseCard key={r.id} release={r} onClick={() => openPanel(r.id)} />
                 ))
               )}
             </div>
 
             {/* Right — derived panels */}
             <div className="flex flex-col gap-3.5 min-w-0">
-              <ShippingThisWeek releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
-              <AgingSignals releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
-              <CompliancePacks releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
+              <ShippingThisWeek releases={derived} onOpen={openPanel} />
+              <AgingSignals releases={derived} onOpen={openPanel} />
+              <CompliancePacks releases={derived} onOpen={openPanel} />
               <RecentActivity releases={derived} />
             </div>
           </div>
         )}
       </div>
+
+      {/* A release's detail, beside the list. Modal: the page keeps its
+          layout (a non-modal panel reserves its width, and this page's
+          340 px right rail would squeeze the cards to a sliver), and the
+          dialogs opened from it (edit, link a run) stack above it. */}
+      <SidePanel
+        open={panelRelease !== null}
+        modal
+        onClose={closePanel}
+        title={panelRelease ? releaseTitle(panelRelease) : 'Release'}
+        width={640}
+        closeLabel="Close release"
+        footer={panelRelease && (
+          <div className="flex items-center gap-2" data-release-panel-actions="">
+            <button
+              type="button"
+              onClick={() => openEdit(panelRelease.source)}
+              className="btn-secondary inline-flex items-center gap-1 text-xs"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteRelease(panelRelease.id)}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/10"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+            </button>
+            <Link
+              to={`/releases/${panelRelease.id}`}
+              onClick={closePanel}
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+            >
+              Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        )}
+      >
+        {panelRelease && (
+          <div data-release-panel={panelRelease.id} className="space-y-3">
+            {panelRelease.source.description && (
+              <p className="text-sm text-[var(--color-text-muted)]">{panelRelease.source.description}</p>
+            )}
+            {/* Keyed: another release starts on its own detail, with its own state. */}
+            <ReleaseDetailPanel key={panelRelease.id} releaseId={panelRelease.id} />
+            {releaseModal}
+          </div>
+        )}
+      </SidePanel>
     </>
   )
+}
+
+/** The side panel's heading: the name, and the version when it says something the name does not. */
+function releaseTitle(release: { name: string; version: string }): string {
+  return release.version && release.version !== release.name ? `${release.name} ${release.version}` : release.name
 }

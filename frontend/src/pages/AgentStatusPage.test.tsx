@@ -650,6 +650,14 @@ describe('AgentStatusPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
 
+    // The panel sits in the collapsed "Agent stages" disclosure (P5), whose
+    // header counts the alerts so a collapsed section still flags them.
+    const stages = screen.getByRole('button', { name: /^Agent stages/ })
+    expect(stages).toHaveAttribute('aria-expanded', 'false')
+    expect(stages).toHaveTextContent('1 alert')
+    expect(screen.queryByText('Pipeline Observability')).toBeNull()
+    fireEvent.click(stages)
+
     expect(screen.getByText('Pipeline Observability')).toBeInTheDocument()
     expect(screen.getByText('$5.25')).toBeInTheDocument()
     expect(screen.getByText('1,500')).toBeInTheDocument()
@@ -829,6 +837,9 @@ describe('AgentStatusPage — a foreign pipeline is not drawn as the offline one
     // the page shows "Select a pipeline run to see agent stages" and both
     // assertions below would pass for the wrong reason.
     fireEvent.click(screen.getByRole('button', { name: /investigation pipeline/i }))
+    // ...and only once "Agent stages" is opened (collapsed since P5), for the
+    // same reason.
+    fireEvent.click(screen.getByRole('button', { name: 'Agent stages' }))
   }
 
   it('names the stages that actually ran', async () => {

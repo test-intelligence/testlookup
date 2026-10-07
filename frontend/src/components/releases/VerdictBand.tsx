@@ -68,7 +68,10 @@ export default function VerdictBand({ highlighted, inProgressReleases }: Verdict
     if (highlighted.gate.decision === 'conditional') {
       return `${highlighted.name}${verLabel} is on track — ${highlighted.blockers.length} item${highlighted.blockers.length === 1 ? '' : 's'} to clear${dueLabel ? ` before ${dueLabel}` : ''}`
     }
-    return `${highlighted.name}${verLabel} is in planning${dueLabel ? ` — target ${dueLabel}` : ''}`
+    // Not evaluated yet. The highlighted release is always an IN-PROGRESS one
+    // (ReleasesPage picks it from those), so this used to say "is in
+    // planning" about a release in progress.
+    return `${highlighted.name}${verLabel} is in progress, not evaluated yet${dueLabel ? ` — target ${dueLabel}` : ''}`
   })()
 
   const lede = (() => {

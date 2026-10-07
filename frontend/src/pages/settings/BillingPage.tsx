@@ -15,6 +15,9 @@ import {
 } from '@/services/llmBudgetService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatDayIso, shiftDayIso } from '@/utils/calendarDay'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/billing')
 
 /**
  * Workspace billing overview — Tier 1 item 2.
@@ -42,7 +45,9 @@ export default function BillingPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        compact
         title="LLM Cost Budget"
+        helpTopic={HELP_TOPIC}
         actions={<ExperimentalBadge />}
         subtitle={`Current period: ${formatDate(overview.period_start)} — ${formatPeriodEnd(overview.period_end)}`}
       />

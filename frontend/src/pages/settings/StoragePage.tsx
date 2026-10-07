@@ -6,6 +6,9 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { appSettingsService, type StorageConfigRead, type StorageConfigUpdate } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import Field from '@/components/ui/Field'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/storage')
 
 export default function StoragePage() {
   const { isAdmin } = usePermissions()
@@ -64,103 +67,112 @@ export default function StoragePage() {
   if (!config) return null
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Data & Storage" subtitle="Database connections, object storage, and vector store" />
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        title="Data & Storage"
+        subtitle="Database connections, object storage, and vector store"
+        helpTopic={HELP_TOPIC}
+      />
 
-      <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
-        {/* Infrastructure status (connection details masked for security) */}
-        <div className="card space-y-3">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Infrastructure</h3>
-          <p className="text-xs text-[var(--color-text-muted)]">Connection details are configured via environment variables and masked for security.</p>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.postgres_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
-              <span className="text-sm text-[var(--color-text-muted)]">PostgreSQL</span>
-            </div>
-            <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.mongo_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
-              <span className="text-sm text-[var(--color-text-muted)]">MongoDB</span>
-            </div>
-            <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.redis_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
-              <span className="text-sm text-[var(--color-text-muted)]">Redis</span>
+      <form onSubmit={handleSave} className="space-y-4">
+        {/* Two columns at >= 1280 px (UX redesign P5): the status strip on top,
+            the two editable stores side by side under it. */}
+        <div data-settings-form-grid="" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {/* Infrastructure status (connection details masked for security) */}
+          <div className="card space-y-3 xl:col-span-2">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Infrastructure</h3>
+            <p className="text-xs text-[var(--color-text-muted)]">Connection details are configured via environment variables and masked for security.</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
+                <div className={`w-2 h-2 rounded-full ${config.postgres_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
+                <span className="text-sm text-[var(--color-text-muted)]">PostgreSQL</span>
+              </div>
+              <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
+                <div className={`w-2 h-2 rounded-full ${config.mongo_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
+                <span className="text-sm text-[var(--color-text-muted)]">MongoDB</span>
+              </div>
+              <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
+                <div className={`w-2 h-2 rounded-full ${config.redis_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
+                <span className="text-sm text-[var(--color-text-muted)]">Redis</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* MinIO / S3 (editable) */}
-        <div className="card space-y-3">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Object Storage (MinIO / S3)</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Field label="Backend" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <select id={id} value={form.storage_backend ?? ''} onChange={e => upd('storage_backend', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
-                    <option value="minio">MinIO</option>
-                    <option value="s3">S3</option>
-                    <option value="local">Local</option>
-                  </select>
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Endpoint" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.minio_endpoint ?? ''} onChange={e => upd('minio_endpoint', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                    placeholder="localhost:9000" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Bucket Name" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.minio_bucket_name ?? ''} onChange={e => upd('minio_bucket_name', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-            <div className="flex items-end pb-1">
-              <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={form.minio_use_ssl ?? false} disabled={!isAdmin}
-                  onChange={e => upd('minio_use_ssl', e.target.checked)}
-                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-                Use SSL
-              </label>
+          {/* MinIO / S3 (editable) */}
+          <div className="card space-y-3">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Object Storage (MinIO / S3)</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Field label="Backend" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <select id={id} value={form.storage_backend ?? ''} onChange={e => upd('storage_backend', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
+                      <option value="minio">MinIO</option>
+                      <option value="s3">S3</option>
+                      <option value="local">Local</option>
+                    </select>
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Endpoint" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.minio_endpoint ?? ''} onChange={e => upd('minio_endpoint', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                      placeholder="localhost:9000" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Bucket Name" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.minio_bucket_name ?? ''} onChange={e => upd('minio_bucket_name', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+              <div className="flex items-end pb-1">
+                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+                  <input type="checkbox" checked={form.minio_use_ssl ?? false} disabled={!isAdmin}
+                    onChange={e => upd('minio_use_ssl', e.target.checked)}
+                    className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                  Use SSL
+                </label>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* ChromaDB (editable) */}
-        <div className="card space-y-3">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">ChromaDB (Vector Store)</h3>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <Field label="Host" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.chroma_host ?? ''} onChange={e => upd('chroma_host', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                    placeholder="localhost" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Port" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} type="number" min="1" max="65535" value={form.chroma_port ?? 8001} disabled={!isAdmin}
-                    onChange={e => upd('chroma_port', parseInt(e.target.value))}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Collection" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.chroma_collection ?? ''} onChange={e => upd('chroma_collection', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
+          {/* ChromaDB (editable) */}
+          <div className="card space-y-3">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">ChromaDB (Vector Store)</h3>
+            <div className="grid grid-cols-3 gap-3 xl:grid-cols-2">
+              <div>
+                <Field label="Host" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.chroma_host ?? ''} onChange={e => upd('chroma_host', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                      placeholder="localhost" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Port" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} type="number" min="1" max="65535" value={form.chroma_port ?? 8001} disabled={!isAdmin}
+                      onChange={e => upd('chroma_port', parseInt(e.target.value))}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Collection" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.chroma_collection ?? ''} onChange={e => upd('chroma_collection', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
             </div>
           </div>
         </div>

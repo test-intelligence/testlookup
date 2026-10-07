@@ -40,11 +40,13 @@ test.describe('API Keys — management', () => {
     await mockJson(page, '**/api/v1/keys*', [KEY_ROW]);
 
     await page.goto('/settings/api-keys');
-    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
-    // also matches /api keys/i, so a loose name resolves to two headings and
-    // dies on strict mode whenever the list happens to be empty.
+    // `exact` matters: the empty state renders <h3>No streaming keys yet</h3>,
+    // which also matches /streaming .*keys/i, so a loose name resolves to two
+    // headings and dies on strict mode whenever the list happens to be empty.
+    // The page is "Streaming API keys" since UX P5 (the user's own keys are
+    // "My API keys" on /users).
     await expect(
-      page.getByRole('heading', { name: 'API Keys', exact: true }),
+      page.getByRole('heading', { name: 'Streaming API keys', exact: true }),
     ).toBeVisible({ timeout: 10000 });
 
     if (await onManagementUi(page)) {
@@ -72,11 +74,13 @@ test.describe('API Keys — management', () => {
     });
 
     await page.goto('/settings/api-keys');
-    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
-    // also matches /api keys/i, so a loose name resolves to two headings and
-    // dies on strict mode whenever the list happens to be empty.
+    // `exact` matters: the empty state renders <h3>No streaming keys yet</h3>,
+    // which also matches /streaming .*keys/i, so a loose name resolves to two
+    // headings and dies on strict mode whenever the list happens to be empty.
+    // The page is "Streaming API keys" since UX P5 (the user's own keys are
+    // "My API keys" on /users).
     await expect(
-      page.getByRole('heading', { name: 'API Keys', exact: true }),
+      page.getByRole('heading', { name: 'Streaming API keys', exact: true }),
     ).toBeVisible({ timeout: 10000 });
 
     // Fail closed: the management UI not rendering is the failure this test
@@ -120,11 +124,13 @@ test.describe('API Keys — management', () => {
     });
 
     await page.goto('/settings/api-keys');
-    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
-    // also matches /api keys/i, so a loose name resolves to two headings and
-    // dies on strict mode whenever the list happens to be empty.
+    // `exact` matters: the empty state renders <h3>No streaming keys yet</h3>,
+    // which also matches /streaming .*keys/i, so a loose name resolves to two
+    // headings and dies on strict mode whenever the list happens to be empty.
+    // The page is "Streaming API keys" since UX P5 (the user's own keys are
+    // "My API keys" on /users).
     await expect(
-      page.getByRole('heading', { name: 'API Keys', exact: true }),
+      page.getByRole('heading', { name: 'Streaming API keys', exact: true }),
     ).toBeVisible({ timeout: 10000 });
 
     const revoke = page.getByRole('button', { name: /revoke/i });

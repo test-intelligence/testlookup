@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
-import SettingsBackBar from './SettingsBackBar'
+import { isSettingsAreaPath } from './settingsRoutes'
 import SectionTabs from './SectionTabs'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
 import { useHelpStore } from '@/store/helpStore'
@@ -12,6 +12,10 @@ import { useHelpStore } from '@/store/helpStore'
 // page): loaded the first time help opens, never in the shell's first load
 // (the eager bundle budget).
 const HelpDrawer = lazy(() => import('@/components/help/HelpDrawer'))
+
+// The settings sub-nav (UX redesign P5) and its groups' words: loaded on the
+// first settings or admin page, never in the shell's first load (the budget).
+const SettingsLayout = lazy(() => import('./SettingsLayout'))
 
 /**
  * VIZ-106 (Wave 2.6, OD-9): below 1024 px the sidebar is a drawer. This is
@@ -45,6 +49,10 @@ export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const helpOpen = useHelpStore((s) => s.topic !== null)
+  // Every settings and admin page sits in the settings layout, keyed off the
+  // route here, never per page (BUG-009: a per-page rule is one 14 of 23
+  // pages forgot). It replaced the "Back to Settings" bar.
+  const inSettings = isSettingsAreaPath(location.pathname)
 
   // The drawer closes on every navigation (a link inside it, the browser's
   // back button, a redirect) and when the window widens past 1024 px, where
@@ -98,7 +106,6 @@ export default function AppLayout() {
                 (see PageShell). px scales 16→24→32→40 as the viewport grows;
                 py-6 preserves the old p-6 vertical padding. */}
             <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
-              <SettingsBackBar />
               <SectionTabs />
               {/* VIZ-104 (Wave 2.5): the ONE page-level chart announcer, for
                   every routed page. Each ChartFrame reports its changes to it.
@@ -108,7 +115,15 @@ export default function AppLayout() {
                   outside this layout. `AppLayout.announcer.test.tsx` holds both
                   facts. */}
               <ChartAnnouncerProvider>
-                <Outlet />
+                {inSettings ? (
+                  <Suspense fallback={null}>
+                    <SettingsLayout>
+                      <Outlet />
+                    </SettingsLayout>
+                  </Suspense>
+                ) : (
+                  <Outlet />
+                )}
               </ChartAnnouncerProvider>
             </div>
           </main>

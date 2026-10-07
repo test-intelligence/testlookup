@@ -82,14 +82,15 @@ test.describe('EXJ-2026-09-18 fixes, live', () => {
     expect(fill, 'the table falls short of its panel — empty band at the right edge').toBeGreaterThan(0.97)
   })
 
-  test('BUG-008: the AI report leads and Agent Stages collapses', async ({ page, request }) => {
+  test('BUG-008: the AI report leads and Agent stages is collapsed', async ({ page, request }) => {
     test.setTimeout(3 * 60 * 1000)
     await signIn(page, request)
     // Deep-link to a run that HAS a pipeline, so the list is populated. The
     // default project may have none, and an empty list renders "Select a
     // pipeline run to see agent stages" — which would fail this test for a
-    // reason that has nothing to do with the fix.
-    await page.goto(`${BASE}/agents/run/${RUN_WITH_PIPELINE}`, { waitUntil: 'domcontentloaded' })
+    // reason that has nothing to do with the fix. `/agents/run/:id` redirects
+    // to the Run page since the UX redesign P4; the run stays in `?run=`.
+    await page.goto(`${BASE}/agents?run=${RUN_WITH_PIPELINE}`, { waitUntil: 'domcontentloaded' })
     await page.waitForTimeout(3000)
 
     // The detail column only renders once a pipeline is selected.
@@ -105,24 +106,25 @@ test.describe('EXJ-2026-09-18 fixes, live', () => {
     await page.waitForTimeout(3000)
 
     const report = page.getByRole('heading', { name: 'AI Report' })
-    const stages = page.getByRole('heading', { name: 'Agent Stages' })
+    // Since the UX redesign P5 the stages are the "Agent stages" Disclosure,
+    // collapsed on arrival (was an "Agent Stages" heading + Hide/Show button).
+    const toggle = page.getByRole('button', { name: /^Agent stages/ })
     await expect(report, 'no "AI Report" heading — the deploy does not carry this change')
       .toBeVisible({ timeout: 20_000 })
-    await expect(stages).toBeVisible({ timeout: 20_000 })
+    await expect(toggle, 'Agent stages has no collapse control').toBeVisible({ timeout: 20_000 })
+    await expect(toggle, 'Agent stages is open on arrival').toHaveAttribute('aria-expanded', 'false')
 
     const reportFirst = await page.evaluate(() => {
-      const hs = [...document.querySelectorAll('h3')]
-      const r = hs.find((h) => (h.textContent || '').trim() === 'AI Report')
-      const s = hs.find((h) => (h.textContent || '').trim() === 'Agent Stages')
+      const r = [...document.querySelectorAll('h3')].find((h) => (h.textContent || '').trim() === 'AI Report')
+      const s = [...document.querySelectorAll('button[aria-expanded]')].find((b) => (b.textContent || '').trim().startsWith('Agent stages'))
       if (!r || !s) return null
       return (r.compareDocumentPosition(s) & 4) !== 0
     })
-    expect(reportFirst, 'the AI report must come before Agent Stages').toBe(true)
+    expect(reportFirst, 'the AI report must come before Agent stages').toBe(true)
 
-    const toggle = page.getByRole('button', { name: /hide stages|show stages/i })
-    await expect(toggle, 'Agent Stages has no collapse control').toBeVisible({ timeout: 10_000 })
     await toggle.click()
     await page.waitForTimeout(800)
-    await expect(report, 'collapsing the stages hid the report too').toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(report, 'opening the stages hid the report').toBeVisible()
   })
 })

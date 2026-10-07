@@ -22,7 +22,9 @@ describe('helpTopics (UX redesign P1)', () => {
 
   it('the longest prefix wins, and an unknown page falls back to the introduction', () => {
     expect(helpTopicFor('/settings/sso')).toEqual({ topic: 'security' })
-    expect(helpTopicFor('/settings/ai')).toEqual({ topic: 'administration' })
+    // A settings page with no entry of its own falls back to /settings (P5 gave most of them a section).
+    expect(helpTopicFor('/settings/storage')).toEqual({ topic: 'administration' })
+    expect(helpTopicFor('/settings/ai')).toEqual({ topic: 'administration', anchor: 'ai-configuration' })
     expect(helpTopicFor('/defects')).toEqual({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
     expect(helpTopicFor('/runs/r1/intelligence')).toEqual({ topic: 'ingestion' })
     expect(helpTopicFor('/nowhere')).toBe(DEFAULT_HELP_TOPIC)

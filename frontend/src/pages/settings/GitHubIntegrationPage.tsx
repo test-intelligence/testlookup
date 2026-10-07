@@ -5,6 +5,7 @@ import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
@@ -21,6 +22,8 @@ const PR_COMMENT_MODES: { value: PrCommentMode; label: string }[] = [
   { value: 'failures_only', label: 'Failures only — comment when tests fail (default)' },
   { value: 'always', label: 'Always — comment on every PR run' },
 ]
+
+const HELP_TOPIC = helpTopicParam('/settings/github')
 
 /**
  * GitHub Checks integration settings — Tier 1 item 5.
@@ -88,7 +91,7 @@ export default function GitHubIntegrationPage() {
   if (isAllProjects) {
     return (
       <div className="space-y-4">
-        <PageHeader title="GitHub Integration" subtitle="Per-project GitHub Checks API configuration" actions={<ExperimentalBadge />} />
+        <PageHeader compact helpTopic={HELP_TOPIC} title="GitHub Integration" subtitle="Per-project GitHub Checks API configuration" actions={<ExperimentalBadge />} />
         <ProjectRequiredEmptyState
           description="GitHub integration settings are configured per project."
         />
@@ -153,6 +156,8 @@ export default function GitHubIntegrationPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        compact
+        helpTopic={HELP_TOPIC}
         title="GitHub Integration"
         subtitle={`Post check runs for ${activeProject?.name || 'this project'}`}
       />
@@ -174,6 +179,10 @@ export default function GitHubIntegrationPage() {
           )}
         </div>
 
+        {/* Two columns of fields (P5 item 4): owner | name always, the API
+            URL | token pair from 1280 px, where each half is still wide
+            enough for a GitHub Enterprise URL. `items-end` keeps the two
+            inputs level when the token's longer label wraps. */}
         <div className="grid grid-cols-2 gap-3">
           <FieldText
             label="Owner / Organization"
@@ -191,22 +200,24 @@ export default function GitHubIntegrationPage() {
           />
         </div>
 
-        <FieldText
-          label="API base URL"
-          value={form.api_base_url}
-          onChange={(v) => setForm({ ...form, api_base_url: v })}
-          disabled={!canEdit}
-          placeholder="https://api.github.com (or https://ghe.corp.com/api/v3)"
-        />
+        <div data-github-connection="" className="grid grid-cols-1 items-end gap-3 xl:grid-cols-2">
+          <FieldText
+            label="API base URL"
+            value={form.api_base_url}
+            onChange={(v) => setForm({ ...form, api_base_url: v })}
+            disabled={!canEdit}
+            placeholder="https://api.github.com (or https://ghe.corp.com/api/v3)"
+          />
 
-        <FieldText
-          label={`Personal Access Token${existing?.has_pat ? ' (leave empty to keep the stored token)' : ''}`}
-          value={patDraft}
-          onChange={setPatDraft}
-          disabled={!canEdit}
-          placeholder="ghp_..."
-          type="password"
-        />
+          <FieldText
+            label={`Personal Access Token${existing?.has_pat ? ' (leave empty to keep the stored token)' : ''}`}
+            value={patDraft}
+            onChange={setPatDraft}
+            disabled={!canEdit}
+            placeholder="ghp_..."
+            type="password"
+          />
+        </div>
 
         <label className="text-xs flex items-center gap-2">
           <input

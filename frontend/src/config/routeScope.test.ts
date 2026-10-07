@@ -39,7 +39,7 @@ describe('routeScope', () => {
     expect(routeScope('/a-page-that-does-not-exist')).toBe('any')
   })
 
-  it('names the nine pages that gate on All Projects and no others', () => {
+  it('names the eleven pages that gate on All Projects and no others', () => {
     // A literal list, so widening the registry is a decision someone makes
     // rather than a side effect. The ratchet test proves this list matches the
     // code; this one proves it matches intent.
@@ -55,10 +55,14 @@ describe('routeScope', () => {
       // left the list: it redirects to Inbox › Approvals, whose tab still
       // asks for one project in All Projects mode (the page itself does not).
       '/flaky',
+      // UX redesign P5: ownership rules and team channels are per project;
+      // both pages show the picker prompt (they had a line of text).
+      '/ownership',
       '/settings/api-keys',
       '/settings/github',
       '/settings/gitlab',
       '/settings/retention',
+      '/settings/team-channels',
       '/settings/webhooks',
     ])
   })

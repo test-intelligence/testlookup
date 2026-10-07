@@ -28,6 +28,9 @@ import {
   type ProjectResetMode,
   type ProjectResetResponse,
 } from '@/services/projectsService'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/project-data')
 
 interface ModeSpec {
   mode: ProjectResetMode
@@ -223,11 +226,15 @@ export default function ProjectDataPage() {
     )
   }
 
+  // No form fields here (two actions behind a typed confirmation), so no
+  // second column (UX redesign P5): only the max-w-3xl cap goes.
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Project Data"
         subtitle="Reset destructive project data when you need a clean slate. ADMIN only."
+        helpTopic={HELP_TOPIC}
       />
 
       {/* Context card */}

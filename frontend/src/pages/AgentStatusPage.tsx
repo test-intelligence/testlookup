@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import ScopedLink from '@/components/ui/ScopedLink'
 import PageHeader from '@/components/ui/PageHeader'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
 import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -311,7 +312,13 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
   )
 }
 
-function PipelineCard({
+/**
+ * One pipeline run as one row of the pipelines list (UX redesign P5: a
+ * one-line row, so the list stays short above the full-width AI report — it
+ * was a card in a third-width column beside it). Same facts: status, workflow,
+ * the run it analysed, when, how long, then the chips.
+ */
+function PipelineRow({
   pipeline,
   onSelect,
   selected,
@@ -336,30 +343,50 @@ function PipelineCard({
 
   return (
     <button
+      type="button"
       onClick={onSelect}
-      className={`w-full text-left card p-3 hover:border-[var(--color-border-light)] transition-colors ${
-        selected ? 'border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/40' : ''
+      aria-pressed={selected}
+      className={`w-full text-left px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 transition-colors hover:bg-[var(--color-bg-hover)] ${
+        selected ? 'bg-[var(--color-bg-secondary)]' : ''
       }`}
     >
-      <div className="flex items-center gap-2 mb-1">
-        <StatusIcon status={publicPipelineStatus(pipeline)} degraded={isDegradedPipeline(pipeline)} />
-        <span className="text-sm font-medium text-[var(--color-text)] capitalize">
-          {pipeline.workflow_type} pipeline
-        </span>
+      <StatusIcon status={publicPipelineStatus(pipeline)} degraded={isDegradedPipeline(pipeline)} />
+      <span className="text-sm font-medium text-[var(--color-text)] capitalize">
+        {pipeline.workflow_type} pipeline
+      </span>
+      {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
+          the same per-(project, suite) "Run #N" shown on /runs + /live; falls
+          back to the SDK build number, then to the raw run id, so there's
+          always something identifying. */}
+      <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
+        {pipeline.run_seq != null
+          ? `Run #${pipeline.run_seq}`
+          : pipeline.build_number
+            ? `Build ${pipeline.build_number}`
+            : `Run ${pipeline.test_run_id.slice(0, 8)}`}
+      </span>
+      {pipeline.suite_name && (
+        <SuiteBadge primary={pipeline.suite_name} all={[pipeline.suite_name]} />
+      )}
+      <span className="text-xs text-[var(--color-text-muted)]">{started}</span>
+      {duration !== null && (
+        <span className="text-xs text-[var(--color-text-muted)]">Duration: {duration}s</span>
+      )}
+      <span className="ml-auto flex flex-wrap items-center gap-2">
         {/* E7.5: the chip only ever shows one of the four public statuses.
             Degradation is a quality qualifier, not a fifth status, so it gets
             its own tag and keeps the amber tone that BUG-004 needed. */}
         {isDegradedPipeline(pipeline) && (
           <span
             data-testid="pipeline-quality-tag"
-            className={`ml-auto text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
+            className={`text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
           >
             DEGRADED
           </span>
         )}
         <span
           data-testid="pipeline-status-chip"
-          className={`${isDegradedPipeline(pipeline) ? '' : 'ml-auto '}text-xs font-mono ${
+          className={`text-xs font-mono ${
             isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[publicPipelineStatus(pipeline)]
           }`}
         >
@@ -387,27 +414,7 @@ function PipelineCard({
             stopping
           </span>
         )}
-      </div>
-      {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
-          the same per-(project, suite) "Run #N" shown on /runs + /live; falls
-          back to the SDK build number, then to the raw run id, so there's
-          always something identifying. */}
-      <div className="flex items-center gap-2 mb-1 pl-5 flex-wrap">
-        <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
-          {pipeline.run_seq != null
-            ? `Run #${pipeline.run_seq}`
-            : pipeline.build_number
-              ? `Build ${pipeline.build_number}`
-              : `Run ${pipeline.test_run_id.slice(0, 8)}`}
-        </span>
-        {pipeline.suite_name && (
-          <SuiteBadge primary={pipeline.suite_name} all={[pipeline.suite_name]} />
-        )}
-      </div>
-      <p className="text-xs text-[var(--color-text-muted)] pl-5">{started}</p>
-      {duration !== null && (
-        <p className="text-xs text-[var(--color-text-muted)] pl-5">Duration: {duration}s</p>
-      )}
+      </span>
     </button>
   )
 }
@@ -550,9 +557,9 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
 
 /**
  * One pipeline's detail: the AI report (the pipeline's headline output) and
- * the agent stages behind it. The right column of this page, and — since the
- * UX redesign P4 (`/agents/run/:runId` redirects there) — the AI report of
- * the Run page's Evidence tab.
+ * the agent stages behind it. The full-width report of this page (Pipeline
+ * runs), and — since the UX redesign P4 (`/agents/run/:runId` redirects
+ * there) — the AI report of the Run page's Evidence tab.
  *
  * Always mounted: with no pipeline it shows the placeholder (or a spinner
  * while `waiting` for the run's pipeline list), and its hooks are asked with
@@ -564,7 +571,7 @@ export function PipelineDetail({
   testRunId,
   showLLMMetrics,
   waiting = false,
-  defaultShowStages = true,
+  defaultShowStages = false,
 }: {
   pipelineId: string | null
   /** The run the pipeline analysed: the AI report is keyed on the run. */
@@ -572,7 +579,11 @@ export function PipelineDetail({
   showLLMMetrics: boolean
   /** The pipeline is not known yet (its list is loading): a spinner, not the placeholder. */
   waiting?: boolean
-  /** Agent Stages open on arrival (this page) or collapsed (the Run page). */
+  /**
+   * The "Agent stages" disclosure open on arrival. Collapsed by default on
+   * both pages since the UX redesign P5 (D3): the report is the answer, the
+   * stages the mechanism behind it.
+   */
   defaultShowStages?: boolean
 }) {
   // The AI report is shown by default (expanded) once a pipeline is selected —
@@ -581,10 +592,9 @@ export function PipelineDetail({
   // ``useRunSummary`` fetch below is gated on this, so default-true means the
   // report fetches as soon as a pipeline is picked.
   const [showSummary, setShowSummary] = useState(true)
-  // Agent Stages is collapsible (user request 2026-09-18).
-  const [showStages, setShowStages] = useState(defaultShowStages)
   const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(pipelineId)
   const { data: timeline } = usePipelineTimeline(pipelineId)
+  const alertCount = timeline?.alerts?.length ?? 0
   const summaryStage = stages.find((stage) => stage.stage_name === 'summary')
   // Direction-C compute graph: map the backend's flat stage list into the
   // node/edge/decision shape the canvas expects. Derived purely from the
@@ -695,25 +705,17 @@ export function PipelineDetail({
           )}
         </div>
       )}
-      {/* Agent Stages — the mechanism behind the report above, and
-          collapsible so the conclusion stays on screen on a laptop. */}
-      <div className="flex items-center gap-3 mb-1 mt-4">
-        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Agent Stages</h3>
-        <button
-          onClick={() => setShowStages(v => !v)}
-          aria-expanded={showStages}
-          className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
-        >
-          <ChevronRight
-            className={"h-3.5 w-3.5 transition-transform " + (showStages ? 'rotate-90' : '')}
-            aria-hidden
-          />
-          {showStages ? 'Hide stages' : 'Show stages'}
-        </button>
-      </div>
-
-      {showStages && (
-        <>
+      {/* Agent stages — the mechanism behind the report above, in a
+          collapsed Disclosure (UX redesign P5, D3) so the conclusion stays
+          on screen. Its alerts are counted on the header, so a collapsed
+          section still says when something needs a look. */}
+      <Disclosure
+        title="Agent stages"
+        summary={alertCount > 0 ? `${alertCount} alert${alertCount === 1 ? '' : 's'}` : undefined}
+        defaultOpen={defaultShowStages}
+        className="mt-4"
+      >
+        <div className="space-y-4">
       <ObservabilityPanel timeline={timeline} />
 
       {/* Direction-C compute graph: 1750×560 canvas with absolute-
@@ -766,7 +768,7 @@ export function PipelineDetail({
         )}
       </div>
 
-      <details className="card mt-4">
+      <details className="card">
         <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">
           <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
           Raw stage cards
@@ -777,8 +779,8 @@ export function PipelineDetail({
           ))}
         </div>
       </details>
-        </>
-      )}
+        </div>
+      </Disclosure>
 
       {/* The chevron-flow timeline (real stages, skip reasons, event
           history) — collapsed at the bottom of the page. */}
@@ -805,11 +807,37 @@ const MODE_BADGE: Record<string, { label: string; colour: string }> = {
   auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
 }
 
+/**
+ * A run as the picker names it: `<suite> · Run #N`, the attributes a user
+ * recognises (never the run UUID). Run #N matches /runs and /live; legacy rows
+ * without it keep the raw build number prefixed with "#".
+ */
+function runOptionLabel(r: {
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
+  run_seq?: number | null
+  build_number: string | number
+}): string {
+  const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
+  return `${suite} · ${r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`}`
+}
+
+/**
+ * `/agents` — "Pipeline runs" under Admin › AI (UX redesign P5, owner
+ * decision D3), inside the settings layout.
+ *
+ * Top to bottom: the compact header; ONE toolbar row with the ONE run picker
+ * (and, for QA engineers, the trigger that acts on the run it picked); the
+ * run's pipelines (or the recent ones) as one-line rows; the selected
+ * pipeline's AI report at full width (`[data-primary]`), with its agent
+ * stages and timeline in collapsed disclosures below it; live executions,
+ * when there are any, collapsed at the bottom.
+ */
 export default function AgentStatusPage() {
-  // The run whose pipelines are listed: `?run=` (UX redesign P4 — the old
-  // `/agents/run/:runId` now redirects to the Run page's Evidence tab, so the
-  // picker below keeps the run in the query instead). `:runId` is still read
-  // for a page mounted on the old path.
+  // The run on screen: `?run=` (UX redesign P4 — the old `/agents/run/:runId`
+  // now redirects to the Run page's Evidence tab, so the picker keeps the run
+  // in the query instead). `:runId` is still read for a page mounted on the
+  // old path.
   const { runId: routeRunId } = useParams<{ runId?: string }>()
   const [searchParams] = useSearchParams()
   const runId = routeRunId ?? searchParams.get('run') ?? undefined
@@ -818,12 +846,12 @@ export default function AgentStatusPage() {
   // only when that run is still the one on screen.
   //
   // It used to be a bare id, reset on a project change and on a card click but
-  // never on a RUN change. The "Pipeline Runs" dropdown navigates to
-  // a new run, so `usePipelines(runId)` refetched correctly while
-  // every panel keyed on the id — `usePipelineStages`, `usePipelineTimeline`,
-  // the compute graph, the AI report — kept rendering the previous run's
-  // pipeline under the new run's header. That is the user-reported
-  // "selecting a run does not refresh the page" (2026-09-18).
+  // never on a RUN change. The run picker navigates to a new run, so
+  // `usePipelines(runId)` refetched correctly while every panel keyed on the
+  // id — `usePipelineStages`, `usePipelineTimeline`, the compute graph, the AI
+  // report — kept rendering the previous run's pipeline under the new run's
+  // header. That is the user-reported "selecting a run does not refresh the
+  // page" (2026-09-18).
   //
   // Derived rather than reset in an effect: an effect that calls setState on
   // `runId` triggers a cascading render (and eslint rejects it), and it can
@@ -831,27 +859,27 @@ export default function AgentStatusPage() {
   // Pairing the id with its run makes the stale state unrepresentable instead.
   // Clearing it was only HALF the fix, and the other half is BUG-011 (reported
   // again 2026-09-19). Dropping the stale id left `selectedPipeline` null, so
-  // every panel on the right fell back to "Select a pipeline run to see agent
-  // stages" — the same placeholder for every run the user picked. Measured
-  // against the homelab: four different runs, four different pipeline lists on
-  // the left, and an identical empty panel on the right each time. Replacing
-  // the wrong pipeline with NO pipeline reads as "selecting a run changes
-  // nothing", which is what was reported, and it made a second click mandatory.
+  // the report fell back to "Select a pipeline run to see agent stages" — the
+  // same placeholder for every run the user picked. Measured against the
+  // homelab: four different runs, four different pipeline lists, and an
+  // identical empty panel each time. Replacing the wrong pipeline with NO
+  // pipeline reads as "selecting a run changes nothing", which is what was
+  // reported, and it made a second click mandatory.
   //
-  // So a run chosen in the dropdown now also picks that run's newest pipeline
-  // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2 or
-  // 13 pipelines on the homelab, so "the one pipeline" is not a safe assumption
-  // — newest-first is, and it matches what the "Run #N" label leads the reader
-  // to expect. A run with no pipelines keeps the placeholder, which is honest
-  // there: the left column explains the absence.
+  // So a run chosen in the picker now also opens that run's newest pipeline
+  // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2
+  // or 13 pipelines on the homelab, so "the one pipeline" is not a safe
+  // assumption — newest-first is, and it matches what the "Run #N" label leads
+  // the reader to expect. A run with no pipelines keeps the placeholder, which
+  // is honest there: the pipelines list explains the absence.
   const [selection, setSelection] = useState<
     { forRunId: string | undefined; pipelineId: string; testRunId: string } | null
   >(null)
   const selectionMatchesRoute = selection != null && selection.forRunId === runId
   const { data: aiConfig } = useAIConfig()
-  // Recent runs feed the suite+build dropdown so users can browse pipelines
-  // across runs instead of only the one in the URL. Size matches the
-  // pagination convention applied elsewhere.
+  // Recent runs feed the run picker so users can browse pipelines across runs
+  // instead of only the one in the URL. Size matches the pagination
+  // convention applied elsewhere.
   const { data: recentRunsList } = useRuns({ page: 1, size: 25 })
   const recentRuns = recentRunsList?.items ?? []
   const analysisMode = aiConfig?.analysis_mode ?? 'auto'
@@ -862,9 +890,6 @@ export default function AgentStatusPage() {
   // detail panel is keyed on the pipeline, so it remounts expanded.
   useProjectChangeReset(() => setSelection(null))
 
-  // Choosing a different run in the "Pipeline Runs" dropdown must clear the
-  // pipeline selected from the PREVIOUS run.
-  //
   const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
   // Sort descending by created_at client-side as a defensive guarantee
   const pipelines = [...rawPipelines].sort(
@@ -875,8 +900,9 @@ export default function AgentStatusPage() {
   // the correct first screen.
   //
   // Derived, not an effect: it cannot render a frame with the old run's
-  // pipeline, and an explicit card click still wins because clicking stores
-  // `forRunId: runId`, which makes `selectionMatchesRoute` true from then on.
+  // pipeline, and an explicit row click still wins because clicking stores
+  // `forRunId` = the run on screen, which makes `selectionMatchesRoute` true
+  // from then on.
   const autoPipeline = runId ? pipelines[0] ?? null : null
   const selectedPipeline = selectionMatchesRoute
     ? selection.pipelineId
@@ -887,21 +913,34 @@ export default function AgentStatusPage() {
   const { data: liveRuns = [] } = useActiveLiveRuns()
 
   const { isQaEngineer } = usePermissions()
-  const [triggerInput, setTriggerInput] = useState('')
   const [triggerSubmitting, setTriggerSubmitting] = useState(false)
 
-  async function handleTriggerByRunId(e: React.FormEvent) {
-    e.preventDefault()
-    const id = triggerInput.trim()
-    if (!id) {
-      toast.error('Pick a test suite + build to trigger.')
-      return
-    }
+  // ONE run picker (UX redesign P5, D3). There used to be two selects over the
+  // same 25 recent runs: this one (the view) and, under the pipelines, a
+  // "Trigger a pipeline manually" select that only armed a trigger button.
+  // Users read the second as a view selector and reported twice that picking
+  // in it changed nothing (BUG-011). Now the run picked here is the run on
+  // screen AND the run the trigger queues a pipeline for.
+  const pickRun = (id: string) => {
+    navigate(id ? `/agents?run=${encodeURIComponent(id)}` : '/agents')
+  }
+
+  // A row picked from the recent list opens ITS run: the picker, the URL and
+  // the list follow, so the report on screen always belongs to the run in the
+  // picker. On a run's own list it only selects.
+  function openPipeline(p: AgentPipelineRun) {
+    // The detail panel is keyed on the pipeline, so a newly picked one opens
+    // with its AI report expanded.
+    setSelection({ forRunId: p.test_run_id, pipelineId: p.id, testRunId: p.test_run_id })
+    if (p.test_run_id !== runId) pickRun(p.test_run_id)
+  }
+
+  async function handleTrigger() {
+    if (!runId) return
     setTriggerSubmitting(true)
     try {
-      await agentService.triggerPipeline(id)
+      await agentService.triggerPipeline(runId)
       toast.success('Pipeline queued — it will appear in the list shortly.')
-      setTriggerInput('')
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -913,201 +952,158 @@ export default function AgentStatusPage() {
     }
   }
 
+  // A `?run=` older than the 25 recent runs (a link from the Run page) gets
+  // its own option, named from its pipelines, so the picker never reads
+  // "All recent pipelines" over one run's view.
+  const pickedRunMissing = runId != null && !recentRuns.some((r) => r.id === runId)
+  const pickedRunLabel = (() => {
+    const p = pipelines[0]
+    if (!runId) return ''
+    if (!p) return `Run ${runId.slice(0, 8)}`
+    const run = p.run_seq != null ? `Run #${p.run_seq}` : p.build_number ? `#${p.build_number}` : `Run ${runId.slice(0, 8)}`
+    return `${p.suite_name || 'Unknown suite'} · ${run}`
+  })()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
-        title="Agent Pipeline"
-        subtitle="Multi-agent test analysis: ingestion → anomaly detection → root-cause → summary → triage"
+        compact
+        title="Pipeline runs"
+        subtitle="Each AI pipeline run, with its report and agent stages"
+        helpTopic={helpTopicParam('/agents')}
         actions={
-          <div className="flex items-center gap-2 flex-wrap">
-            <ScopedLink
-              to="/agents/workflows"
-              className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-            >
-              <GitBranch className="h-3.5 w-3.5" /> Workflow editor
-            </ScopedLink>
-            {/* Pipeline picker: lets the user jump between recent runs by
-                test suite + build number. Each option is labelled
-                ``<suite> · #<build>`` so the user picks by attributes they
-                recognise, not the opaque run UUID. Selecting keeps the run
-                in ``?run=`` so the page state and URL stay in sync (the old
-                ``/agents/run/:runId`` redirects to the Run page since P4). */}
-            <label htmlFor="agent-field-0" className="text-xs text-[var(--color-text-muted)]">Test Suite &amp; Build:</label>
-            <select id="agent-field-0"
-              value={runId ?? ''}
-              onChange={(e) => {
-                const id = e.target.value
-                if (id) navigate(`/agents?run=${encodeURIComponent(id)}`)
-                else navigate('/agents')
-              }}
-              className="text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-2 py-1 max-w-[320px] truncate"
-            >
-              <option value="">— All recent pipelines —</option>
-              {recentRuns.map((r) => {
-                const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
-                // Picker label uses Run #N when available (matches the
-                // /runs and /live pages); legacy rows still render the
-                // raw build_number prefixed with "#" for continuity.
-                const runLabel = r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`
-                const label = `${suite} · ${runLabel}`
-                return (
-                  <option key={r.id} value={r.id}>{label}</option>
-                )
-              })}
-            </select>
-            <span className={`text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
-              {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
-            </span>
-          </div>
+          <ScopedLink
+            to="/agents/workflows"
+            className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          >
+            <GitBranch className="h-3.5 w-3.5" /> Workflow editor
+          </ScopedLink>
         }
       />
 
-      {/* Live runs */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="agent-run-picker" className="text-xs text-[var(--color-text-muted)]">Test suite &amp; build</label>
+        <select
+          id="agent-run-picker"
+          value={runId ?? ''}
+          onChange={(e) => pickRun(e.target.value)}
+          className="text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-2 py-1 max-w-[320px] truncate"
+        >
+          <option value="">— All recent pipelines —</option>
+          {pickedRunMissing && <option value={runId}>{pickedRunLabel}</option>}
+          {recentRuns.map((r) => (
+            <option key={r.id} value={r.id}>{runOptionLabel(r)}</option>
+          ))}
+        </select>
+        {isQaEngineer && (
+          // Manual trigger — useful when the auto-trigger was lost (worker
+          // crash, etc.). It queues the standard pipeline for the run picked
+          // just left of it; with no run picked there is nothing to queue.
+          <button
+            type="button"
+            onClick={() => void handleTrigger()}
+            disabled={!runId || triggerSubmitting}
+            title={runId
+              ? 'Queue the standard pipeline for the run picked here'
+              : 'Pick a test suite & build first: the pipeline is queued for that run'}
+            className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent"
+          >
+            {triggerSubmitting
+              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              : <Zap className="h-3.5 w-3.5" />}
+            Trigger pipeline
+          </button>
+        )}
+        <span className={`ml-auto text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
+          {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
+        </span>
+      </div>
+
+      <section aria-label="Pipelines" className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          {runId ? "This run's pipelines" : 'Recent pipelines'}
+        </h2>
+        {pipelinesLoading ? (
+          <LoadingSpinner size="sm" />
+        ) : pipelines.length === 0 ? (
+          <div className="card border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 p-4 text-sm space-y-3">
+            <div className="flex items-start gap-2">
+              <Bot className="h-4 w-4 mt-0.5 text-[var(--color-text-muted)] flex-shrink-0" />
+              <div>
+                <p className="font-medium text-[var(--color-text)]">No agent pipelines yet</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  Active analysis mode: <span className="font-mono text-[var(--color-text-secondary)]">{analysisMode}</span>.
+                  Pipelines are recorded once a test run finalises.
+                </p>
+              </div>
+            </div>
+
+            {liveRuns.length > 0 && (
+              <p className="text-xs text-[var(--status-broken)] border-t border-[var(--color-border)] pt-2">
+                {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} still streaming.
+                Pipelines fire after each run sends a <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.
+                Stale runs are auto-closed after 15 min idle.
+              </p>
+            )}
+
+            <div className="text-xs text-[var(--color-text-muted)] space-y-1">
+              <p className="font-medium text-[var(--color-text-secondary)]">To get a pipeline running:</p>
+              <ul className="list-disc list-inside space-y-0.5 marker:text-[var(--color-text-faint)]">
+                <li>Stream tests via the SDK (<code className="px-1 bg-[var(--color-bg-secondary)] rounded">LiveStream</code>) or <code className="px-1 bg-[var(--color-bg-secondary)] rounded">POST /api/v1/stream/ingest</code> with a closing <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.</li>
+                <li>Or upload a JUnit / Allure / TestNG report at <Link to="/runs" className="text-[var(--color-text-secondary)] underline">/runs</Link>.</li>
+                <li>The pipeline runs in every mode — <span className="font-mono">llm</span>, <span className="font-mono">ml</span>, <span className="font-mono">rules</span>, <span className="font-mono">auto</span>. The mode only changes which engine each stage uses.</li>
+              </ul>
+            </div>
+
+            {analysisMode === 'llm' && (
+              <p className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">
+                <span className="text-[var(--color-accent)] font-medium">LLM mode tip:</span>{' '}
+                the analysis stage needs a reachable LLM (Ollama with the configured model pulled, or a hosted provider).
+                If the LLM is unavailable the pipeline still runs and falls back to the rules engine — the row will appear here either way.
+              </p>
+            )}
+          </div>
+        ) : (
+          // Bounded: a run's 1-2 rows sit above the report; the recent list
+          // (up to 100) scrolls in place instead of pushing the report down.
+          // `relative` keeps sr-only descendants inside the scroll box.
+          <div
+            data-testid="pipeline-list"
+            className="card !p-0 relative max-h-60 overflow-y-auto divide-y divide-[var(--color-border)]"
+          >
+            {pipelines.map((p: AgentPipelineRun) => (
+              <PipelineRow
+                key={p.id}
+                pipeline={p}
+                selected={selectedPipeline === p.id}
+                onSelect={() => openPipeline(p)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* The AI report, full width: the page's answer. */}
+      <section aria-label="AI report" data-primary="" className="space-y-3">
+        <PipelineDetail
+          key={selectedPipeline ?? 'none'}
+          pipelineId={selectedPipeline}
+          testRunId={selectedRunId}
+          showLLMMetrics={showLLMMetrics}
+          waiting={Boolean(runId) && pipelinesLoading}
+        />
+      </section>
+
+      {/* Live runs: what will produce the next pipelines — long tail here. */}
       {liveRuns.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-[var(--color-text-muted)] uppercase tracking-wide mb-3">
-            Live Executions
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <Disclosure title="Live executions" summary={`${liveRuns.length} running`}>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {liveRuns.map((run) => (
               <LiveRunCard key={run.run_id} run={run} />
             ))}
           </div>
-        </div>
+        </Disclosure>
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline list */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-            Pipeline Runs
-          </h3>
-
-          {isQaEngineer && (
-            // Manual trigger — pick a recent run by test suite + build and
-            // fire its pipeline. Replaces the prior "paste a run UUID" input
-            // so users never have to handle the opaque UUID directly. The
-            // value carried in state is still the UUID under the hood —
-            // it's just selected by suite/build attributes.
-            // BUG-011: this control sits under the "Pipeline Runs" heading and
-            // lists runs, so users read it as "choose which pipeline run to
-            // view" and report that selecting one changes nothing. It never
-            // did: onChange only arms the trigger button. The pipeline shown
-            // below is chosen by CLICKING A CARD (see setSelection). The
-            // purpose is now stated visibly rather than living only in
-            // aria-label and a hover title, and the control is separated from
-            // the list it does not filter.
-            <form onSubmit={handleTriggerByRunId} className="space-y-1 pb-3 mb-1 border-b border-[var(--color-border-light)]">
-              <label
-                htmlFor="agent-trigger-run"
-                className="block text-[11px] font-medium text-[var(--color-text-muted)]"
-              >
-                Trigger a pipeline manually
-                <span className="font-normal"> — does not change the view below</span>
-              </label>
-              <div className="flex items-center gap-1.5">
-              <select
-                id="agent-trigger-run"
-                value={triggerInput}
-                onChange={e => setTriggerInput(e.target.value)}
-                aria-label="Pick a run by test suite and build to trigger"
-                title="Choose a recent run by its test suite and build number, then fire its agent pipeline manually. Useful when the auto-trigger was lost (worker crash, etc.)."
-                className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)] truncate"
-                disabled={triggerSubmitting}
-              >
-                <option value="">— Pick a test suite &amp; build —</option>
-                {recentRuns.map((r) => {
-                  const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
-                  const runLabel = r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`
-                  return (
-                    <option key={r.id} value={r.id}>
-                      {`${suite} · ${runLabel}`}
-                    </option>
-                  )
-                })}
-              </select>
-              <button
-                type="submit"
-                disabled={triggerSubmitting || triggerInput.trim().length === 0}
-                title="Queue the standard pipeline for the selected run"
-                className="inline-flex items-center justify-center h-7 w-7 rounded text-[var(--color-text-muted)] border border-[var(--color-border-light)] hover:bg-[var(--color-bg-hover)]/40 hover:text-[var(--color-text-secondary)] transition-colors disabled:opacity-50"
-              >
-                {triggerSubmitting
-                  ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  : <Zap className="h-3.5 w-3.5" />}
-              </button>
-              </div>
-            </form>
-          )}
-
-          {pipelinesLoading ? (
-            <LoadingSpinner size="sm" />
-          ) : pipelines.length === 0 ? (
-            <div className="card border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 p-4 text-sm space-y-3">
-              <div className="flex items-start gap-2">
-                <Bot className="h-4 w-4 mt-0.5 text-[var(--color-text-muted)] flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[var(--color-text)]">No agent pipelines yet</p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    Active analysis mode: <span className="font-mono text-[var(--color-text-secondary)]">{analysisMode}</span>.
-                    Pipelines are recorded once a test run finalises.
-                  </p>
-                </div>
-              </div>
-
-              {liveRuns.length > 0 && (
-                <p className="text-xs text-[var(--status-broken)] border-t border-[var(--color-border)] pt-2">
-                  {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} still streaming.
-                  Pipelines fire after each run sends a <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.
-                  Stale runs are auto-closed after 15 min idle.
-                </p>
-              )}
-
-              <div className="text-xs text-[var(--color-text-muted)] space-y-1">
-                <p className="font-medium text-[var(--color-text-secondary)]">To get a pipeline running:</p>
-                <ul className="list-disc list-inside space-y-0.5 marker:text-[var(--color-text-faint)]">
-                  <li>Stream tests via the SDK (<code className="px-1 bg-[var(--color-bg-secondary)] rounded">LiveStream</code>) or <code className="px-1 bg-[var(--color-bg-secondary)] rounded">POST /api/v1/stream/ingest</code> with a closing <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.</li>
-                  <li>Or upload a JUnit / Allure / TestNG report at <Link to="/runs" className="text-[var(--color-text-secondary)] underline">/runs</Link>.</li>
-                  <li>The pipeline runs in every mode — <span className="font-mono">llm</span>, <span className="font-mono">ml</span>, <span className="font-mono">rules</span>, <span className="font-mono">auto</span>. The mode only changes which engine each stage uses.</li>
-                </ul>
-              </div>
-
-              {analysisMode === 'llm' && (
-                <p className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">
-                  <span className="text-[var(--color-accent)] font-medium">LLM mode tip:</span>{' '}
-                  the analysis stage needs a reachable LLM (Ollama with the configured model pulled, or a hosted provider).
-                  If the LLM is unavailable the pipeline still runs and falls back to the rules engine — the row will appear here either way.
-                </p>
-              )}
-            </div>
-          ) : (
-            pipelines.map((p: AgentPipelineRun) => (
-              <PipelineCard
-                key={p.id}
-                pipeline={p}
-                selected={selectedPipeline === p.id}
-                onSelect={() => {
-                  // The detail panel is keyed on the pipeline, so a newly
-                  // picked one opens with its AI report expanded.
-                  setSelection({ forRunId: runId, pipelineId: p.id, testRunId: p.test_run_id })
-                }}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Stage detail */}
-        <div className="lg:col-span-2 space-y-3">
-          <PipelineDetail
-            key={selectedPipeline ?? 'none'}
-            pipelineId={selectedPipeline}
-            testRunId={selectedRunId}
-            showLLMMetrics={showLLMMetrics}
-            waiting={Boolean(runId) && pipelinesLoading}
-          />
-        </div>
-      </div>
     </div>
   )
 }

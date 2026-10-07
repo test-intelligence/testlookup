@@ -14,6 +14,9 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
 import { appMutate } from '@/utils/swrCacheMutate'
 import Field from '@/components/ui/Field'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/ai')
 
 // MUST stay in step with the LLM_PROVIDER Literal in backend/app/core/config.py.
 // A provider the backend accepts but this list omits is unreachable from the UI:
@@ -192,10 +195,13 @@ function ModelStatusCard({
 
           {/* Reachability — kept strictly separate from model presence. */}
           {status.ollama_reachable ? (
-            <p className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)]" aria-hidden="true" />
-              Ollama reachable at <code className="text-[var(--color-text)]">{status.ollama_base_url}</code> —{' '}
-              {status.installed_models.length} model{status.installed_models.length === 1 ? '' : 's'} installed
+            <p className="text-xs text-[var(--color-text-muted)] flex items-start gap-1.5">
+              <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-shrink-0 text-[var(--status-passed)]" aria-hidden="true" />
+              {/* One text run: in a half-width card (P5) bare flex text nodes wrapped as columns. */}
+              <span className="min-w-0 break-words">
+                Ollama reachable at <code className="text-[var(--color-text)]">{status.ollama_base_url}</code> —{' '}
+                {status.installed_models.length} model{status.installed_models.length === 1 ? '' : 's'} installed
+              </span>
             </p>
           ) : (
             <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${BAD_CLS}`}>
@@ -327,309 +333,316 @@ export default function AIConfigPage() {
   const offlinePinned = config.ai_offline_mode_env_pinned === true
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="AI Configuration"
         subtitle="LLM provider, model selection, and AI pipeline settings"
+        helpTopic={HELP_TOPIC}
       />
-      <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
-        {/* Analysis Engine Mode */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Analysis Engine</h3>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Choose how test failures are classified and summarized.
-            Non-LLM modes work without any external AI service.
-          </p>
-          <div className="space-y-2">
-            {ANALYSIS_MODES.map(mode => (
-              <label
-                key={mode.value}
-                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                  form.analysis_mode === mode.value
-                    ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
-                } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="analysis_mode"
-                  value={mode.value}
-                  checked={form.analysis_mode === mode.value}
-                  onChange={() => upd('analysis_mode', mode.value)}
-                  disabled={!isAdmin}
-                  className="mt-0.5"
-                />
-                <div>
-                  <span className="text-sm font-medium text-[var(--color-text)]">{mode.label}</span>
-                  {/* Live LLM-tier state, straight from the probe — the page
-                      used to assert "requires running LLM" and never look. */}
-                  {mode.value === 'llm' && llmTier && !llmTier.available && (
-                    <span
-                      className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}
-                      title={llmTier.reason ?? undefined}
-                    >
-                      {llmTierBadge(llmTier, modelStatus)}
-                    </span>
-                  )}
-                  {mode.value === 'llm' && llmTier?.available && (
-                    <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
-                      Ready
-                    </span>
-                  )}
-                  {mode.value === 'ml' && !config.ml_model_available && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
-                      Not Trained
-                    </span>
-                  )}
-                  {mode.value === 'ml' && config.ml_model_available && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
-                      Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
-                    </span>
-                  )}
-                  {mode.value === 'ml' && config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
-                      Bootstrap (LLM-imitating)
-                    </span>
-                  )}
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{mode.desc}</p>
-                </div>
-              </label>
-            ))}
-          </div>
-          {/* ML Model Status Banner */}
-          {form.analysis_mode === 'ml' && !config.ml_model_available && (
-            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
-              <span className="font-medium">ML model not yet trained.</span>
-              <span className="text-[var(--color-text-muted)]">
-                Need {config.ml_training_sample_count} / 200 labeled samples.
-                The system will use Rules mode as fallback until a model is trained.
-              </span>
-            </div>
-          )}
-          {/* AI-F1 honesty caveat: below the human-label floor, ML mode imitates
-              the LLM's own labels — do not claim it learns from corrections. */}
-          {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
-            config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
-            <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
-              <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
-              <span className="text-[var(--color-text-muted)]">
-                The current model was trained mostly on the LLM&apos;s own high-confidence
-                verdicts, not on human-verified labels
-                ({config.ml_human_label_count} of {config.ml_human_label_floor} human
-                labels needed). Until your team confirms or corrects more AI verdicts,
-                ML mode largely reproduces the LLM&apos;s behavior rather than learning
-                from your corrections. Label composition is tracked per model on the
-                AI Evaluation dashboard.
-              </span>
-            </div>
-          )}
-        </div>
-
-        <ModelStatusCard
-          status={modelStatus}
-          loading={modelStatusLoading}
-          failed={Boolean(modelStatusError)}
-          onRefresh={() => { void refreshModelStatus() }}
-        />
-
-        {/* LLM Provider */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">LLM Provider</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <select id={id} value={form.llm_provider ?? ''} onChange={e => upd('llm_provider', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
-                    {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.llm_model ?? ''} onChange={e => upd('llm_model', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                    placeholder="e.g. qwen2.5:7b" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Temperature (0.0 - 2.0)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} type="number" step="0.1" min="0" max="2" value={form.llm_temperature ?? 0.1} disabled={!isAdmin}
-                    onChange={e => upd('llm_temperature', parseFloat(e.target.value))}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Max Tokens" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} type="number" min="256" max="32768" value={form.llm_max_tokens ?? 4096} disabled={!isAdmin}
-                    onChange={e => upd('llm_max_tokens', parseInt(e.target.value))}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-          </div>
-        </div>
-
-        {/* Embedding */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Embedding</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.embedding_provider ?? ''} onChange={e => upd('embedding_provider', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} value={form.embedding_model ?? ''} onChange={e => upd('embedding_model', e.target.value)} disabled={!isAdmin}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-          </div>
-        </div>
-
-        {/* Pipeline Settings */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Pipeline Settings</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Field label="Confidence Threshold (0-100)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} type="number" min="0" max="100" value={form.ai_confidence_threshold ?? 80} disabled={!isAdmin}
-                    onChange={e => upd('ai_confidence_threshold', parseInt(e.target.value))}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-            <div>
-              <Field label="Timeout (seconds)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
-                {id => (
-                  <input id={id} type="number" min="30" max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
-                    onChange={e => upd('ai_timeout_seconds', parseInt(e.target.value))}
-                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-                )}
-              </Field>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-6">
-            {/* AI_OFFLINE_MODE in the environment is a hard ceiling on outbound
-                LLM egress: this toggle can tighten it, never loosen it. When the
-                env pins it on, the control is disabled and says why — silently
-                accepting a click the backend will refuse (409) is how an operator
-                ends up believing cloud LLM is enabled when it is not. */}
-            <label
-              className={`flex items-center gap-2 text-sm text-[var(--color-text-secondary)] ${
-                offlinePinned ? 'cursor-not-allowed' : 'cursor-pointer'
-              }`}
-              title={offlinePinned ? OFFLINE_PINNED_REASON : undefined}
-            >
-              <input type="checkbox" checked={form.ai_offline_mode ?? true} disabled={!isAdmin || offlinePinned}
-                onChange={e => upd('ai_offline_mode', e.target.checked)}
-                className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-              Offline Mode (air-gapped, Ollama only)
-              {offlinePinned && (
-                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
-                  Pinned by environment
-                </span>
-              )}
-            </label>
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-              <input type="checkbox" checked={form.deep_investigation_enabled ?? true} disabled={!isAdmin}
-                onChange={e => upd('deep_investigation_enabled', e.target.checked)}
-                className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-              Deep Investigation
-            </label>
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-              <input type="checkbox" checked={form.finetune_enabled ?? false} disabled={!isAdmin}
-                onChange={e => upd('finetune_enabled', e.target.checked)}
-                className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-              Fine-Tuning Pipeline
-            </label>
-          </div>
-          {offlinePinned && (
-            <p
-              className="text-xs text-[var(--color-text-muted)]"
-              data-testid="offline-mode-pinned-note"
-            >
-              {OFFLINE_PINNED_REASON}
+      <form onSubmit={handleSave} className="space-y-4">
+        {/* Two columns at >= 1280 px (UX redesign P5): the cards pair up row by
+            row, related ones side by side; the API keys take the full width. */}
+        <div data-settings-form-grid="" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {/* Analysis Engine Mode */}
+          <div className="card space-y-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Analysis Engine</h3>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Choose how test failures are classified and summarized.
+              Non-LLM modes work without any external AI service.
             </p>
-          )}
-        </div>
+            <div className="space-y-2">
+              {ANALYSIS_MODES.map(mode => (
+                <label
+                  key={mode.value}
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    form.analysis_mode === mode.value
+                      ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+                      : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+                  } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="analysis_mode"
+                    value={mode.value}
+                    checked={form.analysis_mode === mode.value}
+                    onChange={() => upd('analysis_mode', mode.value)}
+                    disabled={!isAdmin}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-[var(--color-text)]">{mode.label}</span>
+                    {/* Live LLM-tier state, straight from the probe — the page
+                        used to assert "requires running LLM" and never look. */}
+                    {mode.value === 'llm' && llmTier && !llmTier.available && (
+                      <span
+                        className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}
+                        title={llmTier.reason ?? undefined}
+                      >
+                        {llmTierBadge(llmTier, modelStatus)}
+                      </span>
+                    )}
+                    {mode.value === 'llm' && llmTier?.available && (
+                      <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                        Ready
+                      </span>
+                    )}
+                    {mode.value === 'ml' && !config.ml_model_available && (
+                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                        Not Trained
+                      </span>
+                    )}
+                    {mode.value === 'ml' && config.ml_model_available && (
+                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
+                        Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
+                      </span>
+                    )}
+                    {mode.value === 'ml' && config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                        Bootstrap (LLM-imitating)
+                      </span>
+                    )}
+                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{mode.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {/* ML Model Status Banner */}
+            {form.analysis_mode === 'ml' && !config.ml_model_available && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
+                <span className="font-medium">ML model not yet trained.</span>
+                <span className="text-[var(--color-text-muted)]">
+                  Need {config.ml_training_sample_count} / 200 labeled samples.
+                  The system will use Rules mode as fallback until a model is trained.
+                </span>
+              </div>
+            )}
+            {/* AI-F1 honesty caveat: below the human-label floor, ML mode imitates
+                the LLM's own labels — do not claim it learns from corrections. */}
+            {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
+              config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+              <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
+                <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
+                <span className="text-[var(--color-text-muted)]">
+                  The current model was trained mostly on the LLM&apos;s own high-confidence
+                  verdicts, not on human-verified labels
+                  ({config.ml_human_label_count} of {config.ml_human_label_floor} human
+                  labels needed). Until your team confirms or corrects more AI verdicts,
+                  ML mode largely reproduces the LLM&apos;s behavior rather than learning
+                  from your corrections. Label composition is tracked per model on the
+                  AI Evaluation dashboard.
+                </span>
+              </div>
+            )}
+          </div>
 
-        {/* Knowledge RAG */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Knowledge-Grounded Generation</h3>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Enable RAG-based test case generation from Jira stories, Confluence pages, uploaded documents, and approved URLs.
-          </p>
-          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-            form.knowledge_rag_enabled
-              ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
-              : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
-          } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            <input
-              type="checkbox"
-              checked={form.knowledge_rag_enabled ?? false}
-              onChange={e => upd('knowledge_rag_enabled', e.target.checked)}
-              disabled={!isAdmin}
-              className="mt-0.5 rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]"
-            />
-            <div>
-              <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
-              {config.knowledge_rag_enabled ? (
-                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
-              ) : (
-                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
-              )}
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
-                allowing QA engineers to generate test cases grounded in synced requirement sources.
-              </p>
-            </div>
-          </label>
-        </div>
+          <ModelStatusCard
+            status={modelStatus}
+            loading={modelStatusLoading}
+            failed={Boolean(modelStatusError)}
+            onRefresh={() => { void refreshModelStatus() }}
+          />
 
-        {/* API Keys */}
-        <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Cloud API Keys</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="ai-secret-0" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="ai-secret-0" type="password" placeholder={config.openai_key_set ? '••••••••' : 'sk-...'} disabled={!isAdmin}
-                onChange={e => upd('openai_api_key', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
-            <div>
-              <label htmlFor="ai-secret-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="ai-secret-1" type="password" placeholder={config.google_key_set ? '••••••••' : 'AIza...'} disabled={!isAdmin}
-                onChange={e => upd('google_api_key', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
-            <div>
-              <label htmlFor="ai-secret-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Anthropic API Key {config.anthropic_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="ai-secret-2" type="password" placeholder={config.anthropic_key_set ? '••••••••' : 'sk-ant-...'} disabled={!isAdmin}
-                onChange={e => upd('anthropic_api_key', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
-            <div>
-              <label htmlFor="ai-secret-3" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenRouter API Key {config.openrouter_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="ai-secret-3" type="password" placeholder={config.openrouter_key_set ? '••••••••' : 'sk-or-v1-...'} disabled={!isAdmin}
-                onChange={e => upd('openrouter_api_key', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+          {/* LLM Provider */}
+          <div className="card space-y-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">LLM Provider</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <select id={id} value={form.llm_provider ?? ''} onChange={e => upd('llm_provider', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
+                      {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.llm_model ?? ''} onChange={e => upd('llm_model', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                      placeholder="e.g. qwen2.5:7b" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Temperature (0.0 - 2.0)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} type="number" step="0.1" min="0" max="2" value={form.llm_temperature ?? 0.1} disabled={!isAdmin}
+                      onChange={e => upd('llm_temperature', parseFloat(e.target.value))}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Max Tokens" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} type="number" min="256" max="32768" value={form.llm_max_tokens ?? 4096} disabled={!isAdmin}
+                      onChange={e => upd('llm_max_tokens', parseInt(e.target.value))}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
             </div>
           </div>
-          <p className="text-xs text-[var(--color-text-muted)]">API keys are stored securely and never returned in responses.</p>
+
+          {/* Embedding */}
+          <div className="card space-y-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Embedding</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.embedding_provider ?? ''} onChange={e => upd('embedding_provider', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} value={form.embedding_model ?? ''} onChange={e => upd('embedding_model', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+            </div>
+          </div>
+
+          {/* Pipeline Settings */}
+          <div className="card space-y-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Pipeline Settings</h3>
+            {/* items-end: in a half-width card (P5) a wrapped label keeps the inputs level. */}
+            <div className="grid grid-cols-2 items-end gap-4">
+              <div>
+                <Field label="Confidence Threshold (0-100)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} type="number" min="0" max="100" value={form.ai_confidence_threshold ?? 80} disabled={!isAdmin}
+                      onChange={e => upd('ai_confidence_threshold', parseInt(e.target.value))}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+              <div>
+                <Field label="Timeout (seconds)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                  {id => (
+                    <input id={id} type="number" min="30" max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
+                      onChange={e => upd('ai_timeout_seconds', parseInt(e.target.value))}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                  )}
+                </Field>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-6">
+              {/* AI_OFFLINE_MODE in the environment is a hard ceiling on outbound
+                  LLM egress: this toggle can tighten it, never loosen it. When the
+                  env pins it on, the control is disabled and says why — silently
+                  accepting a click the backend will refuse (409) is how an operator
+                  ends up believing cloud LLM is enabled when it is not. */}
+              <label
+                className={`flex items-center gap-2 text-sm text-[var(--color-text-secondary)] ${
+                  offlinePinned ? 'cursor-not-allowed' : 'cursor-pointer'
+                }`}
+                title={offlinePinned ? OFFLINE_PINNED_REASON : undefined}
+              >
+                <input type="checkbox" checked={form.ai_offline_mode ?? true} disabled={!isAdmin || offlinePinned}
+                  onChange={e => upd('ai_offline_mode', e.target.checked)}
+                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                Offline Mode (air-gapped, Ollama only)
+                {offlinePinned && (
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                    Pinned by environment
+                  </span>
+                )}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={form.deep_investigation_enabled ?? true} disabled={!isAdmin}
+                  onChange={e => upd('deep_investigation_enabled', e.target.checked)}
+                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                Deep Investigation
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={form.finetune_enabled ?? false} disabled={!isAdmin}
+                  onChange={e => upd('finetune_enabled', e.target.checked)}
+                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                Fine-Tuning Pipeline
+              </label>
+            </div>
+            {offlinePinned && (
+              <p
+                className="text-xs text-[var(--color-text-muted)]"
+                data-testid="offline-mode-pinned-note"
+              >
+                {OFFLINE_PINNED_REASON}
+              </p>
+            )}
+          </div>
+
+          {/* Knowledge RAG */}
+          <div className="card space-y-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Knowledge-Grounded Generation</h3>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Enable RAG-based test case generation from Jira stories, Confluence pages, uploaded documents, and approved URLs.
+            </p>
+            <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+              form.knowledge_rag_enabled
+                ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+                : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+            } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              <input
+                type="checkbox"
+                checked={form.knowledge_rag_enabled ?? false}
+                onChange={e => upd('knowledge_rag_enabled', e.target.checked)}
+                disabled={!isAdmin}
+                className="mt-0.5 rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]"
+              />
+              <div>
+                <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
+                {config.knowledge_rag_enabled ? (
+                  <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
+                ) : (
+                  <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
+                )}
+                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
+                  allowing QA engineers to generate test cases grounded in synced requirement sources.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* API Keys */}
+          <div className="card space-y-4 xl:col-span-2">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Cloud API Keys</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="ai-secret-0" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+                <input id="ai-secret-0" type="password" placeholder={config.openai_key_set ? '••••••••' : 'sk-...'} disabled={!isAdmin}
+                  onChange={e => upd('openai_api_key', e.target.value || undefined)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              </div>
+              <div>
+                <label htmlFor="ai-secret-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+                <input id="ai-secret-1" type="password" placeholder={config.google_key_set ? '••••••••' : 'AIza...'} disabled={!isAdmin}
+                  onChange={e => upd('google_api_key', e.target.value || undefined)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              </div>
+              <div>
+                <label htmlFor="ai-secret-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Anthropic API Key {config.anthropic_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+                <input id="ai-secret-2" type="password" placeholder={config.anthropic_key_set ? '••••••••' : 'sk-ant-...'} disabled={!isAdmin}
+                  onChange={e => upd('anthropic_api_key', e.target.value || undefined)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              </div>
+              <div>
+                <label htmlFor="ai-secret-3" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenRouter API Key {config.openrouter_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+                <input id="ai-secret-3" type="password" placeholder={config.openrouter_key_set ? '••••••••' : 'sk-or-v1-...'} disabled={!isAdmin}
+                  onChange={e => upd('openrouter_api_key', e.target.value || undefined)}
+                  className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)]">API keys are stored securely and never returned in responses.</p>
+          </div>
         </div>
 
         {isAdmin && (

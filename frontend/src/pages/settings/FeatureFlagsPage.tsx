@@ -11,6 +11,9 @@ import {
   type FeatureFlagCreate,
 } from '@/services/featureFlagService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/feature-flags')
 
 /**
  * ADMIN-only feature flag management. Lists every flag, supports toggling
@@ -101,8 +104,10 @@ export default function FeatureFlagsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        compact
         title="Feature Flags"
         subtitle="Gate capabilities by global kill switch, project, role, or rollout percent."
+        helpTopic={HELP_TOPIC}
         actions={
           <button
             type="button"

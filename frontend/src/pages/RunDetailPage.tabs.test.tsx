@@ -294,7 +294,9 @@ describe('Run page — tabs', () => {
     renderAt('/runs/run-1?tab=evidence')
     const report = screen.getByRole('region', { name: 'AI report' })
     expect(within(report).getByText('Two checkout tests fail after the timeout change.')).toBeInTheDocument()
-    expect(within(report).getByRole('button', { name: 'Show stages' })).toHaveAttribute('aria-expanded', 'false')
+    // The stages are the "Agent stages" Disclosure since P5 (was a Show/Hide stages button).
+    expect(within(report).getByRole('button', { name: 'Agent stages' })).toHaveAttribute('aria-expanded', 'false')
+    expect(within(report).queryByText('Raw stage cards')).toBeNull()
     expect(askedFor(hooks.usePipelines, 'run-1')).toBe(true)
     expect(askedFor(hooks.usePipelineStages, 'pipe-1')).toBe(true)
     expect(askedFor(hooks.useRunSummary, 'run-1')).toBe(true)

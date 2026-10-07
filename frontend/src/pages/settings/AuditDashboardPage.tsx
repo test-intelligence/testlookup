@@ -14,6 +14,9 @@ import {
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
 import { formatCompactDateTime } from '@/utils/formatters'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/audit')
 
 type Tab = 'events' | 'observability';
 
@@ -66,10 +69,12 @@ export default function AuditDashboardPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Audit Dashboard"
         subtitle="Unified view of security actions, configuration changes, and tenant metrics."
+        helpTopic={HELP_TOPIC}
         actions={
           <button onClick={handleExport} className="px-4 py-2 bg-[var(--color-bg-card)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
             Export CSV

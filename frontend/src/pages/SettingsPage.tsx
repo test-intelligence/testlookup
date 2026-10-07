@@ -1,185 +1,61 @@
+/**
+ * The settings index (UX redesign P5, `02-design-spec.md` §4): the settings
+ * sub-nav's groups as compact lists, one line per page (its name and what it
+ * is for), instead of 22 cards in two columns.
+ *
+ * The same data as the sub-nav beside it (`settingsNav.ts`), role-filtered
+ * the same way, so the index can never offer a page the sub-nav does not, or
+ * the reverse. The route is QA lead and admin only.
+ *
+ * One column: beside the 220 px sub-nav a two-column grid left each list
+ * ~360 px at 1280 px, every description cut to ten characters, and stretched
+ * a one-item group (Release governance) to its row's height (P5 baselines).
+ */
 import { Link } from 'react-router-dom'
-import { Activity, Archive, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, GitMerge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, ShieldCheck, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
-
-const isDev = import.meta.env.DEV
-
-const sections = [
-  {
-    icon: UserCircle2,
-    title: 'My Profile',
-    desc: 'Update your display name, avatar colour, and password',
-    href: '/settings/profile',
-    allRoles: true,
-  },
-  {
-    icon: Bot,
-    title: 'AI Configuration',
-    desc: 'LLM provider, model selection, offline mode toggle',
-    href: '/settings/ai',
-  },
-  {
-    icon: Database,
-    title: 'Data & Storage',
-    desc: 'PostgreSQL, MongoDB, MinIO, ChromaDB connection settings',
-    href: '/settings/storage',
-  },
-  {
-    icon: Key,
-    title: 'Integrations',
-    desc: 'Jira, Splunk, OpenShift API, Slack, Microsoft Teams',
-    href: '/settings/integrations',
-  },
-  {
-    icon: Bell,
-    title: 'Notifications',
-    desc: 'Email, Slack, and Teams alert rules per project',
-    href: '/settings/notifications',
-  },
-  {
-    icon: Fingerprint,
-    title: 'SSO & Identity',
-    desc: 'SAML SSO configuration, SCIM provisioning, identity audit events',
-    href: '/settings/sso',
-  },
-  {
-    icon: Mail,
-    title: 'Digests & Views',
-    desc: 'Scheduled quality digests, saved filter views, subscription management',
-    href: '/settings/digests',
-  },
-  {
-    icon: Activity,
-    title: 'Integration Health',
-    desc: 'Active health probes for Jira, Splunk, GitHub, Slack, SMTP, and more',
-    href: '/settings/integration-health',
-  },
-  {
-    icon: FileSearch,
-    title: 'Audit Dashboard',
-    desc: 'Unified audit trail for security, releases, config changes, and tenant metrics',
-    href: '/settings/audit',
-  },
-  {
-    icon: Sparkles,
-    title: 'AI Agents',
-    desc: 'Agent governance: trust-ladder autonomy mode (shadow / suggest / act), budgets, and promotion status per agent',
-    href: '/settings/ai-agents',
-  },
-  {
-    icon: ScrollText,
-    title: 'Agent Activity',
-    desc: 'Governance ledger — every agent run with trigger, spend, and actions proposed or taken',
-    href: '/settings/agent-activity',
-  },
-  {
-    icon: BrainCircuit,
-    title: 'AI Evaluation',
-    desc: 'Measure AI quality: precision, recall, agreement, drift, model version history',
-    href: '/settings/ai-eval',
-  },
-  {
-    icon: Gauge,
-    title: 'Performance',
-    desc: 'Latency budgets, search indexing config, and scale scenarios',
-    href: '/settings/performance',
-  },
-  {
-    icon: Flag,
-    title: 'Feature Flags',
-    desc: 'Gate capabilities by global kill switch, project, role, or rollout percent',
-    href: '/settings/feature-flags',
-  },
-  {
-    icon: DollarSign,
-    title: 'LLM Cost Budget',
-    desc: 'Usage-based billing: per-project spend caps, at-cap downgrade policy, workspace overview',
-    href: '/settings/billing',
-  },
-  {
-    icon: GitBranch,
-    title: 'GitHub Integration',
-    desc: 'Post check runs to PRs on every test run — per-project repo + token + offline-mode aware',
-    href: '/settings/github',
-  },
-  {
-    icon: GitMerge,
-    title: 'GitLab Integration',
-    desc: 'Post commit statuses + sticky MR comments on every test run — per-project path + token, self-managed aware',
-    href: '/settings/gitlab',
-  },
-  {
-    icon: Webhook,
-    title: 'Outbound Webhooks',
-    desc: 'Subscribe external systems to run.completed, defect.promoted, release.decided, flaky.quarantined, quota.exceeded',
-    href: '/settings/webhooks',
-  },
-  {
-    icon: Key,
-    title: 'API Keys',
-    desc: 'Generate project-scoped streaming keys for CI to ingest test results live without a session token',
-    href: '/settings/api-keys',
-  },
-  {
-    icon: Trash2,
-    title: 'Project Data',
-    desc: 'Reset a project to a clean state — delete test runs only, or wipe everything except the project shell. ADMIN only, two-step confirmation required.',
-    href: '/settings/project-data',
-  },
-  {
-    icon: Archive,
-    title: 'Retention & Purge',
-    desc: 'Per-project data-retention windows for raw events, runs, artifacts, and the audit trail — with purge preview and manual purge. ADMIN only.',
-    href: '/settings/retention',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'MFA & Lockout Policy',
-    desc: 'Require two-factor authentication for a role and above, and tune the failed-sign-in lockout threshold and duration. ADMIN only.',
-    href: '/settings/mfa-policy',
-  },
-  ...(isDev
-    ? [
-        {
-          icon: Sprout,
-          title: 'Seed Data',
-          desc: 'Load, reset, or delete demo data for the dev environment',
-          href: '/settings/seed-data',
-        },
-      ]
-    : []),
-]
+import { helpTopicParam } from '@/components/help/helpTopics'
+import { settingsGroupsFor, settingsItemHref } from '@/components/layout/settingsNav'
 
 export default function SettingsPage() {
-  const { canViewSettings } = usePermissions()
-
-  // Profile card is always visible; other cards require QA_LEAD+
-  const visibleSections = sections.filter(s => s.allRoles || canViewSettings)
+  const { canAccessManagement, canGenerateApiKeys } = usePermissions()
+  const groups = settingsGroupsFor({ canAccessManagement, canOwnApiKeys: canGenerateApiKeys, isDev: import.meta.env.DEV })
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Settings" subtitle="Application configuration and integrations" />
-
-      {!canViewSettings && (
-        <div className="card flex items-center gap-3 border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/10 py-3 px-4">
-          <ShieldAlert className="h-4 w-4 text-[var(--status-broken)] flex-shrink-0" />
-          <p className="text-sm text-[var(--status-broken)]">Some settings require QA Lead or Admin role.</p>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {visibleSections.map(({ icon: Icon, title, desc, href }) => (
-          <Link key={title} to={href} className="block">
-            <div className="card hover:border-[var(--color-border-light)] transition-colors cursor-pointer">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-[var(--color-bg-secondary)] rounded-lg"><Icon className="h-4 w-4 text-[var(--color-text-muted)]" /></div>
-                <h3 className="font-semibold text-[var(--color-text)] flex-1">{title}</h3>
-                <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
-              </div>
-              <p className="text-sm text-[var(--color-text-muted)] pl-11">{desc}</p>
-            </div>
-          </Link>
+      <PageHeader
+        compact
+        title="Settings"
+        subtitle="Your account, the project, its integrations and the AI"
+        helpTopic={helpTopicParam('/settings')}
+      />
+      <div className="space-y-4" data-settings-index="">
+        {groups.map((group) => (
+          <section key={group.id} aria-labelledby={`settings-group-${group.id}`} className="card !p-0 overflow-hidden">
+            <h2
+              id={`settings-group-${group.id}`}
+              className="border-b border-[var(--color-border)] px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]"
+            >
+              {group.label}
+            </h2>
+            <ul>
+              {group.items.map((item) => (
+                <li key={item.id} className="border-b border-[var(--color-border)] last:border-b-0">
+                  <Link
+                    to={settingsItemHref(item)}
+                    data-settings-index-item={item.id}
+                    className="flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-hover)]"
+                  >
+                    {/* 224 px: the longest name, "Jira, Splunk, OCP, Slack, Teams", is 201 px in CI's DejaVu Sans (cut at 192). */}
+                    <span className="w-56 shrink-0 truncate text-[13px] font-medium text-[var(--color-text)]">{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text-muted)]">{item.description}</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-faint)]" aria-hidden="true" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         ))}
       </div>
     </div>

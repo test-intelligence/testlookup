@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StoragePage from './StoragePage'
 import type { StorageConfigRead } from '@/services/appSettingsService'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 const mockGet = vi.fn<() => Promise<StorageConfigRead>>()
 const mockUpdate = vi.fn()
@@ -122,6 +123,42 @@ describe('a non-admin cannot repoint the deployment at another store', () => {
 
     const endpoint = await screen.findByDisplayValue('minio:9000')
     expect(endpoint).not.toBeDisabled()
+  })
+})
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic', async () => {
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expectTemplateHeader('Data & Storage', '/settings/storage')
+  })
+
+  it('lays the form out in two columns at >= 1280 px instead of a max-w-2xl column', async () => {
+    const { container } = renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expect(container.querySelector('.max-w-2xl')).toBeNull()
+    const grid = container.querySelector('[data-settings-form-grid]') as HTMLElement
+    expect(grid).toHaveClass('grid', 'grid-cols-1', 'xl:grid-cols-2')
+
+    // In order: the status strip across both columns, then the two stores side by side.
+    const cards = Array.from(grid.children)
+    expect(cards.map((c) => c.querySelector('h3')?.textContent)).toEqual([
+      'Infrastructure',
+      'Object Storage (MinIO / S3)',
+      'ChromaDB (Vector Store)',
+    ])
+    expect(cards[0]).toHaveClass('xl:col-span-2')
+    expect(cards[1]).not.toHaveClass('xl:col-span-2')
+    expect(cards[2]).not.toHaveClass('xl:col-span-2')
+    // ChromaDB's three fields wrap to two per row in a half-width column.
+    expect(cards[2].querySelector('.grid')).toHaveClass('grid-cols-3', 'xl:grid-cols-2')
+
+    // Save stays under the grid, inside the same form.
+    const save = screen.getByRole('button', { name: /save configuration/i })
+    expect(grid.contains(save)).toBe(false)
+    expect(save.closest('form')).toBe(grid.closest('form'))
   })
 })
 

@@ -83,8 +83,9 @@ test.describe('Tier 0-2 feature pages', () => {
 
   test.describe('Release Compliance Pack', () => {
     test('renders releases page (compliance pack panel host)', async ({ page }) => {
-      // The CompliancePackPanel is rendered inline on ReleasesPage. It
-      // only appears once a release is selected, so the smoke check
+      // The CompliancePackPanel is in a release's detail (the side panel on
+      // /releases, or /releases/:id). It only appears once a release is
+      // opened, so the smoke check
       // here is "releases page loads" — the panel's own render is
       // covered by the frontend unit tests.
       await page.goto('/releases');

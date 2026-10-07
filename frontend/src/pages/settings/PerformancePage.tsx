@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
 import { usePerformanceSettings } from '@/hooks/usePerformanceSettings';
+import PageHeader from '@/components/ui/PageHeader';
+import { helpTopicParam } from '@/components/help/helpTopics';
+
+const HELP_TOPIC = helpTopicParam('/settings/performance');
 
 type Tab = 'budgets' | 'config' | 'scenarios';
 
@@ -17,11 +21,13 @@ export default function PerformancePage() {
   if (isLoading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">Performance Budgets</h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">Codified latency targets, search configuration, and scale scenarios.</p>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        title="Performance Budgets"
+        subtitle="Codified latency targets, search configuration, and scale scenarios."
+        helpTopic={HELP_TOPIC}
+      />
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
         {tabs.map(t => (

@@ -22,6 +22,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SeedDataPage from './SeedDataPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 const mockPost = vi.fn()
 const mockDelete = vi.fn()
@@ -125,5 +126,19 @@ describe('failures are reported with the server reason', () => {
     // reads as "the button did nothing".
     await waitFor(() => expect(mockRefresh).toHaveBeenCalled())
     expect(mockToastSuccess).toHaveBeenCalled()
+  })
+})
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('has the compact header with the route help topic', () => {
+    renderPage()
+    expectTemplateHeader('Seed Data', '/settings/seed-data')
+  })
+
+  it('uses the full content column: the max-w-2xl cap is gone (no fields, so one column)', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('.max-w-2xl')).toBeNull()
+    expect(container.querySelector('[data-settings-form-grid]')).toBeNull()
+    expect(screen.getByRole('button', { name: /load seed data/i })).toBeInTheDocument()
   })
 })

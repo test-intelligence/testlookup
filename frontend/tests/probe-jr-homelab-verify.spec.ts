@@ -130,7 +130,9 @@ test.describe('JR-02..JR-06 fixes, live', () => {
       // sidebar and called it a back affordance. After the fix every page would
       // have matched twice and the duplicate check would have failed on a
       // correct deployment.
-      const count = await page.locator('nav[aria-label="Breadcrumb"] a[href="/settings"]').count()
+      // UX redesign P5: the way back is the settings sub-nav's "All settings"
+      // (the breadcrumb is gone); still exactly one, from the layout.
+      const count = await page.locator('nav[aria-label="Settings"] a[href="/settings"]').count()
       if (count === 0) missing.push(path)
       else if (count > 1) duplicated.push(`${path} (${count})`)
 
@@ -150,8 +152,8 @@ test.describe('JR-02..JR-06 fixes, live', () => {
     // The index is the destination — a link to itself there is a loop.
     await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' })
     await page.waitForTimeout(1500)
-    const onIndex = await page.locator('nav[aria-label="Breadcrumb"] a[href="/settings"]').count()
-    expect(onIndex, 'the settings index must not offer "Back to Settings"').toBe(0)
+    // On the index, "All settings" is the current page, not a way back to it.
+    await expect(page.locator('nav[aria-label="Settings"] a[href="/settings"]')).toHaveAttribute('aria-current', 'page')
   })
 
   test('TL-003: a CONDITIONAL_GO states what it is conditional on', async ({ page, request }) => {

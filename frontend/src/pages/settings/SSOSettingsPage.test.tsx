@@ -29,6 +29,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SSOSettingsPage from './SSOSettingsPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { SSOConfig } from '../../services/ssoService'
 
 const mockUpdateSSOConfig = vi.fn()
@@ -174,5 +175,15 @@ describe('the page reports what it did', () => {
     // secret, but the truncation is the page's stated contract and the same
     // list is where a token would be mis-rendered if one were added later.
     expect(screen.getByText(/AA:BB:CC:DD:EE:F/)).toBeInTheDocument()
+  })
+})
+
+describe('the settings page template (UX redesign P5)', () => {
+  it('replaces the page-local h1 with the compact header and the route help topic', () => {
+    renderWith([])
+    expectTemplateHeader('SSO & Identity Management', '/settings/sso')
+    // The tabs and the config tab's heading are unchanged.
+    expect(screen.getByRole('button', { name: 'SSO Configuration' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'SSO Configurations' })).toBeInTheDocument()
   })
 })

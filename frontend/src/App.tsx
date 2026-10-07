@@ -44,9 +44,9 @@ const SearchPage = lazy(() => import('@/pages/SearchPage'))
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const NotificationsPage = lazy(() => import('@/pages/settings/NotificationsPage'))
-const MyNotificationsPage = lazy(() =>
-  import('@/pages/settings/NotificationsPage').then((m) => ({ default: m.MyNotificationsPage })),
-)
+const MyNotificationsPage = lazy(() => import('@/pages/settings/MyNotificationsPage'))
+const TeamChannelsPage = lazy(() => import('@/pages/settings/TeamChannelsPage'))
+const PersonalKeysPage = lazy(() => import('@/pages/settings/PersonalKeysPage'))
 const AIConfigPage = lazy(() => import('@/pages/settings/AIConfigPage'))
 const IntegrationsSettingsPage = lazy(() => import('@/pages/settings/IntegrationsPage'))
 const StoragePage = lazy(() => import('@/pages/settings/StoragePage'))
@@ -173,6 +173,9 @@ const appRoutes: AppRoute[] = [
   { path: 'settings/profile', component: ProfilePage },
   // Personal notification preferences: every role (UX redesign P1).
   { path: 'settings/my-notifications', component: MyNotificationsPage },
+  // P5: a person's own API keys, for every role that may own one (QA engineer+;
+  // the page tells a lower role it cannot). It was a tab of /users (QA lead+).
+  { path: 'settings/my-api-keys', component: PersonalKeysPage },
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */
@@ -184,6 +187,8 @@ const managementRoutes: AppRoute[] = [
   { path: 'users', component: UserManagementPage },
   { path: 'settings', component: SettingsPage },
   { path: 'settings/notifications', component: NotificationsPage },
+  // UX redesign P5: a team's notification channel, out of Ownership.
+  { path: 'settings/team-channels', component: TeamChannelsPage },
   { path: 'settings/ai', component: AIConfigPage },
   { path: 'settings/integrations', component: IntegrationsSettingsPage },
   { path: 'settings/storage', component: StoragePage },

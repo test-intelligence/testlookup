@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { AIConfigRead, AIModelStatusRead } from '@/services/appSettingsService'
+import { helpTopicParam } from '@/components/help/helpTopics'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
 
@@ -50,8 +51,10 @@ vi.mock('react-hot-toast', () => ({
   },
 }))
 
+// Forwards the template props the page must pass (UX redesign P5).
 vi.mock('@/components/ui/PageHeader', () => ({
-  default: ({ title }: { title: string }) => createElement('h1', null, title),
+  default: ({ title, compact, helpTopic }: { title: string; compact?: boolean; helpTopic?: string }) =>
+    createElement('h1', { 'data-compact': compact ? 'true' : 'false', 'data-help-topic': helpTopic }, title),
 }))
 vi.mock('@/components/ui/LoadingSpinner', () => ({ default: () => createElement('div', null, 'loading') }))
 vi.mock('react-router-dom', () => ({
@@ -369,6 +372,57 @@ describe('AIConfigPage — live model status', () => {
       analysis_mode: 'auto',
     })
     expect(mockToastSuccess).toHaveBeenCalledWith('AI configuration saved')
+  })
+})
+
+/** The settings page template (UX redesign P5, plan item 4). */
+describe('AIConfigPage — layout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetAIConfig.mockResolvedValue(baseConfig())
+    mockGetModelStatus.mockResolvedValue(healthyStatus())
+  })
+
+  it('renders the compact header with the route help topic', async () => {
+    await renderPage()
+    const heading = await screen.findByRole('heading', { level: 1, name: 'AI Configuration' })
+    expect(heading).toHaveAttribute('data-compact', 'true')
+    expect(heading).toHaveAttribute('data-help-topic', helpTopicParam('/settings/ai'))
+  })
+
+  it('pairs the cards in two columns at >= 1280 px instead of a max-w-2xl column', async () => {
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText('Model Availability & Fallback Chain')).toBeInTheDocument())
+
+    expect(container.querySelector('.max-w-2xl')).toBeNull()
+    const grid = container.querySelector('[data-settings-form-grid]') as HTMLElement
+    expect(grid).toHaveClass('grid', 'grid-cols-1', 'xl:grid-cols-2')
+    // Row by row: mode | live availability, LLM | embedding, pipeline | RAG, then the keys across.
+    const cards = Array.from(grid.children)
+    expect(cards.map((c) => c.querySelector('h3')?.textContent)).toEqual([
+      'Analysis Engine',
+      'Model Availability & Fallback Chain',
+      'LLM Provider',
+      'Embedding',
+      'Pipeline Settings',
+      'Knowledge-Grounded Generation',
+      'Cloud API Keys',
+    ])
+    expect(cards.filter((c) => c.classList.contains('xl:col-span-2')).map((c) => c.querySelector('h3')?.textContent))
+      .toEqual(['Cloud API Keys'])
+
+    // Save stays under the grid, inside the same form.
+    const save = screen.getByRole('button', { name: /save configuration/i })
+    expect(grid.contains(save)).toBe(false)
+    expect(save.closest('form')).toBe(grid.closest('form'))
+  })
+
+  it('keeps the reachability line one text run in the half-width card', async () => {
+    await renderPage()
+    const line = await screen.findByText(/Ollama reachable at/)
+    // The text sits in a span, not as bare text nodes of the flex row.
+    expect(line.tagName).toBe('SPAN')
+    expect(line).toHaveTextContent('Ollama reachable at http://ollama:11434 — 2 models installed')
   })
 })
 

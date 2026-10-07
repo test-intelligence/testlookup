@@ -91,6 +91,8 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/MfaPolicyPage': 'own-error-ui',
   'settings/AIAgentsPage': 'own-error-ui',
   'settings/AgentActivityPage': 'own-error-ui',
+  // UX redesign P5: out of Ownership, with the alerts it had there.
+  'settings/TeamChannelsPage': 'own-error-ui',
 
   SettingsPage: 'no-fetch',
   DocsPage: 'no-fetch',
@@ -119,7 +121,15 @@ const REVIEWED: Record<string, ErrorState> = {
   CanonicalDetailPage: 'known-silent', // failure shows "not found"
   ReleaseGatePage: 'known-silent', // failure shows "no decision found"
   PolicyEditorPage: 'known-silent', // policy failure shows "not found"
-  'settings/NotificationsPage': 'known-silent',
+  // P5: the admin page (SMTP + shared channels) shows each read's failure: SMTP's
+  // SmtpLoadFailure, the shared channels' alert (NotificationsPage.test.tsx).
+  'settings/NotificationsPage': 'own-error-ui',
+  // P5: the personal page, its own file; a failed preferences read is
+  // DataUnavailable, never three empty channel cards (MyNotificationsPage.test.tsx).
+  'settings/MyNotificationsPage': 'data-unavailable',
+  // P5: My API keys (was a /users tab); a failed list is DataUnavailable,
+  // never "You have no API keys" (PersonalKeysPage.test.tsx).
+  'settings/PersonalKeysPage': 'data-unavailable',
   'settings/IntegrationsPage': 'known-silent',
   'settings/StoragePage': 'known-silent',
   'settings/IntegrationHealthPage': 'known-silent',
@@ -132,7 +142,7 @@ const REVIEWED: Record<string, ErrorState> = {
 }
 
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
-const KNOWN_SILENT_CEILING = 26
+const KNOWN_SILENT_CEILING = 25
 
 // Tolerant of spacing and quote style: a route written differently must not
 // fall out of the guard.

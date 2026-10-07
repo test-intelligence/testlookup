@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import useSWR from 'swr'
 import {
+  Activity,
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   FileJson,
   GitFork,
@@ -17,6 +17,7 @@ import toast from 'react-hot-toast'
 
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PageHeader from '@/components/ui/PageHeader'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -411,12 +412,18 @@ export default function WorkflowEditorPage() {
 
   return (
     <div className="space-y-5">
+      {/* The template's header (UX redesign P5): compact, with its help topic.
+          Its one action links to the sibling page under Admin › AI, named as
+          the sub-nav names it (it was "← Agent pipeline", a back link: the
+          sub-nav beside the page is the way back now). */}
       <PageHeader
+        compact
         title="Workflow editor"
         subtitle="Fork built-in pipelines, edit versioned definitions, preview topology, validate, evaluate, and publish."
+        helpTopic={helpTopicParam('/agents/workflows')}
         actions={(
-          <Link to="/agents" className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]">
-            <ArrowLeft className="h-4 w-4" /> Agent pipeline
+          <Link to="/agents" className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]">
+            <Activity className="h-3.5 w-3.5" /> Pipeline runs
           </Link>
         )}
       />

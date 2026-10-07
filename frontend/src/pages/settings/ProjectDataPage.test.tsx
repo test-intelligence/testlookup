@@ -14,6 +14,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import ProjectDataPage from './ProjectDataPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 // Mock the service so no real network call happens; per-test handles
 // let us inject success / error / inspect the call.
@@ -138,5 +139,26 @@ describe('ProjectDataPage', () => {
     // After success the page shows the deleted counts.
     expect(await screen.findByText(/reset complete \(runs\)/i)).toBeInTheDocument()
     expect(screen.getByText(/test_runs/)).toBeInTheDocument()
+  })
+})
+
+describe('ProjectDataPage — the settings page template (UX redesign P5)', () => {
+  beforeEach(() => {
+    mockPermissions.isAdmin = true
+    mockProjectStore.activeProject = { ...mockActiveProject }
+    mockProjectStore.activeProjectId = 'proj-uuid-1'
+  })
+
+  it('has the compact header with the route help topic', () => {
+    renderPage()
+    expectTemplateHeader('Project Data', '/settings/project-data')
+  })
+
+  it('uses the full content column: the max-w-3xl cap is gone (no fields, so one column)', () => {
+    const { container } = renderPage()
+    // PageHeader keeps its own title width; the page column is what must not be capped.
+    expect(Array.from(container.querySelectorAll('.max-w-3xl')).filter((el) => !el.closest('[data-page-header]'))).toEqual([])
+    expect(container.querySelector('[data-settings-form-grid]')).toBeNull()
+    expect(screen.getByRole('button', { name: /delete test runs/i })).toBeInTheDocument()
   })
 })

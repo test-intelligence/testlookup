@@ -81,8 +81,9 @@ describe('QuarantinePage — the stat tiles sit above the table being acted on',
   })
 })
 
-describe('NotificationsPage — the unread badge lives in the persistent TopBar', () => {
-  const src = source('settings/NotificationsPage.tsx')
+describe('MyNotificationsPage — the unread badge lives in the persistent TopBar', () => {
+  // UX redesign P5: the history panel moved with the personal preferences.
+  const src = source('settings/MyNotificationsPage.tsx')
 
   it('the per-row dismiss fans out like handleMarkAll does', () => {
     // handleMarkAll already called invalidateNotifications; the per-row handler

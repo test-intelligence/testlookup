@@ -52,6 +52,9 @@ import {
   type RetentionPreview,
 } from '@/types/retention'
 import { formatCompactDateTime } from '@/utils/formatters'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/retention')
 
 /** Copy for the four day-count fields — label + what the class covers. */
 const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string }> = [
@@ -308,8 +311,10 @@ export default function RetentionPage() {
     return (
       <div className="space-y-4">
         <PageHeader
+          compact
           title="Retention & Purge"
           subtitle="Per-project data-retention windows and purge controls"
+          helpTopic={HELP_TOPIC}
         />
         <ProjectRequiredEmptyState
           description="Retention policies are configured per project."
@@ -327,8 +332,10 @@ export default function RetentionPage() {
     return (
       <div className="space-y-4">
         <PageHeader
+          compact
           title="Retention & Purge"
           subtitle={`Data-retention windows for ${activeProject?.name || 'this project'}`}
+          helpTopic={HELP_TOPIC}
         />
         <div className="rounded-md border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-4 text-xs text-[var(--status-failed)] space-y-2">
           <p className="flex items-center gap-1.5">
@@ -408,11 +415,15 @@ export default function RetentionPage() {
   const purgeDisabled = !policy.enabled
   const mongoEntries = preview ? Object.entries(preview.candidates.mongo_docs) : []
 
+  // The full content column (UX redesign P5): the policy form is already a
+  // two-column field grid, so dropping the max-w-3xl cap is its two columns.
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Retention & Purge"
         subtitle={`Data-retention windows for ${projectName || 'this project'}. ADMIN only.`}
+        helpTopic={HELP_TOPIC}
       />
 
       {/* ── Activation nudge (S1) ───────────────────────────────────────

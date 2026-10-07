@@ -7,6 +7,9 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { updateMfaPolicy, useMfaPolicy } from '@/hooks/useMfaPolicy'
 import { MFA_ROLES, type MfaPolicy, type MfaPolicyUpdate, type MfaRole } from '@/types/mfa'
 import { describeMfaError } from '@/utils/mfaErrors'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/mfa-policy')
 
 const ROLE_LABEL: Record<MfaRole, string> = {
   VIEWER: 'Viewer',
@@ -126,10 +129,12 @@ export default function MfaPolicyPage() {
       : `every ${ROLE_LABEL[(draft?.required_for_role || 'ADMIN') as MfaRole]} and above`
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="MFA & Lockout Policy"
         subtitle="Workspace-wide two-factor requirement and failed-sign-in lockout. ADMIN only."
+        helpTopic={HELP_TOPIC}
       />
 
       {isLoading && (
@@ -147,124 +152,128 @@ export default function MfaPolicyPage() {
 
       {draft && (
         <>
-          {/* ── MFA requirement ─────────────────────────────────────────── */}
-          <section className="card space-y-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
-              <ShieldCheck className="h-4 w-4 text-[var(--color-text-muted)]" />
-              Require two-factor authentication
-            </h2>
+          {/* Two columns at >= 1280 px (UX redesign P5): the requirement and the
+              lockout side by side; the confirmation and Save stay under both. */}
+          <div data-settings-form-grid="" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {/* ── MFA requirement ─────────────────────────────────────────── */}
+            <section className="card space-y-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+                <ShieldCheck className="h-4 w-4 text-[var(--color-text-muted)]" />
+                Require two-factor authentication
+              </h2>
 
-            <label className="flex cursor-pointer items-start gap-3">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={draft.require_mfa}
-                onChange={(e) => patch({ require_mfa: e.target.checked })}
-              />
-              <span className="text-sm text-[var(--color-text-secondary)]">
-                <span className="font-medium text-[var(--color-text)]">
-                  Require MFA to sign in
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={draft.require_mfa}
+                  onChange={(e) => patch({ require_mfa: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--color-text-secondary)]">
+                  <span className="font-medium text-[var(--color-text)]">
+                    Require MFA to sign in
+                  </span>
+                  <br />
+                  Users in scope who have not enrolled are stopped at login and walked
+                  through setup before they can continue.
                 </span>
-                <br />
-                Users in scope who have not enrolled are stopped at login and walked
-                through setup before they can continue.
-              </span>
-            </label>
-
-            <div>
-              <label
-                htmlFor="mfa-required-role"
-                className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
-              >
-                Applies to
               </label>
-              <select
-                id="mfa-required-role"
-                className="input w-full"
-                value={draft.required_for_role}
-                disabled={!draft.require_mfa}
-                onChange={(e) =>
-                  patch({ required_for_role: e.target.value as MfaRole | '' })
-                }
-              >
-                <option value={EVERYONE}>Everyone</option>
-                {MFA_ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {ROLE_LABEL[role]} and above
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                Roles are ranked Viewer → Tester → QA Engineer → QA Lead → Admin.
-              </p>
-            </div>
-          </section>
 
-          {/* ── Lockout ─────────────────────────────────────────────────── */}
-          <section className="card space-y-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
-              <Lock className="h-4 w-4 text-[var(--color-text-muted)]" />
-              Failed sign-in lockout
-            </h2>
+              <div>
+                <label
+                  htmlFor="mfa-required-role"
+                  className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
+                >
+                  Applies to
+                </label>
+                <select
+                  id="mfa-required-role"
+                  className="input w-full"
+                  value={draft.required_for_role}
+                  disabled={!draft.require_mfa}
+                  onChange={(e) =>
+                    patch({ required_for_role: e.target.value as MfaRole | '' })
+                  }
+                >
+                  <option value={EVERYONE}>Everyone</option>
+                  {MFA_ROLES.map((role) => (
+                    <option key={role} value={role}>
+                      {ROLE_LABEL[role]} and above
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  Roles are ranked Viewer → Tester → QA Engineer → QA Lead → Admin.
+                </p>
+              </div>
+            </section>
 
-            <label className="flex cursor-pointer items-start gap-3">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={draft.lockout_enabled}
-                onChange={(e) => patch({ lockout_enabled: e.target.checked })}
-              />
-              <span className="text-sm text-[var(--color-text-secondary)]">
-                <span className="font-medium text-[var(--color-text)]">
-                  Lock accounts after repeated failures
+            {/* ── Lockout ─────────────────────────────────────────────────── */}
+            <section className="card space-y-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+                <Lock className="h-4 w-4 text-[var(--color-text-muted)]" />
+                Failed sign-in lockout
+              </h2>
+
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={draft.lockout_enabled}
+                  onChange={(e) => patch({ lockout_enabled: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--color-text-secondary)]">
+                  <span className="font-medium text-[var(--color-text)]">
+                    Lock accounts after repeated failures
+                  </span>
+                  <br />
+                  Applies to both password and second-factor attempts. Locked users get a
+                  429 telling them how long to wait.
                 </span>
-                <br />
-                Applies to both password and second-factor attempts. Locked users get a
-                429 telling them how long to wait.
-              </span>
-            </label>
+              </label>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="mfa-lockout-threshold"
-                  className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
-                >
-                  Failed attempts before lockout
-                </label>
-                <input
-                  id="mfa-lockout-threshold"
-                  type="number"
-                  min={3}
-                  max={100}
-                  className="input w-full"
-                  disabled={!draft.lockout_enabled}
-                  value={draft.lockout_threshold}
-                  onChange={(e) => patch({ lockout_threshold: e.target.value })}
-                />
-                <p className="mt-1 text-xs text-[var(--color-text-muted)]">3–100</p>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                <div>
+                  <label
+                    htmlFor="mfa-lockout-threshold"
+                    className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
+                  >
+                    Failed attempts before lockout
+                  </label>
+                  <input
+                    id="mfa-lockout-threshold"
+                    type="number"
+                    min={3}
+                    max={100}
+                    className="input w-full"
+                    disabled={!draft.lockout_enabled}
+                    value={draft.lockout_threshold}
+                    onChange={(e) => patch({ lockout_threshold: e.target.value })}
+                  />
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">3–100</p>
+                </div>
+                <div>
+                  <label
+                    htmlFor="mfa-lockout-duration"
+                    className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
+                  >
+                    Lockout duration (minutes)
+                  </label>
+                  <input
+                    id="mfa-lockout-duration"
+                    type="number"
+                    min={1}
+                    max={1440}
+                    className="input w-full"
+                    disabled={!draft.lockout_enabled}
+                    value={draft.lockout_duration_minutes}
+                    onChange={(e) => patch({ lockout_duration_minutes: e.target.value })}
+                  />
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">1–1440</p>
+                </div>
               </div>
-              <div>
-                <label
-                  htmlFor="mfa-lockout-duration"
-                  className="mb-1 block text-sm font-medium text-[var(--color-text-secondary)]"
-                >
-                  Lockout duration (minutes)
-                </label>
-                <input
-                  id="mfa-lockout-duration"
-                  type="number"
-                  min={1}
-                  max={1440}
-                  className="input w-full"
-                  disabled={!draft.lockout_enabled}
-                  value={draft.lockout_duration_minutes}
-                  onChange={(e) => patch({ lockout_duration_minutes: e.target.value })}
-                />
-                <p className="mt-1 text-xs text-[var(--color-text-muted)]">1–1440</p>
-              </div>
-            </div>
-          </section>
+            </section>
+          </div>
 
           {/* ── Enable confirmation ─────────────────────────────────────── */}
           {pendingEnable && (

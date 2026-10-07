@@ -21,8 +21,12 @@
  * runs. Asserting merely that "something rendered" would have passed all the
  * way through the reported bug: the placeholder is something.
  *
- * Read-only. It navigates and reads. The one control it sets is the trigger
- * dropdown, whose form it never submits, so no pipeline is queued.
+ * Read-only. It navigates and reads; it never presses "Trigger pipeline", so
+ * no pipeline is queued.
+ *
+ * UX redesign P5 (D3): the page has ONE run picker (`#agent-run-picker`, was
+ * `#agent-field-0`); the second "Trigger a pipeline manually" select is gone —
+ * the trigger button queues a pipeline for the run in the one picker.
  */
 import { expect, test, type Page, type APIRequestContext } from '@playwright/test'
 
@@ -71,8 +75,10 @@ const PLACEHOLDER = /Select a pipeline run to see agent stages/i
  * everything to check. Waiting, and failing when nothing arrives, keeps the
  * skip honest: it can then only mean a genuinely empty deployment.
  */
+const PICKER = '#agent-run-picker'
+
 async function runOptions(page: Page): Promise<string[]> {
-  const header = page.locator('#agent-field-0')
+  const header = page.locator(PICKER)
   await expect(
     header,
     'the run dropdown is not on the page — this probe is not measuring what it claims to',
@@ -105,7 +111,7 @@ test.describe('BUG-011: picking a run changes the page, live', () => {
     await page.goto(`${BASE}/agents`, { waitUntil: 'domcontentloaded' })
 
     const runIds = await runOptions(page)
-    const header = page.locator('#agent-field-0')
+    const header = page.locator(PICKER)
 
     const seen: string[] = []
     const placeholders: boolean[] = []
@@ -142,7 +148,7 @@ test.describe('BUG-011: picking a run changes the page, live', () => {
     await page.goto(`${BASE}/agents`, { waitUntil: 'domcontentloaded' })
 
     const runIds = await runOptions(page)
-    const header = page.locator('#agent-field-0')
+    const header = page.locator(PICKER)
 
     // Find a run that actually has a pipeline; a run with none correctly keeps
     // the placeholder, and skipping that case is the point of the loop.
@@ -164,29 +170,24 @@ test.describe('BUG-011: picking a run changes the page, live', () => {
     ).toBeTruthy()
   })
 
-  test('the manual-trigger dropdown still says it does not change the view', async ({ page, request }) => {
-    // The mitigation shipped in 3909db8e. It is still correct and still needed:
-    // a second dropdown listing the same runs sits under the "Pipeline Runs"
-    // heading and only arms the trigger button, so it must say so.
+  test('one run picker: the trigger dropdown is gone, the trigger acts on the picked run', async ({ page, request }) => {
+    // The mitigation of 3909db8e (a visible "does not change the view below"
+    // label on the second dropdown) was retired with the dropdown itself in the
+    // UX redesign P5: one picker, and the trigger button beside it.
     test.setTimeout(3 * 60 * 1000)
     await signIn(page, request)
     await page.setViewportSize({ width: 1600, height: 1000 })
     await page.goto(`${BASE}/agents`, { waitUntil: 'domcontentloaded' })
+    await runOptions(page)
 
-    // No skip here. The control is gated on QA_ENGINEER and this probe always
-    // signs in as ADMIN, so "not present" means the control moved or its gate
-    // changed — findings, not reasons to pass quietly. (An earlier version used
-    // `isVisible({timeout})`, which does NOT wait, and skipped on a page where
-    // the control was in fact present.)
-    const trigger = page.locator('select[aria-label*="trigger" i]').first()
-    await expect(
-      trigger,
-      'the manual-trigger dropdown is gone from /agents for an ADMIN — if it ' +
-        'was removed on purpose, drop this test with it',
-    ).toBeVisible({ timeout: 30_000 })
+    const pageSelects = await page.locator('[data-page-header]').locator('xpath=..').locator('select').count()
+    expect(pageSelects, 'the page has more than one run picker again').toBe(1)
+    await expect(page.locator('select[aria-label*="trigger" i]')).toHaveCount(0)
 
-    const body = await page.locator('body').innerText()
-    expect(body, 'the trigger dropdown lost its visible label').toMatch(/trigger a pipeline manually/i)
-    expect(body, 'the "does not change the view" qualifier is gone').toMatch(/does not change the view below/i)
+    // Gated on QA_ENGINEER; this probe signs in as ADMIN, so it must be there.
+    // Read only: never clicked (it would queue a pipeline on the deployment).
+    const trigger = page.getByRole('button', { name: 'Trigger pipeline' })
+    await expect(trigger, 'no trigger button beside the run picker').toBeVisible({ timeout: 30_000 })
+    await expect(trigger, 'the trigger is armed with no run picked').toBeDisabled()
   })
 })

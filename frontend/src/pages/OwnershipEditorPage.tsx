@@ -1,48 +1,42 @@
 import { useState } from 'react';
+import ScopedLink from '@/components/ui/ScopedLink';
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
+import PageHeader from '@/components/ui/PageHeader';
+import { helpTopicParam } from '@/components/help/helpTopics';
 import {
   type OwnershipRule,
   CODEOWNERS_SERVICE,
   MATCH_TYPES,
   createOwnershipRule,
   deleteOwnershipRule,
-  deleteTeamChannel,
   importCodeowners,
   updateOwnershipRule,
-  upsertTeamChannel,
 } from '../services/ownershipService';
 import { useProjectStore, ALL_PROJECTS_ID } from '../store/projectStore';
 import { useCodeownersCoverage, useOwnershipRules } from '../hooks/useOwnershipRules';
-import { useTeamChannels } from '../hooks/useTeamChannels';
 
-type ChannelType = 'email' | 'slack' | 'teams';
+const HELP_TOPIC = helpTopicParam('/ownership');
 
-const CHANNEL_TYPES: Array<{ value: ChannelType; label: string }> = [
-  { value: 'slack', label: 'Slack webhook' },
-  { value: 'teams', label: 'Teams webhook' },
-  { value: 'email', label: 'Email' },
-];
+const TITLE = 'Ownership';
 
+/**
+ * Which team owns which tests: the rules, CODEOWNERS import and its coverage.
+ *
+ * UX redesign P5: a team's notification channel (US-7.3) was the last section
+ * here; it is a notification setting, so it is its own page now
+ * (`/settings/team-channels`, `TeamChannelsPage`), linked below the rules.
+ */
 export default function OwnershipEditorPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId;
 
   const { rules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
   const { coverage, refresh: refreshCoverage } = useCodeownersCoverage(projectId);
-  const {
-    channels,
-    isError: isChannelsError,
-    refresh: refreshChannels,
-  } = useTeamChannels(projectId);
 
   // CODEOWNERS import dialog (US-8.3)
   const [showImport, setShowImport] = useState(false);
-
-  // Team-channel edit buffers (US-7.3), keyed by team name
-  const [channelEdits, setChannelEdits] = useState<
-    Record<string, { channel_type: ChannelType; target: string }>
-  >({});
 
   // New rule form
   const [showForm, setShowForm] = useState(false);
@@ -108,78 +102,24 @@ export default function OwnershipEditorPage() {
     }
   };
 
-  // ── Team notification channels (US-7.3) ────────────────────────────────
-  const teamNames = Array.from(
-    new Set([...rules.map(r => r.team_name), ...channels.map(c => c.team_name)]),
-  ).sort();
-
-  const editFor = (team: string): { channel_type: ChannelType; target: string } => {
-    const existing = channels.find(c => c.team_name === team);
-    return (
-      channelEdits[team] ?? {
-        channel_type: existing?.channel_type ?? 'slack',
-        target: existing?.target ?? '',
-      }
-    );
-  };
-
-  const handleSaveChannel = async (team: string) => {
-    if (!projectId) return;
-    const edit = editFor(team);
-    if (!edit.target.trim()) {
-      toast.error('Enter a webhook URL or email address');
-      return;
-    }
-    try {
-      await upsertTeamChannel(projectId, team, {
-        channel_type: edit.channel_type,
-        target: edit.target.trim(),
-      });
-      toast.success(`Channel saved for ${team}`);
-      setChannelEdits(prev => {
-        const next = { ...prev };
-        delete next[team];
-        return next;
-      });
-      refreshChannels();
-    } catch {
-      toast.error('Failed to save team channel');
-    }
-  };
-
-  const handleRemoveChannel = async (team: string) => {
-    if (!projectId || !confirm(`Remove the notification channel for ${team}?`)) return;
-    try {
-      await deleteTeamChannel(projectId, team);
-      toast.success('Team channel removed');
-      refreshChannels();
-    } catch {
-      toast.error('Failed to remove team channel');
-    }
-  };
-
   if (!projectId) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">Service Ownership</h1>
-        <div className="text-center py-12 text-[var(--color-text-muted)]">
-          Select a project to manage ownership rules. Ownership maps tests and failure clusters to responsible teams.
-        </div>
+        <PageHeader compact title={TITLE} helpTopic={HELP_TOPIC} />
+        <ProjectRequiredEmptyState description="Ownership maps tests and failure clusters to the teams responsible for them, one project at a time." />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--color-text)]">Service Ownership Map</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Define rules that map test suites, components, and packages to the teams that own them.
-            Rules are evaluated by priority (highest first).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        title={TITLE}
+        subtitle="Rules that map suites, components and packages to the teams that own them, highest priority first"
+        helpTopic={HELP_TOPIC}
+        actions={
+          <>
           {coverage && coverage.path_rules > 0 && (
             <span
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]"
@@ -206,8 +146,9 @@ export default function OwnershipEditorPage() {
             className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
             {showForm ? 'Cancel' : 'Add Rule'}
           </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {showImport && (
         <ImportCodeownersDialog
@@ -270,7 +211,8 @@ export default function OwnershipEditorPage() {
         </form>
       )}
 
-      {/* Rules list */}
+      {/* Rules list: the page's primary content */}
+      <div data-primary="">
       {loading ? (
         <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
       ) : rules.length === 0 ? (
@@ -319,67 +261,12 @@ export default function OwnershipEditorPage() {
           ))}
         </div>
       )}
-
-      {/* Team notification channels (US-7.3) */}
-      <div className="space-y-2">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text)]">Team Notification Channels</h2>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Route transition notifications (newly failing, recovered, newly flaky) for a team's tests
-            directly to that team's channel. Teams without a channel fall back to the project defaults.
-          </p>
-        </div>
-        {isChannelsError && (
-          <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">
-            Failed to load team channels
-          </div>
-        )}
-        {teamNames.length === 0 ? (
-          <div className="text-center py-6 text-[var(--color-text-muted)] text-sm">
-            No teams yet — teams come from the ownership rules above.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {teamNames.map(team => {
-              const existing = channels.find(c => c.team_name === team);
-              const edit = editFor(team);
-              return (
-                <div key={team}
-                  className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-[1fr_140px_2fr_auto] gap-3 items-center text-sm">
-                  <span className="text-[var(--color-text-secondary)] truncate" title={team}>{team}</span>
-                  <select value={edit.channel_type}
-                    onChange={e => setChannelEdits(prev => ({
-                      ...prev,
-                      [team]: { ...edit, channel_type: e.target.value as ChannelType },
-                    }))}
-                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1.5 text-xs">
-                    {CHANNEL_TYPES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                  <input value={edit.target}
-                    onChange={e => setChannelEdits(prev => ({
-                      ...prev,
-                      [team]: { ...edit, target: e.target.value },
-                    }))}
-                    placeholder={edit.channel_type === 'email' ? 'team@example.com' : 'https://hooks…'}
-                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-1.5 text-xs font-mono" />
-                  <div className="flex gap-1.5">
-                    <button onClick={() => handleSaveChannel(team)}
-                      className="px-2 py-0.5 rounded text-xs bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/40">
-                      Save
-                    </button>
-                    {existing && (
-                      <button onClick={() => handleRemoveChannel(team)}
-                        className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40">
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
+
+      <p data-team-channels-link="" className="text-sm text-[var(--color-text-muted)]">
+        To send a team&apos;s alerts to its own Slack, Teams or email channel, use{' '}
+        <ScopedLink to="/settings/team-channels" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">Team channels</ScopedLink>.
+      </p>
 
       {/* Help section */}
       <div className="bg-[var(--color-bg-hover)]/50 rounded-lg p-4 text-xs text-[var(--color-text-muted)]">

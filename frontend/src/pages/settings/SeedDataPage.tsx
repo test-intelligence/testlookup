@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { SETTINGS_ROOT } from '@/components/layout/settingsRoutes'
+import { SETTINGS_ROOT } from '@/components/layout/settingsNav'
 import { Database, Loader2, Plus, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import { api } from '@/services/api'
 import { useSeedStatus } from '@/hooks/useSeedStatus'
+import { helpTopicParam } from '@/components/help/helpTopics'
+
+const HELP_TOPIC = helpTopicParam('/settings/seed-data')
 
 type SeedAction = 'load' | 'reset' | 'delete' | null
 
@@ -56,9 +59,16 @@ function SeedDataPageBody() {
     delete: 'Deleting seed data...',
   }
 
+  // No form fields here (three actions and a status), so no second column (UX
+  // redesign P5): only the max-w-2xl cap goes.
   return (
-    <div className="space-y-6 max-w-2xl">
-      <PageHeader title="Seed Data" subtitle="Manage demo data for the development environment" />
+    <div className="space-y-4">
+      <PageHeader
+        compact
+        title="Seed Data"
+        subtitle="Manage demo data for the development environment"
+        helpTopic={HELP_TOPIC}
+      />
 
       {/* Dev environment warning */}
       <div className="flex items-start gap-3 rounded-lg border px-4 py-3"

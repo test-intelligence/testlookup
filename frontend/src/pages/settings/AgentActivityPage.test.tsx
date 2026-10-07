@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AgentActivityPage from './AgentActivityPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { AgentRunEntry } from '@/types/investigator'
 
 vi.mock('@/hooks/useAgentGovernance', () => ({
@@ -125,5 +126,15 @@ describe('AgentActivityPage', () => {
     renderPage()
 
     expect(screen.getByTestId('fix-attempts-section-stub')).toBeInTheDocument()
+  })
+})
+
+describe('AgentActivityPage — the settings page template (UX redesign P5)', () => {
+  it('replaces the page-local h1 with the compact header; the agent filter stays beside the title', async () => {
+    await mockRuns([ENTRY])
+    renderPage()
+    expectTemplateHeader('Agent Activity', '/settings/agent-activity')
+    const filter = screen.getByLabelText('Filter by agent')
+    expect(filter.closest('[data-page-header]')).not.toBeNull()
   })
 })

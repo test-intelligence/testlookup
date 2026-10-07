@@ -113,7 +113,10 @@ describe('the treemap against zrender’s real truncation (R1B-1)', () => {
     })
     expect(added).toEqual({ proto: [], ctor: [] })
     expect(Object.getPrototypeOf({})).toBe(Object.prototype)
-  })
+    // A CPU-bound sweep (every prefixed name x 181 widths): 3.3 s alone, past
+    // the 15 s default under coverage with the whole suite in parallel (the
+    // push gate, 2026-10-07). The bound measured the machine, not the code.
+  }, 60_000)
 
   it('every measure, the full-screen text scale and short tiles (the value line dropped) leave it untouched too', () => {
     const added = addedKeys(() => {

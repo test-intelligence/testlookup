@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 
 /**
  * Regression guard: the user list must not filter a truncated page, and must
@@ -73,7 +74,7 @@ describe('UserManagementPage list completeness', () => {
 
   it('asks the server for a page size rather than taking the default', () => {
     useUsersMock.mockReturnValue({ data: userRows(3), isLoading: false })
-    render(<UserManagementPage />)
+    render(<UserManagementPage />, { wrapper: MemoryRouter })
 
     const params = useUsersMock.mock.calls[0][0]
     expect(params).toBeDefined()
@@ -82,14 +83,14 @@ describe('UserManagementPage list completeness', () => {
 
   it('renders a truncation notice when the page cap is hit', () => {
     useUsersMock.mockReturnValue({ data: userRows(200), isLoading: false })
-    render(<UserManagementPage />)
+    render(<UserManagementPage />, { wrapper: MemoryRouter })
 
     expect(screen.getByRole('status').textContent).toMatch(/Showing the first 200 users/i)
   })
 
   it('renders no notice when the list fits', () => {
     useUsersMock.mockReturnValue({ data: userRows(12), isLoading: false })
-    render(<UserManagementPage />)
+    render(<UserManagementPage />, { wrapper: MemoryRouter })
 
     expect(screen.queryByRole('status')).toBeNull()
   })
@@ -103,7 +104,7 @@ describe('UserManagementPage list completeness', () => {
     rows[0].role = 'ADMIN'
     rows[1].is_active = false
     useUsersMock.mockReturnValue({ data: rows, isLoading: false })
-    render(<UserManagementPage />)
+    render(<UserManagementPage />, { wrapper: MemoryRouter })
 
     const roleSelect = screen.getAllByRole('combobox')[0]
     fireEvent.change(roleSelect, { target: { value: 'ADMIN' } })
