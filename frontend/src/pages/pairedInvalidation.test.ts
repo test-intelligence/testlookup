@@ -97,7 +97,15 @@ describe('AIConfigPage — five other surfaces read the shared key', () => {
   const src = source('settings/AIConfigPage.tsx')
 
   it('saving invalidates the shared key and the active-tier panel', () => {
-    expect(src).toContain("appMutate('settings/ai-config')")
+    // The key `useAIConfig` reads, taken from the hook itself: it moved to
+    // 'settings/ai-mode' (every role's read), and a stale literal here would
+    // pass while the save refreshed nothing.
+    const hook = Object.values(
+      import.meta.glob('../hooks/useAIConfig.ts', { query: '?raw', import: 'default', eager: true }),
+    )[0] as string
+    const key = /export function useAIConfig\(\)[\s\S]*?useSWR<\w+>\(\s*'([^']+)'/.exec(hook)?.[1]
+    expect(key).toBe('settings/ai-mode')
+    expect(src).toContain(`appMutate('${key}')`)
     expect(src).toContain('refreshModelStatus()')
   })
 })

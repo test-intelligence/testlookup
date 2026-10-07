@@ -40,9 +40,10 @@ export function refreshFeatureFlags() {
   )
 }
 
-export function useFeatureFlags() {
+/** The admin table's flags. `enabled` false asks nothing: the list is ADMIN-only, and a 403 toasts. */
+export function useFeatureFlags(enabled = true) {
   const { data, error, isLoading } = useSWR<FeatureFlag[]>(
-    'feature-flags',
+    enabled ? 'feature-flags' : null,
     () => featureFlagService.list(),
     { revalidateOnFocus: false },
   )

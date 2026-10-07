@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import require_role
+from app.core.deps import get_current_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
 from app.services.secret_service import extract_secrets_from_config, store_secret, strip_secrets_from_config
@@ -437,6 +437,29 @@ class AIModelStatusRead(BaseModel):
     llm_provider: str
     analysis_mode: str
     checked_at: str
+
+
+class AIModeRead(BaseModel):
+    """The analysis mode alone: what every role's screens branch on."""
+    analysis_mode: str
+
+
+@router.get("/ai/mode", response_model=AIModeRead)
+async def get_ai_mode(
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AIModeRead:
+    """The analysis mode (``rules`` / ``ml`` / ``llm`` / ``auto``), for any signed-in role.
+
+    The sidebar (whether to offer Ask AI) and the chat, release-gate, run
+    evidence and pipeline pages need only this, and read it for every role.
+    They read ``GET /settings/ai`` (QA lead and above), so a QA engineer,
+    tester or viewer got "Requires at least QA_LEAD role" toasts on every
+    page and never saw Ask AI (the UX redesign's browser E2E pass). Nothing
+    else of the config — providers, models, which keys are set — is here.
+    """
+    cfg = await _load_ai_config(db)
+    return AIModeRead(analysis_mode=cfg.get("analysis_mode", "auto"))
 
 
 @router.get("/ai/model-status", response_model=AIModelStatusRead)

@@ -1105,7 +1105,14 @@ async def list_test_suites(
             "failed_count": s["failed_count"],
             "last_run_at": s["last_run_at"].isoformat() if s["last_run_at"] else None,
             "last_run_id": str(s["last_run_id"]) if s["last_run_id"] else None,
-            "pass_rate": round(s["passed_count"] / s["test_count"] * 100, 1) if s["test_count"] > 0 else None,
+            # None, not 0.0, when no test has a pass or fail result: every
+            # latest result skipped (a quarantined suite), or the suite never
+            # ran. The suites list drew "0.0 %" beside "0 failing" for one.
+            "pass_rate": (
+                round(s["passed_count"] / s["test_count"] * 100, 1)
+                if s["test_count"] > 0 and (s["passed_count"] + s["failed_count"]) > 0
+                else None
+            ),
             # Cumulative aggregates (lifetime, all runs).
             "run_count": history_map.get(s["suite_name"], {}).get("run_count", 0),
             "total_executions": history_map.get(s["suite_name"], {}).get("total_tests", 0),

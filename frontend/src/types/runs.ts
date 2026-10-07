@@ -15,7 +15,8 @@ export interface TestRun {
   /** Results whose reported status was outside PASSED/FAILED/SKIPPED/BROKEN. */
   unknown_tests?: number
   total_tests: number
-  pass_rate: number
+  /** `null` while the run is in progress (the list sends it so); read it with `measuredRunPassRate`. */
+  pass_rate: number | null
   duration_ms?: number
   /** Run start timestamp (TestRun.start_time). Set by ingestion / live close. */
   start_time?: string | null

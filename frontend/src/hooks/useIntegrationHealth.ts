@@ -31,9 +31,10 @@ const STATUS_KEY = 'integration-health-status'
 const TRENDS_KEY = 'integration-health-trends'
 const HISTORY_KEY = 'integration-health-history'
 
-export function useIntegrationStatus() {
+/** `enabled` false asks nothing: the probes are QA lead and above, and a 403 toasts. */
+export function useIntegrationStatus(enabled = true) {
   const { data, error, isLoading } = useSWR<IntegrationStatus[]>(
-    [STATUS_KEY] as const,
+    enabled ? ([STATUS_KEY] as const) : null,
     getAllStatus,
     OPTS,
   )

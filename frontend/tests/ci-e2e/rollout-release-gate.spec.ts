@@ -74,7 +74,7 @@ const inventoryOn = (ids: readonly string[] | null) => [
   ...SHELL_BASE,
   `GET /api/v1/release-readiness/${RUN_ID}`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=1`,
-  'GET /api/v1/settings/ai',
+  'GET /api/v1/settings/ai/mode',
   `GET /api/v1/runs/${RUN_ID}`,
   ...(ids ? [`GET ${CHART_DATA_PATH}?${releaseQuery(ids)}`] : []),
 ]

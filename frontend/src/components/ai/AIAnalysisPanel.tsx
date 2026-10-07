@@ -6,6 +6,7 @@ import {
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import { aiService } from '@/services/aiService'
+import { usePermissions } from '@/hooks/usePermissions'
 import type { AnalysisResult, ConfidenceWhy, RoleActions } from '@/types/ai'
 import { confidenceColor } from '@/utils/formatters'
 import RoleActionCard from '@/components/ai/RoleActionCard'
@@ -192,9 +193,15 @@ export default function AIAnalysisPanel({
   const [confirming, setConfirming]   = useState(false)
   const [confirmed, setConfirmed]     = useState(false)
 
+  // Stored analyses (and new ones) are QA engineer and above: a tester or
+  // viewer is told so and asks nothing — the 403 toasted "Requires at least
+  // QA_ENGINEER role" on every failed test they opened (browser E2E pass).
+  const { canTriggerLlm } = usePermissions()
+
   // Auto-load any previously stored analysis so the user sees results immediately
   // without having to click "Analyse Root Cause" again.
   useEffect(() => {
+    if (!canTriggerLlm) return
     let cancelled = false
     aiService.getAnalysis(testCaseId)
       .then((existing) => {
@@ -203,7 +210,7 @@ export default function AIAnalysisPanel({
       .catch(() => { /* ignore — panel shows the analyse button as fallback */ })
       .finally(() => { if (!cancelled) setInitialLoading(false) })
     return () => { cancelled = true }
-  }, [testCaseId])
+  }, [testCaseId, canTriggerLlm])
 
   const handleAnalyze = async () => {
     setLoading(true)
@@ -246,6 +253,15 @@ export default function AIAnalysisPanel({
     } finally {
       setCreatingJira(false)
     }
+  }
+
+  // ── A role that cannot read or run analyses (tester, viewer) ──
+  if (!canTriggerLlm) {
+    return (
+      <div className="card py-8 text-center text-sm text-[var(--color-text-muted)]" data-ai-panel-restricted="">
+        AI root cause analysis is available to QA engineers and above.
+      </div>
+    )
   }
 
   // ── Initial fetch in progress ───────────────────────────────

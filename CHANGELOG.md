@@ -38,6 +38,32 @@ template and the fold, and the last pages that missed the template use it.
 - **Push gate:** it now also runs CI's script self-tests (quality gate,
   mypy ratchet, CI security, clean scratch and push check), checked against
   `ci.yml`'s list.
+- **Found by browser end-to-end testing** on a local stack (a throwaway
+  Postgres, Redis and Mongo, the seeded demo data, every route as admin, QA
+  lead, QA engineer and viewer). Each has a regression test:
+  - **Runs:** a build still in progress read as a red "0.0 %", the worst in the
+    window, and broke the red streak, so a broken pipeline said "Red streak 0
+    in a row". Both now treat it as not yet measured ("—"). "Last green" says
+    "7d ago", not "172h ago".
+  - **Suites:** a suite whose every latest result was skipped (a quarantined
+    suite) read "0.0 %" beside "0 failing". It has no pass rate now ("—"),
+    and a measured 0 % is still shown.
+  - **Settings, for a QA lead:** SSO and Feature flags were offered, but their
+    API is admin-only. The sub-nav and index now list them for admins only. A
+    QA lead who opens one by URL sees "Admin access required" with the page
+    header, and nothing is requested. The SSO page also tells a failed load
+    from an empty list, with Retry.
+  - **Every role below QA lead:** every page asked for the full AI settings
+    (QA lead and above) just to learn the analysis mode, so each page toasted
+    "Requires at least QA_LEAD role" and Ask AI never appeared. A new
+    `GET /api/v1/settings/ai/mode` returns the mode alone to any signed-in
+    user; the full config stays QA lead and above.
+  - **Tester and viewer:** each failed test they opened toasted "Requires at
+    least QA_ENGINEER role" (the stored AI analysis). The panel now says who it
+    is for and asks nothing. Deep Investigation does the same for the
+    integration probes, which are QA lead and above.
+  - **Workflow editor:** the 3,400 px graph widened its column, so the whole
+    page scrolled sideways. The graph scrolls in its own box again.
 
 ## Unreleased - UX redesign P5: settings and admin in one place
 

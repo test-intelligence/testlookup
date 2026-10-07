@@ -83,7 +83,7 @@ describe('refreshTestCases', () => {
     refreshTestCases()
     const m = matcherFrom(mutateSpy.mock.calls[0])
     expect(m(['tm-case', 'abc'])).toBe(false)
-    expect(m('settings/ai-config')).toBe(false)
+    expect(m('settings/ai-mode')).toBe(false)
     expect(m(null)).toBe(false)
   })
 })

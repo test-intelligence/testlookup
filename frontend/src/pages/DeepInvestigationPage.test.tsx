@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -634,6 +634,29 @@ describe('DeepInvestigationPage — only what it really does', () => {
     const link = within(header()).getByRole('link', { name: /checkout/ })
     expect(link).toHaveAttribute('href', '/test-management?tab=Test+Suites&suite=checkout')
     expect(link).toHaveTextContent('checkout+1')
+  })
+
+  it('integration health is a QA lead\'s read: a lower role asks nothing and is told who sees it (browser E2E pass)', async () => {
+    const { useAuthStore } = await import('@/store/authStore')
+    const { useIntegrationStatus } = await import('@/hooks/useIntegrationHealth')
+    const asked = () => (useIntegrationStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    const note = () => document.querySelector('[data-evidence-note]')
+
+    useAuthStore.setState({ user: { id: 'eng', role: 'QA_ENGINEER' } as never })
+    ;(useIntegrationStatus as ReturnType<typeof vi.fn>).mockClear()
+    await renderPage()
+    // It answered 403: a "Requires at least QA_LEAD role" toast, and "Could not load".
+    expect(new Set(asked())).toEqual(new Set([false]))
+    expect(note()).toHaveAttribute('data-evidence-note', 'restricted')
+    expect(note()).toHaveTextContent('Integration health (Jira, GitHub, Splunk and more) is shown to QA leads and admins.')
+    cleanup()
+
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    ;(useIntegrationStatus as ReturnType<typeof vi.fn>).mockClear()
+    await renderPage()
+    expect(new Set(asked())).toEqual(new Set([true]))
+    expect(note()).toBeNull()
+    useAuthStore.setState({ user: null } as never)
   })
 
   it('draws no suite chip in the header for a focused run with no suite (it said only "—")', async () => {

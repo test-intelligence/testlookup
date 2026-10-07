@@ -1224,8 +1224,8 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
 
 // ── Right rail: Evidence sources ─────────────────────────────────────────
 function EvidenceSourcesCard({
-  sources, isLoading, isError,
-}: { sources: EvidenceSource[]; isLoading: boolean; isError: boolean }) {
+  sources, isLoading, isError, restricted = false,
+}: { sources: EvidenceSource[]; isLoading: boolean; isError: boolean; restricted?: boolean }) {
   const externalCount = sources.filter(s => s.id !== 'tests').length
   return (
     <CardShell title="Evidence sources" rightSlot={<span>{sources.filter(s => s.status === 'live').length} live</span>}>
@@ -1233,11 +1233,13 @@ function EvidenceSourcesCard({
         <div className="px-4 py-6 flex justify-center"><LoadingSpinner size="sm" /></div>
       ) : (
       <>
-      {(isError || externalCount === 0) && (
-        <div className="px-4 pt-3 text-[12px] text-[var(--color-text-muted)]">
-          {isError
-            ? 'Could not load integration health.'
-            : 'No integrations configured — connect Jira, GitHub, Splunk and more under Settings → Integration Health.'}
+      {(restricted || isError || externalCount === 0) && (
+        <div className="px-4 pt-3 text-[12px] text-[var(--color-text-muted)]" data-evidence-note={restricted ? 'restricted' : isError ? 'error' : 'none'}>
+          {restricted
+            ? 'Integration health (Jira, GitHub, Splunk and more) is shown to QA leads and admins.'
+            : isError
+              ? 'Could not load integration health.'
+              : 'No integrations configured — connect Jira, GitHub, Splunk and more under Settings → Integration Health.'}
         </div>
       )}
       <div className="px-4 py-3 flex flex-col gap-2">
@@ -1440,7 +1442,7 @@ export default function DeepInvestigationPage() {
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-  const { isQaEngineer } = usePermissions()
+  const { isQaEngineer, canAccessManagement } = usePermissions()
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
@@ -1508,12 +1510,14 @@ export default function DeepInvestigationPage() {
   const { data: pipelineStatus = null } = usePipelineStatus(runId ?? null, 'deep')
 
   // Evidence-source health — real integration probes plus the intrinsic
-  // "test results" source (live whenever runs exist in the workspace).
+  // "test results" source (live whenever runs exist in the workspace). The
+  // probes are QA lead and above: a lower role asks nothing (its 403 toasted
+  // "Requires at least QA_LEAD role" and read "Could not load", browser E2E).
   const {
     statuses: integrationStatuses,
     isLoading: integrationsLoading,
     isError: integrationsError,
-  } = useIntegrationStatus()
+  } = useIntegrationStatus(canAccessManagement)
   const evidenceSources = useMemo<EvidenceSource[]>(
     () => [testResultsSource(recentItems.length > 0), ...integrationStatuses.map(toEvidenceSource)],
     [integrationStatuses, recentItems],
@@ -1691,6 +1695,7 @@ export default function DeepInvestigationPage() {
             sources={evidenceSources}
             isLoading={integrationsLoading}
             isError={integrationsError}
+            restricted={!canAccessManagement}
           />
           <ModelRoutingCard trail={decisionTrail} isLoading={!!runId && trailLoading} />
         </div>

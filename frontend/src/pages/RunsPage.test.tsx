@@ -523,11 +523,38 @@ describe('RunsPage — the page template (P3)', () => {
     expect(banner()).toHaveTextContent('Pipeline broken · 3 of 4 builds failed with the same signature')
     const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)
     expect(facts).toEqual([
-      'Last green #101 · 30h ago',
+      'Last green #101 · 1d ago',
       'Red streak 3 in a row',
       'Avg pass rate 85.0%',
     ])
     expect(within(banner()).getByRole('button', { name: /^Bisect from last green/ })).toBeInTheDocument()
+  })
+
+  it('a build still in progress neither breaks the red streak nor reads as a red 0.0 % (browser E2E pass)', () => {
+    renderRunsPage(newestFirst([
+      run(1, { status: 'PASSED', passed_tests: 10, failed_tests: 0, pass_rate: 100, created_at: hoursAgo(172) }),
+      run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(20) }),
+      run(3, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(10) }),
+      // As the list sends it: counts so far, no pass rate yet.
+      run(4, { status: 'IN_PROGRESS', passed_tests: 10, failed_tests: 1, total_tests: 11, pass_rate: null, created_at: hoursAgo(1) }),
+    ]))
+    const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)
+    // It read "Red streak 0 in a row" under "Pipeline broken", and "172h ago".
+    expect(facts).toEqual(['Last green #101 · 7d ago', 'Red streak 2 in a row', 'Avg pass rate 86.7%'])
+    const rate = (id: string) => primary().querySelector(`#run-row-${id} [data-run-pass-rate]`) as HTMLElement
+    expect(rate('run-4')).toHaveTextContent(/^—$/)
+    expect(rate('run-4').firstElementChild).toHaveAttribute('title', 'No pass rate: the run is still in progress')
+    expect(rate('run-3')).toHaveTextContent(/^80\.0%$/)
+  })
+
+  it('a finished build that reported no tests has no pass rate either', () => {
+    renderRunsPage(newestFirst([
+      run(1, { status: 'PASSED', created_at: hoursAgo(5) }),
+      run(2, { status: 'FAILED', passed_tests: 0, failed_tests: 0, total_tests: 0, pass_rate: 0, created_at: hoursAgo(1) }),
+    ]))
+    const cell = primary().querySelector('#run-row-run-2 [data-run-pass-rate]') as HTMLElement
+    expect(cell).toHaveTextContent(/^—$/)
+    expect(cell.firstElementChild).toHaveAttribute('title', 'No pass rate: the run reported no tests')
   })
 
   it('a green window: OK, no Bisect, no signatures button', () => {
