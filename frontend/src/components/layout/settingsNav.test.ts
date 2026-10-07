@@ -98,7 +98,9 @@ describe('settings sub-nav: which item a page is', () => {
     expect(active('/users')).toBe('users')
     expect(active('/users', '?tab=project-members')).toBe('members')
     expect(active('/users', '?tab=users')).toBe('users')
-    expect(settingsItemHref(ITEMS.find((i) => i.id === 'members')!)).toBe('/users?tab=project-members')
+    const members = ITEMS.find((i) => i.id === 'members')
+    expect(members).toBeDefined()
+    expect(settingsItemHref(members as (typeof ITEMS)[number])).toBe('/users?tab=project-members')
   })
 
   it('the index and a page outside settings are no item', () => {
