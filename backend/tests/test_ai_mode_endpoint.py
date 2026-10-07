@@ -28,7 +28,8 @@ def test_the_mode_route_asks_for_a_signed_in_user_not_a_role():
         re.DOTALL,
     )
     assert block, "GET /ai/mode route not found"
-    assert "Depends(get_current_user)" in block.group(1)
+    # The house "any signed-in user": a JWT or an API key, a disabled account refused.
+    assert "Depends(get_current_active_user)" in block.group(1)
     assert "require_role" not in block.group(1)
 
 

@@ -177,12 +177,12 @@ else of the config — providers, models, which keys are set — is here.
 
 Source: [backend/app/routers/app_settings.py:447](../../../backend/app/routers/app_settings.py#L447).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-_: User=Depends(get_current_user), db: AsyncSession=Depends(get_db)
+_: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -233,9 +233,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     }
   },
   "security": [
-    {
-      "JWT": []
-    },
     {
       "JWT": []
     }

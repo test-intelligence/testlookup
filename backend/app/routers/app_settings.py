@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_user, require_role
+from app.core.deps import get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
 from app.services.secret_service import extract_secrets_from_config, store_secret, strip_secrets_from_config
@@ -446,7 +446,7 @@ class AIModeRead(BaseModel):
 
 @router.get("/ai/mode", response_model=AIModeRead)
 async def get_ai_mode(
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> AIModeRead:
     """The analysis mode (``rules`` / ``ml`` / ``llm`` / ``auto``), for any signed-in role.

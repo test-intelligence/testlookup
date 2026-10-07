@@ -63682,9 +63682,6 @@
         "security": [
           {
             "JWT": []
-          },
-          {
-            "JWT": []
           }
         ],
         "summary": "Get Ai Mode",

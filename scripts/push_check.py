@@ -152,15 +152,14 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     ),
 }
 
-# Reference files whose local regeneration always differs from CI's. A route
-# that depends on `get_current_user` gets two `{"JWT": []}` security entries
-# from CI's FastAPI and one from a local toolchain: authentication.md has
-# several, and settings.md one since `GET /settings/ai/mode` (UX redesign P6).
+# Reference files whose local regeneration always differs from CI's. (A route
+# on plain `get_current_user` gets two `{"JWT": []}` security entries from CI's
+# FastAPI and one locally: authentication.md has several. A new "any signed-in
+# user" route takes `get_current_active_user`, which renders the same in both.)
 SKEWED_REFERENCES = (
     "docs/reference/openapi.json",
     "docs/reference/schemas.md",
     "docs/reference/api/authentication.md",
-    "docs/reference/api/settings.md",
 )
 
 
