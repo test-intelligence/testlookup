@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 
 import OverviewPage from './OverviewPage'
+import { KPI_STRIP_COLUMNS } from '@/components/ui/KpiStrip'
 
 /** The router's current query string, for the `?tab=` tests. */
 function LocationProbe() {
@@ -1347,7 +1348,9 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
   it('draws the five KPIs as compact cards in one strip, values and changes each on one line', async () => {
     await renderPage()
     const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
-    expect(strip.style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    // The strip's own width-fitting columns (one row of five on a desktop page).
+    expect(strip.style.gridTemplateColumns).toBe(KPI_STRIP_COLUMNS)
+    expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
     const values = Array.from(strip.querySelectorAll('[data-metric-card="compact"] p.tabular-nums'))
     expect(values.map((v) => v.textContent)).toEqual(['108', '85%', '0', '0', '0'])
     for (const v of values) expect(v.className.split(/\s+/)).toContain('whitespace-nowrap')
