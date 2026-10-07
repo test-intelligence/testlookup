@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react'
-import {
-  BarChart3, Clock, Download, GitMerge, HelpCircle, Save, Shield, ShieldAlert, SlidersHorizontal,
-  Sparkles, Bug, AlertTriangle, Timer,
-} from 'lucide-react'
-import { clsx } from 'clsx'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Download, HelpCircle, Save, Timer } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
+import WindowPicker from '@/components/ui/WindowPicker'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import Disclosure from '@/components/ui/Disclosure'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import { readyState } from '@/components/charts/chartState'
 import { buildStackedColumnModel, type StackedColumnSeriesInput } from '@/components/charts/stackedColumnModel'
@@ -21,32 +22,10 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import {
   ASSUMPTION_MAX,
   isValidAssumptionMinutes,
-  type AssumptionsSource,
   type AssumptionsWrite,
   type ValueAssumptions,
   type ValueMetricsMonthly,
 } from '@/types/valueMetrics'
-
-function MetricCard({ icon: Icon, label, value, sub, color }: {
-  icon: React.ElementType; label: string; value: string | number; sub?: string; color: string
-}) {
-  // Render "—" instead of a stark "0" so an empty metric reads as
-  // "no data yet" rather than "shipped exactly zero of these." Same
-  // muted tone as the rest of the card so it doesn't draw the eye.
-  const isZero = typeof value === 'number' ? value === 0 : value === '0'
-  const display = isZero ? '—' : value
-  const valueColor = isZero ? 'text-[var(--color-text-faint)]' : color
-  return (
-    <div className="card space-y-1">
-      <div className="flex items-center gap-2">
-        <Icon className={clsx('h-4 w-4', isZero ? 'text-[var(--color-text-faint)]' : color)} />
-        <span className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider">{label}</span>
-      </div>
-      <p className={clsx('text-2xl font-bold tabular-nums', valueColor)}>{display}</p>
-      {sub && <p className="text-xs text-[var(--color-text-faint)]">{sub}</p>}
-    </div>
-  )
-}
 
 // ── Hours-saved model (US-12.1) ─────────────────────────────────────────────
 
@@ -171,10 +150,14 @@ const ASSUMPTION_FIELDS: { key: AssumptionField; label: string; help: string }[]
   },
 ]
 
-function AssumptionsEditor({ projectId, assumptions, source, onSaved }: {
+/**
+ * The per-project minutes behind the hours-saved math, inside the page's
+ * "Model assumptions" disclosure (UX redesign P3): the disclosure carries the
+ * heading and the Customized / Defaults badge.
+ */
+function AssumptionsEditor({ projectId, assumptions, onSaved }: {
   projectId: string
   assumptions: ValueAssumptions
-  source: AssumptionsSource
   /** Revalidates the value-metrics data (headline, monthly, source badge). */
   onSaved: () => Promise<unknown>
 }) {
@@ -252,21 +235,7 @@ function AssumptionsEditor({ projectId, assumptions, source, onSaved }: {
   }
 
   return (
-    <section className="card p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <SlidersHorizontal className="h-4 w-4 text-[var(--color-text-muted)]" />
-        <h3 className="text-sm font-semibold text-[var(--color-text)]">Model assumptions</h3>
-        <span
-          className={clsx(
-            'ml-auto text-[10px] px-2 py-0.5 rounded border',
-            source === 'custom'
-              ? 'border-[var(--color-accent)] text-[var(--color-accent-ink)]'
-              : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
-          )}
-        >
-          {source === 'custom' ? 'Customized' : 'Defaults'}
-        </span>
-      </div>
+    <div className="space-y-3" data-testid="assumptions-editor">
       <p className="text-xs text-[var(--color-text-muted)]">
         Per-project minutes behind the hours-saved math. Bounds: greater than 0, at most {ASSUMPTION_MAX} minutes.
       </p>
@@ -303,7 +272,7 @@ function AssumptionsEditor({ projectId, assumptions, source, onSaved }: {
         </button>
         {dirty && <span className="text-[11px] text-[var(--color-text-faint)]">Unsaved changes</span>}
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -368,24 +337,74 @@ function MonthlyHoursChart({ monthly, methodologyVersion }: { monthly: ValueMetr
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
+/**
+ * Value Metrics' windows: no 24h, and a year (the shared `WindowPicker`'s
+ * `options`). The global window is snapped to the nearest of these, and
+ * picking one here propagates to pages that may snap to a different nearest.
+ */
+const VALUE_OPTIONS = [7, 30, 90, 365] as const
+
+/** The help drawer's topic for this page (the **?** beside the title). */
+const HELP_TOPIC = helpTopicParam('/value-metrics')
+
+/**
+ * A counter as a compact card's value: "—" instead of a stark "0", so an empty
+ * counter reads as "no data yet" rather than "shipped exactly zero of these".
+ */
+const counter = (value: number) => (value === 0 ? '—' : formatNumber(value))
+
+/**
+ * The words beside a counter's value (the compact card's inline slot): the
+ * facts that qualify it, e.g. "64 tests grouped · 4 promoted".
+ */
+function CounterNote({ children }: { children: ReactNode }) {
+  return (
+    <span data-counter-note="" className="block max-w-[11rem] text-right text-[11px] leading-tight text-[var(--color-text-muted)]">
+      {children}
+    </span>
+  )
+}
+
 export default function ValueMetricsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
   const { canAccessManagement } = usePermissions()
-  // Global shared time window — Value Metrics' options diverge from
-  // most other pages (no 24h, includes 1y), so we snap the shared value
-  // to the nearest supported option here. Picking a value here also
-  // propagates to other pages that may snap to a different nearest.
-  const VALUE_OPTIONS = [7, 30, 90, 365] as const
+  // The global shared window, snapped to this page's options (the header's
+  // `WindowPicker` writes the snapped value back).
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, VALUE_OPTIONS)
-  const setDays = setStoredDays
 
   const { metrics, error, isLoading, refresh } = useValueMetrics(projectId, days)
   const [showMethodology, setShowMethodology] = useState(false)
 
-  if (isLoading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
+  const header = (
+    <PageHeader
+      compact
+      title="Value Metrics"
+      helpTopic={HELP_TOPIC}
+      actions={
+        <>
+          <WindowPicker options={VALUE_OPTIONS} />
+          <a
+            href={valueMetricsService.exportUrl(projectId, days)}
+            className="btn-secondary !py-1 text-sm flex items-center gap-2"
+            download
+          >
+            <Download className="h-4 w-4" /> Export
+          </a>
+        </>
+      }
+    />
+  )
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
+      </div>
+    )
+  }
   if (error) {
     return <DataUnavailable error={error} onRetry={() => void refresh()} testId="value-metrics-data-unavailable" />
   }
@@ -416,8 +435,8 @@ export default function ValueMetricsPage() {
   // Detect the "barely any signal" state: nothing has driven a measurable
   // outcome other than (maybe) AI intelligence reports. This is the most
   // common confusing state on a fresh project — the hero shows time saved
-  // but every card is zero, making it look like a data bug. Banner below
-  // explains what each pipeline needs to fire so the user can act.
+  // but every counter is empty, making it look like a data bug. The note
+  // below says what each pipeline needs to fire so the user can act.
   const nonIntelSignalsAllZero = (
     metrics.defects_auto_grouped === 0 &&
     metrics.duplicate_tickets_avoided === 0 &&
@@ -427,44 +446,23 @@ export default function ValueMetricsPage() {
     metrics.releases_conditional === 0 &&
     metrics.release_overrides === 0
   )
+  const showAssumptions = canAccessManagement && Boolean(projectId) && Boolean(metrics.assumptions)
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Value Metrics"
-        subtitle="Operational value delivered by AI-powered test intelligence"
-        actions={
-          <div className="flex items-center gap-3">
-            <select
-              value={days}
-              onChange={e => setDays(Number(e.target.value))}
-              className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
-            >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-              <option value={365}>Last year</option>
-            </select>
-            <a
-              href={valueMetricsService.exportUrl(projectId, days)}
-              className="btn-secondary text-sm flex items-center gap-2"
-              download
-            >
-              <Download className="h-4 w-4" /> Export
-            </a>
-          </div>
-        }
-      />
+    <div className="space-y-4">
+      {header}
 
-      {/* ── Hours-saved headline (US-12.1) ───────────────────────────────── */}
+      {/* ── Hero: hours saved (US-12.1), one line ─────────────────────────── */}
       {hoursSavedAvailable ? (
-        <div className="card border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/10 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <Timer className="h-6 w-6 text-[var(--color-text)]" />
-            <p className="text-sm text-[var(--color-text-muted)] uppercase tracking-wider">
-              Eng-Hours Saved · Last 30 Days
-            </p>
-          </div>
+        <section
+          aria-label="Engineering hours saved"
+          data-value-hero=""
+          className="card flex flex-wrap items-center gap-x-4 gap-y-1 !py-2.5"
+          style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 35%, var(--color-border))' }}
+        >
+          <span className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
+            <Timer className="h-4 w-4" aria-hidden /> Eng-hours saved · last 30 days
+          </span>
           {/* The headline number itself links to the math (AC: credibility
               requires showing the math). */}
           <button
@@ -473,190 +471,164 @@ export default function ValueMetricsPage() {
             title="How is this calculated?"
             className="group text-left"
           >
-            <p className="text-4xl font-black text-[var(--color-text-secondary)] tabular-nums group-hover:underline decoration-dotted underline-offset-8">
+            <span className="text-2xl font-bold tabular-nums text-[var(--color-text)] group-hover:underline decoration-dotted underline-offset-4">
               {fmtHours(metrics.headline.hours_saved_30d)}h
-            </p>
+            </span>
           </button>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            ≈ {fmtFte(metrics.headline.fte_equivalent_30d)} FTE over the last 30 days
-            {' · '}
-            <button
-              type="button"
-              onClick={() => setShowMethodology(true)}
-              className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1 align-baseline"
-            >
-              <HelpCircle className="h-3.5 w-3.5" /> How is this calculated?
-            </button>
-          </p>
+          <span className="text-sm text-[var(--color-text-secondary)]">
+            ≈ {fmtFte(metrics.headline.fte_equivalent_30d)} FTE
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowMethodology(true)}
+            className="text-sm text-[var(--color-accent)] hover:underline inline-flex items-center gap-1"
+          >
+            <HelpCircle className="h-3.5 w-3.5" aria-hidden /> How is this calculated?
+          </button>
           {/* The API reports hours saved for a fixed trailing 30 days only
               (`hours_saved_30d`); the window picker above does not reach it. */}
-          <p className="text-xs text-[var(--color-text-faint)] mt-1" data-testid="hours-saved-window-note">
-            Always the last 30 days: the window picker does not change this figure.
-          </p>
-        </div>
+          <span className="ml-auto text-xs text-[var(--color-text-faint)]" data-testid="hours-saved-window-note">
+            Fixed 30-day figure: the window picker does not change it.
+          </span>
+        </section>
       ) : (
         // Honest empty state: no estimate rather than a misleading "0 hours".
-        <div
-          className="rounded-xl border p-5 text-sm"
+        <section
+          aria-label="Engineering hours saved"
+          data-value-hero=""
+          className="rounded-xl border px-4 py-3 text-sm"
           style={{
             background: 'var(--status-skipped-bg)',
             borderColor: 'var(--status-skipped-bd)',
             color: 'var(--color-text-secondary)',
           }}
         >
-          <p className="font-semibold text-[var(--color-text)] mb-1">
+          <p className="font-semibold text-[var(--color-text)]">
             Not enough data yet to estimate engineering hours saved.
           </p>
           {metrics.insufficient_data_reason && (
             <p className="text-[12.5px] leading-relaxed">{metrics.insufficient_data_reason}</p>
           )}
-          <p className="text-[12.5px] leading-relaxed text-[var(--color-text-muted)] mt-1">
-            The hours-saved model only reports once it has real triage, quarantine, and
-            duplicate-absorption signal — an honest blank beats a made-up zero.
+          <p className="text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+            The model only reports once it has real triage, quarantine, and duplicate-absorption signal — an
+            honest blank beats a made-up zero.
           </p>
+        </section>
+      )}
+
+      {/* ── The value counters, one strip (UX redesign P3: seven cards → five).
+          "Defects promoted" is the second fact of "Defects auto-grouped", and
+          the derived "Release decisions" (blocked + conditional, both shown
+          on "Risky releases blocked") is gone. */}
+      <KpiStrip>
+        <MetricCard
+          compact
+          icon={null}
+          title="Defects auto-grouped"
+          metric={{ value: counter(metrics.defects_auto_grouped) }}
+          sparkline={<CounterNote>{metrics.tests_grouped} tests · {metrics.defects_promoted} promoted to Jira</CounterNote>}
+        />
+        <MetricCard
+          compact
+          icon={null}
+          title="Duplicates avoided"
+          metric={{ value: counter(metrics.duplicate_tickets_avoided) }}
+          sparkline={<CounterNote>tickets prevented</CounterNote>}
+        />
+        <MetricCard
+          compact
+          icon={null}
+          title="Flaky tests found"
+          metric={{ value: counter(metrics.flaky_tests_identified) }}
+          sparkline={<CounterNote>{metrics.quarantine_recommended} recommended for quarantine</CounterNote>}
+        />
+        <MetricCard
+          compact
+          icon={null}
+          title="Risky releases blocked"
+          metric={{ value: counter(metrics.risky_releases_blocked) }}
+          sparkline={<CounterNote>{metrics.releases_conditional} conditional · {metrics.release_overrides} overridden</CounterNote>}
+        />
+        <MetricCard
+          compact
+          icon={null}
+          title="Intelligence reports"
+          metric={{ value: counter(metrics.intelligence_reports_generated) }}
+          sparkline={<CounterNote>AI analyses generated</CounterNote>}
+        />
+      </KpiStrip>
+
+      {/* ── PRIMARY CONTENT: estimated hours saved per month ──────────────── */}
+      {hoursSavedAvailable && monthly.length > 0 && (
+        <div data-primary="">
+          {/* The outline's level 2 for the chart's level-3 title (axe heading-order). */}
+          <h2 className="sr-only">Hours saved by month</h2>
+          <MonthlyHoursChart monthly={monthly} methodologyVersion={metrics.methodology_version} />
         </div>
       )}
 
-      {/* Monthly trend + model counts */}
+      {/* The model's own counts behind the chart, summed over its months. */}
       {hoursSavedAvailable && monthly.length > 0 && (
-        <MonthlyHoursChart monthly={monthly} methodologyVersion={metrics.methodology_version} />
-      )}
-
-      {hoursSavedAvailable && monthly.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          <MetricCard
-            icon={Sparkles}
-            label="Auto-triaged failures"
-            value={monthlyTotals.auto_triaged}
-            sub={`Last ${monthly.length} months`}
-            color="text-[var(--color-text)]"
-          />
-          <MetricCard
-            icon={GitMerge}
-            label="Clustered failures"
-            value={monthlyTotals.clustered_failures}
-            sub={`Last ${monthly.length} months`}
-            color="text-[var(--color-text)]"
-          />
-          <MetricCard
-            icon={AlertTriangle}
-            label="Duplicate failures absorbed"
-            value={monthlyTotals.duplicates_absorbed}
-            sub={`Last ${monthly.length} months`}
-            color="text-[var(--color-text)]"
-          />
-          <MetricCard
-            icon={Shield}
-            label="Quarantine-suppressed failures"
-            value={monthlyTotals.quarantine_suppressed_failures}
-            sub={`Last ${monthly.length} months`}
-            color="text-[var(--color-text)]"
-          />
-          <div title="Proxy estimate — derived from quarantine suppressions and the blocked-run wait assumption, not directly measured.">
+        <Disclosure
+          title="Model breakdown"
+          summary={`last ${monthly.length} month${monthly.length === 1 ? '' : 's'}`}
+          persistKey="value-metrics.model-breakdown"
+        >
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid="model-breakdown">
+            <MetricCard compact icon={null} title="Auto-triaged failures" metric={{ value: counter(monthlyTotals.auto_triaged) }} />
+            <MetricCard compact icon={null} title="Clustered failures" metric={{ value: counter(monthlyTotals.clustered_failures) }} />
+            <MetricCard compact icon={null} title="Duplicate failures absorbed" metric={{ value: counter(monthlyTotals.duplicates_absorbed) }} />
             <MetricCard
-              icon={Clock}
-              label="Runs unblocked (estimate)"
-              value={monthlyTotals.runs_unblocked_proxy}
-              sub={`Proxy · last ${monthly.length} months`}
-              color="text-[var(--color-text)]"
+              compact
+              icon={null}
+              title="Quarantine-suppressed failures"
+              metric={{ value: counter(monthlyTotals.quarantine_suppressed_failures) }}
             />
+            <div title="Proxy estimate — derived from quarantine suppressions and the blocked-run wait assumption, not directly measured.">
+              <MetricCard
+                compact
+                icon={null}
+                title="Runs unblocked (estimate)"
+                metric={{ value: counter(monthlyTotals.runs_unblocked_proxy), trend_direction: 'none', trend_text: 'Proxy estimate' }}
+              />
+            </div>
           </div>
-        </div>
+        </Disclosure>
       )}
 
       {/* Assumptions editor — QA_LEAD+ and a concrete project only. */}
-      {canAccessManagement && projectId && metrics.assumptions && (
-        <AssumptionsEditor
-          projectId={projectId}
-          assumptions={metrics.assumptions}
-          source={metrics.assumptions_source}
-          onSaved={async () => {
-            // Bound mutate revalidates this page's key; the global filter
-            // sweep also refreshes any other cached value-metrics keys
-            // (e.g. the Overview KPI card's 30d/6mo key).
-            await Promise.all([refresh(), refreshValueMetrics()])
-          }}
-        />
+      {showAssumptions && projectId && metrics.assumptions && (
+        <Disclosure
+          title="Model assumptions"
+          summary={metrics.assumptions_source === 'custom' ? 'Customized' : 'Defaults'}
+          persistKey="value-metrics.assumptions"
+        >
+          <AssumptionsEditor
+            projectId={projectId}
+            assumptions={metrics.assumptions}
+            onSaved={async () => {
+              // Bound mutate revalidates this page's key; the global filter
+              // sweep also refreshes any other cached value-metrics keys.
+              await Promise.all([refresh(), refreshValueMetrics()])
+            }}
+          />
+        </Disclosure>
       )}
 
       {nonIntelSignalsAllZero && (
-        // Empty-state banner: data IS accurate but the project hasn't
-        // generated any of the signals these cards track. Surface this
-        // explicitly so users don't read the zeros as a data bug.
-        <div
-          className="rounded-xl border p-4 text-sm"
-          style={{
-            background: 'color-mix(in srgb, var(--status-broken) 6%, transparent)',
-            borderColor: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
-            color: 'var(--color-text-secondary)',
-          }}
-        >
-          <p className="font-semibold text-[var(--color-text)] mb-1">No value-generating activity yet for this window.</p>
-          <p className="text-[12.5px] leading-relaxed">
-            Each card below tracks a specific pipeline. They'll populate as those pipelines fire on your runs:
-          </p>
-          <ul className="text-[12.5px] mt-1.5 space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
+        // The counters ARE accurate, but the project hasn't generated any of
+        // the signals they track: said once, and what fills each one is a
+        // click away, so nobody reads the dashes as a data bug.
+        <Disclosure title="No value-generating activity yet for this window" summary="what fills these counters">
+          <ul className="text-[12.5px] space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
             <li><strong className="text-[var(--color-text-secondary)]">Defects auto-grouped</strong> · run deep investigation on failing builds to cluster failures.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Duplicates avoided</strong> · file a defect from a cluster and the system detects duplicates of prior ones.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Flaky tests found</strong> · the Flaky Coach scans history; needs ≥ 5 runs per fingerprint to flag.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Risky releases blocked</strong> · publish a Release Gate Policy and run release-gate evaluation on a build.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Defects promoted</strong> · promote a cluster to a tracked defect from the Failure Analysis page.</li>
           </ul>
-        </div>
+        </Disclosure>
       )}
-
-      {/* Metric cards grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        <MetricCard
-          icon={GitMerge}
-          label="Defects Auto-Grouped"
-          value={metrics.defects_auto_grouped}
-          sub={`${metrics.tests_grouped} tests grouped into clusters`}
-          color="text-[var(--status-flaky)]"
-        />
-        <MetricCard
-          icon={AlertTriangle}
-          label="Duplicates Avoided"
-          value={metrics.duplicate_tickets_avoided}
-          sub="Duplicate tickets prevented"
-          color="text-[var(--status-broken)]"
-        />
-        <MetricCard
-          icon={Sparkles}
-          label="Defects Promoted"
-          value={metrics.defects_promoted}
-          sub="Cluster → Jira defect"
-          color="text-[var(--status-passed)]"
-        />
-        <MetricCard
-          icon={Bug}
-          label="Flaky Tests Found"
-          value={metrics.flaky_tests_identified}
-          sub={`${metrics.quarantine_recommended} recommended for quarantine`}
-          color="text-[var(--status-flaky)]"
-        />
-        <MetricCard
-          icon={ShieldAlert}
-          label="Risky Releases Blocked"
-          value={metrics.risky_releases_blocked}
-          sub={`${metrics.releases_conditional} conditional, ${metrics.release_overrides} overridden`}
-          color="text-[var(--status-failed)]"
-        />
-        <MetricCard
-          icon={BarChart3}
-          label="Intelligence Reports"
-          value={metrics.intelligence_reports_generated}
-          sub="AI analysis reports generated"
-          color="text-[var(--color-text)]"
-        />
-        <MetricCard
-          icon={Shield}
-          label="Release Decisions"
-          value={metrics.risky_releases_blocked + metrics.releases_conditional}
-          sub="Automated go/no-go assessments"
-          color="text-[var(--status-broken)]"
-        />
-      </div>
 
       <MethodologyModal open={showMethodology} onClose={() => setShowMethodology(false)} />
     </div>

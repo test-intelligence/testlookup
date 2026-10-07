@@ -48,7 +48,9 @@ const ENV = { id: 'heatmap-suite_environment', title: 'Suite pass rate by enviro
 const RELEASE_TITLE = 'Suite pass rate by release'
 const FILTER = '[data-mark-intent="filter"]'
 
-const open = (page: Page) => openRollout(page, '/failures', { handlers: FAILURES_ON, ready })
+/** UX redesign P3: the Failures ladder is the page's "By suite" tab (`?tab=suite`). */
+const FAILURES_LADDER = '/failures?tab=suite'
+const open = (page: Page) => openRollout(page, FAILURES_LADDER, { handlers: FAILURES_ON, ready })
 
 const ladder = (page: Page) => section(page, DRILL)
 /** The page's legacy suite select (`SuiteFilterSelect`) and the top bar's release select (`ReleasePicker`). */
@@ -150,7 +152,8 @@ test.describe('Cross-filter on the legacy scope, multi-filters off (1280 x 4000)
     page,
   }) => {
     const console = watchConsoleErrors(page)
-    const { api, errors } = await openRollout(page, '/coverage', { handlers: COVERAGE_ON, ready: (p) => landmark(p, 'Run cadence') })
+    // UX redesign P3: the heatmap is Coverage's `heatmap` tab.
+    const { api, errors } = await openRollout(page, '/coverage?tab=heatmap', { handlers: COVERAGE_ON, ready: (p) => landmark(p, 'Run cadence') })
     await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
     await expect(releaseSelect(page)).toHaveValue('')
     const kinds = section(page, ENV.id).locator('[data-heatmap-kinds]')
@@ -199,7 +202,7 @@ test.describe('Cross-filter on the legacy scope, multi-filters off (1280 x 4000)
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the ladder with the filter action offered, every impact (${theme})`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready, theme })
+      await openRollout(page, FAILURES_LADDER, { handlers: FAILURES_ON, ready, theme })
       await levelZero(page)
       await focusFirstSuite(page)
       await expect(ladder(page).locator(FILTER)).toBeVisible()

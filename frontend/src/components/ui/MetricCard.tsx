@@ -27,7 +27,8 @@ interface Props {
    */
   positiveDirection?: 'up' | 'down'
   /**
-   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `text-2xl` value,
+   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `--text-stat-lg` value
+   * (24 px at the desk, raised in presentation mode),
    * no icon block, the change line on one line, and `sparkline` beside the
    * value.
    */
@@ -88,7 +89,10 @@ export default function MetricCard({
               <span className="sr-only">Loading</span>
             </div>
           ) : (
-            <p className="whitespace-nowrap text-2xl font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
+            // The stat token, not `text-2xl`: the same 24 px at the desk, and
+            // presentation mode raises it (40 px) like every other metric value.
+            // `leading-[1.3333]` keeps text-2xl's 32 px line at the desk.
+            <p className="whitespace-nowrap text-[length:var(--text-stat-lg)] leading-[1.3333] font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
           )}
           {sparkline && !loading && <div className="min-w-0 shrink">{sparkline}</div>}
         </div>

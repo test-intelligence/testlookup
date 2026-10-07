@@ -18,23 +18,61 @@
  * so nothing below jumps. A sections module that cannot load renders nothing;
  * the page stays. This module imports no section and no `LazySection`: the
  * page imports it EAGERLY into every first visit.
+ *
+ * `sections` picks which of the two render (default both): `/coverage` (UX
+ * redesign P3) mounts the block once per tab with that tab's section, so the
+ * other tab's section is not rendered and asks for nothing.
  */
 import { Suspense, type ReactElement } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import Quiet from './QuietSectionBoundary'
 import type { AdvancedSectionScope } from './sectionContracts'
-import { COVERAGE_ADVANCED_HEIGHT } from './CoverageAdvanced.model'
+import { COVERAGE_ADVANCED_HEIGHT, COVERAGE_HEATMAP_SECTION_HEIGHT, COVERAGE_MAP_SECTION_HEIGHT } from './CoverageAdvanced.model'
 
 export { COVERAGE_HEATMAP_SECTION_HEIGHT, COVERAGE_MAP_SECTION_HEIGHT } from './CoverageAdvanced.model'
 
 const CoverageAdvancedSections = lazyWithRetry(() => import('./CoverageAdvancedSections'))
 
-export default function CoverageAdvanced(props: AdvancedSectionScope): ReactElement {
+/**
+ * The block's sections, by their `data-catalogue-section` / `data-lazy-section`
+ * ids (the heatmap's is `HeatmapSection`'s default, `heatmap-<first kind>`), in
+ * drawing order.
+ */
+const COVERAGE_SECTION_IDS = ['coverage-map', 'heatmap-suite_environment'] as const
+export type CoverageSectionId = (typeof COVERAGE_SECTION_IDS)[number]
+
+const SECTION_HEIGHT: Record<CoverageSectionId, number> = {
+  'coverage-map': COVERAGE_MAP_SECTION_HEIGHT,
+  'heatmap-suite_environment': COVERAGE_HEATMAP_SECTION_HEIGHT,
+}
+
+/**
+ * What the block's placeholder holds while the sections module loads: the
+ * sections it will draw, the 14 px grid gap between them and its 14 px top
+ * margin. Both sections: exactly `COVERAGE_ADVANCED_HEIGHT`, as before.
+ */
+function coverageAdvancedHeight(sections: readonly CoverageSectionId[]): number {
+  const shown = COVERAGE_SECTION_IDS.filter((id) => sections.includes(id))
+  if (shown.length === COVERAGE_SECTION_IDS.length) return COVERAGE_ADVANCED_HEIGHT
+  if (shown.length === 0) return 0
+  return 14 + shown.reduce((sum, id) => sum + SECTION_HEIGHT[id], 0) + 14 * (shown.length - 1)
+}
+
+export interface CoverageAdvancedProps extends AdvancedSectionScope {
+  /**
+   * Which sections to render (a composition choice, UX redesign P3; default
+   * both). A section left out is not rendered at all — no placeholder, no
+   * hook, no request; one listed is drawn exactly as with both.
+   */
+  sections?: readonly CoverageSectionId[]
+}
+
+export default function CoverageAdvanced({ sections = COVERAGE_SECTION_IDS, ...scope }: CoverageAdvancedProps): ReactElement {
   return (
     // A sections module that failed to load is nothing at all (logged and reported): the page is unchanged.
     <Quiet label="coverage">
-      <Suspense fallback={<div aria-hidden="true" style={{ minHeight: COVERAGE_ADVANCED_HEIGHT }} />}>
-        <CoverageAdvancedSections {...props} />
+      <Suspense fallback={<div aria-hidden="true" style={{ minHeight: coverageAdvancedHeight(sections) }} />}>
+        <CoverageAdvancedSections {...scope} sections={sections} />
       </Suspense>
     </Quiet>
   )

@@ -11,12 +11,22 @@
  * here runs with every flag OFF in the harness and the inventory has no seam
  * lookup (`SHELL_BASE`).
  *
+ * UX redesign P3 (page template): the catalogue's headline row (trend +
+ * donut) is the page's primary content under a one-line verdict banner and a
+ * strip of five KPI tiles; its lazy row (Top failing tests + Failure
+ * categories) is the default "Top failing" tab under it, and the activity feed
+ * is the "Activity" tab (`?tab=activity`). Two reads left the load:
+ * `/value-metrics` (the Eng-hours KPI moved to Reports › Value) and the
+ * activity feed (it asks when its tab is opened). The top-failing request
+ * belongs to the Top failing tab: opened on Activity, the page never makes it.
+ *
  * Fail-closed harness: `tests/lib/production-pages.ts`; shared rollout
  * helpers: `tests/lib/rollout.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
 import { frameByHeading, respond } from '../lib/production-pages'
 import {
+  belowMainFold,
   daysOnTheWire,
   expectDrawn,
   expectInventory,
@@ -48,7 +58,9 @@ const SECTIONS: [string, string][] = [
 /**
  * One cold load. The Wave 2.5 list (the shell, `SHELL_BASE`, and the page's
  * own reads) plus top failing; no flag lookup of the page's own. Failure categories is the page's own read and the trend's markers
- * read the top bar's cached release list, so neither is asked twice.
+ * read the top bar's cached release list, so neither is asked twice. Since P3
+ * no `/value-metrics` (the Eng-hours KPI is on Reports › Value) and no
+ * activity feed until the Activity tab is opened (`ACTIVITY_30`).
  */
 const INVENTORY_ON = [
   ...SHELL_BASE,
@@ -57,10 +69,12 @@ const INVENTORY_ON = [
   `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
   `GET /api/v1/analytics/failure-categories?project_id=${P}&days=30`,
   `GET /api/v1/analytics/top-failing?project_id=${P}&days=30`,
-  `GET /api/v1/value-metrics?project_id=${P}&days=30&months=6`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
-  `GET /api/v1/projects/${P}/activity?limit=8&since=2026-08-19T12:00:00.000Z`,
 ]
+
+/** The activity feed's one read, asked when the Activity tab is opened. */
+const ACTIVITY_PATH = `/api/v1/projects/${P}/activity`
+const ACTIVITY_30 = `GET ${ACTIVITY_PATH}?limit=8&since=2026-08-19T12:00:00.000Z`
 
 test.describe('Overview, everything on screen (1280 x 2400)', () => {
   test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
@@ -76,8 +90,19 @@ test.describe('Overview, everything on screen (1280 x 2400)', () => {
     await expect(frameByHeading(page, 'Execution trend')).toHaveCount(0)
     await expect(page.locator('[data-chart-frame]')).toHaveCount(SECTIONS.length)
     await expect(page.locator('[data-lazy-section]'), 'every lazy section mounted at this height').toHaveCount(0)
-    // The rest of the page is still there, one row lower.
-    await expect(page.getByRole('heading', { name: "What's blocking release" })).toBeVisible()
+    // P3: the headline row is the primary content, under the one-line verdict
+    // (which absorbed "What's blocking release") and the five KPI tiles; the
+    // lazy row is the Top failing tab's (the default), under the tab bar.
+    const primary = page.locator('[data-primary]')
+    const panel = page.getByRole('tabpanel', { name: 'Top failing' })
+    await expect(page.getByRole('tab', { name: 'Top failing' })).toHaveAttribute('aria-selected', 'true')
+    for (const [id] of SECTIONS.slice(0, 2)) await expect(primary.locator(`[data-catalogue-section="${id}"]`), id).toHaveCount(1)
+    for (const [id] of SECTIONS.slice(2)) await expect(panel.locator(`[data-catalogue-section="${id}"]`), id).toHaveCount(1)
+    const banner = page.getByRole('region', { name: 'Release readiness' }).locator('[data-status-banner]')
+    await expect(banner).toBeVisible()
+    await expect(banner.getByRole('link', { name: /Open failures/ })).toHaveAttribute('href', '/failures')
+    await expect(page.locator('[data-kpi-strip] [data-metric-card="compact"]')).toHaveCount(5)
+    await expect(page.getByRole('heading', { name: "What's blocking release" })).toHaveCount(0)
     // Hostile test names (top failing) reach the screen as text only.
     await expect(page.locator('[data-catalogue-section] img')).toHaveCount(0)
     expect(await page.evaluate(() => (window as { __xss?: unknown }).__xss)).toBeUndefined()
@@ -85,6 +110,36 @@ test.describe('Overview, everything on screen (1280 x 2400)', () => {
     await expectNoTextEscapes(page, 'Overview at 1280')
     await networkQuiet(page, api)
     expectInventory(api, errors, INVENTORY_ON, 'Overview, every flag off')
+
+    // The Activity tab is closed: opening it asks for the feed, once, and
+    // writes ?tab=activity; the lazy row leaves with its tab.
+    expect(requestsTo(api, ACTIVITY_PATH), 'no activity read before its tab is opened').toEqual([])
+    await page.getByRole('tab', { name: 'Activity' }).click()
+    await expect(page).toHaveURL(/[?&]tab=activity(&|$)/)
+    await expect(page.getByRole('tabpanel', { name: 'Activity' }).getByRole('heading', { name: 'Recent activity', level: 3 })).toBeVisible()
+    await expect(section(page, 'overview-top-failing')).toHaveCount(0)
+    await networkQuiet(page, api)
+    expect(requestsTo(api, ACTIVITY_PATH)).toEqual([ACTIVITY_30])
+    expectInventory(api, errors, [...INVENTORY_ON, ACTIVITY_30], 'Overview, Activity tab opened')
+    // Back on Top failing: the row mounts again and draws (and the clean URL comes back).
+    await page.getByRole('tab', { name: 'Top failing' }).click()
+    await expect(page).not.toHaveURL(/[?&]tab=/)
+    await expectDrawn(sectionFrame(page, 'overview-top-failing', 'Top failing tests'), 'top failing, again')
+  })
+
+  test('opened on ?tab=activity: the feed is asked at load, and top failing never is', async ({ page }) => {
+    const { api, errors } = await openRollout(page, '/overview?tab=activity', { handlers: OVERVIEW_ON, ready })
+    await expect(page.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('heading', { name: 'Recent activity', level: 3 })).toBeVisible()
+    // The headline row (page data) still draws; the lazy row is not rendered.
+    await expectDrawn(sectionFrame(page, 'overview-trend', 'Pass rate trend'), 'trend')
+    await expect(section(page, 'overview-top-failing')).toHaveCount(0)
+    await expect(section(page, 'overview-categories')).toHaveCount(0)
+    await expect(page.locator('[data-lazy-section]')).toHaveCount(0)
+    await networkQuiet(page, api)
+    expect(requestsTo(api, TOP_FAILING_PATH), 'no top-failing read outside its tab').toEqual([])
+    const withoutTopFailing = INVENTORY_ON.filter((line) => !line.includes('/analytics/top-failing'))
+    expectInventory(api, errors, [...withoutTopFailing, ACTIVITY_30], 'Overview opened on Activity')
   })
 
   // Plan 5.3 item 8 / 5.5 (R2-11): axe at EVERY impact, full tag set, on the
@@ -113,13 +168,8 @@ test.describe('Overview, everything on screen (1280 x 2400)', () => {
     expect(days.filter(({ days: d }) => !(d >= 1 && d <= 90)), 'requests over 90 days').toEqual([])
     // The two catalogue requests carry the page's (snapped) window.
     expect(requestsTo(api, TOP_FAILING_PATH)).toEqual([`GET ${TOP_FAILING_PATH}?project_id=${P}&days=90`])
-    // The page snaps 365 to its longest option, 90 (value metrics keep their own
-    // 30 days, the activity feed starts 90 days back).
-    const at90 = INVENTORY_ON.map((line) =>
-      line.startsWith('GET /api/v1/value-metrics')
-        ? line
-        : line.replace('days=30', 'days=90').replace('since=2026-08-19T', 'since=2026-06-20T'),
-    )
+    // The page snaps 365 to its longest option, 90.
+    const at90 = INVENTORY_ON.map((line) => line.replace('days=30', 'days=90'))
     expectInventory(api, errors, at90, 'Overview at 365 days')
   })
 
@@ -147,8 +197,23 @@ test.describe('Overview, everything on screen (1280 x 2400)', () => {
   })
 })
 
-test.describe('Overview, a short screen (1280 x 600)', () => {
-  test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+/**
+ * The lazy proof needs the lazy row to start more than the 200 px margin (plus
+ * 50) below the scroller's fold at load. Before P3 the row sat under the
+ * verdict card, the KPI grid and the headline row, far below a 600 px screen.
+ * P3 put the headline row ≤ 300 px from the top (the page template), and the
+ * lazy row then starts about 130 px below a 600 px screen's fold: inside the
+ * margin, so it mounts at load and the proof would mean nothing. Measured at
+ * 1280 wide: the row's top was ~680 px into the page, so a 420 px screen
+ * (364 px of scroller under the 56 px top bar) put it ~315 px below the fold.
+ * P3 cleanup moved the row into the default "Top failing" tab, under the tab
+ * bar: ~65 px lower, 381 px below the fold at 420 (measured, the `lazy`
+ * annotation below), so the proof still holds with room to spare.
+ */
+const LAZY_PROOF_VIEWPORT = { width: SHORT_VIEWPORT.width, height: 420 } as const
+
+test.describe('Overview, a short screen (1280 x 420)', () => {
+  test.use({ viewport: { ...LAZY_PROOF_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no top-failing request until the row is near, and it is asked before it is visible', async ({
     page,
@@ -159,6 +224,10 @@ test.describe('Overview, a short screen (1280 x 600)', () => {
     const categories = () => requestsTo(api, '/api/v1/analytics/failure-categories').length
     await networkQuiet(page, api)
     expect(categories(), "only the page's own categories read before the row is near").toBe(1)
+    // The lazy row is the Top failing tab's (the default), under the tab bar.
+    await expect(page.getByRole('tabpanel', { name: 'Top failing' }).locator('[data-lazy-section="overview-top-failing"]')).toHaveCount(1)
+    const below = await belowMainFold(page, page.locator('[data-lazy-section="overview-top-failing"]'))
+    test.info().annotations.push({ type: 'lazy', description: `overview-top-failing starts ${below} px below the fold` })
     await proveLazyMount(page, api, {
       label: 'overview-top-failing',
       section: 'overview-top-failing',

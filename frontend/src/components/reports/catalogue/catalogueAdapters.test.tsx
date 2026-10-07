@@ -18,7 +18,6 @@ import {
   chartResponseFromClusters,
   chartResponseFromStatusCounts,
   chartResponseFromSuiteRows,
-  chartResponseFromTopFailingRows,
   displayText,
   statusCountsFromTrendPoints,
 } from './catalogueAdapters'
@@ -202,33 +201,6 @@ describe('chartResponseFromSuiteRows (K4)', () => {
   })
 })
 
-describe('chartResponseFromTopFailingRows (K4)', () => {
-  it('one bar per row, keyed by position (no fingerprint on the row), label carries the suite', () => {
-    const response = valid(
-      chartResponseFromTopFailingRows([
-        { test_name: 'test_login', suite_name: 'auth', class_name: null, failures: 9 },
-        { test_name: 'test_login', suite_name: 'admin', class_name: null, failures: 4 },
-        { test_name: 'test_pay', suite_name: null, class_name: null, failures: 2 },
-      ]),
-    )
-    const bars = barsFromSeries(response.series)
-    // One name in two suites: two bars, not one merged bar of 13.
-    expect(bars.map((bar) => [bar.label, bar.value])).toEqual([
-      ['test_login (auth)', 9],
-      ['test_login (admin)', 4],
-      ['test_pay', 2],
-    ])
-    expect(new Set(bars.map((bar) => bar.key)).size).toBe(3)
-    expect(seriesOf(response).series[0].key).toBe('failures')
-  })
-
-  it('a missing failure count is null, never 0 (and so draws no bar)', () => {
-    const response = valid(chartResponseFromTopFailingRows([{ test_name: 't', suite_name: 's', failures: undefined }]))
-    expect(seriesOf(response).series[0].points[0].y).toBeNull()
-    expect(barsFromSeries(response.series)).toEqual([])
-  })
-})
-
 describe('chartResponseFromClusters (K4)', () => {
   it('one slice per cluster, sized by its member count', () => {
     const response = valid(
@@ -264,7 +236,6 @@ describe('hostile names (K4)', () => {
   it('every adapter keeps a hostile name as the exact text, and the table shows it as text', () => {
     const responses = [
       chartResponseFromSuiteRows([{ suite_name: HOSTILE, passed: 1, failed: 1, broken: 0, skipped: 0 }]),
-      chartResponseFromTopFailingRows([{ test_name: HOSTILE, suite_name: '<b>s</b>', failures: 3 }]),
       chartResponseFromClusters([{ cluster_id: HOSTILE, label: HOSTILE, size: 2 }]),
     ].map(valid)
     for (const response of responses) {
@@ -280,8 +251,6 @@ describe('hostile names (K4)', () => {
     for (const name of ['__proto__', 'constructor', 'prototype']) {
       const response = valid(chartResponseFromSuiteRows([{ suite_name: name, passed: 1, failed: 0, broken: 0, skipped: 0 }]))
       expect(statusRowsFromSeries(response.series)[0].label).toBe(name)
-      const top = valid(chartResponseFromTopFailingRows([{ test_name: name, failures: 1 }]))
-      expect(barsFromSeries(top.series)[0].label).toBe(name)
       const clusters = valid(chartResponseFromClusters([{ cluster_id: name, label: name, size: 1 }]))
       expect(barsFromSeries(clusters.series)[0].label).toBe(name)
     }
@@ -293,7 +262,6 @@ describe('hostile names (K4)', () => {
     expect(displayText('a\uDC00b', '')).toBe('a�b')
     expect(displayText('end\uD800', '')).toBe('end�')
     valid(chartResponseFromSuiteRows([{ suite_name: LONE_SURROGATE, passed: 1 }]))
-    valid(chartResponseFromTopFailingRows([{ test_name: LONE_SURROGATE, suite_name: LONE_SURROGATE, failures: 1 }]))
     valid(chartResponseFromClusters([{ cluster_id: LONE_SURROGATE, label: LONE_SURROGATE, size: 1 }]))
   })
 

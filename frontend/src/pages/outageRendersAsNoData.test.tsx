@@ -50,7 +50,6 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
 vi.mock('@/hooks/useValueMetrics', () => ({
-  useValueMetricsKpi: () => ({ metrics: undefined }),
 }))
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: () => ({ data: { items: [] } }),

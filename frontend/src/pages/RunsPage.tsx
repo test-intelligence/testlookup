@@ -1,39 +1,36 @@
 /**
- * Test Runs — verdict-led redesign per design_handoff_test_runs/README.md.
+ * Test Runs — the page template (UX redesign P3, `02-design-spec.md` §2, §5).
  *
- * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb + right cluster: 2 primary CTAs
- *             ("Trigger all failed (N)" danger style + "Deep all failed (N)") +
- *             All-pages toggle + window select + status select.
- *   Verdict → 1.45fr | 1fr split. Variants BROKEN / MIXED / HEALTHY / PENDING.
- *             Left: pulsing eyebrow → 26 px headline → lede → 3 issue rows
- *             → CTAs (Bisect from last green / Open intelligence).
- *             Right: 44 px composite pipeline-health score (red→amber→green
- *             gradient + 33/66 ticks + marker dot) + 2×2 weighted dimension
- *             grid (Build success 40 % / Signature diversity 15 % / Fix
- *             velocity 25 % / Metadata coverage 20 %).
- *   KPIs    → 5 cells with sparklines: Builds failed · Unique failures ·
- *             Avg pass rate · Last green build · Red streak.
- *   Table   → Runs table, full width (selectable, per-row Intel/Trigger/Deep/
- *             Compare, bulk-action sub-header).
- *   Body    → 1.65fr | 1fr.
- *     Left  → Signature cluster card (groups runs by `passed,failed,total`
- *             tuple, surfaces the dominant cluster + outliers).
- *     Right → Last-green callout (bisect target) → 14-day build velocity.
+ * Top to bottom at 1440 x 900:
+ *   Header  → title, ONE primary action (Upload report, behind the
+ *             `manual_upload` flag; `/runs?upload=1` still opens it), ONE
+ *             secondary (Failure signatures → the side panel), and ⋯ (Trigger
+ *             all failed, Deep all failed).
+ *   Toolbar → the global WindowPicker, the status filter, the suite filter.
+ *   Banner  → the pipeline verdict in one line (`StatusBanner`): failing
+ *             builds, last green, red streak, average pass rate, and Bisect
+ *             from last green.
+ *   Table   → the runs table, the page's primary content (`data-primary`):
+ *             selectable, per-row Intel / Trigger / Deep / Compare, bulk
+ *             actions; a row's signature opens the side panel.
+ *   Below   → two collapsed Disclosures: "How this verdict is computed" (the
+ *             composite pipeline-health gauge and its four weighted dimensions:
+ *             Build success 40 % / Signature diversity 15 % / Fix velocity
+ *             25 % / Metadata coverage 20 %) and "Build history" (the 14-build
+ *             velocity strip, the per-build pass rate, the last green build).
+ *   Panel   → the failure signatures (`SidePanel`): failed runs grouped by
+ *             their `(passed, failed, total)` tuple (README §12 q1 fallback),
+ *             the dominant cluster and its outliers, paginated.
  *
- * The signature is grouped client-side by the `(passed, failed, total)` tuple
- * per README §12 q1 fallback.
- *
- * Data: derives every section from existing useRuns(...) + runsService. Bisect
- * navigates to /runs/compare; per-row Trigger / Deep + bulk-trigger use the
- * existing agentService calls. UX redesign P2: a control renders only when it
- * does something real.
+ * Data: every section derives from one useRuns(...) window. Bisect navigates
+ * to /runs/compare; per-row Trigger / Deep + bulk-trigger use the existing
+ * agentService calls. UX redesign P2: a control renders only when it does
+ * something real.
  */
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  AlertCircle, AlertTriangle, BarChart3, Clock, GitBranch, GitCompare, Layers,
-  Search, Sparkles, Stethoscope, TrendingUp, Upload, XCircle, Zap,
+  GitBranch, GitCompare, Layers, Search, Sparkles, Stethoscope, Upload, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -42,9 +39,16 @@ import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
+import PageHeader from '@/components/ui/PageHeader'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
+import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import Disclosure from '@/components/ui/Disclosure'
+import SidePanel from '@/components/ui/SidePanel'
+import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { TimingCell } from '@/components/ui/TimingCell'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import UploadReportModal from '@/components/runs/UploadReportModal'
 import DayStrip from '@/components/charts/DayStrip'
 import GaugeBar from '@/components/charts/GaugeBar'
@@ -66,22 +70,14 @@ import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
 import { isRunInProgress, measuredRunPassRate } from '@/utils/runPassRate'
 
-// ── Window picker ──────────────────────────────────────────────────────────
-// 1 = last 24 hours, 0 = all time. NB: use 7 (a week), not 6, so the global
-// 7-day default window (timeWindowStore) doesn't silently snap to a different
-// value here than on every other page (Overview/Coverage/Trends/… all use 7).
-const WINDOWS = [1, 7, 14, 30, 90, 0] as const
-type Window = (typeof WINDOWS)[number]
+/** The page's help topic (the header's **?**). */
+const HELP_TOPIC = helpTopicParam('/runs')
 
-const WINDOW_LABELS: Record<Window, string> = {
-  1:  'Last 24 hours',
-  7:  'Last 7 days',
-  14: 'Last 14 days',
-  30: 'Last 30 days',
-  90: 'Last 90 days',
-  0:  'All time',
-}
-
+// ── Filters ────────────────────────────────────────────────────────────────
+// The window is the toolbar's WindowPicker, bound to the global store
+// (24h / 7d / 14d / 30d / 90d). "All time" (0) was a Runs-only option of the
+// page's own select; the shared picker has no such window, and a stored 0
+// snaps to 24h like on every other page.
 const STATUS_FILTERS = ['', 'FAILED', 'PASSED', 'IN_PROGRESS'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
 const STATUS_LABELS: Record<StatusFilter, string> = {
@@ -95,71 +91,47 @@ const STATUS_LABELS: Record<StatusFilter, string> = {
 type Verdict = 'BROKEN' | 'MIXED' | 'HEALTHY' | 'PENDING'
 
 interface VerdictTheme {
-  border: string
-  glow: string
-  bar: string
-  eyebrowText: string
-  gateText: string
+  /** The StatusBanner state that carries this verdict above the table. */
+  banner: BannerState
   pillBg: string
   pillBd: string
   pillFg: string
   meter: string
   label: string
-  pulse: boolean
 }
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   BROKEN: {
-    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-no-go)',
-    eyebrowText: 'var(--status-failed)',
-    gateText:    'var(--status-failed)',
+    banner: 'fail',
     pillBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
     pillFg: 'var(--status-failed)',
     meter:  'var(--status-failed)',
     label:  'Pipeline broken',
-    pulse:  true,
   },
   MIXED: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrowText: 'var(--status-broken)',
-    gateText:    'var(--status-broken)',
+    banner: 'warn',
     pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
     pillFg: 'var(--status-broken)',
     meter:  'var(--status-broken)',
     label:  'Mixed',
-    pulse:  true,
   },
   HEALTHY: {
-    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-go)',
-    eyebrowText: 'var(--status-passed)',
-    gateText:    'var(--status-passed)',
+    banner: 'ok',
     pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
     pillFg: 'var(--status-passed)',
     meter:  'var(--status-passed)',
     label:  'Pipeline healthy',
-    pulse:  false,
   },
   PENDING: {
-    border: 'var(--color-border)',
-    glow:   'transparent',
-    bar:    'var(--color-border-light)',
-    eyebrowText: 'var(--color-text-muted)',
-    gateText:    'var(--color-text-secondary)',
+    banner: 'pending',
     pillBg: 'var(--color-bg-secondary)',
     pillBd: 'var(--color-border)',
     pillFg: 'var(--color-text-muted)',
     meter:  'var(--color-text-muted)',
     label:  'Pending',
-    pulse:  false,
   },
 }
 
@@ -497,35 +469,17 @@ function PrimaryBtn({
   )
 }
 
-// Danger button — used by "Trigger all failed" per README §4.1
-function DangerBtn({
-  children, onClick, title, disabled,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md border transition-colors disabled:opacity-50"
-      style={{ background: 'color-mix(in srgb, var(--status-failed) 12%, transparent)', color: 'var(--status-failed)', borderColor: 'color-mix(in srgb, var(--status-failed) 35%, transparent)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'color-mix(in srgb, var(--status-failed) 20%, transparent)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'color-mix(in srgb, var(--status-failed) 12%, transparent)')}
-    >
-      {children}
-    </button>
-  )
-}
-
 function GhostSelect<T extends string | number>({
-  value, onChange, options,
+  value, onChange, options, ariaLabel,
 }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string }[]
+  ariaLabel?: string
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       value={String(value)}
       onChange={(e) => {
         const next = options.find(o => String(o.value) === e.target.value)?.value
@@ -543,113 +497,55 @@ function GhostSelect<T extends string | number>({
   )
 }
 
-// ── Verdict card ──────────────────────────────────────────────────────────
-interface IssueRowSpec {
-  tone: 'bad' | 'warn' | 'info'
-  Icon: typeof XCircle
-  body: React.ReactNode
-  cta?: { label: string; onClick?: () => void; to?: string }
+// ── Verdict banner ────────────────────────────────────────────────────────
+/** The verdict in words: the banner's title after the state pill. */
+function verdictSummary(model: PipelineModel, verdict: Verdict): string {
+  if (verdict === 'PENDING') return 'no builds in window'
+  if (verdict === 'HEALTHY') return `${model.totalRuns} builds passing`
+  const failed = `${model.failedRuns} of ${model.totalRuns} builds failed`
+  const sharesSig = verdict === 'BROKEN'
+    && model.primaryCluster !== null
+    && model.primaryCluster.members.length / model.failedRuns >= 0.8
+  return sharesSig ? `${failed} with the same signature` : failed
 }
 
-function VerdictCard({
-  model, verdict, summary, lede, issues, ctas,
-}: {
-  model: PipelineModel
-  verdict: Verdict
-  summary: React.ReactNode
-  lede: React.ReactNode
-  issues: IssueRowSpec[]
-  ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
-}) {
-  const t = VERDICT_THEME[verdict]
+/**
+ * The StatusBanner's facts for the window (UX redesign P3: the banner replaces
+ * the verdict card and the KPI strip that repeated it). Failing builds, the
+ * last green build, the red streak, and the average pass rate over MEASURED
+ * builds — "—", never 0 %, when no build has a result yet.
+ */
+function runsBannerFacts(model: PipelineModel): BannerFact[] {
+  const lastGreen = model.lastGreen
+    ? `#${model.lastGreen.build_number}${model.hoursSinceLastGreen != null ? ` · ${model.hoursSinceLastGreen}h ago` : ''}`
+    : 'none in window'
+  return [
+    { label: 'Failing builds', value: `${model.failedRuns} of ${model.totalRuns}` },
+    { label: 'Last green', value: lastGreen },
+    { label: 'Red streak', value: `${model.redStreak} in a row` },
+    { label: 'Avg pass rate', value: model.avgPassRate === null ? '—' : `${model.avgPassRate.toFixed(1)}%` },
+  ]
+}
+
+/**
+ * "How this verdict is computed" (a Disclosure below the table): the composite
+ * pipeline-health gauge, its four weighted dimensions, and — when the reporter
+ * sends no branch / release / duration — the gap the Metadata coverage
+ * dimension scores.
+ */
+export function VerdictDetails({ model, verdict }: { model: PipelineModel; verdict: Verdict }) {
   return (
-    <section
-      aria-label="Pipeline verdict"
-      aria-live="polite"
-      className="relative rounded-xl border overflow-hidden grid gap-6"
-      style={{
-        gridTemplateColumns: '1.45fr 1fr',
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-        marginBottom: 14,
-      }}
-    >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: t.bar,
-              animation: t.pulse ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-            }}
-            aria-hidden
-          />
-          Pipeline signal
-        </span>
-        <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
-          <span className="text-[var(--color-text-muted)] mx-2">·</span>
-          <span>{summary}</span>
-        </h2>
-        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-          {lede}
-        </p>
-
-        <div className="flex flex-col gap-2">
-          {issues.length === 0
-            ? <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">No outstanding issues for this window.</p>
-            : issues.map((iss, i) => <IssueRow key={i} issue={iss} />)
-          }
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          {ctas.primary && <CtaBtn cta={ctas.primary} primary />}
-          {ctas.secondary.filter((x): x is IssueRowSpec['cta'] => Boolean(x)).map((c, i) => <CtaBtn key={i} cta={c} />)}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
-        <HealthMeter model={model} verdict={verdict} />
+    <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)' }}>
+      <HealthMeter model={model} verdict={verdict} />
+      <div className="flex min-w-0 flex-col gap-2.5">
         <DimensionGrid dimensions={model.dimensions} />
+        {model.hasMissingMetadata && (
+          <p className="m-0 text-[12.5px] leading-[1.45] text-[var(--color-text-secondary)]">
+            Branch, release, and duration absent on {Math.round(100 - model.metadataCoveragePct)}% of rows — the Jenkins reporter isn't sending these fields.
+            {' '}<span className="text-[var(--color-text-muted)]">Cannot tell which feature branch broke things.</span>
+          </p>
+        )}
       </div>
-    </section>
-  )
-}
-
-function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean }) {
-  if (!cta) return null
-  if (primary) return <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
-  return <GhostBtn onClick={cta.onClick}>{cta.label}</GhostBtn>
-}
-
-function IssueRow({ issue }: { issue: IssueRowSpec }) {
-  const palette = {
-    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
-    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
-    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
-  }[issue.tone]
-  const Icon = issue.Icon
-  return (
-    <div
-      className="grid gap-2.5 items-center rounded-md border"
-      style={{ gridTemplateColumns: '22px 1fr auto', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
-    >
-      <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="text-[13px] text-[var(--color-text)] leading-[1.4]">{issue.body}</div>
-      {issue.cta && (
-        <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-          style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
-          {issue.cta.label} →
-        </button>
-      )}
     </div>
   )
 }
@@ -744,179 +640,81 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
   )
 }
 
-// ── KPI strip + sparkline primitives ─────────────────────────────────────
-type KpiTone = 'good' | 'warn' | 'bad' | 'neutral'
-
-function KpiCell({
-  Icon, label, value, sub, meta, tone = 'neutral', spark, isFirst, isLast,
-}: {
-  Icon?: typeof TrendingUp
-  label: string
-  value: React.ReactNode
-  sub?: React.ReactNode
-  meta?: React.ReactNode
-  tone?: KpiTone
-  spark?: React.ReactNode
-  isFirst?: boolean
-  isLast?: boolean
-}) {
-  const valueColor =
-    tone === 'good'   ? 'var(--status-passed)' :
-    tone === 'warn'   ? 'var(--status-broken)' :
-    tone === 'bad'    ? 'var(--status-failed)' :
-    'var(--color-text)'
-  return (
-    <div
-      className="flex flex-col gap-1"
-      style={{
-        padding: '14px 18px',
-        background: 'var(--color-bg-card)',
-        borderTop:    '1px solid var(--color-border)',
-        borderBottom: '1px solid var(--color-border)',
-        borderRight:  '1px solid var(--color-border)',
-        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
-        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
-        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
-        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
-        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
-      }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {Icon && <Icon className="h-3 w-3 opacity-70" />}
-        <span>{label}</span>
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
-        {value}
-        {sub && <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
-      </div>
-      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-      {spark && <div className="mt-1.5">{spark}</div>}
-    </div>
-  )
-}
-
+// ── Build history: the per-build pass rate ────────────────────────────────
 /** A pass rate's fixed scale: the sparkline shows 80 → 95 as the small rise it is. */
 const PASS_RATE_DOMAIN = [0, 100] as const
 
+type Tone = 'good' | 'warn' | 'bad' | 'neutral'
+
+const TONE_COLOR: Record<Tone, string> = {
+  good:    'var(--status-passed)',
+  warn:    'var(--status-broken)',
+  bad:     'var(--status-failed)',
+  neutral: 'var(--color-text)',
+}
+
 /**
- * The five run KPIs. Owner decision OD-1 (Wave 2.5): a KPI glyph draws a REAL
- * series or a real scalar, or nothing.
+ * The window's average pass rate and the line it is the average of. Owner
+ * decision OD-1 (Wave 2.5): a glyph draws a REAL series or nothing — every
+ * build's pass rate, oldest first, a gap (never a 0) for a build with no
+ * result; fewer than two measured builds draw no line.
  *
- *   - Avg pass rate: a `Sparkline` of every build's pass rate, oldest first;
- *   - Unique failures: a two-segment `GaugeBar` — the builds in the primary
- *     signature vs the rest (only when something failed);
- *   - Builds failed, Last green build, Red streak: no glyph. The first and the
- *     last were bar counts that repeated the Build velocity strip below; the
- *     middle one was two constant dots.
+ * UX redesign P3: this was the KPI strip's "Avg pass rate" cell. The strip
+ * repeated the banner, so it went; the banner states the average, and this
+ * cell — in "Build history" below the table — draws where it came from.
  */
-export function RunKpiStrip({ model }: { model: PipelineModel }) {
-  const buildsFailedFraction = model.totalRuns > 0 ? (model.failedRuns / model.totalRuns) * 100 : 0
-  const lastGreenLabel = model.hoursSinceLastGreen != null ? `${model.hoursSinceLastGreen}h` : '—'
+export function BuildPassRate({ model }: { model: PipelineModel }) {
   const avg = model.avgPassRate
-  const avgTone: KpiTone = avg === null ? 'neutral' : avg >= 80 ? 'good' : avg >= 50 ? 'warn' : 'bad'
-  const primaryCount = model.primaryCluster?.members.length ?? 0
-  // Fewer than two builds with a result is no trend: the cell stays short
-  // rather than holding an empty glyph row.
-  const hasPassRateTrend = buildSparklineModel(model.passRateSeries) !== null
-  const uniqueFailuresGauge = model.primaryCluster && model.failedRuns > 0 ? (
-    <GaugeBar
-      value={model.failedRuns}
-      domain={[0, model.failedRuns]}
-      size="sm"
-      label="Failed builds by signature"
-      segments={[
-        { value: primaryCount, label: 'Primary signature', tone: 'bad' },
-        { value: model.failedRuns - primaryCount, label: 'Other signatures', tone: 'neutral' },
-      ]}
-    />
-  ) : undefined
+  const tone: Tone = avg === null ? 'neutral' : avg >= 80 ? 'good' : avg >= 50 ? 'warn' : 'bad'
+  const hasTrend = buildSparklineModel(model.passRateSeries) !== null
+  const meta =
+    avg === null ? 'not measured — no build has a result yet'
+    : model.failedRuns === model.totalRuns ? 'misleading — every build still failed'
+    : model.measuredRuns < model.totalRuns ? `${model.measuredRuns} of ${model.totalRuns} builds measured`
+    : `${model.passedRuns} pass · ${model.failedRuns} fail`
   return (
-    <section aria-label="Run KPIs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-      <KpiCell
-        Icon={XCircle}
-        label="Builds failed"
-        value={model.failedRuns}
-        sub={`/ ${model.totalRuns}`}
-        tone={model.failedRuns > 0 ? 'bad' : 'good'}
-        meta={<>{Math.round(buildsFailedFraction)}% of window</>}
-        isFirst
-      />
-      <KpiCell
-        Icon={Layers}
-        label="Unique failures"
-        value={model.uniqueClustersCount}
-        sub={model.uniqueClustersCount === 1 ? 'signature' : 'signatures'}
-        tone={model.uniqueClustersCount === 1 && model.failedRuns >= 2 ? 'bad' : model.uniqueClustersCount > 0 ? 'warn' : 'good'}
-        meta={
-          model.primaryCluster
-            ? <>{model.primaryCluster.members.length} of {model.failedRuns} match · low diversity</>
-            : <>nothing to cluster</>
-        }
-        spark={uniqueFailuresGauge}
-      />
-      <KpiCell
-        Icon={BarChart3}
-        label="Avg pass rate"
-        value={avg === null ? '—' : `${avg.toFixed(1)}`}
-        sub={avg === null ? undefined : '%'}
-        tone={avgTone}
-        meta={
-          avg === null
-            ? <>not measured — no build has a result yet</>
-            : model.failedRuns === model.totalRuns
-              ? <>misleading — every build still failed</>
-              : model.measuredRuns < model.totalRuns
-                ? <>{model.measuredRuns} of {model.totalRuns} builds measured</>
-                : <>{model.passedRuns} pass · {model.failedRuns} fail</>
-        }
-        spark={hasPassRateTrend ? (
+    <section
+      aria-label="Average pass rate"
+      className="flex flex-col gap-1 rounded-xl border px-4 py-3"
+      style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
+    >
+      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        Avg pass rate
+      </div>
+      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: TONE_COLOR[tone] }}>
+        {avg === null ? '—' : avg.toFixed(1)}
+        {avg !== null && <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">%</span>}
+      </div>
+      <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>
+      {hasTrend && (
+        <div className="mt-1.5">
           <Sparkline
             series={model.passRateSeries}
             label="Pass rate per build, oldest first"
             domain={PASS_RATE_DOMAIN}
             format={(v) => `${v.toFixed(1)}%`}
-            tone={avgTone}
+            tone={tone}
             height={24}
           />
-        ) : undefined}
-      />
-      <KpiCell
-        Icon={Clock}
-        label="Last green build"
-        value={lastGreenLabel}
-        sub="ago"
-        tone={
-          model.hoursSinceLastGreen == null ? 'neutral'
-          : model.hoursSinceLastGreen <= 24 ? 'good'
-          : model.hoursSinceLastGreen <= 72 ? 'warn'
-          : 'bad'
-        }
-        meta={
-          model.lastGreen
-            ? <>predecessor of <code className="font-mono text-[10px]">{model.lastGreen.id.slice(0, 8)}</code></>
-            : <>no green build in window</>
-        }
-      />
-      <KpiCell
-        Icon={Sparkles}
-        label="Red streak"
-        value={model.redStreak}
-        sub={model.redStreak === 1 ? 'in a row' : 'in a row'}
-        tone={model.redStreak >= 3 ? 'bad' : model.redStreak > 0 ? 'warn' : 'good'}
-        meta={model.redStreak > 0 ? <>longest streak in window</> : <>no streak — last build passed</>}
-        isLast
-      />
+        </div>
+      )}
     </section>
   )
 }
 
-// ── Signature cluster card ────────────────────────────────────────────────
-// Rows shown per page in the failure-signature table. The card sits beside the
-// scorecard in a fixed-height row, so an unpaginated cluster stretched the page
-// once a window contained more than a handful of matching builds.
+// ── Failure signatures (the side panel) ───────────────────────────────────
+// Rows shown per page in the failure-signature list: a cluster is EXPECTED to
+// be large (its premise is "many builds share one signature"), so it pages.
 export const SIGNATURE_ROWS_PER_PAGE = 8
 
-export function SignatureClusterCard({
+/**
+ * The failure signatures, in the side panel (UX redesign P3: a drill-down
+ * opens beside the page instead of a card under the table). The primary
+ * cluster, the split of the failed builds between it and the other
+ * signatures, and every member, paginated; a row jumps to its run in the
+ * table.
+ */
+export function SignatureClusters({
   primaryCluster, outlierClusters, totalRuns, onJumpToRow,
 }: {
   primaryCluster: SignatureCluster | null
@@ -927,7 +725,7 @@ export function SignatureClusterCard({
   const [sigPage, setSigPage] = useState(1)
 
   // Cluster membership changes when the project or time window changes; without
-  // a reset a viewer parked on page 3 would land on an empty table.
+  // a reset a viewer parked on page 3 would land on an empty list.
   //
   // Adjusted during render rather than in an effect: an effect would paint the
   // stale page first and then re-render, and this repo forbids synchronous
@@ -944,23 +742,24 @@ export function SignatureClusterCard({
 
   if (!primaryCluster) {
     return (
-      <CardShell title="Failure signature" rightSlot={<span>0 clusters</span>}>
-        <div className="px-4 py-6 text-center text-[13px] text-[var(--color-text-secondary)]">
-          No failures in this window — nothing to cluster.
-        </div>
-      </CardShell>
+      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-secondary)]">
+        No failures in this window — nothing to cluster.
+      </p>
     )
   }
   const sigLabel = shortSignatureLabel(primaryCluster)
   const matchCount = primaryCluster.members.length
   const outlierCount = outlierClusters.reduce((s, c) => s + c.members.length, 0)
+  // Clusters are built from the failed runs only: together they ARE the failed builds.
+  const failedCount = matchCount + outlierCount
+  const signatureCount = 1 + outlierClusters.length
   const allRows = [
     ...primaryCluster.members.map(m => ({ run: m, isOutlier: false })),
     ...outlierClusters.flatMap(c => c.members.map(m => ({ run: m, isOutlier: true }))),
   ]
   const sigPages = Math.max(1, Math.ceil(allRows.length / SIGNATURE_ROWS_PER_PAGE))
   // Clamp rather than trust state: a shrinking cluster can leave sigPage past
-  // the end for the render that happens before the reset effect runs.
+  // the end for the render that happens before the reset above.
   const safePage = Math.min(sigPage, sigPages)
   const pageRows = allRows.slice(
     (safePage - 1) * SIGNATURE_ROWS_PER_PAGE,
@@ -968,37 +767,47 @@ export function SignatureClusterCard({
   )
 
   return (
-    <CardShell
-      title={
-        <>
-          Failure signature ·{' '}
+    <div className="flex flex-col gap-3" data-signature-clusters="">
+      <div>
+        <div className="text-[13px] font-semibold text-[var(--color-text)]">
+          Primary signature{' '}
           <code className="font-mono text-[12px]" style={{ color: 'var(--status-failed)' }}>{sigLabel}</code>
-        </>
-      }
-      rightSlot={<span>single root cause likely</span>}
-    >
-      <div className="px-4 pt-1 pb-2">
-        <p className="text-[12.5px] m-0 mt-0.5 mb-2.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-          {matchCount} of {totalRuns} build{totalRuns === 1 ? '' : 's'} match · same test failing across all of them.
-          {' '}Treat them as one regression, not {matchCount + outlierCount} incidents.
-        </p>
-        <div className="flex flex-col gap-1.5">
-          {pageRows.map(({ run, isOutlier }) => (
-            <ClusterRow
-              key={run.id}
-              run={run}
-              isOutlier={isOutlier}
-              primarySignature={primaryCluster.signature}
-              onClick={() => onJumpToRow(run)}
-            />
-          ))}
         </div>
-        {outlierCount > 0 && (
-          <p className="text-[11.5px] m-0 mt-3 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-            The outlier ran a different test count, with the same single failure pattern. Likely an older Jenkinsfile that included a smoke-test suite later removed. Same failing test underneath — treat it as part of the cluster.
-          </p>
-        )}
+        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+          {primaryCluster.passed} pass / {primaryCluster.failed} fail / {primaryCluster.total} total
+          {' · '}{signatureCount} signature{signatureCount === 1 ? '' : 's'} across {failedCount} failed build{failedCount === 1 ? '' : 's'}
+        </p>
       </div>
+      <GaugeBar
+        value={failedCount}
+        domain={[0, failedCount]}
+        size="sm"
+        label="Failed builds by signature"
+        segments={[
+          { value: matchCount, label: 'Primary signature', tone: 'bad' },
+          { value: outlierCount, label: 'Other signatures', tone: 'neutral' },
+        ]}
+      />
+      <p className="m-0 text-[12.5px]" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+        {matchCount} of {totalRuns} build{totalRuns === 1 ? '' : 's'} match · same test failing across all of them.
+        {' '}Treat them as one regression, not {matchCount + outlierCount} incidents.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {pageRows.map(({ run, isOutlier }) => (
+          <ClusterRow
+            key={run.id}
+            run={run}
+            isOutlier={isOutlier}
+            primarySignature={primaryCluster.signature}
+            onClick={() => onJumpToRow(run)}
+          />
+        ))}
+      </div>
+      {outlierCount > 0 && (
+        <p className="text-[11.5px] m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+          The outlier ran a different test count, with the same single failure pattern. Likely an older Jenkinsfile that included a smoke-test suite later removed. Same failing test underneath — treat it as part of the cluster.
+        </p>
+      )}
       {/* Renders nothing at one page, so small clusters look exactly as before. */}
       <Pagination
         page={safePage}
@@ -1006,7 +815,7 @@ export function SignatureClusterCard({
         total={allRows.length}
         onChange={setSigPage}
       />
-    </CardShell>
+    </div>
   )
 }
 
@@ -1066,9 +875,50 @@ function ClusterRow({
 }
 
 // ── Runs table ────────────────────────────────────────────────────────────
+/**
+ * A row's signature. With a cluster in the window it is a button, the way into
+ * the failure-signature side panel (P3: the cluster card became a drill-down);
+ * without one it is the plain "—".
+ */
+function SignatureChip({
+  label, isOutlier, failed, onOpen,
+}: { label: string; isOutlier: boolean; failed: boolean; onOpen?: () => void }) {
+  const hue = isOutlier ? 'var(--status-broken)' : failed ? 'var(--status-failed)' : 'var(--status-passed)'
+  const className = clsx(
+    'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px]',
+    isOutlier && 'italic',
+    onOpen && 'hover:underline',
+  )
+  const style = {
+    background: `color-mix(in srgb, ${hue} 10%, transparent)`,
+    border: `1px solid color-mix(in srgb, ${hue} 25%, transparent)`,
+    color: hue,
+  }
+  const content = (
+    <>
+      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
+      {label}
+    </>
+  )
+  if (!onOpen) return <span className={className} style={style}>{content}</span>
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Show the failure signatures"
+      aria-label={`Signature ${label}: show the failure signatures`}
+      data-signature-chip=""
+      className={className}
+      style={style}
+    >
+      {content}
+    </button>
+  )
+}
+
 function RunsTable({
   runs, primarySignature, selectedIds, setSelectedIds, onTrigger, onDeep,
-  onCompareWithPrevious,
+  onCompareWithPrevious, onOpenSignatures,
   isQaEngineer,
   page, pages, total, onPageChange,
   datetimeSortDir, onToggleDatetimeSort,
@@ -1084,6 +934,8 @@ function RunsTable({
    *  to find the previous-of-same-suite candidate, so the lookup pool
    *  isn't broken by client-side pagination. */
   onCompareWithPrevious: (run: TestRun) => void
+  /** A row's signature chip opens the failure-signature side panel. */
+  onOpenSignatures: () => void
   isQaEngineer: boolean
   /** Pagination props — parent computes pages from full ``runs.length``. */
   page: number
@@ -1228,20 +1080,12 @@ function RunsTable({
                     />
                   </td>
                   <td style={{ padding: '8px 12px' }}>
-                    <span
-                      className={clsx(
-                        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px]',
-                        isOutlier && 'italic',
-                      )}
-                      style={{
-                        background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 10%, transparent)' : (failed ? 'color-mix(in srgb, var(--status-failed) 10%, transparent)' : 'color-mix(in srgb, var(--status-passed) 10%, transparent)'),
-                        border: `1px solid ${isOutlier ? 'color-mix(in srgb, var(--status-broken) 25%, transparent)' : (failed ? 'color-mix(in srgb, var(--status-failed) 25%, transparent)' : 'color-mix(in srgb, var(--status-passed) 25%, transparent)')}`,
-                        color: isOutlier ? 'var(--status-broken)' : (failed ? 'var(--status-failed)' : 'var(--status-passed)'),
-                      }}
-                    >
-                      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-                      {sigLabel}
-                    </span>
+                    <SignatureChip
+                      label={sigLabel}
+                      isOutlier={isOutlier}
+                      failed={failed}
+                      onOpen={primarySignature ? onOpenSignatures : undefined}
+                    />
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <span
@@ -1497,22 +1341,21 @@ export default function RunsPage() {
   // `manual_upload` feature flag.
   const uploadEnabled = useFeatureEnabled('manual_upload')
 
-  // Manual report upload (PRD MRU-4). Opens from the header button or via the
-  // sidebar deep-link ``/runs?upload=1``. Disabled in All-Projects mode — an
-  // upload must target one concrete project.
+  // Manual report upload (PRD MRU-4). Opens from the header's primary button
+  // or via the deep-link ``/runs?upload=1`` (bookmarks, docs). The modal asks
+  // for the project itself, so All Projects does not block it.
   const [searchParams, setSearchParams] = useSearchParams()
   const [uploadOpen, setUploadOpen] = useState(false)
-  // Auto-open the upload drawer when the deep-link condition (``?upload=1`` on a
-  // concrete project with the flag enabled) first becomes true. Tracked during
-  // render via the previous-value pattern instead of a setState-in-effect so a
-  // transition false→true opens once, and re-navigating after a close re-opens.
+  // Auto-open the upload drawer when the deep-link condition (``?upload=1`` with
+  // the flag enabled) first becomes true. Tracked during render via the
+  // previous-value pattern instead of a setState-in-effect so a transition
+  // false→true opens once, and re-navigating after a close re-opens.
   const uploadRequested = searchParams.get('upload') === '1' && uploadEnabled
   const shouldAutoOpenUpload = uploadRequested && isQaEngineer
   // Why the deep link could not honour the request. The reason has to be
   // *rendered*: it previously lived only in the disabled button's `title`, so
-  // arriving from the sidebar's "Upload Report" entry showed an unchanged runs
-  // list and no explanation — the reported bug. `?upload=1` stays in the URL,
-  // so resolving the reason opens the panel via the transition below.
+  // arriving from the "Upload Report" link showed an unchanged runs list and no
+  // explanation — the reported bug.
   const uploadBlockedReason = resolveUploadBlockedReason({
     uploadRequested,
     isQaEngineer,
@@ -1531,32 +1374,27 @@ export default function RunsPage() {
     }
   }
 
-  // Global shared time-window preference — selection here propagates
-  // to every other window-filtered page (and vice versa). Snapped to
-  // RunsPage's allowed set, which includes ``6`` (instead of 7) and
-  // ``0`` (= all time) so the shared value may differ from what other
-  // pages display.
+  // Global shared time-window preference — the toolbar's WindowPicker writes
+  // it, and a window picked on any other page arrives here (snapped to the
+  // picker's 24h-90d set, as the picker itself snaps it).
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
-  const days = snapToAllowed(storedDays, WINDOWS) as Window
-  const setDays = setStoredDays as (w: Window) => void
+  const days = snapToAllowed(storedDays, DEFAULT_WINDOW_OPTIONS)
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel } = usePageSuiteFilter()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  // Client-side table pagination. Analytics widgets (signature clustering,
-  // build velocity, KPIs) continue to consume the full fetched window so
-  // their derived metrics stay accurate; only the table view is sliced.
+  // The failure-signature side panel (P3: the cluster card became a drill-down).
+  const [signaturesOpen, setSignaturesOpen] = useState(false)
+  // Client-side table pagination. The banner, the signatures and the build
+  // history consume the full fetched window so their derived metrics stay
+  // accurate; only the table view is sliced.
   const TABLE_PAGE_SIZE = 25
-  // Analytics fetch size. Was 50 (capped) which made the Pipeline-signal
-  // denominator frozen at "of 50" no matter the selected window — KPIs
-  // and verdict reflected only the latest page slice. 500 covers
-  // realistic windows (1y of daily builds is ~365) so the verdict,
-  // cluster card, KPI strip and velocity grid summarise the actual
-  // window the user picked. ``runs.length`` may still be < server total
-  // when a project ingests >500 runs in-window; the disclosure footer
-  // surfaces that.
+  // Analytics fetch size. Was 50 (capped) which made the verdict's
+  // denominator frozen at "of 50" no matter the selected window. 500 covers
+  // realistic windows (1y of daily builds is ~365) so the verdict, the
+  // signatures and the velocity strip summarise the actual window the user
+  // picked.
   const ANALYTICS_FETCH_SIZE = 500
   const [tablePage, setTablePage] = useState(1)
   // Reset page + selection whenever the filters change so users aren't stuck
@@ -1571,12 +1409,12 @@ export default function RunsPage() {
     setSelectedIds(new Set())
   }
 
-  const { options: suiteOptions } = useSuiteOptions(days || 0)
+  const { options: suiteOptions } = useSuiteOptions(days)
 
   const { data, isLoading, error: runsError, mutate: retryRuns } = useRuns({
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
-    days: days || undefined,
+    days,
     ...(statusFilter && { status: statusFilter }),
     ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
   })
@@ -1605,13 +1443,11 @@ export default function RunsPage() {
   }, [sortedRuns, tablePage])
   const model = useMemo(() => buildPipelineModel(runs), [runs])
   const verdict = pickVerdict(model)
-  const sigLabel = model.primaryCluster ? shortSignatureLabel(model.primaryCluster) : null
 
-  // Bisect navigation — shared by every "Bisect" / "Start bisect" /
-  // "Bisect from green" / "Bisect from last green" button on the page.
-  // When either side is missing (no green run in window, or no failing
-  // run to compare against), toast a clear reason instead of nav'ing
-  // to a half-populated compare page.
+  // Bisect navigation — the banner's "Bisect from last green" and Build
+  // history's "Start bisect". When either side is missing (no green run in
+  // window, or no failing run to compare against), toast a clear reason
+  // instead of nav'ing to a half-populated compare page.
   const handleBisect = (): void => {
     const href = buildBisectHref(model)
     if (!href) {
@@ -1738,90 +1574,6 @@ export default function RunsPage() {
     }
   }
 
-  // Verdict copy ──────────────────────────────────────────────────────────
-  const summaryNode: React.ReactNode = (() => {
-    if (verdict === 'PENDING') return <>no builds in window</>
-    if (verdict === 'HEALTHY') return <>{model.totalRuns} builds passing</>
-    if (verdict === 'BROKEN') {
-      const sharesSig = model.primaryCluster && model.primaryCluster.members.length / model.failedRuns >= 0.8
-      return sharesSig
-        ? <>{model.failedRuns} of {model.totalRuns} builds failed with the same signature</>
-        : <>{model.failedRuns} of {model.totalRuns} builds failed</>
-    }
-    return <>{model.failedRuns} of {model.totalRuns} builds failed</>
-  })()
-
-  const lede: React.ReactNode = (() => {
-    if (verdict === 'PENDING')
-      return <>No builds in this window. Try a longer window or check that the reporter is firing.</>
-    if (verdict === 'HEALTHY')
-      return <>Every build in the last {days || '∞'} days passed. No regressions, no clusters — pipeline is green.</>
-    if (verdict === 'BROKEN' && model.primaryCluster) {
-      const matchN = model.primaryCluster.members.length
-      return (
-        <>
-          {model.failedRuns === model.totalRuns ? 'Every build in this window' : `${model.failedRuns} of ${model.totalRuns} builds`}
-          {' '}hit FAILED status, and {matchN} of {model.failedRuns} share an identical{' '}
-          <strong style={{ color: 'var(--color-text)' }}>{model.primaryCluster.passed}-pass / {model.primaryCluster.failed}-fail / {model.primaryCluster.total}-total</strong> pattern —
-          {' '}the same regression, re-triggered {matchN - 1 === 1 ? 'once' : `${matchN - 1} times`}.
-          {' '}Stop re-running. Bisect from the last green build.
-        </>
-      )
-    }
-    return <>Some builds failed in the window. Check the cluster card and the runs table for the breakdown.</>
-  })()
-
-  const issues: IssueRowSpec[] = []
-  if (model.failedRuns > 0 && model.passedRuns === 0) {
-    issues.push({
-      tone: 'bad',
-      Icon: AlertCircle,
-      body: (
-        <>
-          <strong>0 shippable builds.</strong> The last green Jenkins run produced
-          {' '}{model.lastGreen ? <code>#{model.lastGreen.build_number}</code> : 'a predecessor'}
-          {' '}{model.hoursSinceLastGreen != null ? `${model.hoursSinceLastGreen}h ago` : 'before this window'} — every build since has failed.
-        </>
-      ),
-      cta: { label: 'Bisect from green', onClick: handleBisect },
-    })
-  }
-  if (model.primaryCluster && model.primaryCluster.members.length >= 2) {
-    issues.push({
-      tone: 'warn',
-      Icon: TrendingUp,
-      body: (
-        <>
-          <strong>{model.primaryCluster.members.length} builds share signature <code>{sigLabel}</code></strong> — same {model.primaryCluster.passed}-pass/{model.primaryCluster.failed}-fail pattern.
-          {' '}<span className="text-[var(--color-text-muted)]">Run intelligence once, triage at the cluster level instead of {model.primaryCluster.members.length} times.</span>
-        </>
-      ),
-    })
-  }
-  if (model.hasMissingMetadata) {
-    issues.push({
-      tone: 'info',
-      Icon: AlertTriangle,
-      body: (
-        <>
-          Branch, release, and duration absent on {Math.round(100 - model.metadataCoveragePct)}% of rows — the Jenkins reporter isn't sending these fields.
-          {' '}<span className="text-[var(--color-text-muted)]">Cannot tell which feature branch broke things.</span>
-        </>
-      ),
-    })
-  }
-
-  const verdictCtas = {
-    primary: model.lastGreen
-      ? { label: 'Bisect from last green', onClick: handleBisect } as IssueRowSpec['cta']
-      : { label: 'Refresh', onClick: () => window.location.reload() } as IssueRowSpec['cta'],
-    secondary: [
-      runs[0]
-        ? { label: `Open intelligence · #${runs[0].build_number}`, onClick: () => navigate(`/runs/${runs[0].id}/intelligence`) } as IssueRowSpec['cta']
-        : null,
-    ].filter((c): c is IssueRowSpec['cta'] => c !== null),
-  }
-
   const onJumpToRow = (run: TestRun) => {
     const el = document.getElementById(`run-row-${run.id}`)
     if (el) {
@@ -1831,86 +1583,73 @@ export default function RunsPage() {
     }
   }
 
+  const theme = VERDICT_THEME[verdict]
+  const canBisect = buildBisectHref(model) !== null
+  const signatureCount = model.uniqueClustersCount
+  const subtitle = [
+    `Jenkins builds for ${projectLabel}`,
+    suiteLabel ? `Suite ${suiteLabel}` : null,
+    `${model.totalRuns} build${model.totalRuns === 1 ? '' : 's'} in window`,
+    `refreshed ${refreshedAt}`,
+  ].filter(Boolean).join(' · ')
+  // Header ⋯ (P3): the window-wide actions beyond the one primary + one secondary.
+  const overflow: OverflowItem[] = [
+    {
+      label: `Trigger all failed (${model.failedRuns})`,
+      icon: <Zap className="h-3.5 w-3.5" />,
+      onClick: () => void handleTriggerAllFailed(),
+      danger: true,
+      disabled: !isQaEngineer || model.failedRuns === 0,
+    },
+    {
+      label: `Deep all failed (${model.failedRuns})`,
+      icon: <Stethoscope className="h-3.5 w-3.5" />,
+      onClick: () => void handleDeepAllFailed(),
+      disabled: !isQaEngineer || model.failedRuns === 0,
+    },
+  ]
+
   return (
-    <PageShell>
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Test Runs
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Jenkins builds for</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {suiteLabel && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
-              </>
+    <PageShell className="space-y-4">
+      <PageHeader
+        compact
+        title="Test Runs"
+        subtitle={subtitle}
+        helpTopic={HELP_TOPIC}
+        actions={
+          <>
+            {/* The page's primary action (UX redesign P1): Upload left the
+                sidebar, so this is where it is found. */}
+            {uploadEnabled && (
+              <PrimaryBtn
+                onClick={() => setUploadOpen(true)}
+                disabled={!isQaEngineer}
+                title={
+                  !isQaEngineer
+                    ? 'QA Engineer role required'
+                    : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
+                }
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Upload report
+              </PrimaryBtn>
             )}
-            <span aria-hidden>·</span>
-            <span>{model.totalRuns} build{model.totalRuns === 1 ? '' : 's'} in window</span>
-            <span aria-hidden>·</span>
-            <span>refreshed {refreshedAt}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* The page's primary action (UX redesign P1): Upload left the
-              sidebar, so this is where it is found. */}
-          {uploadEnabled && (
-            <PrimaryBtn
-              onClick={() => setUploadOpen(true)}
-              disabled={!isQaEngineer}
-              title={
-                !isQaEngineer
-                  ? 'QA Engineer role required'
-                  : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
-              }
-            >
-              <Upload className="h-3.5 w-3.5" />
-              Upload report
-            </PrimaryBtn>
-          )}
-          <DangerBtn
-            onClick={handleTriggerAllFailed}
-            disabled={!isQaEngineer || model.failedRuns === 0}
-            title={isQaEngineer ? 'Re-fire the standard pipeline on every failed run in this window' : 'QA Engineer role required'}
-          >
-            <Zap className="h-3.5 w-3.5" />
-            Trigger all failed
-            <span className="ml-1 px-1.5 py-px rounded font-mono text-[10.5px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-              {model.failedRuns}
-            </span>
-          </DangerBtn>
-          <GhostBtn
-            onClick={handleDeepAllFailed}
-            disabled={!isQaEngineer || model.failedRuns === 0}
-            title="Run deep investigation on all failed runs"
-          >
-            <Stethoscope className="h-3.5 w-3.5" />
-            Deep all failed
-            <span className="ml-1 px-1.5 py-px rounded font-mono text-[10.5px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-              {model.failedRuns}
-            </span>
-          </GhostBtn>
-          <GhostSelect
-            value={days}
-            onChange={(v) => setDays(v)}
-            options={WINDOWS.map(w => ({ value: w, label: WINDOW_LABELS[w] }))}
-          />
-          <GhostSelect
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as StatusFilter)}
-            options={STATUS_FILTERS.map(s => ({ value: s, label: STATUS_LABELS[s] }))}
-          />
-          <SuiteFilterSelect
-            value={selectedSuite}
-            onChange={setSelectedSuite}
-            options={suiteOptions}
-            allLabel="All suites"
-          />
-        </div>
-      </header>
+            {model.primaryCluster && (
+              <GhostBtn
+                onClick={() => setSignaturesOpen(true)}
+                title="Failed builds grouped by their pass / fail / total signature"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Failure signatures
+                <span className="ml-1 px-1.5 py-px rounded font-mono text-[10.5px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                  {signatureCount}
+                </span>
+              </GhostBtn>
+            )}
+          </>
+        }
+        overflow={overflow}
+      />
 
       {uploadBlockedReason === 'role' && (
         <div
@@ -1931,24 +1670,32 @@ export default function RunsPage() {
         </div>
       )}
 
-      <VerdictCard
-        model={model}
-        verdict={verdict}
-        summary={summaryNode}
-        lede={lede}
-        issues={issues}
-        ctas={verdictCtas}
+      {/* One toolbar row: the global window, the status, the suite. */}
+      <div className="flex flex-wrap items-center gap-3" data-runs-toolbar="">
+        <WindowPicker />
+        <GhostSelect
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as StatusFilter)}
+          options={STATUS_FILTERS.map(s => ({ value: s, label: STATUS_LABELS[s] }))}
+          ariaLabel="Run status"
+        />
+        <SuiteFilterSelect
+          value={selectedSuite}
+          onChange={setSelectedSuite}
+          options={suiteOptions}
+          allLabel="All suites"
+        />
+      </div>
+
+      <StatusBanner
+        state={theme.banner}
+        title={`${theme.label} · ${verdictSummary(model, verdict)}`}
+        facts={runsBannerFacts(model)}
+        action={canBisect ? { label: 'Bisect from last green', onClick: handleBisect } : undefined}
       />
 
-      {/* KPI strip */}
-      <RunKpiStrip model={model} />
-
-      {/* Runs table is full-width — matches the VerdictCard / KPI strip
-          widths above it. Layout updated 2026-05-15: the previous
-          1.65fr / 1fr grid cramped the table into ~60% of the screen.
-          Users asked for the table to breathe and the context cards to
-          sit parallel to the Failure signature analysis instead. */}
-      <div className="mb-3.5">
+      {/* The page's primary content: the runs table. */}
+      <div data-primary="">
         <RunsTable
           runs={tableRuns}
           primarySignature={model.primaryCluster?.signature ?? null}
@@ -1957,6 +1704,7 @@ export default function RunsPage() {
           onTrigger={handleTrigger}
           onDeep={handleDeep}
           onCompareWithPrevious={handleCompareWithPrevious}
+          onOpenSignatures={() => setSignaturesOpen(true)}
           isQaEngineer={isQaEngineer}
           page={tablePage}
           pages={tableTotalPages}
@@ -1970,21 +1718,36 @@ export default function RunsPage() {
         />
       </div>
 
-      <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          {model.primaryCluster && (
-            <SignatureClusterCard
-              primaryCluster={model.primaryCluster}
-              outlierClusters={model.outlierClusters}
-              totalRuns={model.totalRuns}
-              onJumpToRow={onJumpToRow}
-            />
-          )}
+      <Disclosure
+        title="How this verdict is computed"
+        summary={verdict === 'PENDING' ? 'not measured' : `pipeline health ${model.composite} / 100`}
+      >
+        <VerdictDetails model={model} verdict={verdict} />
+      </Disclosure>
+
+      <Disclosure title="Build history" summary="the last 14 builds">
+        <div className="grid items-start gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+          <BuildVelocityCard cells={model.velocityCells} redStreak={model.redStreak} />
+          <div className="flex min-w-0 flex-col gap-3.5">
+            <BuildPassRate model={model} />
+            <LastGreenCallout model={model} onBisect={handleBisect} />
+          </div>
         </div>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <LastGreenCallout model={model} onBisect={handleBisect} />
-          <BuildVelocityCard cells={model.velocityCells} redStreak={model.redStreak} />        </div>
-      </div>
+      </Disclosure>
+
+      <SidePanel
+        open={signaturesOpen}
+        onClose={() => setSignaturesOpen(false)}
+        title="Failure signatures"
+        width={480}
+      >
+        <SignatureClusters
+          primaryCluster={model.primaryCluster}
+          outlierClusters={model.outlierClusters}
+          totalRuns={model.totalRuns}
+          onJumpToRow={onJumpToRow}
+        />
+      </SidePanel>
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.

@@ -351,7 +351,9 @@ test.describe('journey spine', () => {
     await page.goto('/runs')
     // The run's own identity, not the page chrome: a heading only proves the
     // route rendered, and this chain is about the run travelling with it.
-    await expect(page.getByText('spine-001').first()).toBeVisible({ timeout: 15_000 })
+    // The table row's own selector names the build (UX redesign P3 removed the
+    // card and panel rows that also printed it).
+    await expect(page.getByRole('checkbox', { name: 'Select #spine-001' })).toBeVisible({ timeout: 15_000 })
 
     // hop 2 — the run's own page names the failing test
     await page.goto(`/runs/${RUN_ID}`)

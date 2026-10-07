@@ -12,8 +12,8 @@
  * height the real plot will draw at. Two things follow:
  *
  *   - no layout shift: when the chunk arrives the real frames take exactly the
- *     space this held, so the per-suite and top-failing tables under them do
- *     not move (they used to jump ~400 px a second after they painted);
+ *     space this held, so the tables under them do not move (they used to
+ *     jump ~400 px a second after they painted);
  *   - the takeaway this paints with the page's data is the page's Largest
  *     Contentful Paint candidate, and the real frame's identical paragraph is
  *     not a LARGER element, so it is not a new LCP entry: the page's LCP stays
@@ -38,17 +38,14 @@
 import { usePresentationStore } from '@/store/presentationStore'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
 import {
-  FAILURES_TITLE,
   STATUS_TITLE,
   SUITES_TITLE,
   SUMMARY_BARS_HEIGHT,
   SUMMARY_DONUT_HEIGHT,
   SUMMARY_HEADLINE_CLASS,
   SUMMARY_HEADLINE_ROW_CLASS,
-  SUMMARY_TOP_FAILING_CLASS,
   SUMMARY_TREND_CHROME_PX,
   SUMMARY_TREND_HEIGHT,
-  failuresTakeaway,
   statusTakeaway,
   suitesTakeaway,
 } from './summaryCatalogueWords'
@@ -75,15 +72,12 @@ const BAR_TOOLBAR_BUTTON =
 // ── The plot heights the real charts draw at (held equal by the drift test) ──
 /** `PRESENTATION_MODE_SCALE` (framePlotHeight.ts): a drawing's box grows by it while presentation mode is on. */
 const PRESENTATION_MODE_SCALE = 16 / 11
-/** `MIN_BAR_ROW_HEIGHT`, `MAX_BARS_PER_PAGE`, `TIE_CAP_EXTRA` (BarChart.model.ts). */
+/** `MIN_BAR_ROW_HEIGHT`, `MAX_BARS_PER_PAGE` (BarChart.model.ts). */
 const BAR_ROW_PX = 20
 const BARS_PER_PAGE = 50
-const TIE_CAP_EXTRA = 5
 /** BarChart.tsx: margins + value axis (68), and a status chart's legend on top (32). */
 const RANKED_CHROME_PX = 68
 const STATUS_CHROME_PX = RANKED_CHROME_PX + 32
-/** Summary's failing-test bars draw the top 10 (`topN`). */
-const FAILURES_TOP_N = 10
 
 /** `formatNumber`'s output for a count (en-US, whole numbers), without its module. */
 const COUNT_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -192,80 +186,69 @@ function SwapWords({ labels }: { labels: readonly [string, string] }) {
   )
 }
 
-/** The failing-test bars: the top 10, plus any tied with the 10th (capped), as `rankedModel` keeps them. */
-function failuresKept(report: SummaryReport): { bars: number; ties: number; capped: boolean } {
-  const values = report.top_failing_tests.map((row) => row.failures).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
-  const sorted = [...values].sort((a, b) => b - a)
-  if (sorted.length <= FAILURES_TOP_N) return { bars: sorted.length, ties: 0, capped: false }
-  const boundary = sorted[FAILURES_TOP_N - 1]
-  const cap = FAILURES_TOP_N + TIE_CAP_EXTRA
-  let end = FAILURES_TOP_N
-  while (end < sorted.length && end < cap && sorted[end] === boundary) end += 1
-  return { bars: end, ties: end - FAILURES_TOP_N, capped: end === cap && sorted.length > cap && sorted[cap] === boundary }
-}
-
 export interface SummaryCatalogueShellProps {
-  part: 'headline' | 'top-failing'
+  /** `SummaryCatalogue`'s parts, held one for one: the three together, or one of them. */
+  part: 'headline' | 'suites' | 'status' | 'trend'
   report: SummaryReport
+  /** The page's window, days (the real trend's caption follows it; the boxes here do not). */
   days: number
   mode: SummaryReportMode
 }
 
-export default function SummaryCatalogueShell({ part, report, days, mode }: SummaryCatalogueShellProps) {
-  if (part === 'top-failing') {
-    const { bars, ties, capped } = failuresKept(report)
-    const drawn = report.top_failing_tests.some((row) => count(row.failures) > 0)
-    const notes =
-      ties > 0
-        ? [
-            `Includes ${formatNumber(ties)} more tied with the ${FAILURES_TOP_N}th${capped ? `, capped at ${FAILURES_TOP_N + TIE_CAP_EXTRA}` : ''}: ` +
-              `${formatNumber(bars)} bars in all.`,
-          ]
-        : []
-    return (
-      <div className={SUMMARY_TOP_FAILING_CLASS} aria-busy="true" data-summary-catalogue-shell="top-failing">
-        <ShellFrame
-          title={FAILURES_TITLE}
-          takeaway={failuresTakeaway(days, mode)}
-          drawn={drawn}
-          plotHeight={barPlotHeight(bars, RANKED_CHROME_PX)}
-          height={SUMMARY_BARS_HEIGHT}
-          footer={{ notes, pages: 1 }}
-        />
-      </div>
-    )
-  }
-
+export default function SummaryCatalogueShell({ part, report, mode }: SummaryCatalogueShellProps) {
   const { totals, suites } = report
   const donutDrawn = count(totals.passed) + count(totals.failed) + count(totals.broken) + count(totals.skipped) > 0
   const suitesDrawn = suites.some((row) => count(row.passed) + count(row.failed) + count(row.broken) + count(row.skipped) > 0)
   const pages = Math.max(1, Math.ceil(suites.length / BARS_PER_PAGE))
+  const donut = (
+    <div className="min-w-0">
+      <ShellFrame
+        title={STATUS_TITLE}
+        takeaway={statusTakeaway(report, mode)}
+        drawn={donutDrawn}
+        plotHeight={SUMMARY_DONUT_HEIGHT}
+        height={SUMMARY_DONUT_HEIGHT}
+      />
+    </div>
+  )
+  const bars = (
+    <div className="min-w-0">
+      <ShellFrame
+        title={SUITES_TITLE}
+        takeaway={suitesTakeaway(report, mode)}
+        drawn={suitesDrawn}
+        modeToggle
+        plotHeight={barPlotHeight(suites.length, STATUS_CHROME_PX)}
+        height={SUMMARY_BARS_HEIGHT}
+        footer={{ notes: pages > 1 ? [`${formatNumber(suites.length)} bars in all`] : [], pages }}
+      />
+    </div>
+  )
+  // The trend's own LazySection placeholder, as the section first renders it.
+  const trend = <div aria-hidden="true" style={{ minHeight: SUMMARY_TREND_HEIGHT + SUMMARY_TREND_CHROME_PX }} />
+
+  // One part alone, in the real part's box (`SummaryCatalogue`).
+  if (part === 'suites' || part === 'status') {
+    return (
+      <div className={SUMMARY_HEADLINE_CLASS} aria-busy="true" data-summary-catalogue-shell={part}>
+        {part === 'suites' ? bars : donut}
+      </div>
+    )
+  }
+  if (part === 'trend') {
+    return (
+      <div className="min-w-0" aria-busy="true" data-summary-catalogue-shell="trend">
+        {trend}
+      </div>
+    )
+  }
   return (
     <div className={SUMMARY_HEADLINE_CLASS} aria-busy="true" data-summary-catalogue-shell="headline">
       <div className={SUMMARY_HEADLINE_ROW_CLASS}>
-        <div className="min-w-0">
-          <ShellFrame
-            title={STATUS_TITLE}
-            takeaway={statusTakeaway(report, mode)}
-            drawn={donutDrawn}
-            plotHeight={SUMMARY_DONUT_HEIGHT}
-            height={SUMMARY_DONUT_HEIGHT}
-          />
-        </div>
-        <div className="min-w-0">
-          <ShellFrame
-            title={SUITES_TITLE}
-            takeaway={suitesTakeaway(report, mode)}
-            drawn={suitesDrawn}
-            modeToggle
-            plotHeight={barPlotHeight(suites.length, STATUS_CHROME_PX)}
-            height={SUMMARY_BARS_HEIGHT}
-            footer={{ notes: pages > 1 ? [`${formatNumber(suites.length)} bars in all`] : [], pages }}
-          />
-        </div>
+        {donut}
+        {bars}
       </div>
-      {/* The trend's own LazySection placeholder, as the section first renders it. */}
-      <div aria-hidden="true" style={{ minHeight: SUMMARY_TREND_HEIGHT + SUMMARY_TREND_CHROME_PX }} />
+      {trend}
     </div>
   )
 }

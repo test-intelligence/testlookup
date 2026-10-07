@@ -1,25 +1,39 @@
 /**
- * Test Coverage — verdict-led redesign per
- * design_handoff_test_coverage/README.md.
+ * Test Coverage — the UX redesign's page template (P3, `02-design-spec.md`
+ * §2/§5): "which suites are thin, failing, stale, untagged?"
  *
- * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (project · window · updated) + saved Views +
- *             24h/7d/14d/30d/90d window picker + suite filter + CSV Export +
- *             "View all suites" (the suites list, /suites).
- *   Verdict → 1.45fr | 1fr split. Left: pulsing eyebrow → 26 px
- *             "<Health> · <reason>" headline → lede → up to 3 issue rows
- *             (bad / warn / info) → action buttons. Right: 44 px health
- *             score + threshold-marked meter (red→amber→green) + 2×2
- *             weighted dimension grid (Pass Rate 35 % / Tag Quality 25 % /
- *             Run Cadence 25 % / Suite Breadth 15 %).
- *   KPIs    → 5 cells: Unique tests · Test suites (+ untagged badge) ·
- *             Total executions (+ Δ, later vs earlier half of the window) ·
- *             Pass rate breakdown · Run cadence (days_with_runs / window).
- *   Body    → 1.65fr | 1fr.
- *     Left  → Suite breakdown (stacked bars per suite, with hatched
- *             "Untagged" segment) + Untagged-executions callout (data
- *             quality framing).
- *     Right → Coverage gaps · Run-cadence heatmap (window-day grid).
+ * Top to bottom (at 1440 x 900 the suite table starts within 300 px of the
+ * content top):
+ *   Header  → `PageHeader` (compact): title, the crumb as its one-line
+ *             subtitle (project · suite · window · latest run suite ·
+ *             updated), the help **?**, and on its right the page's one
+ *             filter row (the suite filter, the shared `WindowPicker`, the
+ *             saved Views menu) and the **⋯** menu: Compare to previous
+ *             window, Export CSV, Open triage queue, View all suites.
+ *   KPIs    → `KpiStrip`, 5 compact tiles: Unique tests · Test suites (+
+ *             untagged) · Total executions (+ Δ, later vs earlier half of the
+ *             window) · Pass rate breakdown · Run cadence (days_with_runs /
+ *             window). The comparison strip, when asked for, sits under it.
+ *   Body    → 1.65fr | 1fr from 768 px.
+ *     Left  → the suite coverage table (`data-primary`): one row per suite,
+ *             a stacked bar, its executions, its pass rate and, where the
+ *             window shows one, its gap ("No passing run", "Too few runs");
+ *             then the Untagged-executions callout (data quality).
+ *     Right → Run cadence (the window-day grid).
+ *   Score   → a collapsed `Disclosure` ("How this score is computed"): the
+ *             verdict and its words, the health score on its threshold meter
+ *             (red→amber→green), the 2×2 weighted dimension grid (Pass Rate
+ *             35 % / Tag Quality 25 % / Run Cadence 25 % / Suite Breadth 15 %)
+ *             and the coverage gaps that move it. Its header states the
+ *             verdict and the score.
+ *   Tabs    → `?tab=`: Coverage map (the treemap, default) · Env × release
+ *             heatmap — the Wave 3 sections, each in its own tab.
+ *
+ * P3 moved every section; none was rebuilt. The verdict card is gone: its
+ * score and dimensions are the Disclosure, its issue rows repeated the table,
+ * the untagged callout and the cadence tile, and its two buttons are in the
+ * ⋯ menu. So are the page-local window picker, KPI cell and buttons (the
+ * shared primitives replace them).
  *
  * P2 (UX redesign, "remove the noise"): the invented 4-stage workflow ribbon
  * and its evidence counts, the provenance footer, the recommended-actions
@@ -32,9 +46,9 @@
  * "Unknown Suite" / empty / null in the suites response.
  */
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
-  AlertTriangle, ChevronRight, Clock, Download, Layers, ShieldCheck, TestTube, XCircle,
+  BarChart3, Calendar, Download, GitCompare, Layers, ListChecks, ShieldCheck, TestTube, TrendingUp,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -42,8 +56,16 @@ import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import PageHeader from '@/components/ui/PageHeader'
+import WindowPicker from '@/components/ui/WindowPicker'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import Disclosure from '@/components/ui/Disclosure'
+import Tabs from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
@@ -63,7 +85,7 @@ import { BODY_GRID_MIN_WIDTH, BODY_GRID_ONE_COLUMN, BODY_GRID_TWO_COLUMNS, useMi
 import { countTones, dayWindow, intensityLevel, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
-import CoverageAdvanced from '@/components/reports/catalogue/CoverageAdvanced'
+import CoverageAdvanced, { type CoverageSectionId } from '@/components/reports/catalogue/CoverageAdvanced'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 
@@ -72,73 +94,71 @@ import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
 
+/** The help drawer's topic for this page (the header's **?**). */
+const HELP_TOPIC = helpTopicParam('/coverage')
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+/** The page's own tabs, in `?tab=` (the map is the default and the clean URL). */
+const COVERAGE_TABS = [
+  { id: 'map', label: 'Coverage map' },
+  { id: 'heatmap', label: 'Env × release heatmap' },
+] as const
+type CoverageTab = (typeof COVERAGE_TABS)[number]['id']
+const COVERAGE_TAB_IDS: readonly CoverageTab[] = COVERAGE_TABS.map((t) => t.id)
+
+/**
+ * Which Wave 3 section each tab renders (`CoverageAdvanced`'s `sections`, by
+ * the sections' own ids). The other tab's section is not rendered at all, so
+ * it never mounts and never asks for its data.
+ */
+const COVERAGE_TAB_SECTIONS: Record<CoverageTab, readonly CoverageSectionId[]> = {
+  map: ['coverage-map'],
+  heatmap: ['heatmap-suite_environment'],
+}
+
 // ── Verdict thresholds ────────────────────────────────────────────────────
 type Verdict = 'HEALTHY' | 'AT_RISK' | 'BLOCKED' | 'PENDING'
 
+/** The verdict's words and hues (the score's pill and number; the verdict line in the score disclosure). */
 const VERDICT_THEME: Record<Verdict, {
-  border: string
-  glow: string
-  bar: string
-  eyebrow: string
   gate: string
   pillBg: string
   pillBd: string
   pillFg: string
   meter: string
   label: string
-  pulse: boolean
 }> = {
   HEALTHY: {
-    border: 'color-mix(in srgb, var(--status-passed) 35%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-go)',
-    eyebrow:'var(--status-passed)',
     gate:   'var(--status-passed)',
     pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)',
     pillFg: 'var(--status-passed)',
     meter:  'var(--status-passed)',
     label:  'Healthy',
-    pulse:  false,
   },
   AT_RISK: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrow:'var(--status-broken)',
     gate:   'var(--status-broken)',
     pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)',
     pillFg: 'var(--status-broken)',
     meter:  'var(--status-broken)',
     label:  'At risk',
-    pulse:  true,
   },
   BLOCKED: {
-    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
-    bar:    'var(--gate-no-go)',
-    eyebrow:'var(--status-failed)',
     gate:   'var(--status-failed)',
     pillBg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
     pillBd: 'var(--alert-border-soft)',
     pillFg: 'var(--status-failed)',
     meter:  'var(--status-failed)',
     label:  'Blocked',
-    pulse:  true,
   },
   PENDING: {
-    border: 'var(--color-border)',
-    glow:   'transparent',
-    bar:    'var(--color-border-light)',
-    eyebrow:'var(--color-text-muted)',
     gate:   'var(--color-text-secondary)',
     pillBg: 'var(--color-bg-secondary)',
     pillBd: 'var(--color-border)',
     pillFg: 'var(--color-text-muted)',
     meter:  'var(--color-text-muted)',
     label:  'Pending',
-    pulse:  false,
   },
 }
 
@@ -373,208 +393,44 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
-// ── Issue derivation ───────────────────────────────────────────────────────
-type IssueTone = 'bad' | 'warn' | 'info'
-interface Issue {
-  tone: IssueTone
-  Icon: typeof XCircle
-  body: React.ReactNode
-  cta?: { label: string; to?: string; onClick?: () => void }
-}
-
-function deriveIssues(model: ReturnType<typeof computeHealthModel>, suites: CoverageSuite[], days: number, navigate: (to: string) => void): Issue[] {
-  const issues: Issue[] = []
-
-  // 1. Failing suite — surface the worst pass-rate suite if any have any failures.
-  const failingSuites = suites
-    .filter(s => !isUntaggedRow(s) && (s.failed > 0))
-    .sort((a, b) => a.pass_rate - b.pass_rate)
-  if (failingSuites.length > 0) {
-    const worst = failingSuites[0]
-    const totalRuns = worst.passed + worst.failed + worst.skipped
-    issues.push({
-      tone: 'bad',
-      Icon: XCircle,
-      body: (
-        <>
-          <strong>{Math.round(worst.pass_rate)}% pass rate</strong> in <code>{worst.suite_name}</code> — {worst.failed} of {totalRuns} executions failed.
-          {failingSuites.length > 1 && <> <span className="dim">+{failingSuites.length - 1} more failing suite{failingSuites.length - 1 === 1 ? '' : 's'}.</span></>}
-        </>
-      ),
-      cta: { label: 'Triage', onClick: () => navigate(`/failures?days=${days}`) },
-    })
-  }
-
-  // 2. Untagged runs (data-quality issue).
-  if (model.untaggedRuns > 0 && model.totalRuns > 0) {
-    const pct = Math.round((model.untaggedRuns / model.totalRuns) * 100)
-    issues.push({
-      tone: 'warn',
-      Icon: AlertTriangle,
-      body: (
-        <>
-          <strong>{model.untaggedRuns} executions un-tagged</strong> — {pct}% of all runs landed in <em>Unknown Suite</em>.
-          {' '}<span className="dim">Likely a missing label in the test runner.</span>
-        </>
-      ),
-    })
-  }
-
-  // 3. Run cadence — only N of D days had executions.
-  if (model.daysWithRuns < Math.max(1, Math.floor(days * 0.5))) {
-    issues.push({
-      tone: 'info',
-      Icon: Clock,
-      body: (
-        <>
-          <strong>Only {model.daysWithRuns} of {days} day{days === 1 ? '' : 's'}</strong> had executions.
-          {' '}<span className="dim">Re-enable scheduled runs or extend the window for a meaningful trend.</span>
-        </>
-      ),
-    })
-  }
-
-  return issues.slice(0, 3)
-}
-
-// ── Atoms ──────────────────────────────────────────────────────────────────
-function GhostBtn({
-  children, onClick, title, disabled,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50"
-      style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {children}
-    </button>
-  )
-}
-
-function PrimaryBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
-      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
-    >
-      {children}
-    </button>
-  )
-}
-
-function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window) => void }) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Window"
-      className="flex items-center gap-0 p-0.5 rounded-md"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      {WINDOWS.map((w) => {
-        const active = value === w
-        return (
-          <button
-            key={w}
-            role="tab"
-            type="button"
-            aria-selected={active}
-            onClick={() => onChange(w)}
-            className={clsx(
-              'px-3 py-1 text-[13px] font-medium tabular-nums rounded-sm transition-colors',
-              active
-                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {w === 1 ? '24h' : `${w}d`}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Verdict card ──────────────────────────────────────────────────────────
-function VerdictCard({
-  model, verdict, lede, issues, onOpenTriage, onCompare, comparing,
+// ── Score disclosure ──────────────────────────────────────────────────────
+/**
+ * What the verdict card held, in the collapsed "How this score is computed"
+ * disclosure below the suite table (P3): the verdict and its one-line
+ * action, the words that say how to read it, the coverage gaps that move the
+ * score, the health score on its meter and the four weighted dimensions. The
+ * card's issue rows are not here: each repeated a fact the page already
+ * shows (the failing suite: the table; the untagged executions: the callout
+ * and the suites tile; the cadence: the Run cadence tile and strip).
+ */
+function ScoreDetails({
+  model, verdict, lede, gaps,
 }: {
   model: ReturnType<typeof computeHealthModel>
   verdict: Verdict
   lede: React.ReactNode
-  issues: Issue[]
-  onOpenTriage: () => void
-  onCompare: () => void
-  /** When true, the CTA flips to "Hide comparison" — same toggle pattern
-   *  as ``FailureAnalysisPage``. The inline strip is rendered by the
-   *  page, not by this card, so swapping branches doesn't reflow the
-   *  verdict body. */
-  comparing: boolean
+  gaps: GapRow[]
 }) {
   const t = VERDICT_THEME[verdict]
   return (
     <section
       aria-label="Coverage verdict"
-      aria-live="polite"
-      className="relative rounded-xl border overflow-hidden grid gap-6 verdict-grid"
-      style={{
-        gridTemplateColumns: '1.45fr 1fr',
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-        marginBottom: 14,
-      }}
+      // One column below 1024 px; from lg the card's 1.45fr | 1fr.
+      className="grid gap-6 grid-cols-1 lg:grid-cols-[1.45fr_1fr]"
     >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: t.bar,
-              animation: t.pulse ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-            }}
-            aria-hidden
-          />
-          Coverage health
-        </span>
-        <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          <span style={{ color: t.gate }}>{t.label}</span>
-          <span className="text-[var(--color-text-muted)] mx-2">·</span>
-          <span>{verdictAction(verdict, model)}</span>
-        </h2>
-        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-          {lede}
-        </p>
-
-        <div className="flex flex-col gap-2">
-          {issues.length === 0
-            ? <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">No outstanding coverage issues.</p>
-            : issues.map((iss, i) => <IssueRow key={i} issue={iss} />)
-          }
+      <div className="flex flex-col gap-3.5 min-w-0">
+        <div>
+          <h2 className="text-[15px] font-semibold m-0 mb-1.5 text-[var(--color-text)]">
+            <span style={{ color: t.gate }}>{t.label}</span>
+            <span className="text-[var(--color-text-muted)] mx-2">·</span>
+            <span>{verdictAction(verdict, model)}</span>
+          </h2>
+          <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+            {lede}
+          </p>
         </div>
-
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          <PrimaryBtn onClick={onOpenTriage}>Open triage queue</PrimaryBtn>
-          <GhostBtn onClick={onCompare}>
-            {comparing ? 'Hide comparison' : 'Compare to previous window'}
-          </GhostBtn>
-        </div>
+        <CoverageGaps gaps={gaps} />
       </div>
-
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
         <HealthMeter model={model} verdict={verdict} />
         <DimensionGrid dimensions={model.dimensions} />
@@ -588,7 +444,7 @@ function verdictAction(v: Verdict, model: ReturnType<typeof computeHealthModel>)
   if (v === 'PENDING') return 'awaiting executions'
   const failing = model.dimensions.filter(d => d.tone === 'bad').length
   if (v === 'BLOCKED') return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} below threshold` : 'critical issues blocking'
-  return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} ${failing === 1 ? 'needs' : 'need'} attention` : 'review the issues below'
+  return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} ${failing === 1 ? 'needs' : 'need'} attention` : 'review the gaps below'
 }
 
 // ── Coverage comparison strip ─────────────────────────────────────────────
@@ -700,37 +556,6 @@ function CoverageCompareCell({
   )
 }
 
-function IssueRow({ issue }: { issue: Issue }) {
-  const palette = {
-    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
-    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
-    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
-  }[issue.tone]
-  const Icon = issue.Icon
-  return (
-    <div
-      className="grid gap-2.5 items-center rounded-md border"
-      style={{ gridTemplateColumns: '22px 1fr auto', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
-    >
-      <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="text-[13px] text-[var(--color-text)] leading-[1.4] issue-body">{issue.body}</div>
-      {issue.cta && (
-        issue.cta.to
-          ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
-              {issue.cta.label} →
-            </Link>
-          : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
-              {issue.cta.label} →
-            </button>
-      )}
-    </div>
-  )
-}
-
 function HealthMeter({ model, verdict }: { model: ReturnType<typeof computeHealthModel>; verdict: Verdict }) {
   const t = VERDICT_THEME[verdict]
   const score = model.composite
@@ -809,64 +634,34 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
   )
 }
 
-// ── KPI strip ─────────────────────────────────────────────────────────────
-type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
-
-interface KpiCellProps {
-  Icon?: typeof TestTube
-  label: string
-  value: React.ReactNode
-  meta?: React.ReactNode
-  tone?: KpiTone
-  isFirst?: boolean
-  isLast?: boolean
-}
-
-function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }: KpiCellProps) {
-  const valueColor =
-    tone === 'good'   ? 'var(--status-passed)' :
-    tone === 'warn'   ? 'var(--status-broken)' :
-    tone === 'bad'    ? 'var(--status-failed)' :
-    tone === 'accent' ? 'var(--color-accent)' :
-    'var(--color-text)'
-  return (
-    <div
-      className="flex flex-col gap-1"
-      style={{
-        padding: '14px 18px',
-        background: 'var(--color-bg-card)',
-        borderTop:    '1px solid var(--color-border)',
-        borderBottom: '1px solid var(--color-border)',
-        borderRight:  '1px solid var(--color-border)',
-        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
-        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
-        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
-        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
-        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
-      }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {Icon && <Icon className="h-3 w-3 opacity-70" />}
-        <span>{label}</span>
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
-        {value}
-      </div>
-      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-    </div>
-  )
-}
-
-/** A measured change, in percent. An unmeasured one is not drawn at all (the caller omits it), never "no change". */
-function Delta({ value }: { value: number }) {
-  if (value === 0) return <span className="tabular-nums text-[var(--color-text-muted)]">no change</span>
-  const sign = value > 0 ? '+' : '−'
-  const color = value > 0 ? 'var(--status-passed)' : 'var(--status-failed)'
-  return <span className="tabular-nums font-medium" style={{ color }}>{sign}{Math.abs(Math.round(value))}%</span>
-}
-
 // ── Suite breakdown ────────────────────────────────────────────────────────
-function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; totalExecutions: number }) {
+/** A suite's own gap in the window: the two per-suite rows `buildGaps` lists, for every suite. */
+interface SuiteGapFlag {
+  tone: 'bad' | 'warn'
+  label: string
+  /** The gap in full (the flag's tooltip). */
+  title: string
+}
+
+function suiteGapFlag(suite: CoverageSuite, days: number): SuiteGapFlag | null {
+  if (isUntaggedRow(suite)) return null
+  if (suite.failed > 0 && suite.passed === 0) {
+    return { tone: 'bad', label: 'No passing run', title: `No passing run in ${days}d — blocks regression baseline` }
+  }
+  if (suite.passed + suite.failed + suite.skipped < 3) {
+    return { tone: 'warn', label: 'Too few runs', title: 'No baseline — too few runs to compare' }
+  }
+  return null
+}
+
+/**
+ * The page's one primary content (P3, `data-primary`): every suite in the
+ * window — its stacked bar, its executions, its pass rate and, where the
+ * window shows one, its gap (a fifth column, drawn only when a suite has a
+ * gap, in the full layout). The coverage response has no per-suite last run,
+ * so the table shows none.
+ */
+function SuiteBreakdown({ suites, totalExecutions, days }: { suites: CoverageSuite[]; totalExecutions: number; days: number }) {
   const tagged   = suites.filter(s => !isUntaggedRow(s))
   const untagged = suites.filter(isUntaggedRow)
   const visible = [...tagged, ...untagged]
@@ -876,14 +671,18 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
   // grid at every viewport): see `suiteRowsLayout`.
   const [rowsRef, rowsWidth] = useContainerWidth<HTMLDivElement>()
   const layout = suiteRowsLayout(rowsWidth)
+  const flags = visible.map((s) => suiteGapFlag(s, days))
+  const flagColumn = layout === 'full' && flags.some(Boolean)
   return (
     <section
       aria-label="Suite coverage breakdown"
+      data-primary=""
       className="rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '16px 18px 18px' }}
     >
       <div className="flex items-center justify-between gap-2.5 flex-wrap mb-3.5">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Suite coverage breakdown</h3>
+        {/* h2: the page's primary content, the first heading under the title (P3). */}
+        <h2 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Suite coverage breakdown</h2>
         <div className="flex items-center gap-3 text-[11.5px] text-[var(--color-text-muted)]">
           <Legend color="var(--status-passed)" label="Passed" />
           <Legend color="var(--status-failed)" label="Failed" />
@@ -911,7 +710,7 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
         role={visible.length > 0 ? 'table' : undefined}
         aria-label={visible.length > 0 ? 'Suites' : undefined}
         data-suite-rows-layout={layout}
-        style={{ gridTemplateColumns: SUITE_ROWS_COLUMNS[layout], columnGap: 16 }}
+        style={{ gridTemplateColumns: flagColumn ? `${SUITE_ROWS_COLUMNS[layout]} auto` : SUITE_ROWS_COLUMNS[layout], columnGap: 16 }}
       >
         {visible.length === 0 && (
           <div className="text-[12.5px] text-[var(--color-text-muted)] py-6 text-center" style={{ gridColumn: '1 / -1' }}>
@@ -919,7 +718,14 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
           </div>
         )}
         {visible.map((s, i) => (
-          <SuiteRow key={`${s.suite_name}-${i}`} suite={s} totalExecutions={totalExecutions} isLast={i === visible.length - 1} layout={layout} />
+          <SuiteRow
+            key={`${s.suite_name}-${i}`}
+            suite={s}
+            totalExecutions={totalExecutions}
+            isLast={i === visible.length - 1}
+            layout={layout}
+            gap={flagColumn ? (flags[i] ?? 'none') : undefined}
+          />
         ))}
       </div>
 
@@ -954,11 +760,14 @@ function SuiteRow({
   totalExecutions,
   isLast,
   layout,
+  gap,
 }: {
   suite: CoverageSuite
   totalExecutions: number
   isLast: boolean
   layout: SuiteRowsLayout
+  /** The gap column's cell: a flag, `'none'` (an empty cell), or `undefined` (no gap column). */
+  gap?: SuiteGapFlag | 'none'
 }) {
   const stacked = layout === 'stacked'
   const untagged = isUntaggedRow(suite)
@@ -1040,6 +849,24 @@ function SuiteRow({
         {untagged ? '—' : `${passRate}%`}
         <span className="sr-only">Total executions across all suites: {totalExecutions}</span>
       </div>
+
+      {/* The gap (only when some suite in the window has one) */}
+      {gap !== undefined && (
+        <div role="cell" className="text-right">
+          {gap !== 'none' && (
+            <span
+              data-suite-gap={gap.tone}
+              title={gap.title}
+              className="inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10.5px] font-semibold"
+              style={gap.tone === 'bad'
+                ? { color: 'var(--status-failed)', borderColor: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', background: 'color-mix(in srgb, var(--status-failed) 8%, transparent)' }
+                : { color: 'var(--status-broken)', borderColor: 'var(--gate-conditional-border)', background: 'var(--gate-conditional-bg-soft)' }}
+            >
+              {gap.label}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1310,36 +1137,51 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
       className="rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '14px 16px' }}
     >
-      <h3 className="text-[13px] font-semibold m-0 mb-2 flex justify-between items-center text-[var(--color-text)]">
+      {/* P3: the explainer paragraph under the title is its tooltip now
+          (spec §2: explanatory text is never a paragraph on the page). */}
+      <h3
+        className="text-[13px] font-semibold m-0 mb-2.5 flex justify-between items-center text-[var(--color-text)]"
+        title="Each cell is a day, shaded by its executions. An empty cell: no run landed that day."
+      >
         Run cadence
         <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
           last {days > CADENCE_MAX_CELLS ? `${CADENCE_MAX_CELLS} of ` : ''}{days} days
         </span>
       </h3>
-      <p className="text-[11.5px] text-[var(--color-text-muted)] m-0 mb-2.5" style={{ lineHeight: 1.45 }}>
-        Each cell is a day. Empty cells are missed windows for the configured schedule.
-      </p>
       <DayStrip cells={cells} mode="intensity" label={label} title="Run cadence" />
     </section>
   )
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────
+/**
+ * The latest run's suite in words, as `SuiteBadge` draws it ("<primary> +N"
+ * when the run spans several suites); `null` when the run names none.
+ */
+function latestRunSuiteText(run: { primary_suite_name?: string | null; suite_names?: string[] | null } | undefined): string | null {
+  if (!run) return null
+  const list = (run.suite_names ?? []).filter(Boolean)
+  const label = run.primary_suite_name ?? list[0] ?? null
+  if (!label) return null
+  const extra = list.filter((s) => s !== label).length
+  return extra > 0 ? `${label} +${extra}` : label
+}
+
 export default function CoveragePage() {
   // Two body columns from 768 px; one below, where 205 + 124 px columns squeezed the cards (Wave 3, X2/X3).
   const twoBodyColumns = useMinWidth(BODY_GRID_MIN_WIDTH)
-  const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   // Window is a global user preference (shared with Live / Trends /
   // Runs / Failures / Summary / Overview / My Failures). Snap to this
-  // page's allowed set when the stored value isn't supported here.
+  // page's allowed set when the stored value isn't supported here; the
+  // header's `WindowPicker` writes it.
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, WINDOWS) as Window
-  const setDays = setStoredDays as (w: Window) => void
+  // The page's own tabs (`?tab=`): the coverage map by default.
+  const [tab, setTab] = useTabParam<CoverageTab>(COVERAGE_TAB_IDS, 'map')
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
@@ -1414,7 +1256,6 @@ export default function CoveragePage() {
 
   const model = useMemo(() => computeHealthModel(summary, suites, days), [summary, suites, days])
   const verdict: Verdict = verdictForScore(model.composite)
-  const issues = useMemo(() => deriveIssues(model, suites, days, navigate), [model, suites, days, navigate])
   const gaps = useMemo(() => buildGaps(model, suites, days), [model, suites, days])
 
   // Surface the most-recent run's suite in the header so a user landing here
@@ -1468,69 +1309,74 @@ export default function CoveragePage() {
     )
   })()
 
+  // The crumb the old header drew as chips, as the compact header's one line.
+  const latestSuite = latestRunSuiteText(latestRun)
+  const subtitle = [
+    `Project ${projectLabel}`,
+    suiteLabel ? `Suite ${suiteLabel}` : null,
+    days === 1 ? 'last 24 hours' : `last ${days} days`,
+    latestSuite ? `Latest run suite ${latestSuite}` : null,
+    `Updated ${refreshedAt}`,
+  ].filter(Boolean).join(' · ')
+
+  // Every header action beyond the saved Views (the one secondary button):
+  // the verdict card's two buttons and the header's Export and suites link.
+  const overflow: OverflowItem[] = [
+    {
+      label: comparing ? 'Hide comparison' : 'Compare to previous window',
+      icon: <GitCompare aria-hidden="true" className="h-3.5 w-3.5" />,
+      onClick: () => setComparing(c => !c),
+    },
+    {
+      label: 'Export CSV',
+      icon: <Download aria-hidden="true" className="h-3.5 w-3.5" />,
+      onClick: () => handleCoverageExportCsv({
+        summary, suites, trend, project, days, suiteFilter: suiteLabel || null,
+        healthScore: model.composite,
+        verdict,
+      }),
+    },
+    { label: 'Open triage queue', icon: <ListChecks aria-hidden="true" className="h-3.5 w-3.5" />, href: `/failures?days=${days}` },
+    // /coverage/suite needs a suite `name`: the list of every suite is /suites.
+    { label: 'View all suites', icon: <Layers aria-hidden="true" className="h-3.5 w-3.5" />, href: '/suites' },
+  ]
+
+  const untaggedGroups = suites.filter(isUntaggedRow).length
+  const executionsChange: { trend_direction: 'up' | 'down' | 'flat' | 'none'; trend_text?: string } =
+    totalExecDelta == null || !Number.isFinite(totalExecDelta)
+      ? { trend_direction: 'none' }
+      : totalExecDelta === 0
+        ? { trend_direction: 'flat', trend_text: '· later vs earlier half of window' }
+        : {
+            trend_direction: totalExecDelta > 0 ? 'up' : 'down',
+            trend_text: `${Math.abs(Math.round(totalExecDelta))}% · later vs earlier half of window`,
+          }
+  const cadencePaused = model.daysWithRuns < Math.ceil(days * 0.3)
+
   return (
-    <PageShell>
-      {/* Header */}
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Test Coverage
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Project</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {suiteLabel && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
-              </>
-            )}
-            <span aria-hidden>·</span>
-            <span>Window</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
-            {latestRun && (latestRun.primary_suite_name || latestRun.suite_names?.length) && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Latest run suite</span>
-                <SuiteBadge primary={latestRun.primary_suite_name} all={latestRun.suite_names} />
-              </>
-            )}
-            <span aria-hidden>·</span>
-            <span>Updated {refreshedAt}</span>
+    <PageShell className="space-y-4">
+      {/* The page's one filter row is the header's right side, where the old
+          header had it (and as Trends and Home have it): the suite, the
+          window, then the saved Views (the one secondary button), then ⋯. */}
+      <PageHeader
+        compact
+        title="Test Coverage"
+        subtitle={subtitle}
+        helpTopic={HELP_TOPIC}
+        actions={
+          <div data-page-toolbar="" className="flex flex-wrap items-center gap-2">
+            <SuiteFilterSelect
+              value={selectedSuite}
+              onChange={setSelectedSuite}
+              options={suiteOptions}
+              allLabel="All suites"
+            />
+            <WindowPicker options={WINDOWS} />
+            {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <WindowPicker value={days} onChange={setDays} />
-          <SuiteFilterSelect
-            value={selectedSuite}
-            onChange={setSelectedSuite}
-            options={suiteOptions}
-            allLabel="All suites"
-          />
-          <GhostBtn
-            onClick={() => handleCoverageExportCsv({
-              summary, suites, trend, project, days, suiteFilter: suiteLabel || null,
-              healthScore: model.composite,
-              verdict,
-            })}
-            title="Export coverage data as CSV"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </GhostBtn>
-          <Link
-            to="/suites"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
-          >
-            View all suites <ChevronRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-      </header>
+        }
+        overflow={overflow}
+      />
 
       {isLoading && !coverageData ? (
         <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
@@ -1548,15 +1394,61 @@ export default function CoveragePage() {
         />
       ) : (
         <>
-          <VerdictCard
-            model={model}
-            verdict={verdict}
-            lede={lede}
-            issues={issues}
-            onOpenTriage={() => navigate(`/failures?days=${days}`)}
-            onCompare={() => setComparing(c => !c)}
-            comparing={comparing}
-          />
+          {/* It wraps to fewer columns when its tiles cannot fit (KpiStrip). */}
+          <section aria-label="Coverage metrics">
+            <KpiStrip>
+              <MetricCard
+                compact
+                title="Unique tests"
+                icon={<TestTube className="h-4 w-4" />}
+                metric={{ value: summary.unique_tests ?? 0 }}
+              />
+              <MetricCard
+                compact
+                title="Test suites"
+                icon={<Layers className="h-4 w-4" />}
+                metric={{
+                  value: summary.suite_count ?? 0,
+                  trend_direction: 'none',
+                  trend_text: [
+                    untaggedGroups > 0 ? `+ ${untaggedGroups} untagged` : null,
+                    suites.filter(s => !isUntaggedRow(s)).slice(0, 3).map(s => s.suite_name).join(' · ') || '—',
+                  ].filter(Boolean).join(' · '),
+                }}
+              />
+              <MetricCard
+                compact
+                title="Total executions"
+                icon={<BarChart3 className="h-4 w-4" />}
+                metric={{ value: summary.total_executions ?? 0, ...executionsChange }}
+              />
+              <MetricCard
+                compact
+                title="Pass rate"
+                icon={<TrendingUp className="h-4 w-4" />}
+                metric={{
+                  value: `${(summary.avg_pass_rate ?? 0).toFixed(1)}%`,
+                  trend_direction: 'none',
+                  trend_text: (() => {
+                    const passed  = suites.reduce((s, x) => s + x.passed,  0)
+                    const failed  = suites.reduce((s, x) => s + x.failed,  0)
+                    const skipped = suites.reduce((s, x) => s + x.skipped, 0)
+                    return `${passed} passed · ${failed} failed · ${skipped} skipped`
+                  })(),
+                }}
+              />
+              <MetricCard
+                compact
+                title="Run cadence"
+                icon={<Calendar className="h-4 w-4" />}
+                metric={{
+                  value: `${model.daysWithRuns} / ${days} days`,
+                  trend_direction: 'none',
+                  trend_text: cadencePaused ? '⚠ Schedule may be paused' : `${Math.round((model.daysWithRuns / days) * 100)}% of window`,
+                }}
+              />
+            </KpiStrip>
+          </section>
 
           {comparing && (
             comparison ? (
@@ -1586,83 +1478,36 @@ export default function CoveragePage() {
             )
           )}
 
-          {/* KPI strip — 5 cells. */}
-          <section aria-label="Coverage metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-            <KpiCell
-              Icon={TestTube}
-              label="Unique tests"
-              value={summary.unique_tests ?? 0}
-              isFirst
-            />
-            <KpiCell
-              Icon={Layers}
-              label="Test suites"
-              value={
-                <>
-                  {summary.suite_count ?? 0}
-                  {model.untaggedRuns > 0 && (
-                    <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">
-                      + 1 untagged
-                    </span>
-                  )}
-                </>
-              }
-              meta={suites.filter(s => !isUntaggedRow(s)).slice(0, 3).map(s => s.suite_name).join(' · ') || '—'}
-              tone="accent"
-            />
-            <KpiCell
-              label="Total executions"
-              value={summary.total_executions ?? 0}
-              meta={totalExecDelta == null || !Number.isFinite(totalExecDelta)
-                ? undefined
-                : <><Delta value={totalExecDelta} /> · later vs earlier half of window</>}
-            />
-            <KpiCell
-              label="Pass rate"
-              value={`${(summary.avg_pass_rate ?? 0).toFixed(1)}%`}
-              tone={(summary.avg_pass_rate ?? 0) >= 90 ? 'good' : (summary.avg_pass_rate ?? 0) >= 70 ? 'warn' : 'bad'}
-              meta={(() => {
-                const passed  = suites.reduce((s, x) => s + x.passed,  0)
-                const failed  = suites.reduce((s, x) => s + x.failed,  0)
-                const skipped = suites.reduce((s, x) => s + x.skipped, 0)
-                return <>{passed} passed · {failed} failed · {skipped} skipped</>
-              })()}
-            />
-            <KpiCell
-              label="Run cadence"
-              value={
-                <>
-                  {model.daysWithRuns}
-                  <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {days} days</span>
-                </>
-              }
-              tone={model.daysWithRuns < Math.ceil(days * 0.3) ? 'warn' : 'neutral'}
-              meta={
-                model.daysWithRuns < Math.ceil(days * 0.3) ? (
-                  <span className="font-medium" style={{ color: 'var(--status-broken)' }}>⚠ Schedule may be paused</span>
-                ) : (
-                  <>{Math.round((model.daysWithRuns / days) * 100)}% of window</>
-                )
-              }
-              isLast
-            />
-          </section>
-
-          {/* Body grid — 1.65fr | 1fr from 768 px, one column below it */}
+          {/* Body grid — 1.65fr | 1fr from 768 px, one column below it. The
+              suite table (left) is the page's primary content. */}
           <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
             <div className="flex flex-col gap-3.5 min-w-0">
-              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} />
+              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} days={days} />
               <UntaggedCallout untaggedRuns={model.untaggedRuns} totalRuns={model.totalRuns} suites={suites.filter(isUntaggedRow)} />
             </div>
             <div className="flex flex-col gap-3.5 min-w-0">
-              <CoverageGaps gaps={gaps} />
               <CadenceHeatmap trend={trend} days={days} />
             </div>
           </div>
 
-          <PageSuiteTargetContext.Provider value={suiteTarget}>
-            <CoverageAdvanced days={days} suiteFilter={suiteFilter} />
-          </PageSuiteTargetContext.Provider>
+          <Disclosure
+            title="How this score is computed"
+            summary={verdict === 'PENDING' ? 'Pending · no score yet' : `${VERDICT_THEME[verdict].label} · health ${model.composite} / 100`}
+          >
+            <ScoreDetails model={model} verdict={verdict} lede={lede} gaps={gaps} />
+          </Disclosure>
+
+          <div className="space-y-3">
+            <Tabs ariaLabel="Coverage views" items={COVERAGE_TABS} value={tab} onChange={setTab} />
+            {/* Keyed: a tab's section mounts when it opens and goes when it
+                closes. The block's own top margin is dropped: the tab panel
+                spaces it. */}
+            <div key={tab} data-tab-panel={tab} data-coverage-scope={tab} className="min-w-0 [&_[data-coverage-advanced]]:mt-0">
+              <PageSuiteTargetContext.Provider value={suiteTarget}>
+                <CoverageAdvanced days={days} suiteFilter={suiteFilter} sections={COVERAGE_TAB_SECTIONS[tab]} />
+              </PageSuiteTargetContext.Provider>
+            </div>
+          </div>
         </>
       )}
 

@@ -163,6 +163,71 @@ describe('OverviewCatalogue — the DOM contract B0 relies on', () => {
   })
 })
 
+/** Every section id in the DOM, in order. */
+const sectionIds = () =>
+  Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+
+describe('OverviewCatalogue — `rows` picks which rows render (UX redesign P3)', () => {
+  it('no `rows`: both rows, exactly as before the prop existed', () => {
+    renderSections()
+    expect(sectionIds()).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
+    expect(catalog.calls.map((c) => c.source)).toEqual(['overview-top-failing'])
+  })
+
+  it('`all` is the default: the same sections as no prop', () => {
+    renderSections({ rows: 'all' })
+    expect(sectionIds()).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
+  })
+
+  it('`headline`: the trend and the donut only, and the top-failing request is never made', () => {
+    renderSections({ rows: 'headline' })
+    expect(sectionIds()).toEqual(['overview-trend', 'overview-donut'])
+    expect(document.querySelector('[data-lazy-section]')).toBeNull()
+    // The one server-backed section is not rendered, so nothing asks.
+    expect(catalog.calls).toEqual([])
+  })
+
+  it('`breakdown`: top failing and failure categories only, top failing asking as before', () => {
+    renderSections({ rows: 'breakdown', suiteFilter: 'checkout-api' })
+    expect(sectionIds()).toEqual(['overview-top-failing', 'overview-categories'])
+    expect(catalog.calls.map((c) => [c.source, c.params])).toEqual([
+      ['overview-top-failing', { project_id: 'proj-1', days: 7, suite_name: 'checkout-api' }],
+    ])
+    for (const [id, title] of [
+      ['overview-top-failing', 'Top failing tests'],
+      ['overview-categories', 'Failure categories'],
+    ] as const) {
+      expect(within(section(id)).getByRole('heading', { level: 3, name: title })).toBeInTheDocument()
+    }
+  })
+
+  it('a row is drawn the same whichever value includes it (the donut’s counts under `headline`)', () => {
+    renderSections({ rows: 'headline' })
+    const counts = donutCounts(section('overview-donut'))
+    expect([counts.Passed, counts.Failed, counts.Broken, counts.Skipped, counts.Unknown]).toEqual(['85', '7', '8', '8', '3'])
+  })
+
+  it('far from the reader, `breakdown` holds the two lazy placeholders at the row’s height and asks nothing', () => {
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    try {
+      renderSections({ rows: 'breakdown' })
+      const placeholders = Array.from(document.querySelectorAll<HTMLElement>('[data-lazy-section]'))
+      expect(placeholders.map((el) => [el.getAttribute('data-lazy-section'), el.style.minHeight])).toEqual([
+        ['overview-top-failing', '390px'],
+        ['overview-categories', '390px'],
+      ])
+      expect(catalog.calls).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('OverviewCatalogue — the status donut is the page’s own day series (OD-5)', () => {
   it('sums every status over the days with runs, broken included', () => {
     renderSections()

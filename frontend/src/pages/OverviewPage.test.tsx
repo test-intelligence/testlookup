@@ -1,11 +1,25 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 
-import type { ValueMetrics } from '@/types/valueMetrics'
 import OverviewPage from './OverviewPage'
+
+/** The router's current query string, for the `?tab=` tests. */
+function LocationProbe() {
+  const location = useLocation()
+  return <span data-location={location.search} hidden />
+}
+
+// A disclosure remembers being opened (`persistKey`, localStorage): every test
+// starts with "How this verdict is decided" closed.
+beforeEach(() => {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i)
+    if (key?.startsWith('tl.disclosure.')) localStorage.removeItem(key)
+  }
+})
 
 // P1: the header's Views menu reads this page's saved views (none here).
 vi.mock('@/services/savedViewsService', () => ({
@@ -38,11 +52,16 @@ vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: { items: [] 
 vi.mock('@/components/charts/chartCatalogSources', () => ({
   useCatalogChartData: () => ({ status: 'loading' }),
 }))
-// Eng-hours saved KPI (US-12.2): mutable state so tests can flip between
-// available / unavailable / not-yet-loaded.
-const valueKpiState: { metrics: ValueMetrics | undefined } = { metrics: undefined }
-vi.mock('@/hooks/useValueMetrics', () => ({
-  useValueMetricsKpi: () => valueKpiState,
+// UX redesign P3: the Eng-hours saved KPI moved to Reports › Value, so Home
+// no longer reads value metrics at all (and its Overview-only hook was
+// deleted). The module's remaining hook is mocked as a spy: a re-introduced
+// call would ask /value-metrics on every Home load again.
+const useValueMetrics = vi.hoisted(() => vi.fn(() => ({ metrics: undefined })))
+vi.mock('@/hooks/useValueMetrics', () => ({ useValueMetrics }))
+// Recent activity (epic ACT) has its own tests; here it is a stand-in that
+// says when it is mounted and with which window.
+vi.mock('@/components/activity/RecentActivityPanel', () => ({
+  default: ({ days }: { days: number }) => <div data-testid="recent-activity" data-days={days} />,
 }))
 // P2: the page no longer reads the saved widget selection — the seven KPI
 // cards always render. The hook stays mocked with an EMPTY selection, so a
@@ -92,35 +111,37 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
 
-function hoursSavedMetrics(overrides: Partial<ValueMetrics> = {}): ValueMetrics {
-  return {
-    period_days: 30,
-    project_id: 'proj-1',
-    triage_time_saved_minutes: 0,
-    triage_time_saved_hours: 0,
-    defects_auto_grouped: 0,
-    tests_grouped: 0,
-    duplicate_tickets_avoided: 0,
-    defects_promoted: 0,
-    flaky_tests_identified: 0,
-    quarantine_recommended: 0,
-    risky_releases_blocked: 0,
-    releases_conditional: 0,
-    release_overrides: 0,
-    intelligence_reports_generated: 0,
-    available: true,
-    insufficient_data_reason: null,
-    headline: { hours_saved_30d: 42.5, fte_equivalent_30d: 0.8 },
-    monthly: [],
-    assumptions: {
-      triage_minutes_per_failure: 15,
-      blocked_run_wait_minutes: 30,
-      defect_filing_minutes: 10,
-    },
-    assumptions_source: 'default',
-    methodology_version: 1,
-    ...overrides,
-  }
+/**
+ * The project HAS run, only not in the selected window. A zero-execution
+ * window then shows the page (and its empty-window notice); a project that
+ * never ran shows the getting-started guide alone (UX redesign P3).
+ */
+function pastRunOnly() {
+  runsState.windowed = []
+  runsState.newest = [{ id: 'r-old', created_at: new Date(Date.now() - 16 * 86_400_000).toISOString() }]
+  runsState.everHad = undefined
+}
+
+/** A KPI tile of the strip (a compact `MetricCard`), by its title. */
+function kpiCard(title: string): HTMLElement {
+  return screen.getByText(title).closest('[data-metric-card]') as HTMLElement
+}
+
+/** A KPI tile's change line ("Up 400% vs prev period (worse)"). */
+function kpiChange(title: string): HTMLElement {
+  return kpiCard(title).querySelector('[data-metric-trend]') as HTMLElement
+}
+
+/** The one-line verdict banner (inside the "Release readiness" region). */
+async function findBanner(): Promise<HTMLElement> {
+  const region = await screen.findByRole('region', { name: 'Release readiness' })
+  return region.querySelector('[data-status-banner]') as HTMLElement
+}
+
+/** Open "How this verdict is decided" (collapsed below the charts) and return its content. */
+async function openVerdictDetails(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole('button', { name: /^How this verdict is decided/ }))
+  return screen.getByTestId('verdict-details')
 }
 
 function mockDashboardData(useDashboardSummary: unknown, useTrendData: unknown) {
@@ -144,8 +165,8 @@ function mockDashboardData(useDashboardSummary: unknown, useTrendData: unknown) 
 
 describe('OverviewPage', () => {
   beforeEach(() => {
-    valueKpiState.metrics = undefined
     analyticsViewState.widgetIds = []
+    useValueMetrics.mockClear()
   })
 
   // ── KPI trend units ──────────────────────────────────────────────────────
@@ -183,14 +204,14 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    // The +400 must carry its unit; without it this reads as 400 executions.
-    // findAllByText, not findByText: a singular query throws if another
-    // surface ever repeats the trend — which would fail this test for the
-    // OPPOSITE of the reason it exists.
-    expect((await screen.findAllByText(/\+400%/)).length).toBeGreaterThan(0)
-    expect(screen.queryByText(/▲ \+400$/)).not.toBeInTheDocument()
-    // Downward trends too — the sign is already in the number.
-    expect(screen.getByText(/-2\.2%/)).toBeInTheDocument()
+    // The 400 must carry its unit; without it this reads as 400 executions.
+    // Scoped to the tile's change line: a page-wide match would pass on any
+    // other surface that happened to print a percentage.
+    await screen.findByText('Total executions')
+    expect(kpiChange('Total executions')).toHaveTextContent(/^Up 400% vs prev period/)
+    expect(kpiChange('Total executions').textContent).not.toMatch(/\b400\b(?!%)/)
+    // Downward trends too — the direction is a word, the size a percentage.
+    expect(kpiChange('Avg pass rate')).toHaveTextContent(/^Down 2\.2% vs prev period/)
   })
 
   it('keeps the unit on a flat trend too', async () => {
@@ -221,11 +242,13 @@ describe('OverviewPage', () => {
     )
 
     await screen.findByText('Total executions')
-    const badges = Array.from(document.querySelectorAll('span'))
-      .map((e) => e.textContent?.trim() ?? '')
-      .filter((t) => t.startsWith('▬'))
-    expect(badges.length).toBeGreaterThan(0)
-    for (const b of badges) expect(b).toMatch(/%/)
+    // An unchanged metric says so in words — never a bare "0" beside a count,
+    // which reads as "zero runs", not "no change".
+    expect(kpiChange('Total executions')).toHaveTextContent(/^No change vs prev period$/)
+    expect(kpiChange('Total executions').textContent).not.toMatch(/\b0\b/)
+    // A metric the API sent no direction for has no change line at all: no
+    // "no change" nobody measured.
+    expect(kpiChange('Avg pass rate')).toBeNull()
   })
 
   it('states what the trend is measured against', async () => {
@@ -253,17 +276,18 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    // The KPI badge is the one carrying the explanatory title.
-    const badges = await screen.findAllByText(/\+400%/)
-    const titled = badges.filter((el) => el.getAttribute('title'))
-    expect(titled.length).toBeGreaterThan(0)
-    expect(titled[0]).toHaveAttribute('title', expect.stringMatching(/previous period/i))
+    // The change line says what it is compared with, and its full text
+    // (with the judgement) is its title when a narrow tile truncates it.
+    await screen.findByText('Total executions')
+    expect(kpiChange('Total executions')).toHaveTextContent(/vs prev period/)
+    expect(kpiChange('Total executions')).toHaveAttribute('title', expect.stringMatching(/vs prev period/i))
   })
 
-  it('renders the Eng-hours saved KPI card only when the hours-saved model is available', async () => {
+  // UX redesign P3: "Eng-hours saved" leaves Home for Reports › Value (spec
+  // §5, Home, Delete). Home neither shows it nor asks for it.
+  it('shows no Eng-hours saved KPI and does not read value metrics (it lives on Reports › Value)', async () => {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
-    valueKpiState.metrics = hoursSavedMetrics()
 
     render(
       <MemoryRouter initialEntries={['/overview']}>
@@ -273,48 +297,10 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText('Eng-hours saved')).toBeInTheDocument()
-    expect(screen.getByText(/42\.5/)).toBeInTheDocument()
-    expect(screen.getByText(/View value metrics/i)).toBeInTheDocument()
-  })
-
-  it('omits the Eng-hours saved KPI card entirely when unavailable — no dash-card', async () => {
-    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
-    mockDashboardData(useDashboardSummary, useTrendData)
-    valueKpiState.metrics = hoursSavedMetrics({
-      available: false,
-      insufficient_data_reason: 'Not enough ingested data yet.',
-      headline: { hours_saved_30d: 0, fte_equivalent_30d: 0 },
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/overview']}>
-        <Routes>
-          <Route path="/overview" element={<OverviewPage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await screen.findByRole('region', { name: 'Release readiness' })
+    await findBanner()
     expect(screen.queryByText('Eng-hours saved')).toBeNull()
     expect(screen.queryByText(/View value metrics/i)).toBeNull()
-  })
-
-  it('omits the Eng-hours saved KPI card while value metrics have not loaded', async () => {
-    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
-    mockDashboardData(useDashboardSummary, useTrendData)
-    valueKpiState.metrics = undefined
-
-    render(
-      <MemoryRouter initialEntries={['/overview']}>
-        <Routes>
-          <Route path="/overview" element={<OverviewPage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await screen.findByRole('region', { name: 'Release readiness' })
-    expect(screen.queryByText('Eng-hours saved')).toBeNull()
+    expect(useValueMetrics).not.toHaveBeenCalled()
   })
 
   it('leads with the readiness verdict, with no "Quality workflow" ribbon beside it (P2)', async () => {
@@ -350,26 +336,27 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
-    expect(screen.getByText(/^Dashboard$/i)).toBeInTheDocument()
+    const banner = await findBanner()
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
     // The ribbon's four invented stages (and the heading that named it) are
-    // gone, and the verdict no longer shares a two-column row with it.
+    // gone, and the verdict no longer shares a row with anything.
     expect(screen.queryByText(/Quality workflow/i)).toBeNull()
     for (const stage of ['Quality Snapshot', 'Readiness Check', 'Trend Analysis', 'Action Focus']) {
       expect(screen.queryByRole('link', { name: `Open ${stage}` }), stage).toBeNull()
     }
-    expect(verdictCard.parentElement).not.toHaveClass(
-      'xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.55fr)]',
-    )
-    // It says what the verdict IS generated from: the readiness band.
-    expect(within(verdictCard).getByText(/release-readiness band/)).toBeInTheDocument()
-    // ...and the window it covers, not "generated just now" (the render time).
-    expect(verdictCard).toHaveTextContent(/Verdict for the last \d+ days, from the release-readiness band/)
-    expect(verdictCard.textContent).not.toMatch(/just now/)
-    // The page renders the verdict via ``gateLabel`` — ``GREEN`` readiness
-    // maps to "Go". Match the rendered label rather than the raw backend
-    // colour to stay aligned with the verdict-led redesign.
-    expect(screen.getAllByText(/\bGo\b/).length).toBeGreaterThan(0)
+    // UX redesign P3: the verdict is ONE line — ``GREEN`` readiness is the GO
+    // pill and its words — with the way to the failures.
+    expect(banner).toHaveAttribute('data-status-banner', 'go')
+    expect(within(banner).getByText('GO')).toBeInTheDocument()
+    expect(banner).toHaveTextContent('ship cleared')
+    expect(within(banner).getByRole('link', { name: /Open failures/ })).toHaveAttribute('href', '/failures')
+    // What the verdict IS generated from (the readiness band) and the window it
+    // covers — not "generated just now" (the render time) — sit in the
+    // detail under the charts.
+    const details = await openVerdictDetails()
+    expect(within(details).getByText(/release-readiness band/)).toBeInTheDocument()
+    expect(details).toHaveTextContent(/Verdict for the last \d+ days, from the release-readiness band/)
+    expect(details.textContent).not.toMatch(/just now/)
   })
 
   it('normalizes legacy day-only trend points without logging a render error', async () => {
@@ -394,7 +381,7 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByRole('region', { name: 'Release readiness' })).toBeInTheDocument()
+    expect(await findBanner()).toBeInTheDocument()
     expect(consoleError).not.toHaveBeenCalledWith(
       expect.stringContaining("Cannot read properties of undefined (reading 'length')"),
     )
@@ -424,6 +411,7 @@ describe('OverviewPage', () => {
       data: { data: [] },
       isLoading: false,
     })
+    pastRunOnly()
 
     render(
       <MemoryRouter initialEntries={['/overview']}>
@@ -433,10 +421,14 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    // Zero-executions case must surface as the Pending verdict (via
-    // ``mapReadinessToVerdict`` → ``gateLabel`` = "Pending"), not the
+    // Zero-executions case must surface as the PENDING verdict (via
+    // ``mapReadinessToVerdict``), not the RED the backend sent, nor the
     // misleading "Critical issues must be resolved" copy.
-    expect(await screen.findByText(/\bPending\b/)).toBeInTheDocument()
+    const banner = await findBanner()
+    expect(banner).toHaveAttribute('data-status-banner', 'pending')
+    expect(within(banner).getByText('PENDING')).toBeInTheDocument()
+    expect(banner).toHaveTextContent('awaiting evidence')
+    expect(within(banner).queryByText('NO-GO')).toBeNull()
     expect(screen.queryByText(/Critical issues must be resolved/i)).toBeNull()
   })
 
@@ -468,27 +460,24 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByRole('region', { name: 'Release readiness' })
+    const banner = await findBanner()
     // Fabricated ribbon literals must be gone (the dashboard has no real
     // per-run cost / evidence-count / stage-duration signal to report).
     expect(screen.queryByText(/\$0\.31/)).toBeNull()
     expect(screen.queryByText(/evidence items/i)).toBeNull()
     // The invented "readiness confidence %" is replaced by the real pass rate.
     expect(screen.queryByText(/Readiness confidence/i)).toBeNull()
-    expect(screen.getAllByText(/^Pass rate$/i).length).toBeGreaterThan(0)
+    expect(banner).toHaveTextContent(/Pass rate 92%/)
     // Dead CTAs (no-op handlers) are removed, not shipped as inert buttons.
     expect(screen.queryByRole('button', { name: /Run quality workflow/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /View evidence/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
   })
 
-  // ── P2: remove the noise ────────────────────────────────────────────────
-  const ALL_KPIS = [
-    'Total executions', 'Avg pass rate', 'Active defects', 'Flaky tests',
-    'New failures · 24h', 'Infra-caused failures', 'Avg run duration',
-  ]
+  // ── P2: remove the noise; P3: five KPIs (spec §5, Home) ─────────────────
+  const ALL_KPIS = ['Total executions', 'Avg pass rate', 'New failures · 24h', 'Flaky tests', 'Active defects']
 
-  it('renders all seven KPI cards whatever the saved widget selection, and offers no Customize (P2)', async () => {
+  it('renders the five KPI tiles whatever the saved widget selection, and offers no Customize (P2, P3)', async () => {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     // A saved selection of one card used to hide the other six, forever once
@@ -500,8 +489,13 @@ describe('OverviewPage', () => {
           <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
         </MemoryRouter>,
       )
-      await screen.findByRole('region', { name: 'Release readiness' })
-      for (const label of ALL_KPIS) expect(screen.getByText(label), label).toBeInTheDocument()
+      await findBanner()
+      const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
+      expect(Array.from(strip.querySelectorAll('[data-metric-card="compact"] > p:first-child'), (p) => p.textContent)).toEqual(ALL_KPIS)
+      // P3: the two tiles that left the strip, and the one that moved to Reports › Value.
+      for (const gone of ['Infra-caused failures', 'Avg run duration', 'Eng-hours saved']) {
+        expect(screen.queryByText(gone), gone).toBeNull()
+      }
       expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
       expect(screen.queryByRole('dialog')).toBeNull()
     } finally {
@@ -517,18 +511,19 @@ describe('OverviewPage', () => {
         <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
       </MemoryRouter>,
     )
-    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
+    await findBanner()
     // The verdict's three reason cards (each a KPI card again).
     expect(screen.queryByText('Sample size')).toBeNull()
-    expect(within(verdictCard).queryByText('New failures · 24h')).toBeNull()
     // The coverage micro-strip: executions, avg duration (both KPI cards), an
     // inferred "last green run", and a Mean time to fix that was always "—".
     for (const gone of [/Automation coverage/i, /Last green run/i, /Mean time to fix/i]) {
       expect(screen.queryByText(gone), String(gone)).toBeNull()
     }
     expect(screen.queryByText(/needs ≥ 3 fixes/)).toBeNull()
-    // Each KPI label once — no second block repeating it.
-    expect(screen.getAllByText('Avg run duration')).toHaveLength(1)
+    // Each KPI tile once — no second block repeating it. (The banner's "New
+    // failures · 24h" fact is the verdict's, per spec §5.)
+    const titles = Array.from(document.querySelectorAll('[data-metric-card] > p:first-child'), (p) => p.textContent)
+    for (const label of ALL_KPIS) expect(titles.filter((t) => t === label), label).toHaveLength(1)
   })
 
   it('shows no second "no executions" banner under the page when the window is empty (P2)', async () => {
@@ -546,13 +541,17 @@ describe('OverviewPage', () => {
       },
       isLoading: false,
     })
+    pastRunOnly()
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
       </MemoryRouter>,
     )
-    // The verdict already says it (PENDING lede), and so does the empty-window notice.
-    expect(await screen.findByText(/No test executions in the last \d+ days/)).toBeInTheDocument()
+    // The banner already says it (PENDING, a sample of 0), and so do the
+    // verdict's detail and the empty-window notice.
+    const banner = await findBanner()
+    expect(banner).toHaveTextContent(/Sample 0 executions · 30d/)
+    expect(await openVerdictDetails()).toHaveTextContent(/No test executions in the last \d+ days/)
     expect(screen.queryByText(/readiness, KPIs, and blockers will assess once data lands/)).toBeNull()
   })
 })
@@ -602,7 +601,6 @@ describe('OverviewPage — executions are not runs', () => {
   // for +680%.
 
   beforeEach(() => {
-    valueKpiState.metrics = undefined
     analyticsViewState.widgetIds = []
   })
 
@@ -631,13 +629,17 @@ describe('OverviewPage — executions are not runs', () => {
   }
 
   /**
-   * The verdict's statement of its sample, as a single string. P2 removed the
-   * "Sample size" reason card (the Total executions KPI is the same number);
-   * the verdict's lede is where the verdict itself states its sample now.
+   * The verdict's statements of its sample, as one string: the banner's
+   * "Sample" fact and the verdict detail's sentence. P2 removed the "Sample
+   * size" reason card (the Total executions KPI is the same number); P3 put
+   * the verdict on one line, with its reasoning under the charts.
    */
   async function verdictSampleText(): Promise<string> {
-    const verdictCard = await screen.findByRole('region', { name: 'Release readiness' })
-    return within(verdictCard).getByText(/quality gates passed/).textContent ?? ''
+    const banner = await findBanner()
+    const fact = Array.from(banner.querySelectorAll('[data-banner-fact]')).find((el) => el.textContent?.startsWith('Sample'))
+    const details = await openVerdictDetails()
+    const sentence = within(details).getByText(/quality gates passed/).textContent ?? ''
+    return `${fact?.textContent ?? ''} | ${sentence}`
   }
 
   it('does not describe the execution count as a run count', async () => {
@@ -665,12 +667,15 @@ describe('OverviewPage — executions are not runs', () => {
     // "+680 this period" read as 680 more runs; it means the count grew 680%.
     // The strip that printed it is gone (P2); the KPI card carries the trend.
     expect(screen.queryByText(/this period/)).not.toBeInTheDocument()
-    const card = screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement
-    expect(within(card).getByText(/\+680%/)).toBeInTheDocument()
+    expect(kpiChange('Total executions')).toHaveTextContent(/^Up 680% vs prev period/)
   })
 })
 
-describe('OverviewPage — blockers panel describes its own metric', () => {
+// UX redesign P3: the "What's blocking release" panel is folded into the
+// verdict banner (its 24-hour count is the banner's "New failures · 24h", its
+// words the banner's, its link the banner's "Open failures"). The guards on
+// the WORDS stay: they now hold for the banner and the verdict detail.
+describe('OverviewPage — the 24-hour new failures describe their own metric', () => {
   async function renderWithFailures() {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
@@ -685,7 +690,8 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
 
   it('does not claim the 24h count covers "the window"', async () => {
     await renderWithFailures()
-    await screen.findByText(/What's blocking release/i)
+    await findBanner()
+    await openVerdictDetails()
     expect(
       screen.queryByText(/new failures? in the window/i),
       'the panel says "in the window" for a value that ignores the window selector',
@@ -694,7 +700,8 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
 
   it('does not attribute the count to "the last green run"', async () => {
     await renderWithFailures()
-    await screen.findByText(/What's blocking release/i)
+    await findBanner()
+    await openVerdictDetails()
     expect(
       screen.queryByText(/since the last green run/i),
       'the panel attributes a fixed 24h count to a green-run baseline that is ' +
@@ -704,9 +711,11 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
 
   it('still states the 24h window it actually measures', async () => {
     await renderWithFailures()
-    await screen.findByText(/What's blocking release/i)
-    const body = document.body.textContent ?? ''
-    expect(body).toMatch(/24\s*h/i)
+    const banner = await findBanner()
+    expect(banner).toHaveTextContent(/New failures · 24h 3/)
+    // The panel itself is gone, and its link is the banner's.
+    expect(screen.queryByText(/What's blocking release/i)).toBeNull()
+    expect(within(banner).getByRole('link', { name: /Open failures/ })).toHaveAttribute('href', '/failures')
   })
 
   it('does not call an unresolved-failure release No-Go clear', async () => {
@@ -736,13 +745,18 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText('Release remains blocked by unresolved failures.')).toBeInTheDocument()
+    const banner = await findBanner()
+    expect(banner).toHaveAttribute('data-status-banner', 'no_go')
+    expect(banner).toHaveTextContent('ship blocked by unresolved failures')
+    expect(banner).toHaveTextContent(/New failures · 24h 0/)
     expect(screen.queryByText('Nothing is blocking release.')).toBeNull()
-    expect(screen.getByText(/No new failures in the last 24 h; existing failures/i)).toBeInTheDocument()
+    expect(await openVerdictDetails()).toHaveTextContent(/No new failures in the last 24 h; existing failures still require resolution/i)
   })
 })
 
 describe('OverviewPage — a KPI caption must not deny its own value', () => {
+  // UX redesign P3: the caption sits where the tile's trend line would, beside
+  // the value (a compact MetricCard), and still explains the missing LINE.
   // Regression (homelab, 2026-08-16): the caption under each KPI fills the slot
   // the sparkline would occupy, and appears whenever the series has fewer than
   // two points. It was worded as a claim about the metric, so a project whose
@@ -754,10 +768,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
   //
   // The shortfall is days of history, not runs, and it explains a missing
   // trend line, not a missing metric.
-
-  beforeEach(() => {
-    valueKpiState.metrics = undefined
-  })
 
   async function renderOneDayOfData() {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
@@ -832,6 +842,7 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
       isLoading: false,
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    pastRunOnly()
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes>
@@ -900,13 +911,19 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     emptySummary(useDashboardSummary, useTrendData)
     runsState.windowed = []
     runsState.newest = []
+    // With the getting-started guide dismissed: undismissed, an empty project
+    // shows the guide alone (P3), and the guide says this itself.
+    localStorage.setItem(firstRunDismissKey('proj-1'), '1')
+    try {
+      renderPage()
 
-    renderPage()
-
-    const banner = await screen.findByTestId('overview-empty-window')
-    expect(banner.textContent).toMatch(/No test runs yet/i)
-    expect(banner.textContent).toMatch(/widening the time window will not help/i)
-    expect(banner.textContent).not.toMatch(/Show last/i)
+      const banner = await screen.findByTestId('overview-empty-window')
+      expect(banner.textContent).toMatch(/No test runs yet/i)
+      expect(banner.textContent).toMatch(/widening the time window will not help/i)
+      expect(banner.textContent).not.toMatch(/Show last/i)
+    } finally {
+      localStorage.removeItem(firstRunDismissKey('proj-1'))
+    }
   })
 
   it('stays out of the way when the window has data', async () => {
@@ -992,7 +1009,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
 // keyed on the active project id (`proj-1` in this suite's projectStore mock).
 describe('OverviewPage — first-run guide dismissal is scoped to the project', () => {
   beforeEach(() => {
-    valueKpiState.metrics = undefined
     analyticsViewState.widgetIds = []
     // Purge only this feature's keys; leave the rest of localStorage alone.
     for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -1035,11 +1051,23 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
   it('shows the guide on an empty project and writes the per-project key on dismiss', async () => {
     await renderEmptyProject()
     expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+    // UX redesign P3 (spec §5, Home): an empty project shows ONLY the guide,
+    // under the title — no verdict, no five zero tiles, no empty charts.
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Release readiness' })).toBeNull()
+    expect(document.querySelector('[data-kpi-strip]')).toBeNull()
+    expect(document.querySelector('[data-primary]')).toBeNull()
+    expect(screen.queryByTestId('overview-empty-window')).toBeNull()
+    expect(document.querySelector('[data-disclosure]')).toBeNull()
+    expect(screen.queryByRole('tablist', { name: 'Dashboard sections' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /dismiss getting started/i }))
 
-    // Gone immediately (reactive to the dismiss, no reload needed)…
+    // Gone immediately (reactive to the dismiss, no reload needed), and the
+    // page under it says why it is empty…
     expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+    expect(screen.getByTestId('overview-empty-window')).toHaveTextContent(/No test runs yet/)
+    expect(document.querySelector('[data-kpi-strip]')).not.toBeNull()
     // …and persisted under the project-scoped key, not the bare browser-wide one.
     expect(localStorage.getItem(firstRunDismissKey('proj-1'))).toBe('1')
     expect(localStorage.getItem(FIRST_RUN_DISMISS_KEY)).toBeNull()
@@ -1087,6 +1115,26 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     await renderEmptyProject([], [])
 
     expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+  })
+
+  it('never hides executions the summary counted behind the guide', async () => {
+    // The guide replaces the page, so a summary with executions in it keeps
+    // the page even when the run list (a different read) came back empty.
+    runsState.everHad = undefined
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)   // 120 executions
+    runsState.windowed = []
+    runsState.newest = []
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await findBanner()
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+    expect(kpiCard('Total executions')).toHaveTextContent('120')
   })
 
   it('stays hidden while the lifetime run fetch is still loading', async () => {
@@ -1137,7 +1185,6 @@ describe('OverviewPage — sparklines and meter on the chart kit', () => {
   ]
 
   beforeEach(() => {
-    valueKpiState.metrics = undefined
     // The window is the last 30 UTC days ending "today": pin today to the
     // fixture's newest day. Only `Date` is faked; the render's timers run.
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -1209,6 +1256,9 @@ describe('OverviewPage — sparklines and meter on the chart kit', () => {
 
   it('reads the verdict’s pass rate as a meter, and PENDING as not measured', async () => {
     await renderWith(TREND)
+    // The meter is the verdict's detail (P3): collapsed under the charts.
+    expect(screen.queryByRole('meter', { name: 'Pass rate' })).toBeNull()
+    await openVerdictDetails()
     const meter = screen.getByRole('meter', { name: 'Pass rate' })
     expect(meter.getAttribute('aria-valuenow')).toBe('85')
     expect(meter.getAttribute('data-tone')).toBe('good')
@@ -1221,6 +1271,7 @@ describe('OverviewPage — sparklines and meter on the chart kit', () => {
       isLoading: false,
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    pastRunOnly()
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes>
@@ -1228,7 +1279,8 @@ describe('OverviewPage — sparklines and meter on the chart kit', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findAllByText(/\bPending\b/)
+    expect(await findBanner()).toHaveAttribute('data-status-banner', 'pending')
+    await openVerdictDetails()
     expect(screen.queryByRole('meter', { name: 'Pass rate' })).toBeNull()
     expect(screen.getByRole('img', { name: 'Pass rate: not measured' })).toBeInTheDocument()
   })
@@ -1242,7 +1294,6 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
   ]
 
   beforeEach(() => {
-    valueKpiState.metrics = undefined
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-08-16T12:00:00Z'))
   })
@@ -1251,7 +1302,8 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     vi.useRealTimers()
   })
 
-  async function renderPage() {
+  /** The page at `entry` (default `/overview`); `[data-location]` shows the current search. */
+  async function renderPage(entry = '/overview') {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
@@ -1267,61 +1319,165 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: TREND }, isLoading: false })
     return render(
-      <MemoryRouter initialEntries={['/overview']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/overview" element={<OverviewPage />} />
+          <Route
+            path="/overview"
+            element={
+              <>
+                <OverviewPage />
+                <LocationProbe />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>,
     )
   }
 
-  const kpiValue = (label: string) =>
-    (screen.getByText(label).closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums')?.textContent
+  const sectionIds = () =>
+    Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+  const search = () => document.querySelector('[data-location]')?.getAttribute('data-location')
 
-  it('sizes the metric values on the type tokens of the same value (VIZ-106)', async () => {
+  const kpiValue = (label: string) => kpiCard(label).querySelector('p.tabular-nums')?.textContent
+
+  // UX redesign P3: the KPI tiles are the shared compact `MetricCard` in one
+  // `KpiStrip`. A value never breaks across lines (`whitespace-nowrap`, R2-13)
+  // and the change line truncates to one line with its full text as a title.
+  it('draws the five KPIs as compact cards in one strip, values and changes each on one line', async () => {
     await renderPage()
-    const value = (screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement).querySelector('.tabular-nums') as HTMLElement
-    expect(value.style.fontSize).toBe('var(--text-display-sm)')
-    expect(value.className).not.toMatch(/text-\[26px\]/)
-    // The verdict's pass rate: 26 px, the same token.
-    const passRate = screen.getAllByText('85%').find((el) => el.nextElementSibling?.textContent === 'Pass rate') as HTMLElement
-    expect(passRate.style.fontSize).toBe('var(--text-display-sm)')
-    expect(passRate.className).not.toMatch(/text-\[26px\]/)
+    const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
+    expect(strip.style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    const values = Array.from(strip.querySelectorAll('[data-metric-card="compact"] p.tabular-nums'))
+    expect(values.map((v) => v.textContent)).toEqual(['108', '85%', '0', '0', '0'])
+    for (const v of values) expect(v.className.split(/\s+/)).toContain('whitespace-nowrap')
   })
 
-  it('presentation mode (R2-13): no KPI value or change breaks across lines', async () => {
+  it('opens the page behind a KPI from its tile', async () => {
     await renderPage()
-    const PRESENTING = '[[data-presentation=on]_&]:'
-    // (The coverage strip this test also covered was removed in P2: each of its
-    // tiles repeated a KPI card, or was always "—".)
-    // The KPI cards: the value and its change each stay whole, and the change drops
-    // under the value instead of breaking; the grid takes four columns in the room.
-    const card = screen.getByText('Total executions').closest('.rounded-xl') as HTMLElement
-    const value = card.querySelector('.tabular-nums') as HTMLElement
-    expect(value.className.split(/\s+/)).toContain(`${PRESENTING}whitespace-nowrap`)
-    const delta = card.querySelector('[title="Relative change vs the previous period of the same length"]') as HTMLElement
-    expect(delta.textContent).toBe('▬ 0%')
-    expect(delta.className.split(/\s+/)).toContain(`${PRESENTING}whitespace-nowrap`)
-    expect((value.parentElement as HTMLElement).className.split(/\s+/)).toContain(`${PRESENTING}flex-wrap`)
-    const grid = card.parentElement as HTMLElement
-    expect(grid.className.split(/\s+/)).toEqual(expect.arrayContaining(['xl:grid-cols-6', `${PRESENTING}xl:grid-cols-4`]))
-    // Desk mode is untouched: every new rule is scoped to the presentation attribute.
-    for (const el of [value, value.parentElement as HTMLElement, grid]) {
-      const unscoped = el.className.split(/\s+/).filter((c) => /whitespace-nowrap|flex-wrap|grid-cols-4/.test(c) && !c.startsWith(PRESENTING))
-      expect(unscoped).toEqual([])
-    }
+    const destinations = Array.from(document.querySelectorAll('[data-kpi-strip] a'), (a) => [
+      a.querySelector('[data-metric-card] > p')?.textContent,
+      a.getAttribute('href'),
+    ])
+    expect(destinations).toEqual([
+      ['Total executions', '/runs'],
+      ['New failures · 24h', '/failures'],
+      ['Flaky tests', '/flaky-coach'],
+      ['Active defects', '/defects'],
+    ])
   })
 
   it('the pass-rate trend REPLACES Execution trend (OD-4), beside the donut, above the two breakdowns', async () => {
     await renderPage()
     expect(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend' }, { timeout: 10_000 })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Execution trend' })).toBeNull()
-    const ids = Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
-    expect(ids).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
-    // Blockers keeps its content and moves below the catalogue.
-    const blockers = screen.getByRole('heading', { name: "What's blocking release" })
-    const categories = document.querySelector('[data-catalogue-section="overview-categories"]') as HTMLElement
-    expect(categories.compareDocumentPosition(blockers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The headline row (primary) then the breakdown row (the default tab): the same four, in the same order.
+    await screen.findByRole('heading', { level: 3, name: 'Top failing tests' }, { timeout: 10_000 })
+    expect(sectionIds()).toEqual(['overview-trend', 'overview-donut', 'overview-top-failing', 'overview-categories'])
+    // P3: the "What's blocking release" panel is folded into the verdict banner.
+    expect(screen.queryByRole('heading', { name: "What's blocking release" })).toBeNull()
+  })
+
+  // ── UX redesign P3: the page template ───────────────────────────────────
+  it('puts the primary content (trend + donut) right under the banner and the strip, before the tab bar and the disclosure', async () => {
+    await renderPage()
+    await screen.findByRole('heading', { level: 3, name: 'Pass rate trend' }, { timeout: 10_000 })
+    const primary = document.querySelector('[data-primary]') as HTMLElement
+    expect(document.querySelectorAll('[data-primary]')).toHaveLength(1)
+    // The primary is the headline row ONLY: the breakdown row is the Top failing tab's.
+    expect(Array.from(primary.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))).toEqual([
+      'overview-trend',
+      'overview-donut',
+    ])
+    // Above it, in order: the header, the banner, the strip.
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const banner = document.querySelector('[data-status-banner]') as HTMLElement
+    const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
+    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(header, banner) && follows(banner, strip) && follows(strip, primary)).toBe(true)
+    // Below it: the tab bar (Top failing · Activity), then the one disclosure.
+    const secondary = Array.from(document.querySelectorAll('[role="tablist"], [data-disclosure]'))
+    expect(secondary.map((el) => el.getAttribute('aria-label') ?? el.querySelector('button')?.textContent?.replace(/pass rate.*$/, ''))).toEqual([
+      'Dashboard sections',
+      'How this verdict is decided',
+    ])
+    for (const el of secondary) expect(follows(primary, el)).toBe(true)
+    // The page's block gap is the template's.
+    expect((primary.parentElement as HTMLElement).className.split(/\s+/)).toContain('space-y-4')
+  })
+
+  it('opens on Top failing (the clean URL): the breakdown row in its panel, no activity feed', async () => {
+    await renderPage()
+    const tablist = screen.getByRole('tablist', { name: 'Dashboard sections' })
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Top failing', 'Activity'])
+    expect(within(tablist).getByRole('tab', { name: 'Top failing' })).toHaveAttribute('aria-selected', 'true')
+    const panel = screen.getByRole('tabpanel', { name: 'Top failing' })
+    await within(panel).findByRole('heading', { level: 3, name: 'Top failing tests' }, { timeout: 10_000 })
+    expect(Array.from(panel.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))).toEqual([
+      'overview-top-failing',
+      'overview-categories',
+    ])
+    expect(screen.queryByTestId('recent-activity')).toBeNull()
+    expect(search()).toBe('')
+  })
+
+  it('?tab=activity opens Activity: the feed with the page’s window, and no breakdown row', async () => {
+    await renderPage('/overview?tab=activity')
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true')
+    const panel = screen.getByRole('tabpanel', { name: 'Activity' })
+    expect(within(panel).getByTestId('recent-activity')).toHaveAttribute('data-days', '30')
+    await screen.findByRole('heading', { level: 3, name: 'Pass rate trend' }, { timeout: 10_000 })
+    expect(sectionIds()).toEqual(['overview-trend', 'overview-donut'])
+  })
+
+  it('an unknown ?tab= reads as Top failing', async () => {
+    await renderPage('/overview?tab=nope')
+    expect(screen.getByRole('tab', { name: 'Top failing' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('recent-activity')).toBeNull()
+  })
+
+  it('mounts Recent activity only once its tab is opened, writes ?tab=activity, and the default tab clears it', async () => {
+    await renderPage()
+    expect(screen.queryByTestId('recent-activity')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: 'Activity' }))
+    expect(screen.getByTestId('recent-activity')).toHaveAttribute('data-days', '30')
+    expect(search()).toBe('?tab=activity')
+    // Leaving the tab unmounts the feed and brings the breakdown row back.
+    fireEvent.click(screen.getByRole('tab', { name: 'Top failing' }))
+    expect(screen.queryByTestId('recent-activity')).toBeNull()
+    expect(search()).toBe('')
+    await screen.findByRole('heading', { level: 3, name: 'Top failing tests' }, { timeout: 10_000 })
+  })
+
+  it('keeps the window in the header: the shared WindowPicker, bound to the global window', async () => {
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    await renderPage()
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const picker = within(header).getByRole('radiogroup', { name: 'Time window' })
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '14d', '30d', '90d'])
+    expect(within(picker).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(picker).getByRole('radio', { name: '7d' }))
+    expect(useTimeWindowStore.getState().days).toBe(7)
+    const { useDashboardSummary } = await import('@/hooks/useMetrics')
+    const summaryCalls = (useDashboardSummary as ReturnType<typeof vi.fn>).mock.calls
+    expect(summaryCalls[summaryCalls.length - 1]?.[0]).toBe(7)
+    useTimeWindowStore.getState().setDays(30)
+    // The suite filter sits beside it, and the help topic is the dashboards page.
+    expect(within(header).getByTitle('Filter dashboard metrics by test suite')).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: 'Help: Dashboard' })).toHaveAttribute('data-help-topic', 'dashboards')
+  })
+
+  it('opens and closes "How this verdict is decided" below the charts', async () => {
+    await renderPage()
+    expect(screen.queryByTestId('verdict-details')).toBeNull()
+    const button = screen.getByRole('button', { name: /^How this verdict is decided/ })
+    // Its summary carries the pass rate and the population it is over.
+    expect(button).toHaveTextContent('pass rate 85% · weighted · 30d')
+    fireEvent.click(button)
+    expect(screen.getByTestId('verdict-details')).toHaveTextContent(/All quality gates passed across 108 test executions/)
+    expect(screen.getByTestId('verdict-pass-rate-basis')).toHaveTextContent('85% · weighted · 30d')
+    fireEvent.click(button)
+    expect(screen.queryByTestId('verdict-details')).toBeNull()
   })
 
   it('the donut’s totals equal the KPI and the window’s status counts (OD-5)', async () => {
@@ -1341,6 +1497,8 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
   it('Failure categories draws the page’s own failure-categories read (one request, one SWR entry)', async () => {
     const { useFailureCategories } = await import('@/hooks/useMetrics')
     const mutate = vi.fn()
+    // Only this render's calls (an earlier test picked another window).
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockClear()
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [{ category: 'environment', count: 4 }, { category: 'assertion', count: 9 }] },
       error: undefined,

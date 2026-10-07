@@ -3,14 +3,22 @@
  * "Summary report").
  *
  * Mounted by `SummaryReportPage` in its own chunk, and only inside the page's
- * has-data branch (so "has this project ever had a run" is already yes). The page mounts it twice, once per
- * place a section goes (`part`):
+ * has-data branch (so "has this project ever had a run" is already yes). The
+ * page mounts it once per place a section goes (`part`, a composition choice:
+ * which sections render, never how they draw):
  *
- *   `headline`     above the per-suite table: the status donut beside the
- *                  results-by-suite bars, then the trend (lazy)
- *   `top-failing`  above the top-failing table: the failures-by-test bars
+ *   `headline`  the status donut beside the results-by-suite bars, then the
+ *               trend (lazy): the three together, as before the parts split
+ *   `suites`    the results-by-suite bars alone
+ *   `status`    the status donut alone
+ *   `trend`     the pass-rate trend alone (lazy, its own request)
  *
- * Three of the four charts are drawn from the `/reports/summary` payload the
+ * Since UX redesign P3 the page draws `suites` as its primary content and
+ * `trend` inside a collapsed disclosure, and no `status` (the KPI row carries
+ * its counts). The failures-by-test bars (`top-failing`) were deleted with
+ * their last caller: they drew the top ten rows of the table under them.
+ *
+ * Two of the three charts are drawn from the `/reports/summary` payload the
  * page already holds, so they follow its window, release and Aggregation
  * toggle, and count its population: EACH UNIQUE TEST ONCE (the tiles' "per
  * unique test", F-067), not every execution. The trend is the one chart no
@@ -33,26 +41,24 @@ import type { Release } from '@/types/releases'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
 import LazySection from './LazySection'
 import { useTrendsSeries } from './useTrendsSeries'
-import { chartResponseFromStatusCounts, chartResponseFromSuiteRows, chartResponseFromTopFailingRows } from './catalogueAdapters'
+import { chartResponseFromStatusCounts, chartResponseFromSuiteRows } from './catalogueAdapters'
 import {
-  FAILURES_TITLE,
   STATUS_TITLE,
   SUITES_TITLE,
   SUMMARY_BARS_HEIGHT,
   SUMMARY_DONUT_HEIGHT,
   SUMMARY_HEADLINE_CLASS,
   SUMMARY_HEADLINE_ROW_CLASS,
-  SUMMARY_TOP_FAILING_CLASS,
   SUMMARY_TREND_CHROME_PX,
   SUMMARY_TREND_HEIGHT,
   TREND_TITLE,
-  failuresTakeaway,
   statusTakeaway,
   suitesTakeaway,
   summaryTrendCaption,
 } from './summaryCatalogueWords'
 
-export type SummaryCataloguePart = 'headline' | 'top-failing'
+/** Which sections a mount renders: the three together (`headline`), or one of them. */
+export type SummaryCataloguePart = 'headline' | 'suites' | 'status' | 'trend'
 
 export interface SummaryCatalogueProps {
   part: SummaryCataloguePart
@@ -76,28 +82,36 @@ function releaseInputs(items: readonly Release[] | undefined): ReleaseInput[] {
 }
 
 export default function SummaryCatalogue({ part, report, days, mode }: SummaryCatalogueProps) {
-  if (part === 'top-failing') {
-    return (
-      <div data-catalogue-section="summary-top-failing" className={SUMMARY_TOP_FAILING_CLASS}>
-        <FailuresByTest report={report} days={days} mode={mode} />
+  const donut = (
+    <div data-catalogue-section="summary-donut" className="min-w-0">
+      <StatusDonut report={report} mode={mode} />
+    </div>
+  )
+  const bars = (
+    <div data-catalogue-section="summary-suites" className="min-w-0">
+      <ResultsBySuite report={report} mode={mode} />
+    </div>
+  )
+  const trend = (
+    <LazySection minHeight={SUMMARY_TREND_HEIGHT + SUMMARY_TREND_CHROME_PX} label="summary-trend">
+      <div data-catalogue-section="summary-trend" className="min-w-0">
+        <PassRateTrend days={days} />
       </div>
-    )
-  }
+    </LazySection>
+  )
+  // One section alone. The bars and the donut keep the headline's box (its
+  // bottom margin spaces what follows them as before); the trend alone has no
+  // margin of its own (the page puts it in a disclosure).
+  if (part === 'suites') return <div className={SUMMARY_HEADLINE_CLASS}>{bars}</div>
+  if (part === 'status') return <div className={SUMMARY_HEADLINE_CLASS}>{donut}</div>
+  if (part === 'trend') return <div className="min-w-0">{trend}</div>
   return (
     <div className={SUMMARY_HEADLINE_CLASS}>
       <div className={SUMMARY_HEADLINE_ROW_CLASS}>
-        <div data-catalogue-section="summary-donut" className="min-w-0">
-          <StatusDonut report={report} mode={mode} />
-        </div>
-        <div data-catalogue-section="summary-suites" className="min-w-0">
-          <ResultsBySuite report={report} mode={mode} />
-        </div>
+        {donut}
+        {bars}
       </div>
-      <LazySection minHeight={SUMMARY_TREND_HEIGHT + SUMMARY_TREND_CHROME_PX} label="summary-trend">
-        <div data-catalogue-section="summary-trend" className="min-w-0">
-          <PassRateTrend days={days} />
-        </div>
-      </LazySection>
+      {trend}
     </div>
   )
 }
@@ -147,28 +161,6 @@ function ResultsBySuite({ report, mode }: { report: SummaryReport; mode: Summary
       state={state}
       dimension="Suite"
       valueAxisLabel="Tests"
-    />
-  )
-}
-
-function FailuresByTest({ report, days, mode }: { report: SummaryReport; days: number; mode: SummaryReportMode }) {
-  // Keyed by POSITION, the suite in the label (`chartResponseFromTopFailingRows`):
-  // the row has no fingerprint, and one test name in two suites is two tests.
-  const state = useMemo(
-    () => readyState(chartResponseFromTopFailingRows(report.top_failing_tests)),
-    [report.top_failing_tests],
-  )
-  return (
-    <BarChart
-      title={FAILURES_TITLE}
-      takeaway={failuresTakeaway(days, mode)}
-      headingLevel={2}
-      variant="ranked"
-      topN={10}
-      height={SUMMARY_BARS_HEIGHT}
-      state={state}
-      dimension="Test"
-      valueAxisLabel="Failures"
     />
   )
 }

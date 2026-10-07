@@ -9,13 +9,18 @@
  * are captured once the catalogue has drawn (as `prod-overview-on` captures
  * the same two names). The pass-rate trend that replaced the card is
  * `overview-on-trend` there.
+ *
+ * UX redesign P3 (page template): both regions keep their names and change
+ * their picture. `overview-kpis` is the KpiStrip of five compact MetricCards
+ * (was seven KPI cards); `overview-verdict` is the one-line StatusBanner that
+ * replaced the verdict card (its meter and reasoning moved into the collapsed
+ * "How this verdict is decided" disclosure, which is not captured).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
 import {
   ancestorWithClass,
   assertHermetic,
-  cardAround,
   openProductionPage,
   PINNED,
   THEMES,
@@ -40,12 +45,13 @@ for (const theme of THEMES) {
     })
 
     const kpis = ancestorWithClass(page.getByText('Total executions', { exact: true }), 'grid')
-    // The three KPI cards with a day series draw a sparkline (not a caption).
+    await expect(kpis).toHaveAttribute('data-kpi-strip', '')
+    // The three KPI tiles with a day series draw a sparkline (not a caption).
     await expect(kpis.locator('svg path')).not.toHaveCount(0)
     await expect(kpis.getByText(/no trend line|no executions recorded/)).toHaveCount(0)
 
-    const verdict = cardAround(page.getByText('RELEASE READINESS', { exact: true }))
-    await expect(verdict.getByText('Conditional', { exact: false }).first()).toBeVisible()
+    const verdict = page.getByRole('region', { name: 'Release readiness' }).locator('[data-status-banner]')
+    await expect(verdict.locator('[data-banner-pill]')).toHaveText('CONDITIONAL')
 
     for (const [id, title] of [
       ['overview-trend', 'Pass rate trend'],

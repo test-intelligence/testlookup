@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import FailureAnalysisPage, {
@@ -74,16 +74,70 @@ vi.mock('@/hooks/useAnalysisLookup', () => ({
   useAnalysisLookup: vi.fn(() => ({ lookup: undefined, isLoading: true, isError: false })),
 }))
 
-// Wave 3 (VIZ-504 and friends): the page's one mount. The composite's own
-// flag gates are `FailuresAdvanced.test.tsx`'s; here, only that the page hands
-// it its window and suite scope, once.
-const advanced = vi.hoisted(() => ({ props: [] as unknown[] }))
-vi.mock('@/components/reports/catalogue/FailuresAdvanced', () => ({
+// Wave 3 (VIZ-504 and friends), UX redesign P3: the three catalogue sections,
+// each in its own tab (lazy chunks). Their own behaviour is their tests'; here,
+// only which one the page mounts, and with which window and suite scope.
+const sections = vi.hoisted(() => ({ mounts: [] as { name: string; props: unknown }[] }))
+vi.mock('@/components/reports/catalogue/FailureGroupsSection', () => ({
   default: (props: unknown) => {
-    advanced.props.push(props)
-    return <div data-testid="failures-advanced" />
+    sections.mounts.push({ name: 'groups', props })
+    return <div data-testid="section-groups" />
   },
 }))
+vi.mock('@/components/reports/catalogue/FailuresDrill', () => ({
+  default: (props: unknown) => {
+    sections.mounts.push({ name: 'drill', props })
+    return <div data-testid="section-drill" />
+  },
+}))
+vi.mock('@/components/reports/catalogue/ScatterSection', () => ({
+  default: (props: unknown) => {
+    sections.mounts.push({ name: 'scatter', props })
+    return <div data-testid="section-scatter" />
+  },
+}))
+
+// The Suspects side panel's ranking (Epic 8 US-8.2): no SWR fetch in a unit test.
+vi.mock('@/hooks/useCommitAttribution', () => ({
+  useSuspects: vi.fn(() => ({
+    ranking: { source: 'unavailable' },
+    suspects: [],
+    available: false,
+    caveat: '',
+    hasLocationSignal: false,
+    isLoading: false,
+    isError: false,
+    refresh: vi.fn(),
+  })),
+}))
+
+/** The router's current query string, for the tab-URL tests. */
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.search}</output>
+}
+
+/** Render the page at `/failure-analysis<search>`, with the location probe beside it. */
+function renderFailures(search = '') {
+  return render(
+    <MemoryRouter initialEntries={[`/failure-analysis${search}`]}>
+      <Routes>
+        <Route path="/failure-analysis" element={<><FailureAnalysisPage /><LocationProbe /></>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+/** Open a header ⋯ item (Export, Notify owner, Classify). */
+async function overflowItem(name: RegExp | string) {
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  return screen.findByRole('menuitem', { name })
+}
+
+/** Open a Disclosure by its title (they render nothing while closed). */
+async function openDisclosure(title: string) {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(title) }))
+}
 
 describe('FailureAnalysisPage', () => {
   beforeEach(() => {
@@ -137,34 +191,59 @@ describe('FailureAnalysisPage', () => {
     expect(screen.queryByRole('button', { name: /^Stage \d/ })).toBeNull()
   })
 
-  // X3: at 375 px the 205 + 124 px body columns pushed a card past the screen; below 768 px it is one column.
-  it.each([
-    [false, 'minmax(0, 1fr)'],
-    [true, 'minmax(0, 1.65fr) minmax(0, 1fr)'],
-  ])('body grid at min-width 768 = %s: %s', async (wide, columns) => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query === '(min-width: 768px)' ? wide : true,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }))
-    try {
-      const { useRuns } = await import('@/hooks/useRuns')
-      ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
-      const { container } = render(
-        <MemoryRouter initialEntries={['/failure-analysis']}>
-          <Routes>
-            <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
-          </Routes>
-        </MemoryRouter>,
-      )
-      await screen.findByRole('heading', { name: 'Failure Analysis' })
-      expect((container.querySelector('.body-grid') as HTMLElement).style.gridTemplateColumns).toBe(columns)
-      // P2: the workflow ribbon (and its responsive 4/2-column grid) is gone.
-      expect(container.querySelector('[data-ribbon-columns]')).toBeNull()
-    } finally {
-      vi.unstubAllGlobals()
+  // UX redesign P3 (§2): the primary content — the Top failing table — comes
+  // before every secondary tab bar and every Disclosure, and below one banner
+  // and one KPI strip (no verdict card, no second KPI grid). The two-column
+  // body grid of X3 is gone with the cards it held.
+  it('puts the Top failing table first: before the section tabs and every Disclosure (P3 template)', async () => {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'test A', fail_count: 4, test_fingerprint: 'fp-a' }] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-04-01', passed: 10, failed: 2, skipped: 0, broken: 0, pass_rate: 83 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    const { container } = renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+
+    const primaries = container.querySelectorAll('[data-primary]')
+    expect(primaries).toHaveLength(1)
+    const primary = primaries[0]
+    expect(within(primary as HTMLElement).getByRole('table', { name: 'Top failing tests' })).toBeInTheDocument()
+    // Every tab bar outside the primary content (the section tabs live in the shell, not here) and every Disclosure follows it.
+    const after = [
+      ...Array.from(container.querySelectorAll('[role="tablist"]')).filter((el) => !primary.contains(el)),
+      ...Array.from(container.querySelectorAll('[data-disclosure]')),
+    ]
+    expect(after.length).toBeGreaterThanOrEqual(3)
+    for (const el of after) {
+      expect(primary.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING, el.outerHTML.slice(0, 80)).toBeTruthy()
     }
+    // Above it: ONE banner (the "Failure verdict" landmark) and ONE KPI strip, in that order.
+    const banner = screen.getByRole('region', { name: 'Failure verdict' })
+    const kpis = screen.getByRole('region', { name: 'Failure metrics' })
+    expect(banner.querySelectorAll('[data-status-banner]')).toHaveLength(1)
+    expect(kpis.querySelectorAll('[data-kpi-strip]')).toHaveLength(1)
+    expect(banner.compareDocumentPosition(kpis) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(kpis.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelectorAll('[data-status-banner]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-kpi-strip]')).toHaveLength(1)
+    // The gauge and its dimensions are not above the fold any more: they are in the closed Disclosure.
+    expect(screen.queryByRole('meter', { name: 'Stability score' })).toBeNull()
+    // The page header is the shared one, compact, with the help **?** and the ⋯ menu.
+    const header = container.querySelector('[data-page-header]') as HTMLElement
+    expect(header).toHaveAttribute('data-compact', 'true')
+    expect(within(header).getByRole('button', { name: 'Help: Failure Analysis' })).toHaveAttribute('data-help-topic', 'failure-analysis')
+    expect(within(header).getByRole('button', { name: 'More actions' })).toBeInTheDocument()
+    expect(within(header).getByRole('radiogroup', { name: 'Time window' })).toBeInTheDocument()
+    // P2: the workflow ribbon (and its responsive 4/2-column grid) is gone.
+    expect(container.querySelector('[data-ribbon-columns]')).toBeNull()
   })
 
   it('a saved widget selection no longer hides any section, and there is no Customize button (P2)', async () => {
@@ -187,9 +266,11 @@ describe('FailureAnalysisPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Failure Analysis' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Failure metrics' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: "What's failing" })).toBeInTheDocument()
-    expect(screen.getByText('Failure category distribution')).toBeInTheDocument()
-    expect(screen.getByLabelText('Flakiness analysis')).toBeInTheDocument()
+    // P3: the What's-failing and Flakiness cards are one table; the categories are a tab.
+    expect(screen.getByRole('heading', { name: 'Top failing tests' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Categories' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Categories' }))
+    expect(await screen.findByText('Failure category distribution')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
     expect(screen.queryByTitle(/Customize widgets/i)).toBeNull()
   })
@@ -230,11 +311,14 @@ describe('FailureAnalysisPage', () => {
 
     // Verdict flipped to FLAKY → the contradictory copy is gone.
     expect(screen.queryByText(/zero intermittents/i)).not.toBeInTheDocument()
-    // Manual entry rendered distinctly, not as "100% flake".
-    expect(await screen.findByText(/^Flagged$/)).toBeInTheDocument()
+    expect(await screen.findByText('Flaky', { selector: '[data-verdict="FLAKY"] span' })).toBeInTheDocument()
+    expect(screen.queryByTitle(/a real failure, not a flake/i)).not.toBeInTheDocument()
+    // Manual entry rendered distinctly, not as "100% flake" (nor a "100% failure rate" from its marker counts).
+    const flagged = await screen.findByText(/^Flagged$/)
     expect(screen.queryByText(/100% flake/i)).not.toBeInTheDocument()
-    // Lede explains it was manually flagged.
-    expect(screen.getByText(/manually flagged as flaky/i)).toBeInTheDocument()
+    expect(screen.queryByText(/100% failure rate/i)).not.toBeInTheDocument()
+    // Its tooltip says it was manually flagged (P3: explanation is a tooltip, not a paragraph).
+    expect(flagged).toHaveAttribute('title', expect.stringMatching(/manually flagged as flaky/i))
   })
 
   it('shows a per-test-data-pending warning instead of "no failures" when trend reports failures but top-failing is empty', async () => {
@@ -422,22 +506,21 @@ describe('FailureAnalysisPage', () => {
       </MemoryRouter>,
     )
 
-    // The issue-row body is split across <code>, <strong>, and plain
-    // text spans, so we match by joined textContent on the issue-body
-    // container rather than ``findByText`` (which only walks a single
-    // text node).
+    // P3: the verdict card's issue row is the test's row in the Top failing
+    // table; its Failures cell carries the same words. The cell is split
+    // across <strong> and text, so match its joined textContent.
     await screen.findAllByText('api_key_scope_enforced')
-    const bodies = document.querySelectorAll('.issue-body')
-    const joined = Array.from(bodies).map(b => b.textContent || '').join(' | ')
-    expect(joined).toMatch(/api_key_scope_enforced/)
-    expect(joined).toMatch(/failed/)
-    expect(joined).toMatch(/8 times/)
-    expect(joined).toMatch(/100%/)
-    expect(joined).toMatch(/of failures here/)
+    const row = within(screen.getByRole('table', { name: 'Top failing tests' })).getAllByRole('row')[1]
+    expect(row).toHaveTextContent('api_key_scope_enforced')
+    const cell = (row.querySelector('[data-failure-rate]') as HTMLElement).textContent ?? ''
+    expect(cell).toMatch(/failed/)
+    expect(cell).toMatch(/8 times/)
+    expect(cell).toMatch(/100%/)
+    expect(cell).toMatch(/of failures here/)
     // The misleading "0% failure rate" headline must NOT appear.
-    expect(joined).not.toMatch(/0% failure rate/)
+    expect(document.body.textContent).not.toMatch(/0% failure rate/)
     // The wrong denominator "of 2773 executions" must NOT appear.
-    expect(joined).not.toMatch(/of 2773 executions/)
+    expect(document.body.textContent).not.toMatch(/of 2773 executions/)
   })
 
   it('shows the per-test failure rate when the flaky list has matching total_runs', async () => {
@@ -510,7 +593,7 @@ describe('FailureAnalysisPage', () => {
     expect(screen.queryByText(/^0% failure rate$/i)).toBeNull()
   })
 
-  it('renders the softer "uncategorised" copy instead of the misleading "clustering ran" claim', async () => {
+  it('offers Classify for an uncategorised window, never the misleading "clustering ran" claim (P3: ⋯ and the Categories tab)', async () => {
     // Regression for user-reported "Category unknown — clustering ran
     // but 100% of failures couldn't be matched to a known pattern. No
     // owner auto-routed; no playbook attached." The new copy drops the
@@ -532,28 +615,26 @@ describe('FailureAnalysisPage', () => {
       isLoading: false,
     })
 
-    render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes>
-          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
+    renderFailures('?tab=categories')
 
     // Old (incorrect) copy must NOT appear.
+    expect(await screen.findByText('Failure category distribution')).toBeInTheDocument()
     expect(screen.queryByText(/clustering ran/i)).toBeNull()
     expect(screen.queryByText(/No owner auto-routed/i)).toBeNull()
     expect(screen.queryByText(/no playbook attached/i)).toBeNull()
-    // New copy IS rendered.
-    expect(
-      await screen.findByText(/100% of failures aren't categorised yet/i),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/Classify them so owners can be auto-routed/i),
-    ).toBeInTheDocument()
+    // The share is the KPI; the category card states it and offers the bulk Classify beside it.
+    const kpis = screen.getByRole('region', { name: 'Failure metrics' })
+    expect(within(kpis).getByText('100%')).toBeInTheDocument()
+    expect(screen.getByText(/100% of failures are sitting in/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Classify them so owners can be auto-routed/i }))
+    expect(await screen.findByRole('dialog', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    // …and the same dialog from the header's ⋯ (the verdict card's "Classify" issue row).
+    fireEvent.click(await overflowItem('Classify uncategorised failures'))
+    expect(await screen.findByRole('dialog', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
   })
 
-  it('Export button triggers a CSV download with the in-window failure data', async () => {
+  it('Export (in the header ⋯) triggers a CSV download with the in-window failure data', async () => {
     // Pin the user-visible feature: the Export button used to be a
     // placeholder toast. Now it downloads a CSV with the page's data.
     const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
@@ -611,7 +692,7 @@ describe('FailureAnalysisPage', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: /Export/i }))
+    fireEvent.click(await overflowItem('Export CSV'))
 
     expect(clickSpy).toHaveBeenCalledTimes(1)
     const csv = blobInputs.filter((p): p is string => typeof p === 'string').join('')
@@ -747,24 +828,47 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
   }
 
-  function renderPage() {
-    return render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes>
-          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
+  function renderPage(search = '') {
+    return renderFailures(search)
   }
 
-  it('re-adds the "Start bisect" CTA (Epic 8 US-8.2 — wired to the Suspects surface)', async () => {
+  it('every row carries Mute, Jira and Suspects (Epic 8 US-8.2 — the bisect, now a side panel)', async () => {
     await seedFailingScenario()
     renderPage()
 
-    // The failing-test card is present…
-    expect(await screen.findByRole('button', { name: /Mute test/i })).toBeInTheDocument()
-    // …and the bisect CTA is back — it reveals the Suspects panel.
-    expect(screen.getByRole('button', { name: /Start bisect/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Mute test checkout_flow' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create Jira issue for checkout_flow' })).toBeInTheDocument()
+    // No failed run in the window: nothing to attribute commits against, said in the tooltip.
+    const suspects = screen.getByRole('button', { name: 'Suspects for checkout_flow' })
+    expect(suspects).toBeDisabled()
+    expect(suspects).toHaveAttribute('title', expect.stringMatching(/No failed run in this window/))
+  })
+
+  it('Suspects opens the ranked suspect commits in a side panel beside the table, and closes it', async () => {
+    await seedFailingScenario()
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ id: 'run-9', primary_suite_name: 'Checkout', suite_names: ['Checkout'] }] },
+      isLoading: false,
+    })
+    const { useSuspects } = await import('@/hooks/useCommitAttribution')
+    renderPage()
+
+    // Closed at load: the panel (and its ranking) is a drill-down, not page content.
+    expect(document.querySelector('[data-side-panel]')).toBeNull()
+    expect(screen.queryByTestId('suspects-panel')).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Suspects for checkout_flow' }))
+    const panel = await screen.findByRole('complementary', { name: 'Suspects: checkout_flow' })
+    expect(panel).toHaveAttribute('data-side-panel', 'non-modal')
+    expect(within(panel).getByTestId('suspects-panel')).toBeInTheDocument()
+    expect(within(panel).getByText(/No commit range available for this failure yet/)).toBeInTheDocument()
+    // The ranking is asked for that run and that row's test.
+    expect(useSuspects).toHaveBeenLastCalledWith('run-9', { fingerprint: 'fp-top' })
+    // The table stays on the page beside it.
+    expect(screen.getByRole('table', { name: 'Top failing tests' })).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close suspects' }))
+    await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
   })
 
   it('opens the mute modal and posts a quarantine proposal with the typed reason', async () => {
@@ -826,7 +930,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
 
     // ≥50% UNKNOWN so the category card renders its correction CTA.
     await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
-    renderPage()
+    renderPage('?tab=categories')
 
     fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
     const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
@@ -862,7 +966,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     })
 
     await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
-    renderPage()
+    renderPage('?tab=categories')
 
     fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
     const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
@@ -881,7 +985,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     })
 
     await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
-    renderPage()
+    renderPage('?tab=categories')
 
     // The QA rec's "Open" repeated the category card's correction CTA (and
     // its two siblings were placeholder toasts). Only the card's path stays.
@@ -893,7 +997,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
   })
 
-  it('shows no fabricated detail on the What\'s-failing card or the footer (P2)', async () => {
+  it('shows no fabricated detail on the Top failing table or the footer (P2)', async () => {
     await seedFailingScenario()
     renderPage()
 
@@ -907,16 +1011,13 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
     // The KPI row holds the four measured cells only.
     const kpis = screen.getByRole('region', { name: 'Failure metrics' })
-    expect(Array.from(kpis.children).map(c => c.textContent?.match(/^[A-Za-z ]+?(?=\d|—|$)/)?.[0])).toEqual([
+    expect(Array.from(kpis.querySelectorAll('[data-metric-card]')).map(c => c.textContent?.match(/^[A-Za-z ]+?(?=\d|—|$)/)?.[0])).toEqual([
       'Repeat failures', 'Flaky tests', 'Uncategorized', 'Total executions',
     ])
   })
 
-  describe('the What\'s-failing status pill comes from the data (P2)', () => {
-    const pills = () => {
-      const card = screen.getByRole('heading', { name: "What's failing" }).closest('.rounded-xl') as HTMLElement
-      return within(card)
-    }
+  describe('the row\'s status pill comes from the data (P2; P3: the Signal column of the Top failing table)', () => {
+    const pills = () => within(screen.getByRole('table', { name: 'Top failing tests' }))
 
     it('a repeat failure the flake detector did not flag reads "Repeat failure", never "Hard regression" / "Not flaky"', async () => {
       await seedFailingScenario()
@@ -989,14 +1090,9 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     })
   }
 
-  function renderPage() {
-    return render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes>
-          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
-        </Routes>
-      </MemoryRouter>,
-    )
+  /** P3: the kind chips and the category card are the Categories tab. */
+  function renderPage(search = '?tab=categories') {
+    return renderFailures(search)
   }
 
   it('renders the kind filter chips with by-kind counts and the AI-classified provenance copy', async () => {
@@ -1039,13 +1135,14 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     expect(screen.getByText(/^7 failures$/)).toBeInTheDocument()
   })
 
-  it("shows a color-coded kind badge on the What's-failing card for the headline test", async () => {
+  it("shows a color-coded kind badge in the headline test's row of the Top failing table", async () => {
     await seedKindScenario()
-    renderPage()
+    renderPage('')
 
     await screen.findAllByText('checkout_flow')
     // The badge carries the AI-classified provenance in its tooltip.
-    const badges = screen.getAllByTitle(/AI-classified failure kind: Product/i)
+    const row = within(screen.getByRole('table', { name: 'Top failing tests' })).getAllByRole('row')[1]
+    const badges = within(row).getAllByTitle(/AI-classified failure kind: Product/i)
     expect(badges.length).toBeGreaterThan(0)
   })
 
@@ -1284,18 +1381,26 @@ describe('FailureAnalysisPage — verdict meter and strips', () => {
     })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
-    render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
-      </MemoryRouter>,
-    )
+    renderFailures()
+
+    // P3: the run strip heads the Top failing table; the meter and the
+    // timeline are in Disclosures below it, closed until opened.
+    const strip = await screen.findByRole('img', { name: 'Run strip: 1 failed, 1 passed, 12 not run.' })
+    expect(within(screen.getByRole('region', { name: 'Top failing tests' })).getByRole('img', { name: /^Run strip:/ })).toBe(strip)
+    expect(screen.queryByRole('meter', { name: 'Stability score' })).toBeNull()
+    expect(screen.queryByRole('img', { name: /^Failure timeline:/ })).toBeNull()
+    await openDisclosure('How this score is computed')
+    await openDisclosure('Failure timeline')
 
     const meter = await screen.findByRole('meter', { name: 'Stability score' })
     expect(meter).toHaveAttribute('data-gauge-bar', 'fill')
     expect(meter.getAttribute('aria-valuetext')).toMatch(/^\d+ of 100, /)
     for (const tick of ['Block · 0', 'At risk · 33', 'Stable · 66', '100']) expect(within(meter).getByText(tick)).toBeInTheDocument()
+    // The four weighted dimensions sit beside it (the verdict card's grid, moved).
+    for (const label of ['Pass rate', 'Categorization', 'Flake-free', 'Time to fix']) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
+    }
 
-    const strip = screen.getByRole('img', { name: 'Run strip: 1 failed, 1 passed, 12 not run.' })
     expect(strip.querySelectorAll('[data-day-cell]')).toHaveLength(14)
     // The failed day carries the failure cue, not colour alone.
     expect(strip.querySelectorAll('[data-day-cue="fail"]')).toHaveLength(1)
@@ -1324,12 +1429,14 @@ describe('FailureAnalysisPage — verdict meter and strips', () => {
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
-    render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
-      </MemoryRouter>,
-    )
+    renderFailures()
 
+    // The banner says PENDING, with no score, and so does the Disclosure's summary.
+    const banner = await screen.findByRole('region', { name: 'Failure verdict' })
+    expect(banner.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'pending')
+    expect(banner).toHaveTextContent('Stability —')
+    expect(screen.getByRole('button', { name: /How this score is computed/ })).toHaveTextContent('not measured')
+    await openDisclosure('How this score is computed')
     expect(await screen.findByRole('img', { name: 'Stability score: not measured' })).toBeInTheDocument()
     expect(screen.queryByRole('meter', { name: 'Stability score' })).toBeNull()
   })
@@ -1349,19 +1456,108 @@ describe('FailureAnalysisPage — Wave 3', () => {
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
     useTimeWindowStore.setState({ days: 30 })
-    advanced.props = []
-    render(
-      <MemoryRouter initialEntries={['/failure-analysis']}>
-        <Routes><Route path="/failure-analysis" element={<FailureAnalysisPage />} /></Routes>
-      </MemoryRouter>,
-    )
+    sections.mounts = []
+    renderFailures('?tab=categories')
     return screen.findByText('Failure category distribution')
   }
 
-  it('mounts the advanced sections once, with the page window and suite scope', async () => {
-    await renderWithCategories()
-    expect(screen.getAllByTestId('failures-advanced')).toHaveLength(1)
-    expect(advanced.props[advanced.props.length - 1]).toEqual({ days: 30, suiteFilter: null })
+  /** Seed an empty window (the section tabs do not depend on the data) and render at `search`. */
+  async function renderSections(search = '') {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: 30 })
+    sections.mounts = []
+    renderFailures(search)
+    await screen.findByRole('tablist', { name: 'Failure analysis sections' })
+  }
+
+  const mounted = () => [...new Set(sections.mounts.map((m) => m.name))]
+  const selectedTab = () => screen.getByRole('tab', { selected: true })
+  const location = () => screen.getByTestId('location').textContent
+
+  it('Groups is the default tab: only the failure groups mount, with the page window and suite scope', async () => {
+    await renderSections()
+    expect(selectedTab()).toHaveTextContent('Groups')
+    expect(await screen.findByTestId('section-groups')).toBeInTheDocument()
+    expect(mounted()).toEqual(['groups'])
+    expect(sections.mounts[sections.mounts.length - 1].props).toEqual({ days: 30, suiteFilter: null })
+    expect(screen.getByRole('tabpanel', { name: 'Failure groups' })).toContainElement(screen.getByTestId('section-groups'))
+    expect(location()).toBe('')
+  })
+
+  it.each([
+    ['suite', 'By suite', 'section-drill', 'drill', { days: 30, suiteFilter: null }],
+    ['scatter', 'Scatter', 'section-scatter', 'scatter', { days: 30, suiteFilter: null, placement: 'project' }],
+  ])('?tab=%s selects "%s" and mounts only its section', async (id, label, testId, name, props) => {
+    await renderSections(`?tab=${id}`)
+    expect(selectedTab()).toHaveTextContent(label)
+    expect(await screen.findByTestId(testId)).toBeInTheDocument()
+    expect(mounted()).toEqual([name])
+    expect(sections.mounts[sections.mounts.length - 1].props).toEqual(props)
+  })
+
+  it('?tab=categories selects "Categories": the kind chips and the category card, and no catalogue section', async () => {
+    await renderSections('?tab=categories')
+    expect(selectedTab()).toHaveTextContent('Categories')
+    expect(await screen.findByText('Failure category distribution')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /Filter by failure kind/ })).toBeInTheDocument()
+    expect(mounted()).toEqual([])
+  })
+
+  it('a tab that does not exist reads as the default', async () => {
+    await renderSections('?tab=nonsense')
+    expect(selectedTab()).toHaveTextContent('Groups')
+    expect(await screen.findByTestId('section-groups')).toBeInTheDocument()
+  })
+
+  it('picking a tab writes ?tab= and swaps the section; the default tab has the clean URL', async () => {
+    await renderSections()
+    await screen.findByTestId('section-groups')
+    fireEvent.click(screen.getByRole('tab', { name: 'Scatter' }))
+    expect(await screen.findByTestId('section-scatter')).toBeInTheDocument()
+    expect(screen.queryByTestId('section-groups')).toBeNull()
+    expect(location()).toBe('?tab=scatter')
+    fireEvent.click(screen.getByRole('tab', { name: 'Groups' }))
+    expect(await screen.findByTestId('section-groups')).toBeInTheDocument()
+    expect(location()).toBe('')
+  })
+
+  it('a link with a drill path and no tab opens By suite (the ladder\'s), and says so in the URL', async () => {
+    await renderSections('?drill=suite~payments')
+    expect(selectedTab()).toHaveTextContent('By suite')
+    expect(await screen.findByTestId('section-drill')).toBeInTheDocument()
+    expect(mounted()).toEqual(['drill'])
+    await waitFor(() => expect(new URLSearchParams(location() ?? '').get('tab')).toBe('suite'))
+    expect(new URLSearchParams(location() ?? '').getAll('drill')).toEqual(['suite~payments'])
+  })
+
+  it('a link with a rows panel opens the tab of the section that owns it (the scatter\'s)', async () => {
+    await renderSections('?rows=by~scatter-project&rows=test~fp-1')
+    expect(selectedTab()).toHaveTextContent('Scatter')
+    expect(await screen.findByTestId('section-scatter')).toBeInTheDocument()
+    await waitFor(() => expect(new URLSearchParams(location() ?? '').get('tab')).toBe('scatter'))
+  })
+
+  it('a link with the groups\' rows panel stays on Groups, the default (nothing added to the URL)', async () => {
+    await renderSections('?rows=by~failures-groups&rows=error_signature~x')
+    expect(selectedTab()).toHaveTextContent('Groups')
+    expect(await screen.findByTestId('section-groups')).toBeInTheDocument()
+    expect(new URLSearchParams(location() ?? '').has('tab')).toBe(false)
+  })
+
+  it('leaving a tab closes its section\'s state: the drill path and the rows panel leave the URL', async () => {
+    await renderSections('?tab=suite&drill=suite~payments&rows=by~failures-drill&rows=test~fp-1&release=r1')
+    await screen.findByTestId('section-drill')
+    fireEvent.click(screen.getByRole('tab', { name: 'Groups' }))
+    expect(await screen.findByTestId('section-groups')).toBeInTheDocument()
+    // Unrelated keys (the top bar's release) are kept.
+    expect(location()).toBe('?release=r1')
   })
 
   it('category rows share ONE grid whose label column is as wide as the widest label (no fixed 220 px)', async () => {

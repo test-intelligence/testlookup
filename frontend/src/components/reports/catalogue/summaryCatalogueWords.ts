@@ -32,11 +32,8 @@ export const SUMMARY_TREND_CHROME_PX = 110
 export const SUMMARY_HEADLINE_CLASS = 'mb-5 flex flex-col gap-4'
 export const SUMMARY_HEADLINE_ROW_CLASS = 'grid grid-cols-1 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.6fr)] gap-4'
 /** The top-failing part's box. */
-export const SUMMARY_TOP_FAILING_CLASS = 'mb-5 min-w-0'
-
 export const STATUS_TITLE = 'Status breakdown'
 export const SUITES_TITLE = 'Results by suite'
-export const FAILURES_TITLE = 'Failures by test'
 export const TREND_TITLE = 'Pass rate trend'
 
 export const windowWords = (days: number) => (days === 1 ? 'the last 24 hours' : `the last ${days} days`)
@@ -58,9 +55,6 @@ export const statusTakeaway = (report: SummaryReport, mode: SummaryReportMode) =
 
 export const suitesTakeaway = (report: SummaryReport, mode: SummaryReportMode) =>
   `Tests by status in each suite, most failed and broken first, ${populationWords(report, mode)}`
-
-export const failuresTakeaway = (days: number, mode: SummaryReportMode) =>
-  `The tests that failed most in ${windowWords(days)}, ${MODE_WORDS[mode]}`
 
 /**
  * The trend's caption. It names the population (executions) because every

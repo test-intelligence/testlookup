@@ -20,6 +20,10 @@
  *      "Other" row), where the Wave 2.6 heatmap re-read section 1's top-7
  *      series. The suite series request below therefore feeds section 1 only.
  *
+ * `sections` picks which of them render (default all): `/trends` (UX
+ * redesign P3) mounts the catalogue once per tab with that tab's sections, so
+ * a section in another tab is not rendered and asks for nothing.
+ *
  * Every request is built by `useCatalogueParams`: the page's window clamped to
  * `ROW_GRAIN_MAX_WINDOW_DAYS` (these are the per-execution, "row grain"
  * charts), the page's project, release and suite scope, one value as a scalar.
@@ -300,16 +304,28 @@ function CompareNear({ onNear, ...props }: Parameters<typeof CompareSection>[0] 
 
 // ── The catalogue ───────────────────────────────────────────────────────────
 
+/** The catalogue's sections, by their `data-catalogue-section` / `data-lazy-section` ids, in drawing order. */
+const TRENDS_SECTION_IDS = ['trends-multi-series', 'trends-compare', 'trends-duration', 'trends-heatmap'] as const
+export type TrendsSectionId = (typeof TRENDS_SECTION_IDS)[number]
+
 export interface TrendsCatalogueProps {
   /** The page's window, days, as the page shows it (snapped to its options). Clamped again on the wire. */
   days: number
   /** The page's suite scope (`usePageSuiteFilter().suiteFilter`). */
   suiteFilter: ScopeValue
+  /**
+   * Which sections to render (a composition choice, UX redesign P3; default
+   * all four). A section left out is not rendered at all — no placeholder,
+   * no hook, no request; one listed is drawn exactly as with all four, always
+   * in the catalogue's own order.
+   */
+  sections?: readonly TrendsSectionId[]
 }
 
-export default function TrendsCatalogue({ days, suiteFilter }: TrendsCatalogueProps) {
+export default function TrendsCatalogue({ days, suiteFilter, sections = TRENDS_SECTION_IDS }: TrendsCatalogueProps) {
   const windowDays = clampCatalogueDays(days, ROW_GRAIN_MAX_WINDOW_DAYS)
   const singleDay = windowDays < 2
+  const shows = (id: TrendsSectionId) => sections.includes(id)
 
   // Latches, set by the sections as they mount: whether the suite request is
   // wanted (its multi-series is near) and whether any section is.
@@ -344,36 +360,43 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
 
   return (
     <div data-trends-catalogue="" className="mt-3.5 grid grid-cols-1 gap-3.5 min-w-0">
-      <LazySection label="trends-multi-series" minHeight={SUITE_SERIES_HEIGHT + FRAME_CHROME}>
-        <SuiteSeriesSection
-          state={suiteState}
-          windowDays={windowDays}
-          onNear={onSuitesNear}
-          config={custom.applied}
-          customising={customising}
-          onCustomise={() => setCustomising((open) => !open)}
-        />
-      </LazySection>
-      <LazySection label="trends-compare" minHeight={COMPARE_HEIGHT + FRAME_CHROME}>
-        <CompareNear
-          days={days}
-          suiteFilter={suiteFilter}
-          everHadData={everHadData}
-          busiestSuites={busiestSuites}
-          onNear={onDurationNear}
-        />
-      </LazySection>
-      <LazySection label="trends-duration" minHeight={DURATION_HEIGHT + FRAME_CHROME}>
-        <DurationSection
-          days={days}
-          suiteFilter={suiteFilter}
-          singleDay={singleDay}
-          windowDays={windowDays}
-          everHadData={everHadData}
-          onNear={onDurationNear}
-        />
-      </LazySection>
-      {customising ? (
+      {shows('trends-multi-series') && (
+        <LazySection label="trends-multi-series" minHeight={SUITE_SERIES_HEIGHT + FRAME_CHROME}>
+          <SuiteSeriesSection
+            state={suiteState}
+            windowDays={windowDays}
+            onNear={onSuitesNear}
+            config={custom.applied}
+            customising={customising}
+            onCustomise={() => setCustomising((open) => !open)}
+          />
+        </LazySection>
+      )}
+      {shows('trends-compare') && (
+        <LazySection label="trends-compare" minHeight={COMPARE_HEIGHT + FRAME_CHROME}>
+          <CompareNear
+            days={days}
+            suiteFilter={suiteFilter}
+            everHadData={everHadData}
+            busiestSuites={busiestSuites}
+            onNear={onDurationNear}
+          />
+        </LazySection>
+      )}
+      {shows('trends-duration') && (
+        <LazySection label="trends-duration" minHeight={DURATION_HEIGHT + FRAME_CHROME}>
+          <DurationSection
+            days={days}
+            suiteFilter={suiteFilter}
+            singleDay={singleDay}
+            windowDays={windowDays}
+            everHadData={everHadData}
+            onNear={onDurationNear}
+          />
+        </LazySection>
+      )}
+      {/* The suite series' customise panel: it opens only from that section's toolbar. */}
+      {customising && shows('trends-multi-series') ? (
         <ChartCustomisePanel
           chartTitle={titleOf(custom.config)}
           config={custom.config}
@@ -383,13 +406,15 @@ export default function TrendsCatalogue({ days, suiteFilter }: TrendsCataloguePr
         />
       ) : null}
       {/* Its own lazy placeholder and request: nothing is asked until it is near the reader. */}
-      <HeatmapSection
-        days={days}
-        suiteFilter={suiteFilter}
-        kinds={TRENDS_HEATMAP_KINDS}
-        title={HEATMAP_TITLE}
-        sectionId="trends-heatmap"
-      />
+      {shows('trends-heatmap') && (
+        <HeatmapSection
+          days={days}
+          suiteFilter={suiteFilter}
+          kinds={TRENDS_HEATMAP_KINDS}
+          title={HEATMAP_TITLE}
+          sectionId="trends-heatmap"
+        />
+      )}
     </div>
   )
 }

@@ -231,34 +231,6 @@ export function chartResponseFromSuiteRows(rows: readonly SuiteStatusRow[]): Cha
 
 const STATUS_LABEL: Record<Named, string> = { passed: 'Passed', failed: 'Failed', broken: 'Broken', skipped: 'Skipped' }
 
-// ── Top failing tests (Summary) ──────────────────────────────────────────────
-
-/** A `/reports/summary` top-failing row. */
-export interface TopFailingRow {
-  test_name?: unknown
-  suite_name?: unknown
-  class_name?: unknown
-  failures?: number | null
-}
-
-/**
- * Ranked bars, one per row. The summary row has no test fingerprint, so each
- * bar is keyed by its POSITION and the label names the suite: one test name in
- * two suites is two bars, never one merged bar whose count belongs to neither.
- */
-export function chartResponseFromTopFailingRows(rows: readonly TopFailingRow[]): ChartResponse {
-  const xLabels: Record<string, string> = {}
-  const points = rows.map((row, index) => {
-    const test = displayText(row.test_name, '(unnamed test)')
-    const suite = displayText(row.suite_name, '')
-    const name = suite ? `${test} (${suite})` : test
-    const key = rowKey(test, index)
-    xLabels[key] = name
-    return countPoint(key, readCount(row.failures))
-  })
-  return categoryResponse(['test'], [{ key: 'failures', label: 'Failures', points }], xLabels)
-}
-
 // ── Failure clusters (Release gate) ──────────────────────────────────────────
 
 /** A stored decision's `cluster_insights` entry, as far as the breakdown needs it. */

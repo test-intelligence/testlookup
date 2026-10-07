@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased - UX redesign P3: the page template on the eight heaviest pages
+
+Phase P3 of the UI/UX redesign. Home, Runs, Failures, Defects, Trends,
+Coverage, Reports › Summary and Reports › Value now follow one template:
+
+- a compact header (**?** help, at most one primary and one secondary button,
+  everything else in **⋯**);
+- one toolbar (the shared window picker);
+- **either** a one-line status banner **or** a strip of at most five KPI
+  tiles;
+- then the page's **primary content**, one table or one hero chart, starting
+  within 300 px of the top. Secondary sections sit in tabs (`?tab=`), long
+  tails in collapsed sections, and drill-downs in side panels.
+
+Measured at 1440 x 900 on the hermetic fixtures:
+
+| Page | Page height | Primary content starts at |
+|---|---|---|
+| Home | 1,734 → 1,204 px | 570 → 260 px |
+| Runs | 1,748 → 1,145 px | 652 → 248 px |
+| Failures | 3,530 → 1,826 px | 784 → 278 px |
+| Defects | 1,330 → 1,312 px | 627 → 278 px |
+| Trends | 3,686 → 1,733 px | 1,231 → 254 px |
+| Coverage | 2,059 → 1,350 px | 607 → 254 px |
+| Summary | 2,533 → 1,599 px | 484 → 298 px |
+| Value | 1,359 → 844 px | 344 → 283 px |
+
+- **Verdict cards become banners or KPI strips.** A score gauge and its
+  dimensions move to a collapsed "How this … is computed" section below the
+  primary content (on Defects this also removes the empty fourth tile).
+- **Tabs:**
+  - Home: Top failing · Activity (the feed loads when its tab opens).
+  - Failures: Groups · By suite · Scatter · Categories.
+  - Defects: Where defects live · Jira bridge.
+  - Trends: Volume · By suite · Durations · Heatmap.
+  - Coverage: Coverage map · Env × release heatmap.
+
+  A section in a closed tab is not rendered and asks nothing.
+- **Side panels:** Runs' failure signatures and Failures' suspects open beside
+  the page.
+- **Removed per the spec:**
+  - Home's Eng-hours, Infra-caused and Avg-duration tiles (their data lives on
+    Value, Failures and Runs).
+  - Home's blockers panel (folded into the banner).
+  - Summary's duplicate "Failures by test" chart and its status donut (their
+    counts are on the KPI row).
+  - Summary's trend moves into a collapsed section.
+  - Trends' "Widen window to 90d" (the picker does it).
+  - Value's "Release decisions" card (its two numbers are on Risky releases).
+- **Catalogue composition props** (choose which existing sections render;
+  never how they draw): `OverviewCatalogue rows`, `SummaryCatalogue part`
+  (`suites` / `status` / `trend`), `TrendsCatalogue sections` and
+  `CoverageAdvanced sections`. Without the prop, each renders what it did.
+- **Shared fixes:**
+  - The compact KPI tile's value uses the presentation stat token, so
+    presentation mode enlarges every KPI strip again (24 px at the desk,
+    40 px in the room).
+  - `PageHeader`'s **?** takes `topic#anchor`, so Defects' help opens on
+    "Promoting to a defect".
+- **Dead code:** the Summary top-failing part and its adapter,
+  `useValueMetricsKpi`, and three unused Summary caption words.
+- **Tests:**
+  - Each page has layout tests (primary content before any tab bar or
+    collapsed section), `?tab=` tests and side-panel tests.
+  - New hermetic `fold-<page>.spec.ts` for all eight pages (primary content
+    ≤ 300 px at 1440 x 900).
+  - Request inventories follow the tabs, and each tab is checked to request
+    when opened.
+  - Lazy-load proofs that the pages' new compactness had made vacuous use
+    shorter screens, with the measurements in their comments.
+
 ## Unreleased - UX redesign P2: remove the noise — nothing fake, nothing unbuilt
 
 Phase P2 of the UI/UX redesign. The rule: **anything not built is not

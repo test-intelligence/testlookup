@@ -3,11 +3,12 @@
  * "Summary report").
  *
  * What this pins:
- *   - the donut, the suite bars and the failing-test bars read the page's own
- *     `/reports/summary` payload: its population (per unique test), its mode,
- *     every status (`broken` included), and no invented `unknown`;
+ *   - the donut and the suite bars read the page's own `/reports/summary`
+ *     payload: its population (per unique test), its mode, every status
+ *     (`broken` included), and no invented `unknown`;
  *   - suites are ordered worst first (failed + broken);
- *   - one test name in two suites is two bars (the row has no fingerprint);
+ *   - `part` renders exactly its sections (`headline` = all three, as before
+ *     the split); a part without the trend asks for nothing;
  *   - the trend is the one new request, and its caption names its basis
  *     (executions), because every other number on the page counts unique tests;
  *   - each section root carries its `data-catalogue-section`, each frame its
@@ -131,13 +132,65 @@ describe('SummaryCatalogue — the DOM contract B0 relies on', () => {
     }
     expect(section('summary-top-failing')).toBeNull()
   })
+})
 
-  it('top-failing: only the failing-test bars, titled so the table’s own heading stays unique', () => {
-    render(<SummaryCatalogue part="top-failing" report={makeReport()} days={30} mode="latest" />)
-    expect(within(section('summary-top-failing')).getByRole('heading', { level: 2, name: 'Failures by test' })).toBeInTheDocument()
-    expect(section('summary-donut')).toBeNull()
-    // The page's table section is "Top failing tests"; a second heading starting so would make it ambiguous.
-    expect(document.body.textContent).not.toMatch(/Top failing tests/)
+/** Every section id in the DOM, in order. */
+const sectionIds = () =>
+  Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+
+describe('SummaryCatalogue — `part` picks which sections render (UX redesign P3)', () => {
+  it('`headline` is unchanged: the donut, the suite bars, the trend, in that order, and the trend asks', () => {
+    render(<SummaryCatalogue part="headline" report={makeReport()} days={30} mode="latest" />)
+    expect(sectionIds()).toEqual(['summary-donut', 'summary-suites', 'summary-trend'])
+    expect(trends.calls.length).toBeGreaterThan(0)
+  })
+
+  it('`suites`: the suite bars only, and no trend request', () => {
+    render(<SummaryCatalogue part="suites" report={makeReport()} days={30} mode="latest" />)
+    expect(sectionIds()).toEqual(['summary-suites'])
+    expect(within(section('summary-suites')).getByRole('heading', { level: 2, name: 'Results by suite' })).toBeInTheDocument()
+    expect(tableRows(section('summary-suites')).map(([name]) => name)).toEqual(['checkout-api', 'search', 'auth-api'])
+    expect(trends.calls).toEqual([])
+  })
+
+  it('`status`: the donut only, with the report’s totals, and no trend request', () => {
+    render(<SummaryCatalogue part="status" report={makeReport()} days={30} mode="latest" />)
+    expect(sectionIds()).toEqual(['summary-donut'])
+    expect(new Map(tableRows(section('summary-donut'))).get('Failed')?.[0]).toBe('15')
+    expect(trends.calls).toEqual([])
+  })
+
+  it('`trend`: the trend only, asking with the page’s window', () => {
+    render(<SummaryCatalogue part="trend" report={makeReport()} days={7} mode="latest" />)
+    expect(sectionIds()).toEqual(['summary-trend'])
+    expect(within(section('summary-trend')).getByRole('heading', { level: 2, name: 'Pass rate trend' })).toBeInTheDocument()
+    expect(trends.calls[trends.calls.length - 1]).toEqual({ days: 7, releaseScope: null })
+  })
+
+  it('`trend` far from the reader: its lazy placeholder, and nothing asked', () => {
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    try {
+      render(<SummaryCatalogue part="trend" report={makeReport()} days={30} mode="latest" />)
+      expect(sectionIds()).toEqual([])
+      expect(document.querySelector('[data-lazy-section="summary-trend"]')).not.toBeNull()
+      expect(trends.calls).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('no part draws the failures-by-test bars any more (deleted with their last caller)', () => {
+    for (const part of ['headline', 'suites', 'status', 'trend'] as const) {
+      const { unmount } = render(<SummaryCatalogue part={part} report={makeReport()} days={30} mode="latest" />)
+      expect(section('summary-top-failing')).toBeNull()
+      expect(document.body.textContent).not.toMatch(/Failures by test/)
+      unmount()
+    }
   })
 })
 
@@ -179,30 +232,6 @@ describe('SummaryCatalogue — results by suite', () => {
     render(<SummaryCatalogue part="headline" report={makeReport()} days={30} mode="latest" />)
     // checkout-api 13 + 2, search 1 + 4, auth-api 2 + 0.
     expect(tableRows(section('summary-suites')).map(([name]) => name)).toEqual(['checkout-api', 'search', 'auth-api'])
-  })
-})
-
-describe('SummaryCatalogue — failures by test', () => {
-  it('draws one test name in two suites as two bars, each naming its suite', () => {
-    render(<SummaryCatalogue part="top-failing" report={makeReport()} days={30} mode="latest" />)
-    const rows = new Map(tableRows(section('summary-top-failing')))
-    expect(rows.get('test_login (auth-api)')?.[0]).toBe('5')
-    expect(rows.get('test_login (search)')?.[0]).toBe('3')
-    expect(rows.get('test_pay (checkout-api)')?.[0]).toBe('8')
-  })
-
-  it('renders a hostile test name as text', () => {
-    const hostile = '<img src=x onerror="window.__xss=1">'
-    render(
-      <SummaryCatalogue
-        part="top-failing"
-        report={makeReport({ top_failing_tests: [{ suite_name: 's', class_name: null, test_name: hostile, failures: 2 }] })}
-        days={30}
-        mode="latest"
-      />,
-    )
-    expect(new Map(tableRows(section('summary-top-failing'))).get(`${hostile} (s)`)?.[0]).toBe('2')
-    expect(document.querySelector('img')).toBeNull()
   })
 })
 

@@ -47,7 +47,9 @@ describe('KpiStrip + compact MetricCard', () => {
     )
     const strip = view.container.querySelector('[data-kpi-strip]') as HTMLElement
     expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
-    expect(strip.style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    // Fits the width (one row of five on a desktop page, fewer columns when
+    // presentation-sized tiles cannot fit), never a fixed count that overflows.
+    expect(strip.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(10rem, 1fr))')
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
@@ -61,7 +63,10 @@ describe('KpiStrip + compact MetricCard', () => {
         metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }}
       />,
     )
-    expect(screen.getByText('91.2%').className).toContain('text-2xl')
+    // The presentation-aware stat token (24 px at the desk, 40 px in the room),
+    // never a fixed `text-2xl` that presentation mode cannot raise.
+    expect(screen.getByText('91.2%').className).toContain('text-[length:var(--text-stat-lg)]')
+    expect(screen.getByText('91.2%').className).not.toContain('text-2xl')
     // Two spans, so a narrow tile truncates the change text and never "(worse)".
     expect(screen.getByText('Down 2.1 pp vs previous period')).toBeInTheDocument()
     expect(screen.getByText('(worse)')).toBeInTheDocument()

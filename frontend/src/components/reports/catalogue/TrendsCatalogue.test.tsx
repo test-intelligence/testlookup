@@ -75,6 +75,7 @@ import TrendsCatalogue, {
   ONE_DAY_SUITES_REASON,
   SERIES_SHAPE_ERROR,
   SUITE_SERIES_TITLE,
+  type TrendsSectionId,
 } from './TrendsCatalogue'
 
 const CHART_DATA_URL = '/api/v1/analytics/chart-data'
@@ -132,7 +133,7 @@ const seriesCalls = () => metricCalls('pass_rate').filter((params) => params.top
 /** Compare's requests (C1): they name the suites they compare. */
 const compareCalls = () => chartDataCalls().filter((params) => Array.isArray(params.suite_name))
 
-function renderCatalogue(props: { days: number; suiteFilter?: string | null }) {
+function renderCatalogue(props: { days: number; suiteFilter?: string | null; sections?: readonly TrendsSectionId[] }) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter>
       <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000, revalidateOnFocus: false }}>
@@ -140,7 +141,9 @@ function renderCatalogue(props: { days: number; suiteFilter?: string | null }) {
       </SWRConfig>
     </MemoryRouter>
   )
-  return render(<TrendsCatalogue days={props.days} suiteFilter={props.suiteFilter ?? null} />, { wrapper })
+  // `sections` only when given: the bare mount is every other caller's.
+  const extra = props.sections === undefined ? {} : { sections: props.sections }
+  return render(<TrendsCatalogue days={props.days} suiteFilter={props.suiteFilter ?? null} {...extra} />, { wrapper })
 }
 
 /** Let every queued fetch start: a request goes out a few microtasks after the render that keys it. */
@@ -450,6 +453,73 @@ describe('TrendsCatalogue lazy mounting', () => {
     await settle()
     expect(metricCalls('pass_rate')).toHaveLength(1)
     expect(heatmapCalls()).toHaveLength(1)
+  })
+
+  // ── `sections` (UX redesign P3): which sections render ──────────────────
+  const placeholders = () => Array.from(document.querySelectorAll('[data-lazy-section]'), (el) => el.getAttribute('data-lazy-section'))
+
+  it('no `sections`: the four placeholders, in the catalogue’s order (as before the prop)', async () => {
+    renderCatalogue({ days: 14 })
+    await settle()
+    expect(placeholders()).toEqual(['trends-multi-series', 'trends-compare', 'trends-duration', 'trends-heatmap'])
+  })
+
+  it('each tab’s `sections`: exactly those placeholders, in the catalogue’s order whatever the order given', async () => {
+    const cases: [readonly TrendsSectionId[], string[]][] = [
+      [['trends-multi-series', 'trends-compare'], ['trends-multi-series', 'trends-compare']],
+      [['trends-compare', 'trends-multi-series'], ['trends-multi-series', 'trends-compare']],
+      [['trends-duration'], ['trends-duration']],
+      [['trends-heatmap'], ['trends-heatmap']],
+      [[], []],
+    ]
+    for (const [sections, expected] of cases) {
+      const { unmount } = renderCatalogue({ days: 14, sections })
+      await settle()
+      expect(placeholders(), sections.join(',')).toEqual(expected)
+      unmount()
+    }
+    // Nothing was near: nothing asked, in any of them.
+    expect(get).not.toHaveBeenCalled()
+  })
+})
+
+describe('TrendsCatalogue — `sections` decides what is asked (each section near at once)', () => {
+  const drawn = () => Array.from(document.querySelectorAll('[data-catalogue-section]'), (el) => el.getAttribute('data-catalogue-section'))
+
+  it('by suite (multi-series + compare): the suite series and Compare, never the durations or the heatmap', async () => {
+    renderCatalogue({ days: 14, sections: ['trends-multi-series', 'trends-compare'] })
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    await settle()
+    expect(drawn()).toEqual(['trends-multi-series', 'trends-compare'])
+    expect(seriesCalls()).toHaveLength(1)
+    expect(metricCalls('duration_p50')).toEqual([])
+    expect(metricCalls('duration_p95')).toEqual([])
+    expect(heatmapCalls()).toEqual([])
+  })
+
+  it('durations alone: p50 and p95 and the probe, nothing else', async () => {
+    renderCatalogue({ days: 14, sections: ['trends-duration'] })
+    await waitFor(() => expect(metricCalls('duration_p95')).toHaveLength(1))
+    await settle()
+    expect(drawn()).toEqual(['trends-duration'])
+    expect(metricCalls('duration_p50')).toHaveLength(1)
+    expect(chartDataCalls()).toHaveLength(2)
+    expect(heatmapCalls()).toEqual([])
+    expect(probe.enabled[probe.enabled.length - 1]).toBe(true)
+  })
+
+  it('heatmap alone: the heatmap’s one request, no chart-data', async () => {
+    renderCatalogue({ days: 14, sections: ['trends-heatmap'] })
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
+    await settle()
+    expect(drawn()).toEqual(['trends-heatmap'])
+    expect(chartDataCalls()).toEqual([])
+  })
+
+  it('no `sections` draws all four, as before the prop', async () => {
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(heatmapCalls()).toHaveLength(1))
+    await waitFor(() => expect(drawn()).toEqual(['trends-multi-series', 'trends-compare', 'trends-duration', 'trends-heatmap']))
   })
 })
 

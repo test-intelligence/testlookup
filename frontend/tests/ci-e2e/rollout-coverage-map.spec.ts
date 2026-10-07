@@ -13,6 +13,11 @@
  * level, Escape only clears the highlight. Captions are asserted verbatim:
  * "Test execution coverage — not code coverage" (with the EM DASH, the
  * EPIC's words). Fixtures: the server's wire shape (`fixtures.ts`).
+ *
+ * UX redesign P3: the map and the heatmap are the page's two tabs (`?tab=`:
+ * the map is the default, `heatmap` the other); each tab mounts only its own
+ * section, so a load asks only its tab's read, and opening the other tab
+ * asks the other's.
  */
 import { expect, test, type Page } from '@playwright/test'
 import { landmark, respond, type ApiHandlers, type ApiRequest } from '../lib/production-pages'
@@ -24,7 +29,6 @@ import {
   expectNoErrorFrame,
   expectNoPrototypePollution,
   expectOneRowsPanel,
-  mountEverySection,
   networkQuiet,
   openRollout,
   proveLazyMount,
@@ -67,10 +71,17 @@ const PAGE_READS = [
 const MAP_LINE = `GET ${COVERAGE_MAP_PATH}?depth=1&project_id=${P}&days=30`
 const ENV_LINE = `GET ${HEATMAP_PATH}?kind=suite_environment&project_id=${P}&days=30`
 
-/** Every section near: the shell, the page, level 1 of the map, the heatmap, the probe. No flag lookup. */
-const INVENTORY = [...SHELL_BASE, ...PAGE_READS, MAP_LINE, ENV_LINE, RUN_PROBE]
+/**
+ * A load on each tab, its section near: the shell, the page, then level 1 of
+ * the map (the default tab) or the heatmap, and the probe. No flag lookup.
+ * Before P3 one load asked both (one stack); each tab's share is now its own.
+ */
+const MAP_TAB_INVENTORY = [...SHELL_BASE, ...PAGE_READS, MAP_LINE, RUN_PROBE]
+const HEATMAP_TAB_INVENTORY = [...SHELL_BASE, ...PAGE_READS, ENV_LINE, RUN_PROBE]
 
 const open = (page: Page, path = '/coverage', handlers: ApiHandlers = COVERAGE_ON) => openRollout(page, path, { handlers, ready })
+/** A page tab (UX redesign P3). */
+const pageTab = (page: Page, name: string) => page.getByRole('tablist', { name: 'Coverage views' }).getByRole('tab', { name, exact: true })
 
 const treemap = (page: Page) => section(page, MAP.id).locator('[data-chart-keyboard="treemap"]')
 const focusedLabel = (page: Page) => section(page, MAP.id).locator('[data-coverage-focused]')
@@ -78,23 +89,54 @@ const focusedLabel = (page: Page) => section(page, MAP.id).locator('[data-covera
 test.describe('Coverage (1280 x 4000)', () => {
   test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  test('the map and the heatmap draw; the caption is the EPIC\'s; exactly their reads, once each', async ({ page }) => {
+  test('the map draws (the default tab); the caption is the EPIC\'s; exactly its read, once; the heatmap is not asked', async ({ page }) => {
     const console = watchConsoleErrors(page)
     const { api, errors } = await open(page)
-    await mountEverySection(page, api)
     const map = sectionFrame(page, MAP.id, MAP.title)
     await expectDrawn(map, MAP.id)
-    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
     await expect(map).toContainText(CAPTION)
     await expect(map.locator('canvas').first()).toBeVisible()
     await expect(section(page, MAP.id).locator('[data-coverage-breadcrumb]')).toContainText('All suites')
     // The gaps have words, not only a colour: never run, last run unknown, not run in the window.
     for (const gap of ['Never run', 'Last run unknown', 'Not run in this window']) await expect(map).toContainText(gap)
-    await expectHostileAsText(page, page.locator('[data-coverage-advanced]'), 'Coverage sections')
+    // The heatmap is the other tab's: not rendered at all (no section, no placeholder).
+    await expect(section(page, ENV.id)).toHaveCount(0)
+    await expect(page.locator(`[data-lazy-section="${ENV.id}"]`)).toHaveCount(0)
+    await expectHostileAsText(page, page.locator('[data-coverage-advanced]'), 'Coverage map tab')
     await expectNoErrorFrame(page)
     await networkQuiet(page, api)
-    expectInventory(api, errors, INVENTORY, 'Coverage')
+    expectInventory(api, errors, MAP_TAB_INVENTORY, 'Coverage, map tab')
     expect(console).toEqual([])
+  })
+
+  test('?tab=heatmap: the heatmap draws; exactly its read, once; the map is not asked', async ({ page }) => {
+    const console = watchConsoleErrors(page)
+    const { api, errors } = await open(page, '/coverage?tab=heatmap')
+    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
+    await expect(section(page, MAP.id)).toHaveCount(0)
+    await expect(page.locator(`[data-lazy-section="${MAP.id}"]`)).toHaveCount(0)
+    await expectHostileAsText(page, page.locator('[data-coverage-advanced]'), 'Coverage heatmap tab')
+    await expectNoErrorFrame(page)
+    await networkQuiet(page, api)
+    expectInventory(api, errors, HEATMAP_TAB_INVENTORY, 'Coverage, heatmap tab')
+    expect(console).toEqual([])
+  })
+
+  test('opening the heatmap tab makes its read (and writes ?tab=); the map tab clears it', async ({ page }) => {
+    const { api, errors } = await open(page)
+    await expectDrawn(sectionFrame(page, MAP.id, MAP.title), MAP.id)
+    await networkQuiet(page, api)
+    expect(requestsTo(api, HEATMAP_PATH), 'the heatmap asked on the map tab').toEqual([])
+    await pageTab(page, 'Env × release heatmap').click()
+    await expect(page).toHaveURL(/[?&]tab=heatmap(&|$)/)
+    await expect.poll(() => requestsTo(api, HEATMAP_PATH), { message: 'the heatmap read once its tab opens' }).toEqual([ENV_LINE])
+    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
+    await expect(section(page, MAP.id), 'the map leaves with its tab').toHaveCount(0)
+    await pageTab(page, 'Coverage map').click()
+    await expect(page).not.toHaveURL(/[?&]tab=/)
+    await expectDrawn(sectionFrame(page, MAP.id, MAP.title), MAP.id)
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
   })
 
   test('keyboard: arrows walk the suites, Enter drills (URL + one depth-2 read), Backspace goes up, Escape only clears', async ({
@@ -204,7 +246,7 @@ test.describe('Coverage (1280 x 4000)', () => {
     await expect(legend).not.toHaveText(before)
   })
 
-  test('a 500 on the map is the map\'s own error (no toast); the heatmap draws; Retry recovers', async ({ page }) => {
+  test('a 500 on the map is the map\'s own error (no toast); the heatmap (its own tab) draws; Retry recovers', async ({ page }) => {
     let fail = true
     const fixture = COVERAGE_ON.find(([m]) => m === COVERAGE_MAP_PATH)?.[1]
     const handlers: ApiHandlers = [
@@ -215,8 +257,13 @@ test.describe('Coverage (1280 x 4000)', () => {
     const map = sectionFrame(page, MAP.id, MAP.title)
     await section(page, MAP.id).scrollIntoViewIfNeeded()
     await expect(map).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
-    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
     await expect(page.getByText('planted map failure')).toHaveCount(0)
+    // The heatmap (the other tab since P3) still draws: the map's error is the map's alone.
+    await pageTab(page, 'Env × release heatmap').click()
+    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
+    await pageTab(page, 'Coverage map').click()
+    await section(page, MAP.id).scrollIntoViewIfNeeded()
+    await expect(map).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
     fail = false
     await map.getByRole('button', { name: /retry/i }).click()
     await expectDrawn(map, 'after Retry')
@@ -226,8 +273,13 @@ test.describe('Coverage (1280 x 4000)', () => {
 
   test('a stored 365-day window: every Wave 3 read asks for at most 90 days', async ({ page }) => {
     const { api } = await openRollout(page, '/coverage', { handlers: COVERAGE_ON, ready, days: 365 })
-    await mountEverySection(page, api)
+    await expectDrawn(sectionFrame(page, MAP.id, MAP.title), MAP.id)
+    // Both tabs' reads (P3: one tab each).
+    await pageTab(page, 'Env × release heatmap').click()
+    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
+    await networkQuiet(page, api)
     expect(requestsTo(api, COVERAGE_MAP_PATH).length).toBeGreaterThan(0)
+    expect(requestsTo(api, HEATMAP_PATH).length).toBeGreaterThan(0)
     expect(daysOnTheWire(api).filter(({ days }) => !(days >= 1 && days <= 90)), 'requests over 90 days').toEqual([])
   })
 
@@ -250,8 +302,15 @@ test.describe('Coverage (1280 x 4000)', () => {
   }
 })
 
-test.describe('Coverage, a short screen (1280 x 600)', () => {
-  test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+// UX redesign P3 moved the map up (the verdict card above it is gone, the map
+// tab starts right under the suite table): at the 600 px short screen its
+// placeholder starts 246 px below the fold, inside the 200 px margin plus the
+// proof's 50 px, so it is near at load and the proof would mean nothing.
+// 500 px puts it ~350 px below the fold: the same proof, with room.
+const SHORTER_VIEWPORT = { width: SHORT_VIEWPORT.width, height: 500 } as const
+
+test.describe('Coverage, a short screen (1280 x 500)', () => {
+  test.use({ viewport: { ...SHORTER_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no coverage-map read until the map is near, and it goes out before the map is visible', async ({ page }) => {
     const { api, errors } = await open(page)

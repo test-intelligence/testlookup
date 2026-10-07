@@ -1,24 +1,33 @@
 /**
- * Failure Analysis — verdict-led redesign per
- * design_handoff_failure_analysis/README.md.
+ * Failure Analysis — the UX redesign's page template (P3, `02-design-spec.md`
+ * §2 and the §5 Failures row), at 1440 x 900:
  *
- * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (project · window · updated) + saved views +
- *             7d/14d/30d/90d window picker + Export + "Open triage queue" CTA.
- *   Verdict → 1.45fr | 1fr split. Five variants (REPEAT_FAILURE blocked /
- *             FLAKY at-risk / FIRST_TIME at-risk / RECOVERING info / STABLE
- *             healthy / PENDING). Left: pulsing eyebrow → 26 px headline
- *             "<verdict> · <summary>" → lede → 3 issue rows → CTAs. Right:
- *             44 px stability score + threshold-marked meter (red→amber→
- *             green) + 2×2 weighted dimension grid (Pass rate 35 % /
- *             Categorization 20 % / Flake-free 20 % / Time to fix 25 %).
- *   KPIs    → 4 cells: Repeat failures · Flaky tests (zero = good!) ·
- *             Uncategorized (≥50% warns) · Total executions.
- *   Body    → 1.65fr | 1fr.
- *     Left  → What's failing (headline test + 14-cell run strip) +
- *             Failure-category distribution + Failure timeline.
- *     Right → Flakiness card (zero-state positive — the load-bearing
- *             reframe).
+ *   Header  → `PageHeader` (compact, **?** = the failure-analysis topic): the
+ *             window (`WindowPicker`, the global store) and the suite filter
+ *             share the header row with "Views" (secondary) and "Open triage
+ *             queue" (primary); Export, Notify owner and Classify are in ⋯.
+ *             (A toolbar row of its own put the table past the fold budget
+ *             with both a banner and a KPI strip above it.)
+ *   Verdict → `StatusBanner` in the "Failure verdict" landmark: the verdict,
+ *             the stability score, pass rate, the latest failing suite, the
+ *             data's age; its one action toggles the previous-window
+ *             comparison.
+ *   KPIs    → `KpiStrip`: Repeat failures · Flaky tests · Uncategorized ·
+ *             Total executions ("Failure metrics").
+ *   PRIMARY → the Top failing table (`data-primary`): the top failing tests
+ *             merged with the flaky list — the old "What's failing" card,
+ *             the repeat-failure signal and the Flakiness card in one table
+ *             (14-day run strip in its header). Row actions: Mute (quarantine
+ *             proposal), Jira (dedup-first defect), Suspects (a `SidePanel`
+ *             with the ranked suspect commits, Epic 8 US-8.2 — the bisect).
+ *   Tabs    → `?tab=`: Groups (failure groups + systemic clusters) · By suite
+ *             (the drill ladder) · Scatter (the project test scatter) ·
+ *             Categories (failure-kind chips + category distribution). The
+ *             three catalogue sections are lazy chunks, each mounted only in
+ *             its own tab (the groups also only once near, as before).
+ *   Below   → Disclosures: "How this score is computed" (stability meter,
+ *             the four weighted dimensions, suites with failures) and the
+ *             failure timeline.
  *
  * Data: derives the verdict from existing useFlakyTests / useTopFailing /
  * useFailureCategories / useTrendData. There is no per-failure endpoint
@@ -26,27 +35,26 @@
  * run strip is filled from the trend tail.
  *
  * Wired actions (US-2.4):
- *   - "Mute test" → manual quarantine proposal (POST /api/v1/quarantine,
+ *   - "Mute" → manual quarantine proposal (POST /api/v1/quarantine,
  *     QA_LEAD+; lands as PROPOSED pending approval on /quarantine).
- *   - "Correct classification" → analysis lookup by fingerprint
+ *   - "Correct the classification" → analysis lookup by fingerprint
  *     (GET /projects/{id}/analyses/lookup) + rating=incorrect feedback
  *     (POST /feedback/{analysis_id}) feeding the training loop.
- *   - "Create Jira issue" (US-6.1) → server-prefilled, dedup-first defect
+ *   - "Jira" (US-6.1) → server-prefilled, dedup-first defect
  *     creation via POST /projects/{id}/defects/jira; disabled with a
  *     tooltip when Jira is offline-gated/unconfigured AND no webhook
  *     receiver is subscribed (US-6.3 fallback).
- *   - "Start bisect" was RE-ADDED (Epic 8 US-8.2): it now reveals the
- *     Suspects panel ("Who / what changed") — ranked commits landed since the
+ *   - "Suspects" (Epic 8 US-8.2, the re-added bisect) opens the Suspects
+ *     panel ("Who / what changed") — ranked commits landed since the
  *     last green run, scored by path overlap with the failing test (backend
  *     GET /api/v1/runs/{id}/suspects). Bisect = "show the suspect commit range
  *     for this failure". Framed as suspects, never culprits (monorepo caveat).
  */
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, Check, ChevronRight,
-  Download, GitBranch, GitCommit, Search, ShieldCheck,
-  TestTube, TriangleAlert, XCircle,
+  AlertTriangle, ChevronRight, Download, GitCommit, Mail, Search, ShieldCheck,
+  Tags, TriangleAlert,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -54,8 +62,20 @@ import CreateJiraIssueModal, { jiraUnavailableCopy } from '@/components/defects/
 import EmptyState from '@/components/ui/EmptyState'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageHeader from '@/components/ui/PageHeader'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
+import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard from '@/components/ui/MetricCard'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import Disclosure from '@/components/ui/Disclosure'
+import SidePanel from '@/components/ui/SidePanel'
+import WindowPicker from '@/components/ui/WindowPicker'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { useSuspects } from '@/hooks/useCommitAttribution'
 import CorrectClassificationModal, {
   CATEGORY_CHOICES,
@@ -90,10 +110,29 @@ import DayStrip from '@/components/charts/DayStrip'
 import { countTones, dayWindow, type DayStripCell } from '@/components/charts/dayStrip.model'
 import { csvBlob, csvCell } from '@/lib/viz/csv'
 import { downloadBlob } from '@/utils/download'
-import FailuresAdvanced from '@/components/reports/catalogue/FailuresAdvanced'
+import LazySection from '@/components/reports/catalogue/LazySection'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
-import { BODY_GRID_MIN_WIDTH, BODY_GRID_ONE_COLUMN, BODY_GRID_TWO_COLUMNS, useMinWidth } from '@/hooks/useMinWidth'
+import { lazyWithRetry } from '@/utils/lazyWithRetry'
+
+// ── The catalogue sections, one per tab ───────────────────────────────────
+// Each is a lazy chunk of its own, fetched only when its tab is open (they
+// were one composite, `FailuresAdvanced`, stacked under the page). Dynamic
+// imports: no section code, chart kit or d3 reaches this page's static
+// closure (the d3-confinement and section-only ratchets walk static imports).
+const FailureGroupsSection = lazyWithRetry(() => import('@/components/reports/catalogue/FailureGroupsSection'))
+const FailuresDrill = lazyWithRetry(() => import('@/components/reports/catalogue/FailuresDrill'))
+const ScatterSection = lazyWithRetry(() => import('@/components/reports/catalogue/ScatterSection'))
+
+/**
+ * The groups section's height when drawn, px: its placeholder until it is near
+ * (the groups have no lazy box of their own; the ladder and the scatter do).
+ * Measured with the composite (X3, 1280 x 800): bubbles + ranked table + hint.
+ */
+const GROUPS_HEIGHT = 860
+
+/** The page's help topic (the header's **?**). */
+const HELP_TOPIC = helpTopicParam('/failures')
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -224,98 +263,73 @@ function handleExportCsv({
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'REPEAT_FAILURE' | 'FLAKY' | 'FIRST_TIME' | 'RECOVERING' | 'STABLE' | 'PENDING'
 
+/** The verdict's words and hues: the banner's title, and the score meter in "How this score is computed". */
 interface VerdictTheme {
-  border: string
-  glow: string
-  bar: string
-  eyebrowText: string
-  gateText: string
+  label: string
+  /** The banner's state (its pill word and hue). */
+  banner: BannerState
   pillBg: string
   pillBd: string
   pillFg: string
   meter: string
-  label: string
-  pulse: boolean
+  /** One sentence on what the verdict means: the banner title's tooltip (never a paragraph on the page). */
+  meaning: string
 }
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   REPEAT_FAILURE: {
-    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-no-go-glow), transparent 55%)',
-    bar:    'var(--gate-no-go)',
-    eyebrowText: 'var(--status-failed)',
-    gateText:    'var(--status-failed)',
+    label:  'Repeat failure',
+    banner: 'fail',
     pillBg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
     pillFg: 'var(--status-failed)',
     meter:  'var(--status-failed)',
-    label:  'Repeat failure',
-    pulse:  true,
+    meaning: 'The same tests failed on every observed run in the window: a deterministic regression, not a flake. Re-running will not fix it; bisect against the last green commit.',
   },
   FLAKY: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrowText: 'var(--status-broken)',
-    gateText:    'var(--status-broken)',
+    label:  'Flaky',
+    banner: 'warn',
     pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
     pillFg: 'var(--status-broken)',
     meter:  'var(--status-broken)',
-    label:  'Flaky',
-    pulse:  true,
+    meaning: 'Tests show pass/fail oscillation on the same SHA. Re-runs may pass without fixing the underlying race or fixture issue.',
   },
   FIRST_TIME: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrowText: 'var(--status-broken)',
-    gateText:    'var(--status-broken)',
+    label:  'First-time failure',
+    banner: 'warn',
     pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
     pillFg: 'var(--status-broken)',
     meter:  'var(--status-broken)',
-    label:  'First-time failure',
-    pulse:  true,
+    meaning: 'A new failure landed in this window with no prior history. Check the recent merges and the failure category before deciding to gate.',
   },
   RECOVERING: {
-    border: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 55%)',
-    bar:    'var(--color-accent)',
-    eyebrowText: 'var(--color-accent)',
-    gateText:    'var(--color-accent)',
+    label:  'Recovering',
+    banner: 'ok',
     pillBg: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
     pillFg: 'var(--color-accent)',
     meter:  'var(--color-accent)',
-    label:  'Recovering',
-    pulse:  false,
+    meaning: 'Previously failing tests have started passing again. Confirm with one more run before declaring resolution.',
   },
   STABLE: {
-    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-go-glow), transparent 55%)',
-    bar:    'var(--gate-go)',
-    eyebrowText: 'var(--status-passed)',
-    gateText:    'var(--status-passed)',
+    label:  'Stable',
+    banner: 'ok',
     pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
     pillFg: 'var(--status-passed)',
     meter:  'var(--status-passed)',
-    label:  'Stable',
-    pulse:  false,
+    meaning: 'Every test in the window passed. No regressions, no flakes: nothing to triage.',
   },
   PENDING: {
-    border: 'var(--color-border)',
-    glow:   'transparent',
-    bar:    'var(--color-border-light)',
-    eyebrowText: 'var(--color-text-muted)',
-    gateText:    'var(--color-text-secondary)',
+    label:  'Pending',
+    banner: 'pending',
     pillBg: 'var(--color-bg-secondary)',
     pillBd: 'var(--color-border)',
     pillFg: 'var(--color-text-muted)',
     meter:  'var(--color-text-muted)',
-    label:  'Pending',
-    pulse:  false,
+    meaning: 'No executions in the window. Run a workflow or extend the window to populate failure analysis.',
   },
 }
 
@@ -440,213 +454,20 @@ function pickVerdict(model: StabilityModel): Verdict {
   return 'STABLE'
 }
 
-// ── Atoms ──────────────────────────────────────────────────────────────────
-function GhostBtn({
-  children, onClick, title, disabled, asChildLink,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  title?: string
-  disabled?: boolean
-  asChildLink?: string
-}) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
-  if (asChildLink) {
-    return (
-      <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>
-        {children}
-      </Link>
-    )
-  }
+// ── "How this score is computed" (a Disclosure below the primary content) ──
+// The stability meter, the four weighted dimensions and the suites with
+// failures: the verdict card's right half, which the banner replaced above
+// the fold (§2: the gauge and its dimensions move below the primary content).
+function ScoreDetails({ model, verdict, topFailing }: { model: StabilityModel; verdict: Verdict; topFailing: TopFailingItem[] }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className={cls}
-      style={{ borderColor: 'var(--color-border)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {children}
-    </button>
-  )
-}
-
-function PrimaryBtn({
-  children, onClick, title, asChildLink,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; asChildLink?: string }) {
-  const cls = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors'
-  const style: React.CSSProperties = { background: 'var(--color-btn-primary-bg)', color: 'white' }
-  const hoverIn  = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')
-  const hoverOut = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')
-  if (asChildLink) {
-    return (
-      <Link to={asChildLink} className={cls} style={style} title={title} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        {children}
-      </Link>
-    )
-  }
-  return (
-    <button type="button" onClick={onClick} title={title} className={cls} style={style} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-      {children}
-    </button>
-  )
-}
-
-function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window) => void }) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Window"
-      className="flex items-center gap-0 p-0.5 rounded-md"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      {WINDOWS.map((w) => {
-        const active = value === w
-        return (
-          <button
-            key={w}
-            role="tab"
-            type="button"
-            aria-selected={active}
-            onClick={() => onChange(w)}
-            className={clsx(
-              'px-3 py-1 text-[13px] font-medium tabular-nums rounded-sm transition-colors',
-              active
-                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {w === 1 ? '24h' : `${w}d`}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Verdict card ──────────────────────────────────────────────────────────
-interface IssueRowSpec {
-  tone: 'bad' | 'warn' | 'info'
-  Icon: typeof XCircle
-  body: React.ReactNode
-  cta?: { label: string; onClick?: () => void; to?: string }
-}
-
-function VerdictCard({
-  model, verdict, summary, lede, issues, ctas, topFailing,
-}: {
-  model: StabilityModel
-  verdict: Verdict
-  summary: React.ReactNode
-  lede: React.ReactNode
-  issues: IssueRowSpec[]
-  ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
-  topFailing: TopFailingItem[]
-}) {
-  const t = VERDICT_THEME[verdict]
-  return (
-    <section
-      aria-label="Failure verdict"
-      aria-live="polite"
-      className="relative rounded-xl border overflow-hidden grid gap-6"
-      style={{
-        gridTemplateColumns: '1.45fr 1fr',
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-        marginBottom: 14,
-      }}
-    >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: t.bar,
-              animation: t.pulse ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-            }}
-            aria-hidden
-          />
-          Failure verdict
-        </span>
-        <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
-          <span className="text-[var(--color-text-muted)] mx-2">·</span>
-          <span>{summary}</span>
-        </h2>
-        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-          {lede}
-        </p>
-
-        <div className="flex flex-col gap-2">
-          {issues.length === 0
-            ? <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">No outstanding issues for this window.</p>
-            : issues.map((iss, i) => <IssueRow key={i} issue={iss} />)
-          }
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          {ctas.primary && <CtaBtn cta={ctas.primary} primary />}
-          {ctas.secondary.filter((x): x is IssueRowSpec['cta'] => Boolean(x)).map((c, i) => <CtaBtn key={i} cta={c} />)}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
+    <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+      <div className="flex flex-col gap-3.5 min-w-0">
         <StabilityMeter model={model} verdict={verdict} />
         <DimensionGrid dimensions={model.dimensions} />
+      </div>
+      <div className="min-w-0">
         <SuiteFailureBreakdown topFailing={topFailing} />
       </div>
-    </section>
-  )
-}
-
-function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean }) {
-  if (!cta) return null
-  if (primary) {
-    return cta.to
-      ? <PrimaryBtn asChildLink={cta.to}>{cta.label}</PrimaryBtn>
-      : <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
-  }
-  return cta.to
-    ? <GhostBtn asChildLink={cta.to}>{cta.label}</GhostBtn>
-    : <GhostBtn onClick={cta.onClick}>{cta.label}</GhostBtn>
-}
-
-function IssueRow({ issue }: { issue: IssueRowSpec }) {
-  const palette = {
-    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
-    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
-    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
-  }[issue.tone]
-  const Icon = issue.Icon
-  return (
-    <div
-      className="grid gap-2.5 items-center rounded-md border"
-      style={{ gridTemplateColumns: '22px 1fr auto', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
-    >
-      <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="text-[13px] text-[var(--color-text)] leading-[1.4] issue-body">{issue.body}</div>
-      {issue.cta && (
-        issue.cta.to
-          ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
-              {issue.cta.label} →
-            </Link>
-          : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
-              {issue.cta.label} →
-            </button>
-      )}
     </div>
   )
 }
@@ -805,54 +626,6 @@ function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] })
   )
 }
 
-// ── KPI strip ─────────────────────────────────────────────────────────────
-type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
-
-interface KpiCellProps {
-  Icon?: typeof TestTube
-  label: string
-  value: React.ReactNode
-  meta?: React.ReactNode
-  tone?: KpiTone
-  isFirst?: boolean
-  isLast?: boolean
-}
-
-function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }: KpiCellProps) {
-  const valueColor =
-    tone === 'good'   ? 'var(--status-passed)' :
-    tone === 'warn'   ? 'var(--status-broken)' :
-    tone === 'bad'    ? 'var(--status-failed)' :
-    tone === 'accent' ? 'var(--color-accent)' :
-    'var(--color-text)'
-  return (
-    <div
-      className="flex flex-col gap-1"
-      style={{
-        padding: '14px 18px',
-        background: 'var(--color-bg-card)',
-        borderTop:    '1px solid var(--color-border)',
-        borderBottom: '1px solid var(--color-border)',
-        borderRight:  '1px solid var(--color-border)',
-        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
-        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
-        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
-        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
-        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
-      }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {Icon && <Icon className="h-3 w-3 opacity-70" />}
-        <span>{label}</span>
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
-        {value}
-      </div>
-      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-    </div>
-  )
-}
-
 // ── What's failing card ───────────────────────────────────────────────────
 /** The What's-failing run strip always shows the last fortnight, whatever the window. */
 export const RUN_STRIP_DAYS = 14
@@ -902,38 +675,94 @@ export function runStripLabel(cells: readonly DayStripCell[]): string {
 const NOT_RUN = 'not run'
 const RUN_STRIP_TEXT = { none: 'Not run' }
 
-function WhatsFailingCard({
-  topFailingTest, flakyEntry, totalRuns, trend, onMute, muteDisabledReason,
-  onCreateJira, createJiraDisabledReason, onShowSuspects, showSuspectsDisabledReason,
+// ── The Top failing table (the page's primary content) ────────────────────
+
+/** One row: a failing test, with its flaky-list entry when the flake detector (or a human) flagged it. */
+interface FailingRow {
+  key: string
+  test: TopFailingItem
+  flaky: FlakyTestItem | null
+  /** False for a test only the flaky list names: it carries no category, so no kind is claimed for it. */
+  fromTopFailing: boolean
+}
+
+/** Rows drawn before "Show all": a list page is one viewport plus a page of 25 (§2). */
+const TABLE_PAGE_ROWS = 25
+
+/**
+ * The top failing tests merged with the flaky list, most failures first (a
+ * stable sort: equal counts keep the server's order, top-failing first).
+ * Every failing test is one row; a flaky test the top-failing list does not
+ * name is a row too — the Flakiness card's list, now in the same table.
+ *
+ * A flaky entry pairs with a test by fingerprint when both have one, else by
+ * name: two suites may each have a "login times out", and only the
+ * fingerprint tells them apart.
+ */
+function failingRows(topFailing: TopFailingItem[], flaky: FlakyTestItem[]): FailingRow[] {
+  const paired = new Set<FlakyTestItem>()
+  const flakyOf = (t: TopFailingItem): FlakyTestItem | null =>
+    flaky.find(f => (t.test_fingerprint && f.test_fingerprint
+      ? f.test_fingerprint === t.test_fingerprint
+      : f.test_name === t.test_name)) ?? null
+  const rows: FailingRow[] = topFailing.filter(t => t.fail_count > 0).map((t, i) => {
+    const f = flakyOf(t)
+    if (f) paired.add(f)
+    return { key: `t${i}:${t.test_fingerprint ?? t.test_name}`, test: t, flaky: f, fromTopFailing: true }
+  })
+  flaky.forEach((f, i) => {
+    if (paired.has(f) || f.fail_count <= 0) return
+    rows.push({
+      key: `f${i}:${f.test_fingerprint || f.test_name}`,
+      test: {
+        test_name: f.test_name,
+        fail_count: f.fail_count,
+        test_fingerprint: f.test_fingerprint || null,
+        suite_name: f.suite_name ?? null,
+        class_name: f.class_name ?? null,
+      },
+      flaky: f,
+      fromTopFailing: false,
+    })
+  })
+  return rows.sort((a, b) => b.test.fail_count - a.test.fail_count)
+}
+
+/** A percentage that never collapses a real sub-1 % rate to "0%": 8 of 2773 reads "0.3%". */
+function fmtPct(n: number): string {
+  return n > 0 && n < 1 ? `${n.toFixed(1)}%` : `${Math.round(n)}%`
+}
+
+/** Search for the test's runs: the record carries no run or test-case id to deep-link into. */
+function testSearchHref(name: string): string {
+  return `/search?q=${encodeURIComponent(name)}&scope=tests&mode=keyword`
+}
+
+/** The "Repeat failure" signal's meaning (the old "Why" toast), as its tooltip. */
+const NOT_A_FLAKE =
+  'Failed in two or more runs and not on the flaky list: a real failure, not a flake. A test is flaky when it both passed and failed on the same fingerprint within the window; re-running will not fix this one.'
+
+interface RowActionHandlers {
+  onMute: (row: FailingRow) => void
+  muteDisabledReason: (row: FailingRow) => string | null
+  onCreateJira: (row: FailingRow) => void
+  createJiraDisabledReason: (row: FailingRow) => string | null
+  onShowSuspects: (row: FailingRow) => void
+  /** Set when there is no failed run in the window to attribute commits against. */
+  suspectsDisabledReason: string | null
+}
+
+function TopFailingTable({
+  rows, trend, totalRuns, failedExecutions, actions,
 }: {
-  topFailingTest: TopFailingItem | null
-  /** The headline test's own flaky-list entry, when the flake detector (or a
-   *  human triage) has flagged it. Drives the card's only status pill. */
-  flakyEntry: FlakyTestItem | null
-  totalRuns: number
+  rows: FailingRow[]
   trend: TrendPoint[]
-  onMute: () => void
-  /** When set, the mute button renders disabled with this tooltip —
-   *  quarantine proposals need the test's fingerprint + a project scope. */
-  muteDisabledReason?: string | null
-  /** US-6.1: opens the one-click Create-Jira-issue dialog. */
-  onCreateJira: () => void
-  /** When set, the Jira button renders disabled with this tooltip —
-   *  needs a fingerprint + project, and a configured (non-offline) Jira
-   *  or a webhook receiver. */
-  createJiraDisabledReason?: string | null
-  /** Epic 8 US-8.2: reveals/scrolls to the Suspects panel — the re-added
-   *  bisect affordance (bisect = "show the suspect commit range for this
-   *  failure"). Disabled when there's no failed run to attribute against. */
-  onShowSuspects?: () => void
-  showSuspectsDisabledReason?: string | null
+  totalRuns: number
+  /** The window's failed executions: the denominator of a test's share of failures. */
+  failedExecutions: number
+  actions: RowActionHandlers
 }) {
-  // AI-classified failure kind of the headline test (US-9.2). Prefer the
-  // server-derived value; fall back to the category mirror for older
-  // cached payloads.
-  const topFailingKind = topFailingTest
-    ? (topFailingTest.failure_kind ?? failureKindOf(topFailingTest.failure_category))
-    : null
+  const [showAll, setShowAll] = useState(false)
   // Aggregate failed-run count from trend (which reads test_runs.failed_tests
   // directly). A suite can have failed run aggregates (pass rate < 100%)
   // while test_cases rows haven't landed — the live-stream Redis-buffer gap
@@ -943,150 +772,253 @@ function WhatsFailingCard({
   const failingExecutions = trend.reduce(
     (s, p) => s + (p.failed || 0) + (p.broken || 0), 0,
   )
-  const perTestRowsMissing = (
-    (!topFailingTest || topFailingTest.fail_count === 0) && failingExecutions > 0
-  )
-
-  if (perTestRowsMissing) {
-    return (
-      <CardShell
-        title="What's failing"
-        rightSlot={<Pill tone="warn">Per-test data pending</Pill>}
-      >
-        <div className="px-4 py-6 flex flex-col items-center text-center">
-          <TriangleAlert className="h-8 w-8 mb-2" style={{ color: 'var(--status-broken)' }} />
-          <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
-            <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
-            failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
-            but per-test rows haven&apos;t been persisted yet — common right after a
-            live-stream run finishes. Inspect the failed runs on the Runs page.
-          </p>
-        </div>
-      </CardShell>
-    )
-  }
-
-  if (!topFailingTest || topFailingTest.fail_count === 0) {
-    return (
-      <CardShell title="What's failing" rightSlot={<Pill tone="good">No failures</Pill>}>
-        <div className="px-4 py-6 flex flex-col items-center text-center">
-          <ShieldCheck className="h-8 w-8 mb-2" style={{ color: 'var(--status-passed)' }} />
-          <p className="text-[13px] text-[var(--color-text-secondary)] m-0">
-            No failing tests in this window — every recent run passed.
-          </p>
-        </div>
-      </CardShell>
-    )
-  }
+  const perTestRowsMissing = !rows.some(r => r.fromTopFailing) && failingExecutions > 0
 
   const cells = runStripCells(trend, utcDayIso())
   const { fail: failedCells, pass: passedCells, none: notRunCells } = countTones(cells)
+  const runStrip = (
+    <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
+      <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        Last 14 days
+      </span>
+      {/* Fail is `--status-failed` (it was `--gate-no-go`, which index.css
+          defines as `var(--status-failed)`: one name for one meaning — OD-9). */}
+      <DayStrip
+        className="flex-1 min-w-0"
+        cells={cells}
+        mode="status"
+        label={runStripLabel(cells)}
+        title="Run strip"
+        cellHeight={14}
+        legend={false}
+        text={RUN_STRIP_TEXT}
+      />
+      <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+        {failedCells} fail · {notRunCells} idle · {passedCells} pass
+      </span>
+    </div>
+  )
 
+  if (rows.length === 0) {
+    return (
+      <CardShell
+        title="Top failing tests"
+        rightSlot={perTestRowsMissing ? <Pill tone="warn">Per-test data pending</Pill> : <Pill tone="good">No failures</Pill>}
+      >
+        {perTestRowsMissing ? (
+          <div className="px-4 py-6 flex flex-col items-center text-center">
+            <TriangleAlert className="h-8 w-8 mb-2" style={{ color: 'var(--status-broken)' }} />
+            <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
+              <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
+              failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
+              but per-test rows haven&apos;t been persisted yet — common right after a
+              live-stream run finishes. Inspect the failed runs on the Runs page.
+            </p>
+          </div>
+        ) : (
+          <div className="px-4 py-6 flex flex-col items-center text-center">
+            <ShieldCheck className="h-8 w-8 mb-2" style={{ color: 'var(--status-passed)' }} />
+            <p className="text-[13px] text-[var(--color-text-secondary)] m-0">
+              No failing tests in this window — every recent run passed.
+            </p>
+          </div>
+        )}
+      </CardShell>
+    )
+  }
+
+  const shown = showAll ? rows : rows.slice(0, TABLE_PAGE_ROWS)
   return (
     <CardShell
-      title="What's failing"
+      title="Top failing tests"
       rightSlot={
-        <div className="flex items-center gap-2">
-          {topFailingKind && (
-            <KindBadgeWithEvidence
-              kind={topFailingKind}
-              testFingerprint={topFailingTest.test_fingerprint}
-            />
-          )}
-          {/* A status pill only when the data says so: the flaky list names
-              this test, or it failed in two or more runs (the page's own
-              "Repeat failures" rule). Otherwise no pill. */}
-          {flakyEntry
-            ? <Pill tone="warn">Flaky</Pill>
-            : topFailingTest.fail_count >= 2 && <Pill tone="bad">Repeat failure</Pill>}
-        </div>
+        <>
+          {perTestRowsMissing && <Pill tone="warn">Per-test data pending</Pill>}
+          <span>
+            {rows.length} test{rows.length === 1 ? '' : 's'} · {totalRuns} execution{totalRuns === 1 ? '' : 's'} in window
+          </span>
+        </>
       }
     >
-      <div
-        className="relative"
-        style={{
-          padding: '16px 18px',
-          borderLeft: '3px solid var(--status-failed)',
-          background: 'linear-gradient(90deg, color-mix(in srgb, var(--status-failed) 6%, transparent), transparent 30%), var(--color-bg-card)',
-        }}
-      >
-        <div className="flex items-start justify-between gap-3 flex-wrap mb-2.5">
-          <div className="min-w-0">
-            <div className="font-mono text-[13.5px] font-medium truncate" style={{ color: 'var(--status-failed)' }}>
-              {topFailingTest.test_name}
-            </div>
-            <div className="text-[12px] text-[var(--color-text-muted)] mt-1 flex flex-wrap gap-x-3 gap-y-1">
-              <span>Failed across <strong style={{ color: 'var(--color-text)' }}>{topFailingTest.fail_count}</strong> run{topFailingTest.fail_count === 1 ? '' : 's'}</span>
-              <span>· of {totalRuns} total in window</span>
-            </div>
-            {topFailingTest.failure_step && (
-              <div
-                className="text-[11.5px] mt-1"
-                style={{ color: 'var(--color-text-muted)' }}
-                title={`Failed at step: ${topFailingTest.failure_step}`}
-              >
-                failed at:{' '}
-                <span className="font-mono" style={{ color: 'var(--status-failed)' }}>
-                  {topFailingTest.failure_step}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="text-[12px]" style={{ color: 'var(--status-failed)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-            {topFailingTest.fail_count} failed
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 mt-3">
-          <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-            Last 14 days
-          </span>
-          {/* Fail is `--status-failed` now (it was `--gate-no-go`, which
-              index.css defines as `var(--status-failed)`: the same colour in
-              every theme, one name for one meaning — OD-9). */}
-          <DayStrip
-            className="flex-1 min-w-0"
-            cells={cells}
-            mode="status"
-            label={runStripLabel(cells)}
-            title="Run strip"
-            cellHeight={14}
-            legend={false}
-            text={RUN_STRIP_TEXT}
-          />
-          <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
-            {failedCells} fail · {notRunCells} idle · {passedCells} pass
-          </span>
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-3.5">
-          <GhostBtn
-            onClick={onMute}
-            disabled={Boolean(muteDisabledReason)}
-            title={muteDisabledReason ?? 'Propose quarantine for this test with a documented reason'}
-          >
-            Mute test
-          </GhostBtn>
-          <GhostBtn
-            onClick={onCreateJira}
-            disabled={Boolean(createJiraDisabledReason)}
-            title={createJiraDisabledReason ?? 'File a pre-filled Jira issue for this failure (dedups against open defects)'}
-          >
-            Create Jira issue
-          </GhostBtn>
-          {/* Epic 8 US-8.2 — re-added bisect affordance. Bisect here means
-              "show the suspect commit range for this failure": it reveals the
-              Suspects panel (ranked commits since the last green run). */}
-          <GhostBtn
-            onClick={onShowSuspects}
-            disabled={Boolean(showSuspectsDisabledReason)}
-            title={showSuspectsDisabledReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
-          >
-            <GitBranch className="h-3.5 w-3.5" /> Start bisect
-          </GhostBtn>
-        </div>
+      {runStrip}
+      <div className="overflow-x-auto">
+        <table aria-label="Top failing tests" className="w-full text-[12.5px]">
+          <thead>
+            <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
+              <Th label="Test" />
+              <Th label="Kind" />
+              <Th label="Failures" />
+              <Th label="Signal" />
+              <Th label="Last failed" />
+              <Th label="Actions" align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map(row => (
+              <FailingRowEl key={row.key} row={row} failedExecutions={failedExecutions} actions={actions} />
+            ))}
+          </tbody>
+        </table>
       </div>
+      {rows.length > TABLE_PAGE_ROWS && (
+        <div className="px-4 py-2 text-[12px]" style={{ borderTop: '1px solid var(--color-border)' }}>
+          <button type="button" onClick={() => setShowAll(v => !v)} className="text-[var(--color-accent)] hover:underline">
+            {showAll ? `Show the first ${TABLE_PAGE_ROWS}` : `Show all ${rows.length}`}
+          </button>
+        </div>
+      )}
     </CardShell>
+  )
+}
+
+function Th({ label, align }: { label: string; align?: 'right' }) {
+  return (
+    <th
+      scope="col"
+      className="whitespace-nowrap"
+      style={{
+        padding: '8px 12px',
+        textAlign: align ?? 'left',
+        color: 'var(--color-text-muted)',
+        fontWeight: 500,
+        fontSize: 10.5,
+        textTransform: 'uppercase',
+        letterSpacing: 'var(--tracking-wider)',
+      }}
+    >
+      {label}
+    </th>
+  )
+}
+
+function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; failedExecutions: number; actions: RowActionHandlers }) {
+  const { test, flaky } = row
+  // AI-classified failure kind (US-9.2): the server-derived value, else the
+  // category mirror for older payloads. A flaky-only row has no category.
+  const kind = row.fromTopFailing ? (test.failure_kind ?? failureKindOf(test.failure_category)) : null
+  // The test's OWN runs are the only honest denominator for a failure rate,
+  // and only the flaky list carries them (a human-flagged entry's counts are
+  // a marker, not a measurement). Without them: the count and its share of
+  // the window's failures — never one test's failures over every execution
+  // in the window (the "0% failure rate — failed 8 of 2773" report).
+  const measured = flaky && flaky.source !== 'manual' && flaky.total_runs > 0 ? flaky : null
+  const sharePct = failedExecutions > 0 ? (test.fail_count / failedExecutions) * 100 : null
+  const muteReason = actions.muteDisabledReason(row)
+  const jiraReason = actions.createJiraDisabledReason(row)
+  const suite = [test.suite_name, test.class_name].filter(Boolean).join(' · ')
+  return (
+    <tr data-failing-row="" style={{ borderBottom: '1px solid var(--color-border)' }} className="hover:bg-[var(--color-bg-hover)]">
+      <td style={{ padding: '8px 12px', minWidth: 260 }}>
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <Link
+            to={testSearchHref(test.test_name)}
+            title="Find this test's runs"
+            className="font-mono text-[12.5px] font-medium truncate hover:underline"
+            style={{ color: 'var(--status-failed)' }}
+          >
+            {test.test_name}
+          </Link>
+          {suite && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{suite}</span>}
+          {test.failure_step && (
+            <span className="text-[10.5px] text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
+              failed at: <span className="font-mono" style={{ color: 'var(--status-failed)' }}>{test.failure_step}</span>
+            </span>
+          )}
+        </div>
+      </td>
+      <td style={{ padding: '8px 12px' }}>
+        {kind
+          ? <KindBadgeWithEvidence kind={kind} testFingerprint={test.test_fingerprint} compact />
+          : <span className="text-[var(--color-text-faint)]">—</span>}
+      </td>
+      <td style={{ padding: '8px 12px' }}>
+        <div className="text-[13px] font-semibold tabular-nums" style={{ color: 'var(--status-failed)' }}>{test.fail_count}</div>
+        <div data-failure-rate="" className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+          {measured
+            ? <><strong>{fmtPct((measured.fail_count / measured.total_runs) * 100)} failure rate</strong> · failed {measured.fail_count} of {measured.total_runs} executions</>
+            : sharePct !== null
+              ? <>failed {test.fail_count} time{test.fail_count === 1 ? '' : 's'} — <strong>{fmtPct(sharePct)}</strong> of failures here</>
+              : null}
+        </div>
+      </td>
+      <td style={{ padding: '8px 12px' }}>
+        <SignalCell row={row} />
+      </td>
+      <td className="whitespace-nowrap text-[11.5px] tabular-nums text-[var(--color-text-secondary)]" style={{ padding: '8px 12px' }} title={test.last_failed ?? undefined}>
+        {test.last_failed ? shortAgo(test.last_failed) : '—'}
+      </td>
+      <td style={{ padding: '8px 12px' }}>
+        <div className="flex justify-end gap-1.5">
+          <RowAction
+            label={`Mute test ${test.test_name}`}
+            title={muteReason ?? 'Propose quarantine for this test with a documented reason'}
+            disabled={Boolean(muteReason)}
+            onClick={() => actions.onMute(row)}
+          >
+            Mute
+          </RowAction>
+          <RowAction
+            label={`Create Jira issue for ${test.test_name}`}
+            title={jiraReason ?? 'File a pre-filled Jira issue for this failure (dedups against open defects)'}
+            disabled={Boolean(jiraReason)}
+            onClick={() => actions.onCreateJira(row)}
+          >
+            Jira
+          </RowAction>
+          {/* Epic 8 US-8.2 — the bisect: the suspect commit range for this failure, in a side panel. */}
+          <RowAction
+            label={`Suspects for ${test.test_name}`}
+            title={actions.suspectsDisabledReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
+            disabled={Boolean(actions.suspectsDisabledReason)}
+            onClick={() => actions.onShowSuspects(row)}
+          >
+            <GitCommit className="h-3 w-3" aria-hidden="true" /> Suspects
+          </RowAction>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+/**
+ * The row's status, only when the data says so: the flaky list names the
+ * test (measured, or flagged by a human), or it failed in two or more runs
+ * (the page's "Repeat failures" rule). Otherwise nothing.
+ */
+function SignalCell({ row }: { row: FailingRow }) {
+  const { test, flaky } = row
+  if (flaky?.source === 'manual') {
+    return <Pill tone="neutral" title="Manually flagged as flaky on /my-failures (a human triage, not a measured rate)">Flagged</Pill>
+  }
+  if (flaky) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="inline-flex items-center gap-1.5">
+          <Pill tone="warn" title="Intermittent pass/fail on the same SHA: re-runs won't fix it — investigate the race or fixture.">Flaky</Pill>
+          <span className="text-[11px] tabular-nums" style={{ color: 'var(--status-broken)' }}>{Math.round(flaky.failure_rate_pct)}% flake</span>
+        </span>
+        {flaky.likely_cause && <span className="text-[10.5px] text-[var(--color-text-muted)] leading-tight">{flaky.likely_cause}</span>}
+      </div>
+    )
+  }
+  if (test.fail_count >= 2) return <Pill tone="bad" title={NOT_A_FLAKE}>Repeat failure</Pill>
+  return <span className="text-[var(--color-text-faint)]">—</span>
+}
+
+function RowAction({
+  children, label, title, disabled, onClick,
+}: { children: React.ReactNode; label: string; title: string; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+    >
+      {children}
+    </button>
   )
 }
 
@@ -1346,12 +1278,14 @@ const CATEGORY_FIXED_WIDTH = 48 + 56 + 56 + 3 * 12
 /** A card too narrow for even that: one column, each row stacked (name line, then bar and figures). */
 const CATEGORY_STACKED_GRID = { gridTemplateColumns: 'minmax(0, 1fr)' } as const
 
-function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, kindFilter = 'all' }: {
+function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, onClassify, kindFilter = 'all' }: {
   categories: FailureCategoryItem[]
   totalFailures: number
   uncategorizedPct: number
   /** Opens the correct-classification dialog for the top failing test. */
   onCorrect: () => void
+  /** Opens the bulk "classify uncategorised failures" dialog. */
+  onClassify?: () => void
   /** Active failure-kind filter — 'all' shows everything (US-9.2). */
   kindFilter?: FailureKind | 'all'
 }) {
@@ -1420,6 +1354,19 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
               >
                 Correct the classification →
               </button>
+              {/* The verdict card's "Classify" issue row, moved beside its own evidence. */}
+              {onClassify && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    onClick={onClassify}
+                    className="text-[var(--color-accent)] hover:underline"
+                  >
+                    Classify them so owners can be auto-routed →
+                  </button>
+                </>
+              )}
             </span>
           </div>
         )}
@@ -1659,127 +1606,16 @@ export function failureTimelineLabel(cells: readonly DayStripCell[]): string {
   return `Failure timeline: ${failures} day${failures === 1 ? '' : 's'} with failures over the last ${cells.length} days.`
 }
 
+/** The failure timeline, inside its Disclosure below the primary content (one cell a day, at most 30). */
 function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number }) {
   const cells = useMemo(() => failureTimelineCells(trend, days, utcDayIso()), [trend, days])
 
   return (
-    <CardShell title="Failure timeline" rightSlot={<span>last {days} days</span>}>
-      <div className="px-4 py-3.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
-          Repeat-failure events vs total runs in this window. Each cell = 1 day.
-        </p>
-        <DayStrip cells={cells} mode="status" label={failureTimelineLabel(cells)} title="Failure timeline" text={RUN_STRIP_TEXT} />
-      </div>
-    </CardShell>
-  )
-}
-
-// ── Flakiness card ────────────────────────────────────────────────────────
-function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repeatFailures: TopFailingItem[] }) {
-  const isStable = flaky.length === 0
-  const headerBorder = isStable ? 'color-mix(in srgb, var(--status-passed) 28%, transparent)' : 'color-mix(in srgb, var(--status-broken) 28%, transparent)'
-  const stripe       = isStable ? 'var(--status-passed)'              : 'var(--status-broken)'
-  const ledeBg       = isStable
-    ? 'linear-gradient(90deg, color-mix(in srgb, var(--status-passed) 6%, transparent), transparent 40%), var(--color-bg-card)'
-    : 'linear-gradient(90deg, color-mix(in srgb, var(--status-broken) 6%, transparent), transparent 40%), var(--color-bg-card)'
-  return (
-    <section
-      aria-label="Flakiness analysis"
-      className="rounded-xl"
-      style={{
-        background: ledeBg,
-        border: `1px solid ${headerBorder}`,
-        borderLeft: `3px solid ${stripe}`,
-        padding: '14px 16px',
-      }}
-    >
-      <h3 className="text-[13px] font-semibold m-0 mb-1 flex items-center gap-2 text-[var(--color-text)]">
-        Flakiness
-        <Pill tone={isStable ? 'good' : 'warn'}>{isStable ? 'Stable' : 'Flaky'}</Pill>
-      </h3>
-
-      {isStable && repeatFailures.length > 0 ? (
-        <>
-          <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-            <strong style={{ color: 'var(--color-text)' }}>This is a real failure, not a flake.</strong>{' '}
-            Don't re-run hoping for green. The signal is consistent — every observed run on this branch hit the same assertion.
-          </p>
-          <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <FlakeMetaCell k="Detector"      v="v2"        tone="good" />
-            <FlakeMetaCell k="Required runs" v="≥ 5 mixed" tone="neutral" />
-            <FlakeMetaCell k="Cost saved"    v="—"         tone="neutral" />
-          </div>
-        </>
-      ) : isStable ? (
-        <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-          <strong style={{ color: 'var(--color-text)' }}>No flakes detected this window.</strong>{' '}
-          Every observed run produced a deterministic outcome. Zero flakes is good news — keep going.
-        </p>
-      ) : (
-        <>
-          {(() => {
-            // Manual-triage entries (source==='manual') are human-flagged, not
-            // measured intermittents, so the "intermittent pass/fail" copy only
-            // applies to auto-detected ones. Describe each present source.
-            const autoCount = flaky.filter(f => f.source !== 'manual').length
-            const manualCount = flaky.length - autoCount
-            return (
-              <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-                {autoCount > 0 && (
-                  <>
-                    {autoCount} test{autoCount === 1 ? '' : 's'} show intermittent pass/fail patterns on the same SHA. Re-runs
-                    won't fix these — investigate the underlying race or fixture issue.
-                  </>
-                )}
-                {autoCount > 0 && manualCount > 0 && ' '}
-                {manualCount > 0 && (
-                  <>
-                    {manualCount} test{manualCount === 1 ? '' : 's'} {manualCount === 1 ? 'was' : 'were'} manually flagged as
-                    flaky on /my-failures{autoCount > 0 ? ' as well' : ''}.
-                  </>
-                )}
-              </p>
-            )
-          })()}
-          <div className="flex flex-col gap-1.5 mt-3">
-            {flaky.slice(0, 5).map(f => (
-              <div
-                key={f.test_fingerprint}
-                className="flex flex-col gap-1 rounded-sm border px-2.5 py-2 text-[12px]"
-                style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-              >
-                <div className="grid items-center gap-3" style={{ gridTemplateColumns: '1fr auto' }}>
-                  <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">{f.test_name}</span>
-                  {f.source === 'manual' ? (
-                    <span className="tabular-nums" style={{ color: 'var(--color-accent)' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
-                  ) : (
-                    <span className="tabular-nums" style={{ color: 'var(--status-broken)' }}>{Math.round(f.failure_rate_pct)}% flake</span>
-                  )}
-                </div>
-                {f.likely_cause && (
-                  <span className="text-[10.5px] text-[var(--color-text-muted)] leading-tight">{f.likely_cause}</span>
-                )}
-              </div>
-            ))}
-            {flaky.length > 5 && (
-              <span className="text-[11px] text-[var(--color-text-muted)] mt-1">+{flaky.length - 5} more</span>
-            )}
-          </div>
-        </>
-      )}
-    </section>
-  )
-}
-
-function FlakeMetaCell({ k, v, tone }: { k: string; v: string; tone: 'good' | 'neutral' }) {
-  const fg = tone === 'good' ? 'var(--status-passed)' : 'var(--color-text-secondary)'
-  return (
-    <div
-      className="rounded-sm border px-2 py-2"
-      style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>{k}</div>
-      <div className="text-[13px] font-semibold tabular-nums mt-0.5" style={{ color: fg }}>{v}</div>
+    <div data-failure-timeline="">
+      <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+        Repeat-failure events vs total runs in this window. Each cell = 1 day.
+      </p>
+      <DayStrip cells={cells} mode="status" label={failureTimelineLabel(cells)} title="Failure timeline" text={RUN_STRIP_TEXT} />
     </div>
   )
 }
@@ -1805,7 +1641,7 @@ function CardShell({
   )
 }
 
-function Pill({ children, tone }: { children: React.ReactNode; tone: 'good' | 'warn' | 'bad' | 'neutral' }) {
+function Pill({ children, tone, title }: { children: React.ReactNode; tone: 'good' | 'warn' | 'bad' | 'neutral'; title?: string }) {
   const palette = {
     good:    { bg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',      bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)' },
     warn:    { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)' },
@@ -1814,8 +1650,9 @@ function Pill({ children, tone }: { children: React.ReactNode; tone: 'good' | 'w
   }[tone]
   return (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
+      className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase whitespace-nowrap"
       style={{ background: palette.bg, border: `1px solid ${palette.bd}`, color: palette.fg, letterSpacing: 'var(--tracking-wide)' }}
+      title={title}
     >
       {children}
     </span>
@@ -1954,22 +1791,60 @@ function MuteTestModal({
   )
 }
 
+// ── The secondary sections (tabs under the primary content) ─────────────
+type SectionTab = 'groups' | 'suite' | 'scatter' | 'categories'
+
+const SECTION_TABS: readonly TabItem<SectionTab>[] = [
+  { id: 'groups', label: 'Groups' },
+  { id: 'suite', label: 'By suite' },
+  { id: 'scatter', label: 'Scatter' },
+  { id: 'categories', label: 'Categories' },
+]
+const SECTION_TAB_IDS: readonly SectionTab[] = SECTION_TABS.map(t => t.id)
+const DEFAULT_SECTION_TAB: SectionTab = 'groups'
+const SECTION_LABEL: Record<SectionTab, string> = {
+  groups: 'Failure groups',
+  suite: 'Results by suite',
+  scatter: 'Test scatter',
+  categories: 'Failure categories',
+}
+
+/** The tab key, and the section-owned keys a tab change clears (the drill path, the rows panel). */
+const TAB_KEY = 'tab'
+const SECTION_URL_KEYS = ['drill', 'rows'] as const
+
+/** A rows panel's owner (`rows=by~<owner>`, `useDrillPath`) → the tab its section lives in. */
+const TAB_OF_ROWS_OWNER: Readonly<Record<string, SectionTab>> = {
+  'failures-drill': 'suite',
+  'scatter-project': 'scatter',
+}
+
+/**
+ * The tab a link that names none belongs in: a drill path (`drill=`) is the
+ * By-suite ladder's, a rows panel (`rows=by~<owner>`) its section's. A link
+ * copied before the tabs existed (or a hand-made one) then opens on the
+ * section it describes, not on Groups with the state invisible. Read here, not
+ * through `useDrillPath`: that module is section-only (it must stay out of
+ * this page's static closure, `sectionOnlyModules.test.ts`).
+ */
+function tabOfLink(params: URLSearchParams): SectionTab | null {
+  const owner = /^by~(.+)$/.exec(params.get('rows') ?? '')?.[1]
+  if (owner && TAB_OF_ROWS_OWNER[owner]) return TAB_OF_ROWS_OWNER[owner]
+  return params.has('drill') ? 'suite' : null
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function FailureAnalysisPage() {
-  // Two body columns from 768 px; one below, where 205 + 124 px columns squeezed the cards (Wave 3, X2/X3).
-  const twoBodyColumns = useMinWidth(BODY_GRID_MIN_WIDTH)
-  const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   // Global shared time-window preference — picking 24h here propagates
   // to /reports/summary, /live, /coverage, /trends, /runs, /overview,
-  // /my-failures and vice versa. Snapped to this page's allowed set.
+  // /my-failures and vice versa (the header's `WindowPicker` writes it).
+  // Snapped to this page's allowed set.
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, WINDOWS) as Window
-  const setDays = setStoredDays as (w: Window) => void
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
@@ -1985,8 +1860,32 @@ export default function FailureAnalysisPage() {
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
 
+  // ── The section tabs (?tab=) ─────────────────────────────────────────
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [tabParam, setTabParam] = useTabParam(SECTION_TAB_IDS, DEFAULT_SECTION_TAB)
+  // A link naming no tab opens the tab its drill / rows state belongs to,
+  // and the URL is completed to say so (replace), so leaving that state
+  // (the ladder's root link) keeps the tab.
+  const linkedTab = searchParams.has(TAB_KEY) ? null : tabOfLink(searchParams)
+  const tab = linkedTab ?? tabParam
+  useEffect(() => {
+    if (linkedTab) setTabParam(linkedTab)
+  }, [linkedTab, setTabParam])
+  // A tab change closes the section it leaves: its drill path and rows panel
+  // are that section's state (and would otherwise pull the page back to it).
+  const selectTab = useCallback((next: SectionTab) => {
+    if (next === tab) return
+    setSearchParams((current) => {
+      const out = new URLSearchParams(current)
+      for (const key of SECTION_URL_KEYS) out.delete(key)
+      if (next === DEFAULT_SECTION_TAB) out.delete(TAB_KEY)
+      else out.set(TAB_KEY, next)
+      return out
+    }, { replace: true })
+  }, [tab, setSearchParams])
+
   // ── Compare-to-previous-window toggle ────────────────────────────────
-  // The "Compare to previous window" CTA flips this on, which triggers a
+  // The banner's "Compare to previous window" flips this on, which triggers a
   // second trend fetch covering twice the window. We split that into
   // current + prior halves to compute deltas without a bespoke backend
   // endpoint. The toggle stays page-local so a stale comparison can't
@@ -2007,9 +1906,8 @@ export default function FailureAnalysisPage() {
   const { data: compareTrendsData, isLoading: compareLoading } = useTrendData(
     compareDays, suiteFilter,
   )
-  // Surface the suite of the most-recent failing run in the header so a user
-  // landing on this page can immediately see which test suite owns the
-  // failures they're about to triage.
+  // The most recent failing run: its suite is a banner fact, and it is the
+  // run the Suspects panel attributes commits against.
   const { data: latestFailedRuns } = useRuns({ page: 1, size: 1, days, status: 'FAILED', ...(suiteFilter && { suite_name: suiteFilter }) })
   const latestFailedRun = latestFailedRuns?.items?.[0]
 
@@ -2017,6 +1915,7 @@ export default function FailureAnalysisPage() {
   const categories = useMemo<FailureCategoryItem[]>(() => normaliseList<FailureCategoryItem>(categoryData), [categoryData])
   const topFailing = useMemo<TopFailingItem[]>(() => normaliseList<TopFailingItem>(topData), [topData])
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
+  const rows = useMemo(() => failingRows(topFailing, flaky), [topFailing, flaky])
 
   // ── Failure-kind triad (US-9.2) ──────────────────────────────────────
   // Chip filter over the AI-classified kind. The by-kind aggregation comes
@@ -2078,41 +1977,37 @@ export default function FailureAnalysisPage() {
   )
   const verdict = pickVerdict(model)
 
-  // ── US-2.4 action state: mute-to-quarantine + classifier correction ──
-  // Both actions target the page's headline failing test — the only test
-  // the analytics payloads identify by fingerprint AND surface prominently.
-  const [muteOpen, setMuteOpen] = useState(false)
+  // ── US-2.4 action state: mute-to-quarantine, Jira, suspects (per row) ──
+  // + the classifier correction, which targets the headline failing test.
+  const [muteFor, setMuteFor] = useState<FailingRow | null>(null)
+  const [jiraFor, setJiraFor] = useState<FailingRow | null>(null)
+  const [suspectsFor, setSuspectsFor] = useState<FailingRow | null>(null)
   const [correctionOpen, setCorrectionOpen] = useState(false)
-  // US-6.1: one-click Jira issue for the headline failing test.
-  const [jiraOpen, setJiraOpen] = useState(false)
   const { metadata: jiraMeta } = useJiraDefectMetadata(project?.id ?? null)
 
   const actionTarget = model.topFailingTest
-  const muteDisabledReason = !project?.id
-    ? 'Pick a specific project to propose a quarantine.'
-    : !actionTarget?.test_fingerprint
-      ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
-      : null
-  // Disabled when there's no identity/project, or when the metadata probe
-  // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
-  // webhook receiver). While metadata is still loading the button stays
-  // enabled — the dialog itself gates submission.
-  const createJiraDisabledReason = !project?.id
-    ? 'Pick a specific project to create a Jira issue.'
-    : !actionTarget?.test_fingerprint
-      ? 'Test identity (fingerprint) not available yet — cannot file a defect.'
-      : jiraMeta && !jiraMeta.available && !jiraMeta.webhook_available
-        ? jiraUnavailableCopy(jiraMeta.reason)
-        : null
-  // Flake context for the mute modal, reused from data already on the page.
-  const actionTargetFlakyEntry = useMemo(() => {
-    if (!actionTarget) return null
-    return (
-      flaky.find(f => f.test_fingerprint === actionTarget.test_fingerprint) ??
-      flaky.find(f => f.test_name === actionTarget.test_name) ??
-      null
-    )
-  }, [flaky, actionTarget])
+  const rowActions = useMemo<RowActionHandlers>(() => ({
+    onMute: (row) => setMuteFor(row),
+    muteDisabledReason: (row) => !project?.id
+      ? 'Pick a specific project to propose a quarantine.'
+      : !row.test.test_fingerprint
+        ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
+        : null,
+    onCreateJira: (row) => setJiraFor(row),
+    // Disabled when there's no identity/project, or when the metadata probe
+    // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
+    // webhook receiver). While metadata is still loading the button stays
+    // enabled — the dialog itself gates submission.
+    createJiraDisabledReason: (row) => !project?.id
+      ? 'Pick a specific project to create a Jira issue.'
+      : !row.test.test_fingerprint
+        ? 'Test identity (fingerprint) not available yet — cannot file a defect.'
+        : jiraMeta && !jiraMeta.available && !jiraMeta.webhook_available
+          ? jiraUnavailableCopy(jiraMeta.reason)
+          : null,
+    onShowSuspects: (row) => setSuspectsFor(row),
+    suspectsDisabledReason: latestFailedRun?.id ? null : 'No failed run in this window to attribute commits against.',
+  }), [project?.id, jiraMeta, latestFailedRun?.id])
 
   const openCorrection = useCallback(() => {
     if (!project?.id) {
@@ -2128,11 +2023,11 @@ export default function FailureAnalysisPage() {
 
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
 
-  // Real arrival time of this view's payload (the header's "Updated …"). This
+  // Real arrival time of this view's payload (the banner's "Updated"). This
   // age used to be the literal '4h ago' for every project, however fresh the data was.
   const fetchedAt = useDataFreshness(isLoading ? undefined : model)
 
-  // ── CTA handlers ─────────────────────────────────────────────────────────
+  // ── Overflow handlers ────────────────────────────────────────────────────
   const [notifyingOwner, setNotifyingOwner] = useState(false)
 
   async function handleNotifyOwner() {
@@ -2181,10 +2076,10 @@ export default function FailureAnalysisPage() {
     }
   }
 
-  // Classify modal — opened by the "Category unknown" issue row CTA. Lets
-  // the user bulk-assign a category (Flaky / Product Bug / Infrastructure /
-  // Test Data / Automation Defect) to every uncategorised failure in the
-  // current project + window. The selection persists via the
+  // Classify modal — opened from ⋯ and from the category card's low-confidence
+  // note. Lets the user bulk-assign a category (Flaky / Product Bug /
+  // Infrastructure / Test Data / Automation Defect) to every uncategorised
+  // failure in the current project + window. The selection persists via the
   // ``/analytics/classify-uncategorized`` endpoint.
   const [classifyOpen, setClassifyOpen] = useState(false)
   const [classifying, setClassifying] = useState(false)
@@ -2231,21 +2126,6 @@ export default function FailureAnalysisPage() {
     }
   }
 
-  // Why-not-a-flake explanation — surfaces the heuristics so users understand
-  // what the verdict means rather than having to read the rules engine code.
-  function showFlakeWhyDetails() {
-    toast(
-      [
-        'Why this isn\'t flagged as flaky:',
-        '',
-        '• A test is "flaky" when it both passed and failed on the same fingerprint within the window.',
-        '• Every failing test in this window has only failing executions — no recent pass that would indicate intermittency.',
-        '• Retrying won\'t fix it; treat the failures as a hard regression and bisect against the last green run.',
-      ].join('\n'),
-      { icon: '🪛', duration: 12000, style: { whiteSpace: 'pre-line', maxWidth: 480 } },
-    )
-  }
-
   if (!project && !isAllProjects) {
     return (
       <EmptyState
@@ -2260,10 +2140,10 @@ export default function FailureAnalysisPage() {
     return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
   }
 
-  const projectLabel = project?.name ?? 'All Projects'
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
+  const theme = VERDICT_THEME[verdict]
 
-  // Verdict summary headline
+  // The banner's headline after the verdict word.
   const summaryNode: React.ReactNode = (() => {
     if (verdict === 'STABLE')         return <>0 failures in {days} days</>
     if (verdict === 'PENDING')        return <>awaiting executions</>
@@ -2283,322 +2163,218 @@ export default function FailureAnalysisPage() {
     return <>recovering from prior failures</>
   })()
 
-  const lede: React.ReactNode = (() => {
-    if (verdict === 'PENDING')
-      return <>No executions in the last {days} days. Run a workflow or extend the window to populate failure analysis.</>
-    if (verdict === 'STABLE')
-      return <>Every test in the {days}-day window passed. No regressions, no flakes — nothing to triage.</>
-    if (verdict === 'REPEAT_FAILURE')
-      return <>The same assertion has failed on every observed run in the window. This is a deterministic regression, not a flake — re-running won't fix it. Start by bisecting against the last green commit.</>
-    if (verdict === 'FLAKY')
-      return <>{model.flakyCount} test{model.flakyCount === 1 ? '' : 's'} show pass/fail oscillation on the same SHA. Re-runs may pass without fixing the underlying race or fixture issue.</>
-    if (verdict === 'FIRST_TIME')
-      return <>A new failure landed in this window with no prior history. Check the recent merges and the failure category before deciding to gate.</>
-    return <>Previously failing tests have started passing again. Confirm with one more run before declaring resolution.</>
-  })()
+  const passRatePct = model.totalRuns > 0 ? (model.passedRuns / model.totalRuns) * 100 : null
+  const latestSuite = latestFailedRun && (latestFailedRun.primary_suite_name || latestFailedRun.suite_names?.length)
+    ? <SuiteBadge inline primary={latestFailedRun.primary_suite_name} all={latestFailedRun.suite_names} />
+    : null
+  // The banner is ONE line at 1440 px (§2): the facts are short, and the
+  // headline after the verdict word is cut (whole text in its tooltip).
+  const bannerFacts: BannerFact[] = [
+    { label: 'Stability', value: verdict === 'PENDING' ? '—' : `${model.composite}/100` },
+    { label: 'Pass rate', value: passRatePct === null ? '—' : `${passRatePct.toFixed(1)}%` },
+    ...(latestSuite ? [{ label: 'Latest failing suite', value: latestSuite }] : []),
+    { label: 'Updated', value: refreshedAt },
+  ]
 
-  // Issues — up to 3
-  const issues: IssueRowSpec[] = []
-  if (model.topFailingTest && model.topFailingTest.fail_count > 0) {
-    const t = model.topFailingTest
-    // Prefer the flaky-list entry for this exact test (if it exists)
-    // since that carries the test's OWN ``total_runs`` — the only
-    // denominator that makes "failure rate" honest. Falling back to
-    // ``model.totalRuns`` (executions across every test in the window)
-    // produced the user-reported "0% failure rate on test X — failed
-    // 8 of 2773" bug: 8/2773 rounds to 0%, and the denominator was
-    // comparing one test's failures to the entire suite's executions.
-    const flakyMatch = flaky.find(f => f.test_name === t.test_name)
-    const perTestRatePct = flakyMatch && flakyMatch.total_runs > 0
-      ? (flakyMatch.fail_count / flakyMatch.total_runs) * 100
-      : null
-    // Share of failures in the current window — meaningful when the
-    // per-test rate isn't available. Tells the user "this single test
-    // accounts for X% of the failures you're looking at."
-    const failureSharePct = model.failedRuns > 0
-      ? (t.fail_count / model.failedRuns) * 100
-      : null
-
-    // Format a percentage so values under 1% show one decimal instead
-    // of collapsing to "0%". 8/2773 now reads as "0.3%", not "0%".
-    const fmtPct = (n: number): string => (
-      n > 0 && n < 1 ? `${n.toFixed(1)}%` : `${Math.round(n)}%`
-    )
-
-    const headline = perTestRatePct !== null && flakyMatch
-      ? <><strong>{fmtPct(perTestRatePct)} failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {flakyMatch.total_runs} executions.</>
-      // Drop the misleading denominator when we don't actually know this
-      // test's run count. Lead with the count + share so the user gets
-      // an actionable signal rather than a fake-precise rate.
-      : (
-          <><code>{t.test_name}</code> failed <strong>{t.fail_count}</strong> time{t.fail_count === 1 ? '' : 's'} in this window{failureSharePct !== null ? <> — <strong>{fmtPct(failureSharePct)}</strong> of failures here</> : null}.</>
-        )
-
-    issues.push({
-      tone: 'bad',
-      Icon: XCircle,
-      body: (
-        <>
-          {headline}
-          {model.repeatFailures.length > 1 && <> <span className="dim">+{model.repeatFailures.length - 1} other repeat{model.repeatFailures.length - 1 === 1 ? '' : 's'}.</span></>}
-        </>
-      ),
-      cta: {
-        label: 'Open test',
-        // The top-failing-test record only carries (test_name, fail_count) —
-        // there's no canonical run/test-case id to deep-link into. Route the
-        // user to /search scoped to test cases with the test name pre-filled
-        // so they can click into the most recent failing occurrence (or any
-        // historical run) from there. Keyword mode matches an exact substring
-        // on the test_name column.
-        onClick: () => navigate(`/search?q=${encodeURIComponent(t.test_name)}&scope=tests&mode=keyword`),
-      },
-    })
-  }
-  if (model.uncategorizedPct >= 50) {
-    // Re-worded from the previous "clustering ran but 100% of failures
-    // couldn't be matched to a known pattern. No owner auto-routed; no
-    // playbook attached." That phrasing implied (a) the cluster stage
-    // was the categorisation source (it isn't — categories come from
-    // the AI triage path), and (b) something concrete failed during
-    // owner routing (the routing simply doesn't fire without a
-    // category). The new wording is shorter, accurate, and points the
-    // user at the actionable next step.
-    const pct = Math.round(model.uncategorizedPct)
-    issues.push({
-      tone: 'warn',
-      Icon: AlertTriangle,
-      body: (
-        <>
-          <strong>{pct}% of failures aren&apos;t categorised yet.</strong>
-          {' '}<span className="dim">Classify them so owners can be auto-routed and a playbook applied.</span>
-        </>
-      ),
-      cta: {
-        label: 'Classify',
-        // Opens the inline category picker (FLAKY / PRODUCT_BUG /
-        // INFRASTRUCTURE / TEST_DATA / AUTOMATION_DEFECT) — the user can
-        // bulk-label every uncategorised failure in the current project +
-        // window. Persists via /api/v1/analytics/classify-uncategorized.
-        onClick: () => setClassifyOpen(true),
-      },
-    })
-  }
-  if (verdict === 'REPEAT_FAILURE' && model.flakyCount === 0) {
-    issues.push({
-      tone: 'info',
-      Icon: Check,
-      body: (
-        <>
-          <strong>Not a flake</strong> — flake detector found zero intermittents.
-          {' '}<span className="dim">Treat as a hard regression, not a re-run candidate.</span>
-        </>
-      ),
-      cta: { label: 'Why', onClick: () => showFlakeWhyDetails() },
-    })
-  }
-
-  const verdictCtas = {
-    primary: { label: 'Open triage queue', onClick: () => navigate(`/runs?days=${days}`) } as IssueRowSpec['cta'],
-    secondary: [
-      model.topFailingTest
-        ? { label: 'Notify owner', onClick: () => handleNotifyOwner() } as IssueRowSpec['cta']
-        : null,
-      // Toggle an inline comparison panel that shows current-window vs
-      // prior-window deltas (failures, runs, pass rate). Cheap client-
-      // side compute on a double-window trend fetch — no bespoke
-      // backend endpoint needed.
-      {
-        label: comparing ? 'Hide comparison' : 'Compare to previous window',
-        onClick: () => setComparing(c => !c),
-      } as IssueRowSpec['cta'],
-    ].filter((c): c is IssueRowSpec['cta'] => c !== null),
-  }
+  const overflow: OverflowItem[] = [
+    {
+      label: 'Export CSV',
+      icon: <Download className="h-3.5 w-3.5" aria-hidden="true" />,
+      onClick: () => handleExportCsv({ topFailing, flaky, categories, project, days, suiteFilter: suiteLabel || null }),
+    },
+    ...(model.topFailingTest
+      ? [{
+          label: 'Notify suite owner',
+          icon: <Mail className="h-3.5 w-3.5" aria-hidden="true" />,
+          onClick: () => { void handleNotifyOwner() },
+          disabled: notifyingOwner,
+        }]
+      : []),
+    // The verdict card's "N% of failures aren't categorised yet" issue row.
+    ...(model.uncategorizedPct >= 50
+      ? [{
+          label: 'Classify uncategorised failures',
+          icon: <Tags className="h-3.5 w-3.5" aria-hidden="true" />,
+          onClick: () => setClassifyOpen(true),
+        }]
+      : []),
+  ]
 
   return (
-    <PageShell>
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Failure Analysis
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Project</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            {suiteLabel && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Suite</span>
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{suiteLabel}</code>
-              </>
-            )}
-            <span aria-hidden>·</span>
-            <span>Window</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
-            {latestFailedRun && (latestFailedRun.primary_suite_name || latestFailedRun.suite_names?.length) && (
-              <>
-                <span aria-hidden>·</span>
-                <span>Latest failing suite</span>
-                <SuiteBadge primary={latestFailedRun.primary_suite_name} all={latestFailedRun.suite_names} />
-              </>
-            )}
-            <span aria-hidden>·</span>
-            <span>Updated {refreshedAt}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
-          <WindowPicker value={days} onChange={setDays} />
-          <SuiteFilterSelect
-            value={selectedSuite}
-            onChange={setSelectedSuite}
-            options={suiteOptions}
-            allLabel="All suites"
-          />
-          <GhostBtn
-            onClick={() => handleExportCsv({
-              topFailing, flaky, categories, project, days, suiteFilter: suiteLabel || null,
-            })}
-            title="Export failure data as CSV"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </GhostBtn>
-          <PrimaryBtn asChildLink={`/runs?days=${days}`} title="Open the triage queue filtered to this window">
-            Open triage queue <ChevronRight className="h-3.5 w-3.5" />
-          </PrimaryBtn>
-        </div>
-      </header>
-
-      <VerdictCard
-        model={model}
-        verdict={verdict}
-        summary={summaryNode}
-        lede={lede}
-        issues={issues}
-        ctas={verdictCtas}
-        topFailing={topFailing}
+    <PageShell className="space-y-4">
+      <PageHeader
+        compact
+        title="Failure Analysis"
+        helpTopic={HELP_TOPIC}
+        actions={
+          <>
+            {/* The page's toolbar (window + suite) shares the header row: with a banner AND a KPI strip above the
+                table, a row of its own put the table past the 300 px fold budget. */}
+            <WindowPicker options={WINDOWS} />
+            <SuiteFilterSelect
+              value={selectedSuite}
+              onChange={setSelectedSuite}
+              options={suiteOptions}
+              allLabel="All suites"
+            />
+            {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
+            <Link
+              to={`/runs?days=${days}`}
+              title="Open the triage queue filtered to this window"
+              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-[13px]"
+            >
+              Open triage queue <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </>
+        }
+        overflow={overflow}
       />
 
-      <section aria-label="Failure metrics" className="grid grid-cols-2 xl:grid-cols-4 mb-3.5">
-        <KpiCell
-          Icon={TriangleAlert}
-          label="Repeat failures"
-          value={model.repeatFailures.length}
-          tone={model.repeatFailures.length > 0 ? 'bad' : 'good'}
-          meta={model.repeatFailures.length > 0
-            ? <>tests failing ≥ 2 runs · {model.repeatFailures.length} unresolved</>
-            : <>no test failed twice in this window</>
+      {/* "Failure verdict" stays the page's landmark (the shell and rollout specs wait for it). */}
+      <section aria-label="Failure verdict" aria-live="polite">
+        <StatusBanner
+          state={theme.banner}
+          title={
+            <span data-verdict={verdict} title={theme.meaning} className="inline-flex max-w-full min-w-0 items-baseline">
+              <span className="whitespace-nowrap">{theme.label}</span>{' '}
+              <span aria-hidden="true" className="mx-1.5 text-[var(--color-text-muted)]">·</span>{' '}
+              <span className="max-w-[26ch] truncate font-normal">{summaryNode}</span>
+            </span>
           }
-          isFirst
-        />
-        <KpiCell
-          Icon={ShieldCheck}
-          label="Flaky tests"
-          value={model.flakyCount}
-          tone={model.flakyCount === 0 ? 'good' : model.flakyCount <= 2 ? 'warn' : 'bad'}
-          meta={model.flakyCount === 0
-            ? <>100% deterministic · positive signal</>
-            : <>{model.flakyCount} test{model.flakyCount === 1 ? '' : 's'} intermittent</>
-          }
-        />
-        <KpiCell
-          Icon={AlertTriangle}
-          label="Uncategorized"
-          value={model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%`}
-          tone={model.uncategorizedPct >= 80 ? 'bad' : model.uncategorizedPct >= 50 ? 'warn' : 'good'}
-          meta={model.totalCategorised === 0
-            ? <>no failures classified yet</>
-            : model.unknownCount > 0
-              ? <>{model.unknownCount} of {model.totalCategorised} failure{model.totalCategorised === 1 ? '' : 's'}</>
-              : <>classifier matched every failure</>
-          }
-        />
-        <KpiCell
-          label="Total executions"
-          value={model.totalRuns}
-          meta={<>{model.passedRuns} passed · {model.failedRuns} failed · {model.skippedRuns} skipped</>}
-          isLast
+          facts={bannerFacts}
+          action={{ label: comparing ? 'Hide comparison' : 'Compare to previous window', onClick: () => setComparing(c => !c) }}
         />
       </section>
 
-      <KindFilterChips byKind={byKind} value={kindFilter} onChange={setKindFilter} />
+      {/* Values only: a tile with a meta line is ~99 px (the strip's target is ~72), and the table must start
+          within the fold budget below a banner AND this strip. The window's passed / failed split is the
+          banner's pass rate; the uncategorised share's counts are in the Categories tab. */}
+      <section aria-label="Failure metrics">
+        <KpiStrip>
+          {[
+            <MetricCard key="repeat" compact icon={null} title="Repeat failures" metric={{ value: model.repeatFailures.length }} />,
+            <MetricCard key="flaky" compact icon={null} title="Flaky tests" metric={{ value: model.flakyCount }} />,
+            <MetricCard
+              key="uncategorized"
+              compact
+              icon={null}
+              title="Uncategorized"
+              metric={{ value: model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%` }}
+            />,
+            <MetricCard key="executions" compact icon={null} title="Total executions" metric={{ value: model.totalRuns }} />,
+          ]}
+        </KpiStrip>
+      </section>
 
-      <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <WhatsFailingCard
-            topFailingTest={model.topFailingTest}
-            flakyEntry={actionTargetFlakyEntry}
-            totalRuns={model.totalRuns}
-            trend={trend}
-            onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
-            muteDisabledReason={muteDisabledReason}
-            onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
-            createJiraDisabledReason={createJiraDisabledReason}
-            onShowSuspects={() => {
-              document
-                .getElementById('suspects-panel')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }}
-            showSuspectsDisabledReason={
-              latestFailedRun?.id
-                ? null
-                : 'No failed run in this window to attribute commits against.'
-            }
-          />
-          {/* Epic 8 US-8.2 — the bisect surface: ranked suspect commits for the
-              latest failing run. Honest empty state when no commit range. */}
-          <SuspectsPanel
-            runId={latestFailedRun?.id ?? null}
-            fingerprint={model.topFailingTest?.test_fingerprint ?? null}
-            panelId="suspects-panel"
-          />
-          <FailureCategoryCard
-            categories={kindFilteredCategories}
-            totalFailures={model.failedRuns}
-            uncategorizedPct={model.uncategorizedPct}
-            onCorrect={openCorrection}
-            kindFilter={kindFilter}
-          />
-          {comparing && (
-            comparison ? (
-              <ComparisonStrip
-                current={comparison.current}
-                prior={comparison.prior}
-                windowDays={days}
-                suiteName={suiteLabel || null}
-              />
-            ) : (
-              <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
-                <div className="px-4 py-3.5 text-[12.5px] text-[var(--color-text-muted)]">
-                  {compareLoading
-                    ? 'Loading prior-window data…'
-                    : 'Not enough trend data to compare against the prior window yet.'}
-                </div>
-              </CardShell>
-            )
-          )}
-          <FailureTimeline trend={trend} days={days} />
-        </div>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <FlakinessCard flaky={flaky} repeatFailures={model.repeatFailures} />
-        </div>
-      </div>
+      <section data-primary="" aria-label="Top failing tests">
+        <TopFailingTable
+          rows={rows}
+          trend={trend}
+          totalRuns={model.totalRuns}
+          failedExecutions={model.failedRuns}
+          actions={rowActions}
+        />
+      </section>
 
+      {comparing && (
+        comparison ? (
+          <ComparisonStrip
+            current={comparison.current}
+            prior={comparison.prior}
+            windowDays={days}
+            suiteName={suiteLabel || null}
+          />
+        ) : (
+          <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
+            <div className="px-4 py-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+              {compareLoading
+                ? 'Loading prior-window data…'
+                : 'Not enough trend data to compare against the prior window yet.'}
+            </div>
+          </CardShell>
+        )
+      )}
+
+      {/* The catalogue sections and the categories, one tab each. Only the open tab mounts (and asks for) its section. */}
       <PageSuiteTargetContext.Provider value={suiteTarget}>
-        <FailuresAdvanced days={days} suiteFilter={suiteFilter} />
+        <div data-failures-sections="">
+          <Tabs items={SECTION_TABS} value={tab} onChange={selectTab} ariaLabel="Failure analysis sections" />
+          <div role="tabpanel" aria-label={SECTION_LABEL[tab]} data-tab-panel={tab} className="pt-3 min-w-0">
+            {tab === 'groups' && (
+              <LazySection label="failures-groups" minHeight={GROUPS_HEIGHT}>
+                <SectionErrorBoundary message="Failure groups failed to load">
+                  <Suspense fallback={null}>
+                    <FailureGroupsSection days={days} suiteFilter={suiteFilter} />
+                  </Suspense>
+                </SectionErrorBoundary>
+              </LazySection>
+            )}
+            {tab === 'suite' && (
+              <SectionErrorBoundary message="Failures by suite failed to load">
+                <Suspense fallback={null}>
+                  <FailuresDrill days={days} suiteFilter={suiteFilter} />
+                </Suspense>
+              </SectionErrorBoundary>
+            )}
+            {tab === 'scatter' && (
+              <SectionErrorBoundary message="Test scatter failed to load">
+                <Suspense fallback={null}>
+                  <ScatterSection days={days} suiteFilter={suiteFilter} placement="project" />
+                </Suspense>
+              </SectionErrorBoundary>
+            )}
+            {tab === 'categories' && (
+              <>
+                <KindFilterChips byKind={byKind} value={kindFilter} onChange={setKindFilter} />
+                <FailureCategoryCard
+                  categories={kindFilteredCategories}
+                  totalFailures={model.failedRuns}
+                  uncategorizedPct={model.uncategorizedPct}
+                  onCorrect={openCorrection}
+                  onClassify={() => setClassifyOpen(true)}
+                  kindFilter={kindFilter}
+                />
+              </>
+            )}
+          </div>
+        </div>
       </PageSuiteTargetContext.Provider>
+
+      <Disclosure
+        title="How this score is computed"
+        summary={verdict === 'PENDING' ? 'not measured' : `stability ${model.composite} / 100`}
+      >
+        <ScoreDetails model={model} verdict={verdict} topFailing={topFailing} />
+      </Disclosure>
+
+      <Disclosure title="Failure timeline" summary={`last ${Math.min(days, TIMELINE_MAX_CELLS)} days`}>
+        <FailureTimeline trend={trend} days={days} />
+      </Disclosure>
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
 
-      {muteOpen && actionTarget?.test_fingerprint && project?.id && (
+      {/* Epic 8 US-8.2 — the bisect: the suspect commits for a row's test, beside the table. */}
+      <SidePanel
+        open={suspectsFor !== null && Boolean(latestFailedRun?.id)}
+        onClose={() => setSuspectsFor(null)}
+        title={suspectsFor ? `Suspects: ${suspectsFor.test.test_name}` : 'Suspects'}
+        closeLabel="Close suspects"
+      >
+        <SuspectsPanel
+          runId={latestFailedRun?.id ?? null}
+          fingerprint={suspectsFor?.test.test_fingerprint ?? null}
+          panelId="suspects-panel"
+        />
+      </SidePanel>
+
+      {muteFor?.test.test_fingerprint && project?.id && (
         <MuteTestModal
-          test={actionTarget}
-          flakyEntry={actionTargetFlakyEntry}
+          test={muteFor.test}
+          flakyEntry={muteFor.flaky}
           projectId={project.id}
-          onClose={() => setMuteOpen(false)}
+          onClose={() => setMuteFor(null)}
         />
       )}
 
@@ -2611,12 +2387,12 @@ export default function FailureAnalysisPage() {
         />
       )}
 
-      {jiraOpen && actionTarget?.test_fingerprint && project?.id && (
+      {jiraFor?.test.test_fingerprint && project?.id && (
         <CreateJiraIssueModal
           projectId={project.id}
-          fingerprint={actionTarget.test_fingerprint}
-          testName={actionTarget.test_name}
-          onClose={() => setJiraOpen(false)}
+          fingerprint={jiraFor.test.test_fingerprint}
+          testName={jiraFor.test.test_name}
+          onClose={() => setJiraFor(null)}
         />
       )}
 

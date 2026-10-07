@@ -45,7 +45,13 @@ const P = PROJECT_ID
 const ready = (p: Page) => landmark(p, 'Failure verdict')
 const DRILL = 'failures-drill'
 
-const open = (page: Page, path = '/failures') => openRollout(page, path, { handlers: FAILURES_ON, ready })
+/**
+ * UX redesign P3: the ladder is the Failures page's "By suite" tab
+ * (`?tab=suite`). A link with a drill path and no tab (every hand-made link
+ * below) opens that tab by itself, and the page adds `tab=suite` to the URL.
+ */
+const LADDER_PATH = '/failures?tab=suite'
+const open = (page: Page, path = LADDER_PATH) => openRollout(page, path, { handlers: FAILURES_ON, ready })
 
 const ladder = (page: Page) => section(page, DRILL)
 const frame = (page: Page) => ladder(page).locator('[data-chart-frame]')
@@ -163,10 +169,38 @@ test.describe('Drill ladder (1280 x 4000)', () => {
   test('the breadcrumb\'s root link clears the path and puts focus on the chart', async ({ page }) => {
     await open(page, '/failures?drill=suite~payments')
     await drawn(page, 'statuses')
+    // P3: the drill link named no tab; the page opened By suite and wrote it down, so clearing the path keeps the tab.
+    await expect(page).toHaveURL(/[?&]tab=suite(&|$)/)
     await ladder(page).locator('[data-drill-breadcrumb]').getByRole('link', { name: 'All suites' }).click()
     await expect(page).not.toHaveURL(/[?&]drill=/)
+    await expect(page).toHaveURL(/[?&]tab=suite(&|$)/)
     await drawn(page, 'suites')
     await expect(cursor(page)).toBeFocused()
+  })
+
+  test('P3: the ladder is a tab — not mounted (no read) on the default tab; opening "By suite" draws level 0; leaving it drops the drill path', async ({
+    page,
+  }) => {
+    const { api, errors } = await open(page, '/failures')
+    await networkQuiet(page, api)
+    await expect(ladder(page)).toHaveCount(0)
+    await expect(page.locator('[data-lazy-section="failures-drill"]')).toHaveCount(0)
+    expect(ladderReads(api), 'no ladder read on the Groups tab').toEqual([])
+    const tabs = page.getByRole('tablist', { name: 'Failure analysis sections' })
+    await tabs.getByRole('tab', { name: 'By suite', exact: true }).click()
+    await expect(page).toHaveURL(/[?&]tab=suite(&|$)/)
+    await drawn(page, 'suites')
+    expect(ladderReads(api).map((q) => q.getAll('group_by').join(','))).toEqual(['suite,status'])
+    // Drill one level, then leave the tab: the path belongs to the ladder and goes with it.
+    await cursor(page).focus()
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/[?&]drill=suite(%7E|~)/)
+    await tabs.getByRole('tab', { name: 'Groups', exact: true }).click()
+    await expect(page).not.toHaveURL(/[?&](drill|tab)=/)
+    await expect(ladder(page)).toHaveCount(0)
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
   })
 
   test('a hand-edited link naming a status that does not exist is cut and said, never a crash', async ({ page }) => {
@@ -187,7 +221,7 @@ test.describe('Drill ladder (1280 x 4000)', () => {
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the ladder, every impact (${theme}): level 0, a bar focused, the leaf`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready, theme })
+      await openRollout(page, LADDER_PATH, { handlers: FAILURES_ON, ready, theme })
       await drawn(page, 'suites')
       const only = [`[data-catalogue-section="${DRILL}"]`]
       await expectNoBlockingViolations(page, theme, [], only)

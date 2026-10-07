@@ -8,6 +8,10 @@
  * frame is the analysis frame (overlay row and brush), so
  * `trends-presentation-pass-rate` was re-baselined. The mode is stored
  * as ON before the app loads, exactly as a reload after the toggle finds it.
+ * UX redesign P3: the Overview KPIs are the page template's KpiStrip of five
+ * compact MetricCards; `overview-presentation-kpis` captures that strip (its
+ * values are `text-2xl`, not on a presentation token, until the shared
+ * compact card adopts `--text-stat-lg`).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'

@@ -3,7 +3,7 @@ import { findDocPage } from '@/content/guide/manifest'
 import { DOC_SOURCES } from '@/content/guide/sources'
 import { anchorIds } from '@/content/guide/slug'
 import { ADMIN_ITEM, NAV_ITEMS } from '@/components/layout/navConfig'
-import { DEFAULT_HELP_TOPIC, HELP_TOPICS, helpTopicFor } from './helpTopics'
+import { DEFAULT_HELP_TOPIC, HELP_TOPICS, helpTopicFor, helpTopicParam } from './helpTopics'
 
 describe('helpTopics (UX redesign P1)', () => {
   it('every topic is a documentation page, and every anchor a heading in it', () => {
@@ -26,5 +26,10 @@ describe('helpTopics (UX redesign P1)', () => {
     expect(helpTopicFor('/defects')).toEqual({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
     expect(helpTopicFor('/runs/r1/intelligence')).toEqual({ topic: 'ingestion' })
     expect(helpTopicFor('/nowhere')).toBe(DEFAULT_HELP_TOPIC)
+  })
+
+  it("helpTopicParam keeps the route's section for PageHeader (topic#anchor)", () => {
+    expect(helpTopicParam('/defects')).toBe('failure-analysis#promoting-to-a-defect')
+    expect(helpTopicParam('/failures')).toBe('failure-analysis')
   })
 })

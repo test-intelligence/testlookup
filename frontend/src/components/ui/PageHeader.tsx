@@ -11,7 +11,10 @@ interface Props {
   /** At most one primary and one secondary button; the rest go in `overflow`. */
   actions?: ReactNode
   className?: string
-  /** A documentation topic: renders a **?** beside the title that opens it in the help drawer. */
+  /**
+   * A documentation topic: renders a **?** beside the title that opens it in
+   * the help drawer. `topic#anchor` opens it on that section.
+   */
   helpTopic?: string
   /** Header actions beyond `actions`, in a **⋯** menu. */
   overflow?: readonly OverflowItem[]
@@ -43,8 +46,12 @@ export default function PageHeader({ title, subtitle, actions, className, helpTo
               <button
                 type="button"
                 aria-label={`Help: ${title}`}
-                data-help-topic={helpTopic}
-                onClick={() => openHelp(helpTopic)}
+                data-help-topic={helpTopic.split('#')[0]}
+                data-help-anchor={helpTopic.split('#')[1] || undefined}
+                onClick={() => {
+                  const [topic, anchor] = helpTopic.split('#')
+                  openHelp(topic, anchor || null)
+                }}
                 className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]"
               >
                 <HelpCircle aria-hidden="true" className="h-4 w-4" />

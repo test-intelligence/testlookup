@@ -44,8 +44,13 @@ import {
 const P = PROJECT_ID
 const SCATTER = { id: 'scatter-project', title: 'Test duration vs failure rate' } as const
 
-const openFailures = (page: Page, handlers: ApiHandlers = FAILURES_ON) =>
-  openRollout(page, '/failures', { handlers, ready: (p) => landmark(p, 'Failure verdict') })
+/** UX redesign P3: the project scatter is the Failures page's Scatter tab (`?tab=scatter`). */
+const openFailures = (page: Page, handlers: ApiHandlers = FAILURES_ON, path = '/failures?tab=scatter') =>
+  openRollout(page, path, { handlers, ready: (p) => landmark(p, 'Failure verdict') })
+
+/** The page's section tabs (Groups · By suite · Scatter · Categories). */
+const sectionTab = (page: Page, name: string) =>
+  page.getByRole('tablist', { name: 'Failure analysis sections' }).getByRole('tab', { name, exact: true })
 
 const scatter = (page: Page) => section(page, SCATTER.id)
 const frame = (page: Page) => sectionFrame(page, SCATTER.id, SCATTER.title)
@@ -142,8 +147,11 @@ test.describe('Project scatter on Failures (1280 x 4000)', () => {
     await openFailures(page, handlers)
     await bringNear(page, SCATTER.id)
     await expect(frame(page)).toHaveAttribute('data-chart-state', 'error', { timeout: 20_000 })
-    await expectDrawn(sectionFrame(page, 'failures-groups', 'Failures grouped by error message'), 'groups')
     await expect(page.getByText('planted scatter failure')).toHaveCount(0)
+    // P3: the groups are another tab; the scatter's error does not take them down.
+    await sectionTab(page, 'Groups').click()
+    await bringNear(page, 'failures-groups')
+    await expectDrawn(sectionFrame(page, 'failures-groups', 'Failures grouped by error message'), 'groups')
   })
 
   test('hostile names in the table view and the selection list, as text', async ({ page }) => {
@@ -156,7 +164,7 @@ test.describe('Project scatter on Failures (1280 x 4000)', () => {
 
   for (const theme of ['signal', 'lab'] as const) {
     test(`axe on the project scatter, every impact (${theme}): idle, a point focused, the selection listed`, async ({ page }) => {
-      await openRollout(page, '/failures', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict'), theme })
+      await openRollout(page, '/failures?tab=scatter', { handlers: FAILURES_ON, ready: (p) => landmark(p, 'Failure verdict'), theme })
       await drawn(page)
       const only = [`[data-catalogue-section="${SCATTER.id}"]`]
       await expectNoBlockingViolations(page, theme, [], only)
@@ -173,18 +181,27 @@ test.describe('Project scatter on Failures (1280 x 4000)', () => {
 test.describe('Scatter, a short screen (1280 x 600)', () => {
   test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  test('Failures: the project scatter (the last section) is not asked at load, nor its chunk; it is once scrolled to', async ({
+  // UX redesign P3: the scatter is a tab, not the last of three stacked sections. Its intent is kept:
+  // nothing of the scatter (placeholder, chunk, read) at load on the default tab, and ONE read once the
+  // reader opens the Scatter tab and the scatter's own placeholder comes near.
+  test('Failures: the project scatter is not asked at load (its tab is closed); it is once its tab opens', async ({
     page,
   }) => {
-    const { api, errors } = await openFailures(page)
+    const scatterChunk: string[] = []
+    page.on('request', (request) => {
+      if (/\/catalogue\/ScatterSection\.tsx|\/assets\/ScatterSection-/.test(new URL(request.url()).pathname)) scatterChunk.push(request.url())
+    })
+    const { api, errors } = await openFailures(page, FAILURES_ON, '/failures')
     await networkQuiet(page, api)
-    // Far below the fold at load: a placeholder, no read. (The strict "asked before visible" proof is on the
-    // first section of each page: the sections above this one change height when they draw.)
-    await expect(page.locator('[data-lazy-section="failures-scatter"]')).toHaveCount(1)
+    await expect(page.locator('[data-lazy-section="scatter-project"]')).toHaveCount(0)
+    await expect(section(page, SCATTER.id)).toHaveCount(0)
     expect(requestsTo(api, TEST_SCATTER_PATH)).toEqual([])
-    await page.locator('[data-lazy-section="failures-scatter"]').scrollIntoViewIfNeeded()
+    expect(scatterChunk, 'the scatter chunk before its tab opened').toEqual([])
+    await sectionTab(page, 'Scatter').click()
+    await expect(page).toHaveURL(/[?&]tab=scatter(&|$)/)
     await bringNear(page, SCATTER.id)
     await expect.poll(() => requestsTo(api, TEST_SCATTER_PATH).length).toBe(1)
+    expect(scatterChunk.length, 'the scatter chunk once its tab opened').toBeGreaterThan(0)
     expect(api.unhandled).toEqual([])
     expect(errors).toEqual([])
   })

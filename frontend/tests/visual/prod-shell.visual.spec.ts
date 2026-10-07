@@ -26,7 +26,7 @@ for (const theme of THEMES) {
     await visualRegion(page, 'shell-sidebar', theme, aside)
     await visualRegion(page, 'shell-section-tabs', theme, page.locator('[data-section-tabs="trends"]'))
 
-    await page.getByRole('button', { name: 'Help' }).click()
+    await page.getByRole('button', { name: 'Help', exact: true }).click()
     await visualRegion(page, 'shell-help-menu', theme, page.getByRole('menu', { name: 'Help' }))
     await page.getByRole('menuitem', { name: 'Help for this page' }).click()
     const drawer = page.locator('aside').filter({ has: page.locator('[data-help-topic="dashboards"]') })
