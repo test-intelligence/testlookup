@@ -498,14 +498,13 @@ describe('RunsPage — the page template (P3)', () => {
     expect(screen.queryByText(/Stop re-running/)).toBeNull()
   })
 
-  it('states the verdict in one banner: failing builds, last green, red streak, average pass rate, Bisect', () => {
+  it('states the verdict in one banner: the failing count in the title once, last green, red streak, average pass rate, Bisect', () => {
     renderRunsPage(brokenWindow())
     expect(banner()).toHaveAttribute('data-status-banner', 'fail')
     expect(banner()).toHaveTextContent('FAILING')
     expect(banner()).toHaveTextContent('Pipeline broken · 3 of 4 builds failed with the same signature')
     const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)
     expect(facts).toEqual([
-      'Failing builds 3 of 4',
       'Last green #101 · 30h ago',
       'Red streak 3 in a row',
       'Avg pass rate 85.0%',

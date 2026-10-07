@@ -511,16 +511,17 @@ function verdictSummary(model: PipelineModel, verdict: Verdict): string {
 
 /**
  * The StatusBanner's facts for the window (UX redesign P3: the banner replaces
- * the verdict card and the KPI strip that repeated it). Failing builds, the
- * last green build, the red streak, and the average pass rate over MEASURED
- * builds — "—", never 0 %, when no build has a result yet.
+ * the verdict card and the KPI strip that repeated it). The last green
+ * build, the red streak, and the average pass rate over MEASURED builds —
+ * "—", never 0 %, when no build has a result yet. No "Failing builds" fact:
+ * the title already says "N of M builds failed" (or "N builds passing"), and
+ * repeating it wrapped the banner onto a second line at 1280 px.
  */
 function runsBannerFacts(model: PipelineModel): BannerFact[] {
   const lastGreen = model.lastGreen
     ? `#${model.lastGreen.build_number}${model.hoursSinceLastGreen != null ? ` · ${model.hoursSinceLastGreen}h ago` : ''}`
     : 'none in window'
   return [
-    { label: 'Failing builds', value: `${model.failedRuns} of ${model.totalRuns}` },
     { label: 'Last green', value: lastGreen },
     { label: 'Red streak', value: `${model.redStreak} in a row` },
     { label: 'Avg pass rate', value: model.avgPassRate === null ? '—' : `${model.avgPassRate.toFixed(1)}%` },

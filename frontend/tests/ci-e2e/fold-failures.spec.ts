@@ -73,3 +73,26 @@ test('the Top failing table starts within the fold budget at 1440 x 900', async 
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })
+
+// The P3 baseline showed the table wider than its card at 1280 px: it
+// scrolled sideways inside its box and only "Mute" of the row actions was
+// on screen (Jira and Suspects were off to the right).
+for (const width of [1280, 1440]) {
+  test(`the Top failing table fits its card at ${width} px: no sideways scroll, every row action on screen`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const { api, errors } = await openRollout(page, '/failures', { handlers: FAILURES_ON, ready })
+    await networkQuiet(page, api)
+    const table = page.locator('[data-primary]').getByRole('table', { name: 'Top failing tests' })
+    const box = await table.evaluate((el) => {
+      const scroller = el.parentElement as HTMLElement
+      return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth }
+    })
+    expect(box.scrollWidth, 'the table is no wider than its card').toBeLessThanOrEqual(box.clientWidth)
+    const firstRow = table.getByRole('row').nth(1)
+    for (const action of [/^Mute test /, /^Create Jira issue for /, /^Suspects for /]) {
+      await expect(firstRow.getByRole('button', { name: action })).toBeInViewport()
+    }
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
+  })
+}

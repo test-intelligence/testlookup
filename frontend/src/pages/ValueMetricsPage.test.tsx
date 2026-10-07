@@ -463,17 +463,17 @@ describe('ValueMetricsPage', () => {
     expect((primary.parentElement as HTMLElement).className.split(/\s+/)).toContain('space-y-4')
   })
 
-  it('folds "Defects promoted" into Defects auto-grouped and drops the derived "Release decisions" (seven cards → five)', async () => {
+  it('folds "Defects promoted" into Defects grouped and drops the derived "Release decisions" (seven cards → five)', async () => {
     await renderPage()
 
     await screen.findByTestId('monthly-chart')
-    expect(within(counterCard('Defects auto-grouped')).getByText('12')).toBeInTheDocument()
-    expect(counterCard('Defects auto-grouped')).toHaveTextContent('44 tests · 9 promoted to Jira')
+    expect(within(counterCard('Defects grouped')).getByText('12')).toBeInTheDocument()
+    expect(counterCard('Defects grouped')).toHaveTextContent('44 tests · 9 promoted to Jira')
     expect(within(counterCard('Duplicates avoided')).getByText('5')).toBeInTheDocument()
     expect(counterCard('Flaky tests found')).toHaveTextContent('2 recommended for quarantine')
     // Blocked and conditional are both on this card: their sum needs no card of its own.
-    expect(counterCard('Risky releases blocked')).toHaveTextContent('1 conditional · 0 overridden')
-    expect(within(counterCard('Intelligence reports')).getByText('7')).toBeInTheDocument()
+    expect(counterCard('Releases blocked')).toHaveTextContent('1 conditional · 0 overridden')
+    expect(within(counterCard('AI reports')).getByText('7')).toBeInTheDocument()
     expect(screen.queryByText(/^Release Decisions$/i)).toBeNull()
     expect(screen.queryByText(/^Defects Promoted$/i)).toBeNull()
   })

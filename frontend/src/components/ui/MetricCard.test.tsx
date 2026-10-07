@@ -181,4 +181,25 @@ describe('MetricCard', () => {
     expect(container.querySelector('[data-trend-judgement]')).toBeNull()
     expect(container.querySelector('[data-metric-trend]')).toHaveAttribute('title', 'not measured last period')
   })
+
+  it('compact: the label is one truncated line whose hover text is the hint, or the label itself', () => {
+    const { rerender } = render(<MetricCard compact title="Time to resolve" hint="Mean time to resolve, over the defects resolved" icon={null} metric={{ value: '2.3d' }} />)
+    const label = screen.getByText('Time to resolve')
+    expect(label).toHaveClass('truncate')
+    expect(label).toHaveAttribute('title', 'Mean time to resolve, over the defects resolved')
+    rerender(<MetricCard compact title="Escape rate" icon={null} metric={{ value: '56%' }} />)
+    expect(screen.getByText('Escape rate')).toHaveAttribute('title', 'Escape rate')
+  })
+
+  it('compact: the sparkline takes what the value leaves, capped to it, and drops below the value rather than overlap it', () => {
+    const { container } = render(
+      <MetricCard compact title="Total executions" icon={null} metric={{ value: '4437' }} sparkline={<svg data-testid="spark" />} />,
+    )
+    const aside = container.querySelector('[data-metric-aside]') as HTMLElement
+    expect(aside).toContainElement(screen.getByTestId('spark'))
+    // Grows into the room left (flex-1), never under 4rem (min-w-16), and caps its child to that room.
+    expect(aside.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex-1', 'min-w-16', '[&>*]:max-w-full']))
+    // The row wraps: under 4rem left, the aside takes a line of its own.
+    expect((aside.parentElement as HTMLElement).className.split(/\s+/)).toContain('flex-wrap')
+  })
 })
