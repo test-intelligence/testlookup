@@ -8,7 +8,6 @@ import {
   QuarantineRedirect,
   ReviewsRedirect,
   RunIntelligenceRedirect,
-  SuiteByNameRedirect,
 } from '@/routing/legacyRedirects'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -27,6 +26,8 @@ import ResetPasswordPage from '@/pages/ResetPasswordPage'
 // call sites below pick up the retry behaviour without per-site edits.
 const lazy = lazyWithRetry as typeof reactLazy
 
+// Lazy: it fetches the suites (the other redirects are eager and dependency-free).
+const SuiteByNameRedirect = lazy(() => import('@/routing/SuiteByNameRedirect'))
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const RunsPage = lazy(() => import('@/pages/RunsPage'))

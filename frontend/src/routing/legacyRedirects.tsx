@@ -4,8 +4,6 @@
  * old URL's query string and adds the tab the content now lives under.
  */
 import { Navigate, useLocation, useParams } from 'react-router-dom'
-import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useSuites } from '@/hooks/useSuites'
 import { withParams } from './withParams'
 
 function To({ pathname, extra = {} }: { pathname: string; extra?: Record<string, string> }) {
@@ -51,21 +49,4 @@ export function ReviewsRedirect() {
   return <To pathname="/my-failures" extra={{ tab: 'approvals' }} />
 }
 
-/**
- * `/coverage/suite?name=X` → the suite's own page, Charts tab. The old page was
- * keyed by name; the suite page by id, so the name is looked up in the
- * project's suites. An unknown (or missing) name goes to the suites list
- * rather than a blank page; any other query parameter is kept.
- */
-export function SuiteByNameRedirect() {
-  const { search } = useLocation()
-  const name = new URLSearchParams(search).get('name')
-  const { data, error, isLoading } = useSuites()
-  if (name && isLoading && !data) return <LoadingSpinner size="lg" />
-  const suite = name && !error ? data?.items.find((s) => s.name === name) : undefined
-  const rest = new URLSearchParams(search)
-  rest.delete('name')
-  if (!suite) return <Navigate to={`/suites${rest.toString() ? `?${rest}` : ''}`} replace />
-  rest.set('tab', 'charts')
-  return <Navigate to={`/suites/${suite.id}?${rest}`} replace />
-}
+// `/coverage/suite?name=X` is `SuiteByNameRedirect.tsx` (lazy: it fetches the suites).

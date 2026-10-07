@@ -14,8 +14,8 @@ import {
   QuarantineRedirect,
   ReviewsRedirect,
   RunIntelligenceRedirect,
-  SuiteByNameRedirect,
 } from './legacyRedirects'
+import SuiteByNameRedirect from './SuiteByNameRedirect'
 import { withParams } from './withParams'
 
 const suites = vi.hoisted(() => ({ value: { data: undefined as unknown, error: undefined as unknown, isLoading: false } }))

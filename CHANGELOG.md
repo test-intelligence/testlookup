@@ -68,6 +68,9 @@ now holds its content, and keeps its query string.
     risk" used to show as FAILING.
 - **Copy:** the quarantine dialog and its toast send people to Flaky tests ›
   Proposed, not `/quarantine`.
+- **Bundle:** the suite-by-name redirect now loads lazily. Loaded eagerly,
+  its suite lookup carried the suites service into the eager bundle, which
+  went to 180,218 B gzip, over the 180,000 budget. It is now 179,384 B.
 - **KPI strips (found in P3's second baselines run):**
   - P3's 4 rem floor for a tile's sparkline was too much at the desk. At
     1280 px on CI's font, Trends' pass-rate sparkline and Summary's
