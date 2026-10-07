@@ -404,6 +404,24 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(list.contains(panel)).toBe(false)
   })
 
+  it('a release with no pass rate yet reads "—", never "—%" (browser E2E pass)', async () => {
+    const { useRelease } = await import('@/hooks/useReleases')
+    ;(useRelease as ReturnType<typeof vi.fn>).mockImplementation((id: string | null) => ({
+      data: id
+        ? { ...detailOf(id), metrics: { total_runs: 0, total_tests: 0, total_passed: 0, total_failed: 0, avg_pass_rate: id === RELEASE.id ? 90 : null } }
+        : undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    }))
+    const tile = (panel: HTMLElement) => within(panel).getByText('Pass Rate').nextElementSibling as HTMLElement
+    renderAt('/releases')
+    fireEvent.click(card(/^Checkout 2\.6 2\.6\.0/))
+    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^—$/)
+    fireEvent.click(screen.getByRole('button', { name: 'Close release' }))
+    fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
+    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^90\.0%$/)
+  })
+
   it('closes, and opens another release in its place', () => {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))

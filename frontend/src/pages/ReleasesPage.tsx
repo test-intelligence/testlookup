@@ -452,7 +452,8 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
   if (!detail) return null
 
   const m = detail.metrics ?? {}
-  const passRate = m.avg_pass_rate != null ? Number(m.avg_pass_rate).toFixed(1) : '—'
+  // "—" alone when there is no rate: the unit went on the dash ("—%", browser E2E pass).
+  const passRate = m.avg_pass_rate != null ? `${Number(m.avg_pass_rate).toFixed(1)}%` : '—'
   const passColor = m.avg_pass_rate == null ? 'text-[var(--color-text-muted)]'
     : m.avg_pass_rate >= 90 ? 'text-[var(--status-passed)]'
     : m.avg_pass_rate >= 70 ? 'text-[var(--status-broken)]'
@@ -476,7 +477,7 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
           { label: 'Tests',   value: m.total_tests ?? 0,   color: 'text-[var(--color-text-secondary)]' },
           { label: 'Passed',  value: m.total_passed ?? 0,  color: 'text-[var(--status-passed)]' },
           { label: 'Failed',  value: m.total_failed ?? 0,  color: 'text-[var(--status-failed)]' },
-          { label: 'Pass Rate', value: `${passRate}%`,     color: passColor },
+          { label: 'Pass Rate', value: passRate,           color: passColor },
         ].map(({ label, value, color }) => (
           <div key={label} className="card py-2.5">
             <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
