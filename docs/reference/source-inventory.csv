@@ -2524,7 +2524,7 @@ frontend/src/components/layout/TopBar.tsx,implementation/configuration,413,,reac
 frontend/src/components/layout/buildInfo.ts,implementation/configuration,38,,@/hooks/useSystemHealth,known; shortRevision; buildTitle
 frontend/src/components/layout/navConfig.test.ts,test,66,,react-router-dom; vitest; ./navConfig,routed; prefixServed
 frontend/src/components/layout/navConfig.ts,implementation/configuration,193,,lucide-react; @/components/ui/RouteTabs,LucideIcon; NavSection; NavItem; NavAccess; visibleNavItems; ownsPath; ownership; owningNavItem
-frontend/src/components/layout/settingsNav.test.ts,test,119,,vitest; ./settingsNav; ./settingsRoutes,routeList
+frontend/src/components/layout/settingsNav.test.ts,test,121,,vitest; ./settingsNav; ./settingsRoutes,routeList
 frontend/src/components/layout/settingsNav.ts,implementation/configuration,172,,,SettingsAccess; SettingsItem; SettingsGroup; SettingsViewer; settingsGroupsFor; settingsItemHref; under; activeSettingsItem
 frontend/src/components/layout/settingsRoutes.ts,implementation/configuration,28,,./navConfig,under; isSettingsAreaPath
 frontend/src/components/mfa/MfaChallengePanel.tsx,implementation/configuration,178,,react; lucide-react; @/hooks/useNow; @/hooks/useMfaStatus; @/types/mfa; @/utils/mfaErrors; ./MfaCodeField,MfaErrorInfo; MfaFactorMode; Props; formatRemaining; MfaChallengePanel
