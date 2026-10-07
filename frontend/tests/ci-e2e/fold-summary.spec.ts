@@ -67,7 +67,7 @@ test('results by suite start within the fold budget at 1440 x 900, under one row
   await expect(kpis.locator('[data-metric-card]')).toHaveCount(5)
   await expect(page.getByText('Evaluated', { exact: true })).toHaveCount(0)
   const subtitle = page.locator('[data-page-header] p').first()
-  await expect(subtitle).toHaveText(/^Runs in window: 14 · Avg duration: 512,400 ms · Latest run: /)
+  await expect(subtitle).toHaveText(/^Runs in window: 14 · Avg duration: 8m 32s · Latest run: /)
   expect(await subtitle.evaluate((el) => el.scrollWidth <= el.clientWidth), 'the subtitle is not truncated').toBe(true)
   // The duplicate failing-tests chart is gone; its rows are the table's.
   await expect(page.locator('[data-catalogue-section="summary-top-failing"]')).toHaveCount(0)

@@ -45,7 +45,9 @@ for (const theme of THEMES) {
     })
 
     const banner = page.locator('[data-status-banner]')
+    // The failing count is the title's, once (no "Failing builds" fact repeating it).
     await expect(banner).toContainText('6 of 13 builds failed')
+    await expect(banner).not.toContainText('Failing builds')
 
     // The table, once every run's AI verdict has arrived (no skeleton left).
     const table = page.locator('[data-primary]')

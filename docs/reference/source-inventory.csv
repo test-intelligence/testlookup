@@ -3447,7 +3447,7 @@ frontend/tests/visual/prod-presentation.visual.spec.ts,test,86,,@playwright/test
 frontend/tests/visual/prod-release-gate-on.visual.spec.ts,test,65,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,Page; Theme; openGate
 frontend/tests/visual/prod-release-gate.visual.spec.ts,test,96,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,Page; contextDrawn
 frontend/tests/visual/prod-run-intelligence.visual.spec.ts,test,32,,@playwright/test; ../lib/production-pages; ./production/fixtures,
-frontend/tests/visual/prod-runs.visual.spec.ts,test,56,,@playwright/test; ../lib/production-pages; ./production/fixtures,
+frontend/tests/visual/prod-runs.visual.spec.ts,test,58,,@playwright/test; ../lib/production-pages; ./production/fixtures,
 frontend/tests/visual/prod-shell.visual.spec.ts,test,49,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,Page
 frontend/tests/visual/prod-suite-detail-on.visual.spec.ts,test,70,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
 frontend/tests/visual/prod-suite-detail.visual.spec.ts,test,51,,@playwright/test; ../lib/production-pages; ../lib/rollout; ./production/fixtures,
