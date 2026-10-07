@@ -4559,7 +4559,7 @@ Suite-match semantics: per-row ``tc.suite_name`` OR run-level
 the Java class as the per-row name but ``testlookup.suite`` at the
 run level still surfaces the case under the run-level suite.
 
-Source: [backend/app/routers/test_management_exports.py:1218](../../../backend/app/routers/test_management_exports.py#L1218).
+Source: [backend/app/routers/test_management_exports.py:1225](../../../backend/app/routers/test_management_exports.py#L1225).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4704,7 +4704,7 @@ Get Suite Changes
 
 Return suite membership change events, optionally filtered by run.
 
-Source: [backend/app/routers/test_management_exports.py:1462](../../../backend/app/routers/test_management_exports.py#L1462).
+Source: [backend/app/routers/test_management_exports.py:1469](../../../backend/app/routers/test_management_exports.py#L1469).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4837,7 +4837,7 @@ Get Suite Deleted
 
 Return deleted/needs_review members from the <suite>-deleted bucket.
 
-Source: [backend/app/routers/test_management_exports.py:1509](../../../backend/app/routers/test_management_exports.py#L1509).
+Source: [backend/app/routers/test_management_exports.py:1516](../../../backend/app/routers/test_management_exports.py#L1516).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4941,7 +4941,7 @@ Get Suite Membership
 
 Return current suite membership records from the traceability model.
 
-Source: [backend/app/routers/test_management_exports.py:1412](../../../backend/app/routers/test_management_exports.py#L1412).
+Source: [backend/app/routers/test_management_exports.py:1419](../../../backend/app/routers/test_management_exports.py#L1419).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5066,7 +5066,7 @@ Per-day trend points for one suite over the time window.
 suite is the path segment; a ``suite_name`` query parameter cannot widen
 or narrow it and is reported in ``meta.ignored_filters``.
 
-Source: [backend/app/routers/test_management_exports.py:1125](../../../backend/app/routers/test_management_exports.py#L1125).
+Source: [backend/app/routers/test_management_exports.py:1132](../../../backend/app/routers/test_management_exports.py#L1132).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

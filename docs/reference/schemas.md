@@ -1115,6 +1115,25 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AIModeRead
+
+```json
+{
+  "description": "The analysis mode alone: what every role's screens branch on.",
+  "properties": {
+    "analysis_mode": {
+      "title": "Analysis Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "analysis_mode"
+  ],
+  "title": "AIModeRead",
+  "type": "object"
+}
+```
+
 ## AIModelStatusRead
 
 ```json

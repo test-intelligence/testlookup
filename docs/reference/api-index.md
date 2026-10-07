@@ -429,6 +429,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/search/similar/{test_case_id}` | Find Similar Failures | [Search](api/search.md) |
 | GET | `/api/v1/settings/ai` | Get Ai Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/ai` | Update Ai Config | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/ai/mode` | Get Ai Mode | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/ai/model-status` | Get Ai Model Status | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/audit-log` | Get Audit Log | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/flags` | List Feature Flags | [Settings](api/settings.md) |
@@ -571,4 +572,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **562 HTTP operations**, **471 paths**, **81 domain pages**.
+Total: **563 HTTP operations**, **472 paths**, **81 domain pages**.
