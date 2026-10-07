@@ -61,6 +61,11 @@ Measured at 1440 x 900 on the hermetic fixtures:
     "Promoting to a defect".
 - **Dead code:** the Summary top-failing part and its adapter,
   `useValueMetricsKpi`, and three unused Summary caption words.
+- **Homelab deploy (found deploying P2):** an old pod still Terminating after
+  a clean rollout (a Celery worker finishing its task) marked the deploy
+  DEGRADED and exited non-zero. The pod check now ignores Terminating and
+  still flags CrashLoopBackOff, Error and Pending, held by
+  `test_deploy_reports_failure_honestly.py`.
 - **Tests:**
   - Each page has layout tests (primary content before any tab bar or
     collapsed section), `?tab=` tests and side-panel tests.
