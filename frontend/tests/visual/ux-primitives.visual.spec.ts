@@ -23,6 +23,17 @@ for (const theme of THEMES) {
       await expect(page.locator('[data-ux-primitive]')).toHaveCount(SECTIONS.length)
     })
 
+    test('every tab is 38 px, with a count or without (labels on one line)', async ({ page }) => {
+      for (const bar of ['route-tabs', 'page-header']) {
+        const heights = await page
+          .locator(`[data-ux-primitive="${bar}"]`)
+          .locator('[data-route-tab], [role="tab"]')
+          .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))
+        expect(heights.length, bar).toBeGreaterThan(2)
+        expect(new Set(heights), `${bar} tab heights`).toEqual(new Set([38]))
+      }
+    })
+
     for (const id of SECTIONS) {
       test(id, async ({ page }) => {
         const section = page.locator(`[data-ux-primitive="${id}"]`)

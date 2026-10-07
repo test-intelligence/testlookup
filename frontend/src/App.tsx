@@ -34,6 +34,9 @@ const SearchPage = lazy(() => import('@/pages/SearchPage'))
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const NotificationsPage = lazy(() => import('@/pages/settings/NotificationsPage'))
+const MyNotificationsPage = lazy(() =>
+  import('@/pages/settings/NotificationsPage').then((m) => ({ default: m.MyNotificationsPage })),
+)
 const AIConfigPage = lazy(() => import('@/pages/settings/AIConfigPage'))
 const IntegrationsSettingsPage = lazy(() => import('@/pages/settings/IntegrationsPage'))
 const StoragePage = lazy(() => import('@/pages/settings/StoragePage'))
@@ -161,6 +164,8 @@ const appRoutes: AppRoute[] = [
   { path: 'reports/summary', component: SummaryReportPage },
   // Profile is accessible to ALL authenticated roles
   { path: 'settings/profile', component: ProfilePage },
+  // Personal notification preferences: every role (UX redesign P1).
+  { path: 'settings/my-notifications', component: MyNotificationsPage },
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */

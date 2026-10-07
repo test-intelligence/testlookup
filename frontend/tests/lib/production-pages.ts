@@ -11,8 +11,8 @@
  *    screenshots green. Here an `/api` (or `/ws`, `/webhooks`) request with
  *    no handler is aborted and recorded, and `assertHermetic()` fails the spec
  *    naming it. Only a short whitelist has a default answer: `auth/me`,
- *    `feature-flags/*` (every flag off), the observability beacon (204)
- *    and `*\/count` badges. A request for any host other than the dev
+ *    `feature-flags/*` (every flag off), the observability beacon (204),
+ *    `*\/count` badges and the sidebar's `stream/active` (no run live). A request for any host other than the dev
  *    server's `127.0.0.1` is aborted and fails the spec too (air-gapped).
  * 2. The CLOCK is fixed. `Date` returns `NOW` for the whole test, so a
  *    "refreshed HH:MM:SS", a relative day label or a "today" outline is the
@@ -194,6 +194,9 @@ const whitelist = (flags: FlagMap): ApiHandlers => [
   [/^\/api\/v1\/feature-flags(\/.*)?$/, () => []],
   [/^\/api\/v1\/observability(\/.*)?$/, () => respond(204), 'POST'],
   [/\/count$/, () => ({ count: 0, unread: 0 })],
+  // The sidebar's Runs live dot (UX redesign P1), on every page: no run live.
+  // A page that reads live sessions itself (Live) answers it in its handlers.
+  ['/api/v1/stream/active', () => ({ sessions: [], count: 0 })],
 ]
 
 const API_PATH = /^\/(api|ws|webhooks)(\/|$)/

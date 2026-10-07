@@ -242,10 +242,41 @@ describe('TopBar', () => {
 
     fireEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('test@example.com')).toBeInTheDocument()
+    expect(screen.getByText(/test@example\.com/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Sign out/ }))
     expect(mocked.logout).toHaveBeenCalledTimes(1)
+  })
+
+  // UX redesign P1: the account menu holds everything personal.
+  it('the account menu has My profile, My notifications, the theme and presentation mode', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    // The role as people say it, not its code.
+    expect(screen.getByText(/^Admin · test@example\.com$/)).toBeInTheDocument()
+    expect(screen.queryByText(/ADMIN/)).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /My profile/ })).toHaveAttribute('href', '/settings/profile')
+    expect(screen.getByRole('menuitem', { name: /My notifications/ })).toHaveAttribute('href', '/settings/my-notifications')
+    expect(screen.getByRole('listbox', { name: 'Color theme' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Presentation mode/ })).toHaveAttribute('aria-pressed')
+    // The theme is no longer a top-bar control of its own.
+    expect(screen.queryByTitle('Change color theme')).not.toBeInTheDocument()
+  })
+
+  it('the bell links to My notifications, which every role can open', async () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }))
+    const links = screen.getAllByRole('link').filter((a) => /Settings|Manage notification/.test(a.textContent ?? ''))
+    expect(links.length).toBe(2)
+    for (const a of links) expect(a).toHaveAttribute('href', '/settings/my-notifications')
   })
 
   it('closes the profile menu on Escape', () => {

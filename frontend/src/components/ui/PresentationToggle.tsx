@@ -14,9 +14,9 @@ import { usePresentationStore } from '@/store/presentationStore'
  * state as a word ("On" / "Off") and as the row's active fill, never from
  * colour alone.
  *
- * It is a row of the sidebar's footer, beside My Profile and Settings, at
- * every width: one click away wherever a presenter is, worded, and (below
- * 1024 px) inside the navigation drawer.
+ * It is a row of the account menu (UX redesign P1; it was the sidebar's
+ * footer), beside the theme swatches: the two ways to change how the app
+ * looks, in one place.
  */
 export default function PresentationToggle() {
   const enabled = usePresentationStore((s) => s.enabled)

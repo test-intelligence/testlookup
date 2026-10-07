@@ -2,7 +2,7 @@
  * VIZ-106 presentation mode on the real routes (Wave 2.6, plan 3.5, 5.3).
  *
  * The mode is a per-browser preference (`store/presentationStore.ts`, key
- * `testlookup-presentation`) toggled from the sidebar footer. It sets
+ * `testlookup-presentation`) toggled from the account menu. It sets
  * `data-presentation="on"` on `<html>` at import time, before React draws
  * anything, and `index.css` raises the metric-value and headline tokens and
  * the small UI sizes; every Recharts drawing is scaled by 16/11 (11 px axis
@@ -45,6 +45,16 @@ const STORAGE_KEY = 'testlookup-presentation'
 const CHART_SVG = '.recharts-wrapper > svg.recharts-surface'
 const overviewReady = (p: Page) => p.getByRole('heading', { level: 1, name: 'Dashboard' })
 
+/**
+ * The presentation toggle, in the account menu since the UX redesign P1 (it
+ * was the sidebar footer): opens the menu when it is closed.
+ */
+async function presentationToggle(page: Page) {
+  const menu = page.getByRole('button', { name: 'Account menu' })
+  if ((await menu.getAttribute('aria-expanded')) !== 'true') await menu.click()
+  return page.locator('[data-account-menu]').getByRole('button', { name: 'Presentation mode' })
+}
+
 /** Store the mode as ON before any app script runs (the zustand `persist` record). */
 async function seedPresentation(page: Page) {
   await page.addInitScript((key) => {
@@ -85,7 +95,7 @@ test.describe('the presentation toggle at 1280 px', () => {
     // metric values once it has drawn, so the desk and room lists are one page.
     await expectDrawn(sectionFrame(page, 'overview-trend', 'Pass rate trend'), 'trend')
     await expectDrawn(sectionFrame(page, 'overview-donut', 'Status breakdown'), 'donut')
-    const toggle = page.locator('aside').getByRole('button', { name: 'Presentation mode' })
+    let toggle = await presentationToggle(page)
     const html = page.locator('html')
     await expect(toggle).toHaveAttribute('aria-pressed', 'false')
     await expect(html).not.toHaveAttribute('data-presentation', /.*/)
@@ -120,6 +130,7 @@ test.describe('the presentation toggle at 1280 px', () => {
     await page.reload()
     await expect(overviewReady(page)).toBeVisible()
     await expect(html).toHaveAttribute('data-presentation', 'on')
+    toggle = await presentationToggle(page)
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
     expect(await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY)).toContain('"enabled":true')
 
@@ -151,7 +162,7 @@ test.describe('the presentation toggle at 1280 px', () => {
     const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: overviewReady })
     const atFirstContent = await page.evaluate(() => (window as unknown as { __atFirstContent?: string | null }).__atFirstContent)
     expect(atFirstContent, 'data-presentation when #root first got content').toBe('on')
-    await expect(page.locator('aside').getByRole('button', { name: 'Presentation mode' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(await presentationToggle(page)).toHaveAttribute('aria-pressed', 'true')
     expect(api.unhandled).toEqual([])
     expect(errors).toEqual([])
   })

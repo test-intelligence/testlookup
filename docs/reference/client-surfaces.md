@@ -176,6 +176,7 @@ path: string
 { path: 'my-failures', component: MyFailuresPage },
 { path: 'reports/summary', component: SummaryReportPage },
 { path: 'settings/profile', component: ProfilePage },
+{ path: 'settings/my-notifications', component: MyNotificationsPage },
 { path: 'projects', component: ProjectsPage },
 { path: 'releases', component: ReleasesPage },
 { path: 'releases/:releaseId', component: ReleasesPage },

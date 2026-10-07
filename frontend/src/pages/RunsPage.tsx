@@ -2133,8 +2133,10 @@ export default function RunsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* The page's primary action (UX redesign P1): Upload left the
+              sidebar, so this is where it is found. */}
           {uploadEnabled && (
-            <GhostBtn
+            <PrimaryBtn
               onClick={() => setUploadOpen(true)}
               disabled={!isQaEngineer}
               title={
@@ -2145,7 +2147,7 @@ export default function RunsPage() {
             >
               <Upload className="h-3.5 w-3.5" />
               Upload report
-            </GhostBtn>
+            </PrimaryBtn>
           )}
           <DangerBtn
             onClick={handleTriggerAllFailed}

@@ -22,21 +22,21 @@ describe('ThemePicker', () => {
     expect(new Set(THEMES.map((t) => t.id)).size).toBe(THEMES.length)
   })
 
-  it('shows the active theme label and opens a list of all themes', () => {
+  it('names the active theme and shows one swatch per theme, the active one selected', () => {
     render(<ThemePicker />)
     expect(screen.getByText('Signal')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /signal/i }))
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(THEMES.length)
+    expect(screen.getByRole('option', { name: 'Signal' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('selecting a theme applies data-theme on <html> and persists in the store', () => {
     render(<ThemePicker />)
-    fireEvent.click(screen.getByRole('button', { name: /signal/i }))
-    fireEvent.click(screen.getByRole('option', { name: /Console/ }))
+    fireEvent.click(screen.getByRole('option', { name: 'Console' }))
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('console')
     expect(useThemeStore.getState().theme).toBe('console')
+    expect(screen.getByRole('option', { name: 'Console' })).toHaveAttribute('aria-selected', 'true')
   })
 })

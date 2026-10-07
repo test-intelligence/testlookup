@@ -783,14 +783,11 @@ function HistoryPanel() {
 
 // ── Main page ─────────────────────────────────────────────────
 
+/**
+ * The admin page: the server's SMTP configuration, then the signed-in user's
+ * own preferences (the same body as My notifications).
+ */
 export default function NotificationsPage() {
-  const { data: preferences, mutate: reload, isLoading } = useNotificationPreferences()
-
-  const prefByChannel = (ch: NotificationChannel) =>
-    preferences?.find(p => p.channel === ch && p.project_id === null)
-
-  const channels: NotificationChannel[] = ['email', 'slack', 'teams']
-
   return (
     <div className="space-y-6 max-w-2xl">
       <PageHeader
@@ -800,6 +797,37 @@ export default function NotificationsPage() {
 
       <SmtpConfigCard />
 
+      <NotificationPreferencesBody />
+    </div>
+  )
+}
+
+/**
+ * My notifications (UX redesign P1): the signed-in user's own channels,
+ * defaults and history, for every role. The preference and history endpoints
+ * are per-user and open to any active user; only SMTP is admin, and it is not
+ * here. The bell and the account menu link to this page, so a viewer is no
+ * longer sent to the admin-only page and silently redirected.
+ */
+export function MyNotificationsPage() {
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <PageHeader title="My notifications" subtitle="Where TestLookup alerts you about test results, and about what" />
+      <NotificationPreferencesBody />
+    </div>
+  )
+}
+
+function NotificationPreferencesBody() {
+  const { data: preferences, mutate: reload, isLoading } = useNotificationPreferences()
+
+  const prefByChannel = (ch: NotificationChannel) =>
+    preferences?.find(p => p.channel === ch && p.project_id === null)
+
+  const channels: NotificationChannel[] = ['email', 'slack', 'teams']
+
+  return (
+    <>
       {isLoading ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner size="lg" />
@@ -832,6 +860,6 @@ export default function NotificationsPage() {
           <HistoryPanel />
         </>
       )}
-    </div>
+    </>
   )
 }

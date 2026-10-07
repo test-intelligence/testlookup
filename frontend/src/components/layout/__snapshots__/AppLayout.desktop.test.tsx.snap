@@ -4,8 +4,8 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
   <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
-  <aside class="w-56 flex-shrink-0 border-r flex flex-col" style="background: var(--color-bg-card); border-color: var(--color-border);">
-    <div class="px-4 py-5 border-b flex items-center justify-center" style="border-color: var(--color-border);">
+  <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
+    <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
       <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
@@ -15,106 +15,129 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
             "lookup"
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "]"
-    <nav aria-label="Main navigation" class="flex-1 px-3 py-4 overflow-y-auto space-y-1">
-      <a class="sidebar-link" data-discover="true" href="/my-failures">
-        <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
-          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
-        "My Failures"
-        <span aria-label="3 assigned failures" class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
-          "3"
-      <div>
-        <div class="flex items-center">
-          <a aria-current="page" class="sidebar-link flex-1 active" data-discover="true" href="/overview">
-            <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <rect height="9" rx="1" width="7" x="3" y="3">
-              <rect height="5" rx="1" width="7" x="14" y="3">
-              <rect height="9" rx="1" width="7" x="14" y="12">
-              <rect height="5" rx="1" width="7" x="3" y="16">
-            "Dashboard"
-          <button aria-expanded="true" aria-label="Collapse" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200 rotate-180" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-        <div class="ml-4 pl-3 mt-0.5 space-y-0.5" style="border-left: 1px solid var(--color-border);">
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/getting-started">
-            <svg aria-hidden="true" class="lucide lucide-rocket h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5">
-              <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09">
-              <path d="M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z">
-              <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05">
-            "Getting Started"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/docs">
-            <svg aria-hidden="true" class="lucide lucide-book-open h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 5v16">
-              <path d="M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z">
-            "Documentation"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/value-metrics">
-            <svg aria-hidden="true" class="lucide lucide-chart-column h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M3 3v16a2 2 0 0 0 2 2h16">
-              <path d="M18 17V9">
-              <path d="M13 17V5">
-              <path d="M8 17v-3">
-            "Value Metrics"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/reports/summary">
-            <svg aria-hidden="true" class="lucide lucide-file-text h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z">
-              <path d="M14 2v5a1 1 0 0 0 1 1h5">
-              <path d="M10 9H8">
-              <path d="M16 13H8">
-              <path d="M16 17H8">
-            "Summary Report"
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/runs">
-            <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15 6a9 9 0 0 0-9 9V3">
-              <circle cx="18" cy="6" r="3">
-              <circle cx="6" cy="18" r="3">
-            "Testing"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/intelligence">
-            <svg aria-hidden="true" class="lucide lucide-brain h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 18V5">
-              <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4">
-              <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5">
-              <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77">
-              <path d="M18 18a4 4 0 0 0 2-7.464">
-              <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517">
-              <path d="M6 18a4 4 0 0 1-2-7.464">
-              <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77">
-            "AI Reports"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div class="my-2" style="border-top: 1px solid var(--color-border); opacity: 0.5;">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/projects">
-            <svg aria-hidden="true" class="lucide lucide-users-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 21a8 8 0 0 0-16 0">
-              <circle cx="10" cy="8" r="5">
-              <path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3">
-            "Management"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-    <div class="px-3 py-3 space-y-1" style="border-top: 1px solid var(--color-border);">
-      <a class="sidebar-link" data-discover="true" href="/settings/profile">
-        <svg aria-hidden="true" class="lucide lucide-circle-user-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17.925 20.056a6 6 0 0 0-11.851.001">
-          <circle cx="12" cy="11" r="4">
-          <circle cx="12" cy="12" r="10">
-        "My Profile"
-      <a class="sidebar-link" data-discover="true" href="/settings">
+    <nav aria-label="Main navigation" class="flex-1 py-4 overflow-y-auto px-3">
+      <div class="mt-0.5">
+        <a aria-current="page" class="sidebar-link relative active" data-discover="true" data-nav-id="home" href="/overview">
+          <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="9" rx="1" width="7" x="3" y="3">
+            <rect height="5" rx="1" width="7" x="14" y="3">
+            <rect height="9" rx="1" width="7" x="14" y="12">
+            <rect height="5" rx="1" width="7" x="3" y="16">
+          <span class="truncate">
+            "Home"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="inbox" href="/my-failures">
+          <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
+            <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
+          <span class="truncate">
+            "Inbox"
+          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+            "3"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+          "INVESTIGATE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
+          <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15 6a9 9 0 0 0-9 9V3">
+            <circle cx="18" cy="6" r="3">
+            <circle cx="6" cy="18" r="3">
+          <span class="truncate">
+            "Runs"
+          <span aria-label="1 run live now" class="h-2 w-2 rounded-full bg-[var(--status-failed)] animate-pulse ml-auto" data-nav-live="" role="img" title="1 run live now">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="failures" href="/failures">
+          <svg aria-hidden="true" class="lucide lucide-bug h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 20v-9">
+            <path d="M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z">
+            <path d="M14.12 3.88 16 2">
+            <path d="M21 21a4 4 0 0 0-3.81-4">
+            <path d="M21 5a4 4 0 0 1-3.55 3.97">
+            <path d="M22 13h-4">
+            <path d="M3 21a4 4 0 0 1 3.81-4">
+            <path d="M3 5a4 4 0 0 0 3.55 3.97">
+            <path d="M6 13H2">
+            <path d="m8 2 1.88 1.88">
+            <path d="M9 7.13V6a3 3 0 1 1 6 0v1.13">
+          <span class="truncate">
+            "Failures"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="flaky" href="/flaky-coach">
+          <svg aria-hidden="true" class="lucide lucide-heart-pulse h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5">
+            <path d="M3.22 13H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27">
+          <span class="truncate">
+            "Flaky tests"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+          "QUALITY"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="trends" href="/trends">
+          <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 7h6v6">
+            <path d="m22 7-8.5 8.5-5-5L2 17">
+          <span class="truncate">
+            "Trends"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="suites" href="/suites">
+          <svg aria-hidden="true" class="lucide lucide-folder-tree h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M3 5a2 2 0 0 0 2 2h3">
+            <path d="M3 3v13a2 2 0 0 0 2 2h3">
+          <span class="truncate">
+            "Suites"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="test-cases" href="/test-management">
+          <svg aria-hidden="true" class="lucide lucide-clipboard-list h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="4" rx="1" ry="1" width="8" x="8" y="2">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2">
+            <path d="M12 11h4">
+            <path d="M12 16h4">
+            <path d="M8 11h.01">
+            <path d="M8 16h.01">
+          <span class="truncate">
+            "Test cases"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="reports" href="/reports/summary">
+          <svg aria-hidden="true" class="lucide lucide-file-text h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z">
+            <path d="M14 2v5a1 1 0 0 0 1 1h5">
+            <path d="M10 9H8">
+            <path d="M16 13H8">
+            <path d="M16 17H8">
+          <span class="truncate">
+            "Reports"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+          "RELEASE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
+          <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z">
+          <span class="truncate">
+            "Release gate"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="releases" href="/releases">
+          <svg aria-hidden="true" class="lucide lucide-package h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z">
+            <path d="M12 22V12">
+            <polyline points="3.29 7 12 12 20.71 7">
+            <path d="m7.5 4.27 9 5.15">
+          <span class="truncate">
+            "Releases"
+    <div class="py-3 space-y-1 px-3" style="border-top: 1px solid var(--color-border);">
+      <a class="sidebar-link relative" data-discover="true" data-nav-id="admin" href="/settings">
         <svg aria-hidden="true" class="lucide lucide-settings h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915">
           <circle cx="12" cy="12" r="3">
-        "Settings"
-      <div data-stub="app-version">
+        <span class="truncate">
+          "Admin"
+      <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <rect height="18" rx="2" width="18" x="3" y="3">
+          <path d="M9 3v18">
+          <path d="m16 15-3-3 3-3">
+        <span>
+          "Collapse"
   <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
     <header class="relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style="border-color: var(--color-border); background: var(--color-bg-card);">
       <div class="flex-1 max-w-md relative">
@@ -132,20 +155,20 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
         <option value="p1">
           "Core UI"
       <div data-stub="release-picker">
-      <div class="relative ml-auto">
+      <div class="ml-auto">
+        <div class="relative">
+          <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10">
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
+              <path d="M12 17h.01">
+      <div class="relative">
         <button aria-label="Notifications (2 unread)" class="relative p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors">
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
-      <div class="relative">
-        <button aria-expanded="false" aria-haspopup="listbox" class="flex items-center gap-2 h-9 px-3 rounded-full text-xs font-semibold border transition-colors" style="color: var(--color-text-secondary); background: var(--color-bg-input); border-color: var(--color-border);" title="Change color theme" type="button">
-          <span class="w-3.5 h-3.5 rounded-full border-2" style="background: rgb(59, 130, 246); border-color: var(--color-bg); box-shadow: 0 0 0 1.5px var(--color-border-light);">
-          <span class="hidden sm:inline" style="color: var(--color-text);">
-            "Signal"
-          <svg aria-hidden="true" class="lucide lucide-chevron-down w-3.5 h-3.5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" style="color: var(--color-text-muted);" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-            <path d="m6 9 6 6 6-6">
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
           <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
@@ -154,7 +177,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div>
@@ -167,8 +190,8 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
   <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
-  <aside class="w-56 flex-shrink-0 border-r flex flex-col" style="background: var(--color-bg-card); border-color: var(--color-border);">
-    <div class="px-4 py-5 border-b flex items-center justify-center" style="border-color: var(--color-border);">
+  <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
+    <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
       <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
@@ -178,78 +201,129 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
             "lookup"
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "]"
-    <nav aria-label="Main navigation" class="flex-1 px-3 py-4 overflow-y-auto space-y-1">
-      <a class="sidebar-link" data-discover="true" href="/my-failures">
-        <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
-          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
-        "My Failures"
-        <span aria-label="3 assigned failures" class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
-          "3"
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/overview">
-            <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <rect height="9" rx="1" width="7" x="3" y="3">
-              <rect height="5" rx="1" width="7" x="14" y="3">
-              <rect height="9" rx="1" width="7" x="14" y="12">
-              <rect height="5" rx="1" width="7" x="3" y="16">
-            "Dashboard"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/runs">
-            <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15 6a9 9 0 0 0-9 9V3">
-              <circle cx="18" cy="6" r="3">
-              <circle cx="6" cy="18" r="3">
-            "Testing"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/intelligence">
-            <svg aria-hidden="true" class="lucide lucide-brain h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 18V5">
-              <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4">
-              <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5">
-              <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77">
-              <path d="M18 18a4 4 0 0 0 2-7.464">
-              <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517">
-              <path d="M6 18a4 4 0 0 1-2-7.464">
-              <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77">
-            "AI Reports"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div class="my-2" style="border-top: 1px solid var(--color-border); opacity: 0.5;">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/projects">
-            <svg aria-hidden="true" class="lucide lucide-users-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 21a8 8 0 0 0-16 0">
-              <circle cx="10" cy="8" r="5">
-              <path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3">
-            "Management"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-    <div class="px-3 py-3 space-y-1" style="border-top: 1px solid var(--color-border);">
-      <a aria-current="page" class="sidebar-link active" data-discover="true" href="/settings/profile">
-        <svg aria-hidden="true" class="lucide lucide-circle-user-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17.925 20.056a6 6 0 0 0-11.851.001">
-          <circle cx="12" cy="11" r="4">
-          <circle cx="12" cy="12" r="10">
-        "My Profile"
-      <a class="sidebar-link" data-discover="true" href="/settings">
+    <nav aria-label="Main navigation" class="flex-1 py-4 overflow-y-auto px-3">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="home" href="/overview">
+          <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="9" rx="1" width="7" x="3" y="3">
+            <rect height="5" rx="1" width="7" x="14" y="3">
+            <rect height="9" rx="1" width="7" x="14" y="12">
+            <rect height="5" rx="1" width="7" x="3" y="16">
+          <span class="truncate">
+            "Home"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="inbox" href="/my-failures">
+          <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
+            <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
+          <span class="truncate">
+            "Inbox"
+          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+            "3"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+          "INVESTIGATE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
+          <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15 6a9 9 0 0 0-9 9V3">
+            <circle cx="18" cy="6" r="3">
+            <circle cx="6" cy="18" r="3">
+          <span class="truncate">
+            "Runs"
+          <span aria-label="1 run live now" class="h-2 w-2 rounded-full bg-[var(--status-failed)] animate-pulse ml-auto" data-nav-live="" role="img" title="1 run live now">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="failures" href="/failures">
+          <svg aria-hidden="true" class="lucide lucide-bug h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 20v-9">
+            <path d="M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z">
+            <path d="M14.12 3.88 16 2">
+            <path d="M21 21a4 4 0 0 0-3.81-4">
+            <path d="M21 5a4 4 0 0 1-3.55 3.97">
+            <path d="M22 13h-4">
+            <path d="M3 21a4 4 0 0 1 3.81-4">
+            <path d="M3 5a4 4 0 0 0 3.55 3.97">
+            <path d="M6 13H2">
+            <path d="m8 2 1.88 1.88">
+            <path d="M9 7.13V6a3 3 0 1 1 6 0v1.13">
+          <span class="truncate">
+            "Failures"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="flaky" href="/flaky-coach">
+          <svg aria-hidden="true" class="lucide lucide-heart-pulse h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5">
+            <path d="M3.22 13H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27">
+          <span class="truncate">
+            "Flaky tests"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+          "QUALITY"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="trends" href="/trends">
+          <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 7h6v6">
+            <path d="m22 7-8.5 8.5-5-5L2 17">
+          <span class="truncate">
+            "Trends"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="suites" href="/suites">
+          <svg aria-hidden="true" class="lucide lucide-folder-tree h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M3 5a2 2 0 0 0 2 2h3">
+            <path d="M3 3v13a2 2 0 0 0 2 2h3">
+          <span class="truncate">
+            "Suites"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="test-cases" href="/test-management">
+          <svg aria-hidden="true" class="lucide lucide-clipboard-list h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="4" rx="1" ry="1" width="8" x="8" y="2">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2">
+            <path d="M12 11h4">
+            <path d="M12 16h4">
+            <path d="M8 11h.01">
+            <path d="M8 16h.01">
+          <span class="truncate">
+            "Test cases"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="reports" href="/reports/summary">
+          <svg aria-hidden="true" class="lucide lucide-file-text h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z">
+            <path d="M14 2v5a1 1 0 0 0 1 1h5">
+            <path d="M10 9H8">
+            <path d="M16 13H8">
+            <path d="M16 17H8">
+          <span class="truncate">
+            "Reports"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+          "RELEASE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
+          <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z">
+          <span class="truncate">
+            "Release gate"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="releases" href="/releases">
+          <svg aria-hidden="true" class="lucide lucide-package h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z">
+            <path d="M12 22V12">
+            <polyline points="3.29 7 12 12 20.71 7">
+            <path d="m7.5 4.27 9 5.15">
+          <span class="truncate">
+            "Releases"
+    <div class="py-3 space-y-1 px-3" style="border-top: 1px solid var(--color-border);">
+      <a class="sidebar-link relative" data-discover="true" data-nav-id="admin" href="/settings">
         <svg aria-hidden="true" class="lucide lucide-settings h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915">
           <circle cx="12" cy="12" r="3">
-        "Settings"
-      <div data-stub="app-version">
+        <span class="truncate">
+          "Admin"
+      <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <rect height="18" rx="2" width="18" x="3" y="3">
+          <path d="M9 3v18">
+          <path d="m16 15-3-3 3-3">
+        <span>
+          "Collapse"
   <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
     <header class="relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style="border-color: var(--color-border); background: var(--color-bg-card);">
       <div class="flex-1 max-w-md relative">
@@ -267,20 +341,20 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
         <option value="p1">
           "Core UI"
       <div data-stub="release-picker">
-      <div class="relative ml-auto">
+      <div class="ml-auto">
+        <div class="relative">
+          <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10">
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
+              <path d="M12 17h.01">
+      <div class="relative">
         <button aria-label="Notifications (2 unread)" class="relative p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors">
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
-      <div class="relative">
-        <button aria-expanded="false" aria-haspopup="listbox" class="flex items-center gap-2 h-9 px-3 rounded-full text-xs font-semibold border transition-colors" style="color: var(--color-text-secondary); background: var(--color-bg-input); border-color: var(--color-border);" title="Change color theme" type="button">
-          <span class="w-3.5 h-3.5 rounded-full border-2" style="background: rgb(59, 130, 246); border-color: var(--color-bg); box-shadow: 0 0 0 1.5px var(--color-border-light);">
-          <span class="hidden sm:inline" style="color: var(--color-text);">
-            "Signal"
-          <svg aria-hidden="true" class="lucide lucide-chevron-down w-3.5 h-3.5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" style="color: var(--color-text-muted);" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-            <path d="m6 9 6 6 6-6">
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
           <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
@@ -289,7 +363,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <nav aria-label="Breadcrumb" class="mb-4">
@@ -308,8 +382,8 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
   <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
-  <aside class="w-56 flex-shrink-0 border-r flex flex-col" style="background: var(--color-bg-card); border-color: var(--color-border);">
-    <div class="px-4 py-5 border-b flex items-center justify-center" style="border-color: var(--color-border);">
+  <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
+    <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
       <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
@@ -319,148 +393,129 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
             "lookup"
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "]"
-    <nav aria-label="Main navigation" class="flex-1 px-3 py-4 overflow-y-auto space-y-1">
-      <a class="sidebar-link" data-discover="true" href="/my-failures">
-        <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
-          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
-        "My Failures"
-        <span aria-label="3 assigned failures" class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
-          "3"
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/overview">
-            <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <rect height="9" rx="1" width="7" x="3" y="3">
-              <rect height="5" rx="1" width="7" x="14" y="3">
-              <rect height="9" rx="1" width="7" x="14" y="12">
-              <rect height="5" rx="1" width="7" x="3" y="16">
-            "Dashboard"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1 active" data-discover="true" href="/runs">
-            <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15 6a9 9 0 0 0-9 9V3">
-              <circle cx="18" cy="6" r="3">
-              <circle cx="6" cy="18" r="3">
-            "Testing"
-          <button aria-expanded="true" aria-label="Collapse" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200 rotate-180" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-        <div class="ml-4 pl-3 mt-0.5 space-y-0.5" style="border-left: 1px solid var(--color-border);">
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/live">
-            <svg aria-hidden="true" class="lucide lucide-radio h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16.247 7.761a6 6 0 0 1 0 8.478">
-              <path d="M19.075 4.933a10 10 0 0 1 0 14.134">
-              <path d="M4.925 19.067a10 10 0 0 1 0-14.134">
-              <path d="M7.753 16.239a6 6 0 0 1 0-8.478">
-              <circle cx="12" cy="12" r="2">
-            "Live"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/coverage">
-            <svg aria-hidden="true" class="lucide lucide-shield-check h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z">
-              <path d="m9 12 2 2 4-4">
-            "Coverage"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/suites">
-            <svg aria-hidden="true" class="lucide lucide-folder-tree h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
-              <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
-              <path d="M3 5a2 2 0 0 0 2 2h3">
-              <path d="M3 3v13a2 2 0 0 0 2 2h3">
-            "Suites"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/failures">
-            <svg aria-hidden="true" class="lucide lucide-bug h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 20v-9">
-              <path d="M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z">
-              <path d="M14.12 3.88 16 2">
-              <path d="M21 21a4 4 0 0 0-3.81-4">
-              <path d="M21 5a4 4 0 0 1-3.55 3.97">
-              <path d="M22 13h-4">
-              <path d="M3 21a4 4 0 0 1 3.81-4">
-              <path d="M3 5a4 4 0 0 0 3.55 3.97">
-              <path d="M6 13H2">
-              <path d="m8 2 1.88 1.88">
-              <path d="M9 7.13V6a3 3 0 1 1 6 0v1.13">
+    <nav aria-label="Main navigation" class="flex-1 py-4 overflow-y-auto px-3">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="home" href="/overview">
+          <svg aria-hidden="true" class="lucide lucide-layout-dashboard h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="9" rx="1" width="7" x="3" y="3">
+            <rect height="5" rx="1" width="7" x="14" y="3">
+            <rect height="9" rx="1" width="7" x="14" y="12">
+            <rect height="5" rx="1" width="7" x="3" y="16">
+          <span class="truncate">
+            "Home"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="inbox" href="/my-failures">
+          <svg aria-hidden="true" class="lucide lucide-inbox h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12">
+            <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
+          <span class="truncate">
+            "Inbox"
+          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+            "3"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+          "INVESTIGATE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
+          <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15 6a9 9 0 0 0-9 9V3">
+            <circle cx="18" cy="6" r="3">
+            <circle cx="6" cy="18" r="3">
+          <span class="truncate">
+            "Runs"
+          <span aria-label="1 run live now" class="h-2 w-2 rounded-full bg-[var(--status-failed)] animate-pulse ml-auto" data-nav-live="" role="img" title="1 run live now">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="failures" href="/failures">
+          <svg aria-hidden="true" class="lucide lucide-bug h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 20v-9">
+            <path d="M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z">
+            <path d="M14.12 3.88 16 2">
+            <path d="M21 21a4 4 0 0 0-3.81-4">
+            <path d="M21 5a4 4 0 0 1-3.55 3.97">
+            <path d="M22 13h-4">
+            <path d="M3 21a4 4 0 0 1 3.81-4">
+            <path d="M3 5a4 4 0 0 0 3.55 3.97">
+            <path d="M6 13H2">
+            <path d="m8 2 1.88 1.88">
+            <path d="M9 7.13V6a3 3 0 1 1 6 0v1.13">
+          <span class="truncate">
             "Failures"
-          <a aria-current="page" class="sidebar-link text-[13px] py-2 active" data-discover="true" href="/trends">
-            <svg aria-hidden="true" class="lucide lucide-trending-up h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16 7h6v6">
-              <path d="m22 7-8.5 8.5-5-5L2 17">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="flaky" href="/flaky-coach">
+          <svg aria-hidden="true" class="lucide lucide-heart-pulse h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5">
+            <path d="M3.22 13H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27">
+          <span class="truncate">
+            "Flaky tests"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+          "QUALITY"
+        <a aria-current="page" class="sidebar-link relative active" data-discover="true" data-nav-id="trends" href="/trends">
+          <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 7h6v6">
+            <path d="m22 7-8.5 8.5-5-5L2 17">
+          <span class="truncate">
             "Trends"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/explore">
-            <svg aria-hidden="true" class="lucide lucide-layout-grid h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <rect height="7" rx="1" width="7" x="3" y="3">
-              <rect height="7" rx="1" width="7" x="14" y="3">
-              <rect height="7" rx="1" width="7" x="14" y="14">
-              <rect height="7" rx="1" width="7" x="3" y="14">
-            "Explorer"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/defects">
-            <svg aria-hidden="true" class="lucide lucide-gauge h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m12 14 4-4">
-              <path d="M3.34 19a10 10 0 1 1 17.32 0">
-            "Defects"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/search">
-            <svg aria-hidden="true" class="lucide lucide-search h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m21 21-4.34-4.34">
-              <circle cx="11" cy="11" r="8">
-            "Search"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/activity">
-            <svg aria-hidden="true" class="lucide lucide-activity h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2">
-            "Activity"
-          <a class="sidebar-link text-[13px] py-2" data-discover="true" href="/test-management">
-            <svg aria-hidden="true" class="lucide lucide-clipboard-list h-3.5 w-3.5 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <rect height="4" rx="1" ry="1" width="8" x="8" y="2">
-              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2">
-              <path d="M12 11h4">
-              <path d="M12 16h4">
-              <path d="M8 11h.01">
-              <path d="M8 16h.01">
-            "Test Cases"
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/intelligence">
-            <svg aria-hidden="true" class="lucide lucide-brain h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 18V5">
-              <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4">
-              <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5">
-              <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77">
-              <path d="M18 18a4 4 0 0 0 2-7.464">
-              <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517">
-              <path d="M6 18a4 4 0 0 1-2-7.464">
-              <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77">
-            "AI Reports"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-      <div class="my-2" style="border-top: 1px solid var(--color-border); opacity: 0.5;">
-      <div>
-        <div class="flex items-center">
-          <a class="sidebar-link flex-1" data-discover="true" href="/projects">
-            <svg aria-hidden="true" class="lucide lucide-users-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 21a8 8 0 0 0-16 0">
-              <circle cx="10" cy="8" r="5">
-              <path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3">
-            "Management"
-          <button aria-expanded="false" aria-label="Expand" class="p-1.5 rounded-md transition-colors" style="color: var(--color-text-faint);">
-            <svg aria-hidden="true" class="lucide lucide-chevron-down h-3.5 w-3.5 transition-transform duration-200" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-              <path d="m6 9 6 6 6-6">
-    <div class="px-3 py-3 space-y-1" style="border-top: 1px solid var(--color-border);">
-      <a class="sidebar-link" data-discover="true" href="/settings/profile">
-        <svg aria-hidden="true" class="lucide lucide-circle-user-round h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17.925 20.056a6 6 0 0 0-11.851.001">
-          <circle cx="12" cy="11" r="4">
-          <circle cx="12" cy="12" r="10">
-        "My Profile"
-      <a class="sidebar-link" data-discover="true" href="/settings">
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="suites" href="/suites">
+          <svg aria-hidden="true" class="lucide lucide-folder-tree h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z">
+            <path d="M3 5a2 2 0 0 0 2 2h3">
+            <path d="M3 3v13a2 2 0 0 0 2 2h3">
+          <span class="truncate">
+            "Suites"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="test-cases" href="/test-management">
+          <svg aria-hidden="true" class="lucide lucide-clipboard-list h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <rect height="4" rx="1" ry="1" width="8" x="8" y="2">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2">
+            <path d="M12 11h4">
+            <path d="M12 16h4">
+            <path d="M8 11h.01">
+            <path d="M8 16h.01">
+          <span class="truncate">
+            "Test cases"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="reports" href="/reports/summary">
+          <svg aria-hidden="true" class="lucide lucide-file-text h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z">
+            <path d="M14 2v5a1 1 0 0 0 1 1h5">
+            <path d="M10 9H8">
+            <path d="M16 13H8">
+            <path d="M16 17H8">
+          <span class="truncate">
+            "Reports"
+      <div class="mt-0.5">
+        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+          "RELEASE"
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
+          <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z">
+          <span class="truncate">
+            "Release gate"
+      <div class="mt-0.5">
+        <a class="sidebar-link relative" data-discover="true" data-nav-id="releases" href="/releases">
+          <svg aria-hidden="true" class="lucide lucide-package h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z">
+            <path d="M12 22V12">
+            <polyline points="3.29 7 12 12 20.71 7">
+            <path d="m7.5 4.27 9 5.15">
+          <span class="truncate">
+            "Releases"
+    <div class="py-3 space-y-1 px-3" style="border-top: 1px solid var(--color-border);">
+      <a class="sidebar-link relative" data-discover="true" data-nav-id="admin" href="/settings">
         <svg aria-hidden="true" class="lucide lucide-settings h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915">
           <circle cx="12" cy="12" r="3">
-        "Settings"
-      <div data-stub="app-version">
+        <span class="truncate">
+          "Admin"
+      <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <rect height="18" rx="2" width="18" x="3" y="3">
+          <path d="M9 3v18">
+          <path d="m16 15-3-3 3-3">
+        <span>
+          "Collapse"
   <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
     <header class="relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style="border-color: var(--color-border); background: var(--color-bg-card);">
       <div class="flex-1 max-w-md relative">
@@ -478,20 +533,20 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
         <option value="p1">
           "Core UI"
       <div data-stub="release-picker">
-      <div class="relative ml-auto">
+      <div class="ml-auto">
+        <div class="relative">
+          <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10">
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
+              <path d="M12 17h.01">
+      <div class="relative">
         <button aria-label="Notifications (2 unread)" class="relative p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors">
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
-      <div class="relative">
-        <button aria-expanded="false" aria-haspopup="listbox" class="flex items-center gap-2 h-9 px-3 rounded-full text-xs font-semibold border transition-colors" style="color: var(--color-text-secondary); background: var(--color-bg-input); border-color: var(--color-border);" title="Change color theme" type="button">
-          <span class="w-3.5 h-3.5 rounded-full border-2" style="background: rgb(59, 130, 246); border-color: var(--color-bg); box-shadow: 0 0 0 1.5px var(--color-border-light);">
-          <span class="hidden sm:inline" style="color: var(--color-text);">
-            "Signal"
-          <svg aria-hidden="true" class="lucide lucide-chevron-down w-3.5 h-3.5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" style="color: var(--color-text-muted);" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
-            <path d="m6 9 6 6 6-6">
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
           <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
@@ -500,9 +555,17 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
-              "ADMIN"
+              "Admin"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
+        <div class="mb-4" data-section-tabs="trends">
+          <nav aria-label="Trends pages" class="flex items-end gap-1 border-b border-[var(--color-border)]" data-route-tabs="">
+            <a aria-current="page" class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-[var(--color-accent)] text-[var(--color-text)]" data-discover="true" data-route-tab="/trends" href="/trends">
+              "Trends"
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/coverage" href="/coverage">
+              "Coverage"
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/explore" href="/explore">
+              "Explorer"
         <div>
           "Page"
         <div class="sr-only" data-chart-announcer="polite" role="status">
