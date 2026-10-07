@@ -36,7 +36,9 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
 
   return (
     <div data-settings-layout="" className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <nav aria-label="Settings" className="lg:sticky lg:top-0 lg:self-start">
+      {/* Its own scroller: seven groups run ~1,240 px, taller than the window, and a
+          sticky nav that tall cannot show its last groups until the page ends. */}
+      <nav aria-label="Settings" className="lg:sticky lg:top-0 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
         <div className="space-y-4">
           {canAccessManagement && (
             <Link

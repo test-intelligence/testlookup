@@ -30,6 +30,9 @@ describe('SettingsPage (the /settings index)', () => {
       'href',
       '/users?tab=project-members',
     )
+    // One column (P5 baselines: two columns beside the sub-nav cut every
+    // description to ten characters at 1280 px).
+    expect((container.querySelector('[data-settings-index]') as HTMLElement).className).not.toMatch(/grid-cols-2/)
     // No card grid: one list per group.
     expect(container.querySelectorAll('[data-settings-index] section ul')).toHaveLength(SETTINGS_GROUPS.length)
   })

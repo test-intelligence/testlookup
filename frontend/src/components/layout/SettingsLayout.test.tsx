@@ -50,6 +50,11 @@ describe('SettingsLayout', () => {
     expect(current(nav)).toEqual(['Profile'])
   })
 
+  it('the sub-nav scrolls on its own: seven groups are taller than the window', () => {
+    const nav = renderAt('/settings/profile')
+    expect(nav.className.split(/\s+/)).toEqual(expect.arrayContaining(['lg:sticky', 'lg:overflow-y-auto']))
+  })
+
   it('one page, two items told apart by ?tab=: Users and Members & access', () => {
     expect(current(renderAt('/users?tab=project-members'))).toEqual(['Members & access'])
   })

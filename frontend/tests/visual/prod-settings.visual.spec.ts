@@ -13,8 +13,9 @@ import { PINNED, THEMES, visualRegion } from '../lib/production-pages'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import { LAYOUT } from './production/fixtures'
 
-// Tall enough for the whole sub-nav (seven groups): a region must end inside the viewport.
-test.use({ ...PINNED, viewport: { width: 1280, height: 1800 } })
+// Tall enough for the whole sub-nav and the one-column index (seven groups each):
+// a region must end inside the viewport.
+test.use({ ...PINNED, viewport: { width: 1280, height: 2400 } })
 
 for (const theme of THEMES) {
   test(`the P5 settings layout and index — ${theme}`, async ({ page }) => {

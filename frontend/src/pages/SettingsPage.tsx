@@ -6,6 +6,10 @@
  * The same data as the sub-nav beside it (`settingsNav.ts`), role-filtered
  * the same way, so the index can never offer a page the sub-nav does not, or
  * the reverse. The route is QA lead and admin only.
+ *
+ * One column: beside the 220 px sub-nav a two-column grid left each list
+ * ~360 px at 1280 px, every description cut to ten characters, and stretched
+ * a one-item group (Release governance) to its row's height (P5 baselines).
  */
 import { Link } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
@@ -27,7 +31,7 @@ export default function SettingsPage() {
         helpTopic={helpTopicParam('/settings')}
       />
       {/* The page's one primary content (the template's `data-primary`, P6 fold budget). */}
-      <div className="grid gap-4 xl:grid-cols-2" data-settings-index="" data-primary="">
+      <div className="space-y-4" data-settings-index="" data-primary="">
         {groups.map((group) => (
           <section key={group.id} aria-labelledby={`settings-group-${group.id}`} className="card !p-0 overflow-hidden">
             <h2
