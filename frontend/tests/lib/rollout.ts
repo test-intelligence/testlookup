@@ -579,3 +579,40 @@ export async function expectNoPrototypePollution(page: Page, where: string) {
   )
   expect(extra, `${where}: Object.prototype gained properties (prototype pollution from a hostile name)`).toEqual([])
 }
+
+// ── The primary content's own width (UX redesign P3/P4) ────────────────────
+
+export interface PrimaryOverflow {
+  scrollWidth: number
+  clientWidth: number
+  /** Each header cell's text and width, for the log: where the room went when it fails. */
+  columns: [string, number][]
+}
+
+/**
+ * The page's primary content (`[data-primary]`) against its own box: the
+ * horizontal scroller is the element itself or the first box inside it that
+ * scrolls sideways. A table wider than its card hides its right-hand columns —
+ * the row actions, every time: Failures (P3), Runs and the suite's tests (P4)
+ * all fitted on Windows and spilled 50-70 px on CI's DejaVu Sans. Fonts load
+ * first: a fallback face measures another table.
+ */
+export async function primaryOverflow(page: Page): Promise<PrimaryOverflow> {
+  await page.evaluate(() => document.fonts.ready)
+  return page.evaluate(() => {
+    const primary = document.querySelector('[data-primary]') as HTMLElement
+    const boxes = [primary, ...Array.from(primary.querySelectorAll<HTMLElement>('*'))]
+    const scroller = boxes.find((el) => ['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) ?? primary
+    const table = scroller.querySelector('table')
+    return {
+      scrollWidth: scroller.scrollWidth,
+      clientWidth: scroller.clientWidth,
+      columns: table
+        ? (Array.from(table.querySelectorAll('thead th'), (th) => [
+            (th.textContent ?? '').trim() || '(blank)',
+            Math.round(th.getBoundingClientRect().width),
+          ]) as [string, number][])
+        : [],
+    }
+  })
+}

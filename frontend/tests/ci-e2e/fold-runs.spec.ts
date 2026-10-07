@@ -74,10 +74,18 @@ test('the runs table starts within the fold budget at 1440 x 900', async ({ page
 })
 
 /** The runs table's horizontal scroller: its content width against its box. */
-async function tableOverflow(page: Page): Promise<{ scrollWidth: number; clientWidth: number }> {
+async function tableOverflow(page: Page): Promise<{ scrollWidth: number; clientWidth: number; columns: [string, number][] }> {
+  // Fonts first: a fallback face measures another table (CI's DejaVu is wider
+  // than Windows' Segoe: the P4 table fitted at 974 = 974 here and was 1,040 there).
+  await page.evaluate(() => document.fonts.ready)
   return page.locator('[data-primary] [data-runs-table-scroller]').evaluate((el) => ({
     scrollWidth: el.scrollWidth,
     clientWidth: el.clientWidth,
+    // Each column's width, for the log: where the room went when this fails.
+    columns: Array.from(el.querySelectorAll('thead th'), (th) => [
+      (th.textContent ?? '').trim() || '(blank)',
+      Math.round(th.getBoundingClientRect().width),
+    ]) as [string, number][],
   }))
 }
 

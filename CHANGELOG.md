@@ -68,6 +68,22 @@ now holds its content, and keeps its query string.
     risk" used to show as FAILING.
 - **Copy:** the quarantine dialog and its toast send people to Flaky tests ›
   Proposed, not `/quarantine`.
+- **Tables that ran past their cards (found reading P4's baselines):** three
+  tables fitted on Windows but were 50-250 px too wide on CI's font. Each
+  hid its row actions off the right edge.
+  - **Runs** (1,040 px in a 974 px card at 1280 px): the suite now sits
+    under its run number in the Build column, since "Run #N" counts per
+    suite. The Tests counts wrap between their two groups.
+  - **A suite's tests** (1,230 px, too wide at 1440 px as well): the headers
+    may wrap. The last error truncates without widening its column. The
+    latest run is the row's Run action, named by its id ("↗ run 1a2b3c4d").
+    The source moved under the status.
+  - **The suites list:** names and owners stay on one line ("All Tests" had
+    wrapped mid-name), and the description truncates instead.
+  - `tests/lib/rollout.ts` gained `primaryOverflow`, which measures the
+    page's primary content against its own box and logs each column's
+    width. `fold-runs` and `fold-suite` assert it at 1280 and 1440, under
+    DejaVu Sans as well.
 - **Bundle:** the suite-by-name redirect now loads lazily. Loaded eagerly,
   its suite lookup carried the suites service into the eager bundle, which
   went to 180,218 B gzip, over the 180,000 budget. It is now 179,384 B.
