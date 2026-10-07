@@ -5,12 +5,11 @@ import { useNow } from '@/hooks/useNow'
 import { shortAgo } from '@/utils/formatters'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
-  Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
+  ClipboardList, Plus, Sparkles, ChevronDown,
+  User, CheckCircle2, AlertCircle,
   RotateCcw, MessageSquare, History, Shield, FileText,
-  ChevronUp, Trash2, BookOpen, BarChart2,
+  ChevronUp, Trash2, BookOpen,
   Download, FileSpreadsheet, Layers,
-  Copy, GitMerge, Search as SearchIcon,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -18,6 +17,9 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
+import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
+import { useTabParam } from '@/components/ui/useTabParam'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import EvidenceGapLists from '@/components/testManagement/EvidenceGapLists'
 import LifecyclePanel from '@/components/testManagement/LifecyclePanel'
 import PromotionAction from '@/components/testManagement/PromotionAction'
@@ -27,9 +29,10 @@ import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { api } from '@/services/api'
 import { useProjectStore } from '@/store/projectStore'
 import {
-  useTestCases, useTestPlans, useStrategies, useAuditLog,
+  useTestCases, useTestPlans, useAuditLog,
   useTestCaseHistory, useTestCaseReviews, useTestCaseComments,
-  usePlanItems, useUsers, useDuplicateCandidates, refreshTestCases } from '@/hooks/useTestManagement'
+  usePlanItems, useUsers } from '@/hooks/useTestManagement'
+import { useSuites } from '@/hooks/useSuites'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectMembers } from '@/hooks/useUserManagement'
 import {
@@ -39,20 +42,34 @@ import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/
 import { deriveTestManagementTotals, describeStatBasis } from '@/utils/testManagementTotals'
 import { getTestManagementCaseDetailPath } from '@/utils/testManagementCase'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
+import AIGenerateModal from '@/pages/test-management/AIGenerateModal'
+import ApprovalsTab from '@/pages/test-management/ApprovalsTab'
+import AuditTab from '@/pages/test-management/AuditTab'
+import DuplicatesTab from '@/pages/test-management/DuplicatesTab'
+import InsightsPanel, {
+  AutomationCoverageCard,
+  LibraryHealthCard,
+  RecentActivityCard,
+  ReviewQueueCard,
+  StrategyGapsCard,
+  type HealthTag,
+  type RecentEvent,
+  type StrategyGap,
+} from '@/pages/test-management/InsightsPanel'
+import StrategyTab from '@/pages/test-management/StrategyTab'
+import TestCasesTabBar from '@/pages/test-management/TestCasesTabBar'
+import { STATUS_COLORS, PRIORITY_COLORS, fmtDate, fmtDateTime } from '@/pages/test-management/format'
+import { ModalWrap, QualityScore, StatusPill } from '@/pages/test-management/tmUi'
+import { TM_TAB_IDS, tabAlias, type TmTab } from '@/pages/test-management/tabs'
 import type {
   AIReviewResult,
-  DuplicateBand,
-  DuplicateCandidate,
-  DuplicateCandidateStatus,
   ManagedTestCase,
   TestCaseComment,
   TestCaseReview,
   TestCaseVersion,
   TestPlan,
   TestPlanItem,
-  TestCaseTransitionAction,
   TestStep,
-  TestStrategy,
 } from '@/types/test-management'
 import {
   buildTestCaseListParams,
@@ -60,44 +77,13 @@ import {
 } from '@/utils/testCaseLifecycleUi'
 
 // ─── Constants / helpers ─────────────────────────────────────────────────────
+//
+// UX redesign P4 item 7: eight tabs became Cases · Suites · Plans · Approvals
+// · More ▾ (Strategy, Duplicates, Audit log, Knowledge). Strategy, Duplicates,
+// Audit log, Approvals (was Reviews) and the AI Generate modal are in
+// `./test-management/`; the shared pills, colours and date formats too.
 
-const TABS = ['Test Cases', 'Test Suites', 'Test Plans', 'Strategy', 'Knowledge Generation', 'Reviews', 'Duplicates', 'Audit Log'] as const
-type Tab = typeof TABS[number]
-
-const STATUS_COLORS: Record<string, string> = {
-  draft:            'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  review_requested: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  under_review:     'bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  approved:         'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
-  active:           'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
-  rejected:         'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
-  needs_update:     'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  deprecated:       'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
-  archived:         'bg-[var(--color-bg-secondary)] text-[var(--color-text-faint)] border border-[var(--color-border)]',
-}
-
-const REVIEW_ACTION_LABELS: Partial<Record<TestCaseTransitionAction, string>> = {
-  claim_review: 'Claim review',
-  unclaim: 'Unclaim',
-  approve: 'Approve',
-  request_changes: 'Request changes',
-  reject: 'Reject',
-}
-
-const REVIEW_DECISION_ACTIONS = new Set<TestCaseTransitionAction>([
-  'approve',
-  'request_changes',
-  'reject',
-])
-
-const LEGACY_REVIEW_ACTIONS: TestCaseTransitionAction[] = ['approve', 'request_changes', 'reject']
-
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
-  high:     'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  medium:   'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] border border-[var(--status-skipped-bd)]',
-  low:      'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-light)]',
-}
+const HELP_TOPIC = helpTopicParam('/test-management')
 
 const PLAN_STATUS_COLORS: Record<string, string> = {
   draft:       'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
@@ -107,49 +93,7 @@ const PLAN_STATUS_COLORS: Record<string, string> = {
   archived:    'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
-function StatusPill({ status, map }: { status: string; map: Record<string, string> }) {
-  const cls = map[status] ?? 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-light)]'
-  return (
-    <span className={clsx('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', cls)}>
-      {status.replace(/_/g, ' ')}
-    </span>
-  )
-}
-
-function QualityScore({ score }: { score?: number }) {
-  if (score == null) return <span className="text-[var(--color-text-faint)] text-xs">—</span>
-  const color = score >= 80 ? 'text-[var(--status-passed)]' : score >= 60 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]'
-  return <span className={clsx('text-sm font-semibold tabular-nums', color)}>{score}</span>
-}
-
-function fmtDate(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function fmtDateTime(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
 // ─── Sub-components (Modals) ──────────────────────────────────────────────────
-
-interface ModalWrapProps { onClose: () => void; title: string; children: React.ReactNode; width?: string }
-function ModalWrap({ onClose, title, children, width = 'max-w-2xl' }: ModalWrapProps) {
-  return (
-    <div role="dialog" aria-modal="true" aria-labelledby="tm-generic-modal-title" className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-center justify-center p-4">
-      <div className={clsx('bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl w-full shadow-2xl flex flex-col max-h-[90vh]', width)}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] flex-shrink-0">
-          <h2 id="tm-generic-modal-title" className="text-base font-semibold text-[var(--color-text)]">{title}</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors text-xl leading-none">&times;</button>
-        </div>
-        <div className="overflow-y-auto flex-1 px-6 py-4">
-          {children}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Create Test Case Modal ────────────────────────────────────────────────────
 
@@ -319,64 +263,6 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
           <button onClick={handleSubmit} disabled={saving} className="btn-primary flex items-center gap-2">
             {saving && <LoadingSpinner size="sm" />}
             {saving ? 'Saving…' : 'Create Test Case'}
-          </button>
-        </div>
-      </div>
-    </ModalWrap>
-  )
-}
-
-// ── AI Generate Modal ─────────────────────────────────────────────────────────
-
-interface AIGenerateModalProps { projectId: string; onClose: () => void }
-
-function AIGenerateModal({ projectId, onClose }: AIGenerateModalProps) {
-  const [requirements, setRequirements] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const handleGenerate = async () => {
-    if (requirements.trim().length < 3) { toast.error('Please enter at least 3 characters'); return }
-    setLoading(true)
-    try {
-      await testManagementService.aiGenerateAsync({
-        project_id: projectId,
-        requirements: requirements.trim(),
-        persist: true,
-      })
-      toast.success(
-        'Test cases are being generated in the background and will be saved as drafts — refresh the list in a moment.',
-        { duration: 7000 }
-      )
-      onClose()
-    } catch {
-      toast.error('Failed to start AI generation')
-      setLoading(false)
-    }
-  }
-
-  return (
-    <ModalWrap onClose={onClose} title="AI Generate Test Cases" width="max-w-2xl">
-      <div className="space-y-4">
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Describe the feature or paste requirements text. The AI will generate comprehensive test cases and save them as drafts automatically.
-        </p>
-        <textarea
-          className="input w-full h-36 resize-none"
-          value={requirements}
-          onChange={e => setRequirements(e.target.value)}
-          placeholder="e.g. User should be able to log in with email and password, with form validation and error handling for wrong credentials..."
-          disabled={loading}
-          autoFocus
-        />
-        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
-          <Clock className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-[var(--color-text-muted)]" />
-          <span>Generation runs in the background (typically 1–2 minutes). You can close this and check the list shortly.</span>
-        </div>
-        <div className="flex justify-end gap-3 pt-1">
-          <button onClick={onClose} disabled={loading} className="btn-secondary">Cancel</button>
-          <button onClick={handleGenerate} disabled={loading || requirements.trim().length < 3} className="btn-primary flex items-center gap-2">
-            {loading ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-            {loading ? 'Submitting…' : 'Generate & Save'}
           </button>
         </div>
       </div>
@@ -863,69 +749,6 @@ function CreatePlanModal({ projectId, onClose, onCreated }: CreatePlanModalProps
   )
 }
 
-// ── Generate Strategy Modal ───────────────────────────────────────────────────
-
-interface GenerateStrategyModalProps { projectId: string; onClose: () => void }
-
-function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProps) {
-  const [context, setContext] = useState('')
-  const [strategyName, setStrategyName] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const handleGenerate = async () => {
-    if (!context.trim()) { toast.error('Project context is required'); return }
-    setLoading(true)
-    try {
-      await testManagementService.aiGenerateStrategyAsync({
-        project_id: projectId,
-        project_context: context.trim(),
-        strategy_name: strategyName || undefined,
-      })
-      toast.success(
-        'Strategy is being generated in the background and will appear in the list shortly.',
-        { duration: 7000 }
-      )
-      onClose()
-    } catch {
-      toast.error('Strategy generation failed')
-      setLoading(false)
-    }
-  }
-
-  return (
-    <ModalWrap onClose={onClose} title="Generate Test Strategy with AI">
-      <div className="space-y-4">
-        <div>
-          <label htmlFor="tm-field-16" className="block text-xs text-[var(--color-text-muted)] mb-1">Strategy Name (optional)</label>
-          <input id="tm-field-16" className="input w-full" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="e.g. v2.0 Release Strategy" />
-        </div>
-        <div>
-          <label htmlFor="tm-field-17" className="block text-xs text-[var(--color-text-muted)] mb-1">Project Context *</label>
-          <textarea id="tm-field-17"
-            className="input w-full h-40 resize-none"
-            value={context}
-            onChange={e => setContext(e.target.value)}
-            placeholder="Describe your project: technology stack, team size, release cadence, key features, compliance requirements, known risks, etc. The more context, the better the strategy."
-            disabled={loading}
-            autoFocus
-          />
-        </div>
-        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
-          <Clock className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-[var(--color-text-muted)]" />
-          <span>Covers objectives, scope, test types, risk assessment, entry/exit criteria, environments, and automation approach. Runs in the background — typically 1–2 minutes.</span>
-        </div>
-        <div className="flex justify-end gap-3 pt-2 border-t border-[var(--color-border)]">
-          <button onClick={onClose} disabled={loading} className="btn-secondary">Cancel</button>
-          <button onClick={handleGenerate} disabled={loading || !context.trim()} className="btn-primary flex items-center gap-2">
-            {loading ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-            {loading ? 'Submitting…' : 'Generate & Save'}
-          </button>
-        </div>
-      </div>
-    </ModalWrap>
-  )
-}
-
 // ─── Tab: Test Cases ──────────────────────────────────────────────────────────
 
 interface TestCasesTabProps { projectId: string | null; lifecycleV2: boolean }
@@ -946,6 +769,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const [savedView, setSavedView] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
+  const [showInsights, setShowInsights] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
   const [pendingDeprecation, setPendingDeprecation] = useState<ManagedTestCase | null>(null)
   const [deprecating, setDeprecating] = useState(false)
@@ -1142,7 +966,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     reviewFreshScore  * 0.20 +
     depInActiveScore  * 0.25,
   )
-  const healthTag: 'Healthy' | 'Needs attention' | 'At risk' =
+  const healthTag: HealthTag =
     healthScore >= 85 ? 'Healthy' : healthScore >= 70 ? 'Needs attention' : 'At risk'
   const healthTone = healthScore >= 85 ? 'var(--status-passed)' : healthScore >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
 
@@ -1182,7 +1006,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     const s = (c.suite_name ?? '').trim() || 'unknown'
     suiteCounts.set(s, (suiteCounts.get(s) ?? 0) + 1)
   }
-  const strategyGaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] = []
+  const strategyGaps: StrategyGap[] = []
   if (deprecatedInActive > 0) {
     strategyGaps.push({ severity: 'critical', title: 'Deprecated cases in active suites', sub: 'still referenced by run plans', pill: `${deprecatedInActive} active` })
   }
@@ -1197,32 +1021,41 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   }
 
   // ── Recent activity from audit log ──────────────────────────────────
-  type AuditEvent = { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
-  const auditEvents: AuditEvent[] = ((auditRoll?.items ?? []) as unknown as AuditEvent[]).slice(0, 5)
+  const auditEvents: RecentEvent[] = ((auditRoll?.items ?? []) as unknown as RecentEvent[]).slice(0, 5)
 
   // ── Sort + Pagination ───────────────────────────────────────────────
   const sortLabel = 'updated'   // matches default useTableSort
   const totalShown = cases.length
 
+  // ── The health banner (UX redesign P4 item 7) ───────────────────────
+  // The 48 px strip above the table: the library-health verdict and four of
+  // its inputs. The full breakdown (active, average age, deprecated cases in
+  // active suites, the refresh time) is the Insights drawer's first card.
+  const statBasis = describeStatBasis(fullList.length, authoredTotal)
+  const isEmptyCatalog = authoredTotal === 0
+  const bannerState: BannerState = isEmptyCatalog
+    ? 'pending'
+    : healthTag === 'Healthy' ? 'ok' : healthTag === 'Needs attention' ? 'warn' : 'fail'
+
   // ── Render ──────────────────────────────────────────────────────────
   return (
-    <>
-      {/* Library verdict */}
-      <LibraryVerdictRibbon
-        healthScore={healthScore}
-        healthTag={healthTag}
-        healthTone={healthTone}
-        totalCases={authoredTotal}
-        reviewCount={reviewCount}
-        staleCount={staleCount}
-        deprecatedInActive={deprecatedInActive}
-        oldestReviewDays={oldestReviewDays}
-        activeCount={activeCount}
-        automatedPct={automatedPct}
-        avgAgeDays={avgAgeDays}
-        olderThan180Pct={olderThan180Pct}
-        statBasis={describeStatBasis(fullList.length, authoredTotal)}
+    <div className="space-y-3">
+      <StatusBanner
+        state={bannerState}
+        title={isEmptyCatalog ? 'No authored test cases yet' : `Library health ${healthScore}/100 · ${healthTag}`}
+        facts={[
+          { label: authoredTotal === 1 ? 'Case' : 'Cases', value: authoredTotal },
+          { label: 'Awaiting review', value: reviewCount },
+          { label: 'Automated', value: `${automatedPct}%` },
+          { label: 'Stale drafts', value: staleCount },
+        ]}
+        action={{ label: 'Insights', onClick: () => setShowInsights(true) }}
       />
+      {statBasis && (
+        <p className="text-[11px] m-0 text-[var(--color-text-muted)]" data-testid="library-health-stat-basis">
+          {statBasis}
+        </p>
+      )}
 
       {/* Filter bar */}
       <CasesFilterBar
@@ -1238,9 +1071,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         suiteFilter={suiteFilter}
         onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
         suiteOptions={Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()}
-        savedView={savedView}
-        savedViews={SAVED_VIEWS}
-        onSavedView={(v) => applySavedView(v.id)}
         includeAutomation={includeAutomation}
         onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
@@ -1248,7 +1078,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       {(casesError || healthError) && (
         <div
           role="alert"
-          className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
         >
           <span>
             {hasPreviouslyLoadedCases
@@ -1269,24 +1099,25 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       {caseRefreshWarning && (
         <p
           role="status"
-          className="mt-3 rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]"
+          className="rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]"
         >
           {caseRefreshWarning}
         </p>
       )}
 
-      {/* Body grid */}
-      <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
-        <div className="flex flex-col gap-3.5 min-w-0">
-          {/* Cases table */}
-          <div className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+      {/* The cases table, the page's primary content, at full width (the
+          right rail it shared the row with is the Insights drawer). */}
+          <div data-primary="" className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
             <div
               className="flex items-center justify-between gap-2 px-4 py-3"
               style={{ borderBottom: '1px solid var(--color-border)' }}
             >
-              <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
-                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
-              </h3>
+              <div className="flex items-center gap-4 flex-wrap min-w-0">
+                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+                  Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
+                </h3>
+                <SavedViewChips savedView={savedView} savedViews={SAVED_VIEWS} onSavedView={(v) => applySavedView(v.id)} />
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleExportExcel}
@@ -1351,46 +1182,40 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
             )}
           </div>
 
-          {/* Automation split of the authored catalog */}
-          <AutomationCoverageCard
-            auto={coverageAuto}
-            manual={coverageManual}
-          />
-        </div>
-
-        {/* Right rail */}
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <ReviewQueueCard
-            rows={reviewQueue.slice(0, 5)}
-            onPick={openCase}
-          />
-          {/* The three counts that used to be passed here were 15%, 8% and 50%
-              of numbers already on the page. Besides being invented, they were
-              wired to `disabled={count === 0}`, so a small library silently
-              greyed out working generation entry points. */}
-          <GenerateCasesCard onPathClick={() => projectId && setShowAiGen(true)} />
-          <StrategyGapsCard gaps={strategyGaps} />
-          <RecentActivityCard events={auditEvents} />
-        </div>
-      </div>
-
       <EvidenceGapLists projectId={projectId} />
 
-      {/* Provenance */}
-      <div
-        className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
-        style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
-      >
-        {/* This row used to read "Library indexed against prd:current ·
-            main@HEAD". Neither ref exists: nothing indexes a PRD, and the page
-            has no git revision for the catalog. Both were fixed strings, so
-            they said the same thing on every deployment of every project. The
-            refresh time is real (it comes from useDataFreshness), so it is
-            what remains. */}
-        <span className="flex items-center gap-1.5 flex-wrap">
-          <span>Library refreshed {refreshedAt}</span>
-        </span>
-      </div>
+      {/* The former right rail (UX redesign P4 item 7), opened from the
+          banner's "Insights". Its "Generate test cases" card is the AI
+          Generate modal's sources now (a description, or documents). */}
+      <InsightsPanel open={showInsights} onClose={() => setShowInsights(false)}>
+        <LibraryHealthCard
+          healthScore={healthScore}
+          healthTag={healthTag}
+          healthTone={healthTone}
+          totalCases={authoredTotal}
+          reviewCount={reviewCount}
+          staleCount={staleCount}
+          deprecatedInActive={deprecatedInActive}
+          oldestReviewDays={oldestReviewDays}
+          activeCount={activeCount}
+          automatedPct={automatedPct}
+          avgAgeDays={avgAgeDays}
+          olderThan180Pct={olderThan180Pct}
+          statBasis={statBasis}
+          refreshedAt={refreshedAt}
+        />
+        <ReviewQueueCard
+          rows={reviewQueue.slice(0, 5)}
+          onPick={openCase}
+        />
+        <StrategyGapsCard gaps={strategyGaps} />
+        <RecentActivityCard events={auditEvents} />
+        {/* Automation split of the authored catalog */}
+        <AutomationCoverageCard
+          auto={coverageAuto}
+          manual={coverageManual}
+        />
+      </InsightsPanel>
 
       {showCreate && projectId && (
         <CreateCaseModal
@@ -1424,205 +1249,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
           onConfirm={confirmDeprecation}
         />
       )}
-    </>
-  )
-}
-
-// ── New atoms / cards for the Test Cases redesign ──────────────────────────
-// Locally-scoped to keep this redesign isolated from the other tab panels.
-
-interface LibraryVerdictProps {
-  healthScore: number
-  healthTag: 'Healthy' | 'Needs attention' | 'At risk'
-  healthTone: string
-  totalCases: number
-  reviewCount: number
-  staleCount: number
-  deprecatedInActive: number
-  oldestReviewDays: number
-  activeCount: number
-  automatedPct: number
-  avgAgeDays: number
-  olderThan180Pct: number
-  /** Set when the rates below describe a capped sample rather than the catalog. */
-  statBasis: string | null
-}
-
-function LibraryVerdictRibbon(p: LibraryVerdictProps) {
-  // Empty-catalog state. The Library health panel aggregates the authored
-  // test-case catalog (ManagedTestCase rows from the Test Cases tab). When
-  // the catalog is empty, every derived metric collapses to 0 — which
-  // looks identical to "data load failed" or "everything is broken."
-  // Render a clear explanation instead so the user understands the panel
-  // reflects an empty *authored* catalog, NOT empty execution data.
-  // Background: the user reported "invalid data" on 2026-05-15 because
-  // the same project has 97 executed test cases (in /search) but 0
-  // authored cases, and the panel's zeros looked wrong without context.
-  const isEmptyCatalog = p.totalCases === 0
-  const t = isEmptyCatalog
-    ? { border: 'var(--color-border)', glow: 'transparent', bar: 'var(--color-border-light)', eyebrow: 'var(--color-text-muted)' }
-    : p.healthTag === 'Healthy'
-      ? { border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)', bar: 'var(--gate-go)', eyebrow: 'var(--status-passed)' }
-      : p.healthTag === 'Needs attention'
-        ? { border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: 'var(--status-broken)' }
-        : { border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: 'var(--status-failed)' }
-
-  const blockers: { tone: 'critical' | 'warn'; text: React.ReactNode }[] = []
-  if (p.deprecatedInActive > 0) {
-    blockers.push({ tone: 'critical', text: <><strong>{p.deprecatedInActive}</strong> deprecated cases referenced by active suites</> })
-  }
-  if (p.staleCount > 0) {
-    blockers.push({ tone: 'warn', text: <><strong>{p.staleCount}</strong> drafts untouched ≥30d</> })
-  }
-  if (p.reviewCount > 0 && p.oldestReviewDays >= 7) {
-    blockers.push({ tone: 'warn', text: <><strong>{p.reviewCount}</strong> reviews aging — oldest {p.oldestReviewDays} days</> })
-  }
-
-  return (
-    <section
-      aria-label="Library verdict"
-      className="relative rounded-xl border overflow-hidden grid gap-6 mb-3.5"
-      style={{
-        gridTemplateColumns: '1.45fr 1fr',
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-      }}
-    >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: t.bar,
-              animation: !isEmptyCatalog && p.healthTag === 'At risk' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-            }}
-            aria-hidden
-          />
-          Library health
-        </span>
-        {isEmptyCatalog ? (
-          <>
-            <div className="text-[20px] font-semibold mt-1.5 mb-1.5 text-[var(--color-text)]">
-              No authored test cases yet
-            </div>
-            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-              This panel summarises the <strong>authored</strong> test-case catalog
-              (Test Cases tab) — not the execution rows ingested from CI runs.
-              Library health only renders once you have at least one authored case.
-              Until then, see the <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">Test Suites</code>
-              tab for the executions that have already streamed in.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="flex items-baseline gap-3 mt-1.5 mb-1.5">
-              <span className="font-bold tabular-nums leading-none" style={{ fontSize: 34, color: p.healthTone, letterSpacing: '-0.02em' }}>
-                {p.healthScore}
-              </span>
-              <span className="text-[14px] text-[var(--color-text-muted)] font-medium">/ 100</span>
-              <span
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
-                style={{
-                  background: p.healthTag === 'Healthy' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
-                  border: `1px solid ${t.border}`,
-                  color: p.healthTone,
-                }}
-              >
-                {p.healthTag}
-              </span>
-            </div>
-            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> case{p.totalCases === 1 ? '' : 's'} · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
-            </p>
-          </>
-        )}
-        {blockers.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            {blockers.map((b, i) => (
-              <span
-                key={i}
-                className="inline-flex items-center px-2.5 py-1 rounded-full text-[11.5px]"
-                style={{
-                  background: b.tone === 'critical' ? 'color-mix(in srgb, var(--status-failed) 8%, transparent)' : 'color-mix(in srgb, var(--status-broken) 8%, transparent)',
-                  border: b.tone === 'critical' ? '1px solid color-mix(in srgb, var(--status-failed) 25%, transparent)' : '1px solid color-mix(in srgb, var(--status-broken) 25%, transparent)',
-                  color: b.tone === 'critical' ? 'var(--status-failed)' : 'var(--status-broken)',
-                }}
-              >
-                <span className="sr-only">{b.tone === 'critical' ? 'Warning: ' : 'Notice: '}</span>
-                {b.text}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {isEmptyCatalog ? (
-        // Empty stats grid would just show "0 / 0% / 0d" three times,
-        // which reads exactly like a broken data fetch. Replace with a
-        // single helper card pointing the user to where they can author
-        // a case so the panel does something useful.
-        <div
-          className="flex flex-col items-start justify-center gap-1.5"
-          style={{ padding: '14px 16px' }}
-        >
-          <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-            Get started
-          </div>
-          <div className="text-[13px] text-[var(--color-text-secondary)] leading-snug">
-            Author your first case under <strong className="text-[var(--color-text)]">Test Cases</strong> tab,
-            or import a batch via the API to populate this dashboard.
-          </div>
-        </div>
-      ) : (
-        <div
-          className="grid items-stretch"
-          style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
-        >
-          <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
-          <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
-          {/* A fourth stat, "Req coverage", stood here reading a constant 87%
-              for every project. It is gone rather than replaced: there is no
-              requirements data to compute a real one from, and an invented
-              number is worse than an absent one. */}
-          <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
-        </div>
-      )}
-      {p.statBasis && (
-        <p
-          className="text-[11px] m-0 text-[var(--color-text-muted)]"
-          style={{ padding: '0 16px 12px' }}
-          data-testid="library-health-stat-basis"
-        >
-          {p.statBasis}
-        </p>
-      )}
-    </section>
-  )
-}
-
-function VerdictStat({ label, value, sub, isFirst, isLast }: { label: string; value: React.ReactNode; sub: React.ReactNode; isFirst?: boolean; isLast?: boolean }) {
-  return (
-    <div
-      className="flex flex-col justify-center gap-0.5"
-      style={{
-        padding: '14px 16px',
-        borderRight: isLast ? '0' : '1px solid var(--color-border)',
-        borderLeft: isFirst ? '0' : undefined,
-      }}
-    >
-      <div className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {label}
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1] text-[var(--color-text)]" style={{ fontSize: 19, letterSpacing: '-0.01em' }}>
-        {value}
-      </div>
-      {sub && <div className="text-[10.5px] text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   )
 }
@@ -1643,9 +1269,6 @@ interface CasesFilterBarProps {
   suiteFilter: string
   onSuiteChange: (v: string) => void
   suiteOptions: string[]
-  savedView: string | null
-  savedViews: { id: SavedViewId; label: string }[]
-  onSavedView: (v: { id: SavedViewId; label: string }) => void
   // "Show automation-ingested tests too" toggle — merges per-run TestCase
   // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
   includeAutomation: boolean
@@ -1669,9 +1292,6 @@ function CasesFilterBar({
   suiteFilter,
   onSuiteChange,
   suiteOptions,
-  savedView,
-  savedViews,
-  onSavedView,
   includeAutomation,
   onToggleAutomation,
 }: CasesFilterBarProps) {
@@ -1760,8 +1380,27 @@ function CasesFilterBar({
         onChange={onSuiteChange}
       />
 
-      <span aria-hidden className="inline-block w-px h-[18px] mx-1" style={{ background: 'var(--color-border)' }} />
+    </div>
+  )
+}
 
+/**
+ * The saved views, as chips. They sat at the end of the filter bar, which
+ * then wrapped to a second line at 1440 px; they are views OF the table, so
+ * since UX redesign P4 they sit in the table's own header row and the filter
+ * bar is one line.
+ */
+function SavedViewChips({
+  savedView,
+  savedViews,
+  onSavedView,
+}: {
+  savedView: string | null
+  savedViews: { id: SavedViewId; label: string }[]
+  onSavedView: (v: { id: SavedViewId; label: string }) => void
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5" role="group" aria-label="Saved views">
       <span
         className="inline-flex items-center text-[10px] uppercase font-medium text-[var(--color-text-muted)]"
         style={{ letterSpacing: 'var(--tracking-wider)' }}
@@ -1786,7 +1425,7 @@ function CasesFilterBar({
           </button>
         )
       })}
-    </div>
+    </span>
   )
 }
 
@@ -2198,311 +1837,6 @@ function EmptyStateBlock({
   )
 }
 
-// ── Automation coverage card ────────────────────────────────────────────
-//
-// Was "Coverage by requirement", reading "<N> requirements tracked · <M>
-// covered (87%)". TestLookup has no requirements: N was the test-case count
-// relabelled, and the uncovered bucket it was measured against was 15% of that
-// same count, invented in the page body. The percentage could therefore never
-// be anything but 87%, and the card named a domain the product does not model.
-//
-// Automated-vs-manual is the split the rows actually carry, so that is what
-// this card now reports, under a title that says so.
-function AutomationCoverageCard({ auto, manual }: { auto: number; manual: number }) {
-  const total = auto + manual
-  const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
-  return (
-    <CasesCardShell title="Automation coverage">
-      <div className="px-4 py-3.5">
-        {total === 0 ? (
-          <p className="text-[12px] text-[var(--color-text-muted)] m-0">
-            No authored cases yet — nothing to split.
-          </p>
-        ) : (
-          <>
-            <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
-              <strong className="text-[var(--color-text)] font-semibold">{total}</strong> authored case{total === 1 ? '' : 's'} · <strong className="text-[var(--color-text)] font-semibold">{auto}</strong> automated (<strong className="text-[var(--color-text)] font-semibold">{pct(auto)}%</strong>)
-            </p>
-            <div
-              className="flex h-7 rounded-md overflow-hidden border"
-              style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
-              role="img"
-              aria-label={`Automation coverage: ${auto} automated, ${manual} manual`}
-            >
-              {auto > 0 && (
-                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
-                  {auto} auto
-                </div>
-              )}
-              {manual > 0 && (
-                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
-                  {manual} manual
-                </div>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
-              <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${pct(auto)}%`} />
-              <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${pct(manual)}%`} />
-            </div>
-          </>
-        )}
-      </div>
-    </CasesCardShell>
-  )
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
-      {label}
-    </span>
-  )
-}
-
-// ── Right rail cards ────────────────────────────────────────────────────
-function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
-  const now = useNow()  // captured at mount — avoids impure Date.now() in render
-  return (
-    <CasesCardShell title={`Review queue · ${rows.length}`}>
-      {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
-          Caught up — review queue is empty.
-        </div>
-      ) : (
-        <div>
-          {rows.map(c => {
-            const days = Math.floor((now - new Date(c.updated_at).getTime()) / 86400000)
-            const ageColor = days >= 7 ? 'var(--status-failed)' : 'var(--color-text-muted)'
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onPick(c)}
-                className="grid items-center gap-2.5 w-full text-left hover:bg-[var(--color-bg-hover)] transition-colors"
-                style={{
-                  gridTemplateColumns: '1fr auto',
-                  padding: '10px 16px',
-                  borderBottom: '1px solid var(--color-border)',
-                }}
-              >
-                <div className="min-w-0">
-                  <div className="text-[12.5px] m-0 flex items-center gap-1.5">
-                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>TC-{c.id.slice(0, 6).toUpperCase()}</code>
-                    <span className="text-[var(--color-text)] truncate font-medium">{c.title}</span>
-                  </div>
-                  <div className="text-[10.5px] text-[var(--color-text-muted)] truncate mt-0.5">
-                    {c.assignee_id ? c.assignee_id.slice(0, 8) : 'Unassigned'} · requested by {c.author_id ? c.author_id.slice(0, 8) : '—'}
-                  </div>
-                </div>
-                <span className="text-[11px] tabular-nums" style={{ color: ageColor }}>
-                  {days < 1 ? `${Math.max(1, Math.floor((now - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </CasesCardShell>
-  )
-}
-
-/**
- * Entry points into AI case generation.
- *
- * Each path used to carry a backlog count and a source ref (`prd:current`,
- * `main`). None of it was measured: the counts were percentages of unrelated
- * numbers, and the page has no PRD or branch-coverage data to point at. The
- * paths are prompts for the generator, so they are described as prompts —
- * without asserting a backlog nobody counted.
- */
-function GenerateCasesCard({ onPathClick }: { onPathClick: () => void }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{
-        background: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-flaky) 6%, transparent), transparent 55%), var(--color-bg-card)',
-        border: '1px solid color-mix(in srgb, var(--status-flaky) 30%, transparent)',
-      }}
-    >
-      <div
-        className="flex items-center justify-between gap-2 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 inline-flex items-center gap-2" style={{ color: 'var(--status-flaky)' }}>
-          <Sparkles className="h-3.5 w-3.5" />
-          Generate test cases
-        </h3>
-        <span className="text-[11px] text-[var(--color-text-muted)]">drafts → review queue</span>
-      </div>
-      <div className="px-4 py-3 flex flex-col gap-2">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">
-          Pick what to generate from. All generated cases land as drafts in your review queue.
-        </p>
-        <GeneratePath
-          title="From requirements"
-          sub="describe the requirement to cover"
-          onClick={onPathClick}
-        />
-        <GeneratePath
-          title="From code paths"
-          sub="point the generator at a module or path"
-          onClick={onPathClick}
-        />
-        <GeneratePath
-          title="From recent defects"
-          sub="write regression cases for a defect"
-          onClick={onPathClick}
-        />
-      </div>
-    </div>
-  )
-}
-
-// No `count` prop, and therefore no `disabled={count === 0}`: the counts were
-// invented, and gating a working button on an invented number meant a library
-// of 6 cases could not reach "From code paths" at all (round(6 * 0.08) === 0).
-function GeneratePath({ title, sub, onClick }: { title: string; sub: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)]"
-      style={{
-        gridTemplateColumns: '30px 1fr',
-        padding: '8px 12px',
-        background: 'var(--color-bg)',
-        borderColor: 'var(--color-border)',
-      }}
-    >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', color: 'var(--status-flaky)' }}>
-        <Sparkles className="h-3.5 w-3.5" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[12.5px] font-medium text-[var(--color-text)]">{title}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{sub}</div>
-      </div>
-    </button>
-  )
-}
-
-function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] }) {
-  return (
-    <CasesCardShell title="Strategy gaps">
-      {gaps.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
-          No gaps detected against current strategy.
-        </div>
-      ) : (
-        <div>
-          {gaps.map((g, i) => (
-            <div
-              key={i}
-              className="grid items-center gap-2.5"
-              style={{
-                gridTemplateColumns: '1fr auto',
-                padding: '9px 16px',
-                borderBottom: i < gaps.length - 1 ? '1px solid var(--color-border)' : '0',
-              }}
-            >
-              <div className="min-w-0">
-                <div className="text-[12px] font-medium text-[var(--color-text)]">{g.title}</div>
-                <div className="text-[10.5px] text-[var(--color-text-muted)]">{g.sub}</div>
-              </div>
-              <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
-                style={{
-                  background: g.severity === 'critical' ? 'color-mix(in srgb, var(--status-failed) 14%, transparent)' : 'color-mix(in srgb, var(--status-broken) 14%, transparent)',
-                  border: g.severity === 'critical' ? '1px solid color-mix(in srgb, var(--status-failed) 30%, transparent)' : '1px solid color-mix(in srgb, var(--status-broken) 30%, transparent)',
-                  color: g.severity === 'critical' ? 'var(--status-failed)' : 'var(--status-broken)',
-                }}
-              >
-                {g.pill}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </CasesCardShell>
-  )
-}
-
-interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
-
-function RecentActivityCard({ events }: { events: RecentEvent[] }) {
-  const now = useNow()  // captured at mount — avoids impure Date.now() in render
-  return (
-    <CasesCardShell title="Recent activity">
-      {events.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
-          No recent activity.
-        </div>
-      ) : (
-        <div>
-          {events.map((e, i) => {
-            const ms = now - new Date(e.created_at).getTime()
-            const min = Math.max(1, Math.floor(ms / 60000))
-            const ageLabel = min < 60 ? `${min}m` : min < 1440 ? `${Math.floor(min / 60)}h` : `${Math.floor(min / 1440)}d`
-            const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
-            const palette = /create|new/.test(action) ? { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',    fg: 'var(--status-passed)' }
-              : /review|approve/.test(action)        ? { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' }
-              : /deprecate|delete/.test(action)      ? { bg: 'rgba(120,113,108,0.16)', fg: '#a8a29e' }
-              : /ai|generate/.test(action)           ? { bg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', fg: 'var(--status-flaky)' }
-              : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
-            return (
-              <div
-                key={e.id || i}
-                className="grid items-center gap-2.5"
-                style={{
-                  gridTemplateColumns: '22px 1fr auto',
-                  padding: '9px 16px',
-                  borderBottom: i < events.length - 1 ? '1px solid var(--color-border)' : '0',
-                }}
-              >
-                <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: palette.bg, color: palette.fg }}>
-                  <FileText className="h-3 w-3" />
-                </span>
-                <div className="text-[12px] text-[var(--color-text-secondary)] truncate">
-                  <strong className="text-[var(--color-text)] font-medium">{e.actor_name ?? 'Someone'}</strong>
-                  {' '}
-                  {action.replace(/_/g, ' ')}
-                  {' '}
-                  {e.entity_id && (
-                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>
-                      TC-{e.entity_id.slice(0, 6).toUpperCase()}
-                    </code>
-                  )}
-                </div>
-                <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)]">{ageLabel}</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </CasesCardShell>
-  )
-}
-
-function CasesCardShell({
-  title, rightSlot, children,
-}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
 // ─── Plan Items Expanded View ─────────────────────────────────────────────────
 
 interface PlanItemsViewProps { planId: string; onMutate: () => void; projectId?: string | null }
@@ -2901,280 +2235,6 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
   )
 }
 
-// ─── Tab: Strategy ────────────────────────────────────────────────────────────
-
-interface StrategyTabProps { projectId: string | null }
-
-// Hoisted to module scope (was defined inside StrategyTab) so it isn't a
-// component re-created every render — react-hooks/static-components. The
-// accordion open-state is passed in rather than closed over.
-function AccordionSection({
-  id, title, expandedSection, setExpandedSection, children,
-}: {
-  id: string
-  title: string
-  expandedSection: string | null
-  setExpandedSection: (v: string | null) => void
-  children: React.ReactNode
-}) {
-  return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--color-bg-hover)]/50 transition-colors"
-        onClick={() => setExpandedSection(expandedSection === id ? null : id)}
-      >
-        <span className="text-sm font-medium text-[var(--color-text)]">{title}</span>
-        {expandedSection === id
-          ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" />
-          : <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
-        }
-      </button>
-      {expandedSection === id && (
-        <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40">
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function StrategyTab({ projectId }: StrategyTabProps) {
-  const [showGenerate, setShowGenerate] = useState(false)
-  const [expandedSection, setExpandedSection] = useState<string | null>('objective')
-  const [updatingStatus, setUpdatingStatus] = useState(false)
-  const [downloadingFormat, setDownloadingFormat] = useState<'word' | 'pdf' | null>(null)
-  const { data: strategies, isLoading, mutate } = useStrategies()
-
-  const strategy = strategies?.[0] as TestStrategy | undefined
-
-  const handleStatusChange = async (newStatus: string) => {
-    if (!strategy) return
-    setUpdatingStatus(true)
-    try {
-      await testManagementService.updateStrategy(strategy.id, { status: newStatus })
-      mutate()
-      toast.success('Strategy status updated')
-    } catch {
-      toast.error('Failed to update status')
-    } finally {
-      setUpdatingStatus(false)
-    }
-  }
-
-  const handleStrategyDownload = async (format: 'word' | 'pdf') => {
-    if (!strategy) return
-    setDownloadingFormat(format)
-    try {
-      if (format === 'word') {
-        await testManagementService.downloadStrategyWord(strategy.id)
-      } else {
-        await testManagementService.downloadStrategyPdf(strategy.id)
-      }
-    } catch {
-      toast.error(`Failed to export strategy as ${format.toUpperCase()}`)
-    } finally {
-      setDownloadingFormat(null)
-    }
-  }
-
-  return (
-    <>
-      <div className="space-y-4">
-        {projectId && (
-          <div className="flex items-center justify-end">
-            <button onClick={() => setShowGenerate(true)} className="btn-primary flex items-center gap-2">
-              <Sparkles className="h-4 w-4" /> Generate Strategy
-            </button>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-        ) : !strategy ? (
-          <EmptyState
-            icon={<BarChart2 className="h-10 w-10" />}
-            title="No test strategy"
-            description={projectId ? "Generate a comprehensive AI-powered test strategy for your project" : "No test strategies found across all projects"}
-            action={projectId ? (
-              <button onClick={() => setShowGenerate(true)} className="btn-primary flex items-center gap-2">
-                <Sparkles className="h-4 w-4" /> Generate Strategy
-              </button>
-            ) : undefined}
-          />
-        ) : (
-          <div className="space-y-3">
-            {/* Header card */}
-            <div className="card">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-base font-semibold text-[var(--color-text)]">{strategy.name}</h3>
-                  <div className="flex items-center gap-3 mt-1">
-                    <select
-                      value={strategy.status}
-                      onChange={e => handleStatusChange(e.target.value)}
-                      disabled={updatingStatus}
-                      className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
-                    >
-                      {['draft', 'active', 'suspended', 'closed', 'review', 'approved'].map(s => (
-                        <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                      ))}
-                    </select>
-                    <span className="text-xs text-[var(--color-text-muted)]">v{strategy.version_label}</span>
-                    {strategy.ai_generated && (
-                      <span className="text-xs text-[var(--color-purple)] flex items-center gap-1">
-                        <Sparkles className="h-3 w-3" /> AI Generated
-                      </span>
-                    )}
-                    <span className="text-xs text-[var(--color-text-muted)]">Created {fmtDate(strategy.created_at)}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleStrategyDownload('word')}
-                    disabled={downloadingFormat !== null}
-                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-                    title="Export strategy to Word"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    {downloadingFormat === 'word' ? 'Exporting…' : 'Word'}
-                  </button>
-                  <button
-                    onClick={() => handleStrategyDownload('pdf')}
-                    disabled={downloadingFormat !== null}
-                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-                    title="Export strategy to PDF"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    {downloadingFormat === 'pdf' ? 'Exporting…' : 'PDF'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Accordion sections */}
-            {strategy.objective && (
-              <AccordionSection id="objective" title="Objective" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.objective}</p>
-              </AccordionSection>
-            )}
-            {(strategy.scope || strategy.out_of_scope) && (
-              <AccordionSection id="scope" title="Scope" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                {strategy.scope && (
-                  <div className="mb-3">
-                    <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">In Scope</p>
-                    <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.scope}</p>
-                  </div>
-                )}
-                {strategy.out_of_scope && (
-                  <div>
-                    <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Out of Scope</p>
-                    <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.out_of_scope}</p>
-                  </div>
-                )}
-              </AccordionSection>
-            )}
-            {strategy.test_types && strategy.test_types.length > 0 && (
-              <AccordionSection id="test_types" title="Test Types" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr>
-                        <th className="th text-left">Type</th>
-                        <th className="th text-left">Priority</th>
-                        <th className="th text-left">Tools</th>
-                        <th className="th text-right">Coverage Target</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {strategy.test_types.map((tt, i) => (
-                        <tr key={i} className="table-row">
-                          <td className="td font-medium text-[var(--color-text)] capitalize">{tt.type}</td>
-                          <td className="td"><StatusPill status={tt.priority} map={PRIORITY_COLORS} /></td>
-                          <td className="td text-[var(--color-text-muted)]">{tt.tools.join(', ')}</td>
-                          <td className="td text-right tabular-nums text-[var(--color-text)]">{tt.coverage_target_pct}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </AccordionSection>
-            )}
-            {strategy.risk_assessment && strategy.risk_assessment.length > 0 && (
-              <AccordionSection id="risks" title="Risk Assessment" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <div className="space-y-2">
-                  {strategy.risk_assessment.map((r, i) => (
-                    <div key={i} className="bg-[var(--color-bg-secondary)] rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
-                      <div className="col-span-2 font-medium text-[var(--color-text)]">{r.risk}</div>
-                      <div><span className="text-xs text-[var(--color-text-muted)]">Likelihood: </span><span className="text-[var(--color-text-secondary)] capitalize">{r.likelihood}</span></div>
-                      <div><span className="text-xs text-[var(--color-text-muted)]">Impact: </span><span className="text-[var(--color-text-secondary)] capitalize">{r.impact}</span></div>
-                      <div className="col-span-2 text-xs text-[var(--color-text-muted)]"><span className="text-[var(--color-text-muted)]">Mitigation: </span>{r.mitigation}</div>
-                    </div>
-                  ))}
-                </div>
-              </AccordionSection>
-            )}
-            {(strategy.entry_criteria?.length || strategy.exit_criteria?.length) && (
-              <AccordionSection id="criteria" title="Entry / Exit Criteria" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <div className="grid grid-cols-2 gap-4">
-                  {strategy.entry_criteria && strategy.entry_criteria.length > 0 && (
-                    <div>
-                      <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Entry Criteria</p>
-                      <ul className="space-y-1">
-                        {strategy.entry_criteria.map((c, i) => (
-                          <li key={i} className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)] flex-shrink-0" />{c}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {strategy.exit_criteria && strategy.exit_criteria.length > 0 && (
-                    <div>
-                      <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Exit Criteria</p>
-                      <ul className="space-y-1">
-                        {strategy.exit_criteria.map((c, i) => (
-                          <li key={i} className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-text-secondary)] flex-shrink-0" />{c}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </AccordionSection>
-            )}
-            {strategy.environments && strategy.environments.length > 0 && (
-              <AccordionSection id="envs" title="Test Environments" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <div className="grid grid-cols-3 gap-3">
-                  {strategy.environments.map((env, i) => (
-                    <div key={i} className="bg-[var(--color-bg-secondary)] rounded-lg p-3">
-                      <p className="text-sm font-medium text-[var(--color-text)]">{env.name}</p>
-                      <p className="text-xs text-[var(--color-text-muted)] capitalize mt-0.5">{env.type}</p>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1">{env.purpose}</p>
-                    </div>
-                  ))}
-                </div>
-              </AccordionSection>
-            )}
-            {strategy.automation_approach && (
-              <AccordionSection id="automation" title="Automation Approach" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
-                <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.automation_approach}</p>
-              </AccordionSection>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showGenerate && projectId && (
-        <GenerateStrategyModal
-          projectId={projectId}
-          onClose={() => { setShowGenerate(false); mutate() }}
-        />
-      )}
-    </>
-  )
-}
-
 // ─── Tab: Test Suites ─────────────────────────────────────────────────────────
 
 interface SuiteItem {
@@ -3279,6 +2339,13 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   useEffect(() => {
     if (suitesError) toast.error('Failed to load test suites')
   }, [suitesError])
+  // The list above is aggregated by suite NAME; the suite page is keyed by
+  // the suite record's id, so names are looked up in the project's suites.
+  const { data: suiteRecords } = useSuites()
+  const suiteIdByName = useMemo(
+    () => new Map((suiteRecords?.items ?? []).map(s => [s.name, s.id] as const)),
+    [suiteRecords],
+  )
   const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
   // Per-suite pagination state for the cases inline-expand. Keyed by
@@ -3552,7 +2619,21 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1">
                   <Layers className="h-4 w-4 text-[var(--color-text)] flex-shrink-0" />
-                  <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">{suite.suite_name}</h3>
+                  <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">
+                    {/* The suite's own page (UX redesign P4): its tests, runs
+                        and charts. A name with no suite record (aggregated
+                        from runs only) has no page, so it stays text; the
+                        row still expands its cases here. */}
+                    {suiteIdByName.get(suite.suite_name) ? (
+                      <Link
+                        to={`/suites/${suiteIdByName.get(suite.suite_name)}`}
+                        className="hover:text-[var(--color-accent)] hover:underline"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {suite.suite_name}
+                      </Link>
+                    ) : suite.suite_name}
+                  </h3>
                   <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
                     {reviewStyle.label}
                   </span>
@@ -3622,14 +2703,18 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       )}
                     </span>
                   )}
-                  <Link
-                    to={`/coverage/suite?name=${encodeURIComponent(suite.suite_name)}&days=30`}
-                    className="text-[var(--color-accent)] hover:underline text-[11px]"
-                    onClick={e => e.stopPropagation()}
-                    title="View per-day trend"
-                  >
-                    Trend →
-                  </Link>
+                  {/* The per-day trend is the suite page's Charts tab (P4:
+                      `/coverage/suite?name=` only redirects there now). */}
+                  {suiteIdByName.get(suite.suite_name) && (
+                    <Link
+                      to={`/suites/${suiteIdByName.get(suite.suite_name)}?tab=charts`}
+                      className="text-[var(--color-accent)] hover:underline text-[11px]"
+                      onClick={e => e.stopPropagation()}
+                      title="View per-day trend"
+                    >
+                      Trend →
+                    </Link>
+                  )}
                   <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                     <User className="h-3 w-3" />
                     {isEditingOwner ? (
@@ -4040,684 +3125,14 @@ function AddTestSuiteModal({
   )
 }
 
-// ─── Tab: Reviews ─────────────────────────────────────────────────────────────
-
-interface ReviewsTabProps { projectId: string | null; lifecycleV2: boolean }
-type ReviewQueueSource = 'requested' | 'claimed'
-
-export function ReviewsTab({ projectId: _projectId, lifecycleV2 }: ReviewsTabProps) {
-  const [reviewingId, setReviewingId] = useState<string | null>(null)
-  const [transitioning, setTransitioning] = useState<{ caseId: string; action: TestCaseTransitionAction } | null>(null)
-  const [pendingDecision, setPendingDecision] = useState<{ caseItem: ManagedTestCase; action: TestCaseTransitionAction } | null>(null)
-  const [reviewOverrides, setReviewOverrides] = useState<Map<string, ManagedTestCase>>(() => new Map())
-  const [locallyAiReviewedIds, setLocallyAiReviewedIds] = useState<Set<string>>(() => new Set())
-  const [queueRefreshWarning, setQueueRefreshWarning] = useState<string | null>(null)
-  const requestedQuery = useTestCases({ status: 'review_requested', size: 50 })
-  const claimedQuery = useTestCases({ status: 'under_review', size: 50 })
-
-  const entriesById = new Map<string, { caseItem: ManagedTestCase; source: ReviewQueueSource }>()
-  for (const caseItem of requestedQuery.data?.items ?? []) {
-    entriesById.set(caseItem.id, { caseItem, source: 'requested' })
-  }
-  for (const caseItem of claimedQuery.data?.items ?? []) {
-    entriesById.set(caseItem.id, { caseItem, source: 'claimed' })
-  }
-  for (const updated of reviewOverrides.values()) {
-    if (updated.status === 'review_requested') {
-      entriesById.set(updated.id, { caseItem: updated, source: 'requested' })
-    } else if (updated.status === 'under_review') {
-      entriesById.set(updated.id, { caseItem: updated, source: 'claimed' })
-    } else {
-      entriesById.delete(updated.id)
-    }
-  }
-  const reviewEntries = Array.from(entriesById.values())
-  const isLoading = requestedQuery.isLoading || claimedQuery.isLoading
-  const reviewError = requestedQuery.error ?? claimedQuery.error
-
-  // The two queues AND every tm-cases roll: the library headline, verdict
-  // ribbon and blocker line are derived from a different useTestCases key, and
-  // refreshing only the queues left them stale on the first paint back.
-  const mutateReviews = () =>
-    Promise.all([requestedQuery.mutate(), claimedQuery.mutate(), refreshTestCases()])
-
-  async function retryReviews() {
-    setQueueRefreshWarning(null)
-    try {
-      await mutateReviews()
-    } catch {
-      setQueueRefreshWarning('The review queue is still stale. Actions remain unavailable for rows from the failed source.')
-    }
-  }
-
-  const handleAiReview = async (tc: ManagedTestCase) => {
-    setReviewingId(tc.id)
-    setQueueRefreshWarning(null)
-    try {
-      await testManagementService.aiReview(tc.id)
-    } catch {
-      toast.error('AI review failed')
-      setReviewingId(null)
-      return
-    }
-
-    setLocallyAiReviewedIds((current) => new Set(current).add(tc.id))
-    setReviewingId(null)
-    toast.success('AI review complete')
-    try {
-      await mutateReviews()
-    } catch {
-      setQueueRefreshWarning('The AI review completed, but the review queue could not be refreshed. The completed control remains disabled locally.')
-    }
-  }
-
-  const handleReviewAction = async (
-    tc: ManagedTestCase,
-    action: TestCaseTransitionAction,
-    notes?: string,
-  ) => {
-    setTransitioning({ caseId: tc.id, action })
-    setQueueRefreshWarning(null)
-    let updated: ManagedTestCase
-    try {
-      if (lifecycleV2) {
-        updated = await testManagementService.transitionCase(tc.id, {
-          action,
-          expected_version: tc.version,
-          ...(notes ? { notes } : {}),
-        })
-      } else {
-        updated = await testManagementService.reviewAction(tc.id, action, notes)
-      }
-    } catch {
-      toast.error('Action failed')
-      setTransitioning(null)
-      return
-    }
-
-    setReviewOverrides((current) => new Map(current).set(updated.id, updated))
-    setPendingDecision(null)
-    setTransitioning(null)
-    toast.success(`Test case ${action.replace(/_/g, ' ')}`)
-    try {
-      await mutateReviews()
-    } catch {
-      setQueueRefreshWarning('The review action was saved, but the queue could not be refreshed. The returned case state is shown locally.')
-    }
-  }
-
-  function chooseReviewAction(tc: ManagedTestCase, action: TestCaseTransitionAction) {
-    if (REVIEW_DECISION_ACTIONS.has(action)) {
-      setPendingDecision({ caseItem: tc, action })
-      return
-    }
-    void handleReviewAction(tc, action)
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--color-text-muted)]">{reviewEntries.length} test cases awaiting review</p>
-      </div>
-
-      {reviewError && (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]">
-          <span>
-            The review queue could not be loaded completely. Any available cases are shown below.
-          </span>
-          <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => void retryReviews()}>
-            Retry both lists
-          </button>
-        </div>
-      )}
-
-      {queueRefreshWarning && (
-        <p role="status" className="rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]">
-          {queueRefreshWarning}
-        </p>
-      )}
-
-      {isLoading && reviewEntries.length === 0 ? (
-        <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-      ) : reviewEntries.length === 0 && !reviewError ? (
-        <EmptyState
-          icon={<Shield className="h-10 w-10" />}
-          title="No pending reviews"
-          description="Test cases submitted for review will appear here"
-        />
-      ) : (
-        <div className="space-y-3">
-          {reviewEntries.map(({ caseItem: tc, source }) => {
-            const sourceFailed = source === 'requested' ? !!requestedQuery.error : !!claimedQuery.error
-            const aiReviewSavedLocally = locallyAiReviewedIds.has(tc.id)
-            return (
-            <div key={tc.id} className="card">
-              <div className="flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="text-sm font-medium text-[var(--color-text)] truncate">{tc.title}</h4>
-                    <StatusPill status={tc.priority} map={PRIORITY_COLORS} />
-                    <span className="text-xs text-[var(--color-text-muted)] capitalize">{tc.test_type}</span>
-                  </div>
-                  {tc.feature_area && <p className="text-xs text-[var(--color-text-muted)] mb-2">{tc.feature_area}</p>}
-                  {tc.objective && <p className="text-xs text-[var(--color-text-muted)] line-clamp-2">{tc.objective}</p>}
-                  <div className="flex items-center gap-4 mt-2">
-                    <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                      <Clock className="h-3.5 w-3.5" />
-                      Requested {fmtDate(tc.updated_at)}
-                    </div>
-                    {tc.ai_quality_score != null && (
-                      <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                        <Star className="h-3.5 w-3.5" />
-                        AI Score: <QualityScore score={tc.ai_quality_score} />
-                      </div>
-                    )}
-                    {tc.steps && (
-                      <span className="text-xs text-[var(--color-text-muted)]">{tc.steps.length} steps</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-                  {sourceFailed ? (
-                    <span className="text-xs text-[var(--status-broken)]">Actions unavailable until this review list refreshes.</span>
-                  ) : (
-                    <>
-                    <button
-                      onClick={() => handleAiReview(tc)}
-                      disabled={reviewingId === tc.id || aiReviewSavedLocally}
-                      className="btn-secondary flex items-center gap-1.5 text-xs"
-                    >
-                      {reviewingId === tc.id ? <LoadingSpinner size="sm" /> : <Sparkles className="h-3.5 w-3.5" />}
-                      {aiReviewSavedLocally ? 'AI reviewed' : 'AI Review'}
-                    </button>
-                    {(lifecycleV2 ? (tc.allowed_actions ?? []) : LEGACY_REVIEW_ACTIONS).map((action) => {
-                    const label = REVIEW_ACTION_LABELS[action]
-                    if (!label) return null
-                    const saving = transitioning?.caseId === tc.id && transitioning.action === action
-                    return (
-                      <button
-                        key={action}
-                        type="button"
-                        disabled={transitioning !== null}
-                        onClick={() => chooseReviewAction(tc, action)}
-                        className="btn-secondary text-xs"
-                      >
-                        {saving ? 'Saving…' : label}
-                      </button>
-                    )
-                    })}
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-            )
-          })}
-        </div>
-      )}
-
-      {pendingDecision && (
-        <TransitionReasonDialog
-          title={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Record review decision'}
-          description="Record a nonblank review note for the audit trail."
-          confirmLabel={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Submit'}
-          fieldLabel="Review notes"
-          placeholder="Explain the review decision"
-          busy={transitioning?.caseId === pendingDecision.caseItem.id}
-          onCancel={() => setPendingDecision(null)}
-          onConfirm={(notes) => handleReviewAction(pendingDecision.caseItem, pendingDecision.action, notes)}
-        />
-      )}
-    </div>
-  )
-}
-
-// ─── Tab: Audit Log ───────────────────────────────────────────────────────────
-
-interface AuditTabProps { projectId: string | null }
-
-function AuditTab({ projectId: _projectId }: AuditTabProps) {
-  const [page, setPage] = useState(1)
-  const [entityType, setEntityType] = useState('')
-
-  const { data, isLoading } = useAuditLog({
-    page,
-    size: 25,
-    entity_type: entityType || undefined,
-  })
-
-  const entries = data?.items ?? []
-
-  const ACTION_COLORS: Record<string, string> = {
-    created:          'text-[var(--status-passed)]',
-    updated:          'text-[var(--color-text)]',
-    deleted:          'text-[var(--status-failed)]',
-    status_changed:   'text-[var(--status-broken)]',
-    review_requested: 'text-[var(--color-purple)]',
-    approved:         'text-[var(--status-passed)]',
-    rejected:         'text-[var(--status-failed)]',
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <select className="input" value={entityType} onChange={e => { setEntityType(e.target.value); setPage(1) }}>
-          <option value="">All Entity Types</option>
-          {['test_case','test_plan','test_strategy','test_case_review'].map(t => (
-            <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="card p-0">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-        ) : entries.length === 0 ? (
-          <EmptyState
-            icon={<History className="h-10 w-10" />}
-            title="No audit log entries"
-            description="All changes to test cases, plans and strategies are tracked here"
-          />
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="th text-left">Timestamp</th>
-                    <th className="th text-left">Entity Type</th>
-                    <th className="th text-left">Action</th>
-                    <th className="th text-left">Actor</th>
-                    <th className="th text-left">Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map(entry => (
-                    <tr key={entry.id} className="table-row">
-                      <td className="td text-[var(--color-text-muted)] whitespace-nowrap text-xs">{fmtDateTime(entry.created_at)}</td>
-                      <td className="td">
-                        <span className="text-xs text-[var(--color-text-muted)] capitalize">{entry.entity_type.replace(/_/g, ' ')}</span>
-                      </td>
-                      <td className="td">
-                        <span className={clsx('text-xs font-medium capitalize', ACTION_COLORS[entry.action] ?? 'text-[var(--color-text-muted)]')}>
-                          {entry.action.replace(/_/g, ' ')}
-                        </span>
-                      </td>
-                      <td className="td">
-                        <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                          <User className="h-3.5 w-3.5" />
-                          {entry.actor_name ?? entry.actor_id?.slice(0, 8) ?? 'System'}
-                        </div>
-                      </td>
-                      <td className="td text-xs text-[var(--color-text-muted)] max-w-xs truncate">{entry.details ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {data && <Pagination page={data.page} pages={data.pages} total={data.total} onChange={setPage} />}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Tab: Duplicates (Phase 4) ────────────────────────────────────────────────
-
-const DUP_BAND_COLORS: Record<DuplicateBand, string> = {
-  exact:    'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
-  strong:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  possible: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-}
-
-const DUP_METHOD_LABEL: Record<string, string> = {
-  fingerprint: 'Fingerprint',
-  structural:  'Structural',
-  semantic:    'Semantic',
-}
-
-function DupBandBadge({ band }: { band: DuplicateBand }) {
-  return (
-    <span className={clsx('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold capitalize', DUP_BAND_COLORS[band])}>
-      {band}
-    </span>
-  )
-}
-
-function fmtScore(score: number) {
-  // Service emits a 0..1 ratio; surface as a percentage.
-  return `${Math.round(score * 100)}%`
-}
-
-interface DupCaseCardProps { ref_: DuplicateCandidate['case_a']; label: string }
-function DupCaseCard({ ref_, label }: DupCaseCardProps) {
-  return (
-    <div className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] rounded-lg p-3 border border-[var(--color-border)]">
-      <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">{label}</p>
-      <p className="text-sm font-medium text-[var(--color-text)] leading-snug break-words">{ref_.title}</p>
-      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-        {ref_.suite_name && (
-          <span className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
-            <Layers className="h-3 w-3" /> {ref_.suite_name}
-          </span>
-        )}
-        {ref_.status && <StatusPill status={ref_.status} map={STATUS_COLORS} />}
-      </div>
-    </div>
-  )
-}
-
-interface DuplicateCandidateCardProps {
-  projectId: string
-  candidate: DuplicateCandidate
-  /** Optimistically drop this candidate from the current view, then revalidate. */
-  onResolved: (candidateId: string) => Promise<unknown>
-}
-
-export function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateCandidateCardProps) {
-  const { isQaLead } = usePermissions()
-  const [busy, setBusy] = useState<'dismiss' | 'merge' | null>(null)
-  const [resolvedLocally, setResolvedLocally] = useState<'dismissed' | 'merged' | null>(null)
-  const [refreshWarning, setRefreshWarning] = useState<string | null>(null)
-  // Default to keeping case_a; user can flip before merging.
-  const [keepCaseId, setKeepCaseId] = useState<string>(candidate.case_a.id)
-
-  const componentScores = candidate.component_scores ?? {}
-  const componentEntries = Object.entries(componentScores)
-
-  const handleDismiss = async () => {
-    setBusy('dismiss')
-    setRefreshWarning(null)
-    try {
-      await testManagementService.dismissDuplicate(projectId, candidate.id)
-    } catch {
-      toast.error('Failed to dismiss pair')
-      setBusy(null)
-      return
-    }
-
-    setResolvedLocally('dismissed')
-    setBusy(null)
-    toast.success('Pair dismissed — it won’t resurface')
-    try {
-      await onResolved(candidate.id)
-    } catch {
-      setRefreshWarning('The pair was dismissed, but the duplicate queue could not be refreshed. Actions remain disabled locally.')
-    }
-  }
-
-  const handleMerge = async () => {
-    setBusy('merge')
-    setRefreshWarning(null)
-    try {
-      await testManagementService.mergeDuplicate(projectId, candidate.id, {
-        candidate_id: candidate.id,
-        keep_case_id: keepCaseId,
-        deprecate_loser: true,
-      })
-    } catch {
-      toast.error('Failed to merge pair')
-      setBusy(null)
-      return
-    }
-
-    setResolvedLocally('merged')
-    setBusy(null)
-    toast.success('Pair merged — losing case soft-deprecated')
-    try {
-      await onResolved(candidate.id)
-    } catch {
-      setRefreshWarning('The pair was merged, but the duplicate queue could not be refreshed. Merge remains disabled locally.')
-    }
-  }
-
-  return (
-    <div className="rounded-xl p-4" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-      {/* Header: band + method + score */}
-      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <DupBandBadge band={candidate.band} />
-          <span className="text-xs text-[var(--color-text-muted)]">
-            {DUP_METHOD_LABEL[candidate.method] ?? candidate.method}
-          </span>
-        </div>
-        <span className="text-sm font-semibold tabular-nums text-[var(--color-text)]">
-          {fmtScore(candidate.score)} <span className="text-xs font-normal text-[var(--color-text-muted)]">match</span>
-        </span>
-      </div>
-
-      {/* Side-by-side cases */}
-      <div className="flex items-stretch gap-3">
-        <DupCaseCard ref_={candidate.case_a} label="Case A" />
-        <div className="flex items-center text-[var(--color-text-faint)]">
-          <Copy className="h-4 w-4" />
-        </div>
-        <DupCaseCard ref_={candidate.case_b} label="Case B" />
-      </div>
-
-      {/* Reason */}
-      {candidate.reason && (
-        <div className="mt-3 flex items-start gap-2 bg-[var(--color-bg-secondary)]/70 rounded-lg px-3 py-2">
-          <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-[var(--color-text-muted)]" />
-          <p className="text-xs text-[var(--color-text-secondary)]">{candidate.reason}</p>
-        </div>
-      )}
-
-      {/* Component score breakdown */}
-      {componentEntries.length > 0 && (
-        <div className="mt-3">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Component scores</p>
-          <div className="flex flex-wrap gap-1.5">
-            {componentEntries.map(([k, v]) => (
-              <span
-                key={k}
-                className="inline-flex items-center gap-1 bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] text-xs px-2 py-0.5 rounded-full border border-[var(--color-border)]"
-              >
-                <span className="capitalize">{k.replace(/_/g, ' ')}</span>
-                <span className="tabular-nums text-[var(--color-text-secondary)]">
-                  {typeof v === 'number' ? fmtScore(v) : String(v)}
-                </span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Actions (only on open candidates) */}
-      {candidate.status === 'open' && !resolvedLocally ? (
-        <div className="mt-4 flex items-center justify-between gap-3 flex-wrap border-t border-[var(--color-border)] pt-3">
-          {isQaLead ? (
-            <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-              Keep
-              <select
-                className="input text-xs py-1"
-                value={keepCaseId}
-                onChange={e => setKeepCaseId(e.target.value)}
-                disabled={busy !== null}
-              >
-                <option value={candidate.case_a.id}>Case A — {candidate.case_a.title}</option>
-                <option value={candidate.case_b.id}>Case B — {candidate.case_b.title}</option>
-              </select>
-            </label>
-          ) : <span />}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDismiss}
-              disabled={busy !== null}
-              className="btn-secondary text-sm flex items-center gap-1.5"
-            >
-              {busy === 'dismiss' ? <LoadingSpinner size="sm" /> : <XCircle className="h-3.5 w-3.5" />}
-              Dismiss
-            </button>
-            {isQaLead && (
-              <button
-                onClick={handleMerge}
-                disabled={busy !== null}
-                className="btn-primary text-sm flex items-center gap-1.5"
-              >
-                {busy === 'merge' ? <LoadingSpinner size="sm" /> : <GitMerge className="h-3.5 w-3.5" />}
-                Merge
-              </button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 border-t border-[var(--color-border)] pt-3">
-          <StatusPill status={resolvedLocally ?? candidate.status} map={STATUS_COLORS} />
-        </div>
-      )}
-      {refreshWarning && (
-        <p role="status" className="mt-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-xs text-[var(--status-broken)]">
-          {refreshWarning}
-        </p>
-      )}
-    </div>
-  )
-}
-
-interface DuplicatesTabProps { projectId: string | null }
-
-function DuplicatesTab({ projectId }: DuplicatesTabProps) {
-  const [band, setBand] = useState<DuplicateBand | ''>('')
-  const [statusFilter, setStatusFilter] = useState<DuplicateCandidateStatus>('open')
-  const [detecting, setDetecting] = useState(false)
-
-  // Pass undefined in All-Projects mode (projectId === null) → hook short-circuits.
-  const params = useMemo(
-    () => ({ ...(band ? { band } : {}), status: statusFilter, size: 200 }),
-    [band, statusFilter],
-  )
-  const { data, isLoading, mutate } = useDuplicateCandidates(projectId ?? undefined, params)
-
-  const candidates = data?.items ?? []
-
-  // Optimistically remove a resolved (dismissed/merged) candidate from the
-  // current view (the filter is status=open by default, so it disappears),
-  // then revalidate against the server to reconcile open_count/total.
-  const handleResolved = useCallback(
-    (candidateId: string) =>
-      mutate(
-        (current) =>
-          current
-            ? {
-                ...current,
-                items: current.items.filter(c => c.id !== candidateId),
-                total: Math.max(0, current.total - 1),
-                open_count: Math.max(0, current.open_count - 1),
-              }
-            : current,
-        { revalidate: true },
-      ),
-    [mutate],
-  )
-
-  const handleDetect = async () => {
-    if (!projectId) return
-    setDetecting(true)
-    try {
-      const res = await testManagementService.runDuplicateDetection(projectId, { enable_semantic: true })
-      const msg = res.sampled
-        ? `Scanned ${res.cases_scanned} cases (sampled) — ${res.candidates_created} new candidate(s)`
-        : `Scanned ${res.cases_scanned} cases — ${res.candidates_created} new candidate(s)`
-      toast.success(msg, { duration: 6000 })
-      if (res.note) toast(res.note, { icon: 'ℹ️', duration: 6000 })
-      void mutate()
-    } catch {
-      toast.error('Detection failed — please try again')
-    } finally {
-      setDetecting(false)
-    }
-  }
-
-  if (!projectId) {
-    return (
-      <EmptyState
-        icon={<Copy className="h-10 w-10" />}
-        title="Select a single project"
-        description="Duplicate detection runs per project. Pick a project from the top bar to review duplicate test cases."
-      />
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Header / controls */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Duplicate Test Cases</h3>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Banded near-duplicate pairs across this project&rsquo;s authored cases.
-            {data ? ` ${data.open_count} open.` : ''}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            className="input text-sm py-1.5"
-            value={band}
-            onChange={e => setBand(e.target.value as DuplicateBand | '')}
-          >
-            <option value="">All bands</option>
-            <option value="exact">Exact</option>
-            <option value="strong">Strong</option>
-            <option value="possible">Possible</option>
-          </select>
-          <select
-            className="input text-sm py-1.5"
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as DuplicateCandidateStatus)}
-          >
-            <option value="open">Open</option>
-            <option value="merged">Merged</option>
-            <option value="dismissed">Dismissed</option>
-          </select>
-          <button
-            onClick={handleDetect}
-            disabled={detecting}
-            className="btn-primary text-sm flex items-center gap-1.5"
-          >
-            {detecting ? <LoadingSpinner size="sm" /> : <SearchIcon className="h-3.5 w-3.5" />}
-            {detecting ? 'Detecting…' : 'Detect duplicates'}
-          </button>
-        </div>
-      </div>
-
-      {/* Body */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-16"><LoadingSpinner size="lg" /></div>
-      ) : candidates.length === 0 ? (
-        <EmptyState
-          icon={<Copy className="h-8 w-8" />}
-          title={statusFilter === 'open' ? 'No duplicate candidates' : `No ${statusFilter} candidates`}
-          description={
-            statusFilter === 'open'
-              ? 'Run detection to scan this project’s authored test cases for near-duplicate pairs.'
-              : 'Nothing to show for this filter.'
-          }
-        />
-      ) : (
-        <div className="space-y-3">
-          {candidates.map(c => (
-            <DuplicateCandidateCard
-              key={c.id}
-              projectId={projectId}
-              candidate={c}
-              onResolved={handleResolved}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TestManagementPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const rawTab = searchParams.get('tab')
-  const activeTab: Tab = (TABS as readonly string[]).includes(rawTab ?? '') ? (rawTab as Tab) : 'Test Cases'
-  const setActiveTab = (tab: Tab) => setSearchParams({ tab }, { replace: true })
+  const [searchParams] = useSearchParams()
+  const [tabParam, setTab] = useTabParam<TmTab>(TM_TAB_IDS, 'cases')
+  // A link from before P4 (`?tab=Test+Suites&suite=<name>`, `?tab=reviews`)
+  // opens the tab that has its content now; choosing a tab writes the new id.
+  const activeTab: TmTab = tabAlias(searchParams.get('tab')) ?? tabParam
 
   const project = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
@@ -4738,40 +3153,24 @@ export default function TestManagementPage() {
   const tabProjectId = isAllProjects ? null : projectId
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Test Case Management"
-        subtitle={`Manage test cases, plans, strategies and reviews${project ? ` for ${project.name}` : ' — All Projects'}`}
+        subtitle={`Manage test cases, suites, plans and approvals${project ? ` for ${project.name}` : ' — All Projects'}`}
+        helpTopic={HELP_TOPIC}
+        tabs={<TestCasesTabBar value={activeTab} onChange={setTab} />}
       />
 
-      {/* Tab navigation */}
-      <div className="flex items-center gap-1 border-b border-[var(--color-border)] pb-0">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={clsx(
-              'px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2',
-              activeTab === tab
-                ? 'border-[var(--color-border-light)] text-[var(--color-text)] bg-[var(--color-bg-secondary)]/60'
-                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]/30'
-            )}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      <div>
-        {activeTab === 'Test Cases'   && <TestCasesTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
-        {activeTab === 'Test Suites'  && <TestSuitesTab projectId={tabProjectId} />}
-        {activeTab === 'Test Plans'   && <TestPlansTab projectId={tabProjectId} />}
-        {activeTab === 'Strategy'     && <StrategyTab projectId={tabProjectId} />}
-        {activeTab === 'Reviews'      && <ReviewsTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
-        {activeTab === 'Knowledge Generation' && <KnowledgeGenerationTab />}
-        {activeTab === 'Duplicates'   && <DuplicatesTab projectId={tabProjectId} />}
-        {activeTab === 'Audit Log'    && <AuditTab projectId={tabProjectId} />}
+      <div data-tab-panel={activeTab}>
+        {activeTab === 'cases'      && <TestCasesTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
+        {activeTab === 'suites'     && <TestSuitesTab projectId={tabProjectId} />}
+        {activeTab === 'plans'      && <TestPlansTab projectId={tabProjectId} />}
+        {activeTab === 'approvals'  && <ApprovalsTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
+        {activeTab === 'strategy'   && <StrategyTab projectId={tabProjectId} />}
+        {activeTab === 'duplicates' && <DuplicatesTab projectId={tabProjectId} />}
+        {activeTab === 'audit'      && <AuditTab projectId={tabProjectId} />}
+        {activeTab === 'knowledge'  && <KnowledgeGenerationTab />}
       </div>
     </div>
   )

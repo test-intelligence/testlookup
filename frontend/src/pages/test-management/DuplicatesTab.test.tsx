@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePermissions } from '@/hooks/usePermissions'
 import { testManagementService } from '@/services/testManagementService'
 import type { DuplicateCandidate } from '@/types/test-management'
-import { DuplicateCandidateCard } from './TestManagementPage'
+// Moved with its code (UX redesign P4 item 7: Duplicates is under More ▾).
+import { DuplicateCandidateCard } from './DuplicatesTab'
 
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: vi.fn() }))
 

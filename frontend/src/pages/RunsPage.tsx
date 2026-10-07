@@ -11,8 +11,10 @@
  *             builds, last green, red streak, average pass rate, and Bisect
  *             from last green.
  *   Table   → the runs table, the page's primary content (`data-primary`):
- *             selectable, per-row Intel / Trigger / Deep / Compare, bulk
- *             actions; a row's signature opens the side panel.
+ *             selectable, each run's AI verdict (P4, D2: the retired
+ *             `/intelligence` list's job; the verdict opens the run's
+ *             Analysis tab), per-row Trigger / Deep / Compare, bulk actions;
+ *             a row's signature opens the side panel.
  *   Below   → two collapsed Disclosures: "How this verdict is computed" (the
  *             composite pipeline-health gauge and its four weighted dimensions:
  *             Build success 40 % / Signature diversity 15 % / Fix velocity
@@ -22,15 +24,17 @@
  *             their `(passed, failed, total)` tuple (README §12 q1 fallback),
  *             the dominant cluster and its outliers, paginated.
  *
- * Data: every section derives from one useRuns(...) window. Bisect navigates
- * to /runs/compare; per-row Trigger / Deep + bulk-trigger use the existing
+ * Data: every section derives from one useRuns(...) window. The AI-verdict
+ * column asks each run ON SCREEN for its Run Intelligence report (no batch
+ * endpoint exists; `runsList/aiVerdict.ts`). Bisect navigates to
+ * /runs/compare; per-row Trigger / Deep + bulk-trigger use the existing
  * agentService calls. UX redesign P2: a control renders only when it does
  * something real.
  */
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  GitBranch, GitCompare, Layers, Search, Sparkles, Stethoscope, Upload, Zap,
+  GitBranch, GitCompare, Layers, Search, Stethoscope, Upload, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -50,6 +54,7 @@ import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { TimingCell } from '@/components/ui/TimingCell'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import UploadReportModal from '@/components/runs/UploadReportModal'
+import AiVerdictCell from './runsList/AiVerdictCell'
 import DayStrip from '@/components/charts/DayStrip'
 import GaugeBar from '@/components/charts/GaugeBar'
 import Sparkline from '@/components/charts/Sparkline'
@@ -886,7 +891,7 @@ function SignatureChip({
 }: { label: string; isOutlier: boolean; failed: boolean; onOpen?: () => void }) {
   const hue = isOutlier ? 'var(--status-broken)' : failed ? 'var(--status-failed)' : 'var(--status-passed)'
   const className = clsx(
-    'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px]',
+    'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] whitespace-nowrap',
     isOutlier && 'italic',
     onOpen && 'hover:underline',
   )
@@ -916,6 +921,14 @@ function SignatureChip({
     </button>
   )
 }
+
+/**
+ * A runs-table cell's padding. 10 px a side, not 12 (P4): the AI-verdict
+ * column took the room, and the 36 px this gives back keeps the Tests bar
+ * drawn (its 24 px floor) while the table still fits its card at a 1280 px
+ * window.
+ */
+const CELL_PAD = '8px 10px'
 
 function RunsTable({
   runs, primarySignature, selectedIds, setSelectedIds, onTrigger, onDeep,
@@ -984,14 +997,19 @@ function RunsTable({
         </div>
       }
     >
-      {/* Wide table (10 cols) — force natural width with min-w so horizontal
-          scroll kicks in cleanly on narrow viewports instead of columns
-          getting squeezed and clipped to the right of the visible area. */}
-      <div className="overflow-x-auto">
-        <table className="text-[12.5px]" style={{ minWidth: 980, width: '100%' }}>
+      {/* Wide table (10 cols) — a min width so horizontal scroll kicks in
+          cleanly on narrow viewports instead of columns getting squeezed and
+          clipped. P4 (the AI verdict came in, the "Intel" link went): the
+          columns' min-content width is 955 px on the visual fixtures (Build
+          and the signature chip no longer wrap; `CELL_PAD`), under the card's
+          974 px at a 1280 px window; `fold-runs.spec.ts` holds the table
+          inside its card at 1280 and 1440. It was 980: 6 px of sideways
+          scroll at 1280. */}
+      <div className="overflow-x-auto" data-runs-table-scroller="">
+        <table className="text-[12.5px]" style={{ minWidth: 960, width: '100%' }}>
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <th style={{ width: 32, padding: '8px 12px' }}>
+              <th style={{ width: 32, padding: CELL_PAD }}>
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -1004,6 +1022,7 @@ function RunsTable({
               <Th label="Test Suite" />
               <Th label="Signature" />
               <Th label="Status" />
+              <Th label="AI verdict" />
               <Th label="Tests" />
               <ThSort label="Pass rate" />
               <ThSort
@@ -1018,7 +1037,7 @@ function RunsTable({
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={10} className="text-center py-10 text-[var(--color-text-muted)]">
                   No runs in the window. Try a longer window or check your reporter.
                 </td>
               </tr>
@@ -1040,7 +1059,7 @@ function RunsTable({
                   }}
                   className="transition-colors hover:bg-[var(--color-bg-hover)]"
                 >
-                  <td style={{ padding: '8px 12px' }}>
+                  <td style={{ padding: CELL_PAD }}>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(r.id)}
@@ -1055,8 +1074,15 @@ function RunsTable({
                       over the partition. Falls back to the raw SDK
                       build_number for legacy rows that pre-date the
                       run_seq field. */}
-                  <td className="font-mono text-[12.5px] font-semibold" style={{ padding: '8px 12px' }}>
-                    <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
+                  <td className="font-mono text-[12.5px] font-semibold whitespace-nowrap" style={{ padding: CELL_PAD }}>
+                    {/* The job and branch the retired `/intelligence` rows
+                        printed under the build (P4): on hover here, where
+                        the table has no width left for a second line. */}
+                    <Link
+                      to={`/runs/${r.id}`}
+                      title={[r.jenkins_job, r.branch ? `branch ${r.branch}` : null].filter(Boolean).join(' · ') || undefined}
+                      className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline"
+                    >
                       {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
                     </Link>
                     {r.ingestion_source === 'upload' && (
@@ -1073,14 +1099,14 @@ function RunsTable({
                       </span>
                     )}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td style={{ padding: CELL_PAD }}>
                     <SuiteBadge
                       primary={r.primary_suite_name}
                       all={r.suite_names}
                       linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
                     />
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td style={{ padding: CELL_PAD }}>
                     <SignatureChip
                       label={sigLabel}
                       isOutlier={isOutlier}
@@ -1088,7 +1114,7 @@ function RunsTable({
                       onOpen={primarySignature ? onOpenSignatures : undefined}
                     />
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td style={{ padding: CELL_PAD }}>
                     <span
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
                       style={{
@@ -1099,9 +1125,12 @@ function RunsTable({
                       {(r.status || '—').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}
                     </span>
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td style={{ padding: CELL_PAD }} data-ai-verdict-cell="">
+                    <AiVerdictCell run={r} />
+                  </td>
+                  <td style={{ padding: CELL_PAD }}>
                     <div className="flex items-center gap-2">
-                      <div className="flex h-3 rounded-sm overflow-hidden flex-1 max-w-[80px]" style={{ background: 'var(--color-bg-secondary)' }}>
+                      <div className="flex h-3 rounded-sm overflow-hidden flex-1 min-w-[24px] max-w-[80px]" style={{ background: 'var(--color-bg-secondary)' }}>
                         {r.passed_tests > 0 && <span style={{ flex: r.passed_tests, background: 'var(--status-passed)' }} />}
                         {r.failed_tests > 0 && <span style={{ flex: r.failed_tests, background: 'var(--status-failed)' }} />}
                       </div>
@@ -1110,7 +1139,7 @@ function RunsTable({
                       </span>
                     </div>
                   </td>
-                  <td style={{ padding: '8px 12px' }} className="font-semibold tabular-nums">
+                  <td style={{ padding: CELL_PAD }} className="font-semibold tabular-nums">
                     <span style={{
                       color: Number(r.pass_rate) >= 80 ? 'var(--status-passed)'
                         : Number(r.pass_rate) >= 50 ? 'var(--status-broken)'
@@ -1124,19 +1153,10 @@ function RunsTable({
                     end={r.end_time}
                     durationMs={r.duration_ms}
                   />
-                  <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                  <td style={{ padding: CELL_PAD, textAlign: 'right' }}>
+                    {/* P4: no separate "Intel" link — the AI verdict cell opens
+                        the run's Analysis tab (`/runs/:id?tab=analysis`). */}
                     <div className="inline-flex items-center gap-1.5">
-                      <Link
-                        to={`/runs/${r.id}/intelligence`}
-                        className="inline-flex items-center gap-1 text-[11.5px] px-2 py-0.5 rounded-md border"
-                        style={{
-                          color: 'var(--color-accent)',
-                          borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
-                          background: 'var(--color-accent-bg-soft)',
-                        }}
-                      >
-                        <Sparkles className="h-3 w-3" /> Intel
-                      </Link>
                       <button
                         type="button"
                         onClick={() => onTrigger(r.id)}
@@ -1188,7 +1208,7 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
   return (
     <th
       style={{
-        padding: '8px 12px',
+        padding: CELL_PAD,
         textAlign: align ?? 'left',
         color: 'var(--color-text-muted)',
         fontWeight: 500,
@@ -1210,7 +1230,7 @@ function ThSort({
       aria-sort={active ? (sortDir === '↑' ? 'ascending' : 'descending') : undefined}
       onClick={onClick}
       style={{
-        padding: '8px 12px',
+        padding: CELL_PAD,
         textAlign: 'left',
         color: active ? 'var(--color-text)' : 'var(--color-text-muted)',
         fontWeight: 500,

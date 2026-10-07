@@ -1,16 +1,97 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ChevronRight, FolderTree, Plus, Star, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { refreshSuites, useSuites } from '@/hooks/useSuites'
 import { suitesService } from '@/services/suitesService'
 import type { Project } from '@/types/projects'
 import type { TestSuite } from '@/types/suites'
+import { formatDateTime, shortAgo } from '@/utils/formatters'
+import { useSuiteAggregates, type SuiteAggregate } from './suite/useSuiteAggregates'
+
+/** A run column with no value for this suite: a dash, and why on hover. */
+function NoValue({ title }: { title: string }) {
+  return (
+    <span title={title} className="text-[var(--color-text-muted)]">
+      —
+    </span>
+  )
+}
+
+/**
+ * The suite's run columns (UX redesign P4), from the per-name aggregates. A
+ * suite no run has carried by name (a new or a default catch-all suite) has
+ * no row there: every cell is a dash, never a 0 %.
+ */
+function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }) {
+  const none = 'No run has reported this suite'
+  if (!aggregate) {
+    return (
+      <>
+        <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
+        <td className="px-4 py-3"><NoValue title={none} /></td>
+        <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
+        <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
+        <td className="px-4 py-3"><NoValue title="No owner resolved" /></td>
+      </>
+    )
+  }
+  const failing = aggregate.failed_count ?? 0
+  const owner = aggregate.owner_full_name || aggregate.owner_email
+  return (
+    <>
+      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text)]" data-col="pass-rate">
+        {aggregate.pass_rate != null ? `${Number(aggregate.pass_rate).toFixed(1)}%` : <NoValue title="No test has a latest result yet" />}
+      </td>
+      <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text-muted)]" data-col="last-run">
+        {aggregate.last_run_at ? (
+          aggregate.last_run_id ? (
+            <Link
+              to={`/runs/${aggregate.last_run_id}`}
+              onClick={(e) => e.stopPropagation()}
+              title={formatDateTime(aggregate.last_run_at)}
+              className="hover:text-[var(--color-accent)] hover:underline"
+            >
+              {shortAgo(aggregate.last_run_at)}
+            </Link>
+          ) : (
+            <span title={formatDateTime(aggregate.last_run_at)}>{shortAgo(aggregate.last_run_at)}</span>
+          )
+        ) : (
+          <NoValue title={none} />
+        )}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]" data-col="executions">
+        {aggregate.total_executions ?? <NoValue title={none} />}
+      </td>
+      <td
+        className={`px-4 py-3 text-right tabular-nums ${failing > 0 ? 'font-medium text-[var(--status-failed)]' : 'text-[var(--color-text-muted)]'}`}
+        data-col="failing"
+      >
+        {failing}
+      </td>
+      <td className="px-4 py-3 text-[var(--color-text-muted)]" data-col="owner">
+        {owner ? (
+          <span
+            className={aggregate.owner_is_fallback ? 'italic' : undefined}
+            title={aggregate.owner_is_fallback ? "No owner set on this suite: the project's default QA lead" : undefined}
+          >
+            {owner}
+            {aggregate.owner_is_fallback && ' (project default)'}
+          </span>
+        ) : (
+          <NoValue title="No owner resolved" />
+        )}
+      </td>
+    </>
+  )
+}
 
 interface CreateModalProps {
   // Pre-resolved project for single-project mode. When ``null``, the
@@ -172,6 +253,9 @@ export default function SuitesPage() {
   const canSetDefault = hasRole('QA_LEAD')
 
   const { data, isLoading, error } = useSuites()
+  // The run columns join by suite name, which is only unambiguous inside one
+  // project (`useSuiteAggregates`): All-Projects shows the catalog columns only.
+  const aggregates = useSuiteAggregates(!isAllProjects)
   const [showCreate, setShowCreate] = useState(false)
   // Create is allowed when the user has the role AND either a specific
   // project is active OR they have at least one accessible project to
@@ -227,12 +311,15 @@ export default function SuitesPage() {
   }
 
   const items = data?.items ?? []
+  const showRunColumns = !isAllProjects
 
   return (
-    <>
+    <div className="space-y-4">
       <PageHeader
+        compact
         title="Test Suites"
         subtitle="Project-scoped groupings of test cases. The default suite catches new cases ingested without an explicit suite name."
+        helpTopic={helpTopicParam('/suites')}
         actions={
           canCreate ? (
             <button
@@ -251,67 +338,91 @@ export default function SuitesPage() {
           description="Ingest a test run or create one manually to get started."
         />
       ) : (
-        <div className="overflow-hidden rounded-lg ring-1 ring-[var(--color-border)]">
-          <table className="w-full divide-y divide-[var(--color-border)] text-sm">
-            <thead className="bg-[var(--color-bg-secondary)] text-left text-xs uppercase text-[var(--color-text-muted)]">
-              <tr>
-                <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-4 py-2 font-medium">Description</th>
-                <th className="px-4 py-2 font-medium text-right">Test cases</th>
-                <th className="px-4 py-2 font-medium" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {items.map((s) => (
-                <tr
-                  key={s.id}
-                  className="cursor-pointer transition hover:bg-[var(--color-bg-secondary)]"
-                  onClick={() => navigate(`/suites/${s.id}`)}
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <FolderTree className="h-4 w-4 text-[var(--color-text-muted)]" />
-                      <span className="font-medium text-[var(--color-text)]">{s.name}</span>
-                      {s.is_default && (
-                        <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
-                          <Star className="h-3 w-3" /> Default
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-[var(--color-text-muted)]">
-                    {s.description ?? <span className="italic">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">
-                    {s.test_case_count ?? '—'}
-                  </td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1">
-                      {canSetDefault && !s.is_default && (
-                        <button
-                          onClick={() => handleSetDefault(s)}
-                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-broken-bg)]/10 hover:text-[var(--status-broken)]"
-                          title="Make default"
-                        >
-                          <Star className="h-4 w-4" />
-                        </button>
-                      )}
-                      {canEdit && !s.is_default && (
-                        <button
-                          onClick={() => handleDelete(s)}
-                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                      <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
-                    </div>
-                  </td>
+        <div className="space-y-2">
+          <div data-primary="" className="overflow-x-auto rounded-lg ring-1 ring-[var(--color-border)]">
+            <table className="w-full divide-y divide-[var(--color-border)] text-sm">
+              <thead className="bg-[var(--color-bg-secondary)] text-left text-xs uppercase text-[var(--color-text-muted)]">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 font-medium">Description</th>
+                  <th className="px-4 py-2 font-medium text-right">Test cases</th>
+                  {showRunColumns && (
+                    <>
+                      <th className="px-4 py-2 font-medium text-right" title="Of the suite's tests, the share whose latest result passed">Pass rate</th>
+                      <th className="px-4 py-2 font-medium">Last run</th>
+                      <th className="px-4 py-2 font-medium text-right" title="Every execution of the suite's tests, all runs">Executions</th>
+                      <th className="px-4 py-2 font-medium text-right" title="Tests whose latest result failed">Failing</th>
+                      <th className="px-4 py-2 font-medium">Owner</th>
+                    </>
+                  )}
+                  <th className="px-4 py-2 font-medium" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {items.map((s) => (
+                  <tr
+                    key={s.id}
+                    className="cursor-pointer transition hover:bg-[var(--color-bg-secondary)]"
+                    onClick={() => navigate(`/suites/${s.id}`)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <FolderTree className="h-4 w-4 text-[var(--color-text-muted)]" />
+                        <span className="font-medium text-[var(--color-text)]">{s.name}</span>
+                        {s.is_default && (
+                          <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
+                            <Star className="h-3 w-3" /> Default
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="max-w-[280px] truncate px-4 py-3 text-[var(--color-text-muted)]" title={s.description ?? undefined}>
+                      {s.description ?? <span className="italic">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">
+                      {s.test_case_count ?? '—'}
+                    </td>
+                    {showRunColumns && <AggregateCells aggregate={aggregates.byName.get(s.name.trim())} />}
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        {canSetDefault && !s.is_default && (
+                          <button
+                            onClick={() => handleSetDefault(s)}
+                            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-broken-bg)]/10 hover:text-[var(--status-broken)]"
+                            title="Make default"
+                          >
+                            <Star className="h-4 w-4" />
+                          </button>
+                        )}
+                        {canEdit && !s.is_default && (
+                          <button
+                            onClick={() => handleDelete(s)}
+                            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* The run columns come from a second read: say when it failed (the
+              dashes would otherwise read as "never ran"), and why All-Projects
+              has none. */}
+          {showRunColumns && aggregates.error ? (
+            <p data-aggregates-note="" className="text-xs text-[var(--status-failed)]">
+              Run columns could not be loaded: pass rate, last run, executions, failing and owner are empty.
+            </p>
+          ) : !showRunColumns ? (
+            <p data-aggregates-note="" className="text-xs text-[var(--color-text-muted)]">
+              Select a project to see each suite&apos;s pass rate, last run, executions, failing tests and owner.
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -325,6 +436,6 @@ export default function SuitesPage() {
           onCreated={() => refreshSuites()}
         />
       )}
-    </>
+    </div>
   )
 }

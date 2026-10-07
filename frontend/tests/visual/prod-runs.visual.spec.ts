@@ -10,6 +10,13 @@
  * banner, its gauge `runs-health`) and `runs-kpis` (the KPI strip repeated the
  * banner; its pass-rate line is in Build history). `runs-banner` and
  * `runs-health` are new: their baselines come from CI.
+ *
+ * P4 (D2, the `/intelligence` list retired into the table): `runs-table`, the
+ * runs table with its AI-verdict column (a No-Go and a Conditional awaiting
+ * review, a reviewed Go, "—" for the rest; captured once every verdict has
+ * arrived), new: its baseline comes from CI. The banner's title carries the
+ * failing count since the P3 baseline review ("6 of 13 builds failed"; the
+ * "Failing builds" fact that repeated it is gone).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -38,7 +45,13 @@ for (const theme of THEMES) {
     })
 
     const banner = page.locator('[data-status-banner]')
-    await expect(banner).toContainText('Failing builds 6 of 13')
+    await expect(banner).toContainText('6 of 13 builds failed')
+
+    // The table, once every run's AI verdict has arrived (no skeleton left).
+    const table = page.locator('[data-primary]')
+    await expect(table.locator('[data-ai-verdict="loading"]')).toHaveCount(0)
+    await expect(table.locator('[data-ai-verdict="NO_GO"]')).toHaveText(/No-Go\s*draft/)
+    await visualRegion(page, 'runs-table', theme, table)
 
     // The two Disclosures below the table, opened for their regions.
     await page.getByRole('button', { name: /^How this verdict is computed/ }).click()

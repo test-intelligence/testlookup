@@ -68,7 +68,9 @@ test.describe('hermetic critical journeys', () => {
     await page.getByLabel('Password').fill('correct horse battery staple')
     await page.getByRole('button', { name: 'Log In' }).click()
 
-    await expect(page).toHaveURL(/\/reviews$/)
+    // Back to the deep link, which since the UX redesign P4 (D4) redirects to
+    // Inbox › Approvals: the review queue's new home.
+    await expect(page).toHaveURL(/\/my-failures\?tab=approvals$/)
     // Named: since the UX redesign P1 a section's tabs are a <nav> too.
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
   })

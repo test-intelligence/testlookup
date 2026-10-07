@@ -28,6 +28,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TestRun } from '@/types/runs'
 import { useRuns } from '@/hooks/useRuns'
 import agentService from '@/services/agentService'
+import { getData } from '@/services/http'
+import toast from 'react-hot-toast'
 import { useTimeWindowStore } from '@/store/timeWindowStore'
 import RunsPage, {
   buildBisectHref, buildPipelineModel, BuildPassRate, BuildVelocityCard, HealthMeter, SignatureClusters,
@@ -73,6 +75,19 @@ vi.mock('@/services/agentService', () => ({
     triggerDeepPipeline: vi.fn(async () => ({})),
     bulkTriggerPipelines: vi.fn(async (ids: string[]) => ({ queued: ids.length })),
   },
+}))
+// The AI-verdict column (P4) asks each run on screen for its Run Intelligence
+// report. Per run: a payload, or a failed request; a run not listed was never
+// analysed.
+const intel = vi.hoisted(() => ({ byRun: {} as Record<string, unknown>, failing: new Set<string>() }))
+vi.mock('@/services/http', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/http')>()),
+  getData: vi.fn(async (url: string) => {
+    const id = /^\/api\/v1\/runs\/([^/]+)\/intelligence$/.exec(url)?.[1]
+    if (!id) throw new Error(`unexpected request ${url}`)
+    if (intel.failing.has(id)) throw new Error('503')
+    return intel.byRun[id] ?? { intelligence_available: false, release_decision: null }
+  }),
 }))
 
 // Build the href and assert it is non-null, returning the narrowed
@@ -424,6 +439,9 @@ beforeEach(() => {
   perms.isQaEngineer = false
   useTimeWindowStore.setState({ days: 30 })
   vi.mocked(agentService.bulkTriggerPipelines).mockClear()
+  intel.byRun = {}
+  intel.failing.clear()
+  vi.mocked(getData).mockClear()
 })
 
 // UX redesign P2: anything not built is not rendered. The workflow ribbon
@@ -641,5 +659,76 @@ describe('RunsPage — the failure signatures open in a side panel (P3 drill-dow
     expect(chips).toHaveLength(4)
     fireEvent.click(chips[0])
     expect(panel()).not.toBeNull()
+  })
+})
+
+// UX redesign P4, owner decision D2: the `/intelligence` list retired into an
+// AI-verdict column of the runs table. The verdict is the run's Run
+// Intelligence release recommendation, asked once per run on screen (there is
+// no batch endpoint); "—" when a run has none; the separate "Intel" link went.
+describe('RunsPage — the AI-verdict column (P4, D2)', () => {
+  const decided = (recommendation: string, state = 'accepted') => ({
+    intelligence_available: true,
+    release_decision: { recommendation },
+    review: { state, message: '' },
+  })
+  const row = (id: string) => primary().querySelector(`#run-row-${id}`) as HTMLElement
+  const cell = (id: string) => row(id).querySelector('[data-ai-verdict-cell]') as HTMLElement
+  const intelligenceUrls = () => vi.mocked(getData).mock.calls.map(([url]) => url)
+
+  it('sits after Status, and each run reads its own verdict; the verdict opens the run\'s Analysis tab', async () => {
+    intel.byRun['run-4'] = decided('NO_GO', 'pending_review')
+    intel.byRun['run-3'] = decided('CONDITIONAL_GO', 'rejected')
+    intel.byRun['run-2'] = decided('GO')
+    renderRunsPage(brokenWindow())
+    const headers = within(primary()).getAllByRole('columnheader').map((h) => h.textContent?.trim())
+    expect(headers.indexOf('AI verdict')).toBe(headers.indexOf('Status') + 1)
+
+    const noGo = await within(cell('run-4')).findByRole('link')
+    expect(noGo).toHaveTextContent(/^No-Godraft$/)
+    expect(noGo).toHaveAttribute('href', '/runs/run-4?tab=analysis')
+    expect(noGo).toHaveAttribute('title', expect.stringContaining('awaiting human review'))
+    expect(await within(cell('run-3')).findByRole('link')).toHaveTextContent(/^Conditionalrejected$/)
+    expect(await within(cell('run-2')).findByRole('link')).toHaveTextContent(/^Go$/)
+    // Never analysed: "—", with the reason, and no link.
+    await waitFor(() => expect(cell('run-1')).toHaveTextContent(/^—$/))
+    expect(within(cell('run-1')).queryByRole('link')).toBeNull()
+    expect(cell('run-1').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'No AI verdict: this run has not been analysed')
+  })
+
+  it('asks once per run on screen, for that run\'s report', async () => {
+    renderRunsPage(brokenWindow())
+    await waitFor(() => expect(primary().querySelectorAll('[data-ai-verdict="none"]')).toHaveLength(4))
+    expect([...intelligenceUrls()].sort()).toEqual(
+      ['run-1', 'run-2', 'run-3', 'run-4'].map((id) => `/api/v1/runs/${id}/intelligence`),
+    )
+  })
+
+  it('makes no verdict up: a run still in flight is not asked, and reads "—"', async () => {
+    renderRunsPage(newestFirst([
+      run(1, { status: 'PASSED', created_at: hoursAgo(5) }),
+      run(2, { status: 'IN_PROGRESS', passed_tests: 0, failed_tests: 0, total_tests: 0, pass_rate: 0, created_at: hoursAgo(1) }),
+    ]))
+    const running = cell('run-2').querySelector('[data-ai-verdict]') as HTMLElement
+    expect(running).toHaveTextContent('—')
+    expect(running).toHaveAttribute('title', 'No AI verdict: the run is still in progress')
+    await waitFor(() => expect(intelligenceUrls()).toEqual(['/api/v1/runs/run-1/intelligence']))
+  })
+
+  it('a failed request reads "—" (unavailable), not a verdict, and raises no toast', async () => {
+    intel.failing.add('run-4')
+    renderRunsPage(brokenWindow())
+    await waitFor(() =>
+      expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'unavailable'),
+    )
+    expect(cell('run-4')).toHaveTextContent(/^—$/)
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('drops the separate Intel link, and nothing links to the retired routes', () => {
+    renderRunsPage(brokenWindow())
+    expect(within(primary()).queryByRole('link', { name: /Intel/ })).toBeNull()
+    const hrefs = Array.from(primary().querySelectorAll('a'), (a) => a.getAttribute('href') ?? '')
+    expect(hrefs.filter((h) => /\/intelligence(\?|$)/.test(h))).toEqual([])
   })
 })

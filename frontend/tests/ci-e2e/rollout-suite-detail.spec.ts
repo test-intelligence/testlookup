@@ -16,6 +16,11 @@
  * section that opened a selection may answer it (REQUESTS FK4-1), so every
  * rows test asserts ONE panel.
  *
+ * UX redesign P4: `/coverage/suite?name=Auth` is now a redirect to the suite
+ * page's Charts tab (`/suites/<id>?tab=charts`, the name resolved through the
+ * suites list), which renders the same charts and sections. Every test here
+ * still opens the old URL, so each also proves the redirect lands on them.
+ *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
@@ -51,6 +56,7 @@ import {
   SCATTER_SUITE_TESTS,
   SUITE,
   SUITE_DETAIL_ON,
+  SUITE_ID,
   TEST_SCATTER_PATH,
   withoutObjectMemberLabels,
 } from '../visual/production/fixtures'
@@ -60,11 +66,20 @@ const P = PROJECT_ID
 const ready = (p: Page) => p.getByRole('heading', { name: /^Run history/ })
 const PATH = `/coverage/suite?name=${SUITE}&days=30`
 
-/** The page's own reads (without the shell). */
+/**
+ * The page's own reads (without the shell). P4: the suites list twice (the
+ * redirect resolves the name with it, then the suite page reads it again for
+ * its Move targets), the suite and its catalog (the page's header and tab
+ * counts), and the window's analytics once (the KPI strip and the Charts tab
+ * share the one request).
+ */
 const PAGE_READS = [
   `GET /api/v1/analytics/suite-detail?project_id=${P}&suite_name=${SUITE}&days=30`,
   `GET /api/v1/test-management/suites/${SUITE}/trend?project_id=${P}&days=30`,
   `GET /api/v1/suites?project_id=${P}`,
+  `GET /api/v1/suites?project_id=${P}`,
+  `GET /api/v1/suites/${SUITE_ID}`,
+  `GET /api/v1/suites/${SUITE_ID}/test-cases`,
 ]
 
 const HEATMAP_LINE = `GET ${HEATMAP_PATH}?kind=test_run&project_id=${P}&days=30&suite_name=${SUITE}`
@@ -95,6 +110,9 @@ test.use({ viewport: { width: 1280, height: 2400 }, timezoneId: 'UTC', locale: '
 
 test('the pass-rate frame has trend analysis and zoom, and nothing is asked for it', async ({ page }) => {
   const { api, errors } = await openRollout(page, PATH, { handlers: SUITE_DETAIL_ON, ready })
+  // P4: the old URL is the suite page's Charts tab now (its ?days=30 adopted as the window).
+  await expect(page).toHaveURL(new RegExp(`/suites/${SUITE_ID}\\?tab=charts$`))
+  await expect(page.getByRole('tab', { name: 'Charts' })).toHaveAttribute('aria-selected', 'true')
   const passRate = sectionFrame(page, 'suite-pass-rate', /^Pass rate trend/)
   await expectDrawn(passRate, 'suite-pass-rate')
   await expect(passRate.locator('[data-trend-controls]')).toBeVisible()

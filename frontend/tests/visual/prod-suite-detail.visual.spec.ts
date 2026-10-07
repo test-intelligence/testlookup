@@ -9,6 +9,10 @@
  * `suite-on-pass-rate` (the flag-off `suite-pass-rate` shot is deleted). The
  * page is opened with the catalogue's answers (`SUITE_DETAIL_ON`) and every
  * flag off; the run history above keeps its PNG.
+ * UX redesign P4: the URL redirects to the suite page's Charts tab
+ * (`/suites/<id>?tab=charts`), which draws the same frame; the region is
+ * the frame itself, so the capture is unchanged in kind (the page above it
+ * now has the suite header, tabs, window and KPI strip).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { test } from '@playwright/test'

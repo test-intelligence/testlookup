@@ -1,158 +1,56 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, ListTree, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+/**
+ * The Run page (`/runs/:runId`) — one page for one run (UX redesign P4,
+ * `02-design-spec.md` §5 "Run" row). It merges what used to be four pages:
+ *
+ *   Tests     (default) the run's counts as status chips and the test table,
+ *             failed and broken first — the page's primary content.
+ *   Analysis  Run Intelligence (verdict banner → What failed → evidence) and
+ *             Deep Investigation's clusters with "Analyze failures".
+ *             `/runs/:id/intelligence` and `/deep-investigate/:id` redirect here.
+ *   Changes   the regression diff since the last good run, and Compare.
+ *   Evidence  the verified decision report (claims, verification) and the
+ *             agent pipeline's AI report. `/agents/run/:id` redirects here.
+ *
+ * One PageHeader: build, job · branch · date, the status pill, suite and
+ * release chips; every action (trigger, deep investigation, refresh, PDF,
+ * evidence bundle, compare, release gate) is in its ⋯ menu. The tab is
+ * `?tab=`; a tab that is not open is not rendered and asks for nothing.
+ * Deleted here (§5): the duplicated header buttons and counts (now the
+ * chips), the "Run Intelligence" button (now a tab), the breadcrumb (the
+ * Runs section tabs lead back to the list).
+ */
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Check, FileDown, GitCompare, Package, PencilLine, RefreshCw, ShieldCheck, Stethoscope, X, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { mutate } from 'swr'
 import PageHeader from '@/components/ui/PageHeader'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import StatusBadge from '@/components/ui/StatusBadge'
 import SuiteBadge from '@/components/ui/SuiteBadge'
-import SortableHeader from '@/components/ui/SortableHeader'
-import Pagination from '@/components/ui/Pagination'
-import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useRun, useRunAttribution, useRuns, useTestCases } from '@/hooks/useRuns'
-import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
-import type { TestRun } from '@/types/runs'
-import type { AttributionItem } from '@/types/attribution'
-import { useTableSort } from '@/hooks/useTableSort'
-import { formatDateTime, formatDuration } from '@/utils/formatters'
-import { clsx } from 'clsx'
-import { runsService } from '@/services/runsService'
-import agentService from '@/services/agentService'
-import { mutate } from 'swr'
-import useSWR from 'swr'
-import { api } from '@/services/api'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
+import { helpTopicParam } from '@/components/help/helpTopics'
+import { useRun, useRuns } from '@/hooks/useRuns'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
-import { KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
-import { retryAttempts } from '@/utils/retryEvidence'
-import AttributionVerdictBadge from '@/components/failures/AttributionVerdictBadge'
+import { runsService } from '@/services/runsService'
+import agentService from '@/services/agentService'
+import type { TestRun } from '@/types/runs'
+import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import { formatDateTime } from '@/utils/formatters'
+import { RunDeepClusters } from './DeepInvestigationPage'
+import { RunIntelligenceBody } from './RunIntelligencePage'
+import RunTestsTab from './run/RunTestsTab'
+import RunChangesTab from './run/RunChangesTab'
+import RunEvidenceTab from './run/RunEvidenceTab'
+import { downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
 
-interface TestCase {
-  id: string
-  test_name: string
-  class_name?: string
-  suite_name?: string
-  status: string
-  duration_ms?: number
-  failure_category?: string
-  // AI-classified failure kind (US-9.1 computed field on TestCaseSummary —
-  // included in the list response, so the badge costs no extra call; the
-  // AI-4 evidence popover fetches on demand by test_case_id when opened).
-  failure_kind?: string | null
-  // Phase 1 granular steps: # of top-level steps captured for this test's
-  // latest-run snapshot. null when no parser emitted a step tree for this
-  // producer; 0 when the parser ran but the test had no steps.
-  step_count?: number | null
-  // Retry evidence, persisted at ingest and previously never surfaced.
-  // ``retry_count`` is the number of RETRIES, so attempts = retries + 1.
-  retry_count?: number | null
-  is_flaky_run?: boolean | null
-}
+const HELP_TOPIC = helpTopicParam('/runs')
 
-const STATUSES = ['', 'FAILED', 'BROKEN', 'PASSED', 'SKIPPED']
-
-interface RegressionDiff {
-  baseline_available: boolean
-  baseline_run_id?: string
-  baseline_build_number?: string
-  pass_rate?: number
-  baseline_pass_rate?: number
-  pass_rate_delta?: number
-  new_failing_tests?: Array<{ test_name: string; suite_name: string | null }>
-  new_failing_count?: number
-  resolved_count?: number
-  commit_range?: Array<{ sha: string; message: string; author: string; timestamp: string }>
-}
-
-function RegressionDiffPanel({ runId }: { runId: string }) {
-  const [open, setOpen] = useState(false)
-  const { data, isLoading } = useSWR<RegressionDiff>(
-    open ? `regression-diff-${runId}` : null,
-    () => api.get(`/api/v1/runs/${runId}/regression-diff`).then(r => r.data),
-    { revalidateOnFocus: false },
-  )
-
-  return (
-    <div className="card">
-      <button
-        onClick={() => setOpen(x => !x)}
-        className="w-full flex items-center justify-between text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-      >
-        <span className="flex items-center gap-2">
-          <TrendingDown className="h-4 w-4 text-[var(--status-broken)]" />
-          What changed since last good run?
-        </span>
-        {open ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" /> : <ChevronDown className="h-4 w-4 text-[var(--color-text-muted)]" />}
-      </button>
-
-      {open && (
-        <div className="mt-4 space-y-3">
-          {isLoading && <p className="text-sm text-[var(--color-text-muted)]">Loading diff…</p>}
-          {!isLoading && data && !data.baseline_available && (
-            <p className="text-sm text-[var(--color-text-muted)]">No recent passing baseline run found for comparison.</p>
-          )}
-          {!isLoading && data && data.baseline_available && (
-            <>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className={clsx('text-xl font-bold tabular-nums', (data.pass_rate_delta ?? 0) >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]')}>
-                    {(data.pass_rate_delta ?? 0) >= 0 ? '+' : ''}{data.pass_rate_delta?.toFixed(1)}%
-                  </p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Pass rate delta</p>
-                </div>
-                <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className="text-xl font-bold text-[var(--status-failed)]">{data.new_failing_count ?? 0}</p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">New failures</p>
-                </div>
-                <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className="text-xl font-bold text-[var(--status-passed)]">{data.resolved_count ?? 0}</p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Resolved</p>
-                </div>
-              </div>
-
-              <p className="text-xs text-[var(--color-text-muted)]">Baseline: Build #{data.baseline_build_number}</p>
-
-              {(data.new_failing_tests?.length ?? 0) > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">New failures</p>
-                  <ul className="space-y-1">
-                    {data.new_failing_tests?.slice(0, 10).map((t, i) => (
-                      <li key={i} className="text-sm text-[var(--color-text-secondary)] flex items-center gap-2">
-                        <div className="h-1.5 w-1.5 rounded-full bg-[var(--status-failed-bg)] flex-shrink-0" />
-                        {t.test_name}
-                        {t.suite_name && <span className="text-[var(--color-text-muted)] text-xs">· {t.suite_name}</span>}
-                      </li>
-                    ))}
-                    {(data.new_failing_count ?? 0) > 10 && (
-                      <li className="text-xs text-[var(--color-text-muted)]">…and {(data.new_failing_count ?? 0) - 10} more</li>
-                    )}
-                  </ul>
-                </div>
-              )}
-
-              {(data.commit_range?.length ?? 0) > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">
-                    Commits since baseline ({data.commit_range?.length})
-                  </p>
-                  <ul className="space-y-1">
-                    {data.commit_range?.slice(0, 5).map((c) => (
-                      <li key={c.sha} className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
-                        <GitCommit className="h-3.5 w-3.5 text-[var(--color-text-faint)] flex-shrink-0 mt-0.5" />
-                        <span className="font-mono text-[var(--color-text)] mr-1">{c.sha}</span>
-                        <span>{c.message}</span>
-                        <span className="text-[var(--color-text-faint)]">— {c.author}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+const TAB_IDS = ['tests', 'analysis', 'changes', 'evidence'] as const
+type RunTab = (typeof TAB_IDS)[number]
 
 function ReleaseTag({ releaseName, onSet }: {
   releaseName?: string
@@ -188,10 +86,10 @@ function ReleaseTag({ releaseName, onSet }: {
           onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false) }}
           className="bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-2 py-0.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-faint)] w-44 focus:outline-none focus:border-[var(--color-border)]"
         />
-        <button onClick={handleSave} disabled={saving} className="text-[var(--status-passed)] hover:text-[var(--status-passed)] disabled:opacity-50">
+        <button onClick={handleSave} disabled={saving} aria-label="Save release" className="text-[var(--status-passed)] hover:text-[var(--status-passed)] disabled:opacity-50">
           <Check className="h-4 w-4" />
         </button>
-        <button onClick={() => setEditing(false)} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]">
+        <button onClick={() => setEditing(false)} aria-label="Cancel" className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -208,7 +106,7 @@ function ReleaseTag({ releaseName, onSet }: {
           <Package className="h-3 w-3" />
           {releaseName}
         </button>
-        <button onClick={() => setEditing(true)} title="Change release" className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
+        <button onClick={() => setEditing(true)} title="Change release" aria-label="Change release" className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
           <PencilLine className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -230,21 +128,28 @@ export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const [tab, setTab] = useTabParam<RunTab>(TAB_IDS, 'tests')
 
-  // P4-5: Persist filters in URL params so they survive navigation
+  // P4-5: the Tests filters persist in the URL so they survive navigation.
   const [page, setPage] = useState(() => Number(searchParams.get('page')) || 1)
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || '')
   const [suiteFilter, setSuiteFilter] = useState(() => searchParams.get('suite') || '')
 
-  // P4-5: Sync state changes back to URL (replace to avoid history spam).
+  // Sync the filters back to the URL (replace, no history spam). Functional
+  // and key-by-key: every other key (`tab`, `report_version`, a deep link's
+  // report ids) stays — writing the three filters as the whole query used
+  // to drop `?tab=` on arrival.
   // NOTE: setSearchParams is intentionally excluded from deps — including it
   // causes an infinite loop because react-router returns a new reference each render.
   useEffect(() => {
-    const params: Record<string, string> = {}
-    if (statusFilter) params.status = statusFilter
-    if (suiteFilter) params.suite = suiteFilter
-    if (page > 1) params.page = String(page)
-    setSearchParams(params, { replace: true })
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      const put = (key: string, value: string) => (value ? next.set(key, value) : next.delete(key))
+      put('status', statusFilter)
+      put('suite', suiteFilter)
+      put('page', page > 1 ? String(page) : '')
+      return next
+    }, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, suiteFilter, page])
 
@@ -252,26 +157,10 @@ export default function RunDetailPage() {
 
   const { data: run } = useRun(runId)
 
-  // Roadmap Phase 4 verdicts, keyed by test case for O(1) lookup in the row
-  // renderer. Deliberately non-blocking: the table renders with or without
-  // this, so a slow or failed attribution fetch degrades to the previous
-  // behaviour rather than holding up the failure list.
-  const { data: attributionData } = useRunAttribution(runId)
-  const attributionByTestCase = useMemo(() => {
-    const map: Record<string, AttributionItem> = {}
-    for (const item of attributionData?.items ?? []) {
-      map[item.test_case_id] = item
-    }
-    return map
-  }, [attributionData])
-
-  // Fetch a small page of recent runs for THIS run's suite so the
-  // "Compare with previous run" CTA can pick the chronologically
-  // immediately preceding run. We fetch only when we know the suite
-  // (i.e. ``run.primary_suite_name`` is populated); the conditional
-  // ``suite_name`` param leaves the hook idle for runs without suite
-  // attribution. 50 results is plenty — the previous run is almost
-  // always one or two slots away from the current one.
+  // A small page of recent runs of THIS run's suite, so "Compare to previous
+  // run" can pick the chronologically preceding one. Idle for a run without
+  // suite attribution; 50 is plenty (the previous run is almost always one
+  // or two slots away).
   const suiteForCompare = run?.primary_suite_name ?? null
   const { data: suiteRunsData } = useRuns(
     suiteForCompare
@@ -298,44 +187,10 @@ export default function RunDetailPage() {
     navigate(href)
   }
 
-  const { data, isLoading, error } = useTestCases(runId, {
-    page, size: 25,
-    ...(statusFilter && { status: statusFilter }),
-    ...(suiteFilter && { suite: suiteFilter }),
-  })
-  const tcItems = (data?.items ?? []) as TestCase[]
-  const { sorted: sortedCases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(tcItems, 'test_name', 'asc')
-
   const { isQaEngineer } = usePermissions()
   const [triggeringPipeline, setTriggeringPipeline] = useState(false)
   const [triggeringDeep, setTriggeringDeep] = useState(false)
-  const [recoveringLive, setRecoveringLive] = useState(false)
-
-  async function handleRecoverLive() {
-    if (!runId || recoveringLive) return
-    setRecoveringLive(true)
-    try {
-      const resp = await api.post<{ queued: boolean; buffered_events: number }>(
-        `/api/v1/runs/${runId}/recover-live`,
-      )
-      toast.success(
-        `Replaying ${resp.data.buffered_events} buffered events. Refreshing shortly…`,
-        { icon: '↻', duration: 5000 },
-      )
-      // Persist task runs async on the ingestion worker. Give it a moment
-      // then revalidate the SWR test-cases cache so the table populates
-      // without a full page reload.
-      setTimeout(() => { mutate(['test-cases', runId, { page, size: 25 }]) }, 2500)
-    } catch (err: unknown) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        (err as Error)?.message ??
-        'Failed to queue recovery'
-      toast.error(detail)
-    } finally {
-      setRecoveringLive(false)
-    }
-  }
+  const [refreshing, setRefreshing] = useState(false)
 
   async function handleSetRelease(name: string) {
     if (!runId) return
@@ -348,7 +203,7 @@ export default function RunDetailPage() {
     setTriggeringPipeline(true)
     try {
       await agentService.triggerPipeline(runId)
-      toast.success('Pipeline queued. Track progress on /agents.')
+      toast.success('Pipeline queued — its report appears under Evidence.')
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -365,8 +220,10 @@ export default function RunDetailPage() {
     setTriggeringDeep(true)
     try {
       await agentService.triggerDeepPipeline(runId)
-      toast.success('Deep investigation queued — opening live view…')
-      navigate(`/deep-investigate/${runId}`)
+      toast.success('Deep investigation queued — opening Analysis…')
+      // The investigation's clusters live on this page's Analysis tab now
+      // (it used to open `/deep-investigate/:id`, which redirects there).
+      setTab('analysis')
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -378,316 +235,138 @@ export default function RunDetailPage() {
     }
   }
 
+  async function handleRefreshAnalysis() {
+    if (!runId) return
+    setRefreshing(true)
+    try {
+      const { runIntelligenceService } = await import('@/services/runIntelligenceService')
+      await runIntelligenceService.refreshIntelligence(runId)
+      // Every version's cached analysis of this run (`useRunIntelligence` keys).
+      await mutate((key) => typeof key === 'string' && key.startsWith(`run-intelligence-${runId}-`))
+      toast.success('AI analysis refreshed')
+    } catch {
+      toast.error('Failed to refresh the AI analysis')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const busy = triggeringPipeline || triggeringDeep
+  const overflow: OverflowItem[] = [
+    ...(isQaEngineer
+      ? [
+          {
+            label: triggeringPipeline ? 'Queuing pipeline…' : 'Trigger pipeline',
+            icon: <Zap className="h-3.5 w-3.5" />,
+            onClick: () => void handleTriggerPipeline(),
+            disabled: busy,
+          },
+          {
+            label: triggeringDeep ? 'Queuing investigation…' : 'Deep investigation',
+            icon: <Stethoscope className="h-3.5 w-3.5" />,
+            onClick: () => void handleTriggerDeep(),
+            disabled: busy,
+          },
+        ]
+      : []),
+    {
+      label: refreshing ? 'Refreshing AI analysis…' : 'Refresh AI analysis',
+      icon: <RefreshCw className="h-3.5 w-3.5" />,
+      onClick: () => void handleRefreshAnalysis(),
+      disabled: refreshing || !runId,
+    },
+    {
+      label: 'Export PDF',
+      icon: <FileDown className="h-3.5 w-3.5" />,
+      onClick: () => { if (runId) void downloadRunPdf(runId) },
+      disabled: !runId,
+    },
+    {
+      label: 'Download evidence bundle',
+      icon: <Package className="h-3.5 w-3.5" />,
+      onClick: () => { if (runId) void downloadRunEvidenceBundle(runId) },
+      disabled: !runId,
+    },
+    {
+      label: 'Compare to previous run',
+      icon: <GitCompare className="h-3.5 w-3.5" />,
+      onClick: handleCompareWithPrevious,
+      disabled: !run?.primary_suite_name,
+    },
+    ...(runId
+      ? [{ label: 'Release gate', icon: <ShieldCheck className="h-3.5 w-3.5" />, href: `/release-gate/${runId}` }]
+      : []),
+  ]
+
+  const tabs: TabItem<RunTab>[] = [
+    { id: 'tests', label: 'Tests', count: run?.total_tests },
+    { id: 'analysis', label: 'Analysis' },
+    { id: 'changes', label: 'Changes' },
+    { id: 'evidence', label: 'Evidence' },
+  ]
+
+  const subtitle = run
+    ? [run.jenkins_job ?? 'Jenkins', run.branch, formatDateTime(run.created_at)].filter(Boolean).join(' · ')
+    : undefined
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] mb-2">
-        <button onClick={() => navigate('/runs')} className="hover:text-[var(--color-text)] flex items-center gap-1">
-          <ArrowLeft className="h-4 w-4" /> Runs
-        </button>
-        <ChevronRight className="h-3 w-3" />
-        <span className="text-[var(--color-text)] font-mono">#{run?.build_number ?? '…'}</span>
-      </div>
-
-      {run && (
-        <PageHeader
-          title={`Run #${run.build_number}`}
-          subtitle={`${run.jenkins_job ?? 'Jenkins'} · ${formatDateTime(run.created_at)}`}
-          actions={
-            <div className="flex items-center gap-3 text-sm flex-wrap">
-              <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
-              <ReleaseTag
-                releaseName={run.release_name}
-                onSet={handleSetRelease}
-              />
-              {/* Every persisted status gets a bucket, so the counts reconcile
-                  with total_tests. Previously only passed/failed/skipped were
-                  shown: a run of 2 pass / 2 fail / 1 skip / 1 BROKEN rendered
-                  "2 passed, 2 failed, 1 skipped / 6 total" — 5 of 6 accounted
-                  for, with the infrastructure error invisible on the primary
-                  run screen. BROKEN and UNKNOWN are rendered only when
-                  non-zero so the common all-green run stays uncluttered.
-                  `skipped` also moves off the broken token, which it was
-                  borrowing — it now reads as the neutral state it is. */}
-              <span className="text-[var(--status-passed)] font-medium">{run.passed_tests} passed</span>
-              <span className="text-[var(--status-failed)] font-medium">{run.failed_tests} failed</span>
-              {(run.broken_tests ?? 0) > 0 && (
-                <span className="text-[var(--status-broken)] font-medium">{run.broken_tests} broken</span>
-              )}
-              <span className="text-[var(--color-text-muted)] font-medium">{run.skipped_tests} skipped</span>
-              {(run.unknown_tests ?? 0) > 0 && (
-                <span className="text-[var(--status-broken)] font-medium" title="Reported status was outside PASSED/FAILED/SKIPPED/BROKEN">
-                  {run.unknown_tests} unrecognised
-                </span>
-              )}
-              <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
+      <PageHeader
+        compact
+        title={run ? `Run #${run.build_number}` : 'Run'}
+        subtitle={subtitle}
+        helpTopic={HELP_TOPIC}
+        actions={
+          run && (
+            <div className="flex items-center gap-2 flex-wrap text-sm">
               <StatusBadge status={run.status} />
-              {isQaEngineer && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleTriggerPipeline}
-                    disabled={triggeringPipeline || triggeringDeep}
-                    title="Re-run the multi-agent analysis pipeline (ingestion → anomaly → root cause → summary → triage). Useful after changing AI mode or fixing an upstream issue."
-                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
-                  >
-                    {triggeringPipeline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {triggeringPipeline ? 'Queuing…' : 'Trigger pipeline'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleTriggerDeep}
-                    disabled={triggeringPipeline || triggeringDeep}
-                    title="Run the deep investigation pipeline — adds failure clustering, flaky sentinel, test health, and release risk on top of the standard stages. Requires LLM or Auto mode."
-                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
-                  >
-                    {triggeringDeep ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
-                    {triggeringDeep ? 'Queuing…' : 'Deep investigate'}
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={handleCompareWithPrevious}
-                disabled={!run.primary_suite_name}
-                title={
-                  run.primary_suite_name
-                    ? `Compare this run to the previous run of "${run.primary_suite_name}"`
-                    : 'No suite attribution on this run — cannot pick a previous-of-same-suite'
-                }
-                className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
-              >
-                <GitCompare className="h-3.5 w-3.5" />
-                Compare to previous
-              </button>
-              <Link
-                to={`/runs/${runId}/intelligence`}
-                className="btn-primary text-xs flex items-center gap-1.5 py-1"
-              >
-                <Bot className="h-3.5 w-3.5" />
-                Run Intelligence
-              </Link>
+              <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
+              <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} />
             </div>
-          }
+          )
+        }
+        overflow={overflow}
+        tabs={<Tabs items={tabs} value={tab} onChange={setTab} ariaLabel="Run sections" />}
+      />
+
+      {runId && tab === 'tests' && (
+        <RunTestsTab
+          runId={runId}
+          run={run}
+          statusFilter={statusFilter}
+          suiteFilter={suiteFilter}
+          page={page}
+          onStatusFilter={(status) => { setStatusFilter(status); setPage(1) }}
+          onSuiteFilter={(suite) => { setSuiteFilter(suite); setPage(1) }}
+          onPage={setPage}
         />
       )}
-
-      {/* Regression diff */}
-      {runId && <RegressionDiffPanel runId={runId} />}
-
-      {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-          {STATUSES.map(s => (
-            <button
-              key={s || 'all'}
-              onClick={() => { setStatusFilter(s); setPage(1) }}
-              aria-pressed={statusFilter === s}
-              className={clsx(
-                'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-                statusFilter === s ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
-              )}
-            >
-              {s || 'All'}
-            </button>
-          ))}
-        </div>
-        <input
-          type="text"
-          placeholder="Filter by suite…"
-          className="input w-48 h-9"
-          value={suiteFilter}
-          onChange={e => { setSuiteFilter(e.target.value); setPage(1) }}
-        />
-      </div>
-
-      {/* Test case table */}
-      <div className="card p-0 overflow-hidden">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20"><LoadingSpinner size="lg" /></div>
-        ) : error ? (
-          <div className="flex items-center justify-center py-16 text-[var(--status-failed)] text-sm gap-2">
-            <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
-          </div>
-        ) : !data?.items?.length ? (
-          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3 px-6 text-center max-w-2xl mx-auto">
-            {(() => {
-              const isLive = run?.trigger_source === 'live_stream'
-              const totalReported = run?.total_tests ?? 0
-              const hasAggregates = totalReported > 0
-              const hasActiveFilter = Boolean(statusFilter || suiteFilter)
-
-              if (hasActiveFilter) {
-                return (
-                  <>
-                    <p>No test cases match the current filters{statusFilter && ` (status: ${statusFilter})`}{suiteFilter && ` (suite: ${suiteFilter})`}.</p>
-                    <button
-                      onClick={() => { setStatusFilter(''); setSuiteFilter(''); setPage(1) }}
-                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
-                    >
-                      Clear filters
-                    </button>
-                  </>
-                )
-              }
-
-              if (isLive && hasAggregates) {
-                // The run record carries aggregate counts from the live state
-                // hash (HINCRBY) but persist_live_session didn't materialise
-                // per-test rows — usually the persistence task crashed after
-                // setting its dedup key (so retries silently skipped) while
-                // the Redis event buffer (25h TTL) still has the data. The
-                // ``Recover from buffer`` button below triggers a fresh
-                // persist task that idempotency-checks based on actual
-                // TestCase row count rather than a stuck dedup flag.
-                // Migration 0086 also archives the events on the TestRun
-                // row at session-close time so the 15-day fallback path
-                // works even after the 25-hour Redis TTL has lapsed.
-                return (
-                  <>
-                    <p className="text-[var(--color-text)]">
-                      This live run reported <strong>{totalReported}</strong> test{totalReported === 1 ? '' : 's'}
-                      {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
-                      {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
-                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}
-                      {(run?.unknown_tests ?? 0) > 0 && `, ${run?.unknown_tests} unrecognised status`}),
-                      but per-test details aren't loaded yet.
-                    </p>
-                    <p className="text-xs">
-                      Buffered events are held in Redis for 25 hours after a run
-                      closes, and a durable copy is archived on the run for{' '}
-                      <strong>up to 15 days</strong>. If persistence didn&apos;t
-                      finish on the first try (worker crash, transient error),
-                      use the button below to replay from whichever source is
-                      still available. After 15 days, re-run the suite or
-                      re-ingest the results as a file upload.
-                    </p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <button
-                        type="button"
-                        disabled={recoveringLive || !runId}
-                        onClick={() => handleRecoverLive()}
-                        className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
-                      >
-                        {recoveringLive
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          : <RotateCcw className="h-3.5 w-3.5" />}
-                        {recoveringLive ? 'Replaying…' : 'Recover from buffer'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => window.location.reload()}
-                        className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs underline"
-                      >
-                        Refresh
-                      </button>
-                    </div>
-                  </>
-                )
-              }
-
-              if (isLive) {
-                return (
-                  <>
-                    <p>Live test results are still being processed. This usually takes a few seconds after the session closes.</p>
-                    <button
-                      onClick={() => window.location.reload()}
-                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
-                    >
-                      Refresh page
-                    </button>
-                  </>
-                )
-              }
-
-              return <p>No test cases found for this run.</p>
-            })()}
-          </div>
-        ) : (
-          <>
-            <table className="w-full">
-              <thead className="border-b border-[var(--color-border)]">
-                <tr>
-                  <SortableHeader label="Test Name" sortKey="test_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                  <SortableHeader label="Suite" sortKey="suite_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                  <SortableHeader label="Status" sortKey="status" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                  <SortableHeader label="Duration" sortKey="duration_ms" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                  <SortableHeader label="Category" sortKey="failure_category" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                  <th className="th" />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedCases.map((tc) => (
-                  <tr
-                    key={tc.id}
-                    className="table-row"
-                    onClick={() => navigate(`/runs/${runId}/tests/${tc.id}`)}
-                  >
-                    <td className="td max-w-[280px]">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-[var(--color-text)] text-sm font-medium">{tc.test_name}</p>
-                        {typeof tc.step_count === 'number' && tc.step_count > 0 && (
-                          <span
-                            title={`${tc.step_count} captured step${tc.step_count === 1 ? '' : 's'} — open to view the step tree`}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] flex-shrink-0 tabular-nums"
-                          >
-                            <ListTree className="h-3 w-3" />
-                            {tc.step_count}
-                          </span>
-                        )}
-                      </div>
-                      {tc.class_name && <p className="truncate text-xs text-[var(--color-text-muted)] font-mono mt-0.5">{tc.class_name}</p>}
-                    </td>
-                    <td className="td text-[var(--color-text-muted)] text-sm truncate max-w-[160px]">{tc.suite_name ?? '—'}</td>
-                    <td className="td">
-                      <span className="inline-flex items-center gap-1.5">
-                        <StatusBadge status={tc.status} />
-                        {/* A retry is evidence, not a way to make the build
-                            green. A bare tick on a test that only passed on
-                            attempt 3 erases the one fact that mattered. */}
-                        {retryAttempts(tc) > 1 && (
-                          <span
-                            title={`Passed on attempt ${retryAttempts(tc)} — this test needed ${retryAttempts(tc) - 1} retry${retryAttempts(tc) === 2 ? '' : 'ies'} to reach its final status`}
-                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums flex-shrink-0 bg-[var(--color-bg-secondary)] text-[var(--status-flaky)]"
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            attempt {retryAttempts(tc)}
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="td text-[var(--color-text-muted)]">{formatDuration(tc.duration_ms)}</td>
-                    <td className="td">
-                      <span className="inline-flex items-center gap-2">
-                        {/* Roadmap Phase 4: lead a failure with what it appears
-                            to BE. A raw failure list is mostly noise — ~84% of
-                            pass->fail transitions involve a flaky test — and a
-                            verdict here is annotation, never suppression: the
-                            row renders identically with or without it. */}
-                        {attributionByTestCase[tc.id] && (
-                          <AttributionVerdictBadge
-                            attribution={attributionByTestCase[tc.id]}
-                            compact
-                          />
-                        )}
-                        {tc.failure_category && (
-                          <span className="text-xs text-[var(--color-text-muted)]">{tc.failure_category.replace('_', ' ')}</span>
-                        )}
-                        {tc.failure_kind && (tc.status === 'FAILED' || tc.status === 'BROKEN') && (
-                          <KindBadgeWithEvidence kind={tc.failure_kind} testCaseId={tc.id} compact />
-                        )}
-                      </span>
-                    </td>
-                    <td className="td text-[var(--color-text-faint)]">
-                      <ChevronRight className="h-4 w-4" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {data && <Pagination page={page} pages={data.pages} total={data.total} onChange={setPage} />}
-          </>
-        )}
-      </div>
+      {/* Each hosted body behind its own boundary: one section's bad answer
+          (a clusters payload that is not a list) must not take the header,
+          the tabs and the other sections down with it. */}
+      {runId && tab === 'analysis' && (
+        <SectionErrorBoundary message="The run's AI analysis failed to load">
+          <RunIntelligenceBody
+            runId={runId}
+            reportVersion={readReportVersion(searchParams)}
+            afterPrimary={
+              <SectionErrorBoundary message="The deep investigation failed to load">
+                <RunDeepClusters runId={runId} run={run ?? null} />
+              </SectionErrorBoundary>
+            }
+          />
+        </SectionErrorBoundary>
+      )}
+      {runId && tab === 'changes' && (
+        <SectionErrorBoundary message="The run's changes failed to load">
+          <RunChangesTab runId={runId} run={run} onCompareWithPrevious={handleCompareWithPrevious} />
+        </SectionErrorBoundary>
+      )}
+      {runId && tab === 'evidence' && (
+        <SectionErrorBoundary message="The run's evidence failed to load">
+          <RunEvidenceTab runId={runId} />
+        </SectionErrorBoundary>
+      )}
     </div>
   )
 }

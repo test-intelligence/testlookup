@@ -20,12 +20,17 @@ import { describe, expect, it } from 'vitest'
 
 import pageSource from './TestManagementPage.tsx?raw'
 
+// UX redesign P4 item 7: the page's tab bodies moved to `./test-management/`.
+const siblings = import.meta.glob<string>('./test-management/*.tsx', { query: '?raw', import: 'default', eager: true })
+
 // The exact families the `no-restricted-syntax` rule flags.
 const FLAGGED = /(text|bg|border)-(emerald|green|red|amber|yellow|orange|purple|blue)-\d{2,3}/
 
 describe('TestManagementPage palette-token ratchet (regression)', () => {
   it('has no raw palette classes the design-audit rule flags', () => {
     expect(pageSource).not.toMatch(FLAGGED)
+    expect(Object.keys(siblings).length).toBeGreaterThan(5)
+    for (const [path, src] of Object.entries(siblings)) expect(src, path).not.toMatch(FLAGGED)
   })
 
   it('renders status surfaces through per-theme status tokens', () => {

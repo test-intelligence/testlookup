@@ -99,8 +99,35 @@ describe('DecisionIntelligencePanel', () => {
     fireEvent.click(disclosure)
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByText(/Report checks: 1 passed, 0 failed/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Inspect evidence' }).getAttribute('href')).toBe('/deep-investigate/run-1')
+    // UX redesign P4: the run's Analysis tab, not `/deep-investigate/:id` (which only redirects there now).
+    expect(screen.getByRole('link', { name: 'Inspect evidence' }).getAttribute('href')).toBe('/runs/run-1?tab=analysis')
     expect(screen.getByRole('link', { name: 'Review policy and overrides' }).getAttribute('href')).toBe('/release-gate/run-1')
+  })
+
+  it('links a claim\'s artifact and metric evidence to the run\'s Analysis tab, never to a redirecting URL', () => {
+    renderPanel(report({
+      claims: [
+        {
+          claim_id: 'fact-1', kind: 'fact', text: '2 of 10 tests failed.', confidence: 1,
+          confidence_basis: 'Deterministic metric snapshot.',
+          evidence: [
+            { id: 'artifact-1', type: 'artifact', scope: { test_case_id: 'tc-9' } },
+            { id: 'metric-1', type: 'metric' },
+          ],
+          counter_evidence: [], source_stage: 'decision_report',
+        },
+      ],
+    }), passed, published, {
+      reportVersion: { report_id: 'report-2', report_version: 2, status: 'published', generated_at: '2026-08-12T19:00:00Z' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect evidence for fact-1' }))
+    expect(screen.getByRole('link', { name: 'Open source context' }).getAttribute('href'))
+      .toBe('/runs/run-1?report_id=report-2&report_version=2&test_case_id=tc-9&tab=analysis')
+    expect(screen.getByRole('link', { name: 'Open metric definition' }).getAttribute('href'))
+      .toBe('/runs/run-1?report_id=report-2&report_version=2&tab=analysis#decision-metrics')
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).not.toMatch(/\/deep-investigate\/|\/intelligence|\/agents\/run\//)
+    }
   })
 
   it('shows report-level quality evaluation status and unavailable metrics', () => {

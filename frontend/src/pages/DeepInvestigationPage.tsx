@@ -28,8 +28,8 @@
  * its own: the failures it counts are the focused run's (or, with no run
  * focused, the latest runs'), and `windowLabel` names exactly that.
  */
-import { useEffect, useMemo, useRef } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle, Bot, Clock, Database, DollarSign, FileText,
   GitBranch, KeyRound, Layers, Mail, MessageSquare, Play, Plug,
@@ -946,10 +946,17 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
 }
 
 // ── Proposed clusters preview ───────────────────────────────────────────
-function ProposedClustersCard({ model, focusedRunId }: { model: DeepModel; focusedRunId: string | null }) {
+function ProposedClustersCard({
+  model, focusedRunId, action,
+}: {
+  model: DeepModel
+  focusedRunId: string | null
+  /** A control beside the count (the Run page's "Analyze failures"). */
+  action?: React.ReactNode
+}) {
   if (model.proposedClusters.length === 0) {
     return (
-      <CardShell title="Proposed clusters" rightSlot={<span>0 candidates</span>}>
+      <CardShell title="Proposed clusters" rightSlot={<><span>0 candidates</span>{action}</>}>
         <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-secondary)]">
           Run analysis to discover clusters.
         </div>
@@ -969,7 +976,7 @@ function ProposedClustersCard({ model, focusedRunId }: { model: DeepModel; focus
           </span>
         </span>
       }
-      rightSlot={<span><strong className="text-[var(--color-text)] font-semibold">{model.proposedClusters.length}</strong> candidates · {model.eligibleFailures} failures grouped</span>}
+      rightSlot={<><span><strong className="text-[var(--color-text)] font-semibold">{model.proposedClusters.length}</strong> candidates · {model.eligibleFailures} failures grouped</span>{action}</>}
     >
       <div className="px-4 py-3.5 flex flex-col gap-2">
         {model.proposedClusters.map(c => (
@@ -1346,9 +1353,84 @@ function runInSuites(run: TestRun, suites: readonly string[]): boolean {
   return suites.some(name => own.some(value => suiteMatchesValue(value, name)))
 }
 
+// ── One run's clusters (the Run page's Analysis tab) ────────────────────
+/**
+ * One run's deep-investigation clusters and its "Analyze failures" trigger:
+ * the part of this page the Run page's Analysis tab hosts (UX redesign P4;
+ * `/deep-investigate/:runId` redirects there). The same proposed-cluster
+ * card as the page, scoped to that run; nothing project-wide (spend,
+ * evidence sources, recent runs) is asked for.
+ */
+export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | null }) {
+  const { isQaEngineer } = usePermissions()
+  const { data: clusters = [] } = useFailureClusters(runId)
+  const { data: findings = [] } = useDeepFindings(runId)
+  const { data: pipelineStatus = null, mutate: refreshStatus } = usePipelineStatus(runId, 'deep')
+  const [queuing, setQueuing] = useState(false)
+  const model = useMemo(
+    () => buildModel({
+      clusters, findings, pipelineStatus, recentRuns: run ? [run] : [], focusedRun: run,
+      evidenceSources: [], usage: undefined, quota: null, trail: undefined,
+    }),
+    [clusters, findings, pipelineStatus, run],
+  )
+  const running = isPipelineInProgress(pipelineStatus?.status)
+  const failures = (run?.failed_tests ?? 0) + (run?.broken_tests ?? 0)
+  const blocked = !isQaEngineer
+    ? 'QA Engineer role required'
+    : run && failures === 0
+      ? 'This run has no failures to analyze'
+      : running
+        ? 'An investigation of this run is already running'
+        : null
+
+  async function onAnalyze() {
+    setQueuing(true)
+    try {
+      await deepInvestigationService.triggerDeep(runId, 'deep')
+      toast.success('Deep analysis queued')
+      void refreshStatus()
+    } catch {
+      toast.error('Trigger failed')
+    } finally {
+      setQueuing(false)
+    }
+  }
+
+  return (
+    <section aria-label="Deep investigation" data-run-deep-clusters="">
+      <ProposedClustersCard
+        model={model}
+        focusedRunId={null}
+        action={
+          <>
+            {running && <span className="text-[var(--color-accent)]">investigation running</span>}
+            {pipelineStatus?.status === 'failed' && <span className="text-[var(--status-broken)]">last investigation failed</span>}
+            <PrimaryBtn
+              onClick={() => void onAnalyze()}
+              disabled={Boolean(blocked) || queuing}
+              title={blocked ?? 'Cluster this run\'s failures and find their root causes (deep investigation)'}
+            >
+              <Bot className="h-3.5 w-3.5" />
+              {queuing ? 'Queuing…' : 'Analyze failures'}
+            </PrimaryBtn>
+          </>
+        }
+      />
+    </section>
+  )
+}
+
+/** The landing page's focused run lives in `?run=` (`/deep-investigate/:runId` redirects to the Run page since P4). */
+const focusHref = (runId: string) => `/deep-investigate?run=${encodeURIComponent(runId)}`
+
 // ── Page ────────────────────────────────────────────────────────────────
 export default function DeepInvestigationPage() {
-  const { runId } = useParams<{ runId?: string }>()
+  // `:runId` only where a test mounts the page on the old path; in the app the
+  // page is `/deep-investigate` and the focused run is `?run=`.
+  const { runId: routeRunId } = useParams<{ runId?: string }>()
+  const [searchParams] = useSearchParams()
+  const runId = routeRunId ?? searchParams.get('run') ?? undefined
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1367,7 +1449,7 @@ export default function DeepInvestigationPage() {
   // from the prior page so deep links keep working.
   useEffect(() => {
     if (!runId && recentItems[0]?.id && !runsLoading && project) {
-      navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
+      navigate(focusHref(recentItems[0].id), { replace: true })
     }
   }, [runId, recentItems, runsLoading, project, navigate])
 
@@ -1410,7 +1492,7 @@ export default function DeepInvestigationPage() {
     suiteBaselineRef.current = suiteKey
     if (recentItems.some(r => r.id === runId)) return
     if (focusedRun && runInSuites(focusedRun, suiteNames)) return
-    navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
+    navigate(focusHref(recentItems[0].id), { replace: true })
   }, [suiteKey, suiteNames, pageSuiteFilter, runId, recentItems, focusedRun, runsLoading, runsValidating, focusedRunLoading, navigate])
 
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
@@ -1527,7 +1609,7 @@ export default function DeepInvestigationPage() {
       toast.error('Trigger failed')
     }
   }
-  const onOpenPastRun = (rid: string) => navigate(`/deep-investigate/${rid}`)
+  const onOpenPastRun = (rid: string) => navigate(focusHref(rid))
 
   return (
     <PageShell>

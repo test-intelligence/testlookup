@@ -49,6 +49,18 @@ function displayMetric(key: string, value: number): string {
   return key === 'pass_rate' ? `${value.toFixed(1)}%` : value.toLocaleString()
 }
 
+/**
+ * The run's Analysis tab (UX redesign P4), where Run Intelligence and Deep
+ * Investigation now live; `extra` query keys go before `tab`. These links
+ * used to point at `/runs/:id/intelligence` and `/deep-investigate/:id`,
+ * which only redirect there now.
+ */
+function runAnalysisHref(runId: string, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams(extra)
+  params.set('tab', 'analysis')
+  return `/runs/${encodeURIComponent(runId)}?${params.toString()}`
+}
+
 function formatTime(value: string | undefined): string {
   if (!value) return 'Unknown time'
   const date = new Date(value)
@@ -118,8 +130,8 @@ function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { 
               <span className="ml-2 text-[var(--color-text-muted)]">{text(item.kind, text(item.definition_version, 'reference'))}</span>
               {typeof item.excerpt === 'string' && item.excerpt && <p className="mb-0 mt-1 whitespace-pre-wrap">{item.excerpt}</p>}
               <span className="mt-1 block font-mono text-[10px] text-[var(--color-text-muted)]">{text(item.id, text(item.evidence_id, 'unidentified'))}</span>
-              {reportVersion && item.type === 'artifact' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={`/deep-investigate/${runId}?report_id=${encodeURIComponent(reportVersion.report_id)}&report_version=${reportVersion.report_version}&test_case_id=${encodeURIComponent(String((item.scope as Record<string, unknown> | undefined)?.test_case_id ?? ''))}`}>Open source context</Link>}
-              {reportVersion && item.type === 'metric' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={`/runs/${runId}/intelligence?report_id=${encodeURIComponent(reportVersion.report_id)}&report_version=${reportVersion.report_version}#decision-metrics`}>Open metric definition</Link>}
+              {reportVersion && item.type === 'artifact' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version), test_case_id: String((item.scope as Record<string, unknown> | undefined)?.test_case_id ?? '') })}>Open source context</Link>}
+              {reportVersion && item.type === 'metric' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={`${runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version) })}#decision-metrics`}>Open metric definition</Link>}
             </li>
           ))}
         </ul>
@@ -385,7 +397,7 @@ export default function DecisionIntelligencePanel({
             }
           </div>
           <div className="mt-3 flex flex-wrap gap-3 text-[12px]">
-            <Link className="text-[var(--color-accent)] hover:underline" to={`/deep-investigate/${runId}`}>Inspect evidence</Link>
+            <Link className="text-[var(--color-accent)] hover:underline" to={runAnalysisHref(runId)}>Inspect evidence</Link>
             <Link className="text-[var(--color-accent)] hover:underline" to={`/release-gate/${runId}`}>Review policy and overrides</Link>
           </div>
         </>

@@ -208,11 +208,16 @@ describe('TestCasesTab renders no stub controls', () => {
     expect(screen.queryByRole('button', { name: /View all/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Open strategy/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Audit log/i })).toBeNull()
-    // The real ones remain.
+    // The real ones remain. The former right rail is the Insights drawer
+    // (UX redesign P4 item 7), opened from the health banner.
     expect(screen.getByRole('button', { name: /Export/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'My drafts' })).toBeInTheDocument()
-    expect(screen.getByText(/Review queue/)).toBeInTheDocument()
-    expect(screen.getByText('Strategy gaps')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Insights/ }))
+    const insights = screen.getByRole('complementary', { name: 'Insights' })
+    expect(within(insights).getByText(/Review queue/)).toBeInTheDocument()
+    expect(within(insights).getByText('Strategy gaps')).toBeInTheDocument()
+    // The "Generate test cases" card folded into the AI Generate modal.
+    expect(screen.queryByText('Generate test cases')).toBeNull()
   })
 
   it('has no disabled Owner chip and never sends an owner filter', () => {

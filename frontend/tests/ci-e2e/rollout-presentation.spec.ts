@@ -226,8 +226,9 @@ const PAGES: RoutePage[] = [
     frames: 4,
   },
   {
+    // UX redesign P4 item 6: the gate's charts are its Context tab.
     name: 'Release gate',
-    path: `/release-gate/${RUN_ID}`,
+    path: `/release-gate/${RUN_ID}?tab=context`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),
     frames: 2,

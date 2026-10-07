@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase } from '@/types/test-management'
-import { ReviewsTab } from './TestManagementPage'
+// Moved with its code (UX redesign P4 item 7): the Reviews tab is Approvals.
+import ApprovalsTab from './ApprovalsTab'
 
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
@@ -40,7 +41,7 @@ function reviewCase(overrides: Partial<ManagedTestCase> = {}): ManagedTestCase {
   }
 }
 
-describe('ReviewsTab lifecycle queue', () => {
+describe('ApprovalsTab (was Reviews) lifecycle queue', () => {
   const mutateRequested = vi.fn().mockResolvedValue(undefined)
   const mutateClaimed = vi.fn().mockResolvedValue(undefined)
 
@@ -81,7 +82,7 @@ describe('ReviewsTab lifecycle queue', () => {
           mutate: mutateClaimed,
         })
 
-    render(<ReviewsTab projectId="project-1" lifecycleV2 />)
+    render(<ApprovalsTab projectId="project-1" lifecycleV2 />)
 
     expect(screen.getAllByText('Review sign in')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded completely')
@@ -93,7 +94,7 @@ describe('ReviewsTab lifecycle queue', () => {
   })
 
   it('fails closed on missing v2 allowed_actions', () => {
-    render(<ReviewsTab projectId="project-1" lifecycleV2 />)
+    render(<ApprovalsTab projectId="project-1" lifecycleV2 />)
 
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument()
@@ -101,7 +102,7 @@ describe('ReviewsTab lifecycle queue', () => {
 
   it('preserves the legacy review shim while requiring audit notes', async () => {
     ;(testManagementService.reviewAction as ReturnType<typeof vi.fn>).mockResolvedValue(reviewCase({ status: 'approved' }))
-    render(<ReviewsTab projectId="project-1" lifecycleV2={false} />)
+    render(<ApprovalsTab projectId="project-1" lifecycleV2={false} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Request changes' }))
     const dialog = screen.getByRole('dialog', { name: 'Request changes' })
@@ -140,7 +141,7 @@ describe('ReviewsTab lifecycle queue', () => {
       reviewCase({ status: 'draft', allowed_actions: ['request_review', 'deprecate'] }),
     )
     mutateClaimed.mockRejectedValue(new Error('refresh unavailable'))
-    render(<ReviewsTab projectId="project-1" lifecycleV2 />)
+    render(<ApprovalsTab projectId="project-1" lifecycleV2 />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Request changes' }))
     const dialog = screen.getByRole('dialog', { name: 'Request changes' })

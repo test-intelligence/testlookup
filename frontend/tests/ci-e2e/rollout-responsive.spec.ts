@@ -110,7 +110,8 @@ const PAGES: RoutePage[] = [
   },
   {
     name: 'Release gate',
-    path: `/release-gate/${RUN_ID}`,
+    // UX redesign P4 item 6: the gate's charts are its Context tab.
+    path: `/release-gate/${RUN_ID}?tab=context`,
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
     // Phase D S2: the Context group mounts unconditionally; the page asks no flag.
     handlers: releaseGateOn({ clusters: GATE_CLUSTERS }),

@@ -1,61 +1,56 @@
 /**
- * Run Intelligence — verdict-led redesign per
- * design_handoff_run_intelligence/README.md.
+ * Run Intelligence — the run's AI analysis.
  *
- * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (build / branch / completed time)
- *           + persona tabs (Executive / Developer / Manager, persisted in
- *             localStorage as `tl.runIntel.persona`)
- *           + Refresh / PDF / Evidence / Compare
- *           + View Test Cases primary CTA
- *           Share + Decision-Trail buttons were removed from the header per
- *           the updated README §5.1; Decision Trail is still reachable via
- *           the Provenance footer link (§5.11) and the per-failure action
- *           row in the What-failed card (§5.7).
- *   Verdict card  → 1.4fr | 1fr split. Left: pulsing dot eyebrow → 28 px
- *                   "<Gate> · <action>" headline → lede → blocker line →
- *                   gate-action buttons. Right: 44 px composite-risk score
- *                   + threshold-marked meter + 2×2 dimension grid.
- *   Pipeline ribbon → 9 equal columns, status icon (done/skipped/warn/run),
- *                     name, duration, and a 2 px progress track per stage.
- *   Body grid (1.6fr | 1fr on ≥1280 px, single column below)
- *     Left  → Test outcome (5-stat strip + result distribution bar) +
- *             What failed (failure cards with category pill + error block) +
- *             Recommended actions (role rows: dev / qa / rm / sre).
- *     Right → AI confidence (gaps + checks) + Failure category mix +
- *             Provenance footer with Decision-trail link.
+ * Since the UX redesign P4 the analysis lives on the Run page's **Analysis**
+ * tab (`/runs/:runId?tab=analysis`; `/runs/:runId/intelligence` redirects
+ * there). The body that tab hosts is exported from here as
+ * `RunIntelligenceBody`, in the page template's order:
  *
- * Not built (README §"Out of Scope"):
- *   - Mobile (<768 px) — shows a "wider screen" notice
- *   - Stage drawer — pipeline stages are display-only
- *   - Print styles — server-side PDF renderer handles export
- *   - i18n beyond key structure
+ *   StatusBanner → the release verdict in one line (gate · action, risk,
+ *                  blockers, AI confidence; "Decision trail" opens the drawer),
+ *                  its reasoning and first blocking issue under it.
+ *   What failed  → the PRIMARY content (`data-primary`): failure cards with
+ *                  criticality pill, error block and Open / Decision trail /
+ *                  File defect actions.
+ *   (slot)       → the host's own section (the Run page puts Deep
+ *                  Investigation's clusters here).
+ *   Disclosures  → "How this score is computed" (composite-risk meter +
+ *                  dimension grid) and "Evidence behind the verdict" (pipeline ribbon, test
+ *                  outcome, recommended actions, AI confidence, failure
+ *                  categories, step flips, provenance) — collapsed, so they
+ *                  draw nothing until opened.
  *
- * Data: a single useRunIntelligence(runId) call. Persona switching uses
- * useRunModeSummary for non-executive modes (lazy — hook is null for
- * Executive). Defect promotion still surfaces via the What-failed card
- * actions; Decision Trail wires to the existing drawer.
+ * `RunDecisionReport` (the verified decision report: claims, verification,
+ * report versions) is exported for the Run page's **Evidence** tab.
+ *
+ * The page component below (no longer routed; kept so the body has a
+ * standalone host and its tests a page) renders its own header, the decision
+ * report and the body. Removed in P4 (`02-design-spec.md` §5 "Run" row):
+ * the persona tabs and the placeholder category rows ("None detected this
+ * run" for categories the data never named).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Copy as CopyIcon,
   FileDown, GitCompare, Package, RefreshCw,
-  ShieldAlert, ShieldCheck, ShieldQuestion, Stethoscope,
-  TicketCheck, TriangleAlert, UserRound, Wrench, XCircle,
+  ShieldCheck, Stethoscope,
+  TicketCheck, UserRound, Wrench, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import Disclosure from '@/components/ui/Disclosure'
 import AISuggestion from '@/components/ai/AISuggestion'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import DecisionIntelligencePanel from '@/components/ai/DecisionIntelligencePanel'
 import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
-import { useDecisionReportVersions, useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
+import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -70,19 +65,15 @@ import type {
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { computeRunOutcome } from '@/utils/runOutcome'
 import GaugeBar from '@/components/charts/GaugeBar'
+import { downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
 
 // ── Types ───────────────────────────────────────────────────────────────────
-type Persona = 'executive' | 'developer' | 'manager'
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
-
-const PERSONA_KEY = 'tl.runIntel.persona'
 
 // ── Verdict theming ─────────────────────────────────────────────────────────
 const GATE_THEME: Record<Gate, {
-  border: string
-  glow: string
-  bar: string
-  eyebrow: string
+  /** The banner's state (its pill word and hue). */
+  banner: BannerState
   gate: string
   pillBg: string
   pillBd: string
@@ -90,13 +81,9 @@ const GATE_THEME: Record<Gate, {
   meter: string
   label: string
   action: string
-  Icon: typeof ShieldAlert
 }> = {
   GO: {
-    border: 'color-mix(in srgb, var(--status-passed) 35%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
-    bar:    'var(--gate-go)',
-    eyebrow:'var(--status-passed)',
+    banner: 'go',
     gate:   'var(--status-passed)',
     pillBg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
@@ -104,13 +91,9 @@ const GATE_THEME: Record<Gate, {
     meter:  'var(--status-passed)',
     label:  'Go',
     action: 'ship cleared',
-    Icon:   ShieldCheck,
   },
   CONDITIONAL_GO: {
-    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-glow), transparent 55%)',
-    bar:    'var(--gate-conditional)',
-    eyebrow:'var(--status-broken)',
+    banner: 'conditional',
     gate:   'var(--status-broken)',
     pillBg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',
     pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
@@ -118,13 +101,9 @@ const GATE_THEME: Record<Gate, {
     meter:  'var(--status-broken)',
     label:  'Conditional Go',
     action: 'proceed with mitigation',
-    Icon:   TriangleAlert,
   },
   NO_GO: {
-    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
-    bar:    'var(--gate-no-go)',
-    eyebrow:'var(--status-failed)',
+    banner: 'no_go',
     gate:   'var(--status-failed)',
     pillBg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',
     pillBd: 'var(--alert-border-soft)',
@@ -132,13 +111,9 @@ const GATE_THEME: Record<Gate, {
     meter:  'var(--status-failed)',
     label:  'No-Go',
     action: 'ship blocked',
-    Icon:   ShieldAlert,
   },
   PENDING: {
-    border: 'var(--color-border)',
-    glow:   'transparent',
-    bar:    'var(--color-border-light)',
-    eyebrow:'var(--color-text-muted)',
+    banner: 'pending',
     gate:   'var(--color-text-secondary)',
     pillBg: 'var(--color-bg-secondary)',
     pillBd: 'var(--color-border)',
@@ -146,7 +121,6 @@ const GATE_THEME: Record<Gate, {
     meter:  'var(--color-text-muted)',
     label:  'Pending',
     action: 'awaiting evidence',
-    Icon:   ShieldQuestion,
   },
 }
 
@@ -224,23 +198,17 @@ function alignStages(raw: PipelineStage[]): (PipelineStage | null)[] {
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
-// Per updated README §5.1, the header carries:
-//   Persona tabs · Refresh · PDF · Evidence · Compare · View Test Cases (CTA)
-// Share + Decision Trail were dropped from the header — Decision Trail is
-// still reachable via the Provenance footer link (§5.11) and the per-failure
-// action row in the What-failed card (§5.7).
+// The standalone page's header: Refresh · PDF · Evidence · Compare · View
+// Test Cases (CTA). (The persona tabs were removed in P4.) On the Run page
+// these actions live in its one PageHeader's overflow menu instead.
 function Header({
   run,
-  persona,
-  setPersona,
   onRefresh,
   onPdf,
   onEvidence,
   refreshing,
 }: {
   run: RunIntelligence['run']
-  persona: Persona
-  setPersona: (p: Persona) => void
   onRefresh: () => void
   onPdf: () => void
   onEvidence: () => void
@@ -269,7 +237,6 @@ function Header({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <PersonaTabs persona={persona} onChange={setPersona} />
         <GhostBtn onClick={onRefresh} disabled={refreshing} title="Re-fetch intelligence and refresh stage data">
           <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
           Refresh
@@ -322,47 +289,10 @@ function GhostBtn({
   )
 }
 
-function PersonaTabs({ persona, onChange }: { persona: Persona; onChange: (p: Persona) => void }) {
-  const items: { id: Persona; label: string }[] = [
-    { id: 'executive', label: 'Executive' },
-    { id: 'developer', label: 'Developer' },
-    { id: 'manager',   label: 'Manager' },
-  ]
-  return (
-    <div
-      role="tablist"
-      aria-label="Persona view"
-      className="flex items-center gap-0 p-0.5 rounded-md"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      {items.map(t => {
-        const active = persona === t.id
-        return (
-          <button
-            key={t.id}
-            role="tab"
-            type="button"
-            aria-selected={active}
-            onClick={() => onChange(t.id)}
-            className={clsx(
-              'px-3 py-1 text-[13px] font-medium rounded-sm transition-colors',
-              active
-                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {t.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Verdict card ────────────────────────────────────────────────────────────
-// Implementation lives in VerdictCardWithDimensions below; the standalone
-// VerdictCard scaffolded during the first pass was superseded once the
-// dimensions grid needed to share gate state with the meter.
+// ── Score breakdown (the "How this score is computed" disclosure) ──────────
+// The composite-risk meter and the dimension grid used to sit in a verdict
+// card above everything; the verdict itself is now the StatusBanner, and the
+// score's working moves below the primary content (P3 template, step 3).
 
 function RiskMeter({
   gate, score, pillBg, pillBd, pillFg, pillLabel, meterColor,
@@ -993,38 +923,25 @@ function CriticalityPill({ criticality }: { criticality: FailureClusterIntel['cr
 
 // ── Body: Recommended actions ──────────────────────────────────────────────
 // Per updated README §5.8:
-//   - Default order: Developer → QA → Release Manager → SRE.
-//   - Persona-driven re-emphasis: Executive moves Release Manager to slot 1
-//     (rest stay in default order); Developer + Manager keep the default.
+//   - Default order: Developer → QA → Release Manager → SRE. (The persona
+//     tabs that re-ordered it were removed in P4.)
 //   - Rows that have no copy in `roleActions` are rendered dimmed (60 %
 //     opacity) and locked, not hidden — the spec wants the read of "this
 //     role has nothing to do this run" to be explicit, not invisible.
 function RecommendedActionsCard({
   roleActions,
   ownerHints,
-  persona,
 }: {
   roleActions: Record<string, string>
   ownerHints?: Record<string, string>
-  persona: Persona
 }) {
   type Row = { id: string; label: string; tone: 'dev' | 'qa' | 'rm' | 'sre'; Icon: typeof Wrench }
-  const baseRows: Row[] = [
+  const orderedRows: Row[] = [
     { id: 'DEVELOPER',       label: 'Developer',       tone: 'dev', Icon: Wrench      },
     { id: 'QA',              label: 'QA',              tone: 'qa',  Icon: UserRound   },
     { id: 'RELEASE_MANAGER', label: 'Release Manager', tone: 'rm',  Icon: ShieldCheck },
     { id: 'SRE',             label: 'SRE',             tone: 'sre', Icon: Stethoscope },
   ]
-
-  // Executive view: Release Manager floats to the top, the rest preserve
-  // their default order. Developer + Manager keep the canonical order
-  // (default IS the Manager view; Developer is already first by default).
-  const orderedRows: Row[] = (() => {
-    if (persona !== 'executive') return baseRows
-    const rm  = baseRows.find(r => r.id === 'RELEASE_MANAGER')
-    const rest = baseRows.filter(r => r.id !== 'RELEASE_MANAGER')
-    return rm ? [rm, ...rest] : baseRows
-  })()
 
   // We render every canonical role even when the action prose is empty —
   // dimmed rows are intentional per §5.8 ("de-prioritized roles").
@@ -1053,8 +970,7 @@ function RecommendedActionsCard({
           const txt = roleActions[r.id]
           const owner = ownerHints?.[r.id]
           // Dim a row only when there's no action prose (de-prioritized
-          // role for this run). Persona controls *order*, not contrast —
-          // every role's row is fully legible in every persona.
+          // role for this run).
           const dim = !txt
           return (
             <RoleRow
@@ -1254,18 +1170,20 @@ function AIConfidenceCard({
 }
 
 // ── Body: Failure category ─────────────────────────────────────────────────
+// Only the categories the run's data names. Rows for categories it never
+// named ("Flaky / Infrastructure / Test data — None detected this run",
+// padded up to three) were placeholders and were removed in P4 (§5 "Run").
 function FailureCategoryCard({ breakdown }: { breakdown: Record<string, number> }) {
   const total = Object.values(breakdown).reduce((s, n) => s + n, 0)
   const presentEntries = Object.entries(breakdown).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
-  const placeholderEntries = ['flaky', 'infrastructure', 'test_data'].filter(c => !(c in breakdown) || (breakdown[c] ?? 0) === 0)
   return (
     <CardShell title="Failure category" rightSlot={<span>{total} total</span>}>
       <div className="p-3.5 flex flex-col gap-2">
+        {presentEntries.length === 0 && (
+          <p className="m-0 text-[12px] text-[var(--color-text-muted)]">No failure was categorised in this run.</p>
+        )}
         {presentEntries.map(([cat, count]) => (
           <CategoryRow key={cat} category={cat} count={count} totalAcrossAll={total} active />
-        ))}
-        {placeholderEntries.slice(0, 3 - presentEntries.length).map(c => (
-          <CategoryRow key={c} category={c} count={0} totalAcrossAll={total} active={false} />
         ))}
       </div>
     </CardShell>
@@ -1347,123 +1265,32 @@ function ProvenanceFooter({
   )
 }
 
-// ── Page ────────────────────────────────────────────────────────────────────
-export default function RunIntelligencePage() {
-  const { runId } = useParams<{ runId: string }>()
-  useProjectChangeRedirect('/intelligence', Boolean(runId))
+/// ── The verdict, derived ────────────────────────────────────────────────────
+interface Verdict {
+  gate: Gate
+  decision: ReleaseDecisionIntel | null
+  /** A verified (terminal) decision report backs the verdict. */
+  terminalBacked: boolean
+  lede?: string
+  affectedSuite?: string
+  dimensions: DimensionScore[]
+  /** The composite risk, rounded; null when the decision carries none. */
+  score: number | null
+}
 
-  const [searchParams, setSearchParams] = useSearchParams()
-  const requestedReportVersion = Number(searchParams.get('report_version'))
-  const selectedReportVersion = Number.isInteger(requestedReportVersion) && requestedReportVersion > 0
-    ? requestedReportVersion
-    : null
-  const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null, selectedReportVersion)
-  const { versions: decisionReportVersions } = useDecisionReportVersions(runId ?? null)
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-
-  // Auto-complete the "View Run Intelligence" onboarding step the first time
-  // intelligence loads for a real project. That step has no DB signal for
-  // `auto_detect_progress` to key off (opening a page leaves no row) and no
-  // other caller of `completeStep`, so without this it stays `pending` for
-  // ever and a self-hoster's setup wizard never reaches 100%. Idempotent and
-  // fire-and-forget server-side; keyed on the loaded flag + project so it runs
-  // once per open, not on every persona switch or refresh, and never with the
-  // synthetic "All Projects" id.
-  const intelligenceViewed = !isLoading && !isError && !!intelligence
-  useEffect(() => {
-    if (!intelligenceViewed) return
-    if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) return
-    void onboardingService.completeStep(activeProjectId, 'view_intelligence').catch(() => {})
-  }, [intelligenceViewed, activeProjectId])
-  const [persona, setPersona] = useState<Persona>(() => {
-    const saved = localStorage.getItem(PERSONA_KEY)
-    return saved === 'developer' || saved === 'manager' ? saved : 'executive'
-  })
-  useEffect(() => { localStorage.setItem(PERSONA_KEY, persona) }, [persona])
-
-  const [refreshing, setRefreshing] = useState(false)
-  const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
-  const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
-
-  // Fetch the persona-specific summary when not in Executive mode — drives
-  // the lede override in the verdict card. Hook is null for Executive so
-  // SWR doesn't fire.
-  const personaMode = persona === 'executive' ? 'executive' : persona
-  const { summary: personaSummary } = useRunModeSummary(
-    persona === 'executive' ? null : (runId ?? null),
-    personaMode,
-  )
-
-  async function handleRefresh() {
-    if (!runId) return
-    setRefreshing(true)
-    try {
-      const { runIntelligenceService } = await import('@/services/runIntelligenceService')
-      await runIntelligenceService.refreshIntelligence(runId)
-      await refresh()
-      toast.success('Intelligence refreshed')
-    } catch {
-      toast.error('Failed to refresh intelligence')
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  async function handlePdf() {
-    if (!intelligence?.run?.id) return
-    try {
-      const { downloadPdf } = await import('@/services/reportExportService')
-      await downloadPdf(intelligence.run.id, 'executive')
-    } catch {
-      toast.error('PDF export failed')
-    }
-  }
-
-  async function handleEvidence() {
-    if (!intelligence?.run?.id) return
-    try {
-      const { downloadEvidenceBundle } = await import('@/services/reportExportService')
-      await downloadEvidenceBundle(intelligence.run.id)
-    } catch {
-      toast.error('Bundle export failed')
-    }
-  }
-
-  if (isLoading) return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-  if (isError || !intelligence) {
-    return (
-      <EmptyState
-        icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
-        title="Failed to load Run Intelligence"
-        description="Could not fetch AI analysis data for this run."
-      />
-    )
-  }
-
-  const {
-    run, structured_summary, failure_clusters, category_breakdown,
-    affected_suites, release_decision, role_actions, pipeline_stages,
-    avg_confidence, what_changed_since_last_good_run, provenance,
-  } = intelligence
-
-  const confidencePct = Math.round((avg_confidence ?? 0) * (avg_confidence > 1 ? 1 : 100))
-  const evidenceCount = (structured_summary?.layer3_evidence?.data_sources_used?.length ?? 0)
-    + (structured_summary?.layer3_evidence?.top_stack_traces?.length ?? 0)
-    + (structured_summary?.layer3_evidence?.log_anomalies?.length ?? 0)
-  const toolCount = provenance?.tools_used_count ?? provenance?.sources_used?.length ?? 0
-  const llmUsed = !provenance?.fallback_used
-  const fallbackUsed = !!provenance?.fallback_used
-  const hasBaseline = !!what_changed_since_last_good_run
-
+/**
+ * The verdict one intelligence payload states. A verified decision report
+ * wins over the pipeline's own release decision; with a report envelope but
+ * no verified report there is no verdict (PENDING), never the legacy one.
+ */
+function deriveVerdict(intelligence: RunIntelligence): Verdict {
+  const { structured_summary, release_decision, failure_clusters, affected_suites } = intelligence
   const decisionReport = structured_summary?.decision_intelligence
-  const latestDecisionVerification = structured_summary?.decision_report_verification
-  const latestDecisionAttempt = structured_summary?.latest_decision_attempt
-  const decisionTrust = deriveDecisionTrustState(
-    decisionReport, latestDecisionVerification, latestDecisionAttempt,
-  )
+  const latestVerification = structured_summary?.decision_report_verification
+  const latestAttempt = structured_summary?.latest_decision_attempt
+  const decisionTrust = deriveDecisionTrustState(decisionReport, latestVerification, latestAttempt)
   const reportRelease = decisionTrust.displayReport?.release_decision
-  const retainedReleaseDecision: ReleaseDecisionIntel | null = decisionTrust.displayReport
-    && reportRelease?.recommendation
+  const retained: ReleaseDecisionIntel | null = decisionTrust.displayReport && reportRelease?.recommendation
     ? {
         recommendation: reportRelease.recommendation,
         risk_score: reportRelease.risk_score ?? reportRelease.composite_risk,
@@ -1473,136 +1300,261 @@ export default function RunIntelligencePage() {
         reasoning: reportRelease.reasoning ?? '',
       }
     : null
-  const hasDecisionReportEnvelope = Boolean(
-    decisionReport || latestDecisionVerification || latestDecisionAttempt,
+  const hasEnvelope = Boolean(decisionReport || latestVerification || latestAttempt)
+  const decision = retained ?? (hasEnvelope ? null : release_decision)
+  const terminalBacked = Boolean(decisionTrust.displayReport)
+  const rawScore = decision?.composite_risk ?? decision?.risk_score
+  return {
+    gate: gateOf(decision),
+    decision,
+    terminalBacked,
+    lede: terminalBacked
+      ? (decision?.reasoning || undefined)
+      : (decision?.reasoning ?? structured_summary?.executive_summary ?? undefined),
+    // Run-level dimensions approximated from the top cluster's scores.
+    affectedSuite: terminalBacked ? undefined : affected_suites[0]?.suite,
+    dimensions: terminalBacked ? [] : (failure_clusters[0]?.dimension_scores ?? []),
+    score: typeof rawScore === 'number' ? Math.round(rawScore) : null,
+  }
+}
+
+// ── Verdict banner (above the primary content) ─────────────────────────────
+// Hold / Override / Approve-with-conditions controls are not rendered: there
+// is no gate-decision endpoint to persist them, and a decision kept only in
+// this browser's localStorage is not a decision anyone else sees.
+function VerdictBanner({
+  verdict, confidencePct, onDecisionTrail,
+}: {
+  verdict: Verdict
+  confidencePct: number
+  onDecisionTrail: () => void
+}) {
+  const t = GATE_THEME[verdict.gate]
+  const blockers = verdict.decision?.blocking_issues ?? []
+  const facts: BannerFact[] = [
+    { label: 'Risk', value: verdict.gate === 'PENDING' || verdict.score === null ? '—' : `${verdict.score}/100` },
+    { label: 'Blocking issues', value: blockers.length },
+    { label: 'AI confidence', value: `${confidencePct}%` },
+  ]
+  const lede = verdict.lede
+    ?? (verdict.gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
+  return (
+    <section aria-label="Release verdict" aria-live="polite" className="space-y-1.5">
+      <StatusBanner
+        state={t.banner}
+        title={
+          <>
+            <span style={{ color: t.gate }}>{t.label}</span>
+            <span aria-hidden className="mx-1.5 text-[var(--color-text-muted)]">·</span>
+            <span>{t.action}</span>
+          </>
+        }
+        facts={facts}
+        action={{ label: 'Decision trail', onClick: onDecisionTrail }}
+      />
+      {lede && <p className="m-0 max-w-[90ch] px-1 text-[13px] text-[var(--color-text-secondary)]">{lede}</p>}
+      {blockers.length > 0 && (
+        <p className="m-0 flex items-center gap-2 px-1 text-[13px] text-[var(--color-text-secondary)]">
+          <XCircle aria-hidden className="h-4 w-4 flex-none text-[var(--status-failed)]" />
+          <span className="min-w-0">
+            <strong className="text-[var(--status-failed)]">Blocking</strong> · {blockers[0]}
+            {blockers.length > 1 && <span className="text-[var(--color-text-muted)]"> · +{blockers.length - 1} more</span>}
+          </span>
+          {verdict.affectedSuite && (
+            <span className="ml-auto text-[var(--color-text-muted)]">{verdict.affectedSuite} suite</span>
+          )}
+        </p>
+      )}
+    </section>
   )
-  const decisionForVerdict = retainedReleaseDecision
-    ?? (hasDecisionReportEnvelope ? null : release_decision)
+}
 
-  const terminalBackedVerdict = Boolean(decisionTrust.displayReport)
-  const ledeForPersona = terminalBackedVerdict
-    ? (decisionForVerdict?.reasoning || undefined)
-    : persona === 'executive'
-      ? (decisionForVerdict?.reasoning ?? structured_summary?.executive_summary ?? undefined)
-      : (personaSummary?.executive_summary ?? personaSummary?.layer1_executive ?? decisionForVerdict?.reasoning ?? undefined)
+// ── How this score is computed (a disclosure below the primary content) ────
+function ScoreBreakdown({ verdict }: { verdict: Verdict }) {
+  const t = GATE_THEME[verdict.gate]
+  return (
+    <div className="grid gap-6 md:grid-cols-2">
+      <RiskMeter
+        gate={verdict.gate}
+        score={verdict.score}
+        pillBg={t.pillBg}
+        pillBd={t.pillBd}
+        pillFg={t.pillFg}
+        pillLabel={t.label}
+        meterColor={t.meter}
+      />
+      <DimensionGrid scores={verdict.dimensions} fallback={null} />
+    </div>
+  )
+}
 
-  // Approximate the "dimensions grid" inputs from the per-cluster
-  // dimension scores (the first cluster carries the run-level dimensions).
-  const runDimensionScores: DimensionScore[] = failure_clusters[0]?.dimension_scores ?? []
+// ── The Analysis body ───────────────────────────────────────────────────────
+/**
+ * The run's AI analysis in the page template's order: the verdict banner,
+ * What failed (the primary content), the host's own section, then the score's
+ * working and the evidence, collapsed. The Run page's Analysis tab and the
+ * standalone page both render exactly this.
+ */
+export function RunIntelligenceBody({
+  runId,
+  reportVersion = null,
+  afterPrimary,
+}: {
+  runId: string
+  /** The decision report version (`?report_version=`); null reads the latest. */
+  reportVersion?: number | null
+  /** The host's own section, between What failed and the disclosures. */
+  afterPrimary?: ReactNode
+}) {
+  const { intelligence, isLoading, isError } = useRunIntelligence(runId, reportVersion)
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+
+  // Auto-complete the "View Run Intelligence" onboarding step the first time
+  // intelligence loads for a real project. That step has no DB signal for
+  // `auto_detect_progress` to key off (opening a page leaves no row) and no
+  // other caller of `completeStep`, so without this it stays `pending` for
+  // ever and a self-hoster's setup wizard never reaches 100%. Idempotent and
+  // fire-and-forget server-side; keyed on the loaded flag + project so it runs
+  // once per open, not on every refresh, and never with the synthetic "All
+  // Projects" id. (It lives in the body: opening the Run page's Analysis tab
+  // is what "viewing Run Intelligence" is now.)
+  const intelligenceViewed = !isLoading && !isError && !!intelligence
+  useEffect(() => {
+    if (!intelligenceViewed) return
+    if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) return
+    void onboardingService.completeStep(activeProjectId, 'view_intelligence').catch(() => {})
+  }, [intelligenceViewed, activeProjectId])
+
+  const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
+  const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
+        {afterPrimary}
+      </div>
+    )
+  }
+  if (isError || !intelligence) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
+          title="Failed to load Run Intelligence"
+          description="Could not fetch AI analysis data for this run."
+        />
+        {afterPrimary}
+      </div>
+    )
+  }
+
+  const {
+    run, structured_summary, failure_clusters, category_breakdown,
+    affected_suites, role_actions, pipeline_stages,
+    avg_confidence, what_changed_since_last_good_run, provenance,
+  } = intelligence
+
+  const verdict = deriveVerdict(intelligence)
+  const confidencePct = Math.round((avg_confidence ?? 0) * (avg_confidence > 1 ? 1 : 100))
+  const evidenceCount = (structured_summary?.layer3_evidence?.data_sources_used?.length ?? 0)
+    + (structured_summary?.layer3_evidence?.top_stack_traces?.length ?? 0)
+    + (structured_summary?.layer3_evidence?.log_anomalies?.length ?? 0)
+  const toolCount = provenance?.tools_used_count ?? provenance?.sources_used?.length ?? 0
+  const llmUsed = !provenance?.fallback_used
+  const fallbackUsed = !!provenance?.fallback_used
+  const hasBaseline = !!what_changed_since_last_good_run
 
   return (
-    <main
-      className="mx-auto"
-      style={{
-        maxWidth: 1600,
-        padding: '24px 28px 80px',
-      }}
-    >
-      <Header
-        run={run}
-        persona={persona}
-        setPersona={setPersona}
-        onRefresh={handleRefresh}
-        onPdf={handlePdf}
-        onEvidence={handleEvidence}
-        refreshing={refreshing}
+    <div className="space-y-4" data-run-analysis="">
+      <VerdictBanner
+        verdict={verdict}
+        confidencePct={confidencePct}
+        onDecisionTrail={() => setDecisionTrailOpen(true)}
       />
 
       {/* E8.5: the AI report's human-review status (E8.3 envelope). */}
-      <ReviewBanner envelope={intelligence} className="mb-4" />
+      <ReviewBanner envelope={intelligence} />
 
-      <DecisionIntelligencePanel
-        runId={run.id}
-        report={decisionReport}
-        latestVerification={latestDecisionVerification}
-        latestAttempt={latestDecisionAttempt}
-        reportVersion={structured_summary?.decision_report}
-        reportVersions={decisionReportVersions}
-        selectedReportVersion={selectedReportVersion}
-        onSelectReportVersion={(version) => {
-          const next = new URLSearchParams(searchParams)
-          if (version == null) next.delete('report_version')
-          else next.set('report_version', String(version))
-          setSearchParams(next)
-        }}
-      />
+      <section data-primary="" aria-label="What failed">
+        <WhatFailedCard
+          clusters={failure_clusters}
+          runId={run.id}
+          onPromote={(c) => setPromoteCluster(c)}
+          onDecisionTrail={() => setDecisionTrailOpen(true)}
+          aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
+          aggregateTotalTests={run.total_tests ?? 0}
+        />
+      </section>
 
-      {/* Verdict — risk meter + dimensions injected via custom variant since
-          DimensionGrid wasn't given the scores in the constructor (kept it
-          decoupled so multiple call-sites can pass different inputs). */}
-      <VerdictCardWithDimensions
-        decision={decisionForVerdict}
-        ledeOverride={ledeForPersona}
-        affectedSuite={terminalBackedVerdict ? undefined : affected_suites[0]?.suite}
-        dimensions={terminalBackedVerdict ? [] : runDimensionScores}
-      />
+      {afterPrimary}
 
-      <PipelineRibbon
-        stages={pipeline_stages}
-        confidencePct={confidencePct}
-        evidenceCount={evidenceCount}
-        toolCount={toolCount}
-        hasPerTestGap={
-          ((run.failed_tests ?? 0) + (run.broken_tests ?? 0)) > 0
-          && failure_clusters.length === 0
-        }
-      />
-
-      <section
-        className="grid gap-3.5"
-        style={{ gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)' }}
+      <Disclosure
+        title="How this score is computed"
+        summary={verdict.score === null || verdict.gate === 'PENDING' ? 'no composite risk' : `composite risk ${verdict.score} of 100`}
       >
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <TestOutcomeCard
-            run={run}
-            failureClusters={failure_clusters}
-            affectedSuites={affected_suites}
-            categoryBreakdown={category_breakdown}
-            // Read from the stage list rather than inferred from the workflow
-            // name: a pipeline reports the stages it actually executed, so this
-            // stays correct if clustering is ever added to another workflow.
-            clusteringRan={pipeline_stages.some((s) => s.stage_name === 'failure_clustering')}
-          />
-          <WhatFailedCard
-            clusters={failure_clusters}
-            runId={run.id}
-            onPromote={(c) => setPromoteCluster(c)}
-            onDecisionTrail={() => setDecisionTrailOpen(true)}
-            aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
-            aggregateTotalTests={run.total_tests ?? 0}
-          />
-          <RecommendedActionsCard
-            roleActions={role_actions}
-            ownerHints={structured_summary?.layer4_action_plan?.owner_hints}
-            persona={persona}
-          />
-        </div>
+        <ScoreBreakdown verdict={verdict} />
+      </Disclosure>
 
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <AIConfidenceCard
+      <Disclosure
+        title="Evidence behind the verdict"
+        summary={`${pipeline_stages.length} pipeline stage${pipeline_stages.length === 1 ? '' : 's'} · ${evidenceCount} evidence · ${toolCount} tool${toolCount === 1 ? '' : 's'}`}
+      >
+        <div className="flex flex-col gap-3.5">
+          <PipelineRibbon
+            stages={pipeline_stages}
             confidencePct={confidencePct}
             evidenceCount={evidenceCount}
             toolCount={toolCount}
-            hasBaseline={hasBaseline}
-            llmUsed={llmUsed}
-            fallbackUsed={fallbackUsed}
-            criticalityScored={failure_clusters.some((c) => c.criticality_level != null)}
-            riskAssessed={
-              pipeline_stages.some((s) => s.stage_name.toLowerCase() === 'release_risk' && stageStatus(s) === 'done')
-              || typeof decisionForVerdict?.composite_risk === 'number'
+            hasPerTestGap={
+              ((run.failed_tests ?? 0) + (run.broken_tests ?? 0)) > 0
+              && failure_clusters.length === 0
             }
-            generatedBy={provenance?.generated_by}
           />
-          <FailureCategoryCard breakdown={category_breakdown} />
-          <RunStepFlipCard runId={run.id} />
-          <ProvenanceFooter
-            evidenceCount={evidenceCount}
-            toolCount={toolCount}
-            schemaVersion={provenance?.schema_version}
-            onDecisionTrail={() => setDecisionTrailOpen(true)}
-          />
+          <div className="grid gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+            <div className="flex flex-col gap-3.5 min-w-0">
+              <TestOutcomeCard
+                run={run}
+                failureClusters={failure_clusters}
+                affectedSuites={affected_suites}
+                categoryBreakdown={category_breakdown}
+                // Read from the stage list rather than inferred from the workflow
+                // name: a pipeline reports the stages it actually executed, so this
+                // stays correct if clustering is ever added to another workflow.
+                clusteringRan={pipeline_stages.some((s) => s.stage_name === 'failure_clustering')}
+              />
+              <RecommendedActionsCard
+                roleActions={role_actions}
+                ownerHints={structured_summary?.layer4_action_plan?.owner_hints}
+              />
+            </div>
+            <div className="flex flex-col gap-3.5 min-w-0">
+              <AIConfidenceCard
+                confidencePct={confidencePct}
+                evidenceCount={evidenceCount}
+                toolCount={toolCount}
+                hasBaseline={hasBaseline}
+                llmUsed={llmUsed}
+                fallbackUsed={fallbackUsed}
+                criticalityScored={failure_clusters.some((c) => c.criticality_level != null)}
+                riskAssessed={
+                  pipeline_stages.some((s) => s.stage_name.toLowerCase() === 'release_risk' && stageStatus(s) === 'done')
+                  || typeof verdict.decision?.composite_risk === 'number'
+                }
+                generatedBy={provenance?.generated_by}
+              />
+              <FailureCategoryCard breakdown={category_breakdown} />
+              <RunStepFlipCard runId={run.id} />
+              <ProvenanceFooter
+                evidenceCount={evidenceCount}
+                toolCount={toolCount}
+                schemaVersion={provenance?.schema_version}
+                onDecisionTrail={() => setDecisionTrailOpen(true)}
+              />
+            </div>
+          </div>
         </div>
-      </section>
+      </Disclosure>
 
       <DecisionTrailDrawer
         runId={run.id}
@@ -1622,112 +1574,115 @@ export default function RunIntelligencePage() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ── The verified decision report ────────────────────────────────────────────
+/**
+ * The run's agentic decision report — facts, inferences, recommendations,
+ * their evidence, terminal verification and provenance — with its version
+ * picker (`?report_version=`). The Run page's Evidence tab; the top section
+ * of the standalone page. Renders nothing while the payload loads, and
+ * nothing when the run has no report envelope (the panel's own rule).
+ */
+export function RunDecisionReport({ runId }: { runId: string }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedReportVersion = readReportVersion(searchParams)
+  const { intelligence } = useRunIntelligence(runId, selectedReportVersion)
+  const { versions } = useDecisionReportVersions(runId)
+  if (!intelligence) return null
+  const summary = intelligence.structured_summary
+  return (
+    <DecisionIntelligencePanel
+      runId={runId}
+      report={summary?.decision_intelligence}
+      latestVerification={summary?.decision_report_verification}
+      latestAttempt={summary?.latest_decision_attempt}
+      reportVersion={summary?.decision_report}
+      reportVersions={versions}
+      selectedReportVersion={selectedReportVersion}
+      onSelectReportVersion={(version) => {
+        // Functional: the other keys (`tab`, the Tests filters) stay.
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current)
+          if (version == null) next.delete('report_version')
+          else next.set('report_version', String(version))
+          return next
+        })
+      }}
+    />
+  )
+}
+
+// ── Page ────────────────────────────────────────────────────────────────────
+/**
+ * The standalone host of the body (not routed since P4:
+ * `/runs/:runId/intelligence` redirects to the Run page's Analysis tab).
+ */
+export default function RunIntelligencePage() {
+  const { runId } = useParams<{ runId: string }>()
+  // `/intelligence` redirects to `/runs` since P4 (D2): go there directly.
+  useProjectChangeRedirect('/runs', Boolean(runId))
+
+  const [searchParams] = useSearchParams()
+  const selectedReportVersion = readReportVersion(searchParams)
+  const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null, selectedReportVersion)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    if (!runId) return
+    setRefreshing(true)
+    try {
+      const { runIntelligenceService } = await import('@/services/runIntelligenceService')
+      await runIntelligenceService.refreshIntelligence(runId)
+      await refresh()
+      toast.success('Intelligence refreshed')
+    } catch {
+      toast.error('Failed to refresh intelligence')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  if (isLoading) return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
+  if (isError || !intelligence) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
+        title="Failed to load Run Intelligence"
+        description="Could not fetch AI analysis data for this run."
+      />
+    )
+  }
+
+  const { run } = intelligence
+  return (
+    <main
+      className="mx-auto"
+      style={{
+        maxWidth: 1600,
+        padding: '24px 28px 80px',
+      }}
+    >
+      <Header
+        run={run}
+        onRefresh={handleRefresh}
+        onPdf={() => void downloadRunPdf(run.id)}
+        onEvidence={() => void downloadRunEvidenceBundle(run.id)}
+        refreshing={refreshing}
+      />
+
+      <div className="mb-4">
+        <RunDecisionReport runId={run.id} />
+      </div>
+
+      <RunIntelligenceBody runId={runId ?? run.id} reportVersion={selectedReportVersion} />
 
       {/* Narrow-viewport notice (no mobile layout is built) */}
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2">
         Wider screen needed for the full intelligence layout. Some sections may overflow on narrow viewports.
       </div>
     </main>
-  )
-}
-
-// ── Verdict + Dimensions composed (so the meter and grid share gate state) ─
-function VerdictCardWithDimensions({
-  decision, ledeOverride, affectedSuite, dimensions,
-}: {
-  decision: ReleaseDecisionIntel | null
-  ledeOverride?: string
-  affectedSuite?: string
-  dimensions: DimensionScore[]
-}) {
-  // Hold / Override / Approve-with-conditions controls are not rendered:
-  // there is no gate-decision endpoint to persist them, and a decision kept
-  // only in this browser's localStorage is not a decision anyone else sees.
-  const gate: Gate = gateOf(decision)
-  const t = GATE_THEME[gate]
-  const rawScore = decision?.composite_risk ?? decision?.risk_score
-  const score = typeof rawScore === 'number' ? Math.round(rawScore) : null
-  const blockerCount = decision?.blocking_issues?.length ?? 0
-  const lede = ledeOverride
-    ?? decision?.reasoning
-    ?? (gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
-
-  return (
-    <section
-      aria-live="polite"
-      className="relative rounded-xl border overflow-hidden"
-      style={{
-        background: `${t.glow}, var(--color-bg-card)`,
-        borderColor: t.border,
-        padding: '18px 20px',
-        marginBottom: 14,
-      }}
-    >
-      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
-
-      <div className="grid gap-6 verdict-grid" style={{ gridTemplateColumns: '1.4fr 1fr' }}>
-        <div className="min-w-0" style={{ paddingLeft: 4 }}>
-          <span
-            className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-            style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
-          >
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={{
-                background: t.bar,
-                animation: gate === 'CONDITIONAL_GO' || gate === 'NO_GO' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
-              }}
-              aria-hidden
-            />
-            Release readiness
-          </span>
-          <h2
-            className="font-bold m-0"
-            style={{ fontSize: 28, lineHeight: 1.1, letterSpacing: '-0.02em', margin: '6px 0 6px' }}
-          >
-            <span style={{ color: t.gate }}>{t.label}</span>
-            <span className="text-[var(--color-text-muted)] mx-2">·</span>
-            <span>{t.action}</span>
-          </h2>
-          {lede && (
-            <p className="text-[13px] m-0 mb-3 max-w-[60ch]" style={{ color: 'var(--color-text-secondary)' }}>
-              {lede}
-            </p>
-          )}
-
-          {blockerCount > 0 && (
-            <div
-              className="flex items-center gap-2.5 px-3 py-2.5 rounded-md mb-1"
-              style={{ background: 'var(--alert-bg-soft)', border: '1px solid var(--alert-border-soft)' }}
-            >
-              <XCircle className="h-[18px] w-[18px] flex-none" style={{ color: 'var(--status-failed)' }} />
-              <span className="text-[13px] text-[var(--color-text-secondary)]">
-                <strong style={{ color: 'var(--status-failed)' }}>
-                  {blockerCount} blocking issue{blockerCount === 1 ? '' : 's'}
-                </strong>
-                {decision?.blocking_issues?.[0] && <> · {decision.blocking_issues[0]}</>}
-              </span>
-              {affectedSuite && (
-                <span className="ml-auto text-[var(--color-text-muted)] text-[13px]">{affectedSuite} suite</span>
-              )}
-            </div>
-          )}
-
-        </div>
-
-        <div className="flex flex-col gap-3.5 py-1">
-          <RiskMeter
-            gate={gate}
-            score={score}
-            pillBg={t.pillBg}
-            pillBd={t.pillBd}
-            pillFg={t.pillFg}
-            pillLabel={t.label}
-            meterColor={t.meter}
-          />
-          <DimensionGrid scores={dimensions} fallback={null} />
-        </div>
-      </div>
-    </section>
   )
 }

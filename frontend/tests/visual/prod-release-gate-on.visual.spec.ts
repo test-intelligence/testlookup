@@ -20,8 +20,10 @@ import { GATE_CLUSTERS, GATE_CLUSTERS_7, releaseGateOn, RUN_ID } from './product
 // footer, the cluster frame ends at y = 2,408, past a 2,400 px viewport.
 test.use(PINNED_TALL)
 
+// UX redesign P4 item 6: the Context group is the gate's Context tab (below
+// the verdict card), opened here by its URL.
 async function openGate(page: Page, theme: Theme, clusters: readonly unknown[]) {
-  return openRollout(page, `/release-gate/${RUN_ID}`, {
+  return openRollout(page, `/release-gate/${RUN_ID}?tab=context`, {
     theme,
     handlers: releaseGateOn({ clusters }),
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),

@@ -102,7 +102,8 @@ describe('AIConfigPage — five other surfaces read the shared key', () => {
 })
 
 describe('TestManagementPage — the review headline is a different tm-cases roll', () => {
-  const src = source('TestManagementPage.tsx')
+  // UX redesign P4 item 7: the Reviews tab is the Approvals tab, in its own file.
+  const src = source('test-management/ApprovalsTab.tsx')
 
   it('mutateReviews refreshes every tm-cases key, not just its two queues', () => {
     expect(src).toContain('refreshTestCases()')

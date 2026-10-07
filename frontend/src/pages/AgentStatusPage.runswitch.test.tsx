@@ -224,6 +224,42 @@ describe('AgentStatusPage — switching the selected run', () => {
     })
   })
 
+  // UX redesign P4: `/agents/run/:runId` redirects to the Run page's Evidence
+  // tab, so a picker that navigated there would leave /agents. It keeps the
+  // run in `?run=` instead, and the page reads it back.
+  it('keeps the picked run in /agents?run= (the old /agents/run/:id now leaves the page)', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } =
+      await import('@/hooks/useAgentRuns')
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    mockPipelinesPerRun(usePipelines as ReturnType<typeof vi.fn>)
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, error: undefined })
+    // The app's routes since P4: the old path is a redirect away from /agents.
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+          <Route path="/agents/run/:runId" element={<div>left the page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    switchRunTo('run-2')
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-2-new')
+    })
+    expect(screen.queryByText('left the page')).toBeNull()
+    expect((screen.getByLabelText(/test suite/i) as HTMLSelectElement).value).toBe('run-2')
+  })
+
+  it('opens the run named by ?run= on a direct load', async () => {
+    const { usePipelineStages, useRunSummary } = await setup('/agents?run=run-1')
+    await waitFor(() => {
+      expect(lastArgOf(usePipelineStages as ReturnType<typeof vi.fn>)).toBe('pipe-1')
+    })
+    expect(lastArgOf(useRunSummary as ReturnType<typeof vi.fn>)).toBe('run-1')
+  })
+
   it('keeps an explicitly clicked pipeline selected over the auto-selected one', async () => {
     // Auto-selection must yield to the user. run-2 opens 'pipe-2-new'; clicking
     // the older card has to stick rather than being pulled back on re-render.

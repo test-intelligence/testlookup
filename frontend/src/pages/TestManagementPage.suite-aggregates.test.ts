@@ -27,9 +27,19 @@ describe('TestManagementPage — suite aggregate cells (regression)', () => {
     expect(pageSource).toMatch(/total_broken\?:\s*number/)
   })
 
-  it('renders a Trend → link to /coverage/suite', () => {
-    expect(pageSource).toMatch(/\/coverage\/suite\?name=/)
-    expect(pageSource).toMatch(/Trend/)
+  // UX redesign P4: the per-day trend is the suite page's Charts tab; the old
+  // name-keyed `/coverage/suite?name=` only redirects there now, so the link
+  // goes straight to `/suites/<id>?tab=charts` (comments excluded: prose may
+  // still name the old URL).
+  it('renders a Trend → link to the suite page’s Charts tab', () => {
+    const code = pageSource
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n')
+    expect(code).toMatch(/to=\{`\/suites\/\$\{suiteIdByName\.get\(suite\.suite_name\)\}\?tab=charts`\}/)
+    expect(code).toMatch(/Trend →/)
+    expect(code).not.toMatch(/\/coverage\/suite\?name=/)
   })
 
   it('renders the run_count cell when > 0', () => {
