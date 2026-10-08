@@ -689,6 +689,8 @@ jobs:
           tests/integration/test_run_seq_and_member_order_postgres.py
           tests/integration/test_test_run_index_row_size_postgres.py
           tests/integration/test_viz_seed_postgres.py
+          tests/integration/test_seeded_test_case_times_postgres.py
+          tests/integration/test_failures_headline_counts_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py
           tests/integration/test_analytics_envelope_postgres.py

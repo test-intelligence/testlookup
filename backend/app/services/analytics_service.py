@@ -150,7 +150,12 @@ async def flaky_tests(
     # to before this parameter existed (NFR1). VIZ-201: a sequence is OR.
     release_id: ReleaseArg = None,
 ) -> dict:
-    params: dict = {"period_start": _period_start(days), "limit": limit}
+    # No LIMIT in either query: ``limit`` is the length of the list, and
+    # ``total`` is the count of every flaky test. /failures read the list's
+    # length as the count -- "20 tests intermittent", "Flaky tests 20" -- for a
+    # project with 30 (browser E2E pass, 2026-10-08). The rows are one per
+    # flaky fingerprint, so the full set stays small.
+    params: dict = {"period_start": _period_start(days)}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
@@ -214,7 +219,6 @@ async def flaky_tests(
         -- statistics), so the list reshuffled between reloads and the golden
         -- characterisation flaked.
         ORDER BY failure_rate_pct DESC, suite_name, class_name, test_name, test_fingerprint
-        LIMIT :limit
         """,
         params,
     )
@@ -234,68 +238,69 @@ async def flaky_tests(
     # merged manual triage since 2026-05-18). Same tenant + suite scoping; auto
     # rows win on dedup (they carry a real ratio). ``source`` lets the UI render
     # manual entries distinctly; it's additive, so existing consumers are unchanged.
-    if len(items) < limit:
-        manual_params: dict = {
-            "period_start": _period_start(days),
-            "flaky_status": TriageStatus.FLAKY_TEST.value,
-            "limit": limit,
-        }
-        m_project_filter = _tenant_filter(
-            manual_params, project_id=project_id, allowed_project_ids=allowed_project_ids,
-        )
-        m_suite_filter = _add_suite_param(manual_params, suite_name)
-        # Scope the merge the same way as the auto-detected half above.
-        #
-        # This branch builds a FRESH params dict, so the `release_filter` from
-        # the top of the function is bound to the wrong one and the query had
-        # no filter at all. Under a release, /failures therefore listed
-        # release-scoped intermittents merged with human-triaged flakes from
-        # EVERY release, in one list, with `source` the only hint and nothing
-        # saying the two halves were scoped differently.
-        m_release_filter = _add_release_param(manual_params, release_id)
-        manual_query = scoped_text(
-            f"""
-            SELECT
-                tc.test_fingerprint,
-                MAX(tc.test_name)  AS test_name,
-                MAX(tc.suite_name) AS suite_name,
-                MAX(tc.class_name) AS class_name,
-                MAX(p.name)        AS project_name,
-                COUNT(*)           AS total_runs,
-                COUNT(*)           AS fail_count,
-                0                  AS pass_count,
-                -- 100.0 mirrors flaky-coach's 1.0 "human-flagged" marker (manual
-                -- triage has no measured ratio); ``source='manual'`` is the real
-                -- signal the UI keys on.
-                100.0              AS failure_rate_pct,
-                MAX(tc.triage_updated_at) AS last_seen
-            FROM test_cases tc
-            JOIN test_runs tr   ON tr.id = tc.test_run_id
-            LEFT JOIN projects p ON p.id = tr.project_id
-            WHERE tc.triage_status = :flaky_status
-              AND tc.triage_updated_at >= :period_start
-              AND tc.test_fingerprint IS NOT NULL
-              {m_project_filter}
-              {m_suite_filter}
-              {m_release_filter}
-            GROUP BY tc.test_fingerprint
-            ORDER BY last_seen DESC
-            LIMIT :limit
-            """,
-            manual_params,
-        )
-        for row in (await db.execute(manual_query, manual_params)).fetchall():
-            data = dict(row._mapping)
-            # Defensive: the SQL already filters NULL fingerprints, but never
-            # let a null/empty fingerprint through the Python merge either (it
-            # would dedup-collide and isn't routable to a test).
-            if not data["test_fingerprint"] or data["test_fingerprint"] in seen:
-                continue
-            seen.add(data["test_fingerprint"])
-            data["source"] = "manual"
-            items.append(data)
-            if len(items) >= limit:
-                break
+    #
+    # Always asked, even when the auto list alone fills ``limit``: a
+    # human-flagged flake the detector missed still counts toward ``total``.
+    manual_params: dict = {
+        "period_start": _period_start(days),
+        "flaky_status": TriageStatus.FLAKY_TEST.value,
+    }
+    m_project_filter = _tenant_filter(
+        manual_params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
+    m_suite_filter = _add_suite_param(manual_params, suite_name)
+    # Scope the merge the same way as the auto-detected half above.
+    #
+    # This branch builds a FRESH params dict, so the `release_filter` from
+    # the top of the function is bound to the wrong one and the query had
+    # no filter at all. Under a release, /failures therefore listed
+    # release-scoped intermittents merged with human-triaged flakes from
+    # EVERY release, in one list, with `source` the only hint and nothing
+    # saying the two halves were scoped differently.
+    m_release_filter = _add_release_param(manual_params, release_id)
+    manual_query = scoped_text(
+        f"""
+        SELECT
+            tc.test_fingerprint,
+            MAX(tc.test_name)  AS test_name,
+            MAX(tc.suite_name) AS suite_name,
+            MAX(tc.class_name) AS class_name,
+            MAX(p.name)        AS project_name,
+            COUNT(*)           AS total_runs,
+            COUNT(*)           AS fail_count,
+            0                  AS pass_count,
+            -- 100.0 mirrors flaky-coach's 1.0 "human-flagged" marker (manual
+            -- triage has no measured ratio); ``source='manual'`` is the real
+            -- signal the UI keys on.
+            100.0              AS failure_rate_pct,
+            MAX(tc.triage_updated_at) AS last_seen
+        FROM test_cases tc
+        JOIN test_runs tr   ON tr.id = tc.test_run_id
+        LEFT JOIN projects p ON p.id = tr.project_id
+        WHERE tc.triage_status = :flaky_status
+          AND tc.triage_updated_at >= :period_start
+          AND tc.test_fingerprint IS NOT NULL
+          {m_project_filter}
+          {m_suite_filter}
+          {m_release_filter}
+        GROUP BY tc.test_fingerprint
+        ORDER BY last_seen DESC
+        """,
+        manual_params,
+    )
+    for row in (await db.execute(manual_query, manual_params)).fetchall():
+        data = dict(row._mapping)
+        # Defensive: the SQL already filters NULL fingerprints, but never
+        # let a null/empty fingerprint through the Python merge either (it
+        # would dedup-collide and isn't routable to a test).
+        if not data["test_fingerprint"] or data["test_fingerprint"] in seen:
+            continue
+        seen.add(data["test_fingerprint"])
+        data["source"] = "manual"
+        items.append(data)
+
+    total = len(items)
+    items = items[:limit]
 
     # FLK-P4: attribute a likely cause to each listed flake from its
     # intermittency signals so /failures explains *why*, matching /flaky-coach.
@@ -304,7 +309,7 @@ async def flaky_tests(
         db, items, days=days, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
 
-    return {"items": items, "period_days": days, "total": len(items)}
+    return {"items": items, "period_days": days, "total": total}
 
 
 async def _attach_flaky_likely_cause(
@@ -486,7 +491,12 @@ async def top_failing_tests(
             MAX(tc.class_name)  AS class_name,
             MAX(tc.failure_category) AS failure_category,
             COUNT(*) AS fail_count,
-            MAX(tc.created_at)  AS last_failed
+            MAX(tc.created_at)  AS last_failed,
+            -- Over every failing test, before LIMIT: /failures read the
+            -- top-N list's length as "Repeat failures" (15, the default
+            -- limit, for a project with more; browser E2E pass, 2026-10-08).
+            COUNT(*) OVER () AS failing_total,
+            SUM(CASE WHEN COUNT(*) >= 2 THEN 1 ELSE 0 END) OVER () AS repeat_total
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
         WHERE tc.status IN ('FAILED', 'BROKEN')
@@ -506,6 +516,16 @@ async def top_failing_tests(
     )
     result = await db.execute(query, params)
     items = [dict(row._mapping) for row in result.fetchall()]
+    # The window totals ride on every row; a row without them (a stand-in
+    # result) counts what it has.
+    failing_total = len(items)
+    repeat_total = sum(1 for i in items if (i.get("fail_count") or 0) >= 2)
+    if items and items[0].get("failing_total") is not None:
+        failing_total = int(items[0]["failing_total"])
+        repeat_total = int(items[0].get("repeat_total") or 0)
+    for i in items:
+        i.pop("failing_total", None)
+        i.pop("repeat_total", None)
 
     # Derived failure kind (US-9.1). Category-only fidelity: this query
     # aggregates per fingerprint (no per-row status survives MAX()), so the
@@ -532,7 +552,13 @@ async def top_failing_tests(
         for i in items:
             i["failure_step"] = None
 
-    return {"items": items, "period_days": days}
+    return {
+        "items": items,
+        "period_days": days,
+        # Every failing test in the window, and those failing twice or more.
+        "total": failing_total,
+        "repeat_total": repeat_total,
+    }
 
 
 async def coverage_stats(

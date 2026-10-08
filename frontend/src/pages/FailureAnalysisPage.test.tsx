@@ -1630,3 +1630,76 @@ describe('FailureAnalysisPage — Wave 3', () => {
     })
   })
 })
+
+// ── The headline counts are the whole counts (browser E2E pass, 2026-10-08) ──
+//
+// The flaky list is a top 20 and top-failing a top 15; the page read their
+// lengths as its counts ("20 tests intermittent", "Repeat failures 15") on a
+// project with 30 flaky tests. And the repeat-failure headline said "<test>
+// broken in 3 of 3 runs": the failure count as its own denominator.
+
+describe('FailureAnalysisPage — the headline counts', () => {
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: 7 })
+  })
+
+  async function feed(flaky: unknown, top: unknown) {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: flaky, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: top, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-10-07', passed: 30, failed: 6, skipped: 0, broken: 0, pass_rate: 83 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+  }
+
+  it('states the totals, not the lengths of the listed tops', async () => {
+    await feed(
+      {
+        items: [
+          { test_fingerprint: 'f1', test_name: 'flake one', failure_rate_pct: 40, total_runs: 10, fail_count: 4, pass_count: 6 },
+          { test_fingerprint: 'f2', test_name: 'flake two', failure_rate_pct: 30, total_runs: 10, fail_count: 3, pass_count: 7 },
+        ],
+        total: 30,
+      },
+      {
+        items: [
+          { test_fingerprint: 'r1', test_name: 'repeat one', fail_count: 3 },
+          { test_fingerprint: 'r2', test_name: 'repeat two', fail_count: 2 },
+        ],
+        total: 40,
+        repeat_total: 17,
+      },
+    )
+    const kpis = screen.getByRole('region', { name: 'Failure metrics' })
+    expect(kpis).toHaveTextContent(/Flaky tests\s*30/)
+    expect(kpis).toHaveTextContent(/Repeat failures\s*17/)
+    expect(screen.getByRole('region', { name: 'Failure verdict' })).toHaveTextContent('30 tests intermittent')
+  })
+
+  it('falls back to the lists when an older server sends no totals', async () => {
+    await feed(
+      { items: [{ test_fingerprint: 'f1', test_name: 'flake one', failure_rate_pct: 40, total_runs: 10, fail_count: 4, pass_count: 6 }] },
+      { items: [{ test_fingerprint: 'r1', test_name: 'repeat one', fail_count: 3 }] },
+    )
+    const kpis = screen.getByRole('region', { name: 'Failure metrics' })
+    expect(kpis).toHaveTextContent(/Flaky tests\s*1(?!\d)/)
+    expect(kpis).toHaveTextContent(/Repeat failures\s*1(?!\d)/)
+  })
+
+  it('a repeat failure says how often it failed, not "N of N runs"', async () => {
+    await feed(
+      { items: [], total: 0 },
+      { items: [{ test_fingerprint: 'r1', test_name: 'test_checkout', fail_count: 3 }], total: 1, repeat_total: 1 },
+    )
+    const banner = screen.getByRole('region', { name: 'Failure verdict' })
+    expect(banner).toHaveTextContent('test_checkout failed 3 times in 7 days')
+    expect(banner).not.toHaveTextContent(/of 3 runs/)
+  })
+})

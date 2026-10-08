@@ -404,6 +404,25 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(list.contains(panel)).toBe(false)
   })
 
+  it('"active" counts planning and in progress, not released or cancelled (browser E2E pass)', async () => {
+    const { useReleases } = await import('@/hooks/useReleases')
+    ;(useReleases as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          RELEASE, // in progress
+          OTHER, // planning
+          { ...RELEASE, id: 'release-3', name: 'Checkout 2.4', version: '2.4.0', status: 'released' },
+          { ...RELEASE, id: 'release-4', name: 'Checkout 2.3', version: '2.3.0', status: 'cancelled' },
+        ],
+      },
+      isLoading: false,
+      mutate: vi.fn(),
+    })
+    renderAt('/releases')
+    // It said "4 active" over one released and one cancelled release.
+    expect(screen.getByText(/^2 active across .* · 1 in progress · \d+ blocked$/)).toBeInTheDocument()
+  })
+
   it('a release with no pass rate yet reads "—", never "—%" (browser E2E pass)', async () => {
     const { useRelease } = await import('@/hooks/useReleases')
     ;(useRelease as ReturnType<typeof vi.fn>).mockImplementation((id: string | null) => ({

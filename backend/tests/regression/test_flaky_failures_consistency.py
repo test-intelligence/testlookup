@@ -100,25 +100,34 @@ async def test_auto_detection_wins_dedup_over_manual_for_same_fingerprint():
 
 
 @pytest.mark.asyncio
-async def test_manual_query_skipped_when_auto_already_fills_limit():
-    """If the auto detector already returns ``limit`` rows there's no room (and
-    no need) for manual rows — the second query must not run."""
+async def test_a_full_auto_list_still_counts_the_manual_flakes():
+    """The auto detector filling ``limit`` used to skip the manual query: no
+    room in the list. But ``total`` is the count /failures states ("N tests
+    intermittent"), and it read the list's length -- 20, the default limit,
+    for a project with 30 (browser E2E pass, 2026-10-08). The manual query
+    runs, and the human-flagged flake counts, though the list has no room."""
     auto = [_row(test_fingerprint="A", test_name="a", suite_name="s",
                  class_name="C", project_name="p", total_runs=10, fail_count=3,
                  pass_count=7, failure_rate_pct=30.0, last_seen=None)]
-    db = AsyncMock()
-    # auto query, then the FLK-P4 enrichment query — but NOT the manual query.
-    db.execute = AsyncMock(side_effect=[_Result(auto), _Result([])])
+    manual = [_row(test_fingerprint="M", test_name="m", suite_name="s",
+                   class_name="C", project_name="p", total_runs=2, fail_count=2,
+                   pass_count=0, failure_rate_pct=100.0, last_seen=None)]
+    db = _db(auto, manual)
     out = await analytics_service.flaky_tests(db, "proj", 30, 1)  # limit == 1
 
-    assert len(out["items"]) == 1
-    # 2 calls = auto + likely-cause enrichment; the manual query (a 3rd call
-    # carrying ``flaky_status``) is never issued.
-    assert db.execute.await_count == 2
-    assert all(
-        "flaky_status" not in (call.args[1] if len(call.args) > 1 else {})
-        for call in db.execute.await_args_list
-    )
+    assert [i["test_fingerprint"] for i in out["items"]] == ["A"]
+    assert out["total"] == 2
+    assert "flaky_status" in db.execute.await_args_list[1].args[1]
+
+
+@pytest.mark.asyncio
+async def test_neither_query_is_limited_in_sql():
+    """The count needs every row: ``limit`` slices the merged list in Python."""
+    db = _db([], [])
+    await analytics_service.flaky_tests(db, "proj", 30, 5)
+    for call in db.execute.await_args_list[:2]:
+        assert "LIMIT" not in str(call.args[0]).upper()
+        assert "limit" not in call.args[1]
 
 
 @pytest.mark.asyncio
@@ -196,3 +205,5 @@ async def test_merged_results_respect_the_limit():
     out = await analytics_service.flaky_tests(_db(auto, manual), "proj", 30, 3)
     assert len(out["items"]) == 3
     assert [i["source"] for i in out["items"]] == ["auto", "auto", "manual"]
+    # The list is capped; the count is not.
+    assert out["total"] == 7

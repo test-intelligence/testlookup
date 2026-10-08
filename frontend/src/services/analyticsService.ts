@@ -37,7 +37,8 @@ export const analyticsService = {
     suiteName?: ScopeValue,
     releaseId?: ScopeValue,
   ) =>
-    getData<{ items: FlakyTestItem[] }>('/api/v1/analytics/flaky-tests', {
+    // `total` counts every flaky test; `items` is the top of the list.
+    getData<{ items: FlakyTestItem[]; total?: number }>('/api/v1/analytics/flaky-tests', {
       params: {
         ...projectParam(projectId),
         days,
@@ -67,7 +68,9 @@ export const analyticsService = {
     suiteName?: ScopeValue,
     releaseId?: ScopeValue,
   ) =>
-    getData<{ items: TopFailingItem[] }>('/api/v1/analytics/top-failing', {
+    // `total` counts every failing test, `repeat_total` those failing twice or
+    // more; `items` is the top of the list.
+    getData<{ items: TopFailingItem[]; total?: number; repeat_total?: number }>('/api/v1/analytics/top-failing', {
       params: {
         ...projectParam(projectId),
         days,

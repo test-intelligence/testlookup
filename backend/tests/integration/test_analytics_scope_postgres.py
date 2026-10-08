@@ -322,8 +322,21 @@ def _without_meta(characterised: dict) -> dict:
         if case["status"] == 200 and isinstance(body, dict) and "content_type" not in body:
             assert isinstance(body.get("meta"), dict), f"{key}: no meta envelope"
             body = {k: v for k, v in body.items() if k != "meta"}
+            if key.startswith("top_failing/"):
+                body = _without_top_failing_totals(key, body)
         out[key] = {"status": case["status"], "body": body}
     return out
+
+
+def _without_top_failing_totals(key: str, body: dict) -> dict:
+    """2026-10-08 adds ``total`` and ``repeat_total`` to top-failing (the whole
+    count beside the top-N list; /failures had read the list's length as its
+    count) and changes nothing else: set them aside, checking they add up."""
+    total, repeat_total = body.get("total"), body.get("repeat_total")
+    assert isinstance(total, int) and isinstance(repeat_total, int), f"{key}: no totals"
+    assert len(body["items"]) <= total, key
+    assert sum(1 for i in body["items"] if i["fail_count"] >= 2) <= repeat_total <= total, key
+    return {k: v for k, v in body.items() if k not in ("total", "repeat_total")}
 
 
 def _leaf_diffs(expected, actual, path: str = "", out: list | None = None, cap: int = 12) -> list[str]:

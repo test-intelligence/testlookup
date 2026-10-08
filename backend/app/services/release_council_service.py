@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.postgres import (
     Defect,
     FailureCluster,
+    LaunchStatus,
     ReleaseDecision,
     TestRun,
 )
@@ -285,6 +286,59 @@ def _quick_look_conditions(
     return conditions
 
 
+def _unmeasured_quick_look(
+    run_id: uuid.UUID, run: TestRun, *, in_progress: bool
+) -> ReleaseCouncilResponse:
+    """The quick look for a run with nothing to grade yet.
+
+    No pass rate is not a 0% pass rate. A run still in progress has none yet,
+    and a finished run that reported no passed or failed tests has nothing to
+    measure. Graded as 0.0, both came back NO_GO with "Raise pass rate to at
+    least 90.0% (currently 0.0%)" and the NO-GO floor note, and /release-gate
+    opens the project's newest run, often one still running (the UX redesign's
+    browser E2E pass, 2026-10-08: a run at 10 passed, 1 failed so far).
+
+    Nothing is graded here: no pass rate and no dimension scores, so the page
+    shows its pending state ("No test evidence yet"). The value stays NO_GO,
+    so a consumer gating on it still fails closed.
+    """
+    why = (
+        "the run is still in progress, so it has no pass rate yet"
+        if in_progress
+        else "the run reported no passed or failed tests, so there is no pass rate to grade"
+    )
+    return ReleaseCouncilResponse(
+        run_id=str(run_id),
+        recommendation="NO_GO",
+        risk_score=0,
+        composite_risk=None,
+        dimension_scores=[],
+        blocking_issues=[],
+        conditions_for_go=[
+            "Wait for the run to finish: it is still in progress."
+            if in_progress
+            else "Re-run with tests that pass or fail: this run measured none."
+        ],
+        reasoning=f"Not graded: {why}.",
+        score_model_version=SCORE_MODEL_VERSION,
+        input_snapshot={
+            "synthesized": True,
+            "pass_rate": None,
+            "verdict_driver": "in_progress" if in_progress else "no_pass_rate",
+        },
+        cluster_insights=[],
+        baseline_diff=None,
+        open_defects_by_component=[],
+        human_override=None,
+        override_audit=[],
+        pass_rate=None,
+        build_number=run.build_number,
+        policy_level="hardcoded",
+        rule_evaluations=[],
+        synthesized=True,
+    )
+
+
 async def _synthesize_release_council(
     run_id: uuid.UUID,
     db: AsyncSession,
@@ -320,6 +374,11 @@ async def _synthesize_release_council(
     if run is None:
         return None
 
+    status = getattr(run, "status", None)
+    in_progress = str(getattr(status, "value", status) or "").upper() == LaunchStatus.IN_PROGRESS.value
+    if in_progress or run.pass_rate is None:
+        return _unmeasured_quick_look(run_id, run, in_progress=in_progress)
+
     # Count open defects scoped to the run's project — same input the
     # real agent uses; cheap one-query lookup.
     open_defects = 0
@@ -332,7 +391,7 @@ async def _synthesize_release_council(
             )).scalar_one() or 0
         )
 
-    pass_rate = float(run.pass_rate or 0.0)
+    pass_rate = float(run.pass_rate)
     threshold = float(settings.RELEASE_PASS_RATE_THRESHOLD)
 
     # With no per-test analyses available (those are produced by the
