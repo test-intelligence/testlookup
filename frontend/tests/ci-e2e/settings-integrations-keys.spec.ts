@@ -154,7 +154,7 @@ test('Streaming API keys: the project\'s keys, current in the sub-nav, linking t
   // P5 integration: the keys a person owns have their own Account page.
   await expect(page).toHaveURL(/\/settings\/my-api-keys$/)
   await expect(page.getByRole('heading', { level: 1, name: 'My API keys' })).toBeVisible()
-  await expect(page.getByRole('cell', { name: 'my-laptop-script' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'my-laptop-script', exact: true })).toBeVisible()
   await expect(page.locator('[data-settings-item="my-api-keys"]')).toHaveAttribute('aria-current', 'page')
   // The user's own keys are asked for without a project.
   expect(keysAsked).toContain(null)
