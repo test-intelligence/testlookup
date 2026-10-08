@@ -435,10 +435,21 @@ export default function PolicyEditorPage() {
                   className={FIELD} disabled={!isDraft} />
               </div>
               <div>
-                <label htmlFor="policy-project" className={LABEL}>Project ID</label>
-                <input id="policy-project" placeholder="Project ID (empty = system default)" value={projectId || ''}
+                {/* A project picker: it was a free-text "Project ID" a person
+                    had to paste a UUID into (browser E2E pass, 2026-10-08). A
+                    policy on a project not in the list keeps its own option. */}
+                <label htmlFor="policy-project" className={LABEL}>Project</label>
+                <select id="policy-project" value={projectId || ''}
                   onChange={e => setProjectId(e.target.value || null)}
-                  className={FIELD} disabled={!isDraft} />
+                  className={FIELD} disabled={!isDraft}>
+                  <option value="">System default (every project)</option>
+                  {projectId && !projects.some(project => project.id === projectId) && (
+                    <option value={projectId}>{projectLabel(projectId)}</option>
+                  )}
+                  {projects.map(project => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
                 <p className={HINT}>{scope}</p>
               </div>
             </div>

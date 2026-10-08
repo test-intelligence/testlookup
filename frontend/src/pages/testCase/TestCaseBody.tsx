@@ -68,6 +68,10 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
   const errorMessage = execution?.error?.message ?? execution?.error_message ?? tc.error_message ?? null
   const stackTrace = execution?.error?.trace ?? execution?.stack_trace ?? null
   const tags = tc.tags?.length ? tc.tags : (detail.classification?.tags ?? [])
+  // Attachments stored with this result: the test's own and its steps'. The
+  // Steps tab lists them.
+  const storedAttachments = (detail.attachments?.length ?? 0)
+    + (detail.steps ?? []).reduce((n, step) => n + (step.attachments?.length ?? 0), 0)
   const tabs: TabItem<TabId>[] = [
     { id: 'history', label: 'History' },
     // The reporter's own step count, when it sent one; no count is not 0.
@@ -118,11 +122,20 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
             content={stackTrace ?? errorMessage ?? undefined}
             title={stackTrace ? 'Stack trace' : 'Error message'}
           />
-          {tc.has_attachments && (
-            <p className="text-xs text-[var(--color-text-muted)]">
-              📎 Attachments available — open via Allure report link
+          {/* It said "open via Allure report link", and no such link exists
+              anywhere in the app (browser E2E pass, 2026-10-08). */}
+          {storedAttachments > 0 ? (
+            <p data-test-case-attachments="" className="text-xs text-[var(--color-text-muted)]">
+              📎 {storedAttachments} attachment{storedAttachments === 1 ? '' : 's'},{' '}
+              <button type="button" onClick={() => setTab('steps')} className="text-[var(--color-accent)] hover:underline">
+                in the Steps tab
+              </button>
             </p>
-          )}
+          ) : tc.has_attachments ? (
+            <p data-test-case-attachments="" className="text-xs text-[var(--color-text-muted)]">
+              📎 Its report listed attachments; none were stored with this result.
+            </p>
+          ) : null}
         </div>
 
         <div className="min-w-0 space-y-2">

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased - Fixes: a dead-end attachments pointer, and a UUID field for a project
+
+Found by browser end-to-end testing on a local stack.
+
+- **Test case attachments.** A failed test whose report listed attachments
+  read "📎 Attachments available — open via Allure report link", and no such
+  link exists anywhere in the app. Now the notice says what is true:
+  - When attachments are stored with the result, it gives their count, with
+    a button to the Steps tab that lists them.
+  - When the report listed attachments but none were stored, it says so.
+- **Gate policy project.** A new release-gate policy took its project as a
+  free-text "Project ID" that needed a pasted UUID. It is now a list of
+  projects, with the system default (every project) first. A policy on a
+  project the viewer cannot see keeps its own entry.
+
 ## Unreleased - Fix: Live's session outcomes read "0.0%" with no result
 
 Found by browser end-to-end testing on a local stack.
