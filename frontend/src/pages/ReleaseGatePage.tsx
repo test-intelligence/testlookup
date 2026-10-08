@@ -26,6 +26,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { isRunInProgress } from '@/utils/runPassRate'
 import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
 import { GateContextPending } from '@/components/reports/catalogue/GateContextHeader'
@@ -151,12 +152,16 @@ export default function ReleaseGatePage() {
 
   useProjectChangeRedirect('/release-gate', Boolean(runId))
 
-  const { data: recentRunsData } = useRuns({ page: 1, size: isAllProjects ? 10 : 1 })
+  const { data: recentRunsData } = useRuns({ page: 1, size: 10 })
 
   useEffect(() => {
-    if (!runId && !isAllProjects && recentRunsData?.items?.[0]?.id) {
-      navigate(`/release-gate/${recentRunsData.items[0].id}`, { replace: true })
-    }
+    if (runId || isAllProjects) return
+    const recent = recentRunsData?.items ?? []
+    // The newest FINISHED run: the newest is often still running, and a run in
+    // flight has nothing to grade (browser E2E pass: the gate opened on one at
+    // "NO GO, pass rate 0.0%"). All of them running: the newest, which waits.
+    const target = recent.find(run => !isRunInProgress(run.status)) ?? recent[0]
+    if (target?.id) navigate(`/release-gate/${target.id}`, { replace: true })
   }, [runId, isAllProjects, recentRunsData, navigate])
 
   // All Projects overview

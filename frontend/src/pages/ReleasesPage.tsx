@@ -869,12 +869,13 @@ export default function ReleasesPage() {
           compact
           title="Releases"
           helpTopic={helpTopicParam('/releases')}
+          // Active: planning or in progress. It counted every release, the
+          // released and cancelled ones too ("11 active" over 4 released and 2
+          // cancelled), and the ternary bound the "· in progress · blocked"
+          // tail to its last branch only (browser E2E pass, 2026-10-08).
           subtitle={
-            releaseId
-              ? `${stageCounts.all} active across ${scopeName}`
-              : isAllProjects
-                ? `${stageCounts.all} active across all projects`
-                : `${stageCounts.all} active across ${scopeName}`
+            `${stageCounts.planning + stageCounts.in_progress} active across `
+            + `${isAllProjects && !releaseId ? 'all projects' : scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
           actions={!isAllProjects && !releaseId ? (

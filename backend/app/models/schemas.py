@@ -2264,7 +2264,8 @@ class ManagedTestCaseResponse(BaseModel):
     # Automation-backed rows carry execution metadata from their latest run.
     # These fields let Test Management show the same source owner as the run
     # detail and open the complete rich-detail page instead of a lossy catalog
-    # side panel. They remain null for authored managed_test_cases rows.
+    # side panel. The run fields remain null for authored managed_test_cases
+    # rows; their ``owner`` is the display name of the assignee, else the author.
     owner: Optional[str] = None
     latest_run_id: Optional[uuid.UUID] = None
     latest_test_case_id: Optional[uuid.UUID] = None

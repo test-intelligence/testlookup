@@ -73,7 +73,9 @@ const releaseQuery = (ids: readonly string[]) =>
 const inventoryOn = (ids: readonly string[] | null) => [
   ...SHELL_BASE,
   `GET /api/v1/release-readiness/${RUN_ID}`,
-  `GET /api/v1/runs?project_id=${P}&page=1&size=1`,
+  // Ten, not one: with no run named, the gate opens the newest FINISHED run
+  // of these (the newest is often still running; browser E2E pass).
+  `GET /api/v1/runs?project_id=${P}&page=1&size=10`,
   'GET /api/v1/settings/ai/mode',
   `GET /api/v1/runs/${RUN_ID}`,
   ...(ids ? [`GET ${CHART_DATA_PATH}?${releaseQuery(ids)}`] : []),

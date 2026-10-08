@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased - Fixes: counts that were list lengths, and a gate that graded unfinished runs
+
+Found by browser end-to-end testing on a local stack.
+
+- **Release gate graded an unfinished run as 0%.** The gate opens the
+  project's newest run, often one still running. Its pass rate is empty until
+  it finishes, and the gate read empty as 0%: "NO GO, pass rate 0.0%, raise it
+  to at least 90% (currently 0.0%)" for a run at 10 passed, 1 failed so far.
+  - A run in progress, or one that measured no tests, is no longer graded.
+    The page shows its pending state with "Wait for the run to finish". The
+    value stays NO_GO, so a CI check that gates on it still fails closed.
+  - `/release-gate` opens the newest finished run.
+- **/failures counted list lengths.** "Flaky tests", "N tests intermittent"
+  and "Repeat failures" were the lengths of a top-20 and a top-15 list: 20
+  and 15 on a project with 30 and 18. The flaky-tests endpoint's `total`
+  now counts every flaky test, auto-detected and human-flagged.
+  `top-failing` gains `total` and `repeat_total`. The repeat-failure
+  headline read "<test> broken in 3 of 3 runs", using the failure count as its
+  own denominator. It now says "failed 3 times in 7 days".
+- **Seeded installs dated every test result at the minute the seed ran.**
+  This includes the homelab demo. Every window on a test result's date counted
+  thirty days as the last seven. "New failures · 24h" read 116 (the truth was
+  11), the Inbox dated Run #1 to yesterday, and one /failures row read "7"
+  failures over "failed 3 of 7 executions". The seed now dates each result at
+  its run. Migration 0199 repairs the rows already written; it touches only
+  the dev seed's own projects and runs.
+- **The seed's suites were missing from /suites.** The seed wrote runs
+  directly and never registered them in the suite catalog the way ingestion
+  does. /suites listed the viz seed's suites but not the dev seed's six,
+  AuthSuite (the suite with the most failures) among them. The seed now
+  registers them. A database seeded before this keeps the gap until it is
+  re-seeded (`seed_dev_data.py --reset`).
+- **Test Case Management showed IDs as owners.** Every authored case's owner
+  read "6b1568a9", the start of a user ID. The list now names the assignee,
+  or else the author.
+- **Releases header.** "11 active" counted released and cancelled releases
+  too; it now counts planning and in-progress ones (5). The all-projects and
+  open-release views had lost the "· N in progress · N blocked" tail to an
+  operator-precedence slip.
+
+Each fix has a regression test. The counts and the seed repair are tested
+against real Postgres; both new files are in CI's `postgres-integration` job.
+
 ## Unreleased - Fix: icon-only buttons with no name
 
 A scan of every page as an admin on a local stack listed the buttons with no

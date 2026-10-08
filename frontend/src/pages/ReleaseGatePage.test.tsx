@@ -274,6 +274,74 @@ describe('ReleaseGatePage', () => {
   })
 })
 
+// ── Which run /release-gate opens (browser E2E pass, 2026-10-08) ──────────
+//
+// It opened the project's newest run, and the newest was still running: its
+// pass rate is null until ingestion finishes it, and the gate graded that as
+// "NO GO, pass rate 0.0%, raise it to at least 90% (currently 0.0%)".
+
+describe('ReleaseGatePage — the run it opens', () => {
+  function Where() {
+    return <p data-testid="where">{useLocation().pathname}</p>
+  }
+
+  async function openGate(items: { id: string; status: string }[]) {
+    mockProjectState.activeProjectId = 'proj-1'
+    mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
+    const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+      council: null, isLoading: false, isError: false, refresh: vi.fn(),
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items } })
+    render(
+      <MemoryRouter initialEntries={['/release-gate']}>
+        <Routes>
+          <Route path="/release-gate" element={<ReleaseGatePage />} />
+          <Route path="/release-gate/:runId" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return screen.findByTestId('where')
+  }
+
+  it('skips a run still in progress for the newest finished one', async () => {
+    const where = await openGate([
+      { id: 'run-live', status: 'in_progress' },
+      { id: 'run-done', status: 'failed' },
+    ])
+    expect(where).toHaveTextContent('/release-gate/run-done')
+  })
+
+  it('opens the newest when every recent run is still running', async () => {
+    const where = await openGate([
+      { id: 'run-a', status: 'IN_PROGRESS' },
+      { id: 'run-b', status: 'running' },
+    ])
+    expect(where).toHaveTextContent('/release-gate/run-a')
+  })
+
+  it('a run with nothing to grade reads as pending, with no 0% and no ring', async () => {
+    await renderGate(flooredDecision({
+      risk_score: 0,
+      composite_risk: null,
+      dimension_scores: [],
+      conditions_for_go: ['Wait for the run to finish: it is still in progress.'],
+      reasoning: 'Not graded: the run is still in progress, so it has no pass rate yet.',
+      input_snapshot: { synthesized: true, pass_rate: null, verdict_driver: 'in_progress' },
+      pass_rate: null,
+      synthesized: true,
+    }))
+    expect(screen.getByText('PENDING')).toBeInTheDocument()
+    expect(screen.getByText(/No test evidence yet/)).toBeInTheDocument()
+    // On the verdict card and in Why.
+    expect(screen.getAllByText('Wait for the run to finish: it is still in progress.').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Pass rate:/)).toBeNull()
+    expect(screen.queryByText(/0\.0%/)).toBeNull()
+    expect(screen.queryByRole('meter')).toBeNull()
+  })
+})
+
 // ── The gauge vs the dimension breakdown ───────────────────────────────────
 //
 // Measured live 2026-08-16 on build ui-6 (pass rate 44.4%):

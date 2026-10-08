@@ -1255,3 +1255,43 @@ async def test_managed_only_filters_never_leak_unfilterable_automation_rows(
     assert response.status_code == 200, response.text
     list_managed.assert_awaited_once()
     list_combined.assert_not_awaited()
+
+
+# ── Owner names on authored cases (browser E2E pass, 2026-10-08) ──────────────
+
+
+async def test_list_cases_names_each_authored_cases_owner(client, auth_as, fake_db):
+    """An authored case carried only user ids, so the Owner column showed the
+    first 8 characters of a UUID ("6b1568a9") on every one. The list now names
+    the assignee, else the author, from one users query."""
+    from tests.integration.conftest import fake_execute_result
+
+    project_id = uuid.uuid4()
+    auth_as(role=UserRole.ADMIN)
+    ana, bob, gone = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    assigned = _managed_obj(project_id=project_id, assignee_id=ana, author_id=bob)
+    authored = _managed_obj(project_id=project_id, author_id=bob)
+    orphaned = _managed_obj(project_id=project_id, author_id=gone)
+    fake_db.set_execute_results([
+        # One query for the page: Ana has a full name, Bob only a username;
+        # the deleted author is not found.
+        fake_execute_result(all_=[(ana, "Ana Lee", "ana"), (bob, "  ", "bob")]),
+    ])
+    with patch(
+        "app.core.deps.resolve_project_scope", AsyncMock(return_value=(project_id, None)),
+    ), patch(
+        "app.routers.test_management_cases.list_managed_test_cases",
+        AsyncMock(return_value=([assigned, authored, orphaned], 3, 1)),
+    ), patch(
+        "app.routers.test_management_cases.lifecycle_actions_for",
+        AsyncMock(return_value=[]),
+    ):
+        response = await client.get(f"/api/v1/test-management/cases?project_id={project_id}")
+
+    assert response.status_code == 200, response.text
+    owners = {item["id"]: item["owner"] for item in response.json()["items"]}
+    assert owners == {
+        str(assigned.id): "Ana Lee",  # the assignee wins over the author
+        str(authored.id): "bob",      # a blank full name falls back to the username
+        str(orphaned.id): None,       # an unknown user: no name invented
+    }

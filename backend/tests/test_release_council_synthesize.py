@@ -151,3 +151,82 @@ async def test_synth_reasoning_mentions_quick_look_and_deep_investigation():
     lowered = result.reasoning.lower()
     assert "quick-look" in lowered
     assert "deep investigation" in lowered
+
+
+# ── A run with nothing to grade (browser E2E pass, 2026-10-08) ──────────────
+#
+# /release-gate opens the project's newest run, and the newest is often still
+# running: its pass_rate is NULL until ingestion finishes it. ``or 0.0`` graded
+# that as 0% -- NO GO, "Raise pass rate to at least 90.0% (currently 0.0%)",
+# the NO-GO floor note -- for a run at 10 passed, 1 failed so far.
+
+
+@pytest.mark.asyncio
+async def test_an_in_progress_run_is_not_graded_as_zero_percent():
+    from app.services.release_council_service import _synthesize_release_council
+
+    run = _run(pass_rate=None)
+    run.status = "IN_PROGRESS"
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[_ScalarResult(run)]))
+
+    result = await _synthesize_release_council(run.id, db)
+
+    assert result is not None and result.synthesized is True
+    # No number the run does not have: the page's pending state keys on these.
+    assert result.pass_rate is None
+    assert result.dimension_scores == []
+    assert result.rule_evaluations == []
+    assert result.input_snapshot["verdict_driver"] == "in_progress"
+    assert result.conditions_for_go == ["Wait for the run to finish: it is still in progress."]
+    assert not any("0.0%" in c for c in result.conditions_for_go)
+    assert "0.0%" not in (result.reasoning or "")
+    # Still fails closed for a consumer that gates on the value.
+    assert result.recommendation == "NO_GO"
+    # Nothing else was read: no defect count, no policy lookup.
+    assert db.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_in_progress_run_with_a_partial_rate_waits_too():
+    from app.services.release_council_service import _synthesize_release_council
+
+    run = _run(pass_rate=90.9)
+    run.status = SimpleNamespace(value="IN_PROGRESS")
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[_ScalarResult(run)]))
+
+    result = await _synthesize_release_council(run.id, db)
+
+    assert result.pass_rate is None
+    assert result.input_snapshot["verdict_driver"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_run_that_measured_nothing_says_so():
+    from app.services.release_council_service import _synthesize_release_council
+
+    run = _run(pass_rate=None)
+    run.status = "PASSED"
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[_ScalarResult(run)]))
+
+    result = await _synthesize_release_council(run.id, db)
+
+    assert result.pass_rate is None
+    assert result.input_snapshot["verdict_driver"] == "no_pass_rate"
+    assert result.conditions_for_go == ["Re-run with tests that pass or fail: this run measured none."]
+    assert result.recommendation == "NO_GO"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_run_at_zero_percent_is_still_graded():
+    """0.0 is a measurement (every test failed), not an absence."""
+    from app.services.release_council_service import _synthesize_release_council
+
+    run = _run(pass_rate=0.0)
+    run.status = "FAILED"
+    db = _db_with(run, open_defects=0)
+
+    result = await _synthesize_release_council(run.id, db)
+
+    assert result.pass_rate == 0.0
+    assert result.recommendation == "NO_GO"
+    assert result.input_snapshot["verdict_driver"] == "pass_rate_floor"

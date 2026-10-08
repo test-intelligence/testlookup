@@ -60,13 +60,43 @@ from app.services.test_suite_service import list_test_case_evidence_gaps
 router = APIRouter()
 
 
+def _owner_id(test_case: ManagedTestCase) -> uuid.UUID | None:
+    """The person Test Management's Owner column names: the assignee, else the author."""
+    return test_case.assignee_id or test_case.author_id
+
+
+async def _owner_names(
+    db: AsyncSession, test_cases: list[ManagedTestCase]
+) -> dict[uuid.UUID, str]:
+    """Display names for the cases' owners, in one query.
+
+    An authored case carried only the user ids, so the Owner column fell back
+    to the first 8 characters of a UUID ("6b1568a9") on every authored case
+    (the UX redesign's browser E2E pass, 2026-10-08).
+    """
+    ids = {owner for owner in map(_owner_id, test_cases) if owner is not None}
+    if not ids:
+        return {}
+    rows = await db.execute(
+        select(User.id, User.full_name, User.username).where(User.id.in_(ids))
+    )
+    return {
+        user_id: (full_name or "").strip() or username
+        for user_id, full_name, username in rows.all()
+    }
+
+
 async def _case_response(
     db: AsyncSession,
     test_case: ManagedTestCase,
     current_user: User,
+    owner_names: dict[uuid.UUID, str] | None = None,
 ) -> ManagedTestCaseResponse:
     response = row(test_case, ManagedTestCaseResponse)
     response.allowed_actions = await lifecycle_actions_for(db, test_case, current_user)
+    if owner_names is None:
+        owner_names = await _owner_names(db, [test_case])
+    response.owner = owner_names.get(_owner_id(test_case))
     return response
 
 
@@ -142,8 +172,9 @@ async def list_test_cases(
             search=search,
             suite_name=suite_name,
         )
+        names = await _owner_names(db, list(items))
         return {
-            "items": [await _case_response(db, item, current_user) for item in items],
+            "items": [await _case_response(db, item, current_user, names) for item in items],
             "total": total,
             "page": page,
             "size": size,
@@ -178,9 +209,10 @@ async def list_test_cases(
         project_id=project_id,
         case_ids=automation_ids,
     )
+    names = await _owner_names(db, managed_rows)
     by_identity = {
         **{
-            ("managed", item.id): await _case_response(db, item, current_user)
+            ("managed", item.id): await _case_response(db, item, current_user, names)
             for item in managed_rows
         },
         **{("automation", item["id"]): item for item in automation_rows},

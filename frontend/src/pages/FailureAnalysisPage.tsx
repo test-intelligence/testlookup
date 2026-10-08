@@ -360,6 +360,8 @@ interface StabilityModel {
   failedRuns: number
   skippedRuns: number
   repeatFailures: TopFailingItem[]
+  /** Tests failing twice or more in the window: all of them, not the listed top. */
+  repeatCount: number
   flakyCount: number
   uncategorizedPct: number
   unknownCount: number
@@ -369,12 +371,16 @@ interface StabilityModel {
 }
 
 function computeStabilityModel({
-  flaky, categories, topFailing, trend,
+  flaky, categories, topFailing, trend, flakyTotal, repeatTotal,
 }: {
   flaky: FlakyTestItem[]
   categories: FailureCategoryItem[]
   topFailing: TopFailingItem[]
   trend: TrendPoint[]
+  /** Every flaky test; `flaky` is only the top of the list. */
+  flakyTotal?: number
+  /** Every test failing twice or more; `topFailing` is only the top of the list. */
+  repeatTotal?: number
 }): StabilityModel {
   const passedRuns  = trend.reduce((s, p) => s + p.passed,  0)
   const failedRuns  = trend.reduce((s, p) => s + p.failed,  0)
@@ -391,7 +397,10 @@ function computeStabilityModel({
     ? (unknownCount / totalCategorised) * 100
     : 0
 
-  const flakyCount = flaky.length
+  // The counts are the endpoints' totals, not the lists' lengths: the lists
+  // are a top 20 and a top 15, and the page read "20 tests intermittent" and
+  // "Repeat failures 15" for a project with more (browser E2E pass).
+  const flakyCount = flakyTotal ?? flaky.length
   // Manually-triaged flakes carry failure_rate_pct=100 as a "human-flagged"
   // marker, not a measured rate. Exclude them from the flake-free *score* —
   // otherwise a single human-flagged test pins the score to 0 regardless of the
@@ -403,6 +412,7 @@ function computeStabilityModel({
     : Math.max(0, 100 - Math.max(...autoFlakes.map(f => f.failure_rate_pct)))
 
   const repeatFailures = topFailing.filter(t => t.fail_count >= 2)
+  const repeatCount = repeatTotal ?? repeatFailures.length
 
   // Time-to-fix: synthesise from consecutive-failure tail length.
   let timeToFixScore = 100
@@ -434,7 +444,7 @@ function computeStabilityModel({
 
   return {
     composite, dimensions, totalRuns, passedRuns, failedRuns, skippedRuns,
-    repeatFailures, flakyCount, uncategorizedPct, unknownCount, totalCategorised,
+    repeatFailures, repeatCount, flakyCount, uncategorizedPct, unknownCount, totalCategorised,
     topFailingTest: topFailing[0] ?? null, trend,
   }
 }
@@ -448,7 +458,7 @@ function toneFor(score: number): 'good' | 'warn' | 'bad' {
 function pickVerdict(model: StabilityModel): Verdict {
   if (model.totalRuns === 0) return 'PENDING'
   if (model.failedRuns === 0 && model.flakyCount === 0) return 'STABLE'
-  if (model.repeatFailures.length > 0 && model.flakyCount === 0) return 'REPEAT_FAILURE'
+  if (model.repeatCount > 0 && model.flakyCount === 0) return 'REPEAT_FAILURE'
   if (model.flakyCount > 0) return 'FLAKY'
   if (model.failedRuns > 0) return 'FIRST_TIME'
   return 'STABLE'
@@ -1974,8 +1984,12 @@ export default function FailureAnalysisPage() {
   }, [comparing, compareTrendsData])
 
   const model = useMemo(
-    () => computeStabilityModel({ flaky, categories, topFailing, trend }),
-    [flaky, categories, topFailing, trend],
+    () => computeStabilityModel({
+      flaky, categories, topFailing, trend,
+      flakyTotal: totalOf(flakyData, 'total'),
+      repeatTotal: totalOf(topData, 'repeat_total'),
+    }),
+    [flaky, categories, topFailing, trend, flakyData, topData],
   )
   const verdict = pickVerdict(model)
 
@@ -2151,9 +2165,11 @@ export default function FailureAnalysisPage() {
     if (verdict === 'PENDING')        return <>awaiting executions</>
     if (verdict === 'REPEAT_FAILURE') {
       const top = model.topFailingTest
+      // Failed N times: not "broken in N of N runs", which claimed every run
+      // failed from a count with no denominator (browser E2E pass).
       return top
-        ? <><code className="font-mono">{top.test_name}</code> broken in {top.fail_count} of {top.fail_count} runs</>
-        : <>{model.repeatFailures.length} test{model.repeatFailures.length === 1 ? '' : 's'} failing repeatedly</>
+        ? <><code className="font-mono">{top.test_name}</code> failed {top.fail_count} time{top.fail_count === 1 ? '' : 's'} in {days === 1 ? '24 hours' : `${days} days`}</>
+        : <>{model.repeatCount} test{model.repeatCount === 1 ? '' : 's'} failing repeatedly</>
     }
     if (verdict === 'FLAKY') return <>{model.flakyCount} test{model.flakyCount === 1 ? '' : 's'} intermittent</>
     if (verdict === 'FIRST_TIME') {
@@ -2254,7 +2270,7 @@ export default function FailureAnalysisPage() {
       <section aria-label="Failure metrics">
         <KpiStrip>
           {[
-            <MetricCard key="repeat" compact icon={null} title="Repeat failures" metric={{ value: model.repeatFailures.length }} />,
+            <MetricCard key="repeat" compact icon={null} title="Repeat failures" metric={{ value: model.repeatCount }} />,
             <MetricCard key="flaky" compact icon={null} title="Flaky tests" metric={{ value: model.flakyCount }} />,
             <MetricCard
               key="uncategorized"
@@ -2452,6 +2468,12 @@ export default function FailureAnalysisPage() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+/** A whole-count field of an analytics envelope, when the server sent one. */
+function totalOf(raw: unknown, key: 'total' | 'repeat_total'): number | undefined {
+  const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>)[key] : undefined
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 function normaliseList<T>(raw: unknown): T[] {
   // The analytics endpoints return either an array or a {items: T[]} envelope
   // depending on the route. Coerce to a plain array so the model code doesn't

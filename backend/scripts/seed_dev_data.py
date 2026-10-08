@@ -653,6 +653,11 @@ async def _seed_test_runs(
                     error_message=error_msg,
                     tags=[suite["feature"].lower().replace(" ", "-")],
                     has_attachments=status == TestStatus.FAILED,
+                    # Its run's time, as test_case_history below. Left to the
+                    # column default, thirty days of results were all dated the
+                    # minute the seed ran, and every window on
+                    # test_cases.created_at counted them as "the last 7 days".
+                    created_at=run_start,
                 )
                 test_cases.append(tc)
 
@@ -696,6 +701,26 @@ async def _seed_test_runs(
         runs.append(run)
 
     return runs
+
+
+async def _seed_suite_catalog(
+    db: AsyncSession,
+    project: Project,
+    runs: list[TestRun],
+) -> None:
+    """Register the runs' suites and tests in the catalog, as ingestion does.
+
+    The seed wrote its runs straight to the tables and never ran the canonical
+    sync, so its six suites (AuthSuite, PaymentSuite, ...) had no ``TestSuite``
+    row: /suites listed only the viz seed's, without the suite with the most
+    failures (the UX redesign's browser E2E pass, 2026-10-08). Oldest run
+    first, so each canonical test's ``last_seen_run_id`` is its newest run.
+    """
+    from app.services.test_suite_service import sync_canonical_test_cases
+
+    for run in sorted(runs, key=lambda r: r.start_time or r.created_at):
+        await sync_canonical_test_cases(db, project.id, run.id)
+    await db.flush()
 
 
 async def _seed_test_case_history(
@@ -1110,6 +1135,9 @@ async def main(reset: bool = False, wipe_only: bool = False) -> None:
             # Test case history (flakiness tracking)
             await _seed_test_case_history(db, runs)
             print(f"  Test case history populated")
+
+            # The suite catalog, as ingestion builds it
+            await _seed_suite_catalog(db, project, runs)
 
             # AI analysis for all failed tests
             await _seed_ai_analysis(db, runs)
