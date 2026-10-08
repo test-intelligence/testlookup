@@ -19,6 +19,8 @@ Found by browser end-to-end testing on a local stack.
   - Regression tests cover the seed (every membership role is a `.value`) and
     the migration. On the local stack, after 0198, the same triage closes the
     dialog, the row leaves the Inbox, and the count drops by one.
+- **Also:** My API keys' revoke button was a red bin icon with no name and
+  no tooltip. It is now "Revoke key <name>".
 
 ## Unreleased - Fixes: ten "refresh after saving" helpers that refreshed nothing
 
