@@ -293,6 +293,8 @@ export default function ProfilePage() {
                 type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 onClick={() => setShowCur(v => !v)}
+                aria-label={showCur ? 'Hide password' : 'Show password'}
+                title={showCur ? 'Hide password' : 'Show password'}
                 tabIndex={-1}
               >
                 {showCur ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -318,6 +320,8 @@ export default function ProfilePage() {
                 type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 onClick={() => setShowNew(v => !v)}
+                aria-label={showNew ? 'Hide password' : 'Show password'}
+                title={showNew ? 'Hide password' : 'Show password'}
                 tabIndex={-1}
               >
                 {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -368,6 +372,8 @@ export default function ProfilePage() {
                 type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 onClick={() => setShowConf(v => !v)}
+                aria-label={showConf ? 'Hide password' : 'Show password'}
+                title={showConf ? 'Hide password' : 'Show password'}
                 tabIndex={-1}
               >
                 {showConf ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

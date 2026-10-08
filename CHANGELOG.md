@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased - Fix: icon-only buttons with no name
+
+A scan of every page as an admin on a local stack listed the buttons with no
+text, label or tooltip. Each now says what it does:
+
+- Feature flags: each row's red bin is "Delete flag <key>".
+- Test case: the stack trace's copy button is "Copy Stack trace", then
+  "Copied".
+- Profile: the three password eyes are "Show password" or "Hide password".
+- Email (SMTP): the enable toggle is a switch named "Enable SMTP email
+  delivery", with its on/off state, and the password eye is named.
+
+Live's buttons, which the scan also flagged, have labels; they sit in a
+collapsed section. Each fix has a unit test.
+
+Test harness: the full end-to-end suite on four workers failed once on "the
+640 px Overview scrolls sideways" (853 px measured). The same spec passed 18
+of 18 times on its own, so the measure ran before the page finished laying
+out. The shared check (`expectNoHorizontalOverflow`) now retries for up to
+5 s before it fails. An overflow that stays still fails, with the last
+numbers measured.
+
 ## Unreleased - Fix: a seeded QA lead could not triage their own Inbox
 
 Found by browser end-to-end testing on a local stack.

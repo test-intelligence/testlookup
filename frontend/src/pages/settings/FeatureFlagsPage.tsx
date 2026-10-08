@@ -252,6 +252,8 @@ export default function FeatureFlagsPage() {
                   <button
                     type="button"
                     onClick={() => deleteFlag(flag)}
+                    aria-label={`Delete flag ${flag.key}`}
+                    title={`Delete flag ${flag.key}`}
                     className="text-xs text-[var(--status-failed)] hover:underline"
                   >
                     <Trash2 className="h-3 w-3 inline" />

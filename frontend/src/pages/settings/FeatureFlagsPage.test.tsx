@@ -55,6 +55,12 @@ describe('FeatureFlagsPage', () => {
     expect(screen.getByRole('button', { name: /new flag/i }).closest('[data-page-header]')).not.toBeNull()
   })
 
+  it('each flag\'s delete bin is named after the flag, with a tooltip (browser E2E pass: it had no name)', () => {
+    render(<FeatureFlagsPage />)
+    const del = screen.getByRole('button', { name: 'Delete flag manual_upload' })
+    expect(del).toHaveAttribute('title', 'Delete flag manual_upload')
+  })
+
   it('lists the flags in the table and opens the create form from the header action', () => {
     render(<FeatureFlagsPage />)
     expect(screen.getByRole('table')).toHaveTextContent('manual_upload')

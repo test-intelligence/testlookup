@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProfilePage from './ProfilePage'
 import type { User } from '../../store/authStore'
@@ -77,6 +77,15 @@ describe('ProfilePage', () => {
 describe('ProfilePage layout', () => {
   beforeEach(() => {
     mocked.state.user = makeUser({})
+  })
+
+  it('each password eye says what it does, and flips (browser E2E pass: they had no name)', () => {
+    render(<ProfilePage />)
+    const eyes = screen.getAllByRole('button', { name: 'Show password' })
+    expect(eyes).toHaveLength(3)
+    fireEvent.click(eyes[0])
+    expect(eyes[0]).toHaveAccessibleName('Hide password')
+    expect(eyes[0]).toHaveAttribute('title', 'Hide password')
   })
 
   it('renders the compact template header with a help topic', () => {

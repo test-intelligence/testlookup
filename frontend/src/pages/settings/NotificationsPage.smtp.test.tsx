@@ -13,7 +13,7 @@
  * production mail server with `localhost:587, disabled` — a destructive write
  * derived entirely from a read that never happened.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { SmtpConfigCard } from './NotificationsPage'
@@ -95,5 +95,18 @@ describe('SmtpConfigCard when its config cannot be read', () => {
     expect(screen.getByDisplayValue('465')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
     expect(screen.queryByTestId('smtp-config-unavailable')).not.toBeInTheDocument()
+  })
+
+  it('the enable toggle is a named switch with its state, and the password eye says what it does (browser E2E pass)', async () => {
+    const { appSettingsService } = await import('@/services/appSettingsService')
+    ;(appSettingsService.getSmtpConfig as ReturnType<typeof vi.fn>).mockResolvedValue(CONFIG)
+    render(<SmtpConfigCard />)
+    const toggle = await screen.findByRole('switch', { name: 'Enable SMTP email delivery' })
+    const before = toggle.getAttribute('aria-checked')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe(before === 'true' ? 'false' : 'true')
+    const eye = screen.getByRole('button', { name: 'Show password' })
+    fireEvent.click(eye)
+    expect(eye).toHaveAccessibleName('Hide password')
   })
 })
