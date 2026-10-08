@@ -1,4 +1,5 @@
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import { notificationService } from '../services/notificationService'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
@@ -23,7 +24,7 @@ export function useUnreadCount() {
 }
 
 export async function invalidateNotifications() {
-  await mutate('notifications/preferences')
-  await mutate('notifications/unread')
-  await mutate(key => Array.isArray(key) && key[0] === 'notifications/history')
+  await appMutate('notifications/preferences')
+  await appMutate('notifications/unread')
+  await appMutate(key => Array.isArray(key) && key[0] === 'notifications/history')
 }

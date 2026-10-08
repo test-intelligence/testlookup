@@ -1,4 +1,5 @@
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import {
   type HealthTrend,
   type IntegrationStatus,
@@ -65,7 +66,7 @@ export function useProviderHistory(provider: string, enabled: boolean, days = 7)
  * up fresh data without the page threading individual mutators.
  */
 export function refreshIntegrationHealth() {
-  return mutate(
+  return appMutate(
     (key: unknown) =>
       Array.isArray(key) &&
       (key[0] === STATUS_KEY || key[0] === TRENDS_KEY || key[0] === HISTORY_KEY),

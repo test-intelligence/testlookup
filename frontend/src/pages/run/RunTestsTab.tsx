@@ -21,7 +21,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, ExternalLink, ListTree, Loader2, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
-import { mutate } from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import StatusBadge from '@/components/ui/StatusBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
@@ -167,7 +167,7 @@ export default function RunTestsTab({
       // Persist task runs async on the ingestion worker. Give it a moment
       // then revalidate the SWR test-cases cache so the table populates
       // without a full page reload.
-      setTimeout(() => { mutate(['test-cases', runId, { page, size: PAGE_SIZE }]) }, 2500)
+      setTimeout(() => { appMutate(['test-cases', runId, { page, size: PAGE_SIZE }]) }, 2500)
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??

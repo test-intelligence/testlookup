@@ -41,7 +41,7 @@ import {
   myFailuresService,
   type ReassignmentOption,
 } from '@/services/myFailuresService'
-import { mutate as swrMutate } from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import type { MyFailureItem, TriageStatus } from '@/types/myFailures'
 import ApprovalsTab, { ApprovalsCountBadge } from './inbox/ApprovalsTab'
 import ChipFilter from './inbox/ChipFilter'
@@ -283,13 +283,13 @@ export default function MyFailuresPage() {
             setTriageFor(null)
             // Any non-PENDING_REVIEW status drops the row off the
             // inbox — refetch so the count + page reflect that.
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
             )
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
             )
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
             )
           }}
@@ -306,13 +306,13 @@ export default function MyFailuresPage() {
             // inbox — refetch instead of relying on optimistic
             // splice, since `failure_count` and pagination would
             // otherwise drift.
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
             )
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
             )
-            void swrMutate(
+            void appMutate(
               (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
             )
           }}

@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased - Fixes: ten "refresh after saving" helpers that refreshed nothing
+
+Found by browser end-to-end testing on a local stack, after the redesign.
+
+- **The bug:** the app keeps its SWR cache in its own provider, so the
+  `mutate` exported by the `swr` module is bound to a cache the app never
+  uses. A refresh through it matches nothing and does nothing, and ten
+  helpers used it. What a person saw:
+  - Integration Health: "Probe All Now" stored the results, but the page
+    kept saying "No health data yet" until it was reloaded.
+  - Ask AI: a sent message and its reply disappeared until the next poll.
+  - The suites list did not show a suite created a moment ago.
+  - A run's AI analysis: "Refresh" toasted "AI analysis refreshed", and the
+    old analysis stayed on screen.
+  - The same applied to:
+    - a run's release after setting it;
+    - a run's tests after replaying buffered events;
+    - the Inbox and its counts after a triage status change;
+    - notification preferences and the unread count;
+    - Value Metrics and the defect analytics;
+    - the test-case catalogue after a promotion.
+- **The fix:** all ten use `appMutate`, which is bound to the app's provider.
+  ESLint now refuses `import { mutate } from 'swr'` in app code. New tests
+  render under a real provider and fail if the old import comes back.
+- **Integration Health, GitHub:** the probe checks only an instance-wide
+  token, and GitHub is configured per project since P5. It said "No
+  GITHUB_TOKEN configured", which read as "GitHub is not set up". It now says
+  there is no instance-wide token and that GitHub is configured per project.
+
 ## Unreleased - UX redesign P6: lock it in — a fold budget and gate ratchets
 
 Phase P6 of the UI/UX redesign. Tests and gate checks now hold the
