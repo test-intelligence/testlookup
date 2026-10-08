@@ -192,10 +192,33 @@ describe('Inbox — Assigned to me', () => {
     expect(run).toHaveTextContent(/Run #7.+ · run-1234$/)
   })
 
-  it('carries the open count in the tab label and is selected by default', async () => {
+  // Browser E2E pass (2026-10-08): a lead opens on the team scope, and the tab
+  // read "Assigned to me 62" over the team's 62 while none were theirs (the
+  // sidebar badge said 0). The tab and the count are named for the list shown.
+  it('a lead opens on the team: the tab is "Team failures" with the team count, selected by default', async () => {
+    renderPage()
+    await waitFor(() => expect(tab(/^Team failures/)).toHaveTextContent('Team failures12'))
+    expect(tab(/^Team failures/)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: /^Assigned to me/ })).toBeNull()
+    expect(screen.getByText('unresolved')).toBeInTheDocument()
+    expect(failures.list).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'team' }))
+  })
+
+  it('a lead who picks Mine: "Assigned to me", with their own count', async () => {
+    renderPage()
+    await screen.findByText('test_checkout_pays')
+    failures.list.mockResolvedValue(assigned([FAILURE], 3))
+    fireEvent.click(screen.getByText('mine'))
+    await waitFor(() => expect(tab(/^Assigned to me/)).toHaveTextContent('Assigned to me3'))
+    expect(screen.getByText('assigned')).toBeInTheDocument()
+    expect(failures.list).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'mine' }))
+  })
+
+  it('anyone else sees only their own: "Assigned to me"', async () => {
+    state.isQaLead = false
     renderPage()
     await waitFor(() => expect(tab(/^Assigned to me/)).toHaveTextContent('Assigned to me12'))
-    expect(tab(/^Assigned to me/)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: /^Team failures/ })).toBeNull()
   })
 
   it('keeps the shared window control: picking 24h re-fetches page 1', async () => {

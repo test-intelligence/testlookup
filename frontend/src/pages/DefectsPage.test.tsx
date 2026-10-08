@@ -715,3 +715,59 @@ describe('DefectsPage — the page template (P3)', () => {
     expect(within(table).getByRole('link', { name: 'run an AI investigation' })).toHaveAttribute('href', '/deep-investigate')
   })
 })
+
+// Browser E2E pass (2026-10-08): the list carried no title, severity or
+// component, so a defect typed in as "Refund posts twice", P3, read "product
+// bug" and P1; and the page loaded one 20-row page, reading "Open defects 20"
+// on a project with 80.
+describe('DefectsPage — each defect as entered, and every defect counted', () => {
+  async function renderWith(data: unknown) {
+    const { useDefects } = await import('@/hooks/useMetrics')
+    ;(useDefects as ReturnType<typeof vi.fn>).mockReturnValue({ data, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/defects']}>
+        <Routes>
+          <Route path="/defects" element={<DefectsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return screen.findByRole('region', { name: 'All defects' })
+  }
+
+  const ENTERED = {
+    id: 'def-entered', title: 'Refund posts twice', severity: 'LOW', component: 'payments-service',
+    failure_category: 'PRODUCT_BUG', test_name: null, suite_name: null,
+    resolution_status: 'OPEN', created_at: '2026-10-08T10:00:00Z',
+  }
+
+  it('shows its own title, severity and component, not ones derived from its category', async () => {
+    const table = await renderWith({ items: [ENTERED], total: 1, pages: 1 })
+    const row = within(table).getByText('Refund posts twice').closest('tr') as HTMLElement
+    expect(row).toHaveTextContent('P3')
+    expect(row).not.toHaveTextContent('P1')
+    // Its component is the one entered: searching for it finds the row.
+    fireEvent.change(within(table).getByRole('searchbox', { name: 'Search defects' }), { target: { value: 'payments-service' } })
+    expect(within(table).getByText('Refund posts twice')).toBeInTheDocument()
+  })
+
+  it('keeps the derived title and severity for a defect stored without them', async () => {
+    const table = await renderWith({
+      items: [{ ...ENTERED, id: 'def-seeded', title: null, severity: null, component: null, test_name: 'test_pay', ai_confidence_score: 90 }],
+      total: 1, pages: 1,
+    })
+    const row = within(table).getByText('test_pay').closest('tr') as HTMLElement
+    expect(row).toHaveTextContent('P0') // a product bug at 90% confidence, as before
+  })
+
+  it('says when the counts cover only the newest defects', async () => {
+    await renderWith({ items: [ENTERED], total: 1500, pages: 1 })
+    expect(document.querySelector('[data-defects-capped]')).toHaveTextContent(
+      'The counts and the table cover the newest 1 of 1500 defects.',
+    )
+  })
+
+  it('says nothing of the kind when every defect is loaded', async () => {
+    await renderWith({ items: [ENTERED], total: 1, pages: 1 })
+    expect(document.querySelector('[data-defects-capped]')).toBeNull()
+  })
+})

@@ -93,7 +93,11 @@ function relativeTime(ts: number): string {
   const diff = Math.floor((Date.now() - ts) / 1000)
   if (diff < 5)  return 'just now'
   if (diff < 60) return `${diff}s ago`
-  return `${Math.floor(diff / 60)}m ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  // Hours, then days: it counted minutes without end ("Last completed 2122m
+  // ago"; browser E2E pass, 2026-10-08).
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
 }
 
 // ── WS Status badge ────────────────────────────────────────────────────────
@@ -1090,9 +1094,15 @@ export default function LiveExecutionPage() {
                           <span className="bg-[var(--status-passed)] h-full" style={{ width: `${passW}%` }} />
                           <span className="bg-[var(--status-failed)] h-full" style={{ width: `${failW}%` }} />
                         </div>
-                        <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
-                          {s.pass_rate.toFixed(1)}%
-                        </span>
+                        {/* No rate until a test has passed or failed: it read
+                            "0.0%" for a run at 10 passed, 1 failed (browser E2E pass). */}
+                        {s.pass_rate == null ? (
+                          <span className="font-medium text-[var(--color-text-faint)]" title="No pass rate: no test has passed or failed yet">—</span>
+                        ) : (
+                          <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
+                            {s.pass_rate.toFixed(1)}%
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-3">

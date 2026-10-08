@@ -31,6 +31,12 @@ vi.mock('@/hooks/useMetrics', () => ({
   useKindEvidence: vi.fn(() => ({ data: undefined, isLoading: false })),
 }))
 
+const flags = vi.hoisted(() => ({ quarantineOn: true as boolean | undefined }))
+vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useFeatureFlags')>(),
+  useFeatureFlagStatus: (key: string) => (key === 'flaky_auto_quarantine' ? flags.quarantineOn : undefined),
+}))
+
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
@@ -869,6 +875,24 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Close suspects' }))
     await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
+  })
+
+  // Browser E2E pass (2026-10-08): every quarantine endpoint answers 503 while
+  // the flag is off; Mute opened a dialog that could only fail.
+  it('with quarantine off, Mute is disabled and says how to turn it on', async () => {
+    flags.quarantineOn = false
+    try {
+      await seedFailingScenario()
+      renderPage()
+      const mute = await screen.findByRole('button', { name: /Mute test/i })
+      expect(mute).toBeDisabled()
+      expect(mute).toHaveAttribute(
+        'title',
+        'Quarantine is off for this project: an admin turns on the flaky_auto_quarantine flag in Settings › Feature flags.',
+      )
+    } finally {
+      flags.quarantineOn = true
+    }
   })
 
   it('opens the mute modal and posts a quarantine proposal with the typed reason', async () => {

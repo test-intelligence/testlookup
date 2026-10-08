@@ -21,7 +21,7 @@
  */
 import { cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { ValueMetrics, ValueMetricsMonthly } from '@/types/valueMetrics'
@@ -171,8 +171,16 @@ function counterCard(title: string): HTMLElement {
   return screen.getByText(title).closest('[data-metric-card]') as HTMLElement
 }
 
+// The page's module graph (its charts included) loads once, here, with a
+// budget of its own. Imported inside the first test it counted against that
+// test's 15 s, and under the push gate's load the first test timed out with
+// nothing wrong (twice in #217's gate, again on 2026-10-08).
+let ValueMetricsPage: (typeof import('./ValueMetricsPage'))['default']
+beforeAll(async () => {
+  ;({ default: ValueMetricsPage } = await import('./ValueMetricsPage'))
+}, 60_000)
+
 async function renderPage() {
-  const { default: ValueMetricsPage } = await import('./ValueMetricsPage')
   return render(
     createElement(
       SWRConfig,

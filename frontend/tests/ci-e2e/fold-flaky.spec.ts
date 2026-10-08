@@ -67,6 +67,10 @@ const COACH_LINE = `GET /api/v1/projects/${P}/flaky-coach?days=30&limit=50`
 const STATS_LINE = `GET /api/v1/quarantine/stats?project_id=${P}`
 const LIVE_LINE = `GET /api/v1/quarantine?project_id=${P}&live_only=true&limit=200`
 const ALL_LINE = `GET /api/v1/quarantine?project_id=${P}&live_only=false&limit=200`
+// Proposals are offered only while quarantine is on (every quarantine endpoint
+// answers 503 while it is off; browser E2E pass, 2026-10-08).
+const FLAG_LINE = `GET /api/v1/feature-flags/flaky_auto_quarantine/status?project_id=${P}`
+const QUARANTINE_ON = { flaky_auto_quarantine: true }
 
 test('the detected flaky tests table starts within the fold budget at 1440 x 900', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/flaky', { handlers: flakyHandlers(), ready })
@@ -87,8 +91,12 @@ test('the detected flaky tests table starts within the fold budget at 1440 x 900
   await expect(page.getByRole('tab', { name: /^Quarantined/ })).toHaveText('Quarantined1')
   await expect(page.getByRole('tab', { name: /^History/ })).toHaveText('History2')
   await expect(page.getByText('Awaiting review')).toHaveCount(0)
-  // One load: the analysis, the counts, and the live requests (a detected test's state).
-  expectInventory(api, errors, [...SHELL_BASE, COACH_LINE, STATS_LINE, LIVE_LINE], '/flaky, Detected')
+  // Every flag is off here: no proposal is offered, and one line says why.
+  await expect(table.getByRole('button', { name: 'Propose quarantine' })).toHaveCount(0)
+  await expect(page.locator('[data-quarantine-off]')).toContainText('Quarantine is off for this project')
+  // One load: the analysis, the counts, the live requests (a detected test's
+  // state) and the quarantine flag.
+  expectInventory(api, errors, [...SHELL_BASE, COACH_LINE, STATS_LINE, LIVE_LINE, FLAG_LINE], '/flaky, Detected')
 })
 
 test('each tab renders its section; History asks for the settled requests', async ({ page }) => {
@@ -119,7 +127,7 @@ test('each tab renders its section; History asks for the settled requests', asyn
 
 test('Propose quarantine from a detected row; a test with a live request links to its tab', async ({ page }) => {
   const proposals: unknown[] = []
-  const { api, errors } = await openRollout(page, '/flaky', { handlers: flakyHandlers(proposals), ready })
+  const { api, errors } = await openRollout(page, '/flaky', { handlers: flakyHandlers(proposals), ready, flags: QUARANTINE_ON })
   const table = page.locator('[data-primary]').getByRole('table', { name: 'Flaky tests' })
 
   // test_checkout_flow_0 (fp-00) already has a live proposal: its state, not the action.

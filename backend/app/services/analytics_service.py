@@ -992,6 +992,14 @@ async def list_defects(
         f"""
         SELECT
             d.id,
+            -- The defect's own title, severity and component. Without them
+            -- the Defects page titled a row with its test's name (or its
+            -- category: "product bug") and derived a severity from the
+            -- category, so the title and P0-P3 a person entered never showed
+            -- (the UX redesign's browser E2E pass, 2026-10-08).
+            d.title,
+            d.severity,
+            d.component,
             d.jira_ticket_id,
             d.jira_ticket_url,
             d.jira_status,

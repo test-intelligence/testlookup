@@ -196,7 +196,16 @@ interface QueueModel {
   weeklyClosed: number
 }
 
+// The defects.severity column's values, in the page's P0-P3 vocabulary (the
+// intake maps P0-P3 onto them; analytics_service._SEVERITY_FROM_PRIORITY).
+const SEVERITY_FROM_STORED: Record<string, Severity> = { CRITICAL: 'P0', HIGH: 'P1', MEDIUM: 'P2', LOW: 'P3' }
+
 function classifySeverity(d: DefectItem): Severity {
+  // The defect's own severity when it has one: the P0-P3 a person chose in
+  // New defect, or the one its creator set. It was always synthesised from
+  // the category, so a P3 product bug read P1 (browser E2E pass, 2026-10-08).
+  const stored = SEVERITY_FROM_STORED[(d.severity ?? '').toUpperCase()]
+  if (stored) return stored
   const cat = (d.failure_category ?? '').toUpperCase()
   const conf = d.ai_confidence_score ?? 0
   if (/PRODUCT.?BUG/.test(cat)) return conf >= 80 ? 'P0' : 'P1'
@@ -234,6 +243,7 @@ function buildKeyLabel(d: DefectItem): string {
 }
 
 function componentOf(d: DefectItem): string {
+  if (d.component?.trim()) return d.component.trim()
   if (d.suite_name) return d.suite_name
   // Fallback: take the first segment of the test name before a "."/"_" / "/".
   const first = (d.test_name ?? '').split(/[._/]/, 1)[0] ?? 'unknown'
@@ -254,7 +264,9 @@ function buildRow(d: DefectItem): DefectRow {
     ageTone: a.tone,
     isUnlinked,
     componentName,
-    titleText: d.test_name,
+    // Its own title first: a defect without a test read its category
+    // ("product bug") in place of the title typed for it.
+    titleText: d.title?.trim() || d.test_name || (d.failure_category || 'Untitled defect').toLowerCase().replace(/_/g, ' '),
     subtitleText: d.suite_name
       ? `${d.suite_name} suite · from ${(d.failure_category || 'analysis').toLowerCase().replace(/_/g, ' ')}`
       : `${(d.failure_category || 'analysis').toLowerCase().replace(/_/g, ' ')}`,
@@ -1034,7 +1046,7 @@ export default function DefectsPage() {
   // empty, which the verdict below reads as PENDING and renders as
   // "queue empty" -- an all-clear produced by never having looked.
   const { data: allDefectsData, isLoading, error: defectsError, mutate: retryDefects } =
-    useDefects(1, undefined)
+    useDefects()
   const allDefects = useMemo<DefectItem[]>(() => allDefectsData?.items ?? [], [allDefectsData])
   const model = useMemo(() => buildQueueModel(allDefects), [allDefects])
   const verdict = pickVerdict(model)
@@ -1136,6 +1148,12 @@ export default function DefectsPage() {
       </section>
 
       <DefectKpiStrip model={model} />
+
+      {allDefectsData && allDefectsData.items.length < allDefectsData.total && (
+        <p data-defects-capped="" className="text-[12px] text-[var(--color-text-muted)]">
+          The counts and the table cover the newest {allDefectsData.items.length} of {allDefectsData.total} defects.
+        </p>
+      )}
 
       <section data-primary="" aria-label="All defects">
         <DefectsTable
