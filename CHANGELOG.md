@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased - Fix: a seeded QA lead could not triage their own Inbox
+
+Found by browser end-to-end testing on a local stack.
+
+- **What a person saw:** on any seeded install, the homelab demo included, a
+  QA lead who chose "Update status" on a failure in their own Inbox got
+  "Only the assigned user or a QA_LEAD/ADMIN on the project can update triage
+  status". The dialog stayed open, and nothing changed.
+- **Why:** the dev seed wrote every project membership's role as
+  `str(UserRole.X)`, which is `"UserRole.QA_LEAD"`, not `"QA_LEAD"`. No
+  membership check matches that. Migration 0045 cleaned such values once, but
+  the seed kept writing new ones.
+- **The fix:**
+  - The seed writes the role's value.
+  - Migration 0198 repairs the rows already written, as 0045 did. It is safe
+    to run more than once.
+  - Regression tests cover the seed (every membership role is a `.value`) and
+    the migration. On the local stack, after 0198, the same triage closes the
+    dialog, the row leaves the Inbox, and the count drops by one.
+- **Also:** My API keys' revoke button was a red bin icon with no name and
+  no tooltip. It is now "Revoke key <name>".
+
 ## Unreleased - Fixes: ten "refresh after saving" helpers that refreshed nothing
 
 Found by browser end-to-end testing on a local stack, after the redesign.
