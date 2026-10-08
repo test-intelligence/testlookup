@@ -96,7 +96,8 @@ async def _case_response(
     response.allowed_actions = await lifecycle_actions_for(db, test_case, current_user)
     if owner_names is None:
         owner_names = await _owner_names(db, [test_case])
-    response.owner = owner_names.get(_owner_id(test_case))
+    owner_id = _owner_id(test_case)
+    response.owner = owner_names.get(owner_id) if owner_id is not None else None
     return response
 
 
