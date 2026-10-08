@@ -631,10 +631,11 @@ async def list_users(
     """Return active users for assignee dropdowns (bounded).
 
     Only the people the caller works with: users who share a project with
-    them, and themselves. An admin sees everyone. It returned every active
-    user to anyone signed in, emails included, members of other tenants'
-    projects too (the UX redesign's browser E2E pass, 2026-10-08).
+    them, and themselves. An admin sees everyone.
     """
+    # It returned every active user to anyone signed in, emails included,
+    # members of other tenants' projects too (the UX redesign's browser E2E
+    # pass, 2026-10-08).
     stmt = select(User).where(User.is_active == True)  # noqa: E712
     if getattr(current_user.role, "value", current_user.role) != UserRole.ADMIN.value:
         from app.models.postgres import ProjectMember  # noqa: PLC0415
