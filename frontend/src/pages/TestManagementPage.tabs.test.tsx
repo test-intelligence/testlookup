@@ -17,7 +17,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useEffect } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase } from '@/types/test-management'
@@ -78,7 +78,8 @@ vi.mock('@/hooks/useSuites', () => ({
   }),
 }))
 
-vi.mock('@/hooks/useUserManagement', () => ({ useProjectMembers: () => ({ data: [] }) }))
+const projectMembers = vi.hoisted(() => ({ data: [] as unknown[] }))
+vi.mock('@/hooks/useUserManagement', () => ({ useProjectMembers: () => ({ data: projectMembers.data }) }))
 vi.mock('@/components/testManagement/EvidenceGapLists', () => ({ default: () => null }))
 
 // The long-tail bodies: each is tested beside its own file.
@@ -97,6 +98,7 @@ vi.mock('@/services/testManagementService', async (importOriginal) => {
       listSuites: vi.fn(),
       listReviewsForRun: vi.fn(),
       aiGenerateAsync: vi.fn(),
+      createCase: vi.fn(async () => ({})),
     },
   }
 })
@@ -319,5 +321,33 @@ describe('Test Cases — Suites link to the suite page', () => {
     expect(screen.getAllByRole('link', { name: 'Trend →' })).toHaveLength(1)
     const hrefs = Array.from(document.querySelectorAll('a[href]')).map((a) => a.getAttribute('href') ?? '')
     expect(hrefs.filter((h) => h.startsWith('/coverage/suite'))).toEqual([])
+  })
+})
+
+// Browser E2E pass (2026-10-08): the New Test Case form listed every user on
+// the instance as an assignee, and the backend dropped the pick (its create
+// schema had no assignee_id). It now lists the project's members, and sends
+// the one chosen.
+describe('Test Cases — New Test Case assignee', () => {
+  afterEach(() => { projectMembers.data = [] })
+
+  it('offers the project members, sorted by name, and sends the chosen one', async () => {
+    projectMembers.data = [
+      { id: 'm2', user_id: 'u-zoe', project_id: 'project-1', role: 'QA_ENGINEER', created_at: '', email: 'z@x.test', username: 'zoe', full_name: 'Zoe Park' },
+      { id: 'm1', user_id: 'u-ann', project_id: 'project-1', role: 'QA_LEAD', created_at: '', email: 'a@x.test', username: 'ann', full_name: null },
+    ]
+    renderAt('/test-management')
+    fireEvent.click(screen.getByRole('button', { name: 'New test case from catalog toolbar' }))
+    const picker = screen.getByLabelText('Assignee (optional)')
+    expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual(['Unassigned', 'ann', 'Zoe Park'])
+
+    fireEvent.change(screen.getByLabelText('Title *'), { target: { value: 'Refund is idempotent' } })
+    fireEvent.change(picker, { target: { value: 'u-zoe' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create Test Case' }))
+    await waitFor(() => expect(testManagementService.createCase).toHaveBeenCalled())
+    expect(vi.mocked(testManagementService.createCase).mock.calls[0][0]).toMatchObject({
+      title: 'Refund is idempotent',
+      assignee_id: 'u-zoe',
+    })
   })
 })

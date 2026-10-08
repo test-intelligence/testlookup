@@ -22,12 +22,14 @@ from app.services.run_compare_service import normalize_suite_name
 from app.models.postgres import (
     ManagedTestCase,
     Project,
+    ProjectMember,
     TestCaseComment,
     TestCaseReview,
     TestPlan,
     TestPlanItem,
     TestCaseLifecycleState,
     User,
+    UserRole,
 )
 from app.models.schemas import (
     ManagedTestCaseCreate,
@@ -408,6 +410,38 @@ async def list_automation_test_cases(
     return result
 
 
+async def _require_assignable(
+    db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    """An assignee is an active user who is a member of the project, or an admin.
+
+    The New Test Case form offered an Assignee the create payload dropped
+    silently: ``ManagedTestCaseCreate`` had no such field (the UX redesign's
+    browser E2E pass, 2026-10-08). Taken unchecked, it would let a caller
+    assign a case to any user id, a member of another tenant's project
+    included, and an unknown id would surface as an opaque foreign-key 500.
+    """
+    user = await db.get(User, user_id)
+    if user is not None and user.is_active:
+        role = getattr(user.role, "value", user.role)
+        if role == UserRole.ADMIN.value:
+            return
+        member = (
+            await db.execute(
+                select(ProjectMember.user_id).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if member is not None:
+            return
+    raise HTTPException(
+        status_code=422,
+        detail="The assignee must be an active member of this project.",
+    )
+
+
 async def create_managed_test_case(
     db: AsyncSession,
     payload: ManagedTestCaseCreate,
@@ -426,6 +460,8 @@ async def create_managed_test_case(
     # this a user could author a case in ANY project by supplying its id.
     from app.core.deps import resolve_project_scope
     await resolve_project_scope(db, current_user, str(payload.project_id))
+    if payload.assignee_id is not None:
+        await _require_assignable(db, payload.project_id, payload.assignee_id)
 
     # Migration 0087 — resolve or create the structured suite anchor when the
     # caller supplied a ``suite_name``. This lets authored cases participate

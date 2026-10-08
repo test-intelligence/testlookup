@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased - Fix: the New Test Case form's Assignee was dropped; the user list crossed tenants
+
+Found by browser end-to-end testing on a local stack.
+
+- **The Assignee was never saved.** The New Test Case form sent
+  `assignee_id`, but the create schema had no such field, so it was dropped
+  silently. No other code wrote the column either. Creating a case "assigned
+  to QA Engineer" produced an unassigned case.
+  - The field is accepted now. The assignee must be an active member of the
+    project, or an admin; anyone else gets a 422 that says so.
+  - The form lists the project's members, the people the backend accepts.
+    It used to list every user on the instance.
+- **`GET /api/v1/auth/users` returned every active user to anyone signed
+  in**, emails included, members of other tenants' projects too. It
+  returns the people who share a project with the caller, and the caller.
+  An admin still sees everyone.
+
+Tested against real Postgres: who is listed for a member, a loner and an
+admin, and which assignees are accepted or refused. Both were
+mutation-checked, as was the form test.
+
+## Unreleased - Fixes: "no pass rate" read as 0%, and "not analysed" read as "data missing"
+
+Found by browser end-to-end testing on a local stack.
+
+- **Ask AI's run cards.** A run still in progress has no pass rate yet; the
+  card read "Build viz-3044 completed — 1 test failed. Pass rate: 0.0% (10/11
+  executed)". It now says the build "is still running: 10 passed and 1 failed
+  so far". A finished run that measured no tests says it has no pass rate.
+- **Global search.** A run with no pass rate read "IN_PROGRESS · 0% pass
+  rate"; it now reads "no pass rate yet". The fallback run summary no longer
+  prints "at a 0.0% pass rate" for a run that measured nothing.
+- **The run's Analysis tab.** Every run with failures and no failure
+  clusters (every run not analysed yet) read "per-test detail missing ... the
+  per-test rows aren't available for this run", on runs whose Tests tab listed
+  every row. With the rows present it now says "not analysed yet" and links to
+  the failed tests. The data-gap message stays for runs that really lack them.
+- **Links into the run page applied no filter.** The Tests tab read its
+  filters from the URL only when the page first loaded, so a link within the
+  page to `?tab=tests&status=FAILED` listed every test. It now applies them.
+- **Coverage.**
+  - Each suite's pass rate divided by every execution, skipped ones
+    included. A suite with skips read low, and the all-skipped
+    QuarantinedSuite read 0% in red. Skipped tests are now out of the
+    denominator, as everywhere else, and an all-skipped suite shows "—".
+  - The Run cadence tile read "7 / 7 days, 100%" above a strip of "6 active
+    days, 1 empty". The tile counted the days a rolling 7 × 24 h window
+    touched. It now counts the calendar days the strip draws, and the strip
+    says "1 active day", not "1 active days".
+
+Each fix has a regression test, mutation-checked.
+
 ## Unreleased - Fixes: counts that were list lengths, and a gate that graded unfinished runs
 
 Found by browser end-to-end testing on a local stack.

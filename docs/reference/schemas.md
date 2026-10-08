@@ -15174,6 +15174,18 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "assignee_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignee Id"
+    },
     "automation_status": {
       "default": "not_automated",
       "title": "Automation Status",

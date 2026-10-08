@@ -115,3 +115,42 @@ async def test_a_clean_run_is_not_described_as_failing():
 
     assert "completed with no failures" in text
     assert "will appear shortly" not in text
+
+
+# The UX redesign's browser E2E pass (2026-10-08): a run still in progress has a
+# NULL pass rate, and ``pass_rate or 0.0`` printed "Build viz-3044 completed —
+# 1 test failed. Pass rate: 0.0% (10/11 executed)" for it.
+
+
+@pytest.mark.asyncio
+async def test_a_run_in_progress_is_running_not_completed_at_zero_percent():
+    run = _run("viz-3044", passed=10, failed=1, skipped=0, broken=0, pass_rate=None)
+    run.status = "IN_PROGRESS"
+
+    text = (await _summaries_for([run]))[0]["executive_summary"]
+
+    assert "**viz-3044** is still running: 10 passed and 1 failed so far." in text
+    assert "completed" not in text
+    assert "0.0%" not in text
+    assert "Pass rate:" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_finished_run_that_measured_nothing_has_no_rate():
+    run = _run("empty", passed=0, failed=0, skipped=3, broken=0, pass_rate=None)
+    run.status = SimpleNamespace(value="PASSED")
+
+    text = (await _summaries_for([run]))[0]["executive_summary"]
+
+    assert "No pass rate: no test passed or failed (0/0 executed, 3 skipped)" in text
+    assert "0.0%" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_measured_zero_percent_is_still_stated():
+    run = _run("all-red", passed=0, failed=4, skipped=0, broken=0, pass_rate=0.0)
+    run.status = "FAILED"
+
+    text = (await _summaries_for([run]))[0]["executive_summary"]
+
+    assert "Pass rate: 0.0% (0/4 executed)" in text

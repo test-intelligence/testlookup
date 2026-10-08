@@ -671,6 +671,7 @@ function WhatFailedCard({
   onDecisionTrail,
   aggregateFailedTests,
   aggregateTotalTests,
+  failedTestRows,
 }: {
   clusters: FailureClusterIntel[]
   runId: string
@@ -682,7 +683,33 @@ function WhatFailedCard({
   /** ``test_runs.total_tests`` aggregate — used to detect runs that
    *  legitimately had zero tests at all (vs runs that lost per-test detail). */
   aggregateTotalTests: number
+  /** Failed or broken per-test rows the run actually has (``affected_suites``
+   *  is counted from them). */
+  failedTestRows: number
 }) {
+  if (clusters.length === 0 && aggregateFailedTests > 0 && failedTestRows > 0) {
+    // The rows are there; only the analysis is not. It said "per-test detail
+    // missing ... the per-test rows aren't available" on every run with
+    // failures and no clusters, which is every run not yet analysed: a run
+    // with all 22 rows on its Tests tab (browser E2E pass, 2026-10-08).
+    return (
+      <CardShell
+        title="What failed"
+        rightSlot={<span>{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'} · not analysed yet</span>}
+      >
+        <div className="px-4 py-4 text-[13px] space-y-2">
+          <p className="m-0 text-[var(--color-text-secondary)]">
+            <strong className="text-[var(--color-text)]">{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'}</strong>
+            {aggregateTotalTests > 0 ? <> out of {aggregateTotalTests} tests</> : null}, not clustered yet:
+            no analysis has run for this run. Analyze failures (below) groups them and looks for the root cause.
+          </p>
+          <Link to={`/runs/${runId}?tab=tests&status=FAILED`} className="text-[12px] text-[var(--color-accent)] hover:underline">
+            Open the failed tests →
+          </Link>
+        </div>
+      </CardShell>
+    )
+  }
   if (clusters.length === 0) {
     // Distinguish two zero-cluster states:
     //   (a) The run genuinely had no failures (total_tests > 0, failed = 0)
@@ -1409,6 +1436,7 @@ export function RunIntelligenceBody({
           onDecisionTrail={() => setDecisionTrailOpen(true)}
           aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
           aggregateTotalTests={run.total_tests ?? 0}
+          failedTestRows={(intelligence.affected_suites ?? []).reduce((n, s) => n + (s.failed_count ?? 0), 0)}
         />
       </section>
 

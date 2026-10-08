@@ -153,6 +153,22 @@ export default function RunDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, suiteFilter, page])
 
+  // ...and the other way: a link into this page (the Analysis tab's "Open the
+  // failed tests") changes the URL without remounting it, and the filters,
+  // read from the URL only on mount, kept showing every test.
+  // Render-phase sync: adopt the URL's filters when the URL itself changes.
+  const urlStatus = searchParams.get('status') || ''
+  const urlSuite = searchParams.get('suite') || ''
+  const urlPage = Number(searchParams.get('page')) || 1
+  const urlFilters = `${urlStatus}|${urlSuite}|${urlPage}`
+  const [seenUrlFilters, setSeenUrlFilters] = useState(urlFilters)
+  if (urlFilters !== seenUrlFilters) {
+    setSeenUrlFilters(urlFilters)
+    setStatusFilter(urlStatus)
+    setSuiteFilter(urlSuite)
+    setPage(urlPage)
+  }
+
   useProjectChangeRedirect('/runs', Boolean(runId))
 
   const { data: run } = useRun(runId)

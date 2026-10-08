@@ -281,7 +281,10 @@ async def _search_test_runs(
             "entity_type": "test_run",
             "entity_id": str(r.id),
             "title": f"Build {r.build_number}",
-            "subtitle": f"{r.branch or 'no branch'} · {r.status} · {r.pass_rate or 0:.0f}% pass rate",
+            # No pass rate (a run in progress, or one that measured nothing) is
+            # not 0%: it read "IN_PROGRESS · 0% pass rate" (browser E2E pass).
+            "subtitle": f"{r.branch or 'no branch'} · {r.status} · "
+            + (f"{r.pass_rate:.0f}% pass rate" if r.pass_rate is not None else "no pass rate yet"),
             "project_id": str(r.project_id),
             "navigation_url": f"/runs/{r.id}",
             "relevance_score": 0.7,
