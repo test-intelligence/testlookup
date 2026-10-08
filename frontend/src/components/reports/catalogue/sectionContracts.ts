@@ -3,10 +3,11 @@
  * "a pinned public contract per section, so composites compile before their
  * parts exist").
  *
- * Three composites mount sections they do not own: `CoverageAdvanced` (FK2)
+ * Composites mount sections they do not own: `CoverageAdvanced` (FK2)
  * mounts FK1's `HeatmapSection`; `SuiteDetailAdvanced` (FK4) mounts FK1's
- * `HeatmapSection`; `FailuresAdvanced` (FK3) mounts FK4's `ScatterSection` and
- * FK5's `FailuresDrill`. Each section module exists from M0a on as a stub with
+ * `HeatmapSection`; the Failures page (FK3; its composite went in UX redesign
+ * P3/P6, each section a tab) mounts FK4's `ScatterSection` and FK5's
+ * `FailuresDrill`. Each section module exists from M0a on as a stub with
  * the signature below (renders nothing), so every composite compiles and
  * tests against it on day one; the owner replaces the body, never the
  * signature.

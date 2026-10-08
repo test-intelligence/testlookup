@@ -404,6 +404,24 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(list.contains(panel)).toBe(false)
   })
 
+  it('a release with no pass rate yet reads "—", never "—%" (browser E2E pass)', async () => {
+    const { useRelease } = await import('@/hooks/useReleases')
+    ;(useRelease as ReturnType<typeof vi.fn>).mockImplementation((id: string | null) => ({
+      data: id
+        ? { ...detailOf(id), metrics: { total_runs: 0, total_tests: 0, total_passed: 0, total_failed: 0, avg_pass_rate: id === RELEASE.id ? 90 : null } }
+        : undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    }))
+    const tile = (panel: HTMLElement) => within(panel).getByText('Pass Rate').nextElementSibling as HTMLElement
+    renderAt('/releases')
+    fireEvent.click(card(/^Checkout 2\.6 2\.6\.0/))
+    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^—$/)
+    fireEvent.click(screen.getByRole('button', { name: 'Close release' }))
+    fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
+    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^90\.0%$/)
+  })
+
   it('closes, and opens another release in its place', () => {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
@@ -464,5 +482,163 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(within(planned).getByText('No phases scoped yet')).toBeInTheDocument()
     expect(within(planned).getByText("Add Checkout 2.6's phases in its detail.")).toBeInTheDocument()
     expect(within(planned).queryByRole('button')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * UX redesign P6 (the fold budget, `02-design-spec.md` §2): the list started
+ * 466 px down because a verdict band AND a KPI strip stood side by side above
+ * it. Now: header · one toolbar row · ONE StatusBanner · the list, and what
+ * the band and the strip said beyond the banner's line is in the collapsed
+ * "Release health · this week" disclosure under the list — moved, not lost.
+ */
+describe('ReleasesPage — one banner above the list, the rest under it (P6)', () => {
+  const phase = (id: string, name: string, status: string, order: number) => ({
+    id,
+    release_id: 'rel-active',
+    name,
+    phase_type: 'qa_testing',
+    status,
+    description: null,
+    order_index: order,
+    planned_start: null,
+    planned_end: null,
+    actual_start: null,
+    actual_end: null,
+    exit_criteria: null,
+    notes: null,
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-01T00:00:00Z',
+  })
+  const base = {
+    project_id: 'proj-1',
+    project_name: 'Project One',
+    description: null,
+    planned_date: null,
+    released_at: null as string | null,
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-01T00:00:00Z',
+    phases: [] as ReturnType<typeof phase>[],
+    test_run_count: 0,
+  }
+  /** In progress with a failed phase (a red blocker), one planned, one shipped two days ago. */
+  const RELEASES = [
+    {
+      ...base,
+      id: 'rel-active',
+      name: '2026.11',
+      version: '2026.11',
+      status: 'in_progress',
+      phases: [phase('ph-1', 'Smoke', 'completed', 1), phase('ph-2', 'Regression', 'failed', 2)],
+    },
+    { ...base, id: 'rel-planned', name: '2026.12', version: '2026.12', status: 'planning' },
+    {
+      ...base,
+      id: 'rel-shipped',
+      name: '2026.10',
+      version: '2026.10',
+      status: 'released',
+      released_at: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+    },
+  ]
+
+  beforeEach(async () => {
+    localStorage.clear()
+    projectStoreState.activeProjectId = 'proj-1'
+    projectStoreState.activeProject = { id: 'proj-1', name: 'Project One' }
+    projectStoreState.projects = [{ id: 'proj-1', name: 'Project One' }]
+    const { useRelease, useReleases } = await import('@/hooks/useReleases')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRelease as ReturnType<typeof vi.fn>).mockImplementation((id: string | null) => ({
+      data: id
+        ? {
+            ...RELEASES.find((r) => r.id === id),
+            linked_runs: [],
+            outcomes: [],
+            metrics: { total_runs: 0, total_tests: 0, total_passed: 0, total_failed: 0, avg_pass_rate: null },
+          }
+        : undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    }))
+    ;(useReleases as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: RELEASES }, isLoading: false, mutate: vi.fn() })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+  })
+
+  function renderAt(path: string) {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/releases" element={<ReleasesPage />} />
+          <Route path="/releases/:releaseId" element={<ReleasesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  /** The release health disclosure (a release's own detail has a "Pipeline" one too). */
+  const healthDisclosure = () =>
+    screen.getByRole('button', { name: /Release health · this week/ }).closest('[data-disclosure]') as HTMLElement
+
+  it('has ONE banner above the list — after the toolbar, no KPI cards — and the disclosure under it', () => {
+    const { container } = renderAt('/releases')
+    const banners = container.querySelectorAll('[data-status-banner]')
+    expect(banners).toHaveLength(1)
+    const toolbar = screen.getByPlaceholderText('Search releases, owners, versions…')
+    const primary = container.querySelector('[data-primary]') as HTMLElement
+    const disclosure = healthDisclosure()
+    expect(follows(toolbar, banners[0]), 'the banner follows the toolbar row').toBe(true)
+    expect(follows(banners[0], primary), 'the list follows the banner').toBe(true)
+    expect(primary.contains(disclosure)).toBe(false)
+    expect(follows(primary, disclosure), 'the release health disclosure follows the list').toBe(true)
+    // No KPI card anywhere but the banner's facts (the strip is in the closed disclosure).
+    const cards = screen.queryAllByText('Released · 30d').filter((el) => !el.closest('[data-status-banner]'))
+    expect(cards).toHaveLength(0)
+    expect(disclosure).toHaveAttribute('data-open', 'false')
+  })
+
+  it('the banner names the release that ships next, its gate and the counts, and opens it in the side panel', () => {
+    const { container } = renderAt('/releases')
+    const banner = container.querySelector('[data-status-banner]') as HTMLElement
+    expect(within(banner).getByText('NOT EVALUATED')).toBeInTheDocument()
+    expect(within(banner).getByText(/^2026\.11 is in progress, not evaluated yet/)).toBeInTheDocument()
+    expect(Array.from(banner.querySelectorAll('[data-banner-fact]'), (f) => f.textContent)).toEqual([
+      'Open blockers 1',
+      'Ready to ship 0',
+      'Blocked 1',
+      'Released · 30d 1',
+    ])
+    fireEvent.click(within(banner).getByRole('button', { name: 'Open 2026.11 →' }))
+    expect(screen.getByRole('dialog', { name: '2026.11' })).toBeInTheDocument()
+  })
+
+  it('keeps every fact of the former band and strip: the gate lede, the top blockers and the four counts, under the list', () => {
+    renderAt('/releases')
+    const toggle = screen.getByRole('button', { name: /Release health · this week/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Closed, it still says the two counts the banner does not.
+    expect(toggle).toHaveTextContent('1 in progress · 1 released in 30 days')
+    fireEvent.click(toggle)
+    expect(screen.getByText(/^No gate evaluation yet — phase results will populate/)).toBeInTheDocument()
+    const blockers = screen.getByRole('list', { name: 'Top blockers on 2026.11' })
+    expect(within(blockers).getByText('Regression failed')).toBeInTheDocument()
+    const details = within(healthDisclosure())
+    for (const label of ['In progress', 'Ready to ship', 'Blocked', 'Released · 30d']) {
+      expect(details.getByText(label), label).toBeInTheDocument()
+    }
+    // The In progress card's value is the count: one.
+    const inProgressCard = details.getByText('In progress').closest('div')?.parentElement as HTMLElement
+    expect(inProgressCard.querySelector('.tabular-nums')).toHaveTextContent('1')
+  })
+
+  it("on a release's own page the banner has no Open action: the release is the page", () => {
+    const { container } = renderAt('/releases/rel-active')
+    const banner = container.querySelector('[data-status-banner]') as HTMLElement
+    expect(within(banner).getByText(/^2026\.11 is in progress/)).toBeInTheDocument()
+    expect(within(banner).queryByRole('button')).not.toBeInTheDocument()
+    const primary = container.querySelector('[data-primary]') as HTMLElement
+    expect(primary.contains(healthDisclosure())).toBe(false)
+    expect(follows(primary, healthDisclosure())).toBe(true)
   })
 })

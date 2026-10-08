@@ -14,29 +14,16 @@
  * the `prod-release-gate` visual spec).
  */
 import { expect, test, type Page } from '@playwright/test'
-import type { ApiHandlers, ApiRequest } from '../lib/production-pages'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { CHART_DATA_PATH, GATE_CLUSTERS, releaseGateOn, RUN_ID } from '../visual/production/fixtures'
+// Four stored blockers (the card shows the first three), over the shared handlers' floored NO_GO.
+import { withGateBlockers as withBlockers } from '../visual/production/fixtures-pages'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
 
 const PATH = `/release-gate/${RUN_ID}`
 const ready = (p: Page) => p.getByRole('meter', { name: 'Risk Score' })
-
-const READINESS = /^\/api\/v1\/release-readiness\/[^/]+$/
-
-/** Four stored blockers (the card shows the first three), over the shared handlers' floored NO_GO. */
-const BLOCKERS = ['Checkout down in 3 suites', 'Payment gateway timeout', 'Session cookie not cleared', 'Login 500 on retry']
-
-function withBlockers(handlers: ApiHandlers): ApiHandlers {
-  const stored = handlers.find(([matcher]) => matcher instanceof RegExp && matcher.source === READINESS.source)
-  if (!stored) throw new Error('releaseGateOn no longer answers release-readiness')
-  return [
-    [READINESS, (request: ApiRequest) => ({ ...(stored[1](request) as object), blocking_issues: BLOCKERS })],
-    ...handlers,
-  ]
-}
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 

@@ -22,7 +22,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { GALLERY_ITEMS, galleryCanvasSize } from '../../src/pages/dev/chartGalleryFixtures'
 import { ALL_THEMES, expectNoBlockingViolations } from '../lib/axe-gate'
 import { textEscapes } from '../lib/chart-text-escapes'
-import { isTelemetryBeaconFailure } from '../lib/chart-gallery-page'
+import { GALLERY_RENDER_TIMEOUT, isTelemetryBeaconFailure } from '../lib/chart-gallery-page'
 
 const GALLERY = '/__charts'
 const ANALYSIS_ID = 'timeseries-trend-analysis'
@@ -66,7 +66,8 @@ async function openGallery(page: Page, search = '') {
   await page.goto(`${GALLERY}${search}`)
   // Fail, never skip: a 404 or an auth bounce lands on /overview → /login.
   expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe(GALLERY)
-  await expect(page.getByTestId('chart-gallery')).toBeVisible()
+  // The gallery's one big commit: its own budget, as chart-gallery.spec's (5 s failed 3 tests on CI, P6).
+  await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: GALLERY_RENDER_TIMEOUT })
   // Both charts have measured and drawn: Recharts paints after ResponsiveContainer's first layout.
   await expect(page.locator(`${ANALYSIS} .trend-overlay-trend-line path.recharts-curve`).first()).toBeVisible()
   await expect(page.locator(`${SPARSE} ${CHART_SVG} path`).first()).toBeVisible()

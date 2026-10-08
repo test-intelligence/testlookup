@@ -10,7 +10,7 @@
  * preload lists there cost ~0.6 kB gzip of it and one more shared chunk in
  * every page's preload list (measured, integrator I); behind ONE lazy import
  * of this file they stay off the page's eager chunk — the pattern of
- * `FailuresAdvanced` / `FailuresAdvancedSections`.
+ * `SuiteDetailAdvanced` / `SuiteDetailAdvancedSections`.
  */
 import { Suspense, type ReactElement } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'

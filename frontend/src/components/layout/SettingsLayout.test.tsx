@@ -4,12 +4,12 @@
  * marked, and "All settings" (the index) for those who can open it: the way
  * back BUG-009 guaranteed, now that the breadcrumb is gone.
  */
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsLayout from './SettingsLayout'
 
-const perms = vi.hoisted(() => ({ value: { canAccessManagement: true, canGenerateApiKeys: true } }))
+const perms = vi.hoisted(() => ({ value: { canAccessManagement: true, isAdmin: false, canGenerateApiKeys: true } }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms.value }))
 
 function renderAt(entry: string) {
@@ -27,7 +27,7 @@ const current = (nav: HTMLElement) => Array.from(nav.querySelectorAll('[aria-cur
 
 describe('SettingsLayout', () => {
   beforeEach(() => {
-    perms.value = { canAccessManagement: true, canGenerateApiKeys: true }
+    perms.value = { canAccessManagement: true, isAdmin: false, canGenerateApiKeys: true }
   })
 
   it('a QA lead or admin: All settings, then the seven groups, the page beside them', () => {
@@ -41,13 +41,24 @@ describe('SettingsLayout', () => {
   })
 
   it('a viewer: their own pages and the AI pipeline pages; no index link, nothing that would redirect them', () => {
-    perms.value = { canAccessManagement: false, canGenerateApiKeys: false }
+    perms.value = { canAccessManagement: false, isAdmin: false, canGenerateApiKeys: false }
     const nav = renderAt('/settings/profile')
     expect(within(nav).queryByRole('link', { name: 'All settings' })).toBeNull()
     expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
       'Profile', 'My notifications', 'Workflow editor', 'Pipeline runs',
     ])
     expect(current(nav)).toEqual(['Profile'])
+  })
+
+  it('SSO and Feature flags for an admin only: a QA lead got 403s there (browser E2E pass)', () => {
+    const links = () => within(renderAt('/settings/profile')).getAllByRole('link').map((a) => a.textContent)
+    const lead = links()
+    expect(lead).toContain('MFA & lockout')
+    expect(lead).not.toContain('SSO & identity')
+    expect(lead).not.toContain('Feature flags')
+    cleanup()
+    perms.value = { ...perms.value, isAdmin: true }
+    expect(links()).toEqual(expect.arrayContaining(['SSO & identity', 'Feature flags']))
   })
 
   it('the sub-nav scrolls on its own: seven groups are taller than the window', () => {

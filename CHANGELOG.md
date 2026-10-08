@@ -1,5 +1,70 @@
 # Changelog
 
+## Unreleased - UX redesign P6: lock it in — a fold budget and gate ratchets
+
+Phase P6 of the UI/UX redesign. Tests and gate checks now hold the
+template and the fold, and the last pages that missed the template use it.
+
+- **Fold budget:** `fold-budget.spec.ts` covers 19 routes at 1440 × 900.
+  On each it checks that:
+  - the page has exactly one primary content, starting at most 320 px down;
+  - the page stays within its height budget, and where a page runs over the
+    plan's target, the spec's comment says where the height goes;
+  - nothing scrolls sideways, and a table fits its card, at 1440 and 1280.
+- **Releases:** one status banner replaces the verdict band and the KPI
+  strip, so the list starts at 263 px (it was 466). The summary, top
+  blockers and KPI cards are in a collapsed "Release health · this week"
+  section.
+- **Found by the fold budget:**
+  - `/settings` had no marked primary content.
+  - The Inbox's table (`/my-failures`) was 1,168 px wide in a card that clips at 1,134,
+    which cut off the row actions. Its Test column now shrinks.
+- **The template everywhere:**
+  - Deep Investigation, Live and Search use the template header, so no page
+    makes its own title any more.
+  - Defects' status filter and the agent config panel use the shared tabs.
+  - Live's time window uses the shared window picker.
+- **Dead code removed:**
+  - Run Intelligence's standalone page and header, unrouted since P4. Its
+    body and decision report stay, inside the run page.
+  - The Failures composite. The page loads each section in its own tab.
+- **Quality gate**, 47 to 50 guards. All three new guards are absolute:
+  - `frontend.page-header-only`: a page's title comes from `PageHeader`.
+  - `frontend.nav-item-budget`: the sidebar has at most 14 items.
+  - `frontend.tabs-primitive-only`: no hand-rolled tab list.
+  - `repo.no-gitignored-source` also checks untracked files with this
+    checkout's own git. On Windows, git ignores case, so `*apikey*` dropped
+    a new `ApiKeysPage.test.tsx` from the P5 commit while the gate passed.
+- **Push gate:** it now also runs CI's script self-tests (quality gate,
+  mypy ratchet, CI security, clean scratch and push check), checked against
+  `ci.yml`'s list.
+- **Found by browser end-to-end testing** on a local stack (a throwaway
+  Postgres, Redis and Mongo, the seeded demo data, every route as admin, QA
+  lead, QA engineer and viewer). Each has a regression test:
+  - **Runs:** a build still in progress read as a red "0.0 %", the worst in the
+    window, and broke the red streak, so a broken pipeline said "Red streak 0
+    in a row". Both now treat it as not yet measured ("—"). "Last green" says
+    "7d ago", not "172h ago".
+  - **Suites:** a suite whose every latest result was skipped (a quarantined
+    suite) read "0.0 %" beside "0 failing". It has no pass rate now ("—"),
+    and a measured 0 % is still shown.
+  - **Settings, for a QA lead:** SSO and Feature flags were offered, but their
+    API is admin-only. The sub-nav and index now list them for admins only. A
+    QA lead who opens one by URL sees "Admin access required" with the page
+    header, and nothing is requested. The SSO page also tells a failed load
+    from an empty list, with Retry.
+  - **Every role below QA lead:** every page asked for the full AI settings
+    (QA lead and above) just to learn the analysis mode, so each page toasted
+    "Requires at least QA_LEAD role" and Ask AI never appeared. A new
+    `GET /api/v1/settings/ai/mode` returns the mode alone to any signed-in
+    user; the full config stays QA lead and above.
+  - **Tester and viewer:** each failed test they opened toasted "Requires at
+    least QA_ENGINEER role" (the stored AI analysis). The panel now says who it
+    is for and asks nothing. Deep Investigation does the same for the
+    integration probes, which are QA lead and above.
+  - **Workflow editor:** the 3,400 px graph widened its column, so the whole
+    page scrolled sideways. The graph scrolls in its own box again.
+
 ## Unreleased - UX redesign P5: settings and admin in one place
 
 Phase P5 of the UI/UX redesign. Every settings and admin page now sits

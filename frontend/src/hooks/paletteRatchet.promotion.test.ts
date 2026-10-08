@@ -8,7 +8,7 @@
  * legibility defect. Over successive page-by-page passes every raw class in
  * src/ was mapped by semantic role to its token, leaving zero UI sites. The
  * only remaining literal matches are assertion guards in two test files
- * (RightRail/VerdictBand) that name the raw classes to prove they are ABSENT;
+ * (RightRail/ReleaseHealth, formerly VerdictBand) that name the raw classes to prove they are ABSENT;
  * those carry scoped disables, mirroring the avatar-color-swatch exemption.
  * Promoting the rule to error guards against reintroducing token-bypassing
  * palette classes in app code.

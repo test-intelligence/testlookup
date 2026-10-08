@@ -2269,6 +2269,73 @@ def _frontend_no_unbuilt_stubs() -> list[Violation]:
     return violations
 
 
+_PAGE_H1_RE = re.compile(r"<h1[\s>]")
+
+
+def _frontend_page_header_only() -> list[Violation]:
+    """UX redesign P6 (plan ratchet b): every routed page renders the template
+    header (`PageHeader`: one compact title, the page's help topic, at most one
+    primary and one secondary action, the rest in ⋯), never an `<h1>` of its
+    own. P3-P5 moved 30-odd pages onto it; a hand-made `<h1>` is how a page
+    drifts back to its own spacing, its own action row and no help link. The
+    dev galleries under `pages/dev/` are exempt (not product pages), and so
+    are tests (a test may render an `<h1>` fixture)."""
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src" / "pages"
+    for path in iter_files(root, (".tsx",)):
+        if ".test." in path.name or "dev" in path.relative_to(root).parts[:-1]:
+            continue
+        for ln, text in grep_lines(path, _PAGE_H1_RE):
+            violations.append(Violation(path, ln, f"a page-made <h1>: {text.strip()[:80]}"))
+    return violations
+
+
+_NAV_ITEM_BUDGET = 14
+_NAV_ITEMS_BLOCK_RE = re.compile(r"export const NAV_ITEMS[^=]*=\s*\[(.*?)\n\]", re.S)
+_NAV_ITEM_ID_RE = re.compile(r"^\s*(?:\{\s*)?id:\s*'([^']+)'", re.M)
+
+
+def _frontend_nav_item_budget() -> list[Violation]:
+    """UX redesign P6 (plan ratchet c): the sidebar holds at most 14 items.
+    P1 took it from 31 to 11 (13 for a QA lead or admin); every page that left
+    it is a tab, a ⋯ item or under Admin. A 15th item is a decision the design
+    spec has to make first, not a line someone adds."""
+    path = REPO_ROOT / "frontend" / "src" / "components" / "layout" / "navConfig.ts"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return [Violation(path, 0, "navConfig.ts is missing: the guard cannot have looked")]
+    block = _NAV_ITEMS_BLOCK_RE.search(text)
+    if not block:
+        return [Violation(path, 0, "no `export const NAV_ITEMS = [ … ]` block: the guard cannot have looked")]
+    ids = _NAV_ITEM_ID_RE.findall(block.group(1))
+    if not ids:
+        return [Violation(path, 0, "NAV_ITEMS has no `id:` entries the guard can read: it cannot have looked")]
+    if len(ids) > _NAV_ITEM_BUDGET:
+        return [Violation(path, 0, f"{len(ids)} sidebar items (budget {_NAV_ITEM_BUDGET}): {', '.join(ids)}")]
+    return []
+
+
+_TABLIST_RE = re.compile(r"""role=\{?["']tablist["']""")
+_TABS_PRIMITIVE = "frontend/src/components/ui/Tabs.tsx"
+
+
+def _frontend_tabs_primitive_only() -> list[Violation]:
+    """UX redesign P6 (plan ratchet d): a tab bar is the `Tabs` primitive
+    (`components/ui/Tabs.tsx`: one look, keyboard behaviour, `?tab=` through
+    `useTabParam`), never a hand-rolled `role="tablist"`. There were 19 when
+    the redesign began. Tests are exempt."""
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src"
+    for path in iter_files(root, (".tsx",)):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if ".test." in path.name or rel == _TABS_PRIMITIVE:
+            continue
+        for ln, text in grep_lines(path, _TABLIST_RE):
+            violations.append(Violation(path, ln, f"a hand-rolled tablist: {text.strip()[:80]}"))
+    return violations
+
+
 _AXIOS_CREATE_RE = re.compile(r"\baxios\.create\s*\(")
 _AXIOS_OWNER = "frontend/src/services/api.ts"
 
@@ -4494,6 +4561,43 @@ def _repo_no_gitignored_source() -> list[Violation]:
                 "`git add` will skip it and your commit will land without it"
             )
         violations.append(Violation(REPO_ROOT / path, 0, message))
+
+    # The COMMIT's verdict, beside the TREE's. The pass above asks CI's
+    # case-sensitive question, so the tree passes or fails the same everywhere.
+    # But `git add` on THIS checkout uses this checkout's case rule: on Windows
+    # (core.ignorecase = true) `*apikey*` matched a NEW `ApiKeysPage.test.tsx`,
+    # CI's question said "not ignored", the gate passed, and `git add -A`
+    # silently left the file out of the UX redesign P5 commit. So: untracked
+    # files only (a tracked file is past that risk), asked the way this
+    # checkout's git asks. On Linux the two answers agree and nothing new is
+    # reported, so CI's verdict is unchanged.
+    flagged = {path for path, _ in matches}
+    tracked_now = _git_tracked(candidates)
+    untracked = [p for p in candidates if p not in tracked_now and p not in flagged]
+    if untracked:
+        local = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-v", "--no-index"],
+            cwd=REPO_ROOT,
+            input=b"\n".join(p.encode() for p in untracked),  # bytes: see above
+            capture_output=True,
+        )
+        if local.returncode not in (0, 1):
+            violations.append(Violation(
+                REPO_ROOT / ".gitignore", 0,
+                "git check-ignore (this checkout's case rule) failed — the "
+                "guard could not look, which is not the same as a pass",
+            ))
+        else:
+            asked = set(untracked)
+            for line in local.stdout.decode("utf-8", "replace").splitlines():
+                rule, sep, path = line.rpartition("\t")
+                if sep and path in asked:
+                    violations.append(Violation(
+                        REPO_ROOT / path, 0,
+                        f"UNTRACKED source file is ignored by THIS checkout's git "
+                        f"(`{rule}`, core.ignorecase) though not on CI — `git add` "
+                        "here skips it and the commit lands without it",
+                    ))
     return violations
 
 
@@ -6068,6 +6172,24 @@ GUARDS: list[Guard] = [
         description="No 'Phase 2' / 'coming soon' / 'next iteration' stubs or their comments in frontend/src.",
         check=_frontend_no_unbuilt_stubs,
         fix_hint="Do not render what is not built: drop the control (or its CTA row) and its comment.",
+    ),
+    Guard(
+        name="frontend.page-header-only",
+        description="Routed pages render PageHeader, never a page-made <h1> (pages/dev and tests exempt).",
+        check=_frontend_page_header_only,
+        fix_hint="Use `<PageHeader compact title=… helpTopic={helpTopicParam(path)} />` from components/ui/PageHeader.",
+    ),
+    Guard(
+        name="frontend.nav-item-budget",
+        description="The sidebar (navConfig NAV_ITEMS) holds at most 14 items.",
+        check=_frontend_nav_item_budget,
+        fix_hint="Make the page a section tab, a ⋯ item or an Admin page; a 15th sidebar item is a design-spec decision.",
+    ),
+    Guard(
+        name="frontend.tabs-primitive-only",
+        description='A tab bar is the Tabs primitive, never a hand-rolled role="tablist".',
+        check=_frontend_tabs_primitive_only,
+        fix_hint="Use `Tabs` from components/ui/Tabs (with `useTabParam` for a page's own tabs).",
     ),
     Guard(
         name="backend.project-scope-guard-placement",

@@ -249,6 +249,24 @@ PARITY_ROUTES: tuple[tuple[str, str, list[tuple[str, str]]], ...] = (
 INTENDED_PARITY_ERROR_CHANGES = frozenset({"systemic_clusters/member_all_projects"})
 
 
+def _intended_value_changes(expected: dict) -> int:
+    """Apply the intended value changes since the golden was captured; return how many rows changed (0 on a regenerated golden).
+
+    ``tm_suites``: a suite with no pass or fail result (every latest result
+    skipped -- the seeded quarantined suite -- or never run) has no pass rate,
+    ``None``, not the ``0.0`` the golden captured beside ``failed_count: 0``
+    (the UX redesign's browser E2E pass, 2026-10-07). The golden file stays as
+    captured; the change is stated here.
+    """
+    changed = 0
+    for key in ("tm_suites/none", "tm_suites/member_all_projects"):
+        for row in expected.get(key, {}).get("body", []):
+            if row["passed_count"] + row["failed_count"] == 0 and row["pass_rate"] is not None:
+                row["pass_rate"] = None
+                changed += 1
+    return changed
+
+
 async def _parity_characterise(world) -> dict:
     out: dict = {}
     for name, path, fixed in PARITY_ROUTES:
@@ -280,6 +298,12 @@ async def test_unfiltered_parity_routes_match_the_pre_viz202_golden(world, extra
         )
         pytest.skip(f"golden written: {PARITY_GOLDEN}")
     expected = json.loads(PARITY_GOLDEN.read_text(encoding="utf-8"))
+    _intended_value_changes(expected)
+    # Not vacuous: the golden has the case -- a suite every result of which skipped.
+    assert any(
+        row["passed_count"] + row["failed_count"] == 0 and row["pass_rate"] is None
+        for row in expected["tm_suites/none"]["body"]
+    )
     assert sorted(actual) == sorted(expected)
     for key in INTENDED_PARITY_ERROR_CHANGES:
         assert actual[key]["status"] == expected[key]["status"] == 422, key

@@ -52,9 +52,11 @@ async function fetchTab(tab: SSOTab): Promise<SSOTabData> {
  * surfaces a failed load as a string for the inline banner, matching the prior
  * `setError(...)` in the effect's `catch`.
  */
-export function useSSOTabData(tab: SSOTab) {
+export function useSSOTabData(tab: SSOTab, enabled = true) {
+  // `enabled` false asks nothing: every SSO endpoint is ADMIN-only, and a
+  // QA lead's 403 read as "No SSO configurations" (browser E2E pass).
   const { data, isLoading, error, mutate } = useSWR<SSOTabData>(
-    ['sso-tab', tab],
+    enabled ? ['sso-tab', tab] : null,
     () => fetchTab(tab),
     { revalidateOnFocus: false, shouldRetryOnError: false },
   )

@@ -1050,6 +1050,20 @@
         "title": "AIGenerateTestCasesResponse",
         "type": "object"
       },
+      "AIModeRead": {
+        "description": "The analysis mode alone: what every role's screens branch on.",
+        "properties": {
+          "analysis_mode": {
+            "title": "Analysis Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis_mode"
+        ],
+        "title": "AIModeRead",
+        "type": "object"
+      },
       "AIModelStatusRead": {
         "description": "Live model presence + fallback-chain state (US-13.2).\n\n``ollama_reachable=False`` and \"model missing\" are deliberately\nseparate signals: an unreachable daemon is a connectivity problem,\nan empty/incomplete model list on a reachable daemon is a model-pack\nimport problem. The UI must not collapse them.",
         "properties": {
@@ -63616,6 +63630,61 @@
           }
         ],
         "summary": "Update Ai Config",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/ai/mode": {
+      "get": {
+        "description": "The analysis mode (``rules`` / ``ml`` / ``llm`` / ``auto``), for any signed-in role.\n\nThe sidebar (whether to offer Ask AI) and the chat, release-gate, run\nevidence and pipeline pages need only this, and read it for every role.\nThey read ``GET /settings/ai`` (QA lead and above), so a QA engineer,\ntester or viewer got \"Requires at least QA_LEAD role\" toasts on every\npage and never saw Ask AI (the UX redesign's browser E2E pass). Nothing\nelse of the config — providers, models, which keys are set — is here.",
+        "operationId": "get_ai_mode_api_v1_settings_ai_mode_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIModeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Ai Mode",
         "tags": [
           "Settings"
         ]

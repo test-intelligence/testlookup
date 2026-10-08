@@ -26,7 +26,9 @@ const HELP_TOPIC = helpTopicParam('/settings/feature-flags')
  */
 export default function FeatureFlagsPage() {
   const { isAdmin } = usePermissions()
-  const { flags, isLoading, isError, refresh } = useFeatureFlags()
+  // Asks only for an admin: the list answers anyone else 403, which toasted
+  // "Requires at least ADMIN role" over this page's own message.
+  const { flags, isLoading, isError, refresh } = useFeatureFlags(isAdmin)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState<FeatureFlagCreate>({
     key: '',
@@ -38,10 +40,13 @@ export default function FeatureFlagsPage() {
 
   if (!isAdmin) {
     return (
-      <EmptyState
-        title="Admin access required"
-        description="Only administrators can manage feature flags."
-      />
+      <div className="space-y-4">
+        <PageHeader compact title="Feature Flags" helpTopic={HELP_TOPIC} />
+        <EmptyState
+          title="Admin access required"
+          description="Only administrators can manage feature flags."
+        />
+      </div>
     )
   }
 

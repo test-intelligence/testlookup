@@ -317,3 +317,58 @@ async def test_list_test_suites_run_aggregate_does_not_double_count_existing(mon
     by_name = {s["suite_name"]: s for s in result}
     # Per-test rows win; the fallback row is dropped, not summed.
     assert by_name["auth-api"]["test_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_list_test_suites_no_pass_rate_without_a_pass_or_fail_result(monkeypatch):
+    """A suite whose every latest result SKIPPED (a quarantined suite), or a
+    manually authored suite that never ran, has no pass rate: ``None``, not
+    0.0. The UX redesign's browser E2E pass found the suites list reading
+    "0.0 %" beside "0 failing" for an all-quarantined suite (132 executions,
+    every one skipped)."""
+    from app.routers.test_management_exports import list_test_suites
+
+    project_id = uuid.uuid4()
+    auto_rows = [
+        _row(
+            suite_name="QuarantinedSuite",
+            test_count=3, passed_count=0, failed_count=0,
+            last_run_at=None, last_run_id=uuid.uuid4(),
+        ),
+        _row(
+            suite_name="all-red",
+            test_count=2, passed_count=0, failed_count=2,
+            last_run_at=None, last_run_id=uuid.uuid4(),
+        ),
+    ]
+    manual_rows = [_row(
+        suite_name="Never run",
+        test_count=4, passed_count=0, failed_count=0,
+        last_run_at=None,
+    )]
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[
+            _Result(auto_rows),
+            _Result([]),       # run-aggregate fallback — no live-stream gap rows
+            _Result(manual_rows),
+        ]),
+        rollback=AsyncMock(),
+        begin_nested=_make_begin_nested(),
+    )
+
+    async def _no_owners(_db, _project_id, _names):
+        return {}
+    import app.services.suite_review_service as _sros
+    monkeypatch.setattr(_sros, "list_suite_owners", _no_owners)
+
+    result = await list_test_suites(
+        project_id=project_id,
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4(), role="ADMIN"),
+    )
+
+    by_name = {s["suite_name"]: s for s in result}
+    assert by_name["QuarantinedSuite"]["pass_rate"] is None
+    assert by_name["Never run"]["pass_rate"] is None
+    # A measured 0 % stays 0 %: two tests, both last red.
+    assert by_name["all-red"]["pass_rate"] == 0.0

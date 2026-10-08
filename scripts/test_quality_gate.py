@@ -283,6 +283,74 @@ def test_no_unbuilt_stubs_lets_a_test_assert_the_phrase_is_absent(monkeypatch: p
     assert qg._frontend_no_unbuilt_stubs() == []
 
 
+# ── Guards: frontend.page-header-only / nav-item-budget / tabs-primitive-only (UX redesign P6) ──
+
+
+def test_page_header_only_catches_a_page_made_h1_and_exempts_dev_pages_and_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    pages = tmp_path / "frontend" / "src" / "pages"
+    _write(pages / "Search.tsx", """
+        export default function Search() {
+          return <h1 className="text-xl">Search</h1>
+        }
+    """)
+    _write(pages / "settings" / "Nested.tsx", "const x = <h1>Nested</h1>\n")
+    _write(pages / "Fine.tsx", "const header = <PageHeader compact title='Fine' />\nconst sub = <h2>Not a page title</h2>\n")
+    _write(pages / "dev" / "Gallery.tsx", "const x = <h1>Gallery</h1>\n")
+    _write(pages / "Search.test.tsx", "render(<h1>fixture</h1>)\n")
+    found = sorted((v.file.name, v.line) for v in qg._frontend_page_header_only())
+    assert found == [("Nested.tsx", 1), ("Search.tsx", 2)]
+
+
+def _nav_config(tmp_path: Path, ids: list[str]) -> None:
+    items = "\n".join(f"  {{ id: '{i}', label: '{i}', to: '/{i}', owns: ['/{i}'] }}," for i in ids)
+    _write(
+        tmp_path / "frontend" / "src" / "components" / "layout" / "navConfig.ts",
+        "export const NAV_ITEMS: readonly NavItem[] = [\n" + items + "\n]\n\nexport const ADMIN_ITEM = { id: 'admin' }\n",
+    )
+
+
+def test_nav_item_budget_allows_fourteen_and_refuses_fifteen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _nav_config(tmp_path, [f"item{i}" for i in range(14)])
+    assert qg._frontend_nav_item_budget() == []
+    _nav_config(tmp_path, [f"item{i}" for i in range(15)])
+    violations = qg._frontend_nav_item_budget()
+    assert len(violations) == 1
+    assert "15 sidebar items" in violations[0].message
+
+
+def test_nav_item_budget_cannot_pass_without_looking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A renamed array or a missing file must fail, not read as 'within budget'."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    assert "cannot have looked" in qg._frontend_nav_item_budget()[0].message
+    _write(tmp_path / "frontend" / "src" / "components" / "layout" / "navConfig.ts", "export const ITEMS = []\n")
+    assert "cannot have looked" in qg._frontend_nav_item_budget()[0].message
+
+
+def test_nav_item_budget_reads_the_real_sidebar() -> None:
+    """Runs against the REAL navConfig.ts: the parser finds its items (a
+    parser that finds none would pass every budget)."""
+    text = (qg.REPO_ROOT / "frontend" / "src" / "components" / "layout" / "navConfig.ts").read_text(encoding="utf-8")
+    block = qg._NAV_ITEMS_BLOCK_RE.search(text)
+    assert block
+    ids = qg._NAV_ITEM_ID_RE.findall(block.group(1))
+    assert "home" in ids and len(ids) >= 10
+
+
+def test_tabs_primitive_only_catches_a_hand_rolled_tablist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    src = tmp_path / "frontend" / "src"
+    _write(src / "pages" / "Defects.tsx", '<div role="tablist" aria-label="Status">\n')
+    _write(src / "components" / "agents" / "Panel.tsx", "<div role={'tablist'}>\n")
+    _write(src / "components" / "ui" / "Tabs.tsx", '<div role="tablist">\n')
+    _write(src / "pages" / "Defects.test.tsx", "getByRole('tablist')\n")
+    found = sorted(v.file.name for v in qg._frontend_tabs_primitive_only())
+    assert found == ["Defects.tsx", "Panel.tsx"]
+
+
 # ── Guard: frontend.ingest-formats-match-backend ─────────────────────────────
 
 
@@ -1439,6 +1507,60 @@ def test_gitignored_source_distinguishes_untracked_from_tracked(
     assert "already tracked" in by_path["api_keys.py"]
 
 
+def test_gitignored_source_flags_an_untracked_file_only_this_checkouts_git_ignores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The UX redesign P5 incident. CI's case-sensitive question said a new
+    `ApiKeysPage.test.tsx` was not ignored; the Windows checkout's git
+    (core.ignorecase = true) matched it to `*apikey*`, and `git add -A` left it
+    out of the commit while the gate stayed green. The local pass asks this
+    checkout's git about UNTRACKED files and reports what it would skip."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    new_test_file = "frontend/src/pages/settings/ApiKeysPage.test.tsx"
+    candidates = [f"f{i}.py" for i in range(200)] + [new_test_file, "frontend/src/pages/settings/ApiKeysPage.tsx"]
+    monkeypatch.setattr(qg, "_source_candidates", lambda: candidates)
+    calls: list[list[str]] = []
+
+    def _run(argv, *args, **kwargs):
+        calls.append(list(argv))
+        if "core.ignorecase=false" in argv:
+            return _fake_completed(returncode=1)  # CI's answer: nothing ignored
+        # This checkout's answer: case-insensitive, both camelCase files match.
+        return _fake_completed(
+            returncode=0,
+            stdout=(
+                f".gitignore:28:*apikey*\t{new_test_file}\n"
+                ".gitignore:28:*apikey*\tfrontend/src/pages/settings/ApiKeysPage.tsx\n"
+            ).encode(),
+        )
+
+    monkeypatch.setattr(qg.subprocess, "run", _run)
+    # The page itself is tracked (past the risk); the new test is not.
+    monkeypatch.setattr(qg, "_git_tracked", lambda paths: {"frontend/src/pages/settings/ApiKeysPage.tsx"} & set(paths))
+
+    violations = qg._repo_no_gitignored_source()
+
+    assert [v.file.name for v in violations] == ["ApiKeysPage.test.tsx"]
+    assert "THIS checkout" in violations[0].message
+    assert "`git add`" in violations[0].message
+    # The tracked page was not even asked about in the local pass.
+    local_calls = [c for c in calls if "check-ignore" in c and "core.ignorecase=false" not in " ".join(c)]
+    assert len(local_calls) == 1
+
+
+def test_gitignored_source_local_pass_reports_nothing_when_the_two_answers_agree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On Linux CI the checkout's own answer IS the case-sensitive one: the
+    local pass must add nothing, or CI's verdict would change."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_source_candidates", lambda: [f"f{i}.py" for i in range(200)])
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: _fake_completed(returncode=1))
+    monkeypatch.setattr(qg, "_git_tracked", lambda paths: set())
+
+    assert qg._repo_no_gitignored_source() == []
+
+
 def test_gitignored_source_roots_cover_tests_not_just_app_code() -> None:
     """The first real incident was a TEST file.
 
@@ -1654,7 +1776,9 @@ def test_the_guard_passes_the_case_flag_to_git():
     real_run = subprocess.run
 
     def _capture(argv, *args, **kwargs):
-        if isinstance(argv, list) and "check-ignore" in argv:
+        # The FIRST check-ignore is the tree's verdict (CI's question); a second,
+        # for untracked files in this checkout's case rule, may follow (P6).
+        if isinstance(argv, list) and "check-ignore" in argv and "argv" not in captured:
             captured["argv"] = argv
         return real_run(argv, *args, **kwargs)
 

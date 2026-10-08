@@ -53,13 +53,16 @@ vi.mock('../../services/ssoService', async () => {
   }
 })
 
+const permissions = { isAdmin: true }
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
+
+let tabError: string | null = null
+const tabDataEnabled: unknown[] = []
 vi.mock('../../hooks/useSSOTabData', () => ({
-  useSSOTabData: () => ({
-    data: tabData,
-    isLoading: false,
-    error: null,
-    refresh: mockRefresh,
-  }),
+  useSSOTabData: (_tab: string, enabled?: boolean) => {
+    tabDataEnabled.push(enabled)
+    return { data: tabData, isLoading: false, error: tabError, refresh: mockRefresh }
+  },
 }))
 
 function config(overrides: Partial<SSOConfig> = {}): SSOConfig {
@@ -98,6 +101,32 @@ const toggleButton = (label: RegExp) => screen.getByRole('button', { name: label
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('confirm', vi.fn(() => true))
+  permissions.isAdmin = true
+  tabError = null
+  tabDataEnabled.length = 0
+})
+
+describe('who the page is for, and a failed load (browser E2E pass)', () => {
+  it('a non-admin (a QA lead opens the route): the header and the admin-required state, nothing asked', () => {
+    permissions.isAdmin = false
+    renderWith([])
+    expect(screen.getByRole('heading', { level: 1, name: 'SSO & Identity Management' })).toBeInTheDocument()
+    expect(screen.getByText('Admin access required')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Add SSO Configuration/ })).toBeNull()
+    expect(screen.queryByText(/No SSO configurations/)).toBeNull()
+    // Every SSO endpoint answers a QA lead 403.
+    expect(tabDataEnabled).toEqual([false])
+  })
+
+  it('a failed load says so with Retry, and never claims "No SSO configurations" it could not read', () => {
+    tabError = 'Request failed with status code 500'
+    renderWith([])
+    const banner = document.querySelector('[data-sso-load-error]') as HTMLElement
+    expect(banner).toHaveTextContent('Could not load this tab: Request failed with status code 500')
+    expect(screen.queryByText(/No SSO configurations/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('activating SSO enforcement is confirmed', () => {

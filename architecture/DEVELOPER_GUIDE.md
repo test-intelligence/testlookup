@@ -40,10 +40,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **47 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **50 guards**.
 18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 29 ship at zero with **no baseline file at all** — those are
+fail CI. The other 32 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -100,6 +100,9 @@ fails if a *second* deleter appears.
 | `frontend.single-axios` | a second `axios.create()` | Import the shared base from `services/api.ts` (it owns the 401-refresh queue) |
 | `frontend.all-projects-literal` | inlining the `'all'` project sentinel | Use the `ALL_PROJECTS_ID` constant; convert to `null` before API calls |
 | `frontend.no-unbuilt-stubs` † | a "Phase 2" / "coming soon" / "next iteration" stub in `frontend/src` (case-insensitive, comments included; test files exempt) | Do not render what is not built: drop the control, or its CTA row, and its comment (UX redesign P2 removed 87) |
+| `frontend.page-header-only` † | a page-made `<h1>` in `frontend/src/pages/**` (`pages/dev/` and tests exempt) | Render `<PageHeader compact title=… helpTopic={helpTopicParam(path)} />` (`components/ui/PageHeader`): one title, the page's help link, at most one primary and one secondary action, the rest in ⋯. UX redesign P3-P6 put every routed page on it; a hand-made `<h1>` is how a page drifts back to its own spacing and loses its help link |
+| `frontend.nav-item-budget` † | more than 14 items in `navConfig.ts`'s `NAV_ITEMS` (the guard also fails when it cannot find or read the array) | Make the page a section tab, a ⋯ item or an Admin (settings) page. P1 took the sidebar from 31 items to 11 (13 for a QA lead or admin); a 15th is a design-spec decision, not a line |
+| `frontend.tabs-primitive-only` † | a hand-rolled `role="tablist"` outside `components/ui/Tabs.tsx` (tests exempt) | Use `Tabs` from `@/components/ui/Tabs` — `useTabParam` for a page's own tabs (`?tab=`), local state for a component's. There were 19 hand-rolled bars when the redesign began |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |

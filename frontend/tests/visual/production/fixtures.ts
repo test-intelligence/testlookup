@@ -98,6 +98,8 @@ const AI_SETTINGS = {
 export const LAYOUT: ApiHandlers = [
   ['/api/v1/projects', () => PROJECTS],
   ['/api/v1/settings/ai', () => AI_SETTINGS],
+  // The sidebar's Ask AI entry (every role reads the mode; the config is QA lead+).
+  ['/api/v1/settings/ai/mode', () => ({ analysis_mode: AI_SETTINGS.analysis_mode })],
   ['/api/v1/releases', () => page([])],
   ['/api/v1/notifications/history/unread-count', () => ({ unread: 0 })],
   ['/api/v1/notifications/history', () => []],

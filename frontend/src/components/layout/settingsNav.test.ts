@@ -3,7 +3,7 @@
  *
  *  - Every item opens a page that is routed, with the role its route asks for
  *    (an item marked `all` must be a route every role can open; `management`
- *    one of App.tsx's management routes).
+ *    or `admin` one of App.tsx's management routes).
  *  - Every routed settings page and admin page is listed: a new
  *    `/settings/<thing>` route that nobody adds here fails, rather than ship
  *    unreachable except by URL (the 22-card index was the only list; now the
@@ -34,7 +34,7 @@ describe('settings sub-nav: the routes it links to', () => {
   it('every item opens a routed page, behind the role its route asks for', () => {
     for (const item of ITEMS) {
       // `engineer` items are on a route every role opens (the page itself tells a lower role why it cannot).
-      if (item.requires !== 'management') expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
+      if (item.requires !== 'management' && item.requires !== 'admin') expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
       else expect(MANAGEMENT.has(item.to), `${item.id}: ${item.to} is a management route`).toBe(true)
     }
   })
@@ -58,14 +58,26 @@ describe('settings sub-nav: the routes it links to', () => {
 
 describe('settings sub-nav: who sees what', () => {
   it('a QA lead or admin sees all seven groups (§4), in order', () => {
-    const groups = settingsGroupsFor({ canAccessManagement: true, canOwnApiKeys: true, isDev: false })
-    expect(groups.map((g) => g.label)).toEqual([
-      'Account', 'Project', 'Release governance', 'Integrations', 'AI', 'Security & access', 'System',
-    ])
+    for (const isAdmin of [false, true]) {
+      const groups = settingsGroupsFor({ canAccessManagement: true, isAdmin, canOwnApiKeys: true, isDev: false })
+      expect(groups.map((g) => g.label)).toEqual([
+        'Account', 'Project', 'Release governance', 'Integrations', 'AI', 'Security & access', 'System',
+      ])
+    }
+  })
+
+  it('SSO and Feature flags are admin-only: their API answers a QA lead 403 (browser E2E pass)', () => {
+    const ids = (isAdmin: boolean) =>
+      settingsGroupsFor({ canAccessManagement: true, isAdmin, canOwnApiKeys: true, isDev: false }).flatMap((g) => g.items.map((i) => i.id))
+    expect(ITEMS.filter((i) => i.requires === 'admin').map((i) => i.id)).toEqual(['sso', 'feature-flags'])
+    expect(ids(false)).not.toContain('sso')
+    expect(ids(false)).not.toContain('feature-flags')
+    expect(ids(false)).toContain('mfa-policy')
+    expect(ids(true)).toEqual(expect.arrayContaining(['sso', 'feature-flags', 'mfa-policy']))
   })
 
   it('a viewer sees their own pages and the AI pipeline pages anyone can open, nothing that would redirect them', () => {
-    const groups = settingsGroupsFor({ canAccessManagement: false, canOwnApiKeys: false, isDev: false })
+    const groups = settingsGroupsFor({ canAccessManagement: false, isAdmin: false, canOwnApiKeys: false, isDev: false })
     expect(groups.map((g) => [g.label, g.items.map((i) => i.id)])).toEqual([
       ['Account', ['profile', 'my-notifications']],
       ['AI', ['workflows', 'pipeline-runs']],
@@ -73,12 +85,12 @@ describe('settings sub-nav: who sees what', () => {
   })
 
   it('a QA engineer also sees My API keys: the API lets them own keys (the Users page it lived on is QA lead+)', () => {
-    const groups = settingsGroupsFor({ canAccessManagement: false, canOwnApiKeys: true, isDev: false })
+    const groups = settingsGroupsFor({ canAccessManagement: false, isAdmin: false, canOwnApiKeys: true, isDev: false })
     expect(groups[0].items.map((i) => i.id)).toEqual(['profile', 'my-notifications', 'my-api-keys'])
   })
 
   it('seed data is listed in development builds only', () => {
-    const ids = (dev: boolean) => settingsGroupsFor({ canAccessManagement: true, canOwnApiKeys: true, isDev: dev }).flatMap((g) => g.items.map((i) => i.id))
+    const ids = (dev: boolean) => settingsGroupsFor({ canAccessManagement: true, isAdmin: true, canOwnApiKeys: true, isDev: dev }).flatMap((g) => g.items.map((i) => i.id))
     expect(ids(true)).toContain('seed-data')
     expect(ids(false)).not.toContain('seed-data')
   })

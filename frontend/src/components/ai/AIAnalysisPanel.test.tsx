@@ -40,6 +40,9 @@ vi.mock('react-hot-toast', () => ({
   },
 }))
 
+const permissions = vi.hoisted(() => ({ canTriggerLlm: true }))
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
+
 const MOCK_ANALYSIS = {
   test_case_id: 'tc-1',
   root_cause_summary: 'Database connection pool exhausted at test execution time.',
@@ -81,6 +84,18 @@ const DEFAULT_PROPS = {
 describe('AIAnalysisPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    permissions.canTriggerLlm = true
+  })
+
+  it('a tester or viewer: told who it is for, and the QA-engineer-only analysis never asked for', async () => {
+    // The read answered them 403 and toasted "Requires at least QA_ENGINEER
+    // role" on every failed test they opened (browser E2E pass).
+    permissions.canTriggerLlm = false
+    const { aiService } = await import('@/services/aiService')
+    render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+    expect(screen.getByText('AI root cause analysis is available to QA engineers and above.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Analyse Root Cause/i })).toBeNull()
+    expect(aiService.getAnalysis).not.toHaveBeenCalled()
   })
 
   async function renderResolvedResult(analysis: Partial<AnalysisResult> = {}) {

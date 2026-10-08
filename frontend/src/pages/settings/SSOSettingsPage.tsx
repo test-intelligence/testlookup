@@ -14,13 +14,18 @@ import {
 import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
 import { formatCompactDateTime } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
+import EmptyState from '@/components/ui/EmptyState'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import { usePermissions } from '@/hooks/usePermissions'
 
 const HELP_TOPIC = helpTopicParam('/settings/sso')
 
 export default function SSOSettingsPage() {
+  const { isAdmin } = usePermissions();
   const [tab, setTab] = useState<SSOTab>('config');
-  const { data, isLoading: loading, error: loadError, refresh } = useSSOTabData(tab);
+  // Every SSO endpoint is ADMIN-only: a QA lead (who can open the route) is
+  // told so, and nothing is asked (it was a raw 403 over "No SSO configurations").
+  const { data, isLoading: loading, error: loadError, refresh } = useSSOTabData(tab, isAdmin);
   const { configs, scimTokens, events, syncStatus } = data;
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +36,6 @@ export default function SSOSettingsPage() {
   const [newToken, setNewToken] = useState<SCIMTokenCreated | null>(null);
   const [tokenName, setTokenName] = useState('');
 
-  const displayError = error ?? loadError;
 
   const handleCreateConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,6 +132,18 @@ export default function SSOSettingsPage() {
     { key: 'sync', label: 'Sync Status' },
   ];
 
+  if (!isAdmin) {
+    return (
+      <div className="space-y-4">
+        <PageHeader compact title="SSO & Identity Management" helpTopic={HELP_TOPIC} />
+        <EmptyState
+          title="Admin access required"
+          description="Only administrators can manage single sign-on, SCIM provisioning and identity events."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -154,14 +170,23 @@ export default function SSOSettingsPage() {
         ))}
       </div>
 
-      {displayError && (
+      {/* An action's failure: Dismiss clears it. */}
+      {error && (
         <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">
-          {displayError}
+          {error}
           <button onClick={() => setError(null)} className="ml-2 text-[var(--status-failed)] hover:text-[var(--status-failed)]">Dismiss</button>
         </div>
       )}
 
-      {loading ? (
+      {/* A failed load: the tab's lists are not drawn, so nothing claims "No SSO
+          configurations" it could not read, and Retry asks again (Dismiss could
+          not clear it: it cleared the action error only). */}
+      {loadError ? (
+        <div data-sso-load-error="" className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">
+          Could not load this tab: {loadError}
+          <button onClick={() => void refresh()} className="ml-2 underline">Retry</button>
+        </div>
+      ) : loading ? (
         <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
       ) : (
         <>

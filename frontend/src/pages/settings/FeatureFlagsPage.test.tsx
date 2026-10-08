@@ -29,8 +29,12 @@ const FLAG: FeatureFlag = {
 const permissions = { isAdmin: true }
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
 
+const flagsEnabled: unknown[] = []
 vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureFlags: () => ({ flags: [FLAG], isLoading: false, isError: false, refresh: vi.fn() }),
+  useFeatureFlags: (enabled?: boolean) => {
+    flagsEnabled.push(enabled)
+    return { flags: [FLAG], isLoading: false, isError: false, refresh: vi.fn() }
+  },
 }))
 
 vi.mock('@/services/featureFlagService', () => ({
@@ -41,6 +45,7 @@ vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() 
 
 beforeEach(() => {
   permissions.isAdmin = true
+  flagsEnabled.length = 0
 })
 
 describe('FeatureFlagsPage', () => {
@@ -60,10 +65,14 @@ describe('FeatureFlagsPage', () => {
     expect(screen.getByPlaceholderText('cypress_ingest')).toBeInTheDocument()
   })
 
-  it('shows the admin-required state and no header to a non-admin', () => {
+  it('a non-admin: the header and the admin-required state, no action, and the ADMIN-only list never asked for', () => {
     permissions.isAdmin = false
     render(<FeatureFlagsPage />)
+    expect(screen.getByRole('heading', { level: 1, name: 'Feature Flags' })).toBeInTheDocument()
     expect(screen.getByText('Admin access required')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 1, name: 'Feature Flags' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /new flag/i })).toBeNull()
+    // Asked, it answered 403 and toasted "Requires at least ADMIN role" over
+    // the page's own message (browser E2E pass).
+    expect(flagsEnabled).toEqual([false])
   })
 })

@@ -6,7 +6,9 @@
  * Layout
  * ------
  * ┌─────────────────────────────────────────────────────────────────────┐
- * │  Header: Active Runs | Tests In Progress | Pass Rate | WS Status   │
+ * │  PageHeader (compact, ?) · window · suite · LIVE · last update · WS │
+ * ├─────────────────────────────────────────────────────────────────────┤
+ * │  Status strip: Current | tests across sessions | Pass rate | bar   │
  * ├─────────────────────────────────────────────────────────────────────┤
  * │  Sessions table (sortable, filterable, paginated)                  │
  * ├─────────────────────────────────────────────────────────────────────┤
@@ -14,6 +16,13 @@
  * ├─────────────────────────────────────────────────────────────────────┤
  * │  Connect a test runner (collapsed)                                 │
  * └─────────────────────────────────────────────────────────────────────┘
+ *
+ * The header is the page template's (UX redesign P6): `PageHeader` with the
+ * route's help topic; the old title-row chips (project, suite) are its
+ * one-line subtitle, and its row carries the toolbar — the shared
+ * `WindowPicker` (the completed-sessions window, 24h/7d/14d/30d) where a
+ * hand-rolled tab-list picker sat, the suite filter — and the
+ * stream's status: the LIVE badge, auto-refresh, last update, socket state.
  *
  * Data sources
  * ------------
@@ -53,10 +62,13 @@ import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PageShell from '@/components/layout/PageShell'
+import PageHeader from '@/components/ui/PageHeader'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { TimingCell } from '@/components/ui/TimingCell'
+import WindowPicker from '@/components/ui/WindowPicker'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
@@ -103,44 +115,17 @@ function WsStatusBadge({ status }: { status: string }) {
   )
 }
 
-// ── Window picker ──────────────────────────────────────────────────────────
-// 1 = last 24h; the rest are day counts. Default 7 preserves the prior
-// hardcoded backend cutoff. Matches the picker shape used on /runs,
-// /overview, /trends, and /coverage so users have one mental model.
+/** The page's help topic (the header's **?**): `topic#anchor` for the route. */
+const HELP_TOPIC = helpTopicParam('/live')
+
+// ── Window ─────────────────────────────────────────────────────────────────
+// The cutoff for COMPLETED sessions (active ones always show): 1 = last 24h;
+// the rest are day counts. The toolbar's shared `WindowPicker` offers these
+// and keeps the choice in the global time-window store, so a window picked
+// here follows the reader to /runs, /overview, /trends… and back (a stored
+// window Live does not offer — 90d — snaps to the nearest, 30d).
 const LIVE_WINDOWS = [1, 7, 14, 30] as const
 type LiveWindow = (typeof LIVE_WINDOWS)[number]
-
-function LiveWindowPicker({ value, onChange }: { value: LiveWindow; onChange: (w: LiveWindow) => void }) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Completed sessions window"
-      className="flex items-center gap-0 p-0.5 rounded-md"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      {LIVE_WINDOWS.map(w => {
-        const active = value === w
-        return (
-          <button
-            key={w}
-            role="tab"
-            type="button"
-            aria-selected={active}
-            onClick={() => onChange(w)}
-            className={clsx(
-              'px-2.5 py-0.5 text-[11px] font-medium tabular-nums rounded-sm transition-colors',
-              active
-                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {w === 1 ? '24h' : `${w}d`}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 // ── Sort helpers ───────────────────────────────────────────────────────────
 
@@ -575,13 +560,12 @@ export default function LiveExecutionPage() {
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
   // Cutoff (in days) for completed sessions shown alongside the always-current
-  // active set. 1 = last 24 hours; 0 = no cutoff. Sourced from the
-  // shared user-level preference so selecting "24h" here propagates to
-  // Overview/Runs/Trends/Coverage/Summary/My Failures and vice versa.
+  // active set. 1 = last 24 hours. Sourced from the shared user-level
+  // preference (the toolbar's WindowPicker writes it) so selecting "24h" here
+  // propagates to Overview/Runs/Trends/Coverage/Summary/My Failures and vice
+  // versa. Snapped here too, so the first fetch already uses a window Live offers.
   const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, LIVE_WINDOWS) as LiveWindow
-  const setDays = setStoredDays
 
   const {
     sessions,
@@ -814,59 +798,60 @@ export default function LiveExecutionPage() {
     return { hero: 'No active runs', sub: 'Stream is connected — waiting for the first run', isLive: false }
   })()
 
+  // The old title row's chips (project, suite) as the compact header's one line.
+  const subtitle = [
+    `Real-time test execution stream — ${selectedProject ? selectedProject.name : 'all projects'}`,
+    suiteLabel ? `Suite ${suiteLabel}` : null,
+  ].filter(Boolean).join(' · ')
+
   return (
-    <PageShell className="space-y-5">
+    <PageShell className="space-y-4">
       {/* ════ Header ════ */}
-      <header className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-[var(--color-text)]">Live Execution</h1>
-            <span className={clsx(
-              'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border',
-              liveSummary.isLive
-                ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
-                : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
-            )}>
+      <PageHeader
+        compact
+        title="Live Execution"
+        subtitle={subtitle}
+        helpTopic={HELP_TOPIC}
+        actions={
+          <div data-page-toolbar="" className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-muted)]">
+            {/* The window bounds the COMPLETED sessions; active runs always show. */}
+            <span title="Completed sessions window — active runs always show" className="inline-flex">
+              <WindowPicker options={LIVE_WINDOWS} />
+            </span>
+            <SuiteFilterSelect
+              value={selectedSuite}
+              onChange={setSelectedSuite}
+              options={suiteOptions}
+              allLabel="All suites"
+            />
+            {/* Pulses while a run is actively streaming (the hero's "active" definition). */}
+            <span
+              data-live-badge={liveSummary.isLive ? 'live' : 'idle'}
+              className={clsx(
+                'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                liveSummary.isLive
+                  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
+                  : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
+              )}
+            >
               <span className={clsx(
                 'h-2 w-2 rounded-full',
                 liveSummary.isLive ? 'bg-[var(--status-passed)] animate-pulse' : 'bg-[var(--color-text-faint)]',
               )} />
               LIVE
             </span>
-            {selectedProject && (
-              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full border bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-muted)]">
-                {selectedProject.name}
-              </span>
-            )}
-            {suiteLabel && (
-              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full border bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-muted)]">
-                {suiteLabel}
-              </span>
-            )}
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="w-3 h-3" />
+              Auto-refresh on
+            </span>
+            <span className="text-[var(--color-text-faint)]">·</span>
+            <span>
+              Last update <span className="font-mono text-[var(--color-text-secondary)]">{lastUpdateLabel}</span>
+            </span>
+            <WsStatusBadge status={wsStatus} />
           </div>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            Real-time test execution stream{selectedProject ? ` — ${selectedProject.name}` : ' — all projects'}
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
-          <LiveWindowPicker value={days} onChange={setDays} />
-          <SuiteFilterSelect
-            value={selectedSuite}
-            onChange={setSelectedSuite}
-            options={suiteOptions}
-            allLabel="All suites"
-          />
-          <span className="flex items-center gap-1.5">
-            <RefreshCw className="w-3 h-3" />
-            Auto-refresh on
-          </span>
-          <span className="text-[var(--color-text-faint)]">·</span>
-          <span>
-            Last update <span className="font-mono text-[var(--color-text-secondary)]">{lastUpdateLabel}</span>
-          </span>
-          <WsStatusBadge status={wsStatus} />
-        </div>
-      </header>
+        }
+      />
 
       {/* ════ Status strip (replaces 4 KPI tiles) ════ */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">

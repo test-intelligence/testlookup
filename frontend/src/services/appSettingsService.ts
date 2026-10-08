@@ -32,6 +32,11 @@ export interface SmtpTestResult {
 
 export type AnalysisMode = 'llm' | 'ml' | 'rules' | 'auto'
 
+/** `GET /settings/ai/mode`: what every role's screens branch on, and nothing else of the config. */
+export interface AIModeRead {
+  analysis_mode: AnalysisMode
+}
+
 export interface AIConfigRead {
   llm_provider: string
   llm_model: string
@@ -229,6 +234,10 @@ export const appSettingsService = {
   },
 
   // AI Configuration
+  /** The analysis mode alone, for every signed-in role (`/settings/ai` is QA lead and above). */
+  getAIMode(): Promise<AIModeRead> {
+    return api.get<AIModeRead>('/api/v1/settings/ai/mode').then(r => r.data)
+  },
   getAIConfig(): Promise<AIConfigRead> {
     return api.get<AIConfigRead>('/api/v1/settings/ai').then(r => r.data)
   },

@@ -117,7 +117,8 @@ data). The `.badge-*` primitives already sit on the tokens.
   writes through `pageSuiteTarget`. Saved views (`SavedViewsMenu`, `useReportViewsMenu`) keep
   the report-route registry (`reportRoutes.ts`).
 - **A page change is one import and one mount** of a small static composite
-  (`CoverageAdvanced`, `FailuresAdvanced`, `SuiteDetailAdvanced`) that holds only ONE
+  (`CoverageAdvanced`, `SuiteDetailAdvanced`; the Failures page lazy-loads each section
+  in its own tab since UX redesign P3) that holds only ONE
   `lazy(import())` of a `*Sections` module. Why: a `lazy(import())` writes the imported
   chunk's whole preload list into the importing chunk, and anything a composite imports
   statically (`LazySection`, `SectionErrorBoundary`) lands in every first visit of the page.

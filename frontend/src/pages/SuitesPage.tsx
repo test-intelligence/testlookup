@@ -47,7 +47,7 @@ function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }
   return (
     <>
       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text)]" data-col="pass-rate">
-        {aggregate.pass_rate != null ? `${Number(aggregate.pass_rate).toFixed(1)}%` : <NoValue title="No test has a latest result yet" />}
+        {aggregate.pass_rate != null ? `${Number(aggregate.pass_rate).toFixed(1)}%` : <NoValue title="No test has a pass or fail result yet (never run, or every latest result skipped)" />}
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text-muted)]" data-col="last-run">
         {aggregate.last_run_at ? (

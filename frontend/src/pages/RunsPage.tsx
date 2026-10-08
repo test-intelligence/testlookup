@@ -246,10 +246,14 @@ function buildPassRateSeries(runs: readonly TestRun[]): (number | null)[] {
 }
 
 function computeRedStreak(runs: TestRun[]): number {
-  // Walk newest → oldest, count consecutive failures.
+  // Walk newest → oldest, count consecutive failures. A build still in
+  // progress has no result yet: it neither extends nor breaks the streak (it
+  // broke it, and a broken pipeline read "Red streak 0 in a row" while its
+  // next build ran — the UX redesign's browser E2E pass).
   const sorted = [...runs].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
   let streak = 0
   for (const r of sorted) {
+    if (isRunInProgress(r.status)) continue
     if (isFailed(r.status)) streak++
     else break
   }
@@ -523,8 +527,10 @@ function verdictSummary(model: PipelineModel, verdict: Verdict): string {
  * repeating it wrapped the banner onto a second line at 1280 px.
  */
 function runsBannerFacts(model: PipelineModel): BannerFact[] {
+  // The age in the table's own words (`shortAgo`: "5h ago", "7d ago"), never
+  // a raw hour count ("172h ago").
   const lastGreen = model.lastGreen
-    ? `#${model.lastGreen.build_number}${model.hoursSinceLastGreen != null ? ` · ${model.hoursSinceLastGreen}h ago` : ''}`
+    ? `#${model.lastGreen.build_number}${model.hoursSinceLastGreen != null ? ` · ${shortAgo(model.lastGreen.created_at)}` : ''}`
     : 'none in window'
   return [
     { label: 'Last green', value: lastGreen },
@@ -825,6 +831,24 @@ export function SignatureClusters({
   )
 }
 
+const passRateColor = (pct: number) =>
+  pct >= 80 ? 'var(--status-passed)' : pct >= 50 ? 'var(--status-broken)' : 'var(--status-failed)'
+
+/**
+ * A run's pass rate in the table, or "—" when it has none yet (OD-18,
+ * `measuredRunPassRate`): the API sends `null` (or 0) while a run is in
+ * progress, and `?? 0` drew the newest build as a red 0.0 % — the worst in
+ * the window — before it had a result (the UX redesign's browser E2E pass).
+ */
+function RunPassRateValue({ run }: { run: TestRun }) {
+  const pct = measuredRunPassRate(run)
+  if (pct === null) {
+    const why = isRunInProgress(run.status) ? 'the run is still in progress' : 'the run reported no tests'
+    return <span className="text-[var(--color-text-muted)]" title={`No pass rate: ${why}`}>—</span>
+  }
+  return <span style={{ color: passRateColor(pct) }}>{pct.toFixed(1)}%</span>
+}
+
 function ClusterRow({
   run, isOutlier, primarySignature, onClick,
 }: {
@@ -833,7 +857,7 @@ function ClusterRow({
   primarySignature: string
   onClick: () => void
 }) {
-  const pct = Number(run.pass_rate ?? 0)
+  const pct = measuredRunPassRate(run)
   const passFlex = run.passed_tests
   const failFlex = run.failed_tests
   const sig = clusterSignature(run)
@@ -862,9 +886,9 @@ function ClusterRow({
       </div>
       <span
         className="text-[12.5px] font-semibold tabular-nums text-right"
-        style={{ color: isOutlier ? 'var(--status-broken)' : pct >= 80 ? 'var(--status-passed)' : pct >= 50 ? 'var(--status-broken)' : 'var(--status-failed)' }}
+        style={{ color: pct === null ? 'var(--color-text-muted)' : isOutlier ? 'var(--status-broken)' : passRateColor(pct) }}
       >
-        {pct.toFixed(1)}%
+        {pct === null ? '—' : `${pct.toFixed(1)}%`}
       </span>
       <span
         className="text-[10.5px] uppercase font-semibold text-center px-1.5 py-0.5 rounded-full justify-self-end"
@@ -1146,14 +1170,8 @@ function RunsTable({
                       </span>
                     </div>
                   </td>
-                  <td style={{ padding: CELL_PAD }} className="font-semibold tabular-nums">
-                    <span style={{
-                      color: Number(r.pass_rate) >= 80 ? 'var(--status-passed)'
-                        : Number(r.pass_rate) >= 50 ? 'var(--status-broken)'
-                        : 'var(--status-failed)',
-                    }}>
-                      {Number(r.pass_rate ?? 0).toFixed(1)}%
-                    </span>
+                  <td style={{ padding: CELL_PAD }} className="font-semibold tabular-nums" data-run-pass-rate="">
+                    <RunPassRateValue run={r} />
                   </td>
                   <TimingCell
                     started={r.start_time ?? r.created_at}

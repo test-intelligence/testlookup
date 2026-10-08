@@ -2,7 +2,9 @@
  * Search — hero-first redesign per design_handoff_search/README.md.
  *
  * Layout (1320 px max-width, 14 px section gaps):
- *   Header  → title + crumb (workspace · index counts).
+ *   Header  → the template's `PageHeader` (UX redesign P6: compact, **?** =
+ *             the search topic); the old crumb (workspace · index counts ·
+ *             freshness) is its one-line subtitle.
  *   Hero    → SearchCommandBar — large autofocused input + ⌘K kbd + Search
  *             button, with mode chips (only Keyword is available) and
  *             scope chips (All · Tests · Runs · Suites · Defects · Flaky ·
@@ -37,7 +39,9 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { useNow } from '@/hooks/useNow'
 import PageShell from '@/components/layout/PageShell'
+import PageHeader from '@/components/ui/PageHeader'
 import Pagination from '@/components/ui/Pagination'
+import { helpTopicParam } from '@/components/help/helpTopics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
 import type { SearchType } from '@/services/searchService'
@@ -45,8 +49,11 @@ import type {
   GlobalSearchResponse, GlobalSearchResult, IndexStatus, SearchEntityType,
 } from '@/types/search'
 
+/** The page's help topic (the header's **?**). */
+const HELP_TOPIC = helpTopicParam('/search')
+
 // ── Types ────────────────────────────────────────────────────────────────
-type RetrievalMode = SearchType                                   // 'hybrid' | 'keyword' | 'semantic'
+type RetrievalMode = SearchType                                  // 'hybrid' | 'keyword' | 'semantic'
 type EntityScope = 'all' | 'tests' | 'runs' | 'suites' | 'defects' | 'flaky' | 'releases'
 
 // Global search runs ONE retrieval strategy: SQL ILIKE substring matching
@@ -1082,27 +1089,19 @@ export default function SearchPage() {
 
   const projectLabel = project?.name ?? 'All Projects'
 
+  // The crumb the old header drew (workspace chip · counts · freshness), as
+  // the compact header's one line.
+  const subtitle = [
+    `Find tests, runs, suites, defects, releases across ${projectLabel}`,
+    `${Intl.NumberFormat().format(totalIndexed)} items indexed`,
+    indexStatus?.last_indexed_at
+      ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime())}`
+      : null,
+  ].filter(Boolean).join(' · ')
+
   return (
     <PageShell>
-      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
-            Search
-          </h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
-            <span>Find tests, runs, suites, defects, releases across</span>
-            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
-            <span aria-hidden>·</span>
-            <span>{Intl.NumberFormat().format(totalIndexed)} items indexed</span>
-            {indexStatus?.last_indexed_at && (
-              <>
-                <span aria-hidden>·</span>
-                <span>fresh {relativeTime(new Date(indexStatus.last_indexed_at).getTime())}</span>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
+      <PageHeader compact title="Search" subtitle={subtitle} helpTopic={HELP_TOPIC} />
 
       <SearchCommandBar
         value={query}

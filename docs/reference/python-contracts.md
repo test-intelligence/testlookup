@@ -16527,9 +16527,21 @@ analysis_mode: str
 checked_at: str
 ```
 
+## backend/app/routers/app_settings.py — AIModeRead
+
+[backend/app/routers/app_settings.py:442](../../backend/app/routers/app_settings.py#L442)
+
+Bases: `BaseModel`.
+
+The analysis mode alone: what every role's screens branch on.
+
+```python
+analysis_mode: str
+```
+
 ## backend/app/routers/app_settings.py — FeatureFlagUpdate
 
-[backend/app/routers/app_settings.py:868](../../backend/app/routers/app_settings.py#L868)
+[backend/app/routers/app_settings.py:891](../../backend/app/routers/app_settings.py#L891)
 
 Bases: `BaseModel`.
 

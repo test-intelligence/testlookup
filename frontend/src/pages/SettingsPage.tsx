@@ -19,8 +19,8 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { settingsGroupsFor, settingsItemHref } from '@/components/layout/settingsNav'
 
 export default function SettingsPage() {
-  const { canAccessManagement, canGenerateApiKeys } = usePermissions()
-  const groups = settingsGroupsFor({ canAccessManagement, canOwnApiKeys: canGenerateApiKeys, isDev: import.meta.env.DEV })
+  const { canAccessManagement, canGenerateApiKeys, isAdmin } = usePermissions()
+  const groups = settingsGroupsFor({ canAccessManagement, isAdmin, canOwnApiKeys: canGenerateApiKeys, isDev: import.meta.env.DEV })
 
   return (
     <div className="space-y-4">
@@ -30,7 +30,8 @@ export default function SettingsPage() {
         subtitle="Your account, the project, its integrations and the AI"
         helpTopic={helpTopicParam('/settings')}
       />
-      <div className="space-y-4" data-settings-index="">
+      {/* The page's one primary content (the template's `data-primary`, P6 fold budget). */}
+      <div className="space-y-4" data-settings-index="" data-primary="">
         {groups.map((group) => (
           <section key={group.id} aria-labelledby={`settings-group-${group.id}`} className="card !p-0 overflow-hidden">
             <h2

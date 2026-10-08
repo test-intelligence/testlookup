@@ -575,7 +575,10 @@ export default function WorkflowEditorPage() {
                   </div>
                 </div>
 
-                <div className="space-y-4">
+                {/* min-w-0: a grid item's min-width is its content's by default, so
+                    the 3,380 px graph widened this column past the page and the
+                    whole page scrolled sideways, not the graph's own box. */}
+                <div className="min-w-0 space-y-4" data-workflow-preview-column="">
                   <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4">
                     <div className="mb-3 flex items-center gap-2">
                       <Network className="h-4 w-4 text-[var(--color-text-muted)]" />

@@ -1,8 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import DeepInvestigationPage, { InvestigationKpiStrip } from './DeepInvestigationPage'
+import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 
 vi.mock('@/hooks/useDeepInvestigation', () => ({
   useFailureClusters: vi.fn(),
@@ -427,6 +428,8 @@ describe('DeepInvestigationPage — only what it really does', () => {
     trailCompletedAt?: string | null
     clusters?: Record<string, unknown>[]
     findings?: Record<string, unknown>[]
+    /** Extra fields on the focused run (run-1). */
+    focused?: Record<string, unknown>
   } = {}) {
     const { useFailureClusters, useDeepFindings, usePipelineStatus } = await import('@/hooks/useDeepInvestigation')
     const { useRuns, useRun } = await import('@/hooks/useRuns')
@@ -436,7 +439,7 @@ describe('DeepInvestigationPage — only what it really does', () => {
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         items: [
-          { id: 'run-1', run_seq: 12, failed_tests: 7, created_at: hoursAgo(80) },
+          { id: 'run-1', run_seq: 12, failed_tests: 7, created_at: hoursAgo(80), ...opts.focused },
           { id: 'run-2', run_seq: 11, failed_tests: 24, created_at: hoursAgo(90) },
           { id: 'run-3', run_seq: 10, failed_tests: 3, created_at: hoursAgo(100) },
           { id: 'run-4', run_seq: 9, failed_tests: 5, created_at: hoursAgo(110) },
@@ -608,5 +611,57 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(within(avg).queryByRole('meter')).toBeNull()
     expect(kpi('Likely clusters')).toHaveTextContent('pre-scan · avg conf —')
     expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan signal2 clustersunscored/)
+  })
+
+  // ── UX redesign P6: the page template's header, not a page-made heading ──
+  const header = () => document.querySelector('[data-page-header]') as HTMLElement
+
+  it('renders the template header: one compact h1, the route\'s help topic, the old crumb as its one-line subtitle', async () => {
+    await renderPage({ trailCompletedAt: hoursAgo(5.5) })
+    expectTemplateHeader('Deep Investigation', '/deep-investigate')
+    expect(header()).toHaveTextContent(
+      'Semantic clustering & multi-source root cause for Project One · 7 failures ready · 1 likely cluster · last analysis 5h ago',
+    )
+    // The toolbar shares the header row: the suite filter, then the one primary action.
+    const toolbar = header().querySelector('[data-page-toolbar]') as HTMLElement
+    expect(within(toolbar).getByRole('combobox', { name: 'Test suite' })).toBeInTheDocument()
+    expect(within(toolbar).getByRole('button', { name: /Run Deep Analysis/ })).toBeInTheDocument()
+    expect(within(header()).getAllByRole('button').filter(b => !b.getAttribute('aria-label')?.startsWith('Help'))).toHaveLength(1)
+  })
+
+  it('keeps the focused run\'s suite as a link in the header row (a chip in the old crumb)', async () => {
+    await renderPage({ focused: { primary_suite_name: 'checkout', suite_names: ['checkout', 'payments'] } })
+    const link = within(header()).getByRole('link', { name: /checkout/ })
+    expect(link).toHaveAttribute('href', '/test-management?tab=Test+Suites&suite=checkout')
+    expect(link).toHaveTextContent('checkout+1')
+  })
+
+  it('integration health is a QA lead\'s read: a lower role asks nothing and is told who sees it (browser E2E pass)', async () => {
+    const { useAuthStore } = await import('@/store/authStore')
+    const { useIntegrationStatus } = await import('@/hooks/useIntegrationHealth')
+    const asked = () => (useIntegrationStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    const note = () => document.querySelector('[data-evidence-note]')
+
+    useAuthStore.setState({ user: { id: 'eng', role: 'QA_ENGINEER' } as never })
+    ;(useIntegrationStatus as ReturnType<typeof vi.fn>).mockClear()
+    await renderPage()
+    // It answered 403: a "Requires at least QA_LEAD role" toast, and "Could not load".
+    expect(new Set(asked())).toEqual(new Set([false]))
+    expect(note()).toHaveAttribute('data-evidence-note', 'restricted')
+    expect(note()).toHaveTextContent('Integration health (Jira, GitHub, Splunk and more) is shown to QA leads and admins.')
+    cleanup()
+
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    ;(useIntegrationStatus as ReturnType<typeof vi.fn>).mockClear()
+    await renderPage()
+    expect(new Set(asked())).toEqual(new Set([true]))
+    expect(note()).toBeNull()
+    useAuthStore.setState({ user: null } as never)
+  })
+
+  it('draws no suite chip in the header for a focused run with no suite (it said only "—")', async () => {
+    await renderPage()
+    expect(within(header()).queryByRole('link')).toBeNull()
+    expect(header()).not.toHaveTextContent('—')
   })
 })

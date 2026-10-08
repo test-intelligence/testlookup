@@ -1,6 +1,9 @@
 /**
- * KpiStrip — the 4-pill row above the filter bar. In progress · Ready to
- * ship · Blocked · Released (30d).
+ * KpiStrip — the release counts, four cards: In progress · Ready to ship ·
+ * Blocked · Released (30d). Since UX redesign P6 it sits in the collapsed
+ * "Release health" disclosure under the list (`ReleaseHealth.tsx`): above the
+ * list the page has ONE StatusBanner, which carries the most important of
+ * these counts (the template: a banner OR a KPI strip, never both).
  *
  * A card's sub-line is JSX, never an HTML string: it used to be built as
  * `<strong>N</strong> …` and rendered with `dangerouslySetInnerHTML`. The
@@ -14,6 +17,7 @@ import type { ReactNode } from 'react'
 import { clsx } from 'clsx'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import type { DerivedRelease } from './types'
+import { countReleases } from './health'
 
 type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 
@@ -99,17 +103,7 @@ interface KpiStripProps {
  * list, so these cards carry no sparkline at all.
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
-  const planning = releases.filter(r => r.stage === 'planning')
-  const inProgress = releases.filter(r => r.stage === 'in_progress')
-  const readyToShip = inProgress.filter(r => r.gate.decision === 'go')
-  const blocked = inProgress.filter(r => r.gate.decision === 'no_go' || r.blockers.some(b => b.severity === 'red'))
-  const last30Days = (() => {
-    const cutoff = Date.now() - 30 * 24 * 3600 * 1000
-    return releases.filter(r =>
-      r.stage === 'released' && r.source.released_at &&
-      new Date(r.source.released_at).getTime() >= cutoff,
-    ).length
-  })()
+  const { planning, inProgress, readyToShip, blocked, released30d } = countReleases(releases)
   // When the project has releases but they're all stuck at Planning,
   // the KPI strip used to render four zeros — accurate but useless.
   // Surface the Planning count as the In Progress sub-line so the
@@ -117,33 +111,33 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   // wondering whether the page is broken.
   // Only stated when it is true and counted. The previous fallback here read
   // "from last week", which described a comparison the card does not make.
-  const inProgressSub = inProgress.length === 0 && planning.length > 0
-    ? <><strong>{planning.length}</strong> at Planning · promote one to start tracking</>
+  const inProgressSub = inProgress === 0 && planning > 0
+    ? <><strong>{planning}</strong> at Planning · promote one to start tracking</>
     : undefined
   return [
     {
       label: 'In progress',
-      value: inProgress.length,
+      value: inProgress,
       tone: 'neutral',
       sub: inProgressSub,
     },
     {
       label: 'Ready to ship',
-      value: readyToShip.length,
+      value: readyToShip,
       tone: 'good',
-      sub: readyToShip.length > 0
-        ? <><strong>{readyToShip.length}</strong> of {inProgress.length} in progress</>
+      sub: readyToShip > 0
+        ? <><strong>{readyToShip}</strong> of {inProgress} in progress</>
         : undefined,
     },
     {
       label: 'Blocked',
-      value: blocked.length,
-      tone: blocked.length > 0 ? 'bad' : 'neutral',
-      sub: blocked.length > 0 ? undefined : 'no blockers',
+      value: blocked,
+      tone: blocked > 0 ? 'bad' : 'neutral',
+      sub: blocked > 0 ? undefined : 'no blockers',
     },
     {
       label: 'Released · 30d',
-      value: last30Days,
+      value: released30d,
       tone: 'good',
     },
   ]

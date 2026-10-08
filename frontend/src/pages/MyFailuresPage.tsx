@@ -374,12 +374,17 @@ function FailureRow({
           aria-hidden
         />
       </td>
-      <td className="px-4 py-2">
-        <div className="text-[var(--color-text)] font-medium truncate max-w-[460px]" title={item.test_name}>
+      {/* The Test cell takes the room the other columns leave (`w-full`) and
+          never asks for more (`max-w-0`), so its two lines cut off at the
+          cell's edge. With a fixed 460 px cap the table was 1,168 px wide in a
+          1,134 px card at 1440 (974 at 1280): the card's `overflow-hidden`
+          cut off the row actions (P6 fold budget, `fold-budget.spec.ts`). */}
+      <td className="px-4 py-2 w-full max-w-0" data-col="test">
+        <div className="text-[var(--color-text)] font-medium truncate" title={item.test_name}>
           {item.test_name}
         </div>
         {detail && (
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[460px]" title={detail} data-row-detail="">
+          <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={detail} data-row-detail="">
             {item.error_message && <span className="font-mono">{item.error_message}</span>}
             {item.last_failure_step && (
               <span className="text-[var(--color-text-faint)]">

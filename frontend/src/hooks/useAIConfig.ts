@@ -2,15 +2,25 @@ import useSWR from 'swr'
 import {
   appSettingsService,
   type AIConfigRead,
+  type AIModeRead,
   type AIModelStatusRead,
   type FallbackChainEntry,
 } from '@/services/appSettingsService'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
+/**
+ * The AI configuration as every role may read it: the analysis mode
+ * (`GET /settings/ai/mode`). The sidebar's Ask AI entry and the chat,
+ * release-gate, run evidence and pipeline pages branch on it for every role;
+ * they read `GET /settings/ai` (QA lead and above), so every lower role got
+ * "Requires at least QA_LEAD role" toasts on every page and never saw Ask AI
+ * (the UX redesign's browser E2E pass). The full config is the AI settings
+ * page's own read.
+ */
 export function useAIConfig() {
-  return useSWR<AIConfigRead>(
-    'settings/ai-config',
-    () => appSettingsService.getAIConfig(),
+  return useSWR<AIModeRead>(
+    'settings/ai-mode',
+    () => appSettingsService.getAIMode(),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND, revalidateOnFocus: false },
   )
 }
@@ -50,7 +60,7 @@ export function activeTier(status: AIModelStatusRead | undefined): FallbackChain
 }
 
 /** True when the configured mode can invoke an LLM (llm or auto). */
-export function isLLMAvailable(config: AIConfigRead | undefined): boolean {
+export function isLLMAvailable(config: AIModeRead | undefined): boolean {
   if (!config) return true // safe default while loading: show everything
   return config.analysis_mode === 'llm' || config.analysis_mode === 'auto'
 }

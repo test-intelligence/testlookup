@@ -7,8 +7,8 @@
  * Suite detail. Two `lazy(import())` calls and `SectionErrorBoundary` there
  * cost ~2 kB gzip of it (the boundary's chunk plus each lazy import's preload
  * list, measured, integrator I); behind ONE lazy import of this file they
- * stay off the page's eager chunk — the pattern of `FailuresAdvanced` /
- * `FailuresAdvancedSections`.
+ * stay off the page's eager chunk — the pattern of `CoverageAdvanced` /
+ * `CoverageAdvancedSections`.
  */
 import { Suspense, type ReactElement } from 'react'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'

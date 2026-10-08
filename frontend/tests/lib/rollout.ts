@@ -117,7 +117,9 @@ export const SHELL_BASE = [
   'GET /api/v1/projects',
   'GET /api/v1/projects',
   `GET /api/v1/releases?project_id=${P}`,
-  'GET /api/v1/settings/ai',
+  // The sidebar's Ask AI entry: the mode every role may read (it asked
+  // `/settings/ai`, QA lead and above, and toasted a 403 at every lower role).
+  'GET /api/v1/settings/ai/mode',
 ]
 
 /**

@@ -89,6 +89,16 @@ REPO = Path(__file__).resolve().parent.parent
 BACKEND = REPO / "backend"
 FRONTEND = REPO / "frontend"
 
+# The script self-tests CI runs (.github/workflows/ci.yml, "Self-test the
+# quality-gate script"), in its order. test_push_check.py holds this to ci.yml.
+GATE_SELF_TESTS = (
+    "test_quality_gate.py",
+    "test_mypy_ratchet.py",
+    "test_ci_security.py",
+    "test_clean_scratch.py",
+    "test_push_check.py",
+)
+
 _LANGCHAIN = (
     "local langchain is newer than CI's pin: 'langchain.agents has no "
     "attribute create_react_agent'"
@@ -142,7 +152,10 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     ),
 }
 
-# Reference files whose local regeneration always differs from CI's.
+# Reference files whose local regeneration always differs from CI's. (A route
+# on plain `get_current_user` gets two `{"JWT": []}` security entries from CI's
+# FastAPI and one locally: authentication.md has several. A new "any signed-in
+# user" route takes `get_current_active_user`, which renders the same in both.)
 SKEWED_REFERENCES = (
     "docs/reference/openapi.json",
     "docs/reference/schemas.md",
@@ -191,6 +204,16 @@ def build_checks() -> list[Check]:
         Check("frontend: eslint", [npm, "run", "lint"], FRONTEND, "frontend"),
         Check("frontend: tsc", [npm, "run", "type-check"], FRONTEND, "frontend"),
         Check("repo: quality gate", [py, "scripts/quality_gate.py"], REPO, "repo"),
+        # CI's "Self-test the quality-gate script" step, which this gate did not
+        # run: UX redesign P2's DEVELOPER_GUIDE guard count passed here and failed
+        # CI (test_quality_gate.py pins the guide to the registry). The same five
+        # files CI runs, from scripts/ as CI does (test_push_check.py holds the
+        # list to ci.yml's).
+        Check(
+            "repo: gate self-tests",
+            [py, "-m", "pytest", *GATE_SELF_TESTS, "-q", "-p", "no:testlookup"],
+            REPO / "scripts", "repo",
+        ),
         Check(
             "backend: prompt eval recordings",
             [py, "-m", "app.services.prompt_eval_recordings", "--check"],
