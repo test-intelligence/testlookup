@@ -14575,8 +14575,15 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Launch Name"
     },
     "pass_rate": {
-      "title": "Pass Rate",
-      "type": "number"
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pass Rate"
     },
     "passed": {
       "title": "Passed",
@@ -14667,8 +14674,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "passed",
     "failed",
     "skipped",
-    "broken",
-    "pass_rate"
+    "broken"
   ],
   "title": "LiveSessionState",
   "type": "object"

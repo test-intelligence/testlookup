@@ -13592,8 +13592,15 @@
             "title": "Launch Name"
           },
           "pass_rate": {
-            "title": "Pass Rate",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate"
           },
           "passed": {
             "title": "Passed",
@@ -13684,8 +13691,7 @@
           "passed",
           "failed",
           "skipped",
-          "broken",
-          "pass_rate"
+          "broken"
         ],
         "title": "LiveSessionState",
         "type": "object"
