@@ -125,7 +125,13 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                 <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.expires_at ? new Date(k.expires_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">Never</span>}</td>
                 <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">—</span>}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => handleRevoke(k.id, k.name)} className="text-[var(--status-failed)] hover:text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/20 p-1 rounded transition-colors">
+                  {/* Icon-only: named, and a tooltip says what the red bin does (it had neither). */}
+                  <button
+                    onClick={() => handleRevoke(k.id, k.name)}
+                    aria-label={`Revoke key ${k.name}`}
+                    title={`Revoke key ${k.name}`}
+                    className="text-[var(--status-failed)] hover:text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/20 p-1 rounded transition-colors"
+                  >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

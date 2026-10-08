@@ -65,6 +65,13 @@ describe('PersonalKeysPage — "My API keys"', () => {
     expect(screen.getByText(/You have no API keys/)).toBeInTheDocument()
   })
 
+  it('a key\'s revoke button is named and has a tooltip (an unlabeled red bin, browser E2E pass)', () => {
+    keysState.data = [{ id: 'k1', name: 'ci-runner', key_prefix: 'qai_abcd', scopes: [], expires_at: null, last_used_at: null }]
+    renderPage()
+    const revoke = screen.getByRole('button', { name: 'Revoke key ci-runner' })
+    expect(revoke).toHaveAttribute('title', 'Revoke key ci-runner')
+  })
+
   it('generates "my" key in a dialog with name | expiry side by side', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: /generate key/i }))
