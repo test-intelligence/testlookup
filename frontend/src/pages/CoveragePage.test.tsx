@@ -632,7 +632,7 @@ describe('CoveragePage — verdict meter and cadence strip', () => {
     expect(meter).toHaveAttribute('data-gauge-bar', 'fill')
     for (const tick of ['Block · 0', 'At risk · 33', 'Healthy · 66', '100']) expect(within(meter).getByText(tick)).toBeInTheDocument()
 
-    const strip = screen.getByRole('img', { name: /^Run cadence over the last \d+ days\. 1 active days, \d+ empty days\.$/ })
+    const strip = screen.getByRole('img', { name: /^Run cadence over the last \d+ days\. 1 active day, \d+ empty days\.$/ })
     expect(strip.querySelectorAll('[data-day-cell]').length).toBeGreaterThan(1)
     expect(strip.querySelector('[data-day-cue]')).toBeNull()
     expect(strip.closest('[data-day-strip]')).toHaveAttribute('data-day-strip', 'intensity')
@@ -861,7 +861,8 @@ describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', ()
     }
     expect(card.textContent).not.toMatch(/\d runs?\b/)
     // The pass rate and every count stay: the cell, and the row's name.
-    expect(within(rows[0]).getByText('92%')).toBeInTheDocument()
+    // 610 / (610 + 38): skipped is not in the denominator (it read 92%, over 660).
+    expect(within(rows[0]).getByText('94%')).toBeInTheDocument()
     expect(within(card).getByRole('row', { name: 'Auth: 610 passed, 38 failed, 12 skipped' })).toBeInTheDocument()
     const results = await axe.run(card, { rules: { 'color-contrast': { enabled: false } } })
     expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([])
@@ -965,8 +966,36 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     { suite_name: 'Unknown Suite', unique_tests: 3, passed: 5, failed: 0, skipped: 0, pass_rate: 100 },
   ]
 
+  // Browser E2E pass (2026-10-08): the tile read "7 / 7 days, 100%" above a
+  // strip of "6 active days, 1 empty": the summary counted the days a rolling
+  // window touched; the strip the window's calendar days.
+  it('the Run cadence tile counts the days the strip draws, not the rolling summary', async () => {
+    const day = (back: number) => ({
+      date: shiftDayIso(utcDayIso(), -back), passed: 5, failed: 0, skipped: 0, broken: 0, total: 5, pass_rate: 100,
+    })
+    await renderCoverage(NOISY, [day(1), day(2), day(3), day(4), day(5), day(6)], 8)
+    const kpis = within(screen.getByRole('region', { name: 'Coverage metrics' }))
+    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('6 / 30 days')
+    expect(screen.getByRole('img', { name: /^Run cadence over the last 30 days\. 6 active days, 24 empty days\.$/ })).toBeInTheDocument()
+  })
+
+  it('an all-skipped suite has no pass rate, not 0% (browser E2E pass)', async () => {
+    await renderCoverage([
+      ...NOISY,
+      { suite_name: 'QuarantinedSuite', unique_tests: 3, passed: 0, failed: 0, skipped: 12, pass_rate: 0 },
+    ])
+    const row = screen.getByRole('row', { name: 'QuarantinedSuite: 0 passed, 0 failed, 12 skipped' })
+    const rate = within(row).getAllByRole('cell').at(-1) as HTMLElement
+    expect(rate).toHaveTextContent(/^—/)
+    expect(rate).toHaveAttribute('title', 'No pass rate: every execution was skipped')
+    expect(row).not.toHaveTextContent('0%')
+  })
+
   it('has none of the not-built controls: issue rows, verdict, untagged callout, header', async () => {
-    await renderCoverage(NOISY)
+    // One day with runs, in the trend the cadence tile counts as well as in the summary.
+    await renderCoverage(NOISY, [
+      { date: utcDayIso(), passed: 45, failed: 10, skipped: 0, broken: 0, total: 55, pass_rate: 81.8 },
+    ])
     // P3: the verdict's issue rows are gone with the card; the facts they
     // stated stay on the page: the untagged executions (the callout and the
     // suites tile) and the 1-of-30-day cadence (the Run cadence tile).

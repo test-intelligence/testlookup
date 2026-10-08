@@ -19,6 +19,15 @@ Found by browser end-to-end testing on a local stack.
 - **Links into the run page applied no filter.** The Tests tab read its
   filters from the URL only when the page first loaded, so a link within the
   page to `?tab=tests&status=FAILED` listed every test. It now applies them.
+- **Coverage.**
+  - Each suite's pass rate divided by every execution, skipped ones
+    included. A suite with skips read low, and the all-skipped
+    QuarantinedSuite read 0% in red. Skipped tests are now out of the
+    denominator, as everywhere else, and an all-skipped suite shows "—".
+  - The Run cadence tile read "7 / 7 days, 100%" above a strip of "6 active
+    days, 1 empty". The tile counted the days a rolling 7 × 24 h window
+    touched. It now counts the calendar days the strip draws, and the strip
+    says "1 active day", not "1 active days".
 
 Each fix has a regression test, mutation-checked.
 

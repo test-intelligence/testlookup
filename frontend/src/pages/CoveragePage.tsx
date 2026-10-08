@@ -344,10 +344,19 @@ function handleCoverageExportCsv({
   )
 }
 
-function computeHealthModel(summary: Partial<CoverageSummary>, suites: CoverageSuite[], days: number) {
+function computeHealthModel(
+  summary: Partial<CoverageSummary>,
+  suites: CoverageSuite[],
+  days: number,
+  /** Days with runs among the window's UTC calendar days, the cadence strip's count. */
+  calendarDaysWithRuns?: number,
+) {
   const totalRuns      = summary.total_executions ?? 0
   const passRate       = Number(summary.avg_pass_rate ?? 0)
-  const daysWithRuns   = summary.days_with_runs ?? 0
+  // The strip's count when the trend is in: the summary counts the days a
+  // rolling 7 x 24 h touches, up to eight calendar days, so the tile read
+  // "7 / 7 days, 100%" above a strip of "6 active days, 1 empty" (browser E2E pass).
+  const daysWithRuns   = calendarDaysWithRuns ?? summary.days_with_runs ?? 0
   const suiteCount     = summary.suite_count ?? suites.length
   const untaggedRuns   = suites.filter(isUntaggedRow)
                                .reduce((sum, s) => sum + (s.passed + s.failed + s.skipped), 0)
@@ -775,9 +784,13 @@ function SuiteRow({
   const total = suite.passed + suite.failed + suite.skipped
   // The bar's drawn width: each segment is exactly its share of it, so a count is shown only where it fits.
   const [barRef, barWidth] = useContainerWidth<HTMLDivElement>()
-  const passRate = total > 0 ? Math.round((suite.passed / total) * 100) : 0
+  // Skipped tests are not in the denominator (the app's one pass-rate rule),
+  // and a suite whose every execution was skipped has no rate at all. Over
+  // the total, an all-skipped QuarantinedSuite read 0% in red (browser E2E pass).
+  const executed = suite.passed + suite.failed
+  const passRate = executed > 0 ? Math.round((suite.passed / executed) * 100) : null
   const passRateTone: 'good' | 'warn' | 'bad' | 'dim' =
-    untagged ? 'dim' : passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'
+    untagged || passRate === null ? 'dim' : passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'
   const passRateColor =
     passRateTone === 'good' ? 'var(--status-passed)' :
     passRateTone === 'warn' ? 'var(--status-broken)' :
@@ -853,8 +866,13 @@ function SuiteRow({
       )}
 
       {/* Pass-rate (the screen-reader total sits in this cell: a row owns cells only; sr-only takes no room) */}
-      <div role="cell" className="text-[13px] font-semibold tabular-nums text-right" style={{ color: passRateColor }}>
-        {untagged ? '—' : `${passRate}%`}
+      <div
+        role="cell"
+        className="text-[13px] font-semibold tabular-nums text-right"
+        style={{ color: passRateColor }}
+        title={!untagged && passRate === null ? 'No pass rate: every execution was skipped' : undefined}
+      >
+        {untagged || passRate === null ? '—' : `${passRate}%`}
         <span className="sr-only">Total executions across all suites: {totalExecutions}</span>
       </div>
 
@@ -1133,7 +1151,7 @@ export function coverageCadence(
   const counts = countTones(cells)
   return {
     cells,
-    label: `Run cadence over the last ${cells.length} days. ${counts.pass} active days, ${counts.none} empty days.`,
+    label: `Run cadence over the last ${cells.length} days. ${counts.pass} active day${counts.pass === 1 ? '' : 's'}, ${counts.none} empty day${counts.none === 1 ? '' : 's'}.`,
   }
 }
 
@@ -1262,7 +1280,16 @@ export default function CoveragePage() {
     return { prior: summarise(prior), current: summarise(current) }
   }, [comparing, compareTrendData, days])
 
-  const model = useMemo(() => computeHealthModel(summary, suites, days), [summary, suites, days])
+  const calendarDaysWithRuns = useMemo(() => {
+    if (!trendData) return undefined
+    const { cells } = coverageCadence(trendData.data ?? [], days, utcDayIso())
+    // The strip draws at most CADENCE_MAX_CELLS days; past that, the summary's count.
+    return days <= CADENCE_MAX_CELLS ? countTones(cells).pass : undefined
+  }, [trendData, days])
+  const model = useMemo(
+    () => computeHealthModel(summary, suites, days, calendarDaysWithRuns),
+    [summary, suites, days, calendarDaysWithRuns],
+  )
   const verdict: Verdict = verdictForScore(model.composite)
   const gaps = useMemo(() => buildGaps(model, suites, days), [model, suites, days])
 
