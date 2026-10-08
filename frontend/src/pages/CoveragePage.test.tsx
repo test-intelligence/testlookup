@@ -985,7 +985,8 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
       { suite_name: 'QuarantinedSuite', unique_tests: 3, passed: 0, failed: 0, skipped: 12, pass_rate: 0 },
     ])
     const row = screen.getByRole('row', { name: 'QuarantinedSuite: 0 passed, 0 failed, 12 skipped' })
-    const rate = within(row).getAllByRole('cell').at(-1) as HTMLElement
+    const cells = within(row).getAllByRole('cell')
+    const rate = cells[cells.length - 1]
     expect(rate).toHaveTextContent(/^—/)
     expect(rate).toHaveAttribute('title', 'No pass rate: every execution was skipped')
     expect(row).not.toHaveTextContent('0%')
