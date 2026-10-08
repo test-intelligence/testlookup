@@ -458,7 +458,10 @@ async def _seed_projects(db: AsyncSession, users: dict[UserRole, User]) -> list[
         db.add(project)
         projects.append(project)
         for role_key, user in users.items():
-            db.add(ProjectMember(id=uuid.uuid4(), project_id=project.id, user_id=user.id, role=str(role_key)))
+            # .value, never str(): str() of the enum is 'UserRole.QA_LEAD' on Python 3.11+,
+            # which no membership check matches -- a seeded QA lead got 403 triaging their
+            # own Inbox (the UX redesign's browser E2E pass; migration 0198 repairs rows).
+            db.add(ProjectMember(id=uuid.uuid4(), project_id=project.id, user_id=user.id, role=role_key.value))
         print(f"  {p['name']} ({p['slug']})")
     await db.flush()
     return projects
