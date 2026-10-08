@@ -153,7 +153,7 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/test_management_cases.py:103](../../../backend/app/routers/test_management_cases.py#L103).
+Source: [backend/app/routers/test_management_cases.py:104](../../../backend/app/routers/test_management_cases.py#L104).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -400,7 +400,7 @@ Create Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:231](../../../backend/app/routers/test_management_cases.py#L231).
+Source: [backend/app/routers/test_management_cases.py:232](../../../backend/app/routers/test_management_cases.py#L232).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -804,7 +804,7 @@ Get Test Case Evidence Gaps
 
 
 
-Source: [backend/app/routers/test_management_cases.py:244](../../../backend/app/routers/test_management_cases.py#L244).
+Source: [backend/app/routers/test_management_cases.py:245](../../../backend/app/routers/test_management_cases.py#L245).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1084,7 +1084,7 @@ Deprecate Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:302](../../../backend/app/routers/test_management_cases.py#L302).
+Source: [backend/app/routers/test_management_cases.py:303](../../../backend/app/routers/test_management_cases.py#L303).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1175,7 +1175,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:275](../../../backend/app/routers/test_management_cases.py#L275).
+Source: [backend/app/routers/test_management_cases.py:276](../../../backend/app/routers/test_management_cases.py#L276).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1256,7 +1256,7 @@ Update Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:287](../../../backend/app/routers/test_management_cases.py#L287).
+Source: [backend/app/routers/test_management_cases.py:288](../../../backend/app/routers/test_management_cases.py#L288).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1428,7 +1428,7 @@ Get Allowed Transitions
 
 
 
-Source: [backend/app/routers/test_management_cases.py:366](../../../backend/app/routers/test_management_cases.py#L366).
+Source: [backend/app/routers/test_management_cases.py:367](../../../backend/app/routers/test_management_cases.py#L367).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1513,7 +1513,7 @@ List Comments
 
 
 
-Source: [backend/app/routers/test_management_cases.py:406](../../../backend/app/routers/test_management_cases.py#L406).
+Source: [backend/app/routers/test_management_cases.py:407](../../../backend/app/routers/test_management_cases.py#L407).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1598,7 +1598,7 @@ Add Comment
 
 
 
-Source: [backend/app/routers/test_management_cases.py:417](../../../backend/app/routers/test_management_cases.py#L417).
+Source: [backend/app/routers/test_management_cases.py:418](../../../backend/app/routers/test_management_cases.py#L418).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1689,7 +1689,7 @@ Get Test Case History
 
 
 
-Source: [backend/app/routers/test_management_cases.py:317](../../../backend/app/routers/test_management_cases.py#L317).
+Source: [backend/app/routers/test_management_cases.py:318](../../../backend/app/routers/test_management_cases.py#L318).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1774,7 +1774,7 @@ Request Review
 
 
 
-Source: [backend/app/routers/test_management_cases.py:328](../../../backend/app/routers/test_management_cases.py#L328).
+Source: [backend/app/routers/test_management_cases.py:329](../../../backend/app/routers/test_management_cases.py#L329).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access_for_review_target`.
 
@@ -1855,7 +1855,7 @@ Review Action
 
 
 
-Source: [backend/app/routers/test_management_cases.py:380](../../../backend/app/routers/test_management_cases.py#L380).
+Source: [backend/app/routers/test_management_cases.py:381](../../../backend/app/routers/test_management_cases.py#L381).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1946,7 +1946,7 @@ Get Reviews
 
 
 
-Source: [backend/app/routers/test_management_cases.py:395](../../../backend/app/routers/test_management_cases.py#L395).
+Source: [backend/app/routers/test_management_cases.py:396](../../../backend/app/routers/test_management_cases.py#L396).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -2031,7 +2031,7 @@ Transition Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:342](../../../backend/app/routers/test_management_cases.py#L342).
+Source: [backend/app/routers/test_management_cases.py:343](../../../backend/app/routers/test_management_cases.py#L343).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
