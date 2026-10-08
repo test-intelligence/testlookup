@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased - Fix: the New Test Case form's Assignee was dropped; the user list crossed tenants
+
+Found by browser end-to-end testing on a local stack.
+
+- **The Assignee was never saved.** The New Test Case form sent
+  `assignee_id`, but the create schema had no such field, so it was dropped
+  silently. No other code wrote the column either. Creating a case "assigned
+  to QA Engineer" produced an unassigned case.
+  - The field is accepted now. The assignee must be an active member of the
+    project, or an admin; anyone else gets a 422 that says so.
+  - The form lists the project's members, the people the backend accepts.
+    It used to list every user on the instance.
+- **`GET /api/v1/auth/users` returned every active user to anyone signed
+  in**, emails included, members of other tenants' projects too. It
+  returns the people who share a project with the caller, and the caller.
+  An admin still sees everyone.
+
+Tested against real Postgres: who is listed for a member, a loner and an
+admin, and which assignees are accepted or refused. Both were
+mutation-checked, as was the form test.
+
 ## Unreleased - Fixes: "no pass rate" read as 0%, and "not analysed" read as "data missing"
 
 Found by browser end-to-end testing on a local stack.

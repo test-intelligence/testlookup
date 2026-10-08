@@ -8,7 +8,7 @@ from typing import Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -628,13 +628,25 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return active users for assignee dropdowns (bounded)."""
-    result = await db.execute(
-        select(User)
-        .where(User.is_active == True)  # noqa: E712
-        .order_by(User.full_name)
-        .limit(limit)
-    )
+    """Return active users for assignee dropdowns (bounded).
+
+    Only the people the caller works with: users who share a project with
+    them, and themselves. An admin sees everyone. It returned every active
+    user to anyone signed in, emails included, members of other tenants'
+    projects too (the UX redesign's browser E2E pass, 2026-10-08).
+    """
+    stmt = select(User).where(User.is_active == True)  # noqa: E712
+    if getattr(current_user.role, "value", current_user.role) != UserRole.ADMIN.value:
+        from app.models.postgres import ProjectMember  # noqa: PLC0415
+
+        my_projects = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == current_user.id
+        )
+        co_members = select(ProjectMember.user_id).where(
+            ProjectMember.project_id.in_(my_projects)
+        )
+        stmt = stmt.where(or_(User.id == current_user.id, User.id.in_(co_members)))
+    result = await db.execute(stmt.order_by(User.full_name).limit(limit))
     return result.scalars().all()
 
 

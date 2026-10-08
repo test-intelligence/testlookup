@@ -113,7 +113,16 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
   const [testData, setTestData] = useState('')
   const [estimatedDuration, setEstimatedDuration] = useState('')
   const [saving, setSaving] = useState(false)
-  const { data: users = [] } = useUsers()
+  // The project's active members: who the backend accepts as an assignee.
+  // It listed every user on the instance, and the pick was then dropped
+  // (browser E2E pass, 2026-10-08).
+  const { data: members } = useProjectMembers(projectId || null)
+  const assignees = useMemo(
+    () => (members ?? [])
+      .map(m => ({ id: m.user_id, name: m.full_name || m.username }))
+      .sort((x, y) => x.name.localeCompare(y.name)),
+    [members],
+  )
 
   const addStep = () => setSteps(s => [...s, { step_number: s.length + 1, action: '', expected_result: '' }])
   const removeStep = (i: number) => setSteps(s => s.filter((_, idx) => idx !== i).map((st, idx) => ({ ...st, step_number: idx + 1 })))
@@ -181,9 +190,9 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
           <label htmlFor="tm-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Assignee (optional)</label>
           <select id="tm-field-3" className="input w-full" value={assigneeId} onChange={e => setAssigneeId(e.target.value)}>
             <option value="">Unassigned</option>
-            {(users as UserSummary[]).map((u) => (
+            {assignees.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.full_name ?? u.username}
+                {u.name}
               </option>
             ))}
           </select>

@@ -2230,6 +2230,9 @@ class ManagedTestCaseCreate(BaseModel):
     estimated_duration_minutes: Optional[int] = None
     is_automated: bool = False
     automation_status: str = "not_automated"
+    # The New Test Case form's Assignee: an active member of the project, or
+    # an admin. Without the field the choice was dropped silently.
+    assignee_id: Optional[uuid.UUID] = None
 
 
 class ManagedTestCaseUpdate(BaseModel):
