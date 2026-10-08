@@ -34,6 +34,8 @@ export default function LogViewer({ content, title = 'Stack Trace' }: Props) {
         </div>
         <button
           onClick={handleCopy}
+          aria-label={copied ? 'Copied' : `Copy ${title}`}
+          title={copied ? 'Copied' : `Copy ${title}`}
           className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors p-1 rounded"
           disabled={!content}
         >

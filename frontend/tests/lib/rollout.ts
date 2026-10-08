@@ -329,9 +329,23 @@ export async function measureOverflow(page: Page): Promise<Overflow> {
   }, MAIN)
 }
 
-/** The three overflow assertions of plan 3.4. */
+/**
+ * The three overflow assertions of plan 3.4, on the settled layout. A loaded
+ * machine can reach this line while the page is still laying out (one run of
+ * the full suite on four workers measured the 640 px Overview at 853 px; alone
+ * it passed 18 of 18), so the measure is polled for up to 5 s first. An
+ * overflow that persists still fails, with the last numbers measured.
+ */
 export async function expectNoHorizontalOverflow(page: Page, where: string) {
-  const o = await measureOverflow(page)
+  let o = await measureOverflow(page)
+  const fits = (m: Overflow) =>
+    m.main.scrollWidth <= m.main.clientWidth && m.document.scrollWidth <= m.document.innerWidth && m.framesOutside.length === 0
+  if (!fits(o)) {
+    await expect
+      .poll(async () => fits((o = await measureOverflow(page))), { timeout: 5_000 })
+      .toBe(true)
+      .catch(() => undefined)
+  }
   expect(o.main.scrollWidth, `${where}: ${MAIN} scrolls sideways`).toBeLessThanOrEqual(o.main.clientWidth)
   expect(o.document.scrollWidth, `${where}: the document scrolls sideways`).toBeLessThanOrEqual(o.document.innerWidth)
   expect(o.framesOutside, `${where}: chart frames outside ${MAIN}`).toEqual([])

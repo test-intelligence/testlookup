@@ -190,8 +190,12 @@ export function SmtpConfigCard() {
             {/* Enable toggle */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-[var(--color-text-secondary)]">Enable SMTP email delivery</span>
+              {/* A switch: named, and its state exposed (it had neither). */}
               <button
                 onClick={() => setEnabled(v => !v)}
+                role="switch"
+                aria-checked={enabled}
+                aria-label="Enable SMTP email delivery"
                 className={`relative w-11 h-6 rounded-full transition-colors ${
                   enabled ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'
                 }`}
@@ -308,6 +312,8 @@ export function SmtpConfigCard() {
                       <button
                         type="button"
                         onClick={() => setShowPassword(v => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        title={showPassword ? 'Hide password' : 'Show password'}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                       >
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
