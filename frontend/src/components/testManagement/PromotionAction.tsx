@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mutate } from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import toast from 'react-hot-toast'
 import { GitMerge } from 'lucide-react'
 
@@ -58,7 +58,7 @@ export default function PromotionAction({
     try {
       await Promise.all([
         refreshSuites(),
-        mutate((key: unknown) => Array.isArray(key) && key[0] === 'tm-cases'),
+        appMutate((key: unknown) => Array.isArray(key) && key[0] === 'tm-cases'),
         onPromoted?.(result),
       ])
     } catch {

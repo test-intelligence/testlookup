@@ -113,6 +113,26 @@ export default tseslint.config(
     },
   },
 
+  // App code: the `swr` module's own `mutate` is bound to SWR's default cache,
+  // and main.tsx renders every key into a provider Map, so it matches nothing
+  // and resolves having done nothing. Ten refresh-after-write helpers shipped
+  // on it (Integration Health's "Probe All Now" never showed its results, the
+  // suites list never refreshed after a create) — the browser E2E pass,
+  // 2026-10-07. Tests may mock `swr` and stay exempt.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/test/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: 'swr',
+          importNames: ['mutate'],
+          message: "A no-op here (SWR's default cache, not the app's provider). Use appMutate from '@/utils/swrCacheMutate', or the mutate useSWR / useSWRConfig returns.",
+        }],
+      }],
+    },
+  },
+
   // Plain JS/TS config files (vite, tailwind, postcss)
   {
     files: ['*.config.{js,ts,mjs,cjs}', '*.config.*.{js,ts}'],

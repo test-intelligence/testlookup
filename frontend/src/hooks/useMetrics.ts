@@ -2,7 +2,8 @@
 // ``DEFAULT_TIME_WINDOW_DAYS``. Every page passes an explicit value from
 // the store, so these only apply to a caller that omits it — but a
 // fallback that disagrees with the store is a trap for the next one.
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import { metricsService } from '@/services/metricsService'
 import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -12,7 +13,7 @@ import { keyPart, scopeArg, type ScopeValue } from '@/lib/scopeParams'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function refreshDefects() {
-  return mutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
+  return appMutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
 }
 
 export function useDashboardSummary(days = 30, suiteName?: ScopeValue) {

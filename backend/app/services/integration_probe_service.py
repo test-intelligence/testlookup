@@ -157,7 +157,13 @@ async def probe_github(config: dict | None = None) -> ProbeResult:
 
     token = config.get("github_token") if config is not None else settings.GITHUB_TOKEN
     if not token:
-        return ProbeResult("github", "skipped", message="No GITHUB_TOKEN configured")
+        # GitHub is configured per project (Settings > GitHub); this probes only an
+        # instance-wide token, so say that, not that GitHub is unconfigured.
+        return ProbeResult(
+            "github",
+            "skipped",
+            message="No instance-wide GITHUB_TOKEN; GitHub is configured per project (Settings > GitHub)",
+        )
     refused = _offline_hard_gate("github")
     if refused:
         return refused

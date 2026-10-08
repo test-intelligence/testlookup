@@ -1,4 +1,5 @@
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import toast from 'react-hot-toast'
 import { valueMetricsService } from '@/services/valueMetricsService'
 import type { ValueMethodology, ValueMetrics } from '@/types/valueMetrics'
@@ -40,7 +41,7 @@ export function useValueMetrics(projectId: string | undefined, days = 30, months
 
 /** Revalidate every cached value-metrics key. */
 export function refreshValueMetrics() {
-  return mutate((key: unknown) => Array.isArray(key) && key[0] === 'value-metrics')
+  return appMutate((key: unknown) => Array.isArray(key) && key[0] === 'value-metrics')
 }
 
 /**

@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Check, FileDown, GitCompare, Package, PencilLine, RefreshCw, ShieldCheck, Stethoscope, X, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { mutate } from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import PageHeader from '@/components/ui/PageHeader'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
@@ -195,7 +195,7 @@ export default function RunDetailPage() {
   async function handleSetRelease(name: string) {
     if (!runId) return
     await runsService.setRelease(runId, name)
-    mutate(['run', runId])
+    appMutate(['run', runId])
   }
 
   async function handleTriggerPipeline() {
@@ -242,7 +242,7 @@ export default function RunDetailPage() {
       const { runIntelligenceService } = await import('@/services/runIntelligenceService')
       await runIntelligenceService.refreshIntelligence(runId)
       // Every version's cached analysis of this run (`useRunIntelligence` keys).
-      await mutate((key) => typeof key === 'string' && key.startsWith(`run-intelligence-${runId}-`))
+      await appMutate((key) => typeof key === 'string' && key.startsWith(`run-intelligence-${runId}-`))
       toast.success('AI analysis refreshed')
     } catch {
       toast.error('Failed to refresh the AI analysis')

@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
-import useSWR, { mutate as globalMutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import chatService from '@/services/chatService'
 import type { ChatMessage, ChatSession, RunSummary } from '@/types/chat'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
@@ -88,10 +89,13 @@ export function useChat(sessionId: string | null, projectId?: string | null): Us
         setOptimisticMessages((prev) =>
           prev.filter((m) => m.id !== tempAssistantMsg.id && m.id !== tempUserMsg.id),
         )
-        // Use globalMutate with the actual session key — avoids the stale-closure
+        // A keyed mutate with the actual session key — avoids the stale-closure
         // problem where mutate() from useChatMessages(null) is a no-op when the
         // session was just auto-created before this hook re-rendered with the new ID.
-        await globalMutate(`/chat/sessions/${sid}/messages`)
+        // appMutate, the app provider's: the `swr` module's own mutate was a no-op
+        // here too, so the sent message and its reply vanished with the optimistic
+        // pair until the next poll.
+        await appMutate(`/chat/sessions/${sid}/messages`)
       } catch (err: unknown) {
         setOptimisticMessages((prev) =>
           prev.filter((m) => m.id !== tempAssistantMsg.id),

@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { refreshSuites } from '@/hooks/useSuites'
 import { usePermissions } from '@/hooks/usePermissions'
 import { suitesService } from '@/services/suitesService'
-import { mutate } from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import PromotionAction from './PromotionAction'
 
 vi.mock('@/hooks/useSuites', () => ({ refreshSuites: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: vi.fn() }))
-vi.mock('swr', () => ({ mutate: vi.fn().mockResolvedValue(undefined) }))
+// The app's provider-bound mutate: the `swr` module's own is a no-op here (swrCacheMutate.ts).
+vi.mock('@/utils/swrCacheMutate', () => ({ appMutate: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/services/suitesService', () => ({
   suitesService: { promoteCanonical: vi.fn() },
 }))
@@ -61,7 +62,7 @@ describe('PromotionAction', () => {
     vi.clearAllMocks()
     ;(usePermissions as ReturnType<typeof vi.fn>).mockReturnValue({ isQaEngineer: true })
     ;(refreshSuites as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
-    ;(mutate as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+    ;(appMutate as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
   })
 
   it('does not expose promotion below QA engineer', () => {
@@ -90,7 +91,7 @@ describe('PromotionAction', () => {
 
     await waitFor(() => expect(suitesService.promoteCanonical).toHaveBeenCalledWith('canonical-1'))
     expect(refreshSuites).toHaveBeenCalled()
-    expect(mutate).toHaveBeenCalledWith(expect.any(Function))
+    expect(appMutate).toHaveBeenCalledWith(expect.any(Function))
     expect(onPromoted).toHaveBeenCalledWith(result)
   })
 

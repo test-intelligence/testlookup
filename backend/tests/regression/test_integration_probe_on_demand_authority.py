@@ -137,3 +137,14 @@ async def test_bearer_probes_use_resolved_config(
     call = client.get.await_args
     assert call.args[0] == expected_url
     assert call.kwargs["headers"]["Authorization"] == expected_header
+
+
+@pytest.mark.asyncio
+async def test_github_without_an_instance_token_says_github_is_configured_per_project():
+    """GitHub is configured per project (Settings > GitHub, UX redesign P5); the
+    probe checks only an instance-wide token. "No GITHUB_TOKEN configured" read
+    as "GitHub is not set up" beside projects that had it (browser E2E pass)."""
+    result = await integration_probe_service.probe_github({})
+    assert result.status == "skipped"
+    assert "instance-wide" in result.message
+    assert "configured per project" in result.message

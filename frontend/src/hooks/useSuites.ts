@@ -1,4 +1,5 @@
-import useSWR, { mutate } from 'swr'
+import useSWR from 'swr'
+import { appMutate } from '@/utils/swrCacheMutate'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { suitesService } from '@/services/suitesService'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
@@ -59,7 +60,7 @@ export function useOrphanedCanonicalCases(page = 1, size = ORPHANED_PAGE_SIZE) {
 
 /** Invalidate every suite-keyed SWR entry — call after any mutation. */
 export function refreshSuites() {
-  return mutate(
+  return appMutate(
     (key: unknown) =>
       Array.isArray(key) && (key[0] === 'suites' || key[0] === 'suite'),
   )
