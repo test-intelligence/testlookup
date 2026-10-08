@@ -122,9 +122,14 @@ async def build_fallback_summary(db: AsyncSession, run_id: str) -> AgentRunSumma
     recommendation = release.recommendation if release else "PENDING"
     risk_score = release.risk_score if release else None
 
+    # No pass rate is not 0% (a run that measured no tests has none).
+    rate_text = (
+        f"at a {run.pass_rate:.1f}% pass rate" if run.pass_rate is not None
+        else "with no pass rate (no test passed or failed)"
+    )
     executive_summary = (
         f"Build {run.build_number} completed with {run.failed_tests or 0} failing tests "
-        f"at a {run.pass_rate or 0:.1f}% pass rate. "
+        f"{rate_text}. "
         f"Top AI-classified failure category: {top_category.replace('_', ' ')}. "
         f"Release recommendation: {recommendation.replace('_', ' ')}"
         + (f" ({risk_score}/100)." if risk_score is not None else ".")

@@ -78,7 +78,6 @@ async def get_run_summaries(
     for run in db_runs:
         if str(run.id) in ai_run_ids:
             continue
-        pass_rate = run.pass_rate or 0.0
         total = run.total_tests or 0
         failed = run.failed_tests or 0
         # Read the stored count; never derive it. `total - failed` counted
@@ -91,23 +90,38 @@ async def get_run_summaries(
         # A broken test is a failure for this purpose; "no failures" while a
         # test errored out is not something to tell a user.
         failures = failed + broken
-        status_word = (
-            "completed with no failures" if failures == 0
-            else f"completed — {failures} test{'s' if failures != 1 else ''} failed"
-        )
         # The rate's denominator is executed tests, so show the fraction over
         # the same denominator rather than over the total.
         executed = max(total - skipped, 0)
+        tally = f"{passed}/{executed} executed" + (f", {skipped} skipped" if skipped else "")
+        # A run still in progress has no pass rate yet, and one that measured
+        # no tests has none at all. ``pass_rate or 0.0`` read both as 0%: "Build
+        # viz-3044 completed — 1 test failed. Pass rate: 0.0% (10/11
+        # executed)" for a run still running at 10 passed, 1 failed (the UX
+        # redesign's browser E2E pass, 2026-10-08).
+        status = getattr(run, "status", None)
+        if str(getattr(status, "value", status) or "").upper() == "IN_PROGRESS":
+            outcome = (
+                f"is still running: {passed} passed and {failures} failed so far. "
+                "No pass rate until it finishes"
+            )
+        else:
+            status_word = (
+                "completed with no failures" if failures == 0
+                else f"completed — {failures} test{'s' if failures != 1 else ''} failed"
+            )
+            rate = (
+                f"Pass rate: {run.pass_rate:.1f}% ({tally})" if run.pass_rate is not None
+                else f"No pass rate: no test passed or failed ({tally})"
+            )
+            outcome = f"{status_word}. {rate}"
         stubs.append(
             {
                 "test_run_id": str(run.id),
                 "project_id": str(run.project_id),
                 "build_number": run.build_number or "",
                 "executive_summary": (
-                    f"Build **{run.build_number or str(run.id)[:8]}** {status_word}. "
-                    f"Pass rate: {pass_rate:.1f}% ({passed}/{executed} executed"
-                    + (f", {skipped} skipped" if skipped else "")
-                    + "). "
+                    f"Build **{run.build_number or str(run.id)[:8]}** {outcome}. "
                     # Nothing records whether analysis was ever requested for
                     # a run: ingestion takes a ``run_ai`` flag and, when it is
                     # false, only logs ``agent_pipeline_skipped``. This used to

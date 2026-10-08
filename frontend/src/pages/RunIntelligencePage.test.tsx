@@ -926,6 +926,39 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     expect(screen.queryByRole('tablist')).toBeNull()
   })
 
+  // Browser E2E pass (2026-10-08): with no clusters, any run with failures
+  // read "per-test detail missing ... the per-test rows aren't available" --
+  // every run not yet analysed, one with all 22 rows on its Tests tab.
+  it('failures with their rows but no analysis: "not analysed yet", linking to the failed tests', () => {
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, failure_clusters: [] } })
+    renderBody()
+    const primary = screen.getByRole('region', { name: 'What failed' })
+    expect(primary).toHaveTextContent('15 failures · not analysed yet')
+    expect(primary).not.toHaveTextContent(/per-test detail missing|aren't available/)
+    expect(within(primary).getByRole('link', { name: 'Open the failed tests →' }))
+      .toHaveAttribute('href', '/runs/run-abc?tab=tests&status=FAILED')
+  })
+
+  it('failures with no rows at all: the data gap, as before', () => {
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, failure_clusters: [], affected_suites: [] } })
+    renderBody()
+    const primary = screen.getByRole('region', { name: 'What failed' })
+    expect(primary).toHaveTextContent('15 failures · per-test detail missing')
+  })
+
+  it('no failures: no failures', () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        failure_clusters: [],
+        affected_suites: [],
+        run: { ...MOCK_INTELLIGENCE.run, failed_tests: 0, passed_tests: 200 },
+      },
+    })
+    renderBody()
+    expect(screen.getByRole('region', { name: 'What failed' })).toHaveTextContent('No failures in this run.')
+  })
+
   it('draws nothing of the score or the evidence until its disclosure is opened', () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderBody()

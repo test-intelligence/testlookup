@@ -16,7 +16,7 @@
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect } from 'react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import RunDetailPage from './RunDetailPage'
@@ -326,6 +326,28 @@ describe('Run page — tabs', () => {
     const params = new URLSearchParams(location.split('?')[1])
     expect(params.get('tab')).toBe('evidence')
     expect(params.get('report_version')).toBe('2')
+  })
+
+  it('a link into the page applies its filters (the Analysis tab\'s "Open the failed tests"; browser E2E pass)', () => {
+    render(
+      <MemoryRouter initialEntries={['/runs/run-1?tab=analysis']}>
+        <Routes>
+          <Route
+            path="/runs/:runId"
+            element={<><RunDetailPage /><Link to="/runs/run-1?tab=tests&status=FAILED">to the failed tests</Link><LocationProbe /></>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('link', { name: 'to the failed tests' }))
+    // The page stayed mounted; its filter read the URL only on mount and kept
+    // listing every test.
+    const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button')
+    expect(chips[1]).toHaveTextContent('2 failed')
+    expect(chips[1]).toHaveAttribute('aria-pressed', 'true')
+    const lastCall = hooks.useTestCases.mock.calls[hooks.useTestCases.mock.calls.length - 1]
+    expect(lastCall[1]).toMatchObject({ status: 'FAILED' })
+    expect(new URLSearchParams(location.split('?')[1]).get('status')).toBe('FAILED')
   })
 
   it('an unknown ?tab= falls back to Tests', () => {
