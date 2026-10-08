@@ -24,6 +24,7 @@ import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
 const state = vi.hoisted(() => ({
   projectId: 'p1' as string,
   canAccessManagement: true,
+  quarantineOn: true as boolean | undefined,
   coachError: null as unknown,
 }))
 
@@ -39,6 +40,10 @@ const quarantineMock = vi.hoisted(() => ({
   propose: vi.fn(),
 }))
 vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: quarantineMock }))
+
+vi.mock('@/hooks/useFeatureFlags', () => ({
+  useFeatureFlagStatus: (key: string) => (key === 'flaky_auto_quarantine' ? state.quarantineOn : undefined),
+}))
 
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ canAccessManagement: state.canAccessManagement, isQaEngineer: true }),
@@ -149,6 +154,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   state.projectId = 'p1'
   state.canAccessManagement = true
+  state.quarantineOn = true
   coachMock.getFlakyCoach.mockResolvedValue({
     project_id: 'p1',
     total_flaky: 2,
@@ -307,6 +313,27 @@ describe('FlakyTestsPage — Detected', () => {
     renderPage()
     await screen.findByText('test_flaky_3')
     expect(screen.queryByRole('button', { name: 'Propose quarantine' })).toBeNull()
+  })
+
+  // Browser E2E pass (2026-10-08): every quarantine endpoint answers 503
+  // while the flag is off, and every row offered a proposal that the dialog
+  // could only fail on ("Flaky auto-quarantine is disabled").
+  it('with quarantine off: no proposal on any row, and one line saying how to turn it on', async () => {
+    state.quarantineOn = false
+    renderPage()
+    await screen.findByText('test_flaky_3')
+    expect(screen.queryByRole('button', { name: 'Propose quarantine' })).toBeNull()
+    expect(document.querySelector('[data-quarantine-off]')).toHaveTextContent(
+      'Quarantine is off for this project, so no test can be proposed for it. An admin turns it on with the flaky_auto_quarantine flag in Settings › Feature flags.',
+    )
+  })
+
+  it('while the flag is unknown: no proposal yet, and no claim that it is off', async () => {
+    state.quarantineOn = undefined
+    renderPage()
+    await screen.findByText('test_flaky_3')
+    expect(screen.queryByRole('button', { name: 'Propose quarantine' })).toBeNull()
+    expect(document.querySelector('[data-quarantine-off]')).toBeNull()
   })
 
   it('opens a row in the side panel (it used to expand inline) and closes it', async () => {

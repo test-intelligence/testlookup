@@ -36,6 +36,7 @@ import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import ProposeQuarantineModal from '@/components/quarantine/ProposeQuarantineModal'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 import { useQuarantineList, useQuarantineStats } from '@/hooks/useFlakyQuarantine'
 import { testHealthService, type FlakyCoachEntry, type FlakyCoachResponse } from '@/services/testHealthService'
 import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
@@ -87,6 +88,11 @@ export default function FlakyTestsPage() {
 function FlakyTests({ projectId }: { projectId: string }) {
   const [tab, setTab] = useTabParam(FLAKY_TABS, 'detected')
   const { canAccessManagement: canPropose } = usePermissions()
+  // Every quarantine endpoint answers 503 while this flag is off, so a
+  // proposal is offered only when it can be made. It was offered on every row
+  // and the dialog just stayed open on "Flaky auto-quarantine is disabled"
+  // (browser E2E pass, 2026-10-08). Unknown (in flight) offers nothing yet.
+  const quarantineOn = useFeatureFlagStatus('flaky_auto_quarantine')
 
   // The same key as `useFlakyCoach` (one cache entry), read here with its
   // `error`, so a failed analysis renders as unavailable, not as "no flaky tests".
@@ -150,7 +156,7 @@ function FlakyTests({ projectId }: { projectId: string }) {
         </button>
       )
     }
-    if (!canPropose) return <span className="text-xs text-[var(--color-text-faint)]">—</span>
+    if (!canPropose || quarantineOn !== true) return <span className="text-xs text-[var(--color-text-faint)]">—</span>
     return (
       <button
         type="button"
@@ -199,7 +205,15 @@ function FlakyTests({ projectId }: { projectId: string }) {
         ) : isLoading && !coach ? (
           <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
         ) : (
-          <FlakyCoachBody entries={coach?.entries ?? []} renderAction={rowAction} actionLabel="Quarantine" />
+          <>
+            {quarantineOn === false && canPropose && (
+              <p data-quarantine-off="" className="text-[12px] text-[var(--color-text-muted)]">
+                Quarantine is off for this project, so no test can be proposed for it. An admin turns it on with
+                the <code className="font-mono">flaky_auto_quarantine</code> flag in Settings › Feature flags.
+              </p>
+            )}
+            <FlakyCoachBody entries={coach?.entries ?? []} renderAction={rowAction} actionLabel="Quarantine" />
+          </>
         )
       ) : (
         <QuarantineBody view={VIEW_OF_TAB[tab]} projectId={projectId} primary />

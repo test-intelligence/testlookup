@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased - Fix: quarantine proposals offered while quarantine is off
+
+Found by browser end-to-end testing on a local stack.
+
+- Every quarantine endpoint answers 503 while the `flaky_auto_quarantine`
+  flag is off ("Flaky auto-quarantine is disabled"), and the flag is off by
+  default. Yet every Flaky tests row offered "Propose quarantine", and every
+  Failures row offered Mute. Both open a dialog that can only fail; the
+  Flaky one just stayed open.
+  - Flaky tests: no row offers a proposal while the flag is off, and one
+    line says how an admin turns it on (Settings › Feature flags). While the
+    flag is still loading, nothing is offered and nothing is claimed.
+  - Failures: Mute is disabled, with the same explanation as its tooltip.
+
 ## Unreleased - Fixes: the Defects page counted one page, and the Inbox tab named the wrong list
 
 Found by browser end-to-end testing on a local stack.

@@ -78,6 +78,9 @@ const FAILURES_PAGE_READS = [
   `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30&status=FAILED`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
   `GET /api/v1/projects/${P}/defects/jira/metadata`,
+  // Mute proposes a quarantine, which every quarantine endpoint refuses while
+  // this flag is off: the row's Mute says so instead (browser E2E pass).
+  `GET /api/v1/feature-flags/flaky_auto_quarantine/status?project_id=${P}`,
 ]
 
 /** The suspect commits for the top row's test, against the latest failing run: asked by the Suspects panel only. */

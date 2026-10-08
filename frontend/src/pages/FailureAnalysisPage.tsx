@@ -80,6 +80,7 @@ import { useSuspects } from '@/hooks/useCommitAttribution'
 import CorrectClassificationModal, {
   CATEGORY_CHOICES,
 } from '@/components/ai/CorrectClassificationModal'
+import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
@@ -2000,6 +2001,10 @@ export default function FailureAnalysisPage() {
   const [suspectsFor, setSuspectsFor] = useState<FailingRow | null>(null)
   const [correctionOpen, setCorrectionOpen] = useState(false)
   const { metadata: jiraMeta } = useJiraDefectMetadata(project?.id ?? null)
+  // Every quarantine endpoint answers 503 while this flag is off ("Flaky
+  // auto-quarantine is disabled"): Mute says so instead of opening a dialog
+  // that can only fail (browser E2E pass, 2026-10-08).
+  const quarantineOn = useFeatureFlagStatus('flaky_auto_quarantine')
 
   const actionTarget = model.topFailingTest
   const rowActions = useMemo<RowActionHandlers>(() => ({
@@ -2008,7 +2013,9 @@ export default function FailureAnalysisPage() {
       ? 'Pick a specific project to propose a quarantine.'
       : !row.test.test_fingerprint
         ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
-        : null,
+        : quarantineOn === false
+          ? 'Quarantine is off for this project: an admin turns on the flaky_auto_quarantine flag in Settings › Feature flags.'
+          : null,
     onCreateJira: (row) => setJiraFor(row),
     // Disabled when there's no identity/project, or when the metadata probe
     // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
@@ -2023,7 +2030,7 @@ export default function FailureAnalysisPage() {
           : null,
     onShowSuspects: (row) => setSuspectsFor(row),
     suspectsDisabledReason: latestFailedRun?.id ? null : 'No failed run in this window to attribute commits against.',
-  }), [project?.id, jiraMeta, latestFailedRun?.id])
+  }), [project?.id, jiraMeta, latestFailedRun?.id, quarantineOn])
 
   const openCorrection = useCallback(() => {
     if (!project?.id) {
