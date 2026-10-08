@@ -88,7 +88,9 @@ test('the assigned failures table starts within the fold budget at 1440 x 900', 
   const [rowTop, rowBottom] = geometry.blocks.firstRow ?? [0, 0]
   expect(rowBottom - rowTop, 'a two-line row').toBeLessThanOrEqual(56)
   // The tabs, with their counts: 40 open, 1 report + 2 proposals + 2 cases waiting.
-  await expect(page.getByRole('tab', { name: /^Assigned to me/ })).toHaveText('Assigned to me40')
+  // A lead opens on the team scope, so the tab is the team's (it read
+  // "Assigned to me" over the team's count; browser E2E pass, 2026-10-08).
+  await expect(page.getByRole('tab', { name: /^Team failures/ })).toHaveText('Team failures40')
   await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveText('Approvals5')
   // §5 Delete: no Status column, no static status chip.
   await expect(table.getByRole('columnheader', { name: 'Status' })).toHaveCount(0)

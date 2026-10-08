@@ -267,6 +267,18 @@ def _intended_value_changes(expected: dict) -> int:
     return changed
 
 
+def _without_defect_fields(actual: dict) -> None:
+    """2026-10-08 adds each defect's own ``title``, ``severity`` and
+    ``component`` to the defects list (the Defects page had titled rows with
+    their test's name and derived a severity from the category) and changes
+    nothing else: set them aside, checking every row carries them."""
+    for key in ("defects/none", "defects/member_all_projects"):
+        for row in actual.get(key, {}).get("body", {}).get("items", []):
+            for field in ("title", "severity", "component"):
+                assert field in row, f"{key}: no {field}"
+                del row[field]
+
+
 async def _parity_characterise(world) -> dict:
     out: dict = {}
     for name, path, fixed in PARITY_ROUTES:
@@ -299,6 +311,7 @@ async def test_unfiltered_parity_routes_match_the_pre_viz202_golden(world, extra
         pytest.skip(f"golden written: {PARITY_GOLDEN}")
     expected = json.loads(PARITY_GOLDEN.read_text(encoding="utf-8"))
     _intended_value_changes(expected)
+    _without_defect_fields(actual)
     # Not vacuous: the golden has the case -- a suite every result of which skipped.
     assert any(
         row["passed_count"] + row["failed_count"] == 0 and row["pass_rate"] is None

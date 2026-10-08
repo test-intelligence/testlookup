@@ -165,7 +165,11 @@ export default function MyFailuresPage() {
             value={tab}
             onChange={setTab}
             items={[
-              { id: 'assigned', label: 'Assigned to me', count: data?.unresolved_total },
+              // Named for the list it counts. In the team scope (a lead's
+              // default) it read "Assigned to me 62" while none were: the
+              // count was the team's, and the sidebar badge said 0 (browser
+              // E2E pass, 2026-10-08).
+              { id: 'assigned', label: effectiveScope === 'team' ? 'Team failures' : 'Assigned to me', count: data?.unresolved_total },
               {
                 id: 'approvals',
                 label: 'Approvals',
@@ -203,8 +207,8 @@ export default function MyFailuresPage() {
             {data?.unresolved_total !== undefined && (
               <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">
                 {data.unresolved_total === 0
-                  ? 'Nothing assigned'
-                  : <><strong className="text-[var(--color-text)] tabular-nums">{data.unresolved_total}</strong> assigned</>}
+                  ? (effectiveScope === 'team' ? 'Nothing unresolved' : 'Nothing assigned')
+                  : <><strong className="text-[var(--color-text)] tabular-nums">{data.unresolved_total}</strong> {effectiveScope === 'team' ? 'unresolved' : 'assigned'}</>}
               </span>
             )}
           </div>

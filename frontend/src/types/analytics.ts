@@ -165,6 +165,11 @@ export interface CoverageResponse {
 
 export interface DefectItem {
   id: string
+  /** The defect's own title, severity (CRITICAL/HIGH/MEDIUM/LOW) and component;
+   *  null on defects created without them (the dev seed's, for one). */
+  title?: string | null
+  severity?: string | null
+  component?: string | null
   jira_ticket_id?: string
   jira_ticket_url?: string
   jira_status?: string

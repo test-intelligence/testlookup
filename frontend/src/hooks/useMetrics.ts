@@ -80,12 +80,33 @@ export function useCoverage(days = 30, suiteName?: ScopeValue) {
   )
 }
 
-export function useDefects(page = 1, resolutionStatus?: string) {
+/** The most defects the Defects page loads; past it, it says so. */
+export const DEFECTS_CAP = 1000
+const DEFECTS_PAGE_SIZE = 100 // the API's maximum
+
+/**
+ * Every defect in scope, not one page of it. The Defects page derives all of
+ * its counts from the rows (open, P0/P1, the oldest P0, the status tabs), and
+ * with one 20-row page it read "Open defects 20" on a project with 80 (the UX
+ * redesign's browser E2E pass, 2026-10-08). Pages of 100, newest first, up to
+ * `DEFECTS_CAP`; `total` stays the whole count, so `items.length < total`
+ * says the cap was hit.
+ */
+export function useDefects(resolutionStatus?: string) {
   return useProjectScopedSWR(
     'analytics-defects',
-    (projectId) => analyticsService.getDefects(projectId, { page, resolution_status: resolutionStatus }),
+    async (projectId) => {
+      const params = { size: DEFECTS_PAGE_SIZE, resolution_status: resolutionStatus }
+      const first = await analyticsService.getDefects(projectId, { ...params, page: 1 })
+      const items = [...first.items]
+      const pages = Math.min(first.pages, Math.ceil(DEFECTS_CAP / DEFECTS_PAGE_SIZE))
+      for (let page = 2; page <= pages; page++) {
+        items.push(...(await analyticsService.getDefects(projectId, { ...params, page })).items)
+      }
+      return { ...first, items, page: 1, pages: 1, size: items.length }
+    },
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [page, resolutionStatus],
+    [resolutionStatus],
   )
 }
 

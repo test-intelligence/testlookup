@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased - Fixes: the Defects page counted one page, and the Inbox tab named the wrong list
+
+Found by browser end-to-end testing on a local stack.
+
+- **Defects counted 20 of 80.** The page loaded the first 20-row page of the
+  defects list and derived every count from it: "Open defects 20", the status
+  tabs, P0/P1, the oldest P0, Jira coverage. The project had 80 open, and the
+  Dashboard said 79. The page now loads every defect, 100 at a time, up to
+  1,000; past that it says how many of the total the counts cover.
+- **A defect read as its category.** The list carried no title, severity or
+  component. A defect entered as "Refund posts twice", P3, payments-service
+  read "product bug", P1, with its suite as the component: the title fell back
+  to the test name or category, and the severity was derived from the
+  category. The list now returns each defect's own fields, and the page uses
+  them. Defects stored without them (the dev seed's) read as before.
+- **The Inbox tab said "Assigned to me 62" when none were.** A QA lead opens
+  on the team scope. The tab kept the label "Assigned to me" over the team's
+  count, while the sidebar badge said 0. The tab and the count are now named
+  for the list shown: "Team failures" and "N unresolved", or "Assigned to me"
+  and "N assigned".
+
+Tested against real Postgres (the defect list's fields). Mutation-checked:
+the stored severity, paging past the first page, and the per-scope labels.
+
 ## Unreleased - Fix: the New Test Case form's Assignee was dropped; the user list crossed tenants
 
 Found by browser end-to-end testing on a local stack.
