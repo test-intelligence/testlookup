@@ -14151,6 +14151,18 @@
       },
       "ManagedTestCaseCreate": {
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "automation_status": {
             "default": "not_automated",
             "title": "Automation Status",
@@ -39491,7 +39503,7 @@
     },
     "/api/v1/auth/users": {
       "get": {
-        "description": "Return active users for assignee dropdowns (bounded).",
+        "description": "Return active users for assignee dropdowns (bounded).\n\nOnly the people the caller works with: users who share a project with\nthem, and themselves. An admin sees everyone.",
         "operationId": "list_users_api_v1_auth_users_get",
         "parameters": [
           {

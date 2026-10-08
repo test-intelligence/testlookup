@@ -10,7 +10,7 @@ Change Password
 
 Change the current user's password.
 
-Source: [backend/app/routers/auth.py:641](../../../backend/app/routers/auth.py#L641).
+Source: [backend/app/routers/auth.py:654](../../../backend/app/routers/auth.py#L654).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1327,6 +1327,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 List Users
 
 Return active users for assignee dropdowns (bounded).
+
+Only the people the caller works with: users who share a project with
+them, and themselves. An admin sees everyone.
 
 Source: [backend/app/routers/auth.py:625](../../../backend/app/routers/auth.py#L625).
 
