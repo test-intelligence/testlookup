@@ -1549,6 +1549,21 @@ async def ingest_via_api_key(
     )
 
 
+def _session_pass_rate(stored, passed: int, failed: int, broken: int) -> float | None:
+    """A session's pass rate: the stored one, else passed over passed + failed +
+    broken, else None when nothing has passed or failed.
+
+    Each builder below defaulted a missing rate to 0.0, so Live printed a
+    "0.0%" outcome for a run at 10 passed, 1 failed, and for a session whose
+    42 tests had not reported a result (the UX redesign's browser E2E pass,
+    2026-10-08).
+    """
+    if stored is not None:
+        return float(stored)
+    executed = passed + failed + broken
+    return round(passed / executed * 100, 2) if executed > 0 else None
+
+
 def build_live_session_state(payload: dict) -> LiveSessionState:
     raw_run_id = payload.get("run_id", "")
     display_run_id = payload.get("display_run_id") or raw_run_id
@@ -1563,7 +1578,10 @@ def build_live_session_state(payload: dict) -> LiveSessionState:
         failed=int(payload.get("failed", 0)),
         skipped=int(payload.get("skipped", 0)),
         broken=int(payload.get("broken", 0)),
-        pass_rate=float(payload.get("pass_rate", 0.0)),
+        pass_rate=_session_pass_rate(
+            payload.get("pass_rate"),
+            int(payload.get("passed", 0)), int(payload.get("failed", 0)), int(payload.get("broken", 0)),
+        ),
         current_test=payload.get("current_test") or None,
         started_at=payload.get("started_at"),
         last_event_at=payload.get("last_event_at"),
@@ -1588,7 +1606,10 @@ def build_completed_session_state(session) -> LiveSessionState:
         failed=int(final_state.get("failed", 0)),
         skipped=int(final_state.get("skipped", 0)),
         broken=int(final_state.get("broken", 0)),
-        pass_rate=float(final_state.get("pass_rate", 0.0)),
+        pass_rate=_session_pass_rate(
+            final_state.get("pass_rate"),
+            int(final_state.get("passed", 0)), int(final_state.get("failed", 0)), int(final_state.get("broken", 0)),
+        ),
         current_test=None,
         started_at=session.started_at.isoformat() if session.started_at else None,
         last_event_at=session.completed_at.isoformat() if session.completed_at else None,
@@ -1600,19 +1621,28 @@ def build_completed_session_state(session) -> LiveSessionState:
     )
 
 
+def _fallback_status(run_status) -> str:
+    """"running" for a run still in progress, else "completed"."""
+    value = str(getattr(run_status, "value", run_status) or "").upper()
+    return "running" if value == LaunchStatus.IN_PROGRESS.value else "completed"
+
+
 def build_test_run_fallback_state(run) -> LiveSessionState:
     return LiveSessionState(
         run_id=str(run.id),
         test_run_id=str(run.id),
         project_id=str(run.project_id),
         build_number=run.build_number or "",
-        status="completed",
+        # The run's own state: a run still in progress read "completed".
+        status=_fallback_status(getattr(run, "status", None)),
         total=run.total_tests or 0,
         passed=run.passed_tests or 0,
         failed=run.failed_tests or 0,
         skipped=run.skipped_tests or 0,
         broken=run.broken_tests or 0,
-        pass_rate=float(run.pass_rate or 0.0),
+        pass_rate=_session_pass_rate(
+            run.pass_rate, run.passed_tests or 0, run.failed_tests or 0, run.broken_tests or 0,
+        ),
         current_test=None,
         started_at=run.start_time.isoformat() if run.start_time else None,
         last_event_at=run.end_time.isoformat() if run.end_time else None,

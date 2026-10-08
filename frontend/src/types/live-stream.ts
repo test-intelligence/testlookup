@@ -39,7 +39,8 @@ export interface LiveSessionState {
   failed: number
   skipped: number
   broken: number
-  pass_rate: number
+  /** None until a test has passed or failed (it was sent as 0). */
+  pass_rate: number | null
   current_test?: string
   started_at?: string
   last_event_at?: string

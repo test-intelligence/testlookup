@@ -3180,7 +3180,9 @@ class LiveSessionState(BaseModel):
     failed: int
     skipped: int
     broken: int
-    pass_rate: float
+    # None when no test has passed or failed yet: not 0.0, which Live printed
+    # as a "0.0%" outcome for a run at 10 passed, 1 failed.
+    pass_rate: Optional[float] = None
     current_test: Optional[str] = None
     started_at: Optional[str] = None
     last_event_at: Optional[str] = None

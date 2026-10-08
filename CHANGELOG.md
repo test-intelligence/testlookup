@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased - Fix: Live's session outcomes read "0.0%" with no result
+
+Found by browser end-to-end testing on a local stack.
+
+- **Outcomes.** Each session-state builder behind `GET /stream/active`
+  defaulted a missing pass rate to 0.0. Live's sessions table printed a
+  "0.0%" outcome for a run at 10 passed, 1 failed (its stored rate is empty
+  until it finishes), and for a session whose 42 tests had not reported a
+  result.
+  - The rate is now the stored one, or else computed from the counts. When
+    no test has passed or failed there is none: `pass_rate` is null, and Live
+    shows "—".
+- **Status.** The test-run fallback called every run "completed"; a run
+  still in progress is now "running".
+- **Times.** "Last completed 2122m ago" counted minutes without end; it now
+  moves to hours, then days ("1d ago").
+
+`LiveSessionState.pass_rate` is now nullable in the API. Regression tests
+cover the builders and the page; both were mutation-checked.
+
 ## Unreleased - Fix: quarantine proposals offered while quarantine is off
 
 Found by browser end-to-end testing on a local stack.

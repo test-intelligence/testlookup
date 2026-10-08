@@ -31,7 +31,7 @@ export interface LiveEvent {
   skipped?: number
   broken?: number
   total?: number
-  pass_rate?: number
+  pass_rate?: number | null
   status?: string
   suite_name?: string | null
   message?: string
