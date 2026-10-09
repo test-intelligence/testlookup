@@ -3379,7 +3379,7 @@ frontend/tests/ci-e2e/chart-interaction-axe.spec.ts,test,52,,@playwright/test; .
 frontend/tests/ci-e2e/chart-tooltip.spec.ts,test,334,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; DOMRectLike; tipTitle; Hovered; hoverMark; pointCount; shownTitle; sweep; plotBox; pointerAndKeyboard
 frontend/tests/ci-e2e/chart-touch.spec.ts,test,90,,@playwright/test; ../lib/chart-gallery-page,CDPSession; Page; Point; finger; swipe
 frontend/tests/ci-e2e/chart-zoom.spec.ts,test,519,,@playwright/test; ../lib/chart-gallery-page,Locator; Page; press; Alignment; alignment; expectAligned
-frontend/tests/ci-e2e/chat-conversation.spec.ts,test,152,,@playwright/test; ../lib/rollout; ../lib/production-pages; ../visual/production/fixtures,Page; ApiHandlers; Turn; chatHandlers
+frontend/tests/ci-e2e/chat-conversation.spec.ts,test,155,,@playwright/test; ../lib/rollout; ../lib/production-pages; ../visual/production/fixtures,Page; ApiHandlers; Turn; chatHandlers
 frontend/tests/ci-e2e/critical-journeys.spec.ts,test,96,,@playwright/test,Page; Route; json; installHermeticApi
 frontend/tests/ci-e2e/fold-agents.spec.ts,test,155,,@playwright/test; ../lib/rollout; ../visual/production/fixtures; ../visual/production/fixtures-run; ../visual/production/fixtures-pages,Page; foldGeometry
 frontend/tests/ci-e2e/fold-budget.spec.ts,test,432,,@playwright/test; ../lib/production-pages; ../lib/rollout; ../visual/production/fixtures; ../visual/production/fixtures-run; ../visual/production/fixtures-pages,Locator; Page; ApiHandlers; FoldRoute; Fold; measure; blocks; open; clippedTables; expectFits

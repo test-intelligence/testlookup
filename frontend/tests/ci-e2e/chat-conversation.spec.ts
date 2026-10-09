@@ -92,6 +92,9 @@ function chatHandlers(script: Turn[]) {
 
 const LOAD = [
   ...SHELL_BASE,
+  // The page's own mode read (the composer is off in Rules/ML mode), as on
+  // the release gate: the lazy page mounts after the shell's read settled.
+  'GET /api/v1/settings/ai/mode',
   `GET /api/v1/chat/sessions?project_id=${P}`,
   `GET /api/v1/chat/run-summaries?project_id=${P}&days=5`,
 ]
