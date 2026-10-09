@@ -49,6 +49,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PolicyEditorPage from './PolicyEditorPage'
+import { useProjectStore } from '@/store/projectStore'
 
 const mockCreatePolicy = vi.fn()
 const mockToastError = vi.fn()
@@ -296,14 +297,35 @@ describe('the editor layout (UX redesign P5 item 6)', () => {
   it('labels every metadata field, two side by side and the description full width', () => {
     renderAt('/policies/new')
     expect(screen.getByLabelText('Name')).toBe(nameBox())
-    expect(screen.getByLabelText('Project ID')).toBeInTheDocument()
+    expect(screen.getByLabelText('Project')).toBeInTheDocument()
     const description = screen.getByLabelText('Description')
     expect(description.tagName).toBe('TEXTAREA')
     // The two short fields share one row; the textarea is outside that grid.
     const row = nameBox().closest('.grid') as HTMLElement
     expect(row.className).toContain('grid-cols-2')
-    expect(row.contains(screen.getByLabelText('Project ID'))).toBe(true)
+    expect(row.contains(screen.getByLabelText('Project'))).toBe(true)
     expect(row.contains(description)).toBe(false)
+  })
+
+  // Browser E2E pass (2026-10-08): the project was a free-text "Project ID"
+  // a person had to paste a UUID into.
+  it('picks the project from a list, the system default first', () => {
+    useProjectStore.setState({
+      projects: [
+        { id: 'p-1', name: 'Checkout' },
+        { id: 'p-2', name: 'Payments' },
+      ] as never,
+    })
+    renderAt('/policies/new')
+    const picker = screen.getByLabelText('Project') as HTMLSelectElement
+    expect(picker.tagName).toBe('SELECT')
+    expect(Array.from(picker.options).map(o => o.textContent)).toEqual([
+      'System default (every project)', 'Checkout', 'Payments',
+    ])
+    expect(picker.value).toBe('')
+    fireEvent.change(picker, { target: { value: 'p-2' } })
+    expect(picker.value).toBe('p-2')
+    expect(screen.getByText('Project: Payments')).toBeInTheDocument()
   })
 
   it('has a compact header with the help topic, and "Back to policies" in the overflow menu', () => {

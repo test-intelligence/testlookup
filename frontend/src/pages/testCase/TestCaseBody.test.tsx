@@ -202,3 +202,33 @@ describe('TestCaseBody — compact (the Run page\'s side panel)', () => {
     expect(screen.getByText('Test case not found')).toBeInTheDocument()
   })
 })
+
+// Browser E2E pass (2026-10-08): "📎 Attachments available — open via Allure
+// report link", and no such link exists anywhere in the app.
+describe('TestCaseBody — attachments', () => {
+  const notice = () => document.querySelector('[data-test-case-attachments]')
+
+  it('points to the Steps tab when attachments are stored, and opens it', () => {
+    setCase(failedCase({
+      has_attachments: true,
+      attachments: [{ id: 'a1', name: 'screenshot.png' }, { id: 'a2', name: 'console.log' }],
+    }))
+    renderBody()
+    expect(notice()).toHaveTextContent('📎 2 attachments, in the Steps tab')
+    expect(notice()).not.toHaveTextContent(/Allure/)
+    fireEvent.click(screen.getByRole('button', { name: 'in the Steps tab' }))
+    expect(screen.getByTestId('search')).toHaveTextContent('tab=steps')
+  })
+
+  it('says none were stored when the report listed attachments but none came with the result', () => {
+    setCase(failedCase({ has_attachments: true }))
+    renderBody()
+    expect(notice()).toHaveTextContent("📎 Its report listed attachments; none were stored with this result.")
+  })
+
+  it('says nothing when there are none', () => {
+    setCase(failedCase())
+    renderBody()
+    expect(notice()).toBeNull()
+  })
+})
