@@ -32,7 +32,9 @@ vi.mock('@/hooks/useFeatureFlags', () => ({
 
 // Control the AI analysis mode (the Ask AI entry hides in rules mode).
 const mockAI = vi.hoisted(() => ({ config: undefined as { analysis_mode: string } | undefined }))
-vi.mock('@/hooks/useAIConfig', () => ({
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  // The real gate: the sidebar, the page and the server agree on it.
+  isLLMAvailable: (await importOriginal<typeof import('@/hooks/useAIConfig')>()).isLLMAvailable,
   useAIConfig: () => ({ data: mockAI.config }),
 }))
 
@@ -99,12 +101,17 @@ describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
     for (const el of document.querySelectorAll('[data-nav-section]')) expect(el.closest('a')).toBeNull()
   })
 
-  it('shows Ask AI only when the ask_ai_chat flag is on AND the AI mode is not rules', () => {
+  it('shows Ask AI only when the ask_ai_chat flag is on AND the AI mode is LLM or Auto', () => {
     const { rerender } = renderAt('/overview')
     expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
 
     mockFlags.byKey = { ask_ai_chat: true }
     mockAI.config = { analysis_mode: 'rules' }
+    rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
+    expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
+
+    // ML mode: chat refuses (it needs an LLM), so the entry must not lead there.
+    mockAI.config = { analysis_mode: 'ml' }
     rerender(<MemoryRouter initialEntries={['/overview']}><Sidebar /></MemoryRouter>)
     expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
 

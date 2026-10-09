@@ -124,11 +124,22 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # tests that pass locally and must stay covered. Each was confirmed failing
     # on a PRISTINE origin/main checkout with no local change and no mutation
     # harness running, and each passed in CI run 35549887616 on the same code.
-    "tests/test_chat_copilot.py::test_loop_iteration_cap_then_fallback": _LANGCHAIN,
-    "tests/test_chat_copilot.py::test_loop_timeout_falls_back_to_single_shot": _LANGCHAIN,
-    "tests/test_chat_copilot.py::test_multi_hop_question_resolved_via_two_tools": _LANGCHAIN,
     "tests/test_root_cause_tier_routing.py::"
     "test_react_explanation_uses_endpoint_and_bypasses_classifier_and_caches": _LANGCHAIN,
+    # The ReAct triage regression tests (2026-10-09) drive create_react_agent
+    # for real; they pass under the repo-root .venv311 (langchain 0.3.30, CI's
+    # pin). The file's adapter and Runnable tests need no agent and stay
+    # covered locally.
+    **{
+        f"tests/regression/test_triage_react_runs_through_the_budget_wrapper.py::{name}": _LANGCHAIN
+        for name in (
+            "test_the_react_slow_path_runs_through_the_budgeted_wrapper",
+            "test_a_tool_name_in_backticks_still_runs_the_tool",
+            "test_a_construction_failure_is_a_recorded_fallback_not_an_exception",
+            "test_a_missing_model_falls_back_to_the_rules_engine",
+            "test_a_tool_with_several_arguments_takes_the_json_the_model_writes",
+        )
+    },
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"

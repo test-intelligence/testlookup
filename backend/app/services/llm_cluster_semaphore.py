@@ -270,8 +270,13 @@ class ClusterSemaphore:
 
 
 @contextlib.asynccontextmanager
-async def cluster_llm_slot(provider: str) -> AsyncIterator[bool]:
-    """The configured cluster bound for ``provider``'s calls."""
+async def cluster_llm_slot(provider: str, *, timeout: Optional[float] = None) -> AsyncIterator[bool]:
+    """The configured cluster bound for ``provider``'s calls.
+
+    ``timeout`` bounds the wait for a free slot (default ``AI_TIMEOUT_SECONDS``);
+    an interactive caller (chat) passes a short one so a saturated cluster is
+    reported as busy instead of waited out.
+    """
     from app.core.config import settings
 
     limit = int(settings.LLM_CLUSTER_MAX_CONCURRENT or 0)
@@ -283,5 +288,6 @@ async def cluster_llm_slot(provider: str) -> AsyncIterator[bool]:
         limit,
         lease_seconds=float(settings.LLM_CLUSTER_SLOT_LEASE_SECONDS or 60),
     )
-    async with semaphore.slot(timeout=float(settings.AI_TIMEOUT_SECONDS or 300)) as held:
+    wait = float(timeout) if timeout is not None else float(settings.AI_TIMEOUT_SECONDS or 300)
+    async with semaphore.slot(timeout=wait) as held:
         yield held

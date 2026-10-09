@@ -5,7 +5,7 @@ during unrelated unit tests.
 """
 import importlib
 
-__all__ = ["QueryIntent", "classify_intent", "run_offline_pipeline", "run_deep_pipeline", "resume_pipeline"]
+__all__ = ["run_offline_pipeline", "run_deep_pipeline", "resume_pipeline"]
 
 # Workflow-level node function names that tests may import
 _WORKFLOW_EXPORTS = {
@@ -16,14 +16,6 @@ _WORKFLOW_EXPORTS = {
 
 
 def __getattr__(name: str):
-    if name in {"QueryIntent", "classify_intent"}:
-        from app.agents.conversation import QueryIntent, classify_intent
-
-        exports = {
-            "QueryIntent": QueryIntent,
-            "classify_intent": classify_intent,
-        }
-        return exports[name]
     if name == "workflow":
         return importlib.import_module("app.agents.workflow")
     if name in _WORKFLOW_EXPORTS:

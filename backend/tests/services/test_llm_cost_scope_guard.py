@@ -56,8 +56,7 @@ SCOPED: dict[str, tuple[str, ...]] = {
     ),
     # Chat with a project is charged; an "all projects" chat has no project
     # (asserted in the same test).
-    "agents/conversation.py::ConversationAgent._chat": (_CHAT,),
-    "agents/conversation.py::ConversationAgent._run_tool_loop": (_CHAT,),
+    "agents/conversation.py::ConversationAgent._answer": (_CHAT,),
     "agents/conversation.py::ConversationAgent._maybe_compress_history": (_CHAT,),
     "agents/fixer/pipeline.py::generate_candidate_patch": (
         "tests/test_fixer_pipeline_e2e.py::test_patch_generation_runs_inside_the_projects_llm_cost_scope",

@@ -1,5 +1,115 @@
 # Changelog
 
+## Unreleased - Fix: the pipeline's ReAct triage could never run
+
+The LLM triage "slow path" (`services/agent.run_triage_agent`, used when the
+fast classifier is not confident, and for tiered explanations) handed
+`get_llm()`'s `BudgetedLLM` to LangChain's `create_react_agent`, which
+raised "Expected a Runnable" every time. The router then fell back to rules:
+the homelab's `ai_analysis` holds one such analysis
+(`llm_error: TypeError: Expected a Runnable ...`, 2026-09-11), and building
+the agent in the backend pod reproduced it. Running the fixed path against
+the real model (`mistral-nemo`, in the pod, no writes) surfaced four more
+defects, none of which had ever been reached. Each is fixed:
+
+- **Runnable.** `BudgetedLLM.as_runnable()` is a LangChain `Runnable`. Every
+  call still goes through the wrapper's budget, cost, breaker and slot gates,
+  and `bind(stop=…)` reaches the provider call. Agent construction moved
+  inside the try, so a failure there is a recorded `llm_error` fallback
+  instead of an exception.
+- **Tool input.** The ReAct agent sends one string per Action Input. Tools
+  with several arguments (Splunk, OpenShift) failed pydantic validation and
+  ended the analysis. The model's `test_case_id=…` was compared as a whole
+  string with the bound id and refused. Inputs are now read from the JSON,
+  `key=value` and bare forms the model writes. An input that still does not
+  fit is returned as an observation the model can correct.
+- **Tool names.** A tool name in backticks ("Action: `fetch_allure_stacktrace`")
+  was "not a valid tool" until the iteration cap. The parser now strips the
+  decoration.
+- **Iteration cap.** `early_stopping_method="generate"` is not supported by
+  this agent type, so reaching the cap raised. It is now `force`.
+- **Rules fallback.** The "model not installed" fallback passed
+  `stack_trace=` to `RulesEngine.classify_test`, which takes no such argument.
+  That fallback always ended in the canned stub. It now runs the rules engine.
+
+Measured after the fix: the slow path completes with `mode_used=llm` and a
+schema-valid analysis in 12.8 s. The mypy baseline for `services/agent.py`
+drops to 0. Regression tests (`test_triage_react_runs_through_the_budget_wrapper.py`)
+drive the real `BudgetedLLM` and were mutation-checked.
+
+## Unreleased - Ask AI rebuilt: streamed, grounded answers in a real conversation
+
+Evaluated on the homelab (OpenRouter `mistral-nemo`) before deciding to keep
+it. Chat was worth keeping, but its implementation was broken. The questions
+it serves are real cross-page questions, and the provider answered: "is X
+flaky or a regression, since when, is it quarantined?", "what changed since
+the last build?", "can we ship?".
+
+What was measured on the old chat:
+
+- **The tool loop never ran.** `create_react_agent` rejected `BudgetedLLM`
+  ("Expected a Runnable") on every message. Every answer came from a
+  regex-intent path that had no per-test history.
+- **It invented history.** It said a test "failed 7 of the last 10 runs" when
+  it had failed 1 of 12, and listed failures in the latest run that had
+  passed.
+- **Slow and blank.** Each answer took 6.5–10.6 s with nothing on screen
+  until it finished.
+- **Answers rendered badly.** Tables showed as raw `|` text, and source chips
+  were eight identical unlinked labels.
+- **Errors were saved as answers.** The apology was stored as the reply and
+  replayed to the model as history.
+- **Sessions and messages misbehaved:**
+  - Every project's sessions appeared in one list.
+  - The message list returned the oldest 50, so new turns vanished, and
+    rendered the history-compression summary as a reply.
+  - The page allowed 5,000 characters but the server accepted 4,000, so
+    longer questions failed with a silent 422.
+
+What changed:
+
+- **Streaming.** `POST /chat/sessions/{id}/messages/stream` sends events:
+  `start`, `status` (what is being looked up), `delta`, then `done` or
+  `error` with a code. It sends a heartbeat, and closing the connection stops
+  the model. `BudgetedLLM` gains `astream` and `bind_tools` behind the same
+  budget, cost, circuit-breaker and cluster-slot gates. A stall becomes a
+  breaker-counted timeout, a provider refusing tools is not counted, and a
+  Stop keeps the worst-case reservation.
+- **Agent.** It uses native tool calling with ten project-scoped read tools.
+  Three are new:
+  - `get_test_history` states the pattern (regression since build X, or
+    intermittent).
+  - `compare_builds`.
+  - `list_flaky_tests` (with quarantine state).
+
+  Every answer starts from a snapshot built without the model. Facts the
+  model was measured inventing are looked up first: a named test's history
+  and quarantine state, the flaky list, and the release-gate verdict. The
+  release gate now reports the latest run's verdict, or says that run has
+  none.
+- **Prompt.** `chat_system` v3. `chat_copilot_react` is retired.
+- **Turn safety.**
+  - Separate timeouts for the first token and for the whole turn.
+  - One turn per conversation (a Redis lock).
+  - A stopped answer is saved and marked; a Retry replaces it.
+  - Errors are never saved as answers.
+- **Page.**
+  - The question appears immediately, with a live status line and the answer
+    streaming in.
+  - Stop and Retry, and tables via `remark-gfm`.
+  - Builds and tests in an answer are linked.
+  - Each answer shows its model and timings.
+  - Starter questions per project; sessions filtered to the project.
+  - "Ask AI about this run" on the run page.
+  - A conversation that fails to load shows `DataUnavailable`.
+- **Settings.** `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS`,
+  `CHAT_TURN_TIMEOUT_SECONDS`, `CHAT_MAX_TOOL_ROUNDS`, `CHAT_HISTORY_MESSAGES`,
+  and `CHAT_LLM_MODEL` (a chat-only model).
+- **Retired.** The chat's ChromaDB semantic-search test: chat no longer runs
+  unscoped semantic search, and `recall_failure_history` answers "seen
+  before?". Also retired: the ReAct loop tests that passed in CI while the
+  loop crashed in production. The new tests drive the real `BudgetedLLM`.
+
 ## Unreleased - Fixes: a dead-end attachments pointer, and a UUID field for a project
 
 Found by browser end-to-end testing on a local stack.

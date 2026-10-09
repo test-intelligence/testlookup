@@ -2179,6 +2179,20 @@ class SendMessageRequest(BaseModel):
     project_id: Optional[str] = None
 
 
+class StreamMessageRequest(BaseModel):
+    """One streamed chat turn: a new question, or ``retry`` to answer the
+    session's unanswered (or stopped) last question again."""
+
+    message: Optional[str] = Field(None, min_length=1, max_length=4000)
+    retry: bool = False
+
+    @model_validator(mode="after")
+    def _question_or_retry(self) -> "StreamMessageRequest":
+        if self.retry == bool(self.message and self.message.strip()):
+            raise ValueError("send either a message or retry=true, not both or neither")
+        return self
+
+
 class SendMessageResponse(BaseModel):
     session_id: uuid.UUID
     reply: str

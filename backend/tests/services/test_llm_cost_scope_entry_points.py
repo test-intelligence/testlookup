@@ -169,17 +169,40 @@ def test_a_scope_without_a_project_keeps_the_outer_one():
 
 @pytest.mark.asyncio
 async def test_project_chat_and_its_history_compression_run_inside_the_projects_scope(monkeypatch):
+    """The chat turn runs in its own task: the scope must be entered INSIDE it
+    (ContextVars are copied when a task is created), and the compression task
+    it spawns copies it from there."""
     import asyncio
+
+    from langchain_core.messages import AIMessageChunk
 
     from app.agents import conversation as conv
 
     seen: list = []
     compressed: list = []
-    monkeypatch.setattr(conv, "get_llm", _get_llm(seen, "the reply"))
+
+    class _StreamLLM:
+        provider_name = "openrouter"
+        model_label = "m"
+
+        def bind_tools(self, *args, **kwargs):
+            return self
+
+        async def astream(self, *args, **kwargs):
+            seen.append(current_cost_scope())
+            yield AIMessageChunk(content="the reply")
+
+    async def get_llm(*args, **kwargs):
+        return _StreamLLM()
+
     agent = conv.ConversationAgent()
 
-    async def history(session_id):
+    async def history(session_id, before_id=None):
         return [], ""
+
+    async def save(session_id, role, content, sources):
+        return {"id": str(uuid.uuid4()), "session_id": session_id, "role": role,
+                "content": content, "sources": sources, "created_at": "now"}
 
     async def nothing(*args, **kwargs):
         return None
@@ -187,19 +210,33 @@ async def test_project_chat_and_its_history_compression_run_inside_the_projects_
     async def no_context(*args, **kwargs):
         return "", []
 
+    async def no_text(*args, **kwargs):
+        return ""
+
     async def name(project_id):
         return "Payments"
+
+    async def mode():
+        return "llm"
+
+    async def lock(session_id):
+        return "token"
 
     async def compress(session_id):
         compressed.append(current_cost_scope())
 
+    monkeypatch.setattr(conv, "get_llm", get_llm)
+    monkeypatch.setattr(conv, "_configured_mode", mode)
+    monkeypatch.setattr(conv, "_acquire_turn_lock", lock)
+    monkeypatch.setattr(conv, "_release_turn_lock", nothing)
     monkeypatch.setattr(agent, "_load_history", history)
-    monkeypatch.setattr(agent, "_save_message", nothing)
+    monkeypatch.setattr(agent, "_save_message", save)
     monkeypatch.setattr(agent, "_touch_session", nothing)
-    monkeypatch.setattr(agent, "_retrieve_context", no_context)
+    monkeypatch.setattr(agent, "_fetch_run_context", no_context)
     monkeypatch.setattr(agent, "_fetch_bound_report_context", no_context)
+    monkeypatch.setattr(agent, "_fetch_fingerprint_recall", no_text)
+    monkeypatch.setattr(agent, "_prefetch_lookups", no_text)
     monkeypatch.setattr(agent, "_fetch_project_name", name)
-    monkeypatch.setattr(agent, "_tool_loop_enabled", lambda: False)
     monkeypatch.setattr(agent, "_maybe_compress_history", compress)
 
     project_id = str(uuid.uuid4())
@@ -211,9 +248,12 @@ async def test_project_chat_and_its_history_compression_run_inside_the_projects_
     assert compressed == [project_id]
     assert current_cost_scope() is None
 
-    # An "all projects" chat has no project to charge.
-    await agent.chat("s-2", "hello", "u-1", project_id=None)
-    assert seen == [project_id, None]
+    # A chat with no project is refused before any model call: the tools are
+    # project-scoped, and there is no cap to charge it to.
+    with pytest.raises(conv.ChatTurnError) as refused:
+        await agent.chat("s-2", "hello there friend", "u-1", project_id=None)
+    assert refused.value.code == "project_required"
+    assert seen == [project_id]
 
 
 @pytest.mark.asyncio

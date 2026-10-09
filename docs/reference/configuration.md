@@ -128,6 +128,11 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `AI_REPORT_EVAL_ALLOW_CALLER_CORPUS` | `bool` | `False` |
 | `AI_MAX_RETRIES` | `int` | `3` |
 | `AI_TIMEOUT_SECONDS` | `int` | `300` |
+| `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS` | `int` | `45` |
+| `CHAT_TURN_TIMEOUT_SECONDS` | `int` | `120` |
+| `CHAT_MAX_TOOL_ROUNDS` | `int` | `4` |
+| `CHAT_HISTORY_MESSAGES` | `int` | `12` |
+| `CHAT_LLM_MODEL` | `str` | `''` |
 | `AGENT_PIPELINE_MAX_ATTEMPTS` | `int` | `5` |
 | `AGENT_MAX_ATTEMPTS_CEILING` | `int` | `10` |
 | `AGENT_MAX_TIMEOUT_CEILING` | `int` | `600` |

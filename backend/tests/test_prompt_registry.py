@@ -111,33 +111,33 @@ def test_summary_layers_are_deliberate_v2():
         assert anchors[pid] in p.text, f"{pid} lost a v1 structural anchor"
 
 
-# The ORIGINAL chat_system (v1) hash — v2 deliberately differs (AI-6 copilot:
-# the single-shot prompt must not fabricate tool activity now that some chat
-# answers carry a real tool trace).
+# The ORIGINAL chat_system (v1) hash and v2's: v3 deliberately differs from both.
 _CHAT_SYSTEM_V1_HASH = "b52c5b2cf229"
+_CHAT_SYSTEM_V2_HASH = "5052234131d8"
 
 
-def test_chat_system_is_deliberate_v2():
+def test_chat_system_is_deliberate_v3():
+    """v3 (2026-10-09) is the prompt of a tool-calling chat agent: v2's
+    single-shot path had no per-test history and invented one."""
     p = pr.get_prompt("chat_system")
-    assert p.version == 2
-    assert p.content_hash != _CHAT_SYSTEM_V1_HASH
-    assert "How I looked this up" in p.text
-    # v1's structural anchors survived the edit
-    assert "- Current date/time (UTC): {now}" in p.text
-    assert "- Query focus: {intent_label}" in p.text
-    assert "Ground every answer in the retrieved context below" in p.text
+    assert p.version == 3
+    assert p.content_hash not in (_CHAT_SYSTEM_V1_HASH, _CHAT_SYSTEM_V2_HASH)
+    # The slots the agent fills.
+    for slot in ("{now}", "{project_scope}", "{snapshot}"):
+        assert slot in p.text
+    assert "{intent_label}" not in p.text  # the regex intent router is gone
+    # The grounding rules the measured fabrications broke.
+    assert "Never estimate or invent a count, rate, streak, date" in p.text
+    assert "The snapshot has no history for any test" in p.text
+    assert "get_test_history" in p.text and "check_quarantine_status" in p.text
+    assert "do not call a regression flaky" in p.text
+    p.text.format(now="n", project_scope="p", snapshot="s")  # no stray braces
 
 
-def test_chat_copilot_react_prompt_registered():
-    p = pr.get_prompt("chat_copilot_react")
-    assert p.version == 1
-    # ReAct structural anchors the loop parser depends on
-    for anchor in ("{tools}", "{tool_names}", "{input}", "{agent_scratchpad}",
-                   "Action Input:", "Final Answer:"):
-        assert anchor in p.text
-    # Bound-loop honesty rules
-    assert "budget is exhausted" in p.text
-    assert "read-only" in p.text
+def test_chat_copilot_react_prompt_is_retired():
+    """The ReAct loop it drove never ran (create_react_agent rejected
+    BudgetedLLM on every message); the agent uses native tool calling."""
+    assert "chat_copilot_react" not in pr.registry_prompt_ids()
 
 
 def test_react_triage_is_deliberate_v3():

@@ -71,6 +71,7 @@ This is a documentation/typing limitation observed in source, not evidence that 
 - `GET /api/v1/audit-dashboard/observability/{project_id}`
 - `GET /api/v1/canonical-test-cases/{canonical_id}/runs`
 - `GET /api/v1/chat/run-summaries`
+- `POST /api/v1/chat/sessions/{session_id}/messages/stream`
 - `GET /api/v1/compliance-packs/{pack_id}/download`
 - `POST /api/v1/debug/generate-test-run`
 - `GET /api/v1/deep-investigate/defects/pending-review`

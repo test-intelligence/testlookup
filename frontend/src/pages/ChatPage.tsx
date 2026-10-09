@@ -1,61 +1,56 @@
-import { memo, useEffect, useRef, useState } from 'react'
-import {
-  AlertTriangle,
-  Bot, ChevronDown, ChevronUp,
-  CheckCircle2, MessageSquare, Plus, Send, Trash2, User,
-  Zap,
-} from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
-import type { ExecutivePanel } from '@/services/runIntelligenceService'
+/**
+ * Ask AI: a conversation about one project's test results.
+ *
+ * Rebuilt 2026-10-09 after an evaluation on the homelab. The page used to wait
+ * 7–10 s on a blank "…" for each answer, render tables as raw `|` text, mix
+ * every project's conversations into one list, and save provider failures as
+ * if they were answers. Now: the question shows at once, the assistant says
+ * what it is looking up, the answer streams in, Stop and Retry work, and each
+ * answer links the builds and tests it names.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Bot, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import AppLogo from '@/components/ui/AppLogo'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import EmptyState from '@/components/ui/EmptyState'
-import { useChat, useChatSessions, useRunSummaries } from '@/hooks/useChat'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import ChatComposer, { type ChatComposerHandle } from '@/components/chat/ChatComposer'
+import ChatWelcome from '@/components/chat/ChatWelcome'
+import { starterPrompts } from '@/components/chat/chatContent'
+import { PendingAnswer, SavedAnswer, UserMessage } from '@/components/chat/ChatMessageView'
+import { pendingQuestionVisible, useChatConversation, useRunSummaries } from '@/hooks/useChat'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
-import AssistantMessageExtras from '@/components/chat/AssistantMessageExtras'
-import chatService from '@/services/chatService'
 import { useProjectStore } from '@/store/projectStore'
 import { splitMessageSources } from '@/types/chat'
-import type { ChatSession, RunSummary } from '@/types/chat'
-
-// Upper bound on a single chat message. Enforced client-side to avoid sending
-// unbounded prompts that would blow up LLM context windows and token cost.
-// Backend should enforce a matching limit as defense-in-depth.
-const MAX_CHAT_MESSAGE_LENGTH = 5000
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function fromNow(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const h = Math.floor(diff / 3_600_000)
-  if (h < 1) return 'just now'
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
-// ── Session sidebar item ───────────────────────────────────────────────────
+import type { ChatSession } from '@/types/chat'
 
 function SessionItem({
   session, active, onSelect, onDelete,
 }: {
-  session: ChatSession; active: boolean; onSelect: () => void; onDelete: () => void
+  session: ChatSession
+  active: boolean
+  onSelect: () => void
+  onDelete: () => void
 }) {
   return (
     <div
       className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-        active ? 'bg-white/10 border border-[var(--color-border-light)]' : 'hover:bg-[var(--color-bg-secondary)]/80'
+        active ? 'bg-[var(--color-bg-hover)] border border-[var(--color-border-light)]' : 'hover:bg-[var(--color-bg-secondary)]'
       }`}
       onClick={onSelect}
+      data-testid="chat-session"
     >
       <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-      <span className="text-sm text-[var(--color-text-secondary)] truncate flex-1">
+      <span className="text-sm text-[var(--color-text-secondary)] truncate flex-1" title={session.title ?? undefined}>
         {session.title || 'Conversation'}
       </span>
       <button
-        onClick={e => { e.stopPropagation(); onDelete() }}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onDelete() }}
         className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--status-failed)] transition-all"
+        title="Delete this conversation"
+        aria-label="Delete conversation"
       >
         <Trash2 className="w-3 h-3" />
       </button>
@@ -63,202 +58,37 @@ function SessionItem({
   )
 }
 
-// ── Message bubble ─────────────────────────────────────────────────────────
-
-const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
-  role: 'user' | 'assistant'
-  content: string
-  sources?: Array<{ type: string; id?: string }> | null
-}) {
-  const isUser = role === 'user'
-  // AI-6: the copilot's trace + action handoffs travel inside the sources
-  // JSON; strip the carrier entries so chips render only real sources.
-  const { plainSources, toolTrace, suggestedActions, provenanceRaw } = splitMessageSources(sources ?? null)
-  return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-        isUser ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'
-      }`}>
-        {isUser
-          ? <User className="w-3.5 h-3.5 text-[var(--color-text)]" />
-          : <Bot className="w-3.5 h-3.5 text-[var(--color-text)]" />}
-      </div>
-      <div className={`max-w-[80%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
-        isUser ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text)]'
-      }`}>
-        {content === '…' ? (
-          <span className="inline-flex gap-1 items-center text-[var(--color-text-muted)]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:0ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:150ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:300ms]" />
-          </span>
-        ) : isUser ? (
-          <p className="whitespace-pre-wrap">{content}</p>
-        ) : (
-          <div className="prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown>{content}</ReactMarkdown>
-          </div>
-        )}
-        {!isUser && plainSources.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex flex-wrap gap-1">
-            {plainSources.map((s, i) => (
-              <span key={i} className="text-xs bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] px-2 py-0.5 rounded-full">
-                {s.type}
-              </span>
-            ))}
-          </div>
-        )}
-        {!isUser && (
-          <AssistantMessageExtras
-            toolTrace={toolTrace}
-            suggestedActions={suggestedActions}
-            provenanceRaw={provenanceRaw}
-          />
-        )}
-      </div>
-    </div>
-  )
-})
-
-// ── Run summary card ───────────────────────────────────────────────────────
-
-function RunSummaryCard({
-  summary,
-  onAskAbout,
-}: {
-  summary: RunSummary
-  onAskAbout: (runId: string, build: string) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const hasFullReport = !summary.is_stub && !!summary.markdown_report
-
-  return (
-    <div className={`rounded-lg border transition-colors ${
-      summary.is_regression
-        ? 'border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10'
-        : summary.is_stub
-          ? 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80'
-    }`}>
-      {/* Card header */}
-      <div className="flex items-start gap-3 px-4 py-3">
-        <div className={`mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-          summary.is_regression ? 'bg-[var(--status-failed-bg)]/50' : summary.is_stub ? 'bg-[var(--color-bg-hover)]/50' : 'bg-[var(--color-bg-hover)]'
-        }`}>
-          {summary.is_regression
-            ? <AlertTriangle className="w-4 h-4 text-[var(--status-failed)]" />
-            : summary.is_stub
-              ? <Bot className="w-4 h-4 text-[var(--color-text-muted)]" />
-              : <CheckCircle2 className="w-4 h-4 text-[var(--status-passed)]" />}
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-sm font-semibold text-[var(--color-text)]">
-              {summary.build_number || summary.test_run_id.slice(0, 8)}
-            </span>
-            {summary.is_stub && (
-              <span className="text-[10px] bg-[var(--color-bg-hover)]/60 text-[var(--color-text-muted)] border border-[var(--color-border-light)]/40 px-1.5 py-0.5 rounded font-medium">
-                NO AI ANALYSIS
-              </span>
-            )}
-            {!summary.is_stub && summary.is_regression && (
-              <span className="text-[10px] bg-[var(--status-failed-bg)]/60 text-[var(--status-failed)] border border-[var(--status-failed-bd)]/40 px-1.5 py-0.5 rounded font-medium">
-                REGRESSION
-              </span>
-            )}
-            {!summary.is_stub && summary.anomaly_count > 0 && (
-              <span className="text-[10px] bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)] border border-[var(--status-skipped-bd)]/30 px-1.5 py-0.5 rounded">
-                {summary.anomaly_count} anomal{summary.anomaly_count === 1 ? 'y' : 'ies'}
-              </span>
-            )}
-            <span className="text-xs text-[var(--color-text-muted)] ml-auto shrink-0">
-              {fromNow(summary.generated_at)}
-            </span>
-          </div>
-
-          {/* Executive summary */}
-          {summary.executive_panel ? (
-            <div className="mt-2">
-              <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as ExecutivePanel} compact />
-            </div>
-          ) : (
-            <div className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed prose prose-invert prose-sm max-w-none">
-              <ReactMarkdown>{summary.executive_summary}</ReactMarkdown>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 mt-2.5">
-            {!summary.is_stub && (
-              <span className="text-xs text-[var(--color-text-muted)]">
-                {summary.analysis_count} test{summary.analysis_count !== 1 ? 's' : ''} analysed
-              </span>
-            )}
-            {hasFullReport && (
-              <button
-                onClick={() => setExpanded(v => !v)}
-                className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors ml-1"
-              >
-                {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                {expanded ? 'Hide report' : 'Full report'}
-              </button>
-            )}
-            <button
-              onClick={() => onAskAbout(summary.test_run_id, summary.build_number)}
-              className="ml-auto flex items-center gap-1 text-xs bg-[var(--color-bg-hover)]/30 hover:bg-[var(--color-bg-hover)]/50 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2.5 py-1 rounded transition-colors"
-            >
-              <MessageSquare className="w-3 h-3" />
-              Ask AI
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Expandable full markdown report (AI summaries only) */}
-      {expanded && hasFullReport && (
-        <div className="border-t border-[var(--color-border)] px-4 py-3 max-h-80 overflow-y-auto">
-          <div className="prose prose-invert prose-sm max-w-none text-[var(--color-text-secondary)]">
-            <ReactMarkdown>{summary.markdown_report ?? ''}</ReactMarkdown>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Starter prompts ────────────────────────────────────────────────────────
-
-const STARTER_PROMPTS = [
-  'What are the most common failure patterns in recent runs?',
-  'Show me tests that have been consistently failing this week',
-  'What was the pass rate trend for the last 7 days?',
-  'Are there any critical regressions I should be aware of?',
-  'Which tests are showing flaky behaviour?',
-]
-
-// ── Main page ──────────────────────────────────────────────────────────────
-
 export default function ChatPage() {
   const { activeProject } = useProjectStore()
   const { data: aiConfig } = useAIConfig()
   const llmAvailable = isLLMAvailable(aiConfig)
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [input, setInput] = useState('')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const { data: sessions = [], mutate: reloadSessions } = useChatSessions()
-  const { messages, isSending, sendMessage, error } = useChat(
-    activeSessionId,
-    activeProject?.id,
-  )
-  const { data: runSummaries = [], isLoading: summariesLoading } = useRunSummaries(
-    activeProject?.id,
-    5,
-  )
+  const projectId = activeProject?.id ?? null
+  const chat = useChatConversation(projectId)
+  const { data: runSummaries = [], isLoading: summariesLoading } = useRunSummaries(projectId, 5)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // `/chat?prompt=…` (e.g. "Ask AI about this run" on a run page) fills the
+  // question box; the reader sends it.
+  const [input, setInput] = useState(() => (searchParams.get('prompt') ?? '').slice(0, 4000))
+  const composer = useRef<ChatComposerHandle>(null)
+  const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (!searchParams.get('prompt')) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('prompt')
+    setSearchParams(next, { replace: true })
+    composer.current?.focus()
+  }, [searchParams, setSearchParams])
+
+  const { messages, pending } = chat
+  useEffect(() => {
+    endRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' })
+  }, [messages.length, pending?.answer, pending?.phase, pending?.status])
+
+  const prompts = useMemo(
+    () => starterPrompts(activeProject?.name ?? 'this project', runSummaries[0]?.build_number ?? null),
+    [activeProject?.name, runSummaries],
+  )
 
   if (!activeProject) {
     return (
@@ -270,234 +100,139 @@ export default function ChatPage() {
     )
   }
 
-  const handleNewSession = async () => {
+  const ask = async (text: string) => {
+    const sent = await chat.send(text)
+    if (sent) setInput('')
+  }
+
+  const handleSend = () => {
+    const text = input
+    if (!text.trim()) return
+    setInput('')
+    void chat.send(text).then((sent) => { if (!sent) setInput(text) })
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Delete this conversation?')) return
     try {
-      const session = await chatService.createSession({
-        project_id: activeProject?.id,
-        title: 'New conversation',
-      })
-      await reloadSessions()
-      setActiveSessionId(session.id)
+      await chat.removeSession(id)
     } catch {
-      toast.error('Failed to create session')
+      toast.error('Could not delete the conversation')
     }
   }
 
-  const handleDeleteSession = async (sessionId: string) => {
-    if (!confirm('Delete this conversation?')) return
-    try {
-      await chatService.deleteSession(sessionId)
-      if (activeSessionId === sessionId) setActiveSessionId(null)
-      await reloadSessions()
-    } catch {
-      toast.error('Failed to delete session')
-    }
-  }
-
-  // Create a session (if needed) and send the message
-  const handleSend = async (text?: string) => {
-    const msg = text ?? input
-    if (!msg.trim() || isSending) return
-    // Hard cap to prevent runaway LLM context cost / DoS on the backend.
-    if (msg.length > MAX_CHAT_MESSAGE_LENGTH) {
-      toast.error(`Message too long (${msg.length}/${MAX_CHAT_MESSAGE_LENGTH} characters).`)
-      return
-    }
-    if (!text) setInput('')
-
-    let sid = activeSessionId
-    if (!sid) {
-      try {
-        const session = await chatService.createSession({ project_id: activeProject?.id })
-        sid = session.id
-        setActiveSessionId(sid)
-        await reloadSessions()
-      } catch {
-        if (!text) setInput(msg)
-        toast.error('Could not create chat session')
-        return
-      }
-    }
-
-    await sendMessage(msg, sid)
-    await reloadSessions()
-  }
-
-  // "Ask AI" button on a summary card — auto-sends a focused question
-  const handleAskAboutRun = async (runId: string, build: string) => {
-    const prompt = `Give me a detailed analysis of test run ${build || runId.slice(0, 8)}. What were the key failures, root causes, and recommended actions?`
-    await handleSend(prompt)
-  }
-
-  // Starter prompts auto-send immediately (no extra click needed)
-  const handleStarterPrompt = async (prompt: string) => {
-    await handleSend(prompt)
-  }
+  const lastMessage = messages[messages.length - 1]
+  const lastIsStoppedAnswer =
+    lastMessage?.role === 'assistant' && splitMessageSources(lastMessage.sources).meta?.status === 'stopped'
+  // A question whose turn failed earlier (no answer saved): offer to answer it.
+  const unanswered = !pending && lastMessage?.role === 'user'
+  const showPendingQuestion = pendingQuestionVisible(pending, messages)
+  // After a Stop the saved history may already hold the stopped text.
+  const showPendingAnswer = !!pending && !(pending.phase === 'stopped' && lastIsStoppedAnswer)
+  const conversationOpen = chat.sessionId !== null || pending !== null
 
   return (
     <div className="h-[calc(100vh-8rem)] flex gap-4">
-      {/* ── Sidebar ── */}
-      <aside className="w-56 shrink-0 flex flex-col gap-2">
+      <aside className="w-60 shrink-0 flex flex-col gap-2" aria-label="Conversations">
         <button
-          onClick={handleNewSession}
+          type="button"
+          onClick={() => { chat.selectSession(null); setInput(''); composer.current?.focus() }}
           className="btn-primary flex items-center gap-2 text-sm justify-center py-2"
+          data-testid="chat-new"
         >
-          <Plus className="w-4 h-4" />
-          New Chat
+          <Plus className="w-4 h-4" /> New chat
         </button>
-
         <div className="flex-1 overflow-y-auto space-y-1">
-          {sessions.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-muted)] text-center mt-4">No conversations yet</p>
+          {chat.sessionsLoading ? (
+            <div className="flex justify-center mt-4"><LoadingSpinner size="sm" /></div>
+          ) : chat.sessions.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)] text-center mt-4">No conversations in this project yet</p>
           ) : (
-            sessions.map((s: ChatSession) => (
+            chat.sessions.map((s) => (
               <SessionItem
                 key={s.id}
                 session={s}
-                active={activeSessionId === s.id}
-                onSelect={() => setActiveSessionId(s.id)}
-                onDelete={() => handleDeleteSession(s.id)}
+                active={chat.sessionId === s.id}
+                onSelect={() => chat.selectSession(s.id)}
+                onDelete={() => void handleDelete(s.id)}
               />
             ))
           )}
         </div>
-
         <div className="text-xs text-[var(--color-text-faint)] p-2 border-t border-[var(--color-border)]">
-          <p className="font-medium text-[var(--color-text-muted)] mb-1">Context</p>
-          <p>{activeProject?.name || 'All projects'}</p>
+          <p className="font-medium text-[var(--color-text-muted)] mb-0.5">Project</p>
+          <p className="truncate">{activeProject.name}</p>
         </div>
       </aside>
 
-      {/* ── Chat area ── */}
-      <div className="flex-1 flex flex-col card overflow-hidden min-w-0">
-        {!activeSessionId ? (
-          /* ── Empty state: summaries + starter prompts ── */
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
-            {/* Hero */}
-            <div className="flex items-center gap-3">
-              <div className="shrink-0">
-                <AppLogo glyph className="text-[28px]" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-[var(--color-text)] leading-tight">TestLookup Chat</h3>
-                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                  Ask questions about test results, failures, trends, and AI analysis findings.
-                </p>
-              </div>
-            </div>
-
-            {/* Pre-computed run summaries */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Zap className="w-3.5 h-3.5 text-[var(--status-skipped)]" />
-                <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
-                  Recent Run Summaries — last 5 days
-                </h4>
-                <span className="text-xs text-[var(--color-text-faint)] ml-auto">pre-computed · instant</span>
-              </div>
-
-              {summariesLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <LoadingSpinner size="sm" />
-                </div>
-              ) : runSummaries.length === 0 ? (
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 px-4 py-6 text-center">
-                  <p className="text-sm text-[var(--color-text-muted)]">
-                    No summaries yet. Summaries are generated automatically after each test run completes.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {runSummaries.map(s => (
-                    <RunSummaryCard
-                      key={s.test_run_id}
-                      summary={s}
-                      onAskAbout={handleAskAboutRun}
-                    />
-                  ))}
+      <section className="flex-1 flex flex-col card overflow-hidden min-w-0" aria-label="Ask AI conversation">
+        <div className="flex-1 overflow-y-auto p-5" data-testid="chat-transcript">
+          {!conversationOpen ? (
+            <ChatWelcome
+              projectName={activeProject.name}
+              prompts={prompts}
+              onAsk={(p) => void ask(p)}
+              runs={runSummaries}
+              runsLoading={summariesLoading}
+            />
+          ) : (
+            <div className="max-w-3xl mx-auto w-full space-y-4">
+              {chat.messagesLoading && (
+                <div className="flex justify-center py-6"><LoadingSpinner size="sm" /></div>
+              )}
+              {chat.messagesError != null && (
+                <DataUnavailable error={chat.messagesError} onRetry={chat.reloadMessages} testId="chat-messages-unavailable" />
+              )}
+              {messages.map((m, i) =>
+                m.role === 'user' ? (
+                  <UserMessage key={m.id} content={m.content} />
+                ) : (
+                  <SavedAnswer
+                    key={m.id}
+                    message={m}
+                    onRegenerate={i === messages.length - 1 && !chat.busy ? () => void chat.retry() : undefined}
+                  />
+                ),
+              )}
+              {unanswered && (
+                <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] pl-10" data-testid="chat-unanswered">
+                  <Bot className="w-3.5 h-3.5" /> This question has no answer yet.
+                  <button type="button" onClick={() => void chat.retry()} className="text-[var(--color-accent)] hover:underline">
+                    Answer it now
+                  </button>
                 </div>
               )}
+              {pending && showPendingQuestion && <UserMessage content={pending.question} />}
+              {pending && showPendingAnswer && (
+                <PendingAnswer pending={pending} onStop={chat.stop} onRetry={() => void chat.retry()} />
+              )}
+              <div ref={endRef} />
             </div>
-
-            {/* Starter prompts */}
-            <div>
-              <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                Or ask a question
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {STARTER_PROMPTS.map(prompt => (
-                  <button
-                    key={prompt}
-                    onClick={() => handleStarterPrompt(prompt)}
-                    className="text-left text-sm text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)]/80 hover:bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 transition-colors"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* ── Active session: message list ── */
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.length === 0 && !isSending && (
-              <div className="text-center text-sm text-[var(--color-text-muted)] mt-8">
-                Send your first message to start the conversation.
-              </div>
-            )}
-            {messages.map(msg => (
-              <MessageBubble
-                key={msg.id}
-                role={msg.role}
-                content={msg.content}
-                sources={msg.sources}
-              />
-            ))}
-            {error && (
-              <div className="text-xs text-[var(--status-failed)] text-center">{error}</div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-
-        {/* ── Input bar ── */}
-        <div className="border-t border-[var(--color-border)] p-3 shrink-0">
-          {!llmAvailable ? (
-            <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 px-4 py-3 text-sm text-[var(--color-text-muted)]">
-              <Bot className="w-4 h-4 shrink-0" />
-              Chat is unavailable in Rules mode. Switch to LLM or Auto mode in Settings &gt; AI Configuration.
-            </div>
-          ) : (
-            <>
-              <div className="flex gap-2 items-end">
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value.slice(0, MAX_CHAT_MESSAGE_LENGTH))}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSend()
-                    }
-                  }}
-                  placeholder="Ask about test results, failures, trends…"
-                  rows={1}
-                  maxLength={MAX_CHAT_MESSAGE_LENGTH}
-                  className="input flex-1 resize-none text-sm py-2 leading-relaxed"
-                  style={{ maxHeight: '120px', overflow: 'auto' }}
-                />
-                <button
-                  onClick={() => handleSend()}
-                  disabled={!input.trim() || isSending}
-                  className="btn-primary p-2.5 shrink-0 disabled:opacity-40"
-                >
-                  {isSending ? <LoadingSpinner size="sm" /> : <Send className="w-4 h-4" />}
-                </button>
-              </div>
-              <p className="text-xs text-[var(--color-text-faint)] mt-1">Press Enter to send · Shift+Enter for new line</p>
-            </>
           )}
         </div>
-      </div>
+
+        <div className="border-t border-[var(--color-border)] p-3 shrink-0">
+          {!llmAvailable ? (
+            <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 text-sm text-[var(--color-text-muted)]">
+              <Bot className="w-4 h-4 shrink-0" />
+              {aiConfig?.analysis_mode === 'ml'
+                ? 'Chat is unavailable in ML mode. Switch to LLM or Auto mode in Settings > AI Configuration.'
+                : 'Chat is unavailable in Rules mode. Switch to LLM or Auto mode in Settings > AI Configuration.'}
+            </div>
+          ) : (
+            <div className="max-w-3xl mx-auto w-full">
+              <ChatComposer
+                ref={composer}
+                value={input}
+                onChange={setInput}
+                onSend={handleSend}
+                onStop={chat.stop}
+                busy={chat.busy}
+              />
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   )
 }
