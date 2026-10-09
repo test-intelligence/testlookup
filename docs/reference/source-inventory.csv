@@ -2539,7 +2539,7 @@ frontend/src/components/layout/SectionTabs.test.tsx,test,55,,@testing-library/re
 frontend/src/components/layout/SectionTabs.tsx,implementation/configuration,24,,react-router-dom; @/components/ui/RouteTabs; @/hooks/usePermissions; ./navConfig,SectionTabs
 frontend/src/components/layout/SettingsLayout.test.tsx,test,76,,@testing-library/react; react-router-dom; vitest; ./SettingsLayout,renderAt
 frontend/src/components/layout/SettingsLayout.tsx,implementation/configuration,84,,react; react-router-dom; clsx; @/hooks/usePermissions; ./settingsNav,SettingsLayout
-frontend/src/components/layout/Sidebar.test.tsx,test,215,,@testing-library/react; react-router-dom; vitest; ./Sidebar,renderAt; navIds; activeId
+frontend/src/components/layout/Sidebar.test.tsx,test,222,,@testing-library/react; react-router-dom; vitest; ./Sidebar,renderAt; navIds; activeId
 frontend/src/components/layout/Sidebar.tsx,implementation/configuration,225,,react; react-router-dom; lucide-react; clsx; @/hooks/usePermissions; @/hooks/useFeatureFlags; @/hooks/useAIConfig; @/hooks/useMyFailuresCountUnscoped; @/hooks/useLiveRunningCount; @/components/ui/AppLogo; @/hooks/useModalFocus; ./navConfig,MouseEvent; NavItem; readCollapsed; writeCollapsed; SidebarDrawer; InboxBadge; LiveDot; SidebarItem; Sidebar
 frontend/src/components/layout/TopBar.alignment.test.tsx,test,64,,@testing-library/react; react-router-dom; vitest; ./TopBar,renderTopBar
 frontend/src/components/layout/TopBar.test.tsx,test,297,,@testing-library/react; react-router-dom; vitest; ./TopBar,
