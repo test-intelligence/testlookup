@@ -17439,7 +17439,7 @@ clamps: list[Clamp] = Field(default_factory=list)
 
 ## backend/app/services/agent_config_service.py — _Strict
 
-[backend/app/services/agent_config_service.py:144](../../backend/app/services/agent_config_service.py#L144)
+[backend/app/services/agent_config_service.py:147](../../backend/app/services/agent_config_service.py#L147)
 
 Bases: `BaseModel`.
 
@@ -17451,7 +17451,7 @@ model_config = ConfigDict(extra='forbid')
 
 ## backend/app/services/agent_config_service.py — ModelEndpointConfig
 
-[backend/app/services/agent_config_service.py:148](../../backend/app/services/agent_config_service.py#L148)
+[backend/app/services/agent_config_service.py:151](../../backend/app/services/agent_config_service.py#L151)
 
 Bases: `_Strict`.
 
@@ -17464,10 +17464,10 @@ temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 max_tokens: int = Field(default=1024, ge=1, le=200000)
 ```
 
-- Validator/serializer `_known_provider`: [backend/app/services/agent_config_service.py:158](../../backend/app/services/agent_config_service.py#L158). Read source for the cross-field or conversion rule.
+- Validator/serializer `_known_provider`: [backend/app/services/agent_config_service.py:161](../../backend/app/services/agent_config_service.py#L161). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — EscalationConfig
 
-[backend/app/services/agent_config_service.py:165](../../backend/app/services/agent_config_service.py#L165)
+[backend/app/services/agent_config_service.py:168](../../backend/app/services/agent_config_service.py#L168)
 
 Bases: `_Strict`.
 
@@ -17481,7 +17481,7 @@ max_escalations: int = Field(default=1, ge=0, le=3)
 
 ## backend/app/services/agent_config_service.py — ModelConfig
 
-[backend/app/services/agent_config_service.py:171](../../backend/app/services/agent_config_service.py#L171)
+[backend/app/services/agent_config_service.py:174](../../backend/app/services/agent_config_service.py#L174)
 
 Bases: `_Strict`.
 
@@ -17496,7 +17496,7 @@ escalation: EscalationConfig = Field(default_factory=EscalationConfig)
 
 ## backend/app/services/agent_config_service.py — ThresholdsConfig
 
-[backend/app/services/agent_config_service.py:178](../../backend/app/services/agent_config_service.py#L178)
+[backend/app/services/agent_config_service.py:181](../../backend/app/services/agent_config_service.py#L181)
 
 Bases: `_Strict`.
 
@@ -17510,7 +17510,7 @@ degraded_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
 
 ## backend/app/services/agent_config_service.py — RetryConfig
 
-[backend/app/services/agent_config_service.py:184](../../backend/app/services/agent_config_service.py#L184)
+[backend/app/services/agent_config_service.py:187](../../backend/app/services/agent_config_service.py#L187)
 
 Bases: `_Strict`.
 
@@ -17524,11 +17524,11 @@ jitter: float = Field(default=0.2, ge=0.0, lt=1.0)
 retry_on: list[str] = Field(default_factory=lambda: ['model_unavailable', 'timeout', 'tool_error'])
 ```
 
-- Validator/serializer `_retryable_codes`: [backend/app/services/agent_config_service.py:193](../../backend/app/services/agent_config_service.py#L193). Read source for the cross-field or conversion rule.
-- Validator/serializer `_ceiling_and_cap`: [backend/app/services/agent_config_service.py:200](../../backend/app/services/agent_config_service.py#L200). Read source for the cross-field or conversion rule.
+- Validator/serializer `_retryable_codes`: [backend/app/services/agent_config_service.py:196](../../backend/app/services/agent_config_service.py#L196). Read source for the cross-field or conversion rule.
+- Validator/serializer `_ceiling_and_cap`: [backend/app/services/agent_config_service.py:203](../../backend/app/services/agent_config_service.py#L203). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — ToolsConfig
 
-[backend/app/services/agent_config_service.py:214](../../backend/app/services/agent_config_service.py#L214)
+[backend/app/services/agent_config_service.py:217](../../backend/app/services/agent_config_service.py#L217)
 
 Bases: `_Strict`.
 
@@ -17538,10 +17538,10 @@ Bases: `_Strict`.
 allowlist: list[str] = Field(default_factory=list)
 ```
 
-- Validator/serializer `_known_tools`: [backend/app/services/agent_config_service.py:219](../../backend/app/services/agent_config_service.py#L219). Read source for the cross-field or conversion rule.
+- Validator/serializer `_known_tools`: [backend/app/services/agent_config_service.py:222](../../backend/app/services/agent_config_service.py#L222). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — BudgetConfig
 
-[backend/app/services/agent_config_service.py:226](../../backend/app/services/agent_config_service.py#L226)
+[backend/app/services/agent_config_service.py:229](../../backend/app/services/agent_config_service.py#L229)
 
 Bases: `_Strict`.
 
@@ -17556,7 +17556,7 @@ max_runs_per_day: int = Field(default=int(DEFAULT_BUDGETS['max_runs_per_day']), 
 
 ## backend/app/services/agent_config_service.py — ShadowConfig
 
-[backend/app/services/agent_config_service.py:235](../../backend/app/services/agent_config_service.py#L235)
+[backend/app/services/agent_config_service.py:238](../../backend/app/services/agent_config_service.py#L238)
 
 Bases: `_Strict`.
 
@@ -17569,7 +17569,7 @@ daily_token_budget: int = Field(default=200000, ge=0)
 
 ## backend/app/services/agent_config_service.py — ReviewConfig
 
-[backend/app/services/agent_config_service.py:240](../../backend/app/services/agent_config_service.py#L240)
+[backend/app/services/agent_config_service.py:243](../../backend/app/services/agent_config_service.py#L243)
 
 Bases: `_Strict`.
 
@@ -17581,10 +17581,10 @@ auto_reviewer: bool = False
 second_model_check: bool = False
 ```
 
-- Validator/serializer `_policy_names_the_reviewer`: [backend/app/services/agent_config_service.py:246](../../backend/app/services/agent_config_service.py#L246). Read source for the cross-field or conversion rule.
+- Validator/serializer `_policy_names_the_reviewer`: [backend/app/services/agent_config_service.py:249](../../backend/app/services/agent_config_service.py#L249). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — OverridePolicyConfig
 
-[backend/app/services/agent_config_service.py:252](../../backend/app/services/agent_config_service.py#L252)
+[backend/app/services/agent_config_service.py:255](../../backend/app/services/agent_config_service.py#L255)
 
 Bases: `_Strict`.
 
@@ -17598,7 +17598,7 @@ allow_tool_narrowing: bool = True
 
 ## backend/app/services/agent_config_service.py — InvestigatorPolicyBudgets
 
-[backend/app/services/agent_config_service.py:258](../../backend/app/services/agent_config_service.py#L258)
+[backend/app/services/agent_config_service.py:261](../../backend/app/services/agent_config_service.py#L261)
 
 Bases: `_Strict`.
 
@@ -17622,7 +17622,7 @@ max_cluster_children_per_day: int = Field(default=20, ge=0, le=1000)
 
 ## backend/app/services/agent_config_service.py — InvestigatorConfigExtension
 
-[backend/app/services/agent_config_service.py:276](../../backend/app/services/agent_config_service.py#L276)
+[backend/app/services/agent_config_service.py:279](../../backend/app/services/agent_config_service.py#L279)
 
 Bases: `_Strict`.
 
@@ -17636,7 +17636,7 @@ promotion_note: Optional[str] = Field(default=None, max_length=2000)
 
 ## backend/app/services/agent_config_service.py — FixerRunnerExtension
 
-[backend/app/services/agent_config_service.py:282](../../backend/app/services/agent_config_service.py#L282)
+[backend/app/services/agent_config_service.py:285](../../backend/app/services/agent_config_service.py#L285)
 
 Bases: `_Strict`.
 
@@ -17649,11 +17649,11 @@ command_template: Optional[str] = None
 workflow_ref: Optional[str] = None
 ```
 
-- Validator/serializer `_known_runner_type`: [backend/app/services/agent_config_service.py:290](../../backend/app/services/agent_config_service.py#L290). Read source for the cross-field or conversion rule.
-- Validator/serializer `_safe_runner_image`: [backend/app/services/agent_config_service.py:297](../../backend/app/services/agent_config_service.py#L297). Read source for the cross-field or conversion rule.
+- Validator/serializer `_known_runner_type`: [backend/app/services/agent_config_service.py:293](../../backend/app/services/agent_config_service.py#L293). Read source for the cross-field or conversion rule.
+- Validator/serializer `_safe_runner_image`: [backend/app/services/agent_config_service.py:300](../../backend/app/services/agent_config_service.py#L300). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — FixerPolicyBudgets
 
-[backend/app/services/agent_config_service.py:303](../../backend/app/services/agent_config_service.py#L303)
+[backend/app/services/agent_config_service.py:306](../../backend/app/services/agent_config_service.py#L306)
 
 Bases: `_Strict`.
 
@@ -17668,7 +17668,7 @@ max_concurrent_open_prs: int = Field(default=int(DEFAULT_FIXER_BUDGETS['max_conc
 
 ## backend/app/services/agent_config_service.py — FixerConfigExtension
 
-[backend/app/services/agent_config_service.py:312](../../backend/app/services/agent_config_service.py#L312)
+[backend/app/services/agent_config_service.py:315](../../backend/app/services/agent_config_service.py#L315)
 
 Bases: `_Strict`.
 
@@ -17681,11 +17681,11 @@ budgets: FixerPolicyBudgets = Field(default_factory=FixerPolicyBudgets)
 schedule: str = 'off'
 ```
 
-- Validator/serializer `_non_empty_globs`: [backend/app/services/agent_config_service.py:320](../../backend/app/services/agent_config_service.py#L320). Read source for the cross-field or conversion rule.
-- Validator/serializer `_known_schedule`: [backend/app/services/agent_config_service.py:328](../../backend/app/services/agent_config_service.py#L328). Read source for the cross-field or conversion rule.
+- Validator/serializer `_non_empty_globs`: [backend/app/services/agent_config_service.py:323](../../backend/app/services/agent_config_service.py#L323). Read source for the cross-field or conversion rule.
+- Validator/serializer `_known_schedule`: [backend/app/services/agent_config_service.py:331](../../backend/app/services/agent_config_service.py#L331). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — AgentConfigExtensions
 
-[backend/app/services/agent_config_service.py:334](../../backend/app/services/agent_config_service.py#L334)
+[backend/app/services/agent_config_service.py:337](../../backend/app/services/agent_config_service.py#L337)
 
 Bases: `_Strict`.
 
@@ -17698,7 +17698,7 @@ fixer: Optional[FixerConfigExtension] = None
 
 ## backend/app/services/agent_config_service.py — AgentConfigV1
 
-[backend/app/services/agent_config_service.py:341](../../backend/app/services/agent_config_service.py#L341)
+[backend/app/services/agent_config_service.py:344](../../backend/app/services/agent_config_service.py#L344)
 
 Bases: `_Strict`.
 
@@ -17720,11 +17720,11 @@ override_policy: OverridePolicyConfig = Field(default_factory=OverridePolicyConf
 extensions: AgentConfigExtensions = Field(default_factory=AgentConfigExtensions)
 ```
 
-- Validator/serializer `_registered`: [backend/app/services/agent_config_service.py:360](../../backend/app/services/agent_config_service.py#L360). Read source for the cross-field or conversion rule.
-- Validator/serializer `_section_4_3`: [backend/app/services/agent_config_service.py:366](../../backend/app/services/agent_config_service.py#L366). Read source for the cross-field or conversion rule.
+- Validator/serializer `_registered`: [backend/app/services/agent_config_service.py:363](../../backend/app/services/agent_config_service.py#L363). Read source for the cross-field or conversion rule.
+- Validator/serializer `_section_4_3`: [backend/app/services/agent_config_service.py:369](../../backend/app/services/agent_config_service.py#L369). Read source for the cross-field or conversion rule.
 ## backend/app/services/agent_config_service.py — _TierPatch
 
-[backend/app/services/agent_config_service.py:457](../../backend/app/services/agent_config_service.py#L457)
+[backend/app/services/agent_config_service.py:460](../../backend/app/services/agent_config_service.py#L460)
 
 Bases: `_Strict`.
 
@@ -17736,7 +17736,7 @@ tier: Tier
 
 ## backend/app/services/agent_config_service.py — _RetryPatch
 
-[backend/app/services/agent_config_service.py:461](../../backend/app/services/agent_config_service.py#L461)
+[backend/app/services/agent_config_service.py:464](../../backend/app/services/agent_config_service.py#L464)
 
 Bases: `_Strict`.
 
@@ -17748,7 +17748,7 @@ max_attempts: int = Field(ge=1)
 
 ## backend/app/services/agent_config_service.py — _ThresholdsPatch
 
-[backend/app/services/agent_config_service.py:465](../../backend/app/services/agent_config_service.py#L465)
+[backend/app/services/agent_config_service.py:468](../../backend/app/services/agent_config_service.py#L468)
 
 Bases: `_Strict`.
 
@@ -17760,7 +17760,7 @@ max_failures_analyzed: int = Field(ge=1)
 
 ## backend/app/services/agent_config_service.py — _ToolsPatch
 
-[backend/app/services/agent_config_service.py:469](../../backend/app/services/agent_config_service.py#L469)
+[backend/app/services/agent_config_service.py:472](../../backend/app/services/agent_config_service.py#L472)
 
 Bases: `_Strict`.
 
@@ -17772,7 +17772,7 @@ allowlist: list[str]
 
 ## backend/app/services/agent_config_service.py — _BudgetPatch
 
-[backend/app/services/agent_config_service.py:473](../../backend/app/services/agent_config_service.py#L473)
+[backend/app/services/agent_config_service.py:476](../../backend/app/services/agent_config_service.py#L476)
 
 Bases: `_Strict`.
 
@@ -17787,7 +17787,7 @@ max_runs_per_day: Optional[int] = Field(default=None, ge=0)
 
 ## backend/app/services/agent_config_service.py — _ReviewPatch
 
-[backend/app/services/agent_config_service.py:480](../../backend/app/services/agent_config_service.py#L480)
+[backend/app/services/agent_config_service.py:483](../../backend/app/services/agent_config_service.py#L483)
 
 Bases: `_Strict`.
 
@@ -17799,7 +17799,7 @@ add_auto_reviewer: bool = False
 
 ## backend/app/services/agent_config_service.py — AgentConfigPatch
 
-[backend/app/services/agent_config_service.py:484](../../backend/app/services/agent_config_service.py#L484)
+[backend/app/services/agent_config_service.py:487](../../backend/app/services/agent_config_service.py#L487)
 
 Bases: `_Strict`.
 
