@@ -291,9 +291,13 @@ jobs:
     name: Backend — Test & Lint
     runs-on: ubuntu-latest
 
+    # Service images come from AWS's mirror of the Docker official images, not
+    # Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
+    # on 2026-10-09 both backend jobs failed at "Initialize containers" with
+    # "toomanyrequests: unauthenticated pull rate limit" twice in a row.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -306,7 +310,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
@@ -452,9 +456,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # Mirror, not Docker Hub: see backend-test's services.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -467,7 +472,7 @@ jobs:
           --health-retries 5
 
       mongo:
-        image: mongo:7
+        image: public.ecr.aws/docker/library/mongo:7
         ports: ["27017:27017"]
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
@@ -476,7 +481,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:7-alpine
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"

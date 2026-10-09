@@ -40,6 +40,14 @@ failure rate, in 3.3 s. Regression tests in `tests/test_chat_agent_stream.py`
 replay both measured answers and were mutation-checked (alphabetical order,
 unsorted chips).
 
+**CI.** Both backend jobs of this PR failed at "Initialize containers" twice in
+a row: "toomanyrequests: You have reached your unauthenticated pull rate
+limit". GitHub-hosted runners pull Docker Hub anonymously from shared IPs. The
+service containers (`postgres:16-alpine`, `redis:7-alpine`, `mongo:7`) now come
+from AWS's mirror of the same official images (`public.ecr.aws/docker/library/…`).
+`tests/regression/test_ci_service_images_avoid_docker_hub.py` fails if one goes
+back to Docker Hub.
+
 ## Unreleased - Fix: the pipeline's ReAct triage could never run
 
 The LLM triage "slow path" (`services/agent.run_triage_agent`, used when the
