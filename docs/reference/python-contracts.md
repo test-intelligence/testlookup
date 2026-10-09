@@ -122,7 +122,7 @@ stage_name = 'contract_validation'
 
 ## backend/app/agents/conversation.py — _Timings
 
-[backend/app/agents/conversation.py:329](../../backend/app/agents/conversation.py#L329)
+[backend/app/agents/conversation.py:354](../../backend/app/agents/conversation.py#L354)
 
 Bases: ``.
 
@@ -139,7 +139,7 @@ context_ms: float = 0.0
 
 ## backend/app/agents/conversation.py — _TurnState
 
-[backend/app/agents/conversation.py:342](../../backend/app/agents/conversation.py#L342)
+[backend/app/agents/conversation.py:367](../../backend/app/agents/conversation.py#L367)
 
 Bases: ``.
 
@@ -153,7 +153,7 @@ saving: bool = False
 
 ## backend/app/agents/conversation.py — ChatTurn
 
-[backend/app/agents/conversation.py:472](../../backend/app/agents/conversation.py#L472)
+[backend/app/agents/conversation.py:497](../../backend/app/agents/conversation.py#L497)
 
 Bases: ``.
 

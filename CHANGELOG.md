@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased - Fix: Ask AI answered about the wrong test for "the first one"
+
+Browser validation of the rebuilt Ask AI on the homelab (`mistral-nemo`,
+E-Commerce Platform, 2026-10-09) checked every claim against the database.
+Two of three follow-ups that pointed at a position in the previous answer got
+a different test, confidently:
+
+- After a table of build-2029's failures whose first row was
+  `testAuthenticationCase01`, "Is the first one flaky or a regression?" got
+  `testAuthenticationCase02`'s history.
+- After the flaky-tests table headed by `testCheckoutCase03`, "What does the
+  history of the top one look like? Should we quarantine it?" got
+  `testAuthenticationCase02` again. It pasted the tool output in 21 s and
+  never answered the quarantine question.
+
+`testAuthenticationCase02` is the first failure in the turn's snapshot, which
+lists the latest run's failures by AI confidence. The model took "first" from
+there, not from its own answer. The fix follows the rule already measured for
+this model: settle it before the model runs.
+
+- **Back-references.** "The first / top / second … / last one" (or test,
+  failure) is resolved on the server. It is the test at that position in the
+  previous answer, in the order the answer writes them, counting only names
+  that are tests in the project. That test's history (and its quarantine
+  state, when asked) is looked up and attached to the question, with the line
+  "'the first one' is X". "The first new failure" (a sub-list) is still left
+  to the model, which resolves it correctly. So is a position the answer does
+  not have.
+- **Chips** follow the order the answer names runs and tests. They followed the
+  snapshot's order, so the chips under a table starting with Case01 began with
+  Case02.
+
+Measured after the fix, in the pod against the same model and data: "the first
+one" is `testAuthenticationCase01`, "not flaky; started failing in build-2029,
+last passed in build-2028" (true), in 2.6 s. "The top one" is
+`testCheckoutCase03`, with a quarantine recommendation that cites its 36.4%
+failure rate, in 3.3 s. Regression tests in `tests/test_chat_agent_stream.py`
+replay both measured answers and were mutation-checked (alphabetical order,
+unsorted chips).
+
 ## Unreleased - Fix: the pipeline's ReAct triage could never run
 
 The LLM triage "slow path" (`services/agent.run_triage_agent`, used when the

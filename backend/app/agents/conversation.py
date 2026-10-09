@@ -274,6 +274,14 @@ _ASKS_ABOUT_RELEASE = re.compile(
     r"\b(release|releasing|ship|shipping|go/no-go|no-go|deploy|deployable)\b",
     re.IGNORECASE,
 )
+# "The first one", "the top one", "the last test": a position in the previous
+# answer's list. "The first NEW failure" names a sub-list, so it is left to the
+# model (measured: it resolves that one correctly).
+_ORDINAL_REFERENCE = re.compile(
+    r"\bthe (first|top|second|third|fourth|fifth|last) (?:one|test|failure|failing test|flaky test)\b",
+    re.IGNORECASE,
+)
+_ORDINAL_INDEX = {"first": 0, "top": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4, "last": -1}
 
 # Identifier-shaped words in a question: candidates for a test name.
 _TEST_NAME_TOKEN = re.compile(r"[A-Za-z_][\w.:\-/#\[\]]{5,}")
@@ -299,30 +307,47 @@ def _looks_like_a_test_name(token: str) -> bool:
     )
 
 
-def _mentions(text: str, needle: str) -> bool:
+def _test_name_candidates(text: str) -> list[str]:
+    """Identifier-shaped words in ``text``, in the order they first appear."""
+    seen: dict[str, None] = {}
+    for token in _TEST_NAME_TOKEN.findall(text or ""):
+        word = token.strip(".,:;!?'\"`()[]*")
+        if len(word) >= 6 and _looks_like_a_test_name(word):
+            seen.setdefault(word, None)
+    return list(seen)
+
+
+def _position(text: str, needle: str) -> int:
+    """Where the answer first names ``needle``, or -1."""
     if not needle:
-        return False
+        return -1
     if len(needle) >= 6:
-        return needle in text
+        return text.find(needle)
     # Short build numbers ("105") are common words in an answer: count them
     # only where the answer names them as a build.
-    return re.search(
+    match = re.search(
         rf"(?:build|#)\s*\**\s*{re.escape(needle)}\b", text, flags=re.IGNORECASE,
-    ) is not None
+    )
+    return match.start() if match else -1
 
 
 def _answer_sources(reply: str, candidates: list[dict]) -> list[dict]:
-    """The runs and tests the answer names, as linkable chips (deduplicated)."""
-    chosen: list[dict] = []
+    """The runs and tests the answer names, as linkable chips (deduplicated),
+    in the order the answer names them: the snapshot lists the latest run's
+    failures by AI confidence, and chips in that order read as the answer's
+    "first one" when it is not."""
+    chosen: list[tuple[int, dict]] = []
     seen: set[str] = set()
     for ref in candidates:
         label = str(ref.get("build") or ref.get("name") or "")
         key = f"{ref.get('type')}:{ref.get('id')}"
-        if key in seen or not _mentions(reply, label):
+        at = _position(reply, label)
+        if key in seen or at < 0:
             continue
         seen.add(key)
-        chosen.append(ref)
-    return chosen[:8]
+        chosen.append((at, ref))
+    chosen.sort(key=lambda item: item[0])
+    return [ref for _, ref in chosen[:8]]
 
 
 @dataclass
@@ -750,7 +775,9 @@ class ConversationAgent:
                 self._fetch_project_name(project_id),
                 self._fetch_fingerprint_recall(question, project_id),
                 self._fetch_bound_report_context(project_id, test_run_id, report_id, report_version),
-                self._no_text() if bound else self._prefetch_lookups(question, project_id, emit),
+                self._no_text() if bound else self._prefetch_lookups(
+                    question, project_id, emit, session_id=session_id, before_id=str(question_id),
+                ),
             )
             timings.context_ms = (time.perf_counter() - context_started) * 1000
 
@@ -1284,14 +1311,10 @@ class ConversationAgent:
             logger.debug("fingerprint_recall_fetch_error", error=str(exc))
             return ""
 
-    async def _named_tests(self, question: str, project_id: str) -> list[str]:
-        """Test names, as written in the question, that exist in this project."""
-        candidates = {
-            token.strip(".,:;!?'\"`()[]") for token in _TEST_NAME_TOKEN.findall(question or "")
-        }
-        candidates = {c for c in candidates if len(c) >= 6 and _looks_like_a_test_name(c)}
+    async def _existing_tests(self, candidates: list[str], project_id: str) -> set[str]:
+        """The ``candidates`` that are test names in this project."""
         if not candidates:
-            return []
+            return set()
         try:
             async with AsyncSessionLocal() as db:
                 rows = (
@@ -1300,18 +1323,83 @@ class ConversationAgent:
                         .join(TestRun, TestRun.id == TestCase.test_run_id)
                         .where(
                             TestRun.project_id == project_id,
-                            TestCase.test_name.in_(sorted(candidates)[:20]),
+                            TestCase.test_name.in_(candidates),
                         )
                         .distinct()
-                        .limit(3)
                     )
                 ).scalars().all()
-            return [str(name) for name in rows]
+            return {str(name) for name in rows}
         except Exception as exc:  # noqa: BLE001 -- the model can still call the tool
             logger.debug("chat_named_test_lookup_failed", error=str(exc)[:200])
-            return []
+            return set()
 
-    async def _prefetch_lookups(self, question: str, project_id: str, emit: Emit) -> str:
+    async def _named_tests(self, question: str, project_id: str) -> list[str]:
+        """Test names, as written in the question, that exist in this project."""
+        candidates = _test_name_candidates(question)[:20]
+        found = await self._existing_tests(candidates, project_id)
+        return [name for name in candidates if name in found][:3]
+
+    async def _previous_answer(self, session_id: str, before_id: Optional[str]) -> str:
+        """The whole text of the last answer before the question ``before_id``
+        (the replayed history is truncated; a long table's last row is not)."""
+        try:
+            async with AsyncSessionLocal() as db:
+                query = select(ChatMessage.content).where(
+                    ChatMessage.session_id == session_id, ChatMessage.role == "assistant",
+                )
+                if before_id is not None:
+                    asked_at = (
+                        select(ChatMessage.created_at)
+                        .where(ChatMessage.id == uuid.UUID(str(before_id)))
+                        .scalar_subquery()
+                    )
+                    query = query.where(ChatMessage.created_at < asked_at)
+                row = (
+                    await db.execute(query.order_by(ChatMessage.created_at.desc()).limit(1))
+                ).first()
+            return str(row[0]) if row else ""
+        except Exception as exc:  # noqa: BLE001 -- the model can still look it up
+            logger.debug("chat_previous_answer_lookup_failed", error=str(exc)[:200])
+            return ""
+
+    async def _referred_test(
+        self, question: str, project_id: str, session_id: Optional[str], before_id: Optional[str],
+    ) -> Optional[tuple[str, str, str]]:
+        """("the first one", the test it means, "first") when the question
+        points at a position in the previous answer's list.
+
+        Measured on the homelab, 2026-10-09: after a table whose first row was
+        testAuthenticationCase01, "Is the first one flaky or a regression?" got
+        testAuthenticationCase02's history; after a flaky-tests table headed by
+        testCheckoutCase03, "the top one" got testAuthenticationCase02 again.
+        The model took "first" from the snapshot's list of the latest run's
+        failures (ordered by AI confidence), not from its own answer.
+        """
+        match = _ORDINAL_REFERENCE.search(question or "")
+        if not match or not session_id:
+            return None
+        previous = await self._previous_answer(session_id, before_id)
+        if not previous:
+            return None
+        candidates = _test_name_candidates(previous)[:80]
+        found = await self._existing_tests(candidates, project_id)
+        listed = [name for name in candidates if name in found]
+        word = match.group(1).lower()
+        index = _ORDINAL_INDEX[word]
+        if not listed or index >= len(listed):
+            return None
+        position = "first" if word == "top" else word
+        return match.group(0), listed[index], position
+
+    async def _prefetch_lookups(
+        self,
+        question: str,
+        project_id: str,
+        emit: Emit,
+        *,
+        session_id: Optional[str] = None,
+        before_id: Optional[str] = None,
+    ) -> str:
         """Look up, before the model runs, the facts it was measured inventing.
 
         Measured against mistral-nemo on the homelab, 2026-10-09:
@@ -1335,6 +1423,16 @@ class ConversationAgent:
 
         lookups: list[tuple[str, Any, dict]] = []
         named = (await self._named_tests(question, project_id))[:2]
+        meant = ""
+        if not named:
+            referred = await self._referred_test(question, project_id, session_id, before_id)
+            if referred:
+                phrase, name, position = referred
+                named = [name]
+                meant = (
+                    f'### Which test "{phrase}" is\n"{phrase}" is {name}: the {position} '
+                    "test your previous answer lists. Answer about this test.\n\n"
+                )
         for name in named:
             lookups.append((f"History of {name}", get_test_history, {"test_name": name}))
             if _ASKS_ABOUT_QUARANTINE.search(question):
@@ -1355,7 +1453,7 @@ class ConversationAgent:
             return f"### {title}\n{await tool.ainvoke(args)}"
 
         parts = await asyncio.gather(*(run(*lookup) for lookup in lookups))
-        return "\n\n".join(parts)
+        return meant + "\n\n".join(parts)
 
     async def _fetch_project_name(self, project_id: Optional[str]) -> Optional[str]:
         """Fetch project name for system prompt grounding."""
