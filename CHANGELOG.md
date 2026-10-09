@@ -48,6 +48,24 @@ from AWS's mirror of the same official images (`public.ecr.aws/docker/library/â€
 `tests/regression/test_ci_service_images_avoid_docker_hub.py` fails if one goes
 back to Docker Hub.
 
+The three image scans then died the same way at "Set up Docker Buildx",
+pulling buildkit (`moby/buildkit:buildx-stable-1`). Both buildx steps (the
+scans, and Build & Push) now take buildkit from `public.ecr.aws/vend/moby/buildkit`.
+Every `docker.io` base image the Dockerfiles name (`python:3.11-slim`,
+`node:20-alpine`, `nginx:alpine`) goes through `mirror.gcr.io` (a buildkitd
+registry mirror, falling back to Docker Hub). The Dockerfiles are unchanged, and
+the same test checks both settings.
+
+**Flaky visual baselines on main.** Main's run for the #224 merge (`290b79c2`)
+failed "Chart visual regression" on 3 of 298 screenshots. Each failed the same
+way: `/__charts?theme=lab` still had `data-theme="signal"` after 5 s. The same
+tree passed the step on its PR. The trace shows an empty page: the gallery is
+a lazy route, and its module graph loads after `goto` settles, into a fresh
+context per test. That took over 7 s on the runner, past the theme check's
+5 s. The chart-gallery and UX-primitives specs now wait for the page's own root
+(30 s) before checking its theme. Holding one gallery module back by 7 s
+reproduced the failure with the old order and passes with the new one.
+
 ## Unreleased - Fix: the pipeline's ReAct triage could never run
 
 The LLM triage "slow path" (`services/agent.run_triage_agent`, used when the

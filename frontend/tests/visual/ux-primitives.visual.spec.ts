@@ -19,6 +19,9 @@ for (const theme of THEMES) {
     test.beforeEach(async ({ page }) => {
       await page.goto(`/__ux-primitives?theme=${theme}`)
       expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe('/__ux-primitives')
+      // A lazy route: its module graph loads after `goto` settles (see the
+      // chart gallery's spec, where 3 of 298 timed out on the theme check).
+      await expect(page.getByTestId('ux-primitives-gallery')).toBeVisible({ timeout: 30_000 })
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
       await expect(page.locator('[data-ux-primitive]')).toHaveCount(SECTIONS.length)
     })

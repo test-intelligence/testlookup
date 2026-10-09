@@ -44,6 +44,26 @@ def test_service_images_come_from_a_registry_other_than_docker_hub():
     assert pulled_from_hub == {}
 
 
+def test_every_buildx_setup_pulls_buildkit_and_base_images_through_mirrors():
+    """The image-scan jobs died the same way at "Set up Docker Buildx":
+    buildkit's own image (moby/buildkit) and the Dockerfiles' python/node/nginx
+    bases are Docker Hub pulls too."""
+    if not CI_WORKFLOW.exists():
+        pytest.skip("ci.yml not present in this checkout")
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    setups = {
+        f"{job}: {step.get('name')}": step.get("with") or {}
+        for job, spec in jobs.items()
+        for step in spec.get("steps") or []
+        if str(step.get("uses", "")).startswith("docker/setup-buildx-action")
+    }
+    assert setups, "ci.yml sets up no buildx: this test no longer guards anything"
+    for where, options in setups.items():
+        driver_image = str(options.get("driver-opts", "")).partition("image=")[2].split()[0:1]
+        assert driver_image and _registry(driver_image[0]) != "docker.io", where
+        assert 'mirrors = ["mirror.gcr.io"]' in str(options.get("buildkitd-config-inline", "")), where
+
+
 @pytest.mark.parametrize("image, registry", [
     ("postgres:16-alpine", "docker.io"),
     ("library/postgres:16-alpine", "docker.io"),
