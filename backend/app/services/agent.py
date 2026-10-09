@@ -13,6 +13,7 @@ Includes:
 import importlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
@@ -95,6 +96,110 @@ def _sanitizing_copy(tool):
     return tool.model_copy(update=update) if update else tool
 
 
+_KEY_VALUE = re.compile(r"""(\w+)\s*[=:]\s*("[^"]*"|'[^']*'|[^,\n]+)""")
+
+
+def _unquote(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.strip().strip("`").strip().strip("\"'").strip()
+    return value
+
+
+def _action_input_kwargs(raw: Any, names: list[str]) -> dict[str, Any]:
+    """The arguments a ReAct ``Action Input`` names.
+
+    The model writes them as a JSON object (``{"service_name": "...",
+    "timestamp_utc": "..."}``), as ``key=value`` pairs (``test_case_id=4b47…``)
+    or as the bare value of a tool's only argument.
+    """
+    if isinstance(raw, dict):
+        return {k: _unquote(v) for k, v in raw.items() if k in names}
+    text = str(raw or "").strip().strip("`").strip()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return {k: _unquote(v) for k, v in parsed.items() if k in names}
+    pairs = {k: _unquote(v) for k, v in _KEY_VALUE.findall(text) if k in names}
+    if pairs:
+        return pairs
+    return {names[0]: _unquote(text)} if names else {}
+
+
+def _single_input(tool):
+    """``tool`` taking ONE string, for the ReAct text agent.
+
+    The ReAct agent sends each ``Action Input`` as a single string. The first
+    time the slow path ran against a real model (homelab pod, 2026-10-09):
+      * a tool with several arguments (Splunk: service + time; OpenShift: pod
+        + namespace + time) failed pydantic validation ("timestamp_utc: Field
+        required") and the exception ended the whole analysis;
+      * the model wrote ``test_case_id=4b47…`` for the stack-trace tool, which
+        compared that whole string with the bound test id and refused ("outside
+        the investigation scope") -- after which the model abandoned the format
+        and asked for the id until the iteration cap.
+    Now the arguments are read out of the JSON / ``key=value`` / bare forms the
+    model writes, and an input that still does not fit comes back as an
+    observation the model can correct.
+    """
+    from langchain_core.tools import StructuredTool
+
+    names = list(tool.args)
+    if not names:
+        return tool
+
+    async def _call(tool_input: str = "") -> str:
+        kwargs = _action_input_kwargs(tool_input, names)
+        required = [n for n, spec in tool.args.items() if "default" not in spec]
+        missing = [n for n in required if n not in kwargs]
+        if missing:
+            return (
+                f"{tool.name} needs a JSON object with the keys {', '.join(names)} "
+                f"(missing: {', '.join(missing)})."
+            )
+        try:
+            return _observation_text(await tool.ainvoke(kwargs))
+        except Exception as exc:  # noqa: BLE001 -- an observation, not the end of the analysis
+            from app.services.input_sanitizer import sanitize_tool_output
+
+            # The error can quote the input, which the model took from text
+            # under test: it goes back into the prompt sanitized, like output.
+            return sanitize_tool_output(f"{tool.name} could not run with that input: {str(exc)[:200]}")
+
+    expected = (
+        f"the {names[0]} value only" if len(names) == 1
+        else f"a JSON object with the keys {', '.join(names)}"
+    )
+    return StructuredTool.from_function(
+        coroutine=_call,
+        name=tool.name,
+        description=f"{tool.description}\nAction Input: {expected}.",
+    )
+
+
+def _react_output_parser() -> Any:
+    """The ReAct parser, taking tool names the way models decorate them.
+
+    Measured (homelab pod, 2026-10-09): mistral-nemo wrote
+    ``Action: `fetch_allure_stacktrace` `` -- backticks included -- and the
+    executor's exact lookup answered "not a valid tool" until the iteration
+    cap. The input is cleaned by ``_single_input``; this cleans the name.
+    """
+    from langchain.agents.output_parsers import ReActSingleInputOutputParser
+    from langchain_core.agents import AgentAction
+
+    class _DecoratedNames(ReActSingleInputOutputParser):
+        def parse(self, text: str) -> Any:
+            result = super().parse(text)
+            if isinstance(result, AgentAction):
+                name = result.tool.strip().strip("`\"'*").strip()
+                return AgentAction(name, result.tool_input, result.log)
+            return result
+
+    return _DecoratedNames()
+
+
 def _get_tools():
     from app.tools.analyze_ocp import analyze_openshift_pod_events
     from app.tools.check_flakiness import check_test_flakiness
@@ -104,7 +209,7 @@ def _get_tools():
     from app.tools.recall_memory import recall_similar_failures
 
     return [
-        _sanitizing_copy(tool)
+        _single_input(_sanitizing_copy(tool))
         for tool in (
             fetch_allure_stacktrace,
             fetch_rest_api_payload,
@@ -284,17 +389,26 @@ async def run_triage_agent(
     tools = _get_tools()
 
     prompt = PromptTemplate.from_template(SYSTEM_PROMPT)
-    agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
-    executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=settings.is_development,
-        max_iterations=6,
-        handle_parsing_errors=True,
-        return_intermediate_steps=True,
-        max_execution_time=settings.AI_TIMEOUT_SECONDS,
-        early_stopping_method="generate",
-    )
+    # get_llm() returns BudgetedLLM, which LangChain does not accept as a model:
+    # create_react_agent raised "Expected a Runnable" on every slow-path call
+    # (homelab ai_analysis routing 2026-09-11: "llm_error: TypeError: Expected
+    # a Runnable ..."). as_runnable() keeps every call inside its gates.
+    react_llm = llm.as_runnable() if hasattr(llm, "as_runnable") else llm
+
+    def _build_executor() -> Any:
+        agent = create_react_agent(
+            llm=react_llm, tools=tools, prompt=prompt, output_parser=_react_output_parser(),
+        )
+        return AgentExecutor(
+            agent=agent,
+            tools=tools,
+            verbose=settings.is_development,
+            max_iterations=6,
+            handle_parsing_errors=True,
+            return_intermediate_steps=True,
+            max_execution_time=settings.AI_TIMEOUT_SECONDS,
+            early_stopping_method="force",
+        )
 
     user_question = (
         f"Investigate why test '{test_name}' (ID: {test_case_id}) failed. "
@@ -358,6 +472,10 @@ async def run_triage_agent(
             },
         ) as triage_span:
             try:
+                # Built inside the try: a construction failure is an LLM-path
+                # failure with a recorded fallback reason, not an exception out
+                # of the triage call.
+                executor = _build_executor()
                 result = await executor.ainvoke({"input": user_question})
                 raw_output = result.get("output", "{}")
                 intermediate_steps = result.get("intermediate_steps", [])
@@ -433,10 +551,13 @@ async def run_triage_agent(
                     )
                     try:
                         from app.services.rules_engine import RulesEngine
+                        # classify_test takes no stack_trace: passing one raised
+                        # TypeError, so this fallback always ended in the canned
+                        # stub instead of a rules analysis. The trace stands in
+                        # for a missing message.
                         analysis = RulesEngine.classify_test(
-                            error_message=error_message,
+                            error_message=error_message or stack_trace,
                             test_name=test_name,
-                            stack_trace=stack_trace,
                         )
                         analysis["llm_provider"] = settings.LLM_PROVIDER
                         analysis["llm_model"] = settings.LLM_MODEL

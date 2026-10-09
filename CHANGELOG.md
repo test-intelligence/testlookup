@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased - Fix: the pipeline's ReAct triage could never run
+
+The LLM triage "slow path" (`services/agent.run_triage_agent`, used when the
+fast classifier is not confident, and for tiered explanations) handed
+`get_llm()`'s `BudgetedLLM` to LangChain's `create_react_agent`, which
+raised "Expected a Runnable" every time. The router then fell back to rules:
+the homelab's `ai_analysis` holds one such analysis
+(`llm_error: TypeError: Expected a Runnable ...`, 2026-09-11), and building
+the agent in the backend pod reproduced it. Running the fixed path against
+the real model (`mistral-nemo`, in the pod, no writes) surfaced four more
+defects, none of which had ever been reached. Each is fixed:
+
+- **Runnable.** `BudgetedLLM.as_runnable()` is a LangChain `Runnable`. Every
+  call still goes through the wrapper's budget, cost, breaker and slot gates,
+  and `bind(stop=…)` reaches the provider call. Agent construction moved
+  inside the try, so a failure there is a recorded `llm_error` fallback
+  instead of an exception.
+- **Tool input.** The ReAct agent sends one string per Action Input. Tools
+  with several arguments (Splunk, OpenShift) failed pydantic validation and
+  ended the analysis. The model's `test_case_id=…` was compared as a whole
+  string with the bound id and refused. Inputs are now read from the JSON,
+  `key=value` and bare forms the model writes. An input that still does not
+  fit is returned as an observation the model can correct.
+- **Tool names.** A tool name in backticks ("Action: `fetch_allure_stacktrace`")
+  was "not a valid tool" until the iteration cap. The parser now strips the
+  decoration.
+- **Iteration cap.** `early_stopping_method="generate"` is not supported by
+  this agent type, so reaching the cap raised. It is now `force`.
+- **Rules fallback.** The "model not installed" fallback passed
+  `stack_trace=` to `RulesEngine.classify_test`, which takes no such argument.
+  That fallback always ended in the canned stub. It now runs the rules engine.
+
+Measured after the fix: the slow path completes with `mode_used=llm` and a
+schema-valid analysis in 12.8 s. The mypy baseline for `services/agent.py`
+drops to 0. Regression tests (`test_triage_react_runs_through_the_budget_wrapper.py`)
+drive the real `BudgetedLLM` and were mutation-checked.
+
 ## Unreleased - Ask AI rebuilt: streamed, grounded answers in a real conversation
 
 Evaluated on the homelab (OpenRouter `mistral-nemo`) before deciding to keep

@@ -19247,7 +19247,7 @@ settled: bool = False
 
 ## backend/app/services/llm_factory.py — BudgetedLLM
 
-[backend/app/services/llm_factory.py:100](../../backend/app/services/llm_factory.py#L100)
+[backend/app/services/llm_factory.py:101](../../backend/app/services/llm_factory.py#L101)
 
 Bases: ``.
 

@@ -150,10 +150,10 @@ async def _run_bounded(tool_name: str, fetcher, tool_input: str = "") -> str:
         # Exception text can quote the failing input, so it is sanitized too.
         return sanitize_tool_output(f"{tool_name} unavailable: {str(exc)[:200]}")
     cap = min(state.per_call_token_cap, max(1, state.token_budget_remaining))
-    text = truncate_to_token_budget(sanitize_tool_output(text or "No data found."), cap)
-    state.token_budget_remaining -= estimate_token_count(text)
+    observed: str = truncate_to_token_budget(sanitize_tool_output(text or "No data found."), cap)
+    state.token_budget_remaining -= estimate_token_count(observed)
     state.trace.append({"tool": tool_name, "summary": summary})
-    return text
+    return observed
 
 
 # ── Fetchers (module-level so tests can patch them individually) ─────────────

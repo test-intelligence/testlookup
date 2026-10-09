@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-10-09T16:10:59.019459+00:00",
-  "change_id": "ask-ai-chat-rebuild-2026-10-09",
+  "attested_at": "2026-10-09T16:34:53.052005+00:00",
+  "change_id": "ask-ai-chat-rebuild-and-triage-runnable-2026-10-09",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "4a773dfac85a7ff788ecfbca7e11b9b275d23deab2737460e94d4b6f5378de1b",
+  "eval_manifest_checksum": "7358784715f57d0406c6750eb58ce7f7e4365f76268ae0023bbe72fc8ce6bc77",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -116,7 +116,7 @@
   ],
   "manifest_digest": "ea68b3bc306f223708a6564e1e4d42b2e277d7f3fb74a344104d1d3e24e5be55",
   "mode": "source_review",
-  "notes": "Ask-AI chat rebuild: chat_system v3 (the prompt of a native tool-calling chat agent) and chat_copilot_react retired (its ReAct loop never ran: create_react_agent rejected BudgetedLLM on every message). Watched source llm_factory.py gains BudgetedLLM.astream and bind_tools behind the existing budget/cost/breaker/slot gates; no existing call path changes. Chat prompts are not in GATED_PROMPTS and no golden set covers chat. Reviewed against live behaviour instead: the new agent ran in the homelab backend pod against OpenRouter mistralai/mistral-nemo, multi-turn conversations on E-Commerce Platform and Checkout Service (latest failures, 'is the first one flaky or a regression', build comparison, flaky list with quarantine, release readiness, a named test's history), every factual claim checked against the database. Two fabrication classes found and closed before attesting (unlooked-up test history; release verdict unread / ordered by row creation). Tests: 19 BudgetedLLM stream/bind tests, 271 chat-related backend tests.",
+  "notes": "Ask-AI chat rebuild: chat_system v3 (the prompt of a native tool-calling chat agent) and chat_copilot_react retired (its ReAct loop never ran: create_react_agent rejected BudgetedLLM on every message). Watched source llm_factory.py gains BudgetedLLM.astream and bind_tools behind the existing budget/cost/breaker/slot gates; no existing call path changes. Chat prompts are not in GATED_PROMPTS and no golden set covers chat. Reviewed against live behaviour instead: the new agent ran in the homelab backend pod against OpenRouter mistralai/mistral-nemo, multi-turn conversations on E-Commerce Platform and Checkout Service (latest failures, 'is the first one flaky or a regression', build comparison, flaky list with quarantine, release readiness, a named test's history), every factual claim checked against the database. Two fabrication classes found and closed before attesting (unlooked-up test history; release verdict unread / ordered by row creation). Also BudgetedLLM.as_runnable(): the pipeline ReAct triage slow path handed BudgetedLLM to create_react_agent and crashed on every call (prod ai_analysis 2026-09-11); fixed path ran in the pod against mistral-nemo to a schema-valid analysis (react_triage prompt unchanged). Tests: 19 BudgetedLLM stream/bind cases, 271 chat-related and 8 triage regression tests.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -153,7 +153,7 @@
   "watched_sources": {
     "backend/app/agents/reviewer_agent.py": "9a68e8508d3fbd78620bf1f290482438618bc66676a21fc31bae797ab222bf47",
     "backend/app/services/agent_capability_registry.py": "cd7574054793b43c875b2210535005fe93eaf662fd2deb40b165dbd724922438",
-    "backend/app/services/llm_factory.py": "3f9963d0683959865523b5aa7ffe21f660a787eb3e7825570b49bfb0ea7716d9",
+    "backend/app/services/llm_factory.py": "db163d1a291f196394ab41b07bd713dcc0effc153cdbe363db82d24df80fe96a",
     "backend/app/services/model_router.py": "65048cdf67c973ca7413acf0c7e4be61282476d657d9c3ce38036911ba8ac87d"
   }
 }

@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Any, Optional
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import Runnable
 
 from app.core.config import settings
 
@@ -572,6 +573,11 @@ class BudgetedLLM:
             connect_retries=self._connect_retries,
         )
 
+    def as_runnable(self) -> "BudgetedRunnable":
+        """This wrapper as a LangChain ``Runnable``, for code that composes the
+        model into a chain (``create_react_agent``, ``prompt | llm``)."""
+        return BudgetedRunnable(self)
+
     def bind_tools(self, *args, **kwargs):
         """Tool binding that stays inside the gates.
 
@@ -606,6 +612,33 @@ class BudgetedLLM:
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+
+class BudgetedRunnable(Runnable[Any, Any]):
+    """A ``BudgetedLLM`` that LangChain accepts as a ``Runnable``.
+
+    ``BudgetedLLM`` is a plain wrapper, so ``create_react_agent(llm=...)``
+    rejected it ("Expected a Runnable, callable or dict"): the pipeline's
+    ReAct triage slow path raised that on every call that reached it and fell
+    back to rules (homelab ``ai_analysis`` routing, 2026-09-11; reproduced in
+    the backend pod 2026-10-09). Handing the agent the inner model instead
+    would have bypassed every gate.
+
+    Every call goes through the wrapper's ``invoke`` / ``ainvoke``, so the
+    budget check, sanitisation, cost reservation, cluster slot and circuit
+    breaker all still apply. ``bind(stop=...)`` (the ReAct agent binds its
+    stop sequence) is the base ``Runnable`` binding: the bound keyword
+    arguments arrive here and are passed on to the provider call.
+    """
+
+    def __init__(self, llm: BudgetedLLM) -> None:
+        self._llm = llm
+
+    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        return self._llm.invoke(input, **kwargs)
+
+    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        return await self._llm.ainvoke(input, **kwargs)
 
 
 def _budgeted(
