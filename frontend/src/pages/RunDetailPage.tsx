@@ -21,7 +21,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Check, FileDown, GitCompare, Package, PencilLine, RefreshCw, ShieldCheck, Stethoscope, X, Zap } from 'lucide-react'
+import { Check, FileDown, GitCompare, MessageSquare, Package, PencilLine, RefreshCw, ShieldCheck, Stethoscope, X, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { appMutate } from '@/utils/swrCacheMutate'
 import PageHeader from '@/components/ui/PageHeader'
@@ -35,6 +35,9 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { useRun, useRuns } from '@/hooks/useRuns'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
+import { isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
+import { askAboutRun } from '@/components/chat/chatContent'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
@@ -204,6 +207,10 @@ export default function RunDetailPage() {
   }
 
   const { isQaEngineer } = usePermissions()
+  // The same gate as the sidebar's Ask AI entry (both reads are the shell's,
+  // so this costs no request).
+  const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
+  const { data: aiConfig } = useAIConfig()
   const [triggeringPipeline, setTriggeringPipeline] = useState(false)
   const [triggeringDeep, setTriggeringDeep] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -268,6 +275,7 @@ export default function RunDetailPage() {
   }
 
   const busy = triggeringPipeline || triggeringDeep
+  const chatAvailable = chatFlagEnabled && !!aiConfig && isLLMAvailable(aiConfig)
   const overflow: OverflowItem[] = [
     ...(isQaEngineer
       ? [
@@ -311,6 +319,15 @@ export default function RunDetailPage() {
     },
     ...(runId
       ? [{ label: 'Release gate', icon: <ShieldCheck className="h-3.5 w-3.5" />, href: `/release-gate/${runId}` }]
+      : []),
+    // Ask AI, with the question about this run already written (the reader
+    // sends it): what failed, why, and whether it is new.
+    ...(run && chatAvailable
+      ? [{
+          label: 'Ask AI about this run',
+          icon: <MessageSquare className="h-3.5 w-3.5" />,
+          href: `/chat?prompt=${encodeURIComponent(askAboutRun(run.build_number))}`,
+        }]
       : []),
   ]
 

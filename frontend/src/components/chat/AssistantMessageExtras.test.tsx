@@ -177,9 +177,19 @@ describe('splitMessageSources', () => {
 
   it('handles legacy messages with null or plain sources', () => {
     expect(splitMessageSources(null)).toEqual({
-      plainSources: [], toolTrace: [], suggestedActions: [], provenanceRaw: null,
+      plainSources: [], toolTrace: [], suggestedActions: [], provenanceRaw: null, meta: null,
     })
     expect(splitMessageSources([{ type: 'test_run', id: 'r1' }]).plainSources)
       .toEqual([{ type: 'test_run', id: 'r1' }])
+  })
+
+  it('unpacks how the answer was produced, and never shows it as a chip', () => {
+    const meta = { type: 'meta', status: 'stopped', model: 'mistralai/mistral-nemo', first_token_ms: 1400 }
+    const { plainSources, meta: unpacked } = splitMessageSources([
+      { type: 'test_run', id: 'r1', build: '105' },
+      meta as never,
+    ])
+    expect(plainSources).toEqual([{ type: 'test_run', id: 'r1', build: '105' }])
+    expect(unpacked).toMatchObject({ status: 'stopped', model: 'mistralai/mistral-nemo', first_token_ms: 1400 })
   })
 })

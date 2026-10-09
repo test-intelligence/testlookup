@@ -1,26 +1,23 @@
-"""Ask-AI chat copilot — bounded tool loop + trace + action handoffs (AI-6).
+"""Ask-AI chat read tools — tenancy, budgets, trace and action handoffs (AI-6).
 
-Pins the acceptance criteria:
-  * the loop is bounded: ≤ 6 tool calls (executor iteration cap), per-call +
-    total token budgets on tool observations, hard wall-clock timeout — and
-    ANY loop failure falls back to the legacy single-shot path;
+Pins:
   * every read tool is project-scoped by a server-side ContextVar (the LLM
     never supplies identifiers) — no context ⇒ "unavailable", and the SQL
     each fetcher issues binds the CALLER's project id (leakage guard);
-  * tool_trace is persisted on the ChatMessage (inside the existing sources
-    JSON column — no migration) and returned in the response payload;
+  * per-call + total token budgets on tool observations;
   * suggested_actions emit deterministic quarantine / Jira handoffs from
     structured tool findings — never from LLM text;
-  * no-LLM / rules mode: behavior is byte-identical to the pre-AI-6 single
-    shot path (pinned reply dict, loop never constructed);
-  * multi-hop: a scripted fake LLM resolves a two-tool question end-to-end.
+  * the 2026-10-09 tools (test history, build comparison, flaky list) state
+    what the data says, including the pattern, so the model does not have to.
 
-All DB access is stubbed — no live services required.
+The turn itself (streaming, tool calls through the real BudgetedLLM, errors,
+stop, retry) is pinned in tests/test_chat_agent_stream.py. All DB access is
+stubbed — no live services required.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -29,9 +26,6 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("langchain")
 
-from langchain_core.language_models import FakeListChatModel  # noqa: E402
-
-from app.agents.conversation import ConversationAgent  # noqa: E402
 from app.tools import chat_read_tools as crt  # noqa: E402
 
 PROJECT_A = str(uuid.uuid4())
@@ -79,30 +73,6 @@ def _stmt_params(stmt) -> dict:
     return dict(stmt.compile().params)
 
 
-def _agent_with_stubbed_persistence(monkeypatch):
-    agent = ConversationAgent()
-    saved: list[dict] = []
-
-    async def _save(session_id, role, content, sources):
-        saved.append({
-            "session_id": session_id, "role": role,
-            "content": content, "sources": sources,
-        })
-
-    monkeypatch.setattr(agent, "_save_message", _save)
-    monkeypatch.setattr(agent, "_touch_session", AsyncMock())
-    monkeypatch.setattr(agent, "_maybe_compress_history", AsyncMock())
-    monkeypatch.setattr(agent, "_load_history", AsyncMock(return_value=([], "")))
-    monkeypatch.setattr(agent, "_fetch_project_name", AsyncMock(return_value="Demo"))
-    return agent, saved
-
-
-def _enable_llm_mode(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.analysis_router.get_analysis_mode", lambda: "llm"
-    )
-
-
 # ── (a) Tenancy: no context ⇒ unavailable; context binds the project ────────
 
 
@@ -124,6 +94,8 @@ async def test_tools_refuse_without_bound_context():
         (crt._fetch_quarantine_status, "test_checkout", 2),
         (crt._fetch_release_gate, "", 1),
         (crt._fetch_failure_kind_counts, "", 1),
+        (crt._fetch_test_history, "test_checkout", 2),
+        (crt._fetch_build_comparison, "", 1),
     ],
 )
 async def test_every_fetcher_scopes_sql_to_bound_project(fetcher, tool_input, n_results):
@@ -209,169 +181,6 @@ async def test_tool_never_raises_into_the_loop():
         crt.reset_chat_tool_context(token)
 
 
-# ── (c) Loop bounds: iteration cap and timeout both fall back ───────────────
-
-
-def _scripted_llm(responses):
-    return FakeListChatModel(responses=responses)
-
-
-@pytest.mark.asyncio
-async def test_loop_iteration_cap_then_fallback(monkeypatch):
-    """An LLM that never stops acting is cut off at ≤6 tool calls, and the
-    unusable loop result falls back to the single-shot path."""
-    _enable_llm_mode(monkeypatch)
-    agent, saved = _agent_with_stubbed_persistence(monkeypatch)
-
-    calls = {"n": 0}
-
-    async def _counting_fetch(state, q):
-        calls["n"] += 1
-        return "some runs", "listed runs"
-
-    monkeypatch.setattr(crt, "_fetch_recent_runs", _counting_fetch)
-
-    looping = _scripted_llm(
-        ["Thought: dig\nAction: list_recent_runs\nAction Input: more"] * 20
-    )
-    # Loop LLM is scripted; the single-shot fallback's LLM raises → canned msg
-    llm_calls = {"n": 0}
-
-    async def _get_llm(*a, **k):
-        llm_calls["n"] += 1
-        if llm_calls["n"] == 1:
-            return looping
-        raise RuntimeError("no fallback LLM in test")
-
-    monkeypatch.setattr("app.agents.conversation.get_llm", _get_llm)
-    monkeypatch.setattr(
-        agent, "_retrieve_context", AsyncMock(return_value=("ctx", [])),
-    )
-
-    result = await agent.chat(SESSION_ID, "what changed?", USER_ID, PROJECT_A)
-
-    assert calls["n"] <= 6
-    assert result["tool_trace"] == []          # loop produced no usable answer
-    assert result["suggested_actions"] == []
-    assert "trouble connecting" in result["reply"]  # single-shot fallback ran
-    assert saved[-1]["role"] == "assistant"
-
-
-@pytest.mark.asyncio
-async def test_loop_timeout_falls_back_to_single_shot(monkeypatch):
-    _enable_llm_mode(monkeypatch)
-    agent, _saved = _agent_with_stubbed_persistence(monkeypatch)
-    monkeypatch.setattr("app.agents.conversation.settings.AI_TIMEOUT_SECONDS", 1)
-    monkeypatch.setattr("app.agents.conversation._TOOL_LOOP_TIMEOUT_GRACE_SECONDS", 0)
-
-    class _HangingExecutor:
-        def __init__(self, **kwargs):
-            pass
-
-        async def ainvoke(self, _inputs):
-            await asyncio.sleep(30)
-
-    import langchain.agents as la
-    monkeypatch.setattr(la, "AgentExecutor", _HangingExecutor)
-    monkeypatch.setattr(la, "create_react_agent", lambda **k: object())
-
-    # First call feeds the (patched-away) loop; the single-shot fallback's
-    # call raises so the canned message marks that the fallback ran.
-    llm_calls = {"n": 0}
-
-    async def _get_llm(*a, **k):
-        llm_calls["n"] += 1
-        if llm_calls["n"] == 1:
-            return SimpleNamespace()
-        raise RuntimeError("single-shot has no LLM either")
-
-    monkeypatch.setattr("app.agents.conversation.get_llm", _get_llm)
-    monkeypatch.setattr(
-        agent, "_retrieve_context", AsyncMock(return_value=("ctx", [])),
-    )
-
-    result = await agent.chat(SESSION_ID, "slow question", USER_ID, PROJECT_A)
-    assert "trouble connecting" in result["reply"]
-    assert result["tool_trace"] == []
-
-
-# ── (d) Multi-hop: two scripted tool calls answer the question ───────────────
-
-
-@pytest.mark.asyncio
-async def test_multi_hop_question_resolved_via_two_tools(monkeypatch):
-    """"Which teams own this week's new failures and are any quarantined?"
-    — resolved with list_run_failures + check_quarantine_status."""
-    _enable_llm_mode(monkeypatch)
-    agent, saved = _agent_with_stubbed_persistence(monkeypatch)
-
-    async def _failures(state, build):
-        return (
-            "Failing tests in build 512:\n"
-            "- **test_checkout_flow** (suite: payments-team, FAILED)",
-            "listed 1 failing tests in build 512",
-        )
-
-    async def _quarantine(state, name):
-        state.quarantine_candidates["fp-checkout"] = {
-            "test_fingerprint": "fp-checkout",
-            "test_name": "test_checkout_flow",
-            "suite_name": "payments-team",
-        }
-        return (
-            "- **test_checkout_flow**: flagged flaky by AI analysis, NOT quarantined",
-            "checked flaky/quarantine status for 'test_checkout_flow' — 1 record(s), 0 actively quarantined",
-        )
-
-    monkeypatch.setattr(crt, "_fetch_run_failures", _failures)
-    monkeypatch.setattr(crt, "_fetch_quarantine_status", _quarantine)
-
-    scripted = _scripted_llm([
-        "Thought: find this week's failures\nAction: list_run_failures\nAction Input: ",
-        "Thought: check quarantine\nAction: check_quarantine_status\nAction Input: test_checkout_flow",
-        "Thought: I now have enough information to answer\n"
-        "Final Answer: This week's new failure is **test_checkout_flow** owned by the "
-        "payments-team suite; it is flagged flaky but NOT quarantined yet.",
-    ])
-    monkeypatch.setattr(
-        "app.agents.conversation.get_llm", AsyncMock(return_value=scripted),
-    )
-
-    result = await agent.chat(
-        SESSION_ID,
-        "which teams own this week's new failures and are any quarantined?",
-        USER_ID,
-        PROJECT_A,
-    )
-
-    assert "payments-team" in result["reply"]
-    assert [t["tool"] for t in result["tool_trace"]] == [
-        "list_run_failures", "check_quarantine_status",
-    ]
-    # Transparency phrasing carried through
-    assert "checked flaky/quarantine status" in result["tool_trace"][1]["summary"]
-    # Flaky-but-not-quarantined finding became a one-click handoff
-    assert result["suggested_actions"] == [{
-        "type": "propose_quarantine",
-        "label": "Propose quarantine: test_checkout_flow",
-        "prefill": {
-            "project_id": PROJECT_A,
-            "test_fingerprint": "fp-checkout",
-            "test_name": "test_checkout_flow",
-            "suite_name": "payments-team",
-        },
-    }]
-    # Persisted on the ChatMessage inside the sources JSON (no migration)
-    persisted = saved[-1]
-    assert persisted["role"] == "assistant"
-    carrier_types = [s["type"] for s in persisted["sources"]]
-    assert "tool_trace" in carrier_types and "suggested_actions" in carrier_types
-    trace_entry = next(s for s in persisted["sources"] if s["type"] == "tool_trace")
-    assert trace_entry["trace"] == result["tool_trace"]
-    # Plain source chips mirror the consulted tools
-    assert {"type": "tool", "id": "list_run_failures"} in result["sources"]
-
-
 # ── (e) Suggested actions are deterministic over structured findings ────────
 
 
@@ -446,59 +255,209 @@ async def test_recurring_failure_yields_jira_candidate():
         crt.reset_chat_tool_context(token)
 
 
-# ── (f) No-LLM / rules mode: byte-identical to the pre-AI-6 path ─────────────
+# ── (f) The 2026-10-09 tools: what the data says, stated by the server ───────
+
+
+def _at(day: int) -> datetime:
+    return datetime(2026, 10, day, 12, 0, tzinfo=timezone.utc)
+
+
+def _history_rows(statuses):
+    """Newest first, one run each."""
+    return [
+        SimpleNamespace(
+            run_id=uuid.uuid4(), build_number=f"build-{2030 - i}", start_time=_at(28 - i),
+            case_id=uuid.uuid4(), status=status,
+            error_message="TimeoutException: session" if status == "FAILED" else None,
+        )
+        for i, status in enumerate(statuses)
+    ]
+
+
+async def _history_output(statuses, monkeypatch):
+    match = SimpleNamespace(test_name="testAuth02", test_fingerprint="fp-a", suite_name="AuthSuite")
+    db = _FakeDB(results=[_FakeResult(first=match), _FakeResult(rows=_history_rows(statuses))])
+
+    async def window(db, project_id, fingerprint):
+        return {"total_runs": 0}
+
+    monkeypatch.setattr("app.services.test_case_history_service._flakiness_in_window", window)
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_test_history(state, "testAuth02")
+        return text, summary, state
+    finally:
+        crt.reset_chat_tool_context(token)
 
 
 @pytest.mark.asyncio
-async def test_rules_mode_pins_unchanged_single_shot_behavior(monkeypatch):
-    """In rules mode the loop is never constructed and the reply dict is the
-    exact legacy single-shot result (canned LLM-unavailable message here)."""
-    monkeypatch.setattr(
-        "app.services.analysis_router.get_analysis_mode", lambda: "rules"
-    )
-    agent, saved = _agent_with_stubbed_persistence(monkeypatch)
-    monkeypatch.setattr(
-        agent, "_retrieve_context", AsyncMock(return_value=("ctx", [])),
-    )
-
-    loop_spy = AsyncMock()
-    monkeypatch.setattr(agent, "_run_tool_loop", loop_spy)
-
-    async def _no_llm(*a, **k):
-        raise RuntimeError("LLM not configured")
-
-    monkeypatch.setattr("app.agents.conversation.get_llm", _no_llm)
-
-    result = await agent.chat(SESSION_ID, "hello", USER_ID, PROJECT_A)
-
-    loop_spy.assert_not_awaited()
-    # Byte-identical legacy payload (plus the additive empty AI-6 keys)
-    assert result == {
-        "reply": "I'm having trouble connecting to the AI provider. Please try again.",
-        "sources": [],
-        "tool_trace": [],
-        "suggested_actions": [],
-    }
-    # And the persisted assistant message carries no carrier entries
-    assert saved[-1]["sources"] == []
+async def test_history_names_a_regression_and_where_it_started(monkeypatch):
+    """Measured: given 3 failures after 8 passes, the model called the test
+    "intermittent, which suggests it is flaky" and put the start one build late."""
+    text, summary, state = await _history_output(["FAILED"] * 3 + ["PASSED"] * 8 + ["FAILED"], monkeypatch)
+    assert "Pattern: a REGRESSION" in text
+    assert "failing in the last 3 run(s) in a row (build-2028, build-2029, build-2030)" in text
+    assert "first failure of this streak was build-2028" in text
+    assert "last passed in build-2027" in text
+    assert "build build-" not in text  # the double label the model misread
+    assert "4 of 12 recent runs failed" in summary
+    assert any(r["type"] == "test_case" and r["name"] == "testAuth02" for r in state.refs.values())
 
 
 @pytest.mark.asyncio
-async def test_all_projects_chat_never_engages_loop(monkeypatch):
-    """Without a project scope the loop must not run (tools are tenant-scoped)."""
-    _enable_llm_mode(monkeypatch)
-    agent, _saved = _agent_with_stubbed_persistence(monkeypatch)
-    monkeypatch.setattr(
-        agent, "_retrieve_context", AsyncMock(return_value=("ctx", [])),
+async def test_history_names_intermittent_failures(monkeypatch):
+    text, _summary, _state = await _history_output(["PASSED", "FAILED", "PASSED", "FAILED", "PASSED", "FAILED"], monkeypatch)
+    assert "Pattern: INTERMITTENT" in text
+
+
+@pytest.mark.asyncio
+async def test_history_does_not_call_a_single_failure_a_regression(monkeypatch):
+    text, _summary, _state = await _history_output(["FAILED", "PASSED", "PASSED", "PASSED"], monkeypatch)
+    assert "too early to tell" in text
+
+
+@pytest.mark.asyncio
+async def test_history_asks_which_test_when_a_partial_name_matches_several():
+    rows = [
+        SimpleNamespace(test_name="test_login_ok", test_fingerprint="a", suite_name="s"),
+        SimpleNamespace(test_name="test_login_bad", test_fingerprint="b", suite_name="s"),
+    ]
+    db = _FakeDB(results=[_FakeResult(), _FakeResult(rows=rows)])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, _ = await crt._fetch_test_history(crt.get_chat_tool_state(), "test_login")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "Several tests match" in text and "test_login_ok" in text and "test_login_bad" in text
+
+
+@pytest.mark.parametrize("text,tokens", [
+    ("", []),
+    ("105", ["105"]),
+    ("104 vs 105", ["104", "105"]),
+    ("build 104 and build 105", ["104", "105"]),
+    ("#2027 → #2029", ["2027", "2029"]),
+    ("compare build-2027 with build-2029", ["build-2027", "build-2029"]),
+])
+def test_build_tokens(text, tokens):
+    assert crt._build_tokens(text) == tokens
+
+
+@pytest.mark.asyncio
+async def test_comparison_defaults_to_the_previous_run_of_the_same_suite(monkeypatch):
+    newer = SimpleNamespace(id=uuid.uuid4(), build_number="105", start_time=_at(7), primary_suite_name="api")
+    older = SimpleNamespace(id=uuid.uuid4(), build_number="103", start_time=_at(6), primary_suite_name="api")
+    db = _FakeDB(results=[_FakeResult(first=newer), _FakeResult(first=older)])
+    compared = {}
+
+    async def fake_compare(db, left, right):
+        compared["pair"] = (left, right)
+        return {
+            "left": {"pass_rate": 83.3, "failed_tests": 1, "broken_tests": 1, "total_tests": 12},
+            "right": {"pass_rate": 83.3, "failed_tests": 2, "broken_tests": 0, "total_tests": 12},
+            "new_failures": 1, "fixed": 1, "still_failing": 1, "new_tests": 0, "removed_tests": 0,
+            "test_deltas": [
+                {"classification": "new_failure", "test_name": "test_refund_flow", "suite_name": "api",
+                 "left_status": "PASSED", "right_status": "FAILED"},
+                {"classification": "fixed", "test_name": "test_currency_rounding", "suite_name": "regression",
+                 "left_status": "BROKEN", "right_status": "PASSED"},
+            ],
+        }
+
+    monkeypatch.setattr("app.services.run_compare_service.compare_runs", fake_compare)
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_build_comparison(state, "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert compared["pair"] == (older.id, newer.id)
+    assert text.startswith("Build 103 → build 105 (suite api):")
+    assert "New failures (1):" in text and "test_refund_flow" in text
+    assert "Fixed (1):" in text and "test_currency_rounding" in text
+    assert summary.endswith("1 new failure(s), 1 fixed")
+    # The previous-run query was the same-suite one.
+    assert "primary_suite_name" in str(db.statements[1])
+
+
+@pytest.mark.asyncio
+async def test_the_flaky_list_carries_quarantine_state(monkeypatch):
+    async def flaky(db, project_id, days, limit):
+        assert project_id == PROJECT_A and days == 30
+        return {"total": 2, "items": [
+            {"test_fingerprint": "fp-1", "test_name": "testCheckout03", "suite_name": "Checkout",
+             "total_runs": 22, "fail_count": 8, "pass_count": 14, "failure_rate_pct": 36.4, "source": "auto"},
+            {"test_fingerprint": "fp-2", "test_name": "testAuth04", "suite_name": "Auth",
+             "total_runs": 30, "fail_count": 7, "pass_count": 22, "failure_rate_pct": 23.3, "source": "auto"},
+        ]}
+
+    monkeypatch.setattr("app.services.analytics_service.flaky_tests", flaky)
+    db = _FakeDB(results=[_FakeResult(rows=[("fp-1", "QUARANTINED")])])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_flaky_tests(crt.get_chat_tool_state(), "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "| testCheckout03 | Checkout | 22 | 8 | 14 | 36.4% | auto | QUARANTINED |" in text
+    assert "| testAuth04 | Auth | 30 | 7 | 22 | 23.3% | auto | none |" in text
+    assert "1 of the tests shown are actively quarantined" in text
+    assert summary.endswith("2 found, 1 quarantined")
+
+
+@pytest.mark.asyncio
+async def test_the_release_gate_says_when_the_latest_run_has_no_verdict():
+    """Ordered by when the decision row was written, the homelab's E-Commerce
+    Platform answered with build-2000's verdict while build-2029 was latest."""
+    latest = SimpleNamespace(id=uuid.uuid4(), build_number="build-2029")
+    verdict = SimpleNamespace(
+        recommendation="CONDITIONAL_GO", risk_score=48, blocking_issues=[], reasoning=None,
+        run_id=uuid.uuid4(), build_number="build-2000",
     )
-    loop_spy = AsyncMock()
-    monkeypatch.setattr(agent, "_run_tool_loop", loop_spy)
+    db = _FakeDB(results=[_FakeResult(first=latest), _FakeResult(first=verdict)])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, _ = await crt._fetch_release_gate(crt.get_chat_tool_state(), "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert text.startswith("The latest run (build-2029) has NO release-gate verdict.")
+    assert "verdict for build-2000: **CONDITIONAL_GO**" in text
+    # Ordered by the run, not by when the decision was written.
+    assert "test_runs.start_time DESC" in str(db.statements[1])
 
-    async def _no_llm(*a, **k):
-        raise RuntimeError("nope")
 
-    monkeypatch.setattr("app.agents.conversation.get_llm", _no_llm)
+@pytest.mark.asyncio
+async def test_recent_runs_survive_a_run_in_progress():
+    """``:.1f`` on a None pass rate raised, and the tool answered "unavailable"."""
+    rows = [
+        SimpleNamespace(id=uuid.uuid4(), build_number="106", branch="main", status="IN_PROGRESS",
+                        total_tests=3, failed_tests=0, pass_rate=None, start_time=_at(8)),
+        SimpleNamespace(id=uuid.uuid4(), build_number="105", branch="main", status="FAILED",
+                        total_tests=12, failed_tests=2, pass_rate=83.3, start_time=_at(7)),
+    ]
+    db = _FakeDB(results=[_FakeResult(rows=rows)])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_recent_runs(crt.get_chat_tool_state(), "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "| 106 | main | IN_PROGRESS | 3 | 0 | n/a |" in text
+    assert "83.3%" in text and "n/a pass rate" in summary
 
-    result = await agent.chat(SESSION_ID, "hello", USER_ID, project_id=None)
-    loop_spy.assert_not_awaited()
-    assert result["tool_trace"] == []
+
+@pytest.mark.parametrize("name,args,label", [
+    ("get_test_history", {"test_name": "test_refund_flow"}, "Checking the history of test_refund_flow…"),
+    ("list_run_failures", {"build_number": "105"}, "Reading the failures in build 105…"),
+    ("list_run_failures", {"build_number": "build-2029"}, "Reading the failures in build-2029…"),
+    ("list_run_failures", {"build_number": ""}, "Reading the latest run's failures…"),
+    ("compare_builds", {"builds": ""}, "Comparing the latest build with the previous one…"),
+    ("no_such_tool", {}, "Running no_such_tool…"),
+])
+def test_status_labels(name, args, label):
+    assert crt.tool_status_label(name, args) == label

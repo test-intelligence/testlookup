@@ -1,8 +1,16 @@
 import type { ChatMessage, ChatSession, RunSummary } from '@/types/chat'
 import { deleteData, getData, postData } from './http'
 
+/**
+ * Ask-AI chat sessions and history. Asking a question is streamed — see
+ * `services/chatStream.ts`.
+ */
 const chatService = {
-  listSessions: () => getData<ChatSession[]>('/api/v1/chat/sessions'),
+  /** The caller's conversations; `projectId` narrows them to one project. */
+  listSessions: (projectId?: string | null) =>
+    getData<ChatSession[]>('/api/v1/chat/sessions', {
+      params: { project_id: projectId ?? undefined },
+    }),
 
   getRunSummaries: (projectId?: string | null, days = 5) =>
     getData<RunSummary[]>('/api/v1/chat/run-summaries', {
@@ -15,20 +23,11 @@ const chatService = {
   deleteSession: (sessionId: string) =>
     deleteData(`/api/v1/chat/sessions/${sessionId}`),
 
-  getMessages: (sessionId: string, limit = 50) =>
+  /** The latest `limit` messages, oldest first. */
+  getMessages: (sessionId: string, limit = 100) =>
     getData<ChatMessage[]>(`/api/v1/chat/sessions/${sessionId}/messages`, {
       params: { limit },
     }),
-
-  sendMessage: (
-    sessionId: string,
-    message: string,
-    projectId?: string | null,
-  ) =>
-    postData<{ session_id: string; reply: string; sources: unknown[] }, { message: string; project_id?: string }>(
-      `/api/v1/chat/sessions/${sessionId}/messages`,
-      { message, project_id: projectId ?? undefined },
-    ),
 }
 
 export default chatService

@@ -1,42 +1,69 @@
 """
-Conversation Agent — Chat interface for test analysis.
+Conversation Agent — the Ask-AI chat.
 
-Context engineering improvements over v1:
-  1. Intent classification — pattern matching routes queries to targeted data sources
-  2. Query-aware retrieval — each intent fetches different data (depth, filters, tables)
-  3. Grounded system prompt — includes current datetime, project name, intent label
-  4. Conversation memory compression — long sessions summarised to preserve context window
-  5. Bug fix — user message saved AFTER history load (eliminates duplicate in LLM context)
-  6. Non-blocking ChromaDB — sync client wrapped in asyncio.to_thread
-  7. Concurrent context fetch — independent sources fetched with asyncio.gather
-  8. Source priority matches intent — relevant sources float to top of the list
+A turn is a stream of events, produced by a task and read from a queue
+(:class:`ChatTurn`). The streaming endpoint forwards them as server-sent
+events; the plain JSON endpoint waits for the last one.
+
+    start   {"user_message_id", "retry"}      the question is saved (or re-used on retry)
+    status  {"label", "tool"}                 what the agent is doing ("Checking history of …")
+    delta   {"text"}                          answer text, as the provider writes it
+    done    {"message", "sources", "tool_trace", "suggested_actions", "meta"}
+    error   {"code", "message", "retryable"}  the turn failed; no answer was saved
+
+How an answer is grounded:
+  1. A snapshot built without the model — the project's last runs with
+     reconciled counts and the latest run's failing tests
+     (:meth:`ConversationAgent._fetch_run_context`). Enough for the common
+     questions, so they need no tool round-trip.
+  2. Native tool calling over the read-only, project-scoped tools in
+     ``app.tools.chat_read_tools`` for everything else: a test's history, a
+     build comparison, flaky tests, quarantine, the release gate, what earlier
+     analyses said. Tenancy is a server-side ContextVar; the model never
+     supplies an identifier.
+  3. The registry prompt ``chat_system`` forbids stating a figure the model
+     did not read.
+
+What this replaced (2026-10-09): the AI-6 ReAct copilot handed ``BudgetedLLM``
+to ``create_react_agent``, which rejected it ("Expected a Runnable") on every
+message, so every answer came from a regex-intent single-shot path. That path
+had no per-test history and invented one -- "failed 7 of the last 10 runs" for
+a test that failed 1 of 12 -- after a blank wait of 7-10 s, and saved provider
+errors as if they were answers. Both paths are gone.
 """
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import hashlib
 import json
-import structlog
 import re
 import time
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+import structlog
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
-    AIAnalysis,
     ChatMessage,
     ChatSession,
-    Defect,
     TestCase,
-    TestCaseHistory,
     TestRun,
 )
-from app.services.llm_factory import get_llm
+from app.services.llm_factory import BudgetedLLM, get_llm, tools_unsupported_error
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.privacy_service import sanitize_for_llm
@@ -47,110 +74,483 @@ logger = structlog.get_logger("agents.conversation")
 _MAX_MESSAGE_LENGTH = 50_000
 # Debounce: skip compression if it ran within this many seconds
 _COMPRESS_DEBOUNCE_SECONDS = 300
-# P2-8: In-memory TTL cache for _fetch_run_context() — avoids re-fetching
-# the same run history multiple times within a chat session.
+# P2-8: In-memory TTL cache for _fetch_run_context() — the snapshot is rebuilt
+# for every turn, and a conversation asks several questions a minute.
 _RUN_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict]]] = {}
 _RUN_CONTEXT_TTL_SECONDS = 60
 # P2-8: Hash of last compressed message list per session — skip if unchanged
 _LAST_COMPRESSION_HASH: dict[str, str] = {}
 
-# ── Intent classification ─────────────────────────────────────────────────────
-
-class QueryIntent(str, Enum):
-    TREND       = "trend"
-    FAILURE     = "failure"
-    FLAKINESS   = "flakiness"
-    COMPARISON  = "comparison"
-    SUMMARY     = "summary"
-    TRIAGE      = "triage"
-    PERFORMANCE = "performance"
-    GENERAL     = "general"
-
-
-_INTENT_PATTERNS: dict[QueryIntent, list[str]] = {
-    QueryIntent.TREND: [
-        r"trend", r"over time", r"history", r"last \d+ day", r"last \d+ week",
-        r"getting (worse|better)", r"improv", r"pattern over", r"across.*run",
-        r"week(ly)?", r"daily", r"month",
-    ],
-    QueryIntent.FAILURE: [
-        r"fail", r"broke?n?", r"error", r"exception", r"crash",
-        r"why did", r"what (went|is) wrong", r"root cause", r"stack trace",
-        r"cause of", r"reason.*fail",
-    ],
-    QueryIntent.FLAKINESS: [
-        r"flak", r"intermittent", r"unstable", r"unreliable", r"inconsistent",
-        r"sometimes (pass|fail)", r"non.?determin", r"not reliable",
-    ],
-    QueryIntent.COMPARISON: [
-        r"\bvs\b", r"versus", r"compar", r"difference between",
-        r"regression", r"worse than", r"better than", r"between build",
-    ],
-    QueryIntent.SUMMARY: [
-        r"summar", r"overview", r"status", r"how (is|are)", r"current state",
-        r"latest", r"recent result", r"what.*happening", r"tell me about",
-    ],
-    QueryIntent.TRIAGE: [
-        r"jira", r"ticket", r"defect", r"bug report", r"assign",
-        r"priority", r"created.*ticket", r"open.*issue", r"triage",
-    ],
-    QueryIntent.PERFORMANCE: [
-        r"slow", r"duration", r"timeout", r"performance", r"speed",
-        r"how long", r"takes? too long", r"fast",
-    ],
-}
-
-_INTENT_LABELS: dict[QueryIntent, str] = {
-    QueryIntent.TREND:       "Trend Analysis",
-    QueryIntent.FAILURE:     "Failure Investigation",
-    QueryIntent.FLAKINESS:   "Flakiness Analysis",
-    QueryIntent.COMPARISON:  "Build Comparison",
-    QueryIntent.SUMMARY:     "Status Summary",
-    QueryIntent.TRIAGE:      "Defect Triage",
-    QueryIntent.PERFORMANCE: "Performance Analysis",
-    QueryIntent.GENERAL:     "General QA Query",
-}
-
-
-def classify_intent(query: str) -> QueryIntent:
-    """Classify user query into an intent category using regex pattern matching.
-    Fast — no LLM call required. Falls back to GENERAL when ambiguous.
-    """
-    q = query.lower()
-    scores: dict[QueryIntent, int] = {i: 0 for i in QueryIntent}
-    for intent, patterns in _INTENT_PATTERNS.items():
-        for pat in patterns:
-            if re.search(pat, q):
-                scores[intent] += 1
-    best = max(scores, key=lambda i: scores[i])
-    return best if scores[best] > 0 else QueryIntent.GENERAL
-
-
-# ── System prompt ─────────────────────────────────────────────────────────────
-# Versioned in the prompt registry (AI-F2) — edit there, with a manifest bump
-# + eval-gate attestation.
-
-_SYSTEM_TEMPLATE = get_prompt_text("chat_system")
+# Runs in the grounding snapshot.
+_SNAPSHOT_RUNS = 5
+# Earlier messages are cut to this many characters when replayed: the gist is
+# enough to resolve "the first one", and a small model given whole earlier
+# tables drifts back to the previous topic (measured, mistral-nemo).
+_HISTORY_QUESTION_CHARS = 1_000
+_HISTORY_ANSWER_CHARS = 1_500
+# Tool observations (hosted models): the whole answer, and one call. The chat
+# model's context is far larger than its output ceiling (LLM_MAX_TOKENS),
+# which is what the tool module's defaults are derived from.
+_TOOL_TOTAL_TOKENS = 8_000
+_TOOL_CALL_TOKENS = 2_000
 
 # ── Memory settings ───────────────────────────────────────────────────────────
 
 _COMPRESS_AFTER = 20   # compress when session exceeds this many user+assistant messages
-_HISTORY_TAIL   = 6    # always keep the most recent N messages verbatim
+_HISTORY_TAIL = 6      # compression keeps the most recent N messages verbatim
 
-# ── Copilot tool loop settings (AI-6) ────────────────────────────────────────
+# Fire-and-forget work (history compression) is kept referenced until it ends:
+# the event loop holds only weak references to tasks.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
-# Grace on top of the executor's own max_execution_time before the outer
-# asyncio.wait_for hard-kills the loop.
-_TOOL_LOOP_TIMEOUT_GRACE_SECONDS = 5
+Emit = Callable[[str, dict], None]
+
+
+# ── Errors a user can act on ─────────────────────────────────────────────────
+
+
+class ChatTurnError(Exception):
+    """A turn that cannot produce an answer, said in words a user can act on."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+
+    def as_event(self) -> dict:
+        return {"code": self.code, "message": self.message, "retryable": self.retryable}
+
+
+class _ToolsUnsupported(Exception):
+    """The provider refused the ``tools`` parameter (a model without tool use)."""
+
+
+def _status_code(exc: BaseException) -> Optional[int]:
+    for candidate in (exc, getattr(exc, "response", None)):
+        code = getattr(candidate, "status_code", None)
+        if isinstance(code, int):
+            return code
+    return None
+
+
+def classify_failure(exc: BaseException) -> ChatTurnError:
+    """Map whatever stopped a turn onto the error vocabulary the UI renders."""
+    if isinstance(exc, ChatTurnError):
+        return exc
+    from app.services.llm_circuit_breaker import CircuitBreakerOpen
+    from app.services.llm_cluster_semaphore import LLMSlotTimeout
+    from app.services.llm_cost_reservation import CostCapExceeded
+    from app.services.llm_factory import PipelineBudgetExceeded
+
+    # Before TimeoutError: LLMSlotTimeout subclasses it.
+    if isinstance(exc, LLMSlotTimeout):
+        return ChatTurnError(
+            "busy",
+            "The AI provider is busy with other analysis work. Try again in a moment.",
+            retryable=True,
+        )
+    if isinstance(exc, TimeoutError):  # asyncio.TimeoutError is an alias from 3.11
+        return ChatTurnError(
+            "timeout",
+            "The AI provider took too long to answer. Try again, or ask a narrower question.",
+            retryable=True,
+        )
+    if isinstance(exc, CircuitBreakerOpen):
+        return ChatTurnError(
+            "provider_unavailable",
+            "The AI provider has been failing, so requests to it are paused for a short while. "
+            "Try again in a minute.",
+            retryable=True,
+        )
+    if isinstance(exc, (CostCapExceeded, PipelineBudgetExceeded)):
+        return ChatTurnError(
+            "budget_exceeded",
+            "This project's AI budget for the month is used up, so chat cannot call the model. "
+            "An admin can raise the cap.",
+            retryable=False,
+        )
+    code = _status_code(exc)
+    name = type(exc).__name__
+    if code in (401, 403):
+        return ChatTurnError(
+            "provider_auth",
+            "The AI provider rejected this deployment's credentials. An admin needs to check "
+            "the provider key in Settings > AI Configuration.",
+            retryable=False,
+        )
+    if code == 429:
+        return ChatTurnError(
+            "rate_limited",
+            "The AI provider is rate-limiting requests. Try again in a minute.",
+            retryable=True,
+        )
+    if (code is not None and code >= 500) or "Connect" in name or "Connection" in name:
+        return ChatTurnError(
+            "provider_unavailable",
+            "The AI provider could not be reached. Try again shortly.",
+            retryable=True,
+        )
+    if code is not None and 400 <= code < 500:
+        return ChatTurnError(
+            "provider_error",
+            f"The AI provider refused the request (HTTP {code}). Try rephrasing the question.",
+            retryable=True,
+        )
+    return ChatTurnError(
+        "internal", "Something went wrong while answering. Try again.", retryable=True,
+    )
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+
+
+def _text_of(content: Any) -> str:
+    """Text of a message chunk: a string, or the text parts of a list."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return "".join(parts)
+    return ""
+
+
+def _meta_of(sources: Any) -> dict:
+    for entry in sources or []:
+        if isinstance(entry, dict) and entry.get("type") == "meta":
+            return entry
+    return {}
+
+
+def _is_stopped(sources: Any) -> bool:
+    return _meta_of(sources).get("status") == "stopped"
+
+
+def _iso(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value) if value is not None else datetime.now(timezone.utc).isoformat()
+
+
+async def _configured_mode() -> str:
+    """The analysis mode the sidebar and the page read (``GET /settings/ai/mode``):
+    the ``ai_config`` app setting, else ``ANALYSIS_MODE``."""
+    mode = str(settings.ANALYSIS_MODE or "auto")
+    try:
+        from app.models.postgres import AppSetting
+
+        async with AsyncSessionLocal() as db:
+            row = (
+                await db.execute(select(AppSetting.value).where(AppSetting.key == "ai_config"))
+            ).first()
+        stored = (row[0] or {}) if row else {}
+        if isinstance(stored, dict) and stored.get("analysis_mode"):
+            mode = str(stored["analysis_mode"])
+    except Exception as exc:  # noqa: BLE001 -- fall back to the environment
+        logger.debug("chat_mode_lookup_failed", error=str(exc)[:200])
+    return mode.lower()
+
+
+# Modes in which chat calls a model: the frontend's isLLMAvailable.
+_CHAT_MODES = ("llm", "auto")
+
+
+# Questions whose answer must come from a lookup (see _prefetch_lookups).
+_ASKS_ABOUT_QUARANTINE = re.compile(r"quarantin", re.IGNORECASE)
+_ASKS_ABOUT_FLAKY = re.compile(r"flak", re.IGNORECASE)
+# "Is the first one you mentioned flaky?" is about one earlier test, not the
+# flaky list: it gets no up-front list, so the model must look the test up.
+_REFERS_BACK = re.compile(
+    r"\b(?:the (?:first|second|third|fourth|fifth|last|other|same) (?:one|test|failure)"
+    r"|(?:that|this) (?:one|test|failure)|those|these|it)\b",
+    re.IGNORECASE,
+)
+_ASKS_ABOUT_RELEASE = re.compile(
+    r"\b(release|releasing|ship|shipping|go/no-go|no-go|deploy|deployable)\b",
+    re.IGNORECASE,
+)
+
+# Identifier-shaped words in a question: candidates for a test name.
+_TEST_NAME_TOKEN = re.compile(r"[A-Za-z_][\w.:\-/#\[\]]{5,}")
+
+
+_SMALL_TALK = re.compile(
+    r"^\W*(hi|hello|hey|thanks|thank you|ok|okay|cool|great|bye|help|"
+    r"what can you do|who are you)\W*$",
+    re.IGNORECASE,
+)
+
+
+def _wants_data(question: str) -> bool:
+    """A question about the project's data, not small talk."""
+    return len(question.split()) >= 3 and not _SMALL_TALK.match(question)
+
+
+def _looks_like_a_test_name(token: str) -> bool:
+    """An identifier rather than an English word: has ``_``/``.``/``:``/a digit,
+    or a lower-to-upper case change (``testRefundFlow``)."""
+    return bool(
+        re.search(r"[_.:#\d]", token) or re.search(r"[a-z][A-Z]", token)
+    )
+
+
+def _mentions(text: str, needle: str) -> bool:
+    if not needle:
+        return False
+    if len(needle) >= 6:
+        return needle in text
+    # Short build numbers ("105") are common words in an answer: count them
+    # only where the answer names them as a build.
+    return re.search(
+        rf"(?:build|#)\s*\**\s*{re.escape(needle)}\b", text, flags=re.IGNORECASE,
+    ) is not None
+
+
+def _answer_sources(reply: str, candidates: list[dict]) -> list[dict]:
+    """The runs and tests the answer names, as linkable chips (deduplicated)."""
+    chosen: list[dict] = []
+    seen: set[str] = set()
+    for ref in candidates:
+        label = str(ref.get("build") or ref.get("name") or "")
+        key = f"{ref.get('type')}:{ref.get('id')}"
+        if key in seen or not _mentions(reply, label):
+            continue
+        seen.add(key)
+        chosen.append(ref)
+    return chosen[:8]
+
+
+@dataclass
+class _Timings:
+    started: float = field(default_factory=time.perf_counter)
+    first_status_ms: Optional[int] = None
+    first_token_ms: Optional[int] = None
+    llm_ms: float = 0.0
+    tool_ms: float = 0.0
+    context_ms: float = 0.0
+
+    def since_start(self) -> int:
+        return int((time.perf_counter() - self.started) * 1000)
+
+
+@dataclass
+class _TurnState:
+    """What a turn has shown and whether its answer is being saved."""
+
+    timings: _Timings = field(default_factory=_Timings)
+    shown: list[str] = field(default_factory=list)
+    # Set once the complete answer starts to be saved: a Stop arriving after
+    # that must not save a second, "stopped" copy of it.
+    saving: bool = False
+
+
+# One turn at a time per conversation: two tabs (or a double Retry) would
+# otherwise both pass the retry check and write two answers, and hold two of
+# the cluster's LLM slots for one person.
+_TURN_LOCK_PREFIX = "testlookup:chat:turn:"
+
+
+async def _acquire_turn_lock(session_id: str) -> Optional[str]:
+    """A token when this turn may run; ``None`` when another turn holds the
+    conversation. Fails open: without Redis the lock is skipped, not chat."""
+    token = uuid.uuid4().hex
+    try:
+        from app.db import redis_client
+
+        acquired = await redis_client.get_redis().set(
+            _TURN_LOCK_PREFIX + str(session_id), token,
+            nx=True, ex=int(settings.CHAT_TURN_TIMEOUT_SECONDS) + 30,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a lock store outage must not stop chat
+        logger.warning("chat_turn_lock_unavailable", error=str(exc)[:200])
+        return token
+    return token if acquired else None
+
+
+async def _release_turn_lock(session_id: str, token: str) -> None:
+    try:
+        from app.db import redis_client
+
+        redis = redis_client.get_redis()
+        key = _TURN_LOCK_PREFIX + str(session_id)
+        held = await redis.get(key)
+        if held is not None and (held.decode() if isinstance(held, bytes) else str(held)) == token:
+            await redis.delete(key)
+    except Exception as exc:  # noqa: BLE001 -- the lock expires on its own
+        logger.debug("chat_turn_lock_release_failed", error=str(exc)[:200])
+
+
+# Tool calls run per round; the rest are dropped (small models sometimes ask
+# for the same lookup many times).
+_MAX_CALLS_PER_ROUND = 6
+# An interactive turn does not queue behind the pipeline for a cluster slot.
+_SLOT_TIMEOUT_SECONDS = 15.0
+# Providers whose client honours tool_choice="none" (OpenAI wire); the forced
+# answer round of any other provider gets the unbound model.
+_TOOL_CHOICE_PROVIDERS = frozenset({"openai", "openrouter", "lmstudio", "localai", "vllm"})
+# (provider, model) pairs that refused the ``tools`` parameter in this process.
+_TOOLS_OFF: set[tuple[str, str]] = set()
+
+
+def _call_id() -> str:
+    # Mistral's API requires tool-call ids of 9 alphanumeric characters.
+    return uuid.uuid4().hex[:9]
+
+
+def _tool_calls_of(message: Any) -> list[dict]:
+    """The tool calls of a streamed message, every one with an id.
+
+    Calls whose arguments did not parse (``invalid_tool_calls``) are kept with
+    an ``error``: the model is told, instead of the call -- and with it the
+    answer -- silently vanishing.
+    """
+    calls: list[dict] = []
+    for call in list(getattr(message, "tool_calls", None) or []):
+        calls.append({
+            "name": str(call.get("name") or ""),
+            "args": call.get("args") or {},
+            "id": str(call.get("id") or _call_id()),
+        })
+    for bad in list(getattr(message, "invalid_tool_calls", None) or []):
+        calls.append({
+            "name": str(bad.get("name") or ""),
+            "args": {},
+            "id": str(bad.get("id") or _call_id()),
+            "error": str(bad.get("error") or bad.get("args") or "unparseable arguments"),
+        })
+    return calls
+
+
+def _tool_budgets(llm: Any) -> tuple[int, int]:
+    """(total, per call) token budgets for tool observations.
+
+    A hosted model's context is far larger than anything sent here. Ollama's
+    is ``OLLAMA_NUM_CTX`` (8k by default), which must also hold the snapshot,
+    the history, the tool schemas and the answer.
+    """
+    if getattr(llm, "provider_name", None) == "ollama":
+        return 2_000, 800
+    return _TOOL_TOTAL_TOKENS, _TOOL_CALL_TOKENS
+
+
+def _prompt_budget_tokens(llm: Any) -> Optional[int]:
+    """Tokens the system prompt plus history may use, or ``None`` (no limit)."""
+    if getattr(llm, "provider_name", None) != "ollama":
+        return None
+    context = int(getattr(settings, "OLLAMA_NUM_CTX", 8192) or 8192)
+    # Leave room for the answer, the tool schemas (~1.5k) and observations.
+    return max(0, context - int(settings.LLM_MAX_TOKENS) - 1_500 - _tool_budgets(llm)[0])
+
+
+def _fit_history(system: str, history: list[BaseMessage], budget: Optional[int]) -> list[BaseMessage]:
+    """Drop the oldest question/answer pairs until the prompt fits ``budget``.
+
+    A prompt larger than an Ollama context is truncated server-side with no
+    error (F-5): the model would lose the start of the system prompt, which
+    is where its rules are.
+    """
+    if budget is None:
+        return history
+    kept = list(history)
+
+    def size() -> int:
+        return (len(system) + sum(len(_text_of(m.content)) for m in kept)) // 4
+
+    while kept and size() > budget:
+        kept = kept[2:]
+    return kept
+
+
+# ── A running turn ────────────────────────────────────────────────────────────
+
+
+class ChatTurn:
+    """One running turn: a task that puts ``(event, data)`` on a queue.
+
+    The task is created from the caller's context (so it inherits the request's
+    ContextVars) but is NOT inside the request's cancel scope: when the reader
+    goes away, :meth:`cancel_nowait` stops the model and the task still saves
+    what was already shown.
+    """
+
+    _END = object()
+
+    def __init__(self, runner: Callable[[Emit], Awaitable[None]]) -> None:
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._task = asyncio.create_task(self._run(runner))
+
+    def _emit(self, event: str, data: dict) -> None:
+        self._queue.put_nowait((event, data))
+
+    async def _run(self, runner: Callable[[Emit], Awaitable[None]]) -> None:
+        try:
+            await runner(self._emit)
+        finally:
+            self._queue.put_nowait(self._END)
+
+    async def next_event(self, timeout: Optional[float] = None) -> Optional[tuple[str, dict]]:
+        """The next event; ``None`` when ``timeout`` passes with nothing new.
+
+        Raises ``StopAsyncIteration`` once the turn has ended.
+        """
+        try:
+            if timeout is None:
+                item = await self._queue.get()
+            else:
+                item = await asyncio.wait_for(self._queue.get(), timeout)
+        except asyncio.TimeoutError:
+            return None
+        if item is self._END:
+            raise StopAsyncIteration
+        event, data = item
+        return str(event), dict(data)
+
+    def cancel_nowait(self) -> None:
+        if not self._task.done():
+            self._task.cancel()
+
+    async def wait_closed(self) -> None:
+        await asyncio.wait({self._task})
 
 
 # ── ConversationAgent ─────────────────────────────────────────────────────────
 
+
 class ConversationAgent:
-    """
-    Context-engineered conversation agent.
-    Sessions are persisted to PostgreSQL (ChatSession + ChatMessage tables).
-    """
+    """The Ask-AI chat. Sessions are persisted to PostgreSQL (ChatSession +
+    ChatMessage); every model call goes through ``get_llm()``'s gates."""
+
+    def start_turn(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        project_id: Optional[str],
+        user_message: Optional[str] = None,
+        retry: bool = False,
+        test_run_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        report_version: Optional[int] = None,
+    ) -> ChatTurn:
+        async def runner(emit: Emit) -> None:
+            await self._run_turn(
+                emit,
+                session_id=session_id,
+                user_id=user_id,
+                project_id=project_id,
+                user_message=user_message,
+                retry=retry,
+                test_run_id=test_run_id,
+                report_id=report_id,
+                report_version=report_version,
+            )
+
+        return ChatTurn(runner)
 
     async def chat(
         self,
@@ -162,176 +562,143 @@ class ConversationAgent:
         report_id: Optional[str] = None,
         report_version: Optional[int] = None,
     ) -> dict:
-        """Process one user message and return the assistant reply.
+        """One whole turn for callers that do not stream (``POST …/messages``).
 
-        Re-audit R-B45-1: every LLM call of a project chat (the tool loop,
-        the single-shot reply, and the history compression task it spawns,
-        which copies this context) reserves against the project's monthly
-        cap. An "all projects" chat has no project, so no cap applies.
+        Raises :class:`ChatTurnError` when the turn fails; returns the reply,
+        its sources, the tool trace and the suggested actions otherwise.
+        """
+        turn = self.start_turn(
+            session_id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            user_message=user_message,
+            test_run_id=test_run_id,
+            report_id=report_id,
+            report_version=report_version,
+        )
+        done: Optional[dict] = None
+        failure: Optional[dict] = None
+        while True:
+            try:
+                item = await turn.next_event()
+            except StopAsyncIteration:
+                break
+            if item is None:
+                continue
+            event, data = item
+            if event == "done":
+                done = data
+            elif event == "error":
+                failure = data
+        if failure is not None or done is None:
+            failure = failure or {"code": "internal", "message": "No answer was produced.", "retryable": True}
+            raise ChatTurnError(failure["code"], failure["message"], retryable=bool(failure["retryable"]))
+        return {
+            "reply": done["message"]["content"],
+            "sources": done["sources"],
+            "tool_trace": done["tool_trace"],
+            "suggested_actions": done["suggested_actions"],
+            "message": done["message"],
+            "meta": done["meta"],
+        }
+
+    # ── The turn ─────────────────────────────────────────────────────────────
+
+    async def _run_turn(self, emit: Emit, **params: Any) -> None:
+        """Run one turn inside the project's cost scope and the turn deadline.
+
+        Re-audit R-B45-1: every LLM call of a project chat (the answer and the
+        history compression it spawns, which copies this context) reserves
+        against the project's monthly cap. The scope is entered HERE, inside
+        the turn's own task: ContextVars are copied when a task is created.
+
+        The answer is saved after the deadline and shielded: a Stop or a
+        timeout that lands during the save must neither lose the answer nor
+        save a second, "stopped" copy of it.
         """
         from app.services.llm_cost_reservation import cost_budget_scope
 
-        with cost_budget_scope(project_id):
-            return await self._chat(
-                session_id, user_message, user_id, project_id,
-                test_run_id, report_id, report_version,
+        session_id = params["session_id"]
+        state = _TurnState()
+        lock = await _acquire_turn_lock(session_id)
+        if lock is None:
+            emit("error", ChatTurnError(
+                "turn_in_progress",
+                "An answer is already being written in this conversation. Wait for it, or stop it first.",
+                retryable=True,
+            ).as_event())
+            return
+        try:
+            with cost_budget_scope(params.get("project_id")):
+                async with asyncio.timeout(settings.CHAT_TURN_TIMEOUT_SECONDS):
+                    outcome = await self._answer(emit, state, **params)
+                state.saving = True
+                done = await asyncio.shield(self._finish(session_id, outcome))
+            emit("done", done)
+        except asyncio.CancelledError:
+            # The reader went away (Stop, a closed tab). Keep what they saw,
+            # unless the complete answer is already being saved.
+            if not state.saving:
+                await self._save_stopped(session_id, state)
+            raise
+        except Exception as exc:  # noqa: BLE001 -- every failure becomes an error event
+            failure = classify_failure(exc)
+            logger.warning(
+                "chat_turn_failed",
+                session_id=str(session_id),
+                code=failure.code,
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+                elapsed_ms=state.timings.since_start(),
             )
+            emit("error", failure.as_event())
+        finally:
+            await _release_turn_lock(session_id, lock)
 
-    async def _chat(
+    async def _answer(
         self,
+        emit: Emit,
+        state: _TurnState,
+        *,
         session_id: str,
-        user_message: str,
         user_id: str,
-        project_id: Optional[str] = None,
-        test_run_id: Optional[str] = None,
-        report_id: Optional[str] = None,
-        report_version: Optional[int] = None,
+        project_id: Optional[str],
+        user_message: Optional[str],
+        retry: bool,
+        test_run_id: Optional[str],
+        report_id: Optional[str],
+        report_version: Optional[int],
     ) -> dict:
-
-        # 1. Classify intent (fast — no LLM call)
-        intent = classify_intent(user_message)
-        # structlog kwargs (BoundLogger doesn't accept positional %s args).
-        logger.debug(
-            "chat_intent_classified",
-            session_id=session_id, intent=intent.value, query=user_message[:80],
-        )
-
-        # 2. Load history BEFORE saving user message — prevents duplicate in LLM context
-        history, summary_ctx = await self._load_history(session_id)
-
-        # 3. Save user message
-        await self._save_message(session_id, "user", user_message, sources=None)
-
-        # 3b. AI-6: bounded tool loop — the default path when an LLM is the
-        # resolved analysis engine AND the session is project-scoped (tools
-        # are tenant-scoped by construction; "all projects" chats keep the
-        # legacy single-shot path). Any loop failure falls back to the
-        # single-shot path below, unchanged.
-        loop_result: Optional[dict] = None
-        if project_id and self._tool_loop_enabled() and not report_id:
-            loop_result = await self._run_tool_loop(
-                user_message, project_id, history, summary_ctx
+        """Produce the answer (streamed through ``emit``); return what to save."""
+        timings = state.timings
+        if not project_id:
+            raise ChatTurnError(
+                "project_required",
+                "Select a project first: answers come from one project's test data.",
+                retryable=False,
             )
-        if loop_result is not None:
-            reply = loop_result["reply"]
-            sources = loop_result["sources"]
-            tool_trace = loop_result["tool_trace"]
-            suggested_actions = loop_result["suggested_actions"]
-            persisted_sources = list(sources)
-            # Persist trace + actions inside the existing sources JSON column
-            # (no migration): special entries the UI unpacks.
-            if tool_trace:
-                persisted_sources.append({"type": "tool_trace", "trace": tool_trace})
-            if suggested_actions:
-                persisted_sources.append(
-                    {"type": "suggested_actions", "actions": suggested_actions}
-                )
-            await self._save_message(
-                session_id, "assistant", reply, sources=persisted_sources
+        mode = await _configured_mode()
+        if mode not in _CHAT_MODES:
+            raise ChatTurnError(
+                "llm_disabled",
+                f"Chat is unavailable in {mode.upper() if mode == 'ml' else mode.capitalize()} mode. "
+                "Switch to LLM or Auto mode in Settings > AI Configuration.",
+                retryable=False,
             )
-            await self._touch_session(session_id)
-            asyncio.create_task(self._maybe_compress_history(session_id))
-            return {
-                "reply": reply,
-                "sources": sources,
-                "tool_trace": tool_trace,
-                "suggested_actions": suggested_actions,
-            }
 
-        # 4. Fetch context and project metadata concurrently
-        context_coro = self._retrieve_context(user_message, project_id, intent)
-        report_coro = self._fetch_bound_report_context(project_id, test_run_id, report_id, report_version)
-        project_coro = self._fetch_project_name(project_id)
-        (context, sources), (report_context, report_sources), project_name = await asyncio.gather(
-            context_coro, report_coro, project_coro
-        )
-        if report_context:
-            context = f"{report_context}\n\n{context}" if context else report_context
-            sources = report_sources + sources
+        # 1. The question: saved now (a retry re-uses the unanswered one).
+        if retry:
+            question, question_id = await self._prepare_retry(session_id)
+        else:
+            question = (user_message or "").strip()
+            if not question:
+                raise ChatTurnError("empty_question", "Type a question first.", retryable=False)
+            question_id = (await self._save_message(session_id, "user", question, sources=None))["id"]
+        emit("start", {"user_message_id": str(question_id), "retry": retry})
+        emit("status", {"label": "Reading this project's latest runs…", "tool": None})
+        timings.first_status_ms = timings.since_start()
 
-        # 5. Build grounded system prompt
-        project_scope = (
-            project_name if project_name
-            else ("all projects" if not project_id else f"project …{project_id[-8:]}")
-        )
-        system_content = _SYSTEM_TEMPLATE.format(
-            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            project_scope=project_scope,
-            intent_label=_INTENT_LABELS.get(intent, "General"),
-        )
-        if summary_ctx:
-            system_content += f"\n\n**Earlier conversation summary:**\n{summary_ctx}"
-        system_content += f"\n\n## Retrieved Context\n{context}"
-
-        # 6. Build LangChain message list (history is already deduplicated — no current message)
-        messages: list = [SystemMessage(content=system_content)]
-        for msg in history:
-            cls = HumanMessage if msg["role"] == "user" else AIMessage
-            messages.append(cls(content=msg["content"]))
-        messages.append(HumanMessage(content=user_message))
-
-        # 7. Invoke LLM with timeout
-        try:
-            llm = await get_llm()
-            response = await asyncio.wait_for(
-                llm.ainvoke(messages),
-                timeout=settings.AI_TIMEOUT_SECONDS,
-            )
-            _raw_reply = response.content if hasattr(response, "content") else str(response)
-            reply = _raw_reply if isinstance(_raw_reply, str) else str(_raw_reply)
-        except asyncio.TimeoutError:
-            logger.warning("LLM invocation timed out", timeout=settings.AI_TIMEOUT_SECONDS)
-            reply = "The AI provider took too long to respond. Please try again with a simpler query."
-            sources = []
-        except Exception as exc:
-            logger.error("LLM invocation failed", error=str(exc))
-            reply = "I'm having trouble connecting to the AI provider. Please try again."
-            sources = []
-
-        # 8. Persist assistant reply
-        await self._save_message(session_id, "assistant", reply, sources=sources)
-        await self._touch_session(session_id)
-
-        # 9. Compress history if session is getting long (fire-and-forget, non-blocking)
-        asyncio.create_task(self._maybe_compress_history(session_id))
-
-        return {"reply": reply, "sources": sources, "tool_trace": [], "suggested_actions": []}
-
-    # ── Copilot tool loop (AI-6) ─────────────────────────────────────────────
-
-    def _tool_loop_enabled(self) -> bool:
-        """True when the resolved analysis engine is an LLM.
-
-        Mirrors the frontend's ``isLLMAvailable`` gate: in rules/ML mode the
-        loop never engages and chat behaves exactly as before AI-6.
-        """
-        try:
-            from app.services.analysis_router import get_analysis_mode
-            return get_analysis_mode() == "llm"
-        except Exception as exc:
-            logger.debug("tool_loop_mode_check_failed", error=str(exc))
-            return False
-
-    async def _run_tool_loop(
-        self,
-        user_message: str,
-        project_id: str,
-        history: list[dict],
-        summary_ctx: str,
-    ) -> Optional[dict]:
-        """Run the bounded ReAct copilot loop. Returns None on ANY failure so
-        the caller falls back to the single-shot path.
-
-        Bounds: ≤ CHAT_TOOL_LOOP_MAX_CALLS tool calls (executor
-        max_iterations), per-call + total token budgets on tool outputs
-        (server-side, see chat_read_tools), and a hard wall-clock cap of
-        AI_TIMEOUT_SECONDS (executor max_execution_time + outer wait_for).
-
-        Tenancy: the project scope is bound to a ContextVar before the loop
-        starts (exactly the AI-F3 pattern) — the LLM never scopes a query.
-        """
         from app.tools.chat_read_tools import (
-            CHAT_TOOL_LOOP_MAX_CALLS,
             build_suggested_actions,
             chat_tools,
             get_chat_tool_state,
@@ -339,201 +706,335 @@ class ConversationAgent:
             set_chat_tool_context,
         )
 
+        # A session bound to one immutable DecisionReport answers from that
+        # report: the latest-runs snapshot and the up-front lookups would put
+        # newer data beside it, which its contract forbids ("do not substitute
+        # an unbound or latest report"). The tools stay, and say what they read.
+        bound = bool(report_id)
+
         try:
-            import importlib
+            # CHAT_LLM_MODEL gives chat its own model (a stronger tool user)
+            # without changing the analysis pipeline's; empty = the global one.
+            llm = await get_llm(model=settings.CHAT_LLM_MODEL or None)
+        except Exception as exc:  # noqa: BLE001 -- configuration, said plainly
+            reason = str(exc).strip().split("\n")[0][:240] or type(exc).__name__
+            raise ChatTurnError(
+                "llm_unavailable",
+                f"No AI provider is available for chat: {reason}",
+                retryable=False,
+            ) from exc
+        total_tokens, call_tokens = _tool_budgets(llm)
 
-            from langchain_core.prompts import PromptTemplate
+        # The tools' tenancy + budget state is bound for the whole turn: the
+        # up-front lookups below go through the same tools.
+        token = set_chat_tool_context(
+            project_id=project_id,
+            total_token_budget=total_tokens,
+            per_call_token_cap=call_tokens,
+        )
+        try:
+            tool_state = get_chat_tool_state()
 
-            langchain_agents = importlib.import_module("langchain.agents")
-            create_react_agent = langchain_agents.create_react_agent
-            AgentExecutor = langchain_agents.AgentExecutor
-
-            llm = await get_llm()
-            tools = chat_tools()
-            project_name = await self._fetch_project_name(project_id)
-
-            history_lines = [
-                f"{m['role'].upper()}: {m['content'][:400]}" for m in history[-4:]
-            ]
-            if summary_ctx:
-                history_lines.insert(0, f"SUMMARY OF EARLIER CONVERSATION: {summary_ctx[:600]}")
-
-            prompt = PromptTemplate.from_template(
-                get_prompt_text("chat_copilot_react")
-            ).partial(
-                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                project_scope=project_name or f"project …{project_id[-8:]}",
-                history="\n".join(history_lines) or "(none)",
+            # 2. Context, gathered concurrently and without the model.
+            context_started = time.perf_counter()
+            (
+                (history, summary_ctx),
+                (snapshot, snapshot_refs),
+                project_name,
+                recall_ctx,
+                (report_ctx, report_sources),
+                lookups_ctx,
+            ) = await asyncio.gather(
+                self._load_history(session_id, before_id=str(question_id)),
+                self._no_context() if bound else self._fetch_run_context(project_id, limit=_SNAPSHOT_RUNS),
+                self._fetch_project_name(project_id),
+                self._fetch_fingerprint_recall(question, project_id),
+                self._fetch_bound_report_context(project_id, test_run_id, report_id, report_version),
+                self._no_text() if bound else self._prefetch_lookups(question, project_id, emit),
             )
-            agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
-            executor = AgentExecutor(
-                agent=agent,
-                tools=tools,
-                verbose=settings.is_development,
-                max_iterations=CHAT_TOOL_LOOP_MAX_CALLS,
-                handle_parsing_errors=True,
-                return_intermediate_steps=True,
-                max_execution_time=settings.AI_TIMEOUT_SECONDS,
-                early_stopping_method="force",
-            )
+            timings.context_ms = (time.perf_counter() - context_started) * 1000
 
-            token = set_chat_tool_context(project_id=project_id)
-            try:
-                result = await asyncio.wait_for(
-                    executor.ainvoke({"input": user_message}),
-                    timeout=settings.AI_TIMEOUT_SECONDS + _TOOL_LOOP_TIMEOUT_GRACE_SECONDS,
-                )
-                state = get_chat_tool_state()
-            finally:
-                reset_chat_tool_context(token)
-
-            raw = result.get("output", "")
-            reply = raw if isinstance(raw, str) else str(raw)
-            reply = reply.strip()
-            # Iteration/time-cap stop or empty output → not a usable answer.
-            if not reply or reply.startswith("Agent stopped"):
-                logger.info(
-                    "chat_tool_loop_no_answer",
-                    project_id=project_id,
-                    iterations=len(result.get("intermediate_steps", [])),
-                )
-                return None
-
-            tool_trace = list(state.trace) if state else []
-            suggested_actions = build_suggested_actions(state) if state else []
-            # Source chips mirror the tools consulted (deduplicated, ordered).
-            seen: list[str] = []
-            for entry in tool_trace:
-                if entry["tool"] not in seen:
-                    seen.append(entry["tool"])
-            sources = [{"type": "tool", "id": name} for name in seen][:8]
-
-            logger.info(
-                "chat_tool_loop_answered",
+            system = self._system_prompt(
+                project_name=project_name,
                 project_id=project_id,
-                tool_calls=len(tool_trace),
-                actions=len(suggested_actions),
+                snapshot=(
+                    "This conversation is bound to the decision report below; answer from it. "
+                    "Tools read the project's CURRENT data: say so whenever you use them."
+                    if bound else snapshot
+                ),
+                recall_ctx=recall_ctx,
+                report_ctx=report_ctx,
+                summary_ctx=summary_ctx,
             )
-            return {
-                "reply": reply,
-                "sources": sources,
-                "tool_trace": tool_trace,
-                "suggested_actions": suggested_actions,
-            }
-        except asyncio.TimeoutError:
-            logger.warning(
-                "chat_tool_loop_timeout", timeout=settings.AI_TIMEOUT_SECONDS,
-            )
-            return None
-        except Exception as exc:
-            logger.warning("chat_tool_loop_failed", error=str(exc))
-            return None
-
-    # ── Intent-aware context retrieval ───────────────────────────────────────
-
-    async def _retrieve_context(
-        self, query: str, project_id: Optional[str], intent: QueryIntent
-    ) -> tuple[str, list[dict]]:
-        """
-        Fetch context targeted to the query intent.
-        Each intent path fetches the most relevant data at the right depth.
-        """
-        parts: list[str] = []
-        sources: list[dict] = []
-
-        if intent == QueryIntent.TREND:
-            # More runs, tabular format for trend readability
-            run_ctx, run_src = await self._fetch_run_context(project_id, limit=15)
-            if run_ctx:
-                parts.append(f"### Test Run History (last 15 builds)\n{run_ctx}")
-                sources.extend(run_src)
-
-        elif intent == QueryIntent.FAILURE:
-            # Fewer runs + deep failure analysis, lower confidence threshold to catch more
-            run_ctx, run_src = await self._fetch_run_context(project_id, limit=3)
-            analysis_ctx, analysis_src = await self._fetch_analysis_context(
-                project_id, limit=20, min_confidence=20
-            )
-            if run_ctx:
-                parts.append(f"### Recent Test Runs\n{run_ctx}")
-                sources.extend(run_src)
-            if analysis_ctx:
-                parts.append(f"### Failure Root-Cause Analyses\n{analysis_ctx}")
-                sources.extend(analysis_src)
-            # AI-F3: when the question references a specific test, add that
-            # test's fingerprint history (human corrections, prior analyses,
-            # quarantine one-liner) via the shared memory-recall service.
-            recall_ctx = await self._fetch_fingerprint_recall(query, project_id)
-            if recall_ctx:
-                parts.append(
-                    f"### Prior History for the Referenced Test (memory recall)\n{recall_ctx}"
+            history = _fit_history(system, history, _prompt_budget_tokens(llm))
+            # The up-front lookups ride WITH the question, not in the system
+            # prompt: measured 2026-10-09, mistral-nemo four turns into a
+            # conversation answered "is it ready to release?" by repeating its
+            # previous answer, with the release-gate verdict sitting unread at
+            # the far end of the system prompt.
+            asked = question
+            if lookups_ctx:
+                asked = (
+                    f"{question}\n\n---\nLooked up for this question (read this first; it is "
+                    f"current data):\n{lookups_ctx}"
                 )
+            messages: list[BaseMessage] = [
+                SystemMessage(content=system), *history, HumanMessage(content=asked),
+            ]
 
-        elif intent == QueryIntent.FLAKINESS:
-            # Flakiness-specific data first, supplemented by recent runs
-            flaky_ctx, flaky_src = await self._fetch_flaky_context(project_id)
-            run_ctx, run_src = await self._fetch_run_context(project_id, limit=5)
-            if flaky_ctx:
-                parts.append(f"### Flaky Test Analysis\n{flaky_ctx}")
-                sources.extend(flaky_src)
-            if run_ctx:
-                parts.append(f"### Recent Test Runs\n{run_ctx}")
-
-        elif intent == QueryIntent.COMPARISON:
-            # More runs for meaningful comparison
-            run_ctx, run_src = await self._fetch_run_context(project_id, limit=10)
-            if run_ctx:
-                parts.append(f"### Test Run History (for comparison)\n{run_ctx}")
-                sources.extend(run_src)
-
-        elif intent == QueryIntent.PERFORMANCE:
-            # Performance-specific anomalies first
-            perf_ctx, perf_src = await self._fetch_perf_context(project_id)
-            run_ctx, run_src  = await self._fetch_run_context(project_id, limit=5)
-            if perf_ctx:
-                parts.append(f"### Performance Anomalies\n{perf_ctx}")
-                sources.extend(perf_src)
-            if run_ctx:
-                parts.append(f"### Recent Test Runs\n{run_ctx}")
-
-        elif intent == QueryIntent.TRIAGE:
-            # Open defects + high-confidence analyses
-            triage_ctx, triage_src = await self._fetch_triage_context(project_id)
-            analysis_ctx, analysis_src = await self._fetch_analysis_context(
-                project_id, limit=10, min_confidence=70
+            # 3. The model, with the project's read tools. When nothing was
+            # looked up for it, the first round must call a tool: asked "is
+            # the first one you mentioned flaky?", the model answered from its
+            # previous message and offered "Shall I look into its history?"
+            # instead of looking.
+            stats = await self._converse(
+                llm, chat_tools(), messages, emit, state,
+                require_tool=not lookups_ctx and _wants_data(question),
             )
-            if triage_ctx:
-                parts.append(f"### Open Defects / Jira Tickets\n{triage_ctx}")
-                sources.extend(triage_src)
-            if analysis_ctx:
-                parts.append(f"### High-Confidence AI Analyses\n{analysis_ctx}")
-                sources.extend(analysis_src)
+        finally:
+            reset_chat_tool_context(token)
 
-        else:
-            # GENERAL / SUMMARY: balanced fetch, all sources concurrently
-            (run_ctx, run_src), (analysis_ctx, analysis_src), summary_str = await asyncio.gather(
-                self._fetch_run_context(project_id, limit=5),
-                self._fetch_analysis_context(project_id, limit=5, min_confidence=50),
-                self._fetch_run_summaries(project_id),
+        reply = "".join(state.shown).strip()
+        if not reply:
+            raise ChatTurnError(
+                "empty_answer",
+                "The AI provider returned an empty answer. Try again or rephrase the question.",
+                retryable=True,
             )
-            if run_ctx:
-                parts.append(f"### Recent Test Runs\n{run_ctx}")
-                sources.extend(run_src)
-            if analysis_ctx:
-                parts.append(f"### AI Analysis Findings\n{analysis_ctx}")
-                sources.extend(analysis_src)
-            if summary_str:
-                parts.append(f"### Latest Run Summary\n{summary_str}")
 
-        # Semantic search supplements any intent (optional, non-blocking)
-        semantic_ctx = await self._semantic_search(query, project_id)
-        if semantic_ctx:
-            parts.append(f"### Semantically Similar Historical Failures\n{semantic_ctx}")
+        tool_trace = list(tool_state.trace) if tool_state else []
+        suggested_actions = build_suggested_actions(tool_state) if tool_state else []
+        candidates = list(snapshot_refs) + (list(tool_state.refs.values()) if tool_state else [])
+        sources = report_sources + _answer_sources(reply, candidates)
+        meta = {
+            "type": "meta",
+            "status": "complete",
+            "provider": getattr(llm, "provider_name", None),
+            "model": getattr(llm, "model_label", None),
+            "first_status_ms": timings.first_status_ms,
+            "first_token_ms": timings.first_token_ms,
+            "total_ms": timings.since_start(),
+            "llm_ms": int(timings.llm_ms),
+            "tool_ms": int(timings.tool_ms),
+            "context_ms": int(timings.context_ms),
+            "rounds": stats["rounds"],
+            "tool_calls": stats["tool_calls"],
+            "tools": stats["tools"],
+        }
+        return {
+            "reply": reply,
+            "sources": sources,
+            "tool_trace": tool_trace,
+            "suggested_actions": suggested_actions,
+            "meta": meta,
+            "project_id": project_id,
+        }
 
-        if not parts:
-            return "No relevant test data found for this project yet.", []
+    async def _finish(self, session_id: str, outcome: dict) -> dict:
+        """Save the answer with what it was built from; the ``done`` payload."""
+        persisted: list[dict] = list(outcome["sources"])
+        if outcome["tool_trace"]:
+            persisted.append({"type": "tool_trace", "trace": outcome["tool_trace"]})
+        if outcome["suggested_actions"]:
+            persisted.append({"type": "suggested_actions", "actions": outcome["suggested_actions"]})
+        persisted.append(outcome["meta"])
+        message = await self._save_message(session_id, "assistant", outcome["reply"], sources=persisted)
+        await self._touch_session(session_id)
+        self._spawn(self._maybe_compress_history(session_id))
+        meta = outcome["meta"]
+        logger.info(
+            "chat_turn_answered",
+            session_id=str(session_id),
+            project_id=str(outcome["project_id"]),
+            rounds=meta["rounds"],
+            tool_calls=meta["tool_calls"],
+            first_token_ms=meta["first_token_ms"],
+            total_ms=meta["total_ms"],
+            llm_ms=meta["llm_ms"],
+            tool_ms=meta["tool_ms"],
+        )
+        return {
+            "message": message,
+            "sources": outcome["sources"],
+            "tool_trace": outcome["tool_trace"],
+            "suggested_actions": outcome["suggested_actions"],
+            "meta": meta,
+        }
 
-        return "\n\n".join(parts), sources[:8]
+    @staticmethod
+    async def _no_context() -> tuple[str, list[dict]]:
+        return "", []
+
+    @staticmethod
+    async def _no_text() -> str:
+        return ""
+
+    def _system_prompt(
+        self,
+        *,
+        project_name: Optional[str],
+        project_id: str,
+        snapshot: str,
+        recall_ctx: str,
+        report_ctx: str,
+        summary_ctx: str,
+    ) -> str:
+        system = get_prompt_text("chat_system").format(
+            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            project_scope=project_name or f"project …{project_id[-8:]}",
+            snapshot=snapshot or "No test runs are recorded for this project yet.",
+        )
+        if recall_ctx:
+            system += (
+                "\n\n## What the platform already knows about the test named in the question\n"
+                + recall_ctx
+            )
+        if report_ctx:
+            system += f"\n\n{report_ctx}"
+        if summary_ctx:
+            system += f"\n\n## Earlier in this conversation (summary)\n{summary_ctx}"
+        return system
+
+    async def _converse(
+        self,
+        llm: Any,
+        tools: list,
+        messages: list[BaseMessage],
+        emit: Emit,
+        state: _TurnState,
+        *,
+        require_tool: bool = False,
+    ) -> dict:
+        """Stream the model, run the tools it asks for, repeat; return stats.
+
+        ``require_tool`` makes the first round call a tool (``tool_choice=
+        "required"``; OpenAI-wire providers only).
+
+        At most ``CHAT_MAX_TOOL_ROUNDS`` rounds may call tools. The round after
+        that must answer: OpenAI-wire providers keep the tools declared (one may
+        refuse tool messages without them) with ``tool_choice="none"``; others
+        (Ollama ignores ``tool_choice``) get the unbound model.
+        """
+        provider = str(getattr(llm, "provider_name", "") or "")
+        model_key = (provider, str(getattr(llm, "model_label", "") or ""))
+        by_name = {t.name: t for t in tools}
+        use_tools = bool(tools) and model_key not in _TOOLS_OFF
+        stats = {"rounds": 0, "tool_calls": 0, "tools": use_tools}
+        max_rounds = max(0, int(settings.CHAT_MAX_TOOL_ROUNDS))
+        while True:
+            last = stats["rounds"] >= max_rounds
+            if not use_tools:
+                model = llm
+            elif last:
+                model = llm.bind_tools(tools, tool_choice="none") if provider in _TOOL_CHOICE_PROVIDERS else llm
+            elif require_tool and stats["rounds"] == 0 and provider in _TOOL_CHOICE_PROVIDERS:
+                model = llm.bind_tools(tools, tool_choice="required")
+            else:
+                model = llm.bind_tools(tools)
+            stats["rounds"] += 1
+            try:
+                aggregate = await self._stream_once(
+                    model, messages, emit, state,
+                    # Ollama does not stream a call that declares tools: its
+                    # answer arrives whole, after the full generation, so
+                    # only the turn deadline bounds it.
+                    idle_timeout=None if (provider == "ollama" and use_tools) else
+                    float(settings.CHAT_FIRST_TOKEN_TIMEOUT_SECONDS),
+                )
+            except Exception as exc:
+                if not use_tools or not tools_unsupported_error(exc):
+                    raise
+                # The model has no tool use. Remember it (each turn would
+                # otherwise pay a refused call first) and answer from the
+                # snapshot and the up-front lookups.
+                logger.info("chat_tools_unsupported_by_provider", provider=provider, model=model_key[1])
+                _TOOLS_OFF.add(model_key)
+                use_tools = False
+                stats["tools"] = False
+                continue
+            if not use_tools or last or aggregate is None:
+                return stats
+            calls = _tool_calls_of(aggregate)
+            if not calls:
+                return stats
+            calls = calls[:_MAX_CALLS_PER_ROUND]
+            messages.append(AIMessage(
+                content=_text_of(getattr(aggregate, "content", "")),
+                tool_calls=[{k: c[k] for k in ("name", "args", "id")} | {"type": "tool_call"} for c in calls],
+            ))
+            stats["tool_calls"] += len(calls)
+            tool_started = time.perf_counter()
+            results = await asyncio.gather(*(self._call_tool(by_name, call, emit) for call in calls))
+            state.timings.tool_ms += (time.perf_counter() - tool_started) * 1000
+            for call, result in zip(calls, results):
+                messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
+
+    async def _stream_once(
+        self,
+        model: Any,
+        messages: list[BaseMessage],
+        emit: Emit,
+        state: _TurnState,
+        *,
+        idle_timeout: Optional[float],
+    ) -> Any:
+        """One provider call, streamed. Text goes to the reader as it arrives.
+
+        ``idle_timeout`` bounds the wait for the first chunk and every gap
+        after it (inside ``BudgetedLLM.astream``, so a stall counts against the
+        provider's circuit breaker); a provider that stops sending is reported,
+        not waited out for the turn's whole budget.
+        """
+        timings = state.timings
+        aggregate = None
+        separator_due = bool(state.shown)
+        started = time.perf_counter()
+        stream_kwargs: dict[str, Any] = {}
+        if isinstance(model, BudgetedLLM):
+            stream_kwargs = {"idle_timeout": idle_timeout, "slot_timeout": _SLOT_TIMEOUT_SECONDS}
+        try:
+            async with contextlib.aclosing(model.astream(messages, **stream_kwargs)) as stream:
+                async for chunk in stream:
+                    aggregate = chunk if aggregate is None else aggregate + chunk
+                    text = _text_of(getattr(chunk, "content", ""))
+                    if not text:
+                        continue
+                    if separator_due:
+                        state.shown.append("\n\n")
+                        emit("delta", {"text": "\n\n"})
+                        separator_due = False
+                    if timings.first_token_ms is None:
+                        timings.first_token_ms = timings.since_start()
+                    state.shown.append(text)
+                    emit("delta", {"text": text})
+        finally:
+            timings.llm_ms += (time.perf_counter() - started) * 1000
+        return aggregate
+
+    async def _call_tool(self, by_name: dict, call: dict, emit: Emit) -> str:
+        from app.tools.chat_read_tools import tool_status_label
+
+        name = str(call.get("name") or "")
+        if call.get("error"):
+            # Arguments the provider could not parse: tell the model, so it
+            # can call again, instead of dropping the call (and the answer).
+            return f"{name or 'The tool call'} was not run: its arguments were not valid JSON ({call['error'][:160]})."
+        args = call.get("args") or {}
+        tool = by_name.get(name)
+        if tool is None:
+            return f"There is no tool named {name!r}. Available tools: {', '.join(sorted(by_name))}."
+        emit("status", {"label": tool_status_label(name, args), "tool": name})
+        try:
+            result = await tool.ainvoke(args)
+        except Exception as exc:  # noqa: BLE001 -- a bad argument is the model's to fix
+            logger.info("chat_tool_call_rejected", tool=name, error=str(exc)[:200])
+            return f"{name} could not run with those arguments: {str(exc)[:200]}"
+        return str(result)
+
+    def _spawn(self, coro: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(coro)
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     # ── Focused data fetchers ─────────────────────────────────────────────────
 
@@ -587,10 +1088,12 @@ class ConversationAgent:
                 "### Bound Decision Report\nThe selected DecisionReport could not be loaded. Do not substitute an unbound or latest report.",
                 [{**source_base, "status": "unavailable"}],
             )
+
     async def _fetch_run_context(
         self, project_id: Optional[str], limit: int = 5
     ) -> tuple[str, list[dict]]:
-        """Fetch test run history in a table-friendly format.
+        """The grounding snapshot: recent runs in a table, and the latest run's
+        failing tests by name.
 
         P2-8: Results are cached in-memory with a 60-second TTL to avoid
         redundant DB queries within the same chat session.
@@ -652,19 +1155,23 @@ class ConversationAgent:
                 for r in rows:
                     ts = r.start_time.strftime("%Y-%m-%d %H:%M") if r.start_time else "?"
                     executed = max((r.total_tests or 0) - (r.skipped_tests or 0), 0)
+                    # A run still in progress has no pass rate. `:.1f` on None
+                    # raised, the except below returned "", and the whole
+                    # snapshot vanished whenever any listed run was running.
+                    rate = f"**{r.pass_rate:.1f}%**" if r.pass_rate is not None else "n/a"
                     lines.append(
                         f"| {r.build_number} | {r.branch or '?'} | {r.status} "
                         f"| {r.total_tests} | {executed} "
                         f"| {r.passed_tests} | {r.failed_tests} "
                         f"| {r.skipped_tests} | {r.broken_tests or 0} "
-                        f"| **{r.pass_rate:.1f}%** | {ts} |"
+                        f"| {rate} | {ts} |"
                     )
                     src.append({"type": "test_run", "id": str(r.id), "build": r.build_number})
 
                 result_text = (
                     header + "\n" + "\n".join(lines)
                     + "\n\nPass rate is passed / executed; skipped tests are "
-                      "excluded from the denominator."
+                      "excluded from the denominator. Newest run first."
                 )
 
                 # FR-002: which tests failed, in which suite, and why.
@@ -694,245 +1201,25 @@ class ConversationAgent:
                         "list above; if something is not listed, say it was not "
                         "recorded."
                     )
-                    src.append({
-                        "type": "failure_detail",
-                        "id": str(rows[0].id),
-                        "build": rows[0].build_number,
-                    })
+                    for failure in detail["failures"]:
+                        if failure.get("test_case_id") and failure.get("test_name"):
+                            src.append({
+                                "type": "test_case",
+                                "id": failure["test_case_id"],
+                                "run_id": str(rows[0].id),
+                                "name": failure["test_name"],
+                            })
+                else:
+                    result_text += (
+                        f"\n\nThe most recent run ({rows[0].build_number}) recorded "
+                        "no failed or broken tests."
+                    )
 
                 _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
                 return result_text, src
         except Exception as exc:
             logger.debug("run_context_fetch_error", error=str(exc))
             return "", []
-
-    async def _fetch_analysis_context(
-        self,
-        project_id: Optional[str],
-        limit: int = 5,
-        min_confidence: int = 50,
-    ) -> tuple[str, list[dict]]:
-        """Fetch AI analysis results at configurable depth."""
-        try:
-            async with AsyncSessionLocal() as db:
-                q = (
-                    select(
-                        AIAnalysis.root_cause_summary,
-                        AIAnalysis.failure_category,
-                        AIAnalysis.confidence_score,
-                        AIAnalysis.recommended_actions,
-                        AIAnalysis.is_flaky,
-                        AIAnalysis.test_case_id,
-                        TestCase.test_name,
-                        TestCase.suite_name,
-                    )
-                    .join(TestCase, TestCase.id == AIAnalysis.test_case_id)
-                    .where(AIAnalysis.confidence_score >= min_confidence)
-                    .order_by(AIAnalysis.confidence_score.desc(), AIAnalysis.created_at.desc())
-                    .limit(limit)
-                )
-                if project_id:
-                    q = q.join(TestRun, TestRun.id == TestCase.test_run_id).where(
-                        TestRun.project_id == project_id
-                    )
-
-                rows = (await db.execute(q)).all()
-                if not rows:
-                    return "", []
-
-                lines = []
-                src = []
-                for r in rows:
-                    actions = "; ".join((r.recommended_actions or [])[:2])
-                    flaky_tag = " *(flaky)*" if r.is_flaky else ""
-                    lines.append(
-                        f"- **{r.test_name}**{flaky_tag} "
-                        f"[{r.failure_category}, {r.confidence_score}% confidence]\n"
-                        f"  Root cause: {r.root_cause_summary or 'No summary'}\n"
-                        f"  Actions: {actions or 'None suggested'}"
-                    )
-                    src.append({"type": "ai_analysis", "test_case_id": str(r.test_case_id)})
-
-                return "\n".join(lines), src
-        except Exception as exc:
-            logger.debug("analysis_context_fetch_error", error=str(exc))
-            return "", []
-
-    async def _fetch_flaky_context(
-        self, project_id: Optional[str]
-    ) -> tuple[str, list[dict]]:
-        """Fetch tests identified as flaky by the AI analysis pipeline."""
-        try:
-            async with AsyncSessionLocal() as db:
-                q = (
-                    select(TestCase.test_name, TestCase.suite_name, AIAnalysis.root_cause_summary)
-                    .join(AIAnalysis, AIAnalysis.test_case_id == TestCase.id)
-                    .where(AIAnalysis.is_flaky.is_(True))
-                    .order_by(AIAnalysis.created_at.desc())
-                    .limit(20)
-                )
-                if project_id:
-                    q = q.join(TestRun, TestRun.id == TestCase.test_run_id).where(
-                        TestRun.project_id == project_id
-                    )
-                rows = (await db.execute(q)).all()
-
-                if not rows:
-                    return "No flaky tests identified in recent AI analyses.", []
-
-                lines = [
-                    f"- **{r.test_name}** (suite: {r.suite_name or '?'}): "
-                    f"{r.root_cause_summary or 'No root cause captured'}"
-                    for r in rows
-                ]
-                src = [{"type": "flaky_test", "test_name": r.test_name} for r in rows]
-                return "\n".join(lines), src
-        except Exception as exc:
-            logger.debug("flaky_context_fetch_error", error=str(exc))
-            return "", []
-
-    async def _fetch_perf_context(
-        self, project_id: Optional[str]
-    ) -> tuple[str, list[dict]]:
-        """Fetch tests with duration spikes compared to their 30-day average."""
-        try:
-            async with AsyncSessionLocal() as db:
-                from sqlalchemy.orm import aliased
-
-                current_run = aliased(TestRun)
-                history_run = aliased(TestRun)
-                q = (
-                    select(
-                        TestCase.test_name,
-                        TestCase.suite_name,
-                        TestCase.duration_ms,
-                        func.avg(TestCaseHistory.duration_ms).label("avg_duration_ms"),
-                    )
-                    .join(TestCaseHistory, TestCaseHistory.test_fingerprint == TestCase.test_fingerprint)
-                    .join(current_run, current_run.id == TestCase.test_run_id)
-                    .join(history_run, history_run.id == TestCaseHistory.test_run_id)
-                    .where(TestCase.duration_ms.isnot(None))
-                    .group_by(
-                        TestCase.id, TestCase.test_name,
-                        TestCase.suite_name, TestCase.duration_ms,
-                    )
-                    .having(TestCase.duration_ms > func.avg(TestCaseHistory.duration_ms) * 1.5)
-                    .order_by(
-                        (TestCase.duration_ms / func.avg(TestCaseHistory.duration_ms)).desc()
-                    )
-                    .limit(10)
-                )
-                if project_id:
-                    q = q.where(
-                        current_run.project_id == project_id,
-                        history_run.project_id == project_id,
-                    )
-
-                rows = (await db.execute(q)).all()
-                if not rows:
-                    return "No significant performance anomalies found.", []
-
-                lines = []
-                for r in rows:
-                    if r.avg_duration_ms and r.avg_duration_ms > 0:
-                        ratio = r.duration_ms / r.avg_duration_ms
-                        lines.append(
-                            f"- **{r.test_name}**: {r.duration_ms}ms "
-                            f"vs avg {r.avg_duration_ms:.0f}ms ({ratio:.1f}× slower)"
-                        )
-                return "\n".join(lines) if lines else "No anomalies above 1.5× threshold.", []
-        except Exception as exc:
-            logger.debug("perf_context_fetch_error", error=str(exc))
-            return "", []
-
-    async def _fetch_triage_context(
-        self, project_id: Optional[str]
-    ) -> tuple[str, list[dict]]:
-        """Fetch open defects with Jira ticket references."""
-        try:
-            async with AsyncSessionLocal() as db:
-                q = (
-                    select(
-                        Defect.id, Defect.resolution_status,
-                        Defect.jira_ticket_id, Defect.jira_ticket_url,
-                        Defect.failure_category, Defect.ai_confidence_score,
-                        TestCase.test_name,
-                    )
-                    .join(TestCase, TestCase.id == Defect.test_case_id)
-                    .where(Defect.resolution_status == "OPEN")
-                    .order_by(Defect.created_at.desc())
-                    .limit(15)
-                )
-                if project_id:
-                    q = q.where(Defect.project_id == project_id)
-
-                rows = (await db.execute(q)).all()
-                if not rows:
-                    return "No open defects currently tracked.", []
-
-                lines = []
-                src = []
-                for r in rows:
-                    ticket = f"[{r.jira_ticket_id}]" if r.jira_ticket_id else "(no Jira ticket)"
-                    conf = f" — {r.ai_confidence_score}% confidence" if r.ai_confidence_score else ""
-                    lines.append(
-                        f"- **{r.test_name}** {ticket} "
-                        f"| {r.failure_category or '?'}{conf}"
-                    )
-                    src.append({"type": "defect", "id": str(r.id)})
-                return "\n".join(lines), src
-        except Exception as exc:
-            logger.debug("triage_context_fetch_error", error=str(exc))
-            return "", []
-
-    async def _fetch_run_summaries(self, project_id: Optional[str]) -> str:
-        """Fetch most recent AI-generated run summary from MongoDB."""
-        try:
-            db = get_mongo_db()
-            query: dict = {}
-            if project_id:
-                query["project_id"] = project_id
-            doc = await db[Collections.RUN_SUMMARIES].find_one(
-                query, sort=[("generated_at", -1)]
-            )
-            if doc:
-                return str(doc.get("executive_summary", ""))
-        except Exception as exc:
-            logger.debug("run_summary_fetch_error", error=str(exc))
-        return ""
-
-    async def _semantic_search(self, query: str, project_id: Optional[str]) -> str:
-        """ChromaDB semantic similarity search — wrapped in asyncio.to_thread to avoid blocking."""
-        from app.services.storage_config_service import get_effective_storage_config
-
-        chroma_config = await get_effective_storage_config()
-
-        def _sync_search() -> str:
-            try:
-                from app.db.chroma import get_chroma_client
-                from app.services.llm_factory import get_embedding_model
-
-                client = get_chroma_client(
-                    host=str(chroma_config["chroma_host"]),
-                    port=int(chroma_config["chroma_port"]),
-                )
-                collection = client.get_or_create_collection(
-                    str(chroma_config["chroma_collection"])
-                )
-                if collection.count() == 0:
-                    return ""
-                embedder = get_embedding_model()
-                vector = embedder.embed_query(query)
-                query_kwargs = {"query_embeddings": [vector], "n_results": 3}
-                if project_id:
-                    query_kwargs["where"] = {"project_id": project_id}
-                results = collection.query(**query_kwargs)
-                docs = (results.get("documents") or [[]])[0]
-                return "\n".join(f"- {d[:300]}" for d in docs) if docs else ""
-            except Exception:
-                return ""
-
-        return await asyncio.to_thread(_sync_search)
 
     async def _fetch_fingerprint_recall(
         self, query: str, project_id: Optional[str]
@@ -997,6 +1284,79 @@ class ConversationAgent:
             logger.debug("fingerprint_recall_fetch_error", error=str(exc))
             return ""
 
+    async def _named_tests(self, question: str, project_id: str) -> list[str]:
+        """Test names, as written in the question, that exist in this project."""
+        candidates = {
+            token.strip(".,:;!?'\"`()[]") for token in _TEST_NAME_TOKEN.findall(question or "")
+        }
+        candidates = {c for c in candidates if len(c) >= 6 and _looks_like_a_test_name(c)}
+        if not candidates:
+            return []
+        try:
+            async with AsyncSessionLocal() as db:
+                rows = (
+                    await db.execute(
+                        select(TestCase.test_name)
+                        .join(TestRun, TestRun.id == TestCase.test_run_id)
+                        .where(
+                            TestRun.project_id == project_id,
+                            TestCase.test_name.in_(sorted(candidates)[:20]),
+                        )
+                        .distinct()
+                        .limit(3)
+                    )
+                ).scalars().all()
+            return [str(name) for name in rows]
+        except Exception as exc:  # noqa: BLE001 -- the model can still call the tool
+            logger.debug("chat_named_test_lookup_failed", error=str(exc)[:200])
+            return []
+
+    async def _prefetch_lookups(self, question: str, project_id: str, emit: Emit) -> str:
+        """Look up, before the model runs, the facts it was measured inventing.
+
+        Measured against mistral-nemo on the homelab, 2026-10-09:
+          * "Has test_refund_flow failed before, and is it quarantined?" — no
+            tool call; a table of builds, statuses and dates that do not exist,
+            and a quarantine state it never read.
+          * "Is the latest build ready to release?" — no tool call; "not ready,
+            it failed 10 tests", with the release gate never consulted.
+        So a question that names a test gets that test's history (and its
+        quarantine state when it asks), and a release question gets the
+        release-gate verdict, whatever the model would have done. Each goes
+        through the tool, so it is traced and budgeted like any other call.
+        """
+        from app.tools.chat_read_tools import (
+            check_quarantine_status,
+            get_release_gate_verdict,
+            get_test_history,
+            list_flaky_tests,
+            tool_status_label,
+        )
+
+        lookups: list[tuple[str, Any, dict]] = []
+        named = (await self._named_tests(question, project_id))[:2]
+        for name in named:
+            lookups.append((f"History of {name}", get_test_history, {"test_name": name}))
+            if _ASKS_ABOUT_QUARANTINE.search(question):
+                lookups.append((f"Quarantine status of {name}", check_quarantine_status, {"test_name": name}))
+        if not named and _ASKS_ABOUT_FLAKY.search(question) and not _REFERS_BACK.search(question):
+            # "Which tests are flaky?" Measured: the model called the list AND,
+            # in the same breath, quarantine checks for two tests it guessed
+            # from the previous answer -- then reported its guesses as the
+            # flaky tests. The list (with quarantine state) comes first.
+            lookups.append(("Flaky tests", list_flaky_tests, {"query": ""}))
+        if _ASKS_ABOUT_RELEASE.search(question):
+            lookups.append(("Release-gate verdict", get_release_gate_verdict, {"query": ""}))
+        if not lookups:
+            return ""
+
+        async def run(title: str, tool: Any, args: dict) -> str:
+            emit("status", {"label": tool_status_label(tool.name, args), "tool": tool.name})
+            return f"### {title}\n{await tool.ainvoke(args)}"
+
+        parts = await asyncio.gather(*(run(*lookup) for lookup in lookups))
+        return "\n\n".join(parts)
+
     async def _fetch_project_name(self, project_id: Optional[str]) -> Optional[str]:
         """Fetch project name for system prompt grounding."""
         if not project_id:
@@ -1014,41 +1374,109 @@ class ConversationAgent:
 
     # ── Conversation memory management ───────────────────────────────────────
 
-    async def _load_history(self, session_id: str) -> tuple[list[dict], str]:
-        """
-        Return (recent_messages, summary_text).
+    async def _load_history(
+        self, session_id: str, before_id: Optional[str] = None,
+    ) -> tuple[list[BaseMessage], str]:
+        """The conversation so far, as model messages, plus the compression summary.
 
-        - recent_messages: last HISTORY_TAIL user/assistant messages (verbatim)
-        - summary_text: LLM-generated summary of older messages, empty if not yet compressed
+        Only answered questions are replayed: a question whose turn failed (or
+        was stopped before any text) has no answer, and two user messages in a
+        row are refused by some providers. ``before_id`` is the question being
+        answered now; it and anything after it are excluded.
+        """
+        limit = max(0, int(settings.CHAT_HISTORY_MESSAGES))
+        keep = limit - (limit % 2)
+        async with AsyncSessionLocal() as db:
+            rows = (
+                await db.execute(
+                    select(
+                        ChatMessage.id, ChatMessage.role, ChatMessage.content,
+                        ChatMessage.created_at,
+                    )
+                    .where(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.role.in_(["user", "assistant"]),
+                    )
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(keep + 6)
+                )
+            ).all()
+            summary_row = (
+                await db.execute(
+                    select(ChatMessage.content)
+                    .where(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.role == "summary",
+                    )
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(1)
+                )
+            ).first()
+        summary_text = summary_row[0] if summary_row else ""
+
+        chronological = list(reversed(rows))
+        if before_id is not None:
+            ids = [str(r.id) for r in chronological]
+            if before_id in ids:
+                chronological = chronological[: ids.index(before_id)]
+        pairs: list[BaseMessage] = []
+        i = 0
+        while i < len(chronological):
+            current = chronological[i]
+            following = chronological[i + 1] if i + 1 < len(chronological) else None
+            if current.role == "user" and following is not None and following.role == "assistant":
+                pairs.append(HumanMessage(content=current.content[:_HISTORY_QUESTION_CHARS]))
+                pairs.append(AIMessage(content=following.content[:_HISTORY_ANSWER_CHARS]))
+                i += 2
+            else:
+                i += 1
+        return (pairs[-keep:] if keep else []), summary_text
+
+    async def _prepare_retry(self, session_id: str) -> tuple[str, Any]:
+        """The question to answer again, and its id.
+
+        The latest question must be unanswered, or answered only by a stopped
+        partial answer — which the retry replaces (it is deleted here).
         """
         async with AsyncSessionLocal() as db:
-            # Recent messages (tail)
-            result = await db.execute(
-                select(ChatMessage.role, ChatMessage.content)
-                .where(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.role.in_(["user", "assistant"]),
+            rows = (
+                await db.execute(
+                    select(ChatMessage)
+                    .where(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.role.in_(["user", "assistant"]),
+                    )
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(10)
                 )
-                .order_by(ChatMessage.created_at.desc())
-                .limit(_HISTORY_TAIL)
-            )
-            rows = result.all()
-            recent = [{"role": r.role, "content": r.content} for r in reversed(rows)]
-
-            # Compressed summary (if exists)
-            summary_result = await db.execute(
-                select(ChatMessage.content)
-                .where(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.role == "summary",
+            ).scalars().all()
+            question = next((r for r in rows if r.role == "user"), None)
+            if question is None:
+                raise ChatTurnError("nothing_to_retry", "There is no question to retry.", retryable=False)
+            answers = [r for r in rows if r.role == "assistant" and r.created_at > question.created_at]
+            if any(not _is_stopped(r.sources) for r in answers):
+                raise ChatTurnError(
+                    "nothing_to_retry", "The last question already has an answer.", retryable=False,
                 )
-                .order_by(ChatMessage.created_at.desc())
-                .limit(1)
-            )
-            summary_row = summary_result.first()
-            summary_text = summary_row[0] if summary_row else ""
+            for stale in answers:
+                await db.delete(stale)
+            await db.commit()
+            return question.content, question.id
 
-        return recent, summary_text
+    async def _save_stopped(self, session_id: str, state: _TurnState) -> None:
+        """Keep a stopped answer's text: the reader saw it."""
+        text = "".join(state.shown).strip()
+        if not text:
+            return
+        try:
+            await self._save_message(session_id, "assistant", text, sources=[{
+                "type": "meta",
+                "status": "stopped",
+                "first_token_ms": state.timings.first_token_ms,
+                "total_ms": state.timings.since_start(),
+            }])
+        except Exception as exc:  # noqa: BLE001 -- the reader is gone; log only
+            logger.warning("chat_stopped_answer_not_saved", session_id=str(session_id), error=str(exc)[:200])
 
     async def _maybe_compress_history(self, session_id: str) -> None:
         """
@@ -1165,7 +1593,8 @@ class ConversationAgent:
         role: str,
         content: str,
         sources: Optional[list],
-    ) -> None:
+    ) -> dict:
+        """Persist one message and return it in ``ChatMessageResponse`` shape."""
         # Enforce max content length to prevent unbounded storage growth
         truncated = False
         safe_content = content or ""
@@ -1175,19 +1604,30 @@ class ConversationAgent:
 
         # Redact secrets from stored content
         safe_content = redact_text(safe_content)
+        message_id = uuid.uuid4()
+        created_at = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as db:
             db.add(ChatMessage(
+                id=message_id,
                 session_id=session_id,
                 role=role,
                 content=safe_content,
                 sources=sources,
-                created_at=datetime.now(timezone.utc),
+                created_at=created_at,
             ))
             await db.commit()
 
         if truncated:
             logger.info("Message truncated", session_id=session_id, role=role, original_length=len(content))
+        return {
+            "id": str(message_id),
+            "session_id": str(session_id),
+            "role": role,
+            "content": safe_content,
+            "sources": sources,
+            "created_at": _iso(created_at),
+        }
 
     async def _touch_session(self, session_id: str) -> None:
         async with AsyncSessionLocal() as db:

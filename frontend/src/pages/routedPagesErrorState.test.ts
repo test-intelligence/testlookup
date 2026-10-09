@@ -65,6 +65,8 @@ type ErrorState =
 
 const REVIEWED: Record<string, ErrorState> = {
   OverviewPage: 'data-unavailable',
+  // Ask AI (rebuilt 2026-10-09): a conversation that cannot be loaded says so.
+  ChatPage: 'data-unavailable',
   CoveragePage: 'data-unavailable',
   TrendsPage: 'data-unavailable',
   DefectsPage: 'data-unavailable',
@@ -114,7 +116,6 @@ const REVIEWED: Record<string, ErrorState> = {
   UserManagementPage: 'known-silent',
   OnboardingPage: 'known-silent', // useOnboardingStatus drops the SWR error
   SuiteCasesPage: 'known-silent',
-  ChatPage: 'known-silent',
   RunComparePage: 'known-silent', // run picker only; the compare body is handled
   RunDetailPage: 'known-silent', // useRun drops its error; the header vanishes
   TestCasePage: 'known-silent', // failure shows "not found"

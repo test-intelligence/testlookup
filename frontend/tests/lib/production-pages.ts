@@ -152,6 +152,22 @@ export class ApiResponse {
 /** Mark an explicit response (status other than 200, no body, or headers such as `Retry-After`). */
 export const respond = (status: number, json?: unknown, headers?: Record<string, string>) => new ApiResponse(status, json, headers)
 
+/**
+ * A body that is not JSON, with its own content type: the Ask-AI chat's
+ * server-sent events (`text/event-stream`). `route.fulfill` delivers the body
+ * in one piece, so a spec sees the rendered result of a whole stream; how
+ * text appears as it arrives is pinned by the client's unit tests.
+ */
+export class RawResponse {
+  constructor(
+    readonly body: string,
+    readonly contentType: string,
+    readonly status = 200,
+  ) {}
+}
+
+export const respondRaw = (body: string, contentType: string, status = 200) => new RawResponse(body, contentType, status)
+
 /** A handler's answer: a JSON body (status 200), or an `ApiResponse`. */
 export type ApiHandler = (request: ApiRequest) => unknown
 
@@ -256,6 +272,9 @@ export async function mockApi(
     const answer = await hit[1]({ url, path: url.pathname, method, route })
     // Node-side, so the page's pinned clock can neither stretch nor skip it.
     if (latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, latencyMs))
+    if (answer instanceof RawResponse) {
+      return route.fulfill({ status: answer.status, contentType: answer.contentType, body: answer.body })
+    }
     if (answer instanceof ApiResponse) {
       const { status, json, headers } = answer
       return route.fulfill({

@@ -25062,6 +25062,31 @@
         "title": "StoreFootprintResponse",
         "type": "object"
       },
+      "StreamMessageRequest": {
+        "description": "One streamed chat turn: a new question, or ``retry`` to answer the\nsession's unanswered (or stopped) last question again.",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "retry": {
+            "default": false,
+            "title": "Retry",
+            "type": "boolean"
+          }
+        },
+        "title": "StreamMessageRequest",
+        "type": "object"
+      },
       "StreamTicketResponse": {
         "properties": {
           "expires_in": {
@@ -40417,8 +40442,26 @@
     },
     "/api/v1/chat/sessions": {
       "get": {
+        "description": "The caller's own conversations, newest first; ``project_id`` narrows\nthem to one project (the chat page passes the active project).",
         "operationId": "list_sessions_api_v1_chat_sessions_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -40709,6 +40752,69 @@
           }
         ],
         "summary": "Send Message",
+        "tags": [
+          "Chat"
+        ]
+      }
+    },
+    "/api/v1/chat/sessions/{session_id}/messages/stream": {
+      "post": {
+        "description": "Ask a question and receive the answer as server-sent events.\n\nEvents, in order: ``start`` (the question was saved), ``status`` (what the\nassistant is looking up), ``delta`` (answer text as it is written), then\n``done`` (the saved answer, its sources, tool trace and timings) or\n``error`` (``code``, ``message``, ``retryable``; no answer was saved).\n``retry: true`` answers the last unanswered or stopped question again.\nClosing the connection stops the answer; text already sent is kept.",
+        "operationId": "stream_message_api_v1_chat_sessions__session_id__messages_stream_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StreamMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Stream Message",
         "tags": [
           "Chat"
         ]

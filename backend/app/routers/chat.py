@@ -14,7 +14,8 @@ Transaction model (pilot of the target "one commit per request" pattern):
 import uuid
 from typing import Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -30,6 +31,7 @@ from app.models.schemas import (
     ChatSessionResponse,
     SendMessageRequest,
     SendMessageResponse,
+    StreamMessageRequest,
 )
 from app.services import chat_service
 
@@ -74,10 +76,13 @@ async def get_run_summaries(
 
 @router.get("/sessions", response_model=list[ChatSessionResponse])
 async def list_sessions(
+    project_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await chat_service.list_sessions(db, current_user)
+    """The caller's own conversations, newest first; ``project_id`` narrows
+    them to one project (the chat page passes the active project)."""
+    return await chat_service.list_sessions(db, current_user, project_id=project_id)
 
 
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
@@ -145,8 +150,60 @@ async def send_message(
 
         await resolve_project_scope(db, current_user, str(payload.project_id))
 
-    result = await chat_service.send_message(db, session, payload, current_user)
+    from app.agents.conversation import ChatTurnError  # noqa: PLC0415
+
+    try:
+        result = await chat_service.send_message(db, session, payload, current_user)
+    except ChatTurnError as exc:
+        # The question was saved; no answer was. Say why, in the same
+        # vocabulary the streaming endpoint's ``error`` event uses.
+        await db.commit()
+        raise HTTPException(status_code=_turn_error_status(exc.code), detail=exc.as_event()) from exc
     # Persist the title mutation staged by send_message. The ConversationAgent
     # manages its own writes internally; we only commit our unit of work.
     await db.commit()
     return SendMessageResponse(**result)
+
+
+def _turn_error_status(code: str) -> int:
+    return {
+        "project_required": 422,
+        "empty_question": 422,
+        "nothing_to_retry": 409,
+        "llm_disabled": 409,
+        "budget_exceeded": 429,
+        "rate_limited": 429,
+        "busy": 429,
+        "timeout": 504,
+    }.get(code, 503)
+
+
+# activity: none -- asks this user's own chat a question; the question and answer are stored in their private session and nothing in the project changes.
+@router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(
+    payload: StreamMessageRequest,
+    request: Request,
+    session: ChatSession = Depends(require_session_access()),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Ask a question and receive the answer as server-sent events.
+
+    Events, in order: ``start`` (the question was saved), ``status`` (what the
+    assistant is looking up), ``delta`` (answer text as it is written), then
+    ``done`` (the saved answer, its sources, tool trace and timings) or
+    ``error`` (``code``, ``message``, ``retryable``; no answer was saved).
+    ``retry: true`` answers the last unanswered or stopped question again.
+    Closing the connection stops the answer; text already sent is kept.
+    """
+    # The session's project is the only scope: there is no per-message
+    # project to re-point it with (F-041).
+    _require_chat_project(current_user, session.project_id)
+    chat_service.stage_title(session, payload.message)
+    await db.commit()
+    turn = chat_service.start_turn(session, payload, current_user)
+    return StreamingResponse(
+        chat_service.sse_events(turn, request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )

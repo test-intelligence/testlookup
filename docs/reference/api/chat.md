@@ -10,7 +10,7 @@ Get Run Summaries
 
 
 
-Source: [backend/app/routers/chat.py:51](../../../backend/app/routers/chat.py#L51).
+Source: [backend/app/routers/chat.py:53](../../../backend/app/routers/chat.py#L53).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -113,16 +113,17 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 List Sessions
 
+The caller's own conversations, newest first; ``project_id`` narrows
+them to one project (the chat page passes the active project).
 
-
-Source: [backend/app/routers/chat.py:75](../../../backend/app/routers/chat.py#L75).
+Source: [backend/app/routers/chat.py:77](../../../backend/app/routers/chat.py#L77).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: Optional[uuid.UUID]=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -133,6 +134,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "list_sessions_api_v1_chat_sessions_get",
   "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
     {
       "in": "header",
       "name": "X-API-Key",
@@ -190,7 +208,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/chat.py:83](../../../backend/app/routers/chat.py#L83).
+Source: [backend/app/routers/chat.py:88](../../../backend/app/routers/chat.py#L88).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -277,7 +295,7 @@ Delete Session
 
 
 
-Source: [backend/app/routers/chat.py:109](../../../backend/app/routers/chat.py#L109).
+Source: [backend/app/routers/chat.py:114](../../../backend/app/routers/chat.py#L114).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_session_access.<locals>._check`.
 
@@ -341,7 +359,7 @@ Get Messages
 
 
 
-Source: [backend/app/routers/chat.py:120](../../../backend/app/routers/chat.py#L120).
+Source: [backend/app/routers/chat.py:125](../../../backend/app/routers/chat.py#L125).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_session_access.<locals>._check`.
 
@@ -428,7 +446,7 @@ Send Message
 
 
 
-Source: [backend/app/routers/chat.py:129](../../../backend/app/routers/chat.py#L129).
+Source: [backend/app/routers/chat.py:134](../../../backend/app/routers/chat.py#L134).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_session_access.<locals>._check`.
 
@@ -442,6 +460,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=422, detail='message project_id must match the session project')
+HTTPException(status_code=_turn_error_status(exc.code), detail=exc.as_event())
 ```
 
 ### Declared wire contract
@@ -508,3 +527,97 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   ]
 }
 ```
+
+## POST `/api/v1/chat/sessions/{session_id}/messages/stream`
+
+Stream Message
+
+Ask a question and receive the answer as server-sent events.
+
+Events, in order: ``start`` (the question was saved), ``status`` (what the
+assistant is looking up), ``delta`` (answer text as it is written), then
+``done`` (the saved answer, its sources, tool trace and timings) or
+``error`` (``code``, ``message``, ``retryable``; no answer was saved).
+``retry: true`` answers the last unanswered or stopped question again.
+Closing the connection stops the answer; text already sent is kept.
+
+Source: [backend/app/routers/chat.py:182](../../../backend/app/routers/chat.py#L182).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_session_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: StreamMessageRequest, request: Request, session: ChatSession=Depends(require_session_access()), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "stream_message_api_v1_chat_sessions__session_id__messages_stream_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/StreamMessageRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+StreamingResponse(chat_service.sse_events(turn, request), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'})
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

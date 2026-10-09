@@ -145,7 +145,9 @@ async def get_run_summaries(
     return combined[:20]
 
 
-async def list_sessions(db: AsyncSession, current_user) -> list[ChatSession]:
+async def list_sessions(
+    db: AsyncSession, current_user, project_id: Optional[uuid.UUID] = None,
+) -> list[ChatSession]:
     from app.core.deps import get_accessible_project_ids
 
     accessible = await get_accessible_project_ids(db, current_user)
@@ -155,6 +157,11 @@ async def list_sessions(db: AsyncSession, current_user) -> list[ChatSession]:
         # non-admin may list only sessions in projects they can access now.
         # Projectless sessions are deliberately excluded by this predicate.
         statement = statement.where(ChatSession.project_id.in_(list(accessible)))
+    if project_id is not None:
+        # The chat page shows the active project's conversations. Without this
+        # an admin's list mixed every project's sessions -- including ones
+        # bound to purged projects -- under one project's name.
+        statement = statement.where(ChatSession.project_id == project_id)
     result = await db.execute(
         statement.order_by(ChatSession.updated_at.desc()).limit(50)
     )
@@ -217,12 +224,90 @@ async def delete_session(db: AsyncSession, session: ChatSession) -> None:
 
 
 async def get_messages(db: AsyncSession, session_id: uuid.UUID, limit: int) -> list[ChatMessage]:
-    """List messages for a session the caller has already been authorized for
-    (the ``require_session_access`` guard runs before this service is called)."""
+    """The LATEST ``limit`` questions and answers of a session the caller has
+    already been authorized for, oldest first.
+
+    This used to be ``order_by(created_at asc).limit(limit)`` -- the OLDEST
+    fifty -- so a long conversation stopped showing its new turns. It also
+    returned the history-compression ``summary`` row, which the page rendered
+    as if the assistant had said it.
+    """
     result = await db.execute(
-        select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc()).limit(limit)
+        select(ChatMessage)
+        .where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role.in_(["user", "assistant"]),
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(reversed(result.scalars().all()))
+
+
+def stage_title(session: ChatSession, message: Optional[str]) -> None:
+    """Name a new conversation after its first question (the handler commits)."""
+    if message and (not session.title or session.title == "New conversation"):
+        session.title = message.strip()[:80]
+
+
+# ── Streaming ────────────────────────────────────────────────────────────────
+
+# Server-sent events: a comment line keeps idle proxies from closing the
+# connection while a tool runs; the disconnect check stops a turn whose reader
+# left (the Stop button, a closed tab) within half a second.
+_SSE_HEARTBEAT_SECONDS = 10.0
+_SSE_DISCONNECT_POLL_SECONDS = 0.5
+
+
+def start_turn(session: ChatSession, payload, current_user):
+    """Start a streamed turn on an already-authorized session."""
+    from app.agents.conversation import ConversationAgent
+
+    return ConversationAgent().start_turn(
+        session_id=str(session.id),
+        user_id=str(current_user.id),
+        project_id=str(session.project_id) if session.project_id else None,
+        user_message=payload.message,
+        retry=bool(payload.retry),
+        test_run_id=str(session.active_test_run_id) if session.active_test_run_id else None,
+        report_id=session.active_report_id,
+        report_version=session.active_report_version,
+    )
+
+
+def _sse(event: str, data: dict) -> str:
+    import json
+
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+async def sse_events(turn, request):
+    """Forward a turn's events as server-sent events until it ends or the
+    reader goes away; leaving cancels the turn (it keeps any text shown)."""
+    import time
+
+    last_sent = last_check = time.monotonic()
+    try:
+        while True:
+            try:
+                item = await turn.next_event(timeout=_SSE_DISCONNECT_POLL_SECONDS)
+            except StopAsyncIteration:
+                return
+            now = time.monotonic()
+            if item is None or now - last_check >= _SSE_DISCONNECT_POLL_SECONDS:
+                last_check = now
+                if await request.is_disconnected():
+                    return
+            if item is None:
+                if now - last_sent >= _SSE_HEARTBEAT_SECONDS:
+                    last_sent = now
+                    yield ": ping\n\n"
+                continue
+            event, data = item
+            last_sent = now
+            yield _sse(event, data)
+    finally:
+        turn.cancel_nowait()
 
 
 async def send_message(
@@ -234,9 +319,9 @@ async def send_message(
     """Handle a user turn against an already-authorized session.
 
     Title updates are staged (no commit). The caller (handler) commits once.
+    Raises ``ChatTurnError`` when no answer could be produced.
     """
-    if not session.title or session.title == "New conversation":
-        session.title = payload.message[:80]
+    stage_title(session, payload.message)
 
     from app.agents.conversation import ConversationAgent
 

@@ -466,6 +466,20 @@ class Settings(BaseSettings):
     # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    # Ask-AI chat is interactive: someone is watching the answer arrive, so it
+    # does not inherit the pipeline's 300 s budget. FIRST_TOKEN bounds the wait
+    # for each provider call's first chunk (a hung provider is reported, not
+    # waited out); TURN bounds the whole answer including tool calls.
+    CHAT_FIRST_TOKEN_TIMEOUT_SECONDS: int = 45
+    CHAT_TURN_TIMEOUT_SECONDS: int = 120
+    # Tool rounds per answer; the round after the last is unbound, so the model
+    # must answer with what it read.
+    CHAT_MAX_TOOL_ROUNDS: int = 4
+    # Earlier user/assistant messages replayed to the model each turn.
+    CHAT_HISTORY_MESSAGES: int = 12
+    # Optional model for chat only (same provider as LLM_PROVIDER), e.g. a
+    # stronger tool user than the pipeline's model. Empty = LLM_MODEL.
+    CHAT_LLM_MODEL: str = ""
     # E7.2: run-level retry policy for agent pipelines (requirement 8). A failed
     # attempt moves the row to retry_wait and schedules a same-id resume with
     # exponential backoff; the count lives on agent_pipeline_runs.attempt.

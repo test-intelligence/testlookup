@@ -124,9 +124,6 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # tests that pass locally and must stay covered. Each was confirmed failing
     # on a PRISTINE origin/main checkout with no local change and no mutation
     # harness running, and each passed in CI run 35549887616 on the same code.
-    "tests/test_chat_copilot.py::test_loop_iteration_cap_then_fallback": _LANGCHAIN,
-    "tests/test_chat_copilot.py::test_loop_timeout_falls_back_to_single_shot": _LANGCHAIN,
-    "tests/test_chat_copilot.py::test_multi_hop_question_resolved_via_two_tools": _LANGCHAIN,
     "tests/test_root_cause_tier_routing.py::"
     "test_react_explanation_uses_endpoint_and_bypasses_classifier_and_caches": _LANGCHAIN,
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"

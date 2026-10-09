@@ -4,7 +4,7 @@ import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
-import { useAIConfig } from '@/hooks/useAIConfig'
+import { isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
 import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailuresCountUnscoped'
 import { useLiveRunningCount } from '@/hooks/useLiveRunningCount'
 import AppLogo from '@/components/ui/AppLogo'
@@ -126,7 +126,9 @@ export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | nu
   // Ask-AI chat (US-2.1): flag-gated, and pointless without an LLM, so no
   // dead entry in rules mode. Direct navigation to /chat still works.
   const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
-  const chatEnabled = chatFlagEnabled && !!aiConfig && aiConfig.analysis_mode !== 'rules'
+  // Chat calls a model in LLM and Auto mode only -- the page and the server
+  // refuse it in ML mode too, so the entry must not lead there.
+  const chatEnabled = chatFlagEnabled && !!aiConfig && isLLMAvailable(aiConfig)
 
   const [collapsedPref, setCollapsedPref] = useState(readCollapsed)
   // The drawer always shows labels: it is opened to read them.

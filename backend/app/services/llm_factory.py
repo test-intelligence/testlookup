@@ -3,8 +3,11 @@ Provider-agnostic LLM factory.
 Switch between Ollama (offline), OpenAI, Gemini, or any compatible provider
 by changing the LLM_PROVIDER environment variable — no agent code changes needed.
 """
+import asyncio
+import contextlib
 import logging
 import os
+import re
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -52,6 +55,42 @@ def _internal_retries(runnable: Any, seen: set[int], depth: int = 0) -> int:
     for child in children:
         found = max(found, _internal_retries(child, seen, depth + 1))
     return found
+
+
+
+_TOOLS_REFUSED = re.compile(
+    r"\btools?\b.*\b(support|not allowed|unsupported)|\bsupport\w*\b.*\btools?\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+@contextlib.asynccontextmanager
+async def _closing(stream: Any) -> Any:
+    """``contextlib.aclosing`` for any async iterator: a provider stream is
+    closed (its HTTP response released) however the caller leaves it."""
+    try:
+        yield stream
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+def tools_unsupported_error(exc: BaseException) -> bool:
+    """A provider refusing the ``tools`` parameter: a model without tool use.
+
+    OpenRouter answers 404 "No endpoints found that support tool use"; Ollama
+    400 "... does not support tools". Not an outage -- the circuit breaker
+    must not count it (404 is otherwise a model-unavailable signal), and the
+    caller can retry without tools.
+    """
+    status = None
+    for candidate in (exc, getattr(exc, "response", None)):
+        code = getattr(candidate, "status_code", None)
+        if isinstance(code, int):
+            status = code
+            break
+    return status in (None, 400, 404, 422) and bool(_TOOLS_REFUSED.search(str(exc)))
 
 
 class PipelineBudgetExceeded(RuntimeError):
@@ -334,6 +373,156 @@ class BudgetedLLM:
             if reservation is not None and record_meter and actual_usd > 0:
                 self._note_metered_at_settle(actual_usd, tokens)
 
+    # Providers whose client takes ``stream_usage`` (OpenAI's ``stream_options``).
+    # Other OpenAI-wire servers (LM Studio, LocalAI, vLLM) may reject the
+    # option with a 400 on older versions, so they are not asked.
+    _STREAM_USAGE_PROVIDERS = frozenset({"openai", "openrouter"})
+
+    def _stream_kwargs(self, kwargs: dict) -> dict:
+        """Ask the provider to report usage on its last chunk.
+
+        A stream reports no token usage unless asked, and an unreported call is
+        settled at its reserved worst case -- every chat turn would be billed
+        against the cap at the output ceiling.
+        """
+        if "stream_usage" in kwargs or self._provider not in self._STREAM_USAGE_PROVIDERS:
+            return kwargs
+        return {**kwargs, "stream_usage": True}
+
+    def _estimate_kwargs(self, kwargs: dict) -> dict:
+        """The call's kwargs plus what is bound into the client (``bind_tools``
+        schemas are sent with every request and count as prompt tokens)."""
+        bound = getattr(self._inner, "kwargs", None)
+        return {**bound, **kwargs} if isinstance(bound, dict) else kwargs
+
+    async def astream(
+        self,
+        *args,
+        idle_timeout: Optional[float] = None,
+        slot_timeout: Optional[float] = None,
+        **kwargs,
+    ):
+        """Stream one provider call through the same gates as :meth:`ainvoke`.
+
+        Admission (budget context, circuit breaker, sanitisation, the cost
+        reservation, a cluster slot held for the whole stream) happens before
+        the first chunk; settlement happens once, on the aggregate of every
+        chunk.
+
+        ``idle_timeout`` bounds the wait for the first chunk and for every gap
+        after it, measured from admission (``slot_timeout`` bounds the wait for
+        a cluster slot). A stall raises ``TimeoutError`` through the failure
+        path: observed as a timeout and counted by the circuit breaker, so a
+        provider that hangs every call gets its circuit opened instead of
+        being waited on by each chat turn.
+
+        A consumer that stops early (``aclose`` / cancellation) has still sent
+        the request, so it keeps the reserved worst case like a failed call --
+        but that is the caller's decision, not a provider fault, so it is never
+        counted against the breaker. Nor is a provider's refusal of the
+        ``tools`` parameter (a model without tool use): it is not an outage.
+
+        Connect-phase failures are retried only while no chunk has been
+        yielded: once text reached the caller a retry would repeat it.
+        """
+        self._check()
+        from app.services.llm_circuit_breaker import (
+            LLMCircuitBreaker,
+            require_available,
+        )
+
+        await require_available(self._provider, self._base_url)
+        args, kwargs = self._prepare_invocation(args, kwargs)
+        kwargs = self._stream_kwargs(kwargs)
+        from app.services import llm_cost_reservation as cost
+        from app.services.llm_cluster_semaphore import cluster_llm_slot
+
+        input_tokens = cost.estimate_input_tokens(args, self._estimate_kwargs(kwargs))
+        reservation = await cost.reserve(
+            self._provider,
+            self._model,
+            input_tokens=input_tokens,
+            max_output_tokens=cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
+        )
+        actual_usd = 0.0
+        record_meter = False
+        tokens: Optional[tuple[int, int]] = None
+        try:
+            async with cluster_llm_slot(self._provider, timeout=slot_timeout):
+                started = time.perf_counter()
+                aggregate = None
+                yielded = False
+                attempt = 0
+                try:
+                    while True:
+                        try:
+                            async with _closing(self._inner.astream(*args, **kwargs)) as stream:
+                                iterator = stream.__aiter__()
+                                while True:
+                                    # The timeout wraps only the pull, in this
+                                    # task: never a ``yield`` (the consumer's
+                                    # time is not the provider's) and never a
+                                    # second task (the client's ContextVars and
+                                    # HTTP stream stay in the task that opened
+                                    # them).
+                                    try:
+                                        async with asyncio.timeout(idle_timeout):
+                                            chunk = await iterator.__anext__()
+                                    except StopAsyncIteration:
+                                        break
+                                    aggregate = chunk if aggregate is None else aggregate + chunk
+                                    yielded = True
+                                    yield chunk
+                            break
+                        except Exception as exc:  # noqa: BLE001 -- re-raised unless retryable
+                            if (
+                                yielded
+                                or attempt >= self._connect_retries
+                                or not self._retryable(exc)
+                            ):
+                                raise
+                            await asyncio.sleep(self._retry_delay(attempt))
+                            attempt += 1
+                except (GeneratorExit, asyncio.CancelledError):
+                    # The caller stopped reading. The request was sent, so the
+                    # worst case stays reserved and is metered; the provider
+                    # did nothing wrong.
+                    if reservation is not None:
+                        actual_usd = reservation.estimated_usd
+                        record_meter = True
+                    raise
+                except BaseException as exc:
+                    self._observe(self._status_for(exc), time.perf_counter() - started)
+                    if not tools_unsupported_error(exc):
+                        await LLMCircuitBreaker.record_failure(
+                            self._provider, self._base_url, exc
+                        )
+                    if reservation is not None and (
+                        self._sdk_retries() > 0 or not cost.failure_proves_no_request(exc)
+                    ):
+                        actual_usd = reservation.estimated_usd
+                        record_meter = True
+                    raise
+                self._observe("success", time.perf_counter() - started)
+                await LLMCircuitBreaker.record_success(self._provider, self._base_url)
+                metered_by_stage = self._record_usage(aggregate) if aggregate is not None else False
+                if reservation is not None:
+                    tokens = cost.usage_tokens(aggregate) if aggregate is not None else None
+                    actual_usd = (
+                        cost.price(self._provider, self._model, *tokens)
+                        if tokens is not None
+                        else reservation.estimated_usd
+                    )
+                    record_meter = not metered_by_stage or tokens is None
+        finally:
+            await cost.settle(
+                reservation, actual_usd, record_meter=record_meter,
+                input_tokens=tokens[0] if tokens else 0,
+                output_tokens=tokens[1] if tokens else 0,
+            )
+            if reservation is not None and record_meter and actual_usd > 0:
+                self._note_metered_at_settle(actual_usd, tokens)
+
     def invoke(self, *args, **kwargs):
         self._check()
         from app.services.llm_circuit_breaker import (
@@ -382,6 +571,29 @@ class BudgetedLLM:
             base_url=self._base_url,
             connect_retries=self._connect_retries,
         )
+
+    def bind_tools(self, *args, **kwargs):
+        """Tool binding that stays inside the gates.
+
+        Without this, ``__getattr__`` handed back the inner model's binding --
+        a provider call with no budget check, cost reservation, circuit breaker
+        or cluster slot.
+        """
+        return BudgetedLLM(
+            self._inner.bind_tools(*args, **kwargs),
+            provider=self._provider,
+            model=self._model,
+            base_url=self._base_url,
+            connect_retries=self._connect_retries,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider
+
+    @property
+    def model_label(self) -> str:
+        return self._model
 
     def with_structured_output(self, *args, **kwargs):
         return BudgetedLLM(

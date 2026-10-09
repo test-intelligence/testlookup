@@ -26912,6 +26912,36 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## StreamMessageRequest
+
+```json
+{
+  "description": "One streamed chat turn: a new question, or ``retry`` to answer the\nsession's unanswered (or stopped) last question again.",
+  "properties": {
+    "message": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "retry": {
+      "default": false,
+      "title": "Retry",
+      "type": "boolean"
+    }
+  },
+  "title": "StreamMessageRequest",
+  "type": "object"
+}
+```
+
 ## StreamTicketResponse
 
 ```json

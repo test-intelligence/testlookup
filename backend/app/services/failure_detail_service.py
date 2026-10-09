@@ -106,6 +106,8 @@ async def failure_detail(
         for case, analysis in rows:
             error = (case.error_message or "").strip()
             failures.append({
+                # For links back to the test (the chat's source chips).
+                "test_case_id": str(case.id),
                 "test_name": case.test_name,
                 "suite": effective_suite(case.suite_name, run.primary_suite_name),
                 "status": str(case.status),

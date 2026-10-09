@@ -19,33 +19,28 @@ The **Agent Pipeline** page is the operational view of the analysis pipeline its
 
 ## Ask AI (`/chat`)
 
-Chat over your test data in natural language — "why did last night's payments run fail?", "which suites got flakier this month?". Answers are grounded in your project's data (the same APIs the dashboard uses), scoped to the selected project. The same capability is available to external assistants via the [MCP server](cli-sdk-mcp.md#the-mcp-server).
+Ask questions about one project's test results and follow up on the answers — "what failed in build 105, and why?", "is the first one flaky or a regression?", "what changed since the previous build?", "are any flaky tests quarantined?", "is it ready to release?". Starter questions on the page cover these, and a run's **⋯ → Ask AI about this run** opens chat with the question written for you. The same data is available to external assistants via the [MCP server](cli-sdk-mcp.md#the-mcp-server).
 
-**It shows its work.** When the configured engine is an LLM, chat runs a bounded
-tool loop: it calls the same read APIs you could call yourself, and the reply
-carries a **tool trace** of what it looked at. If an answer seems wrong, the
-trace tells you which query produced it rather than leaving you to guess.
+**Answers arrive as they are written.** Your question shows at once, the assistant says what it is looking up ("Checking the history of test_refund_flow…"), then the answer streams in. **Stop** ends an answer early (the text so far is kept); a failed answer says why (the provider timed out, is unreachable, the budget is used up…) and **Retry** asks again without repeating your question.
 
-**Suggested actions are handoffs, not actions.** A reply may offer follow-ups
-(open the failing run, quarantine a flaky test). These are links into the normal
-UI — chat proposes, you decide. Nothing is changed on your behalf from the chat
-box.
+**Answers are grounded, and show it.** Each answer starts from the project's latest runs and the latest run's failures, and the assistant calls read-only lookups for anything else: a test's history across runs (with the pattern stated: regression since build X, or intermittent), a comparison between builds, the flaky-test list with quarantine state, failure clusters, the release-gate verdict, and what earlier analyses found. A question that names a test, asks about quarantine or about releasing gets those lookups before the model answers. Under each answer: the builds and tests it names, linked to their pages; **How I looked this up**, the lookups it made; and the model and how long it took.
 
-**It is bounded on purpose**, so a question can't run away with your budget:
+**Suggested actions are handoffs, not actions.** An answer may offer a follow-up (propose a quarantine, create a Jira issue). These open the normal dialogs pre-filled — chat proposes, you decide. Nothing is changed on your behalf from the chat box.
 
-| bound | what it limits |
+**It is bounded on purpose:**
+
+| setting | what it limits |
 |---|---|
-| `CHAT_TOOL_LOOP_MAX_CALLS` | how many tools one question may call |
-| per-call + total token budgets | how much tool output can enter the context (enforced server-side) |
-| `AI_TIMEOUT_SECONDS` | hard wall-clock cap on the whole loop |
+| `CHAT_MAX_TOOL_ROUNDS` (4) | rounds of lookups per answer; after the last, the model must answer |
+| per-call + total token budgets | how much lookup output can enter the context (server-side) |
+| `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS` (45) | the wait for the provider's first text, and any silence after it |
+| `CHAT_TURN_TIMEOUT_SECONDS` (120) | the whole answer, lookups included |
+| `CHAT_HISTORY_MESSAGES` (12) | earlier messages replayed to the model |
+| `CHAT_LLM_MODEL` (empty) | a model for chat only, e.g. a stronger tool user; empty = `LLM_MODEL` |
 
-**Project scope is bound before the loop starts** — the LLM never scopes its own
-query, so it cannot widen beyond the project you selected. Any failure inside
-the loop falls back to a single-shot answer rather than erroring.
+Every model call goes through the same budget, cost cap and circuit breaker as the analysis pipeline, and is charged to the project. **Project scope is bound on the server** — the model never names a project or an id, so it cannot read outside the project you selected. One answer at a time per conversation.
 
-> In **rules** or **ML** mode the tool loop never engages and chat behaves as it
-> did before — the feature degrades to the simpler path rather than breaking.
-> Requires the `ask_ai_chat` flag (on by default) and a reachable local LLM.
+> Chat needs an LLM: it is available in **LLM** and **Auto** mode and says so in **Rules** or **ML** mode. It requires the `ask_ai_chat` flag (on by default) and a reachable provider (a local model, or a hosted one when offline mode is off). A provider that cannot take tool calls still answers, from the latest-runs data and the up-front lookups only.
 
 ## What confidence scores actually mean
 

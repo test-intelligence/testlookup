@@ -10,7 +10,51 @@ export interface ChatSource {
   type: string
   id?: string
   label?: string
+  /** test_run: the build number; test_case: the run it belongs to + the test name. */
+  build?: string
+  run_id?: string
+  name?: string
 }
+
+/** How an answer was produced, persisted with it (the `meta` carrier). */
+export interface ChatMeta {
+  status: 'complete' | 'stopped'
+  provider?: string | null
+  model?: string | null
+  first_status_ms?: number | null
+  first_token_ms?: number | null
+  total_ms?: number | null
+  llm_ms?: number | null
+  tool_ms?: number | null
+  context_ms?: number | null
+  rounds?: number
+  tool_calls?: number
+  tools?: boolean
+}
+
+/** Error vocabulary of a failed turn (backend ChatTurnError codes). */
+export interface ChatTurnFailure {
+  code: string
+  message: string
+  retryable: boolean
+}
+
+/** One server-sent event of a streamed turn. */
+export type ChatStreamEvent =
+  | { event: 'start'; data: { user_message_id: string; retry: boolean } }
+  | { event: 'status'; data: { label: string; tool: string | null } }
+  | { event: 'delta'; data: { text: string } }
+  | {
+      event: 'done'
+      data: {
+        message: ChatMessage
+        sources: ChatSource[]
+        tool_trace: ToolTraceEntry[]
+        suggested_actions: SuggestedAction[]
+        meta: ChatMeta
+      }
+    }
+  | { event: 'error'; data: ChatTurnFailure }
 
 /** AI-6: one entry per read tool the copilot loop consulted. */
 export interface ToolTraceEntry {
@@ -54,11 +98,14 @@ export function splitMessageSources(sources: ChatSource[] | null): {
    *  with no provenance line rather than inventing one. Feed it to
    *  `normalizeProvenance`. */
   provenanceRaw: Record<string, unknown> | null
+  /** How the answer was produced (model, timings, stopped or complete). */
+  meta: ChatMeta | null
 } {
   const plainSources: ChatSource[] = []
   let toolTrace: ToolTraceEntry[] = []
   let suggestedActions: SuggestedAction[] = []
   let provenanceRaw: Record<string, unknown> | null = null
+  let meta: ChatMeta | null = null
   for (const s of sources ?? []) {
     const entry = s as ChatSource & {
       trace?: ToolTraceEntry[]
@@ -71,11 +118,13 @@ export function splitMessageSources(sources: ChatSource[] | null): {
       suggestedActions = entry.actions
     } else if (entry.type === 'provenance' && entry.provenance && typeof entry.provenance === 'object') {
       provenanceRaw = entry.provenance
+    } else if (entry.type === 'meta') {
+      meta = entry as unknown as ChatMeta
     } else {
       plainSources.push(s)
     }
   }
-  return { plainSources, toolTrace, suggestedActions, provenanceRaw }
+  return { plainSources, toolTrace, suggestedActions, provenanceRaw, meta }
 }
 
 export interface RunSummary {
