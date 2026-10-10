@@ -451,7 +451,53 @@ async def resolve_project(db: AsyncSession, identifier: str) -> Project:
     raise HTTPException(status_code=404, detail="Project not found")
 
 
-_CI_CONTEXT_FIELDS = ("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url")
+async def assert_session_project_access(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    user=None,
+    bound_project_id: Optional[uuid.UUID] = None,
+    not_found_detail: Optional[str] = None,
+) -> None:
+    """Refuse a live-session call outside the caller's projects.
+
+    A project-scoped API key is confined to its bound project. A JWT or a
+    user-scoped key carries no binding, so the caller's own memberships decide
+    (ADMIN sees every project). Both used to pass unchecked: any signed-in user
+    could open a live run in any project -- by UUID or by name -- and read or
+    close another project's session (E2E 2026-10-10).
+
+    ``not_found_detail`` answers 404 instead of 403, for callers that must not
+    confirm that the thing exists (a session id, a project name).
+    """
+    if bound_project_id is not None:
+        if project_id != bound_project_id:
+            raise HTTPException(
+                status_code=403,
+                detail="This API key is restricted to a different project",
+            )
+        return
+    if user is None:
+        return
+    from app.core.deps import get_accessible_project_ids  # noqa: PLC0415
+
+    accessible = await get_accessible_project_ids(db, user)
+    if accessible is None or project_id in accessible:
+        return
+    if not_found_detail:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    raise HTTPException(status_code=403, detail="You do not have access to this project")
+
+
+def _is_uuid(value: object) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+_CI_CONTEXT_FIELDS =("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url")
 
 
 def _with_ci_context(metadata: dict, payload) -> dict:
@@ -494,6 +540,7 @@ async def create_session(
     db: AsyncSession,
     payload,
     bound_project_id: Optional[uuid.UUID] = None,
+    user=None,
 ) -> LiveSessionResponse:
     """Stage a new LiveSession and return the response shape. Handler commits.
 
@@ -507,11 +554,15 @@ async def create_session(
     a UUID-bound key still validates correctly.
     """
     project = await resolve_project(db, payload.project_id)
-    if bound_project_id is not None and project.id != bound_project_id:
-        raise HTTPException(
-            status_code=403,
-            detail="This API key is restricted to a different project",
-        )
+    # A name the caller cannot access answers like a missing one, so the
+    # name lookup is not an oracle for other tenants' project names.
+    await assert_session_project_access(
+        db,
+        project.id,
+        user=user,
+        bound_project_id=bound_project_id,
+        not_found_detail=None if _is_uuid(payload.project_id) else "Project not found",
+    )
 
     session_id = str(uuid.uuid4())
     run_id = session_id
@@ -653,6 +704,7 @@ async def get_session(
     db: AsyncSession,
     session_id: str,
     bound_project_id: Optional[uuid.UUID] = None,
+    user=None,
 ) -> dict:
     try:
         uid = uuid.UUID(session_id)
@@ -663,11 +715,13 @@ async def get_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if bound_project_id is not None and session.project_id != bound_project_id:
-        raise HTTPException(
-            status_code=403,
-            detail="This API key is restricted to a different project",
-        )
+    await assert_session_project_access(
+        db,
+        session.project_id,
+        user=user,
+        bound_project_id=bound_project_id,
+        not_found_detail="Session not found",
+    )
 
     from app.streams.live_run_state import RedisLiveRunState
 
@@ -729,6 +783,7 @@ async def close_session(
     db: AsyncSession,
     session_id: str,
     bound_project_id: Optional[uuid.UUID] = None,
+    user=None,
 ) -> Optional[uuid.UUID]:
     """Stage a live session's close. The caller commits.
 
@@ -745,16 +800,17 @@ async def close_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Project-scoped API key: the session must belong to the bound project.
-    # JWT and user-scoped API keys pass ``bound_project_id=None`` and skip
-    # this check (membership at the route level was previously enforced by
-    # ``require_live_session_access``; the route now relies on this service
-    # check so X-API-Key callers don't get a spurious 401).
-    if bound_project_id is not None and session.project_id != bound_project_id:
-        raise HTTPException(
-            status_code=403,
-            detail="This API key is restricted to a different project",
-        )
+    # A project-scoped API key must hold the session's project; a JWT or a
+    # user-scoped key must belong to it. The route relies on this check (not
+    # ``require_live_session_access``) so X-API-Key callers don't get a
+    # spurious 401.
+    await assert_session_project_access(
+        db,
+        session.project_id,
+        user=user,
+        bound_project_id=bound_project_id,
+        not_found_detail="Session not found",
+    )
 
     # Idempotency guard: a previous close_session for this session has already
     # cleared Redis state and queued the persistence task. Returning early here

@@ -60,7 +60,7 @@ async def create_session(
     # so it can compare against the *resolved* project — payload.project_id may
     # be a name or a UUID.
     response = await stream_service.create_session(
-        db, payload, bound_project_id=bound_project_id,
+        db, payload, bound_project_id=bound_project_id, user=current_user,
     )
     await db.commit()
     # VIZ-212: the session start commits an IN_PROGRESS TestRun stub, which
@@ -79,11 +79,11 @@ async def get_session(
 ):
     # ``require_live_session_access`` was removed from this route because it
     # depends on get_current_active_user (JWT-only) and breaks SDK callers
-    # using X-API-Key. The membership check now lives in the service and
-    # honours either auth path via ``bound_project_id``.
-    _, bound_project_id = auth
+    # using X-API-Key. The service checks the key's binding or, for a JWT or
+    # user-scoped key, the caller's membership.
+    current_user, bound_project_id = auth
     return await stream_service.get_session(
-        db, session_id, bound_project_id=bound_project_id,
+        db, session_id, bound_project_id=bound_project_id, user=current_user,
     )
 
 
@@ -93,9 +93,9 @@ async def close_session(
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
 ):
-    _, bound_project_id = auth
+    current_user, bound_project_id = auth
     closed_project_id = await stream_service.close_session(
-        db, session_id, bound_project_id=bound_project_id,
+        db, session_id, bound_project_id=bound_project_id, user=current_user,
     )
     await db.commit()
     if closed_project_id is not None:

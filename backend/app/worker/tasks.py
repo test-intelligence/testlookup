@@ -1125,6 +1125,10 @@ def ingest_uploaded_results(
             payload = json.loads(raw_payload)
         if not payload:
             raise ValueError("Uploaded batch payload is missing")
+        # A NUL in a run-level field (build number, branch) failed the run
+        # INSERT and lost the whole batch; PostgreSQL text cannot hold U+0000.
+        from app.services.ingestion_sanitization import strip_nul_bytes
+        payload = strip_nul_bytes(payload)
 
         async with AsyncSessionLocal() as db:
             try:
