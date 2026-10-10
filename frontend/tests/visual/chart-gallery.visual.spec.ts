@@ -169,6 +169,13 @@ for (const theme of THEMES) {
     test.beforeEach(async ({ page }) => {
       await page.goto(`/__charts?theme=${theme}`)
       expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe('/__charts')
+      // The gallery is a lazy route: `goto` settles on the shell's load, and
+      // the page's own module graph (recharts, echarts …) loads after it, from
+      // the dev server, into a fresh context per test. On main 290b79c2 the
+      // echarts modules were first asked for 8 s after the navigation, past
+      // the theme check's 5 s, with the page still empty: 3 of 298 failed,
+      // the same tree passed on its PR. Wait for the page, then its theme.
+      await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: 30_000 })
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
       await expect(page.locator('[data-gallery-item]')).toHaveCount(GALLERY_ITEM_IDS.length)
       // Every chart has measured and drawn before any item is captured, so a

@@ -164,6 +164,17 @@ class Harness:
         async def named(question, project_id):
             return [t for t in ("test_refund_flow",) if t in question]
 
+        async def previous_answer(session_id, before_id=None):
+            rows = [r for r in self.store if r["role"] in ("user", "assistant")]
+            ids = [r["id"] for r in rows]
+            if before_id in ids:
+                rows = rows[: ids.index(before_id)]
+            answers = [r["content"] for r in rows if r["role"] == "assistant"]
+            return answers[-1] if answers else ""
+
+        async def existing(candidates, project_id):
+            return {c for c in candidates if c.startswith("test")}
+
         async def mode_value():
             return mode
 
@@ -184,8 +195,16 @@ class Harness:
         monkeypatch.setattr(self.agent, "_fetch_fingerprint_recall", empty_text)
         monkeypatch.setattr(self.agent, "_fetch_bound_report_context", no_report)
         monkeypatch.setattr(self.agent, "_named_tests", named)
+        monkeypatch.setattr(self.agent, "_previous_answer", previous_answer)
+        monkeypatch.setattr(self.agent, "_existing_tests", existing)
         monkeypatch.setattr(self.agent, "_touch_session", nothing)
         monkeypatch.setattr(self.agent, "_maybe_compress_history", nothing)
+
+    def answered(self, question: str, answer: str) -> None:
+        """An earlier question and its saved answer, in this conversation."""
+        for role, content in (("user", question), ("assistant", answer)):
+            self.store.append({"id": str(uuid.uuid4()), "session_id": SESSION, "role": role,
+                               "content": content, "sources": None, "created_at": "earlier"})
 
     async def turn(self, question="What failed in the latest run and why?", *, project_id=PROJECT, retry=False, **kw):
         t = self.agent.start_turn(
@@ -346,6 +365,104 @@ async def test_which_tests_are_flaky_gets_the_list_up_front_but_the_first_one_do
     await h.turn("Is the first one you mentioned flaky?")
     assert flaky_calls == []
     assert h.model.calls[0]["kwargs"].get("tool_choice") == "required"
+
+
+# The two answers the homelab measurement (2026-10-09) followed up on. Their
+# first rows are NOT the first failure the snapshot lists (Case02, by AI
+# confidence), which is the test the model answered about both times.
+FAILED_TABLE = (
+    "In build-2029, the following tests failed:\n\n"
+    "| Test Name | Suite | Status | Error |\n|---|---|---|---|\n"
+    "| testAuthenticationCase01 | AuthSuite | FAILED | AssertionError: JWT token expiry mismatch |\n"
+    "| testAuthenticationCase02 | AuthSuite | FAILED | TimeoutException: Session validation timed out |\n"
+    "| testSearchCase05 | SearchSuite | FAILED | AssertionError: Search returned 24 results |"
+)
+FLAKY_TABLE = (
+    "Here are the flaky tests in the last 30 days:\n\n"
+    "| Test | Suite | Runs | Failed | Failure rate |\n|---|---|---|---|---|\n"
+    "| **testCheckoutCase03** | CheckoutSuite | 22 | 8 | 36.4% |\n"
+    "| `testAuthenticationCase04` | AuthSuite | 30 | 7 | 23.3% |\n"
+    "| testAuthenticationCase02 | AuthSuite | 30 | 5 | 16.7% |\n\n"
+    "None of these tests are currently quarantined."
+)
+
+
+def _record_history_and_quarantine(monkeypatch):
+    looked_up: list[tuple[str, str]] = []
+
+    async def history(state, name):
+        looked_up.append(("history", name))
+        return f"History of {name}: 2029=FAILED, 2028=PASSED", f"checked the history of '{name}'"
+
+    async def quarantine(state, name):
+        looked_up.append(("quarantine", name))
+        return f"No quarantine record for {name}.", "checked quarantine"
+
+    monkeypatch.setattr(crt, "_fetch_test_history", history)
+    monkeypatch.setattr(crt, "_fetch_quarantine_status", quarantine)
+    return looked_up
+
+
+@pytest.mark.asyncio
+async def test_the_first_one_is_the_first_test_the_previous_answer_lists(monkeypatch, gates):
+    """Measured: "Is the first one flaky or a regression?" after a table whose
+    first row was testAuthenticationCase01 got testAuthenticationCase02's
+    history -- the first failure in the snapshot, not in the answer."""
+    looked_up = _record_history_and_quarantine(monkeypatch)
+    h = Harness(monkeypatch, [AIMessage(content="testAuthenticationCase01 is new in build-2029.")])
+    h.answered("What failed in build-2029, and why?", FAILED_TABLE)
+    events = await h.turn("Is the first one flaky or a regression? When did it start failing?")
+
+    assert looked_up == [("history", "testAuthenticationCase01")]
+    asked = h.model.calls[0]["messages"][-1].content
+    assert '"the first one" is testAuthenticationCase01: the first test your previous answer lists' in asked
+    assert "History of testAuthenticationCase01: 2029=FAILED" in asked
+    assert "tool_choice" not in h.model.calls[0]["kwargs"]  # grounded before the model
+    labels = [d["label"] for d in data(events, "status")]
+    assert "Checking the history of testAuthenticationCase01…" in labels
+    # The saved question is still the user's words.
+    assert h.store[-2]["content"] == "Is the first one flaky or a regression? When did it start failing?"
+
+
+@pytest.mark.asyncio
+async def test_the_top_one_and_the_last_one_and_quarantine(monkeypatch, gates):
+    """Measured: "the top one" after the flaky-tests table (testCheckoutCase03
+    first) got testAuthenticationCase02's history, and "should we quarantine
+    it?" went unanswered. Bold and code-formatted names count as listed."""
+    looked_up = _record_history_and_quarantine(monkeypatch)
+    h = Harness(monkeypatch, [AIMessage(content="ok")])
+    h.answered("Which tests are flaky right now?", FLAKY_TABLE)
+    await h.turn("What does the history of the top one look like? Should we quarantine it?")
+    assert looked_up == [("history", "testCheckoutCase03"), ("quarantine", "testCheckoutCase03")]
+    assert "No quarantine record for testCheckoutCase03." in h.model.calls[0]["messages"][-1].content
+
+    looked_up.clear()
+    h = Harness(monkeypatch, [AIMessage(content="ok")])
+    h.answered("Which tests are flaky right now?", FLAKY_TABLE)
+    await h.turn("Is the last test a regression?")
+    assert looked_up == [("history", "testAuthenticationCase02")]
+
+
+@pytest.mark.parametrize("question", [
+    "Is the fifth one flaky?",  # the answer lists three
+    "Has the first new failure failed before?",  # a sub-list: measured, the model resolves it
+])
+@pytest.mark.asyncio
+async def test_a_reference_the_answer_cannot_settle_is_left_to_the_model(monkeypatch, gates, question):
+    looked_up = _record_history_and_quarantine(monkeypatch)
+    h = Harness(monkeypatch, [AIMessage(content="", tool_calls=[call("list_recent_runs")]), AIMessage(content="ok")])
+    monkeypatch.setattr(crt, "_fetch_recent_runs", lambda s, q: _value(("runs", "listed runs")))
+    h.answered("What failed in build-2029, and why?", FAILED_TABLE)
+    await h.turn(question)
+    assert looked_up == []
+    assert h.model.calls[0]["kwargs"].get("tool_choice") == "required"
+
+
+def test_test_name_candidates_keep_the_order_the_answer_writes_them():
+    assert conv._test_name_candidates(FLAKY_TABLE)[:4] == [
+        "testCheckoutCase03", "CheckoutSuite", "testAuthenticationCase04", "AuthSuite",
+    ]
+    assert conv._test_name_candidates(FAILED_TABLE)[0] == "build-2029"
 
 
 @pytest.mark.asyncio
@@ -535,6 +652,20 @@ def test_answer_sources_are_what_the_answer_names():
     ]
     reply = "Build 105 failed: test_refund_flow. 104 tests passed."
     assert conv._answer_sources(reply, refs) == [refs[0], refs[2]]
+
+
+def test_answer_sources_follow_the_order_the_answer_names_them():
+    """The snapshot lists failures by AI confidence; chips in that order put
+    testAuthenticationCase02 first under a table that starts with Case01."""
+    refs = [
+        {"type": "test_case", "id": "c2", "run_id": "r", "name": "testAuthenticationCase02"},
+        {"type": "test_case", "id": "c1", "run_id": "r", "name": "testAuthenticationCase01"},
+        {"type": "test_run", "id": "r", "build": "build-2029"},
+    ]
+    chips = conv._answer_sources(FAILED_TABLE, refs)
+    assert [c.get("name") or c.get("build") for c in chips] == [
+        "build-2029", "testAuthenticationCase01", "testAuthenticationCase02",
+    ]
 
 
 def test_history_pairs_skip_unanswered_questions(monkeypatch):

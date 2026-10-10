@@ -291,9 +291,13 @@ jobs:
     name: Backend — Test & Lint
     runs-on: ubuntu-latest
 
+    # Service images come from AWS's mirror of the Docker official images, not
+    # Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
+    # on 2026-10-09 both backend jobs failed at "Initialize containers" with
+    # "toomanyrequests: unauthenticated pull rate limit" twice in a row.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -306,7 +310,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
@@ -452,9 +456,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # Mirror, not Docker Hub: see backend-test's services.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -467,7 +472,7 @@ jobs:
           --health-retries 5
 
       mongo:
-        image: mongo:7
+        image: public.ecr.aws/docker/library/mongo:7
         ports: ["27017:27017"]
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
@@ -476,7 +481,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:7-alpine
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
@@ -1424,6 +1429,15 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.scope.outputs.run == 'true'
         uses: docker/setup-buildx-action@v4.3.0
+        # Not from Docker Hub: buildkit's own image comes from AWS's mirror and
+        # every docker.io base image (python, node, nginx) through
+        # mirror.gcr.io, falling back to Docker Hub. On 2026-10-09 all three
+        # image scans died here on "toomanyrequests" (see backend-test's services).
+        with:
+          driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build the image (not pushed)
         if: steps.scope.outputs.run == 'true'
@@ -1552,6 +1566,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.3.0
+        # Mirrors, not Docker Hub: see the image-scan job's buildx step.
+        with:
+          driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Extract metadata
         id: meta
