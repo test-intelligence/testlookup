@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased - Run emails carry the whole run
+
+Owner request 2026-10-10: a run email said one line ("2 failures detected in
+E2E Lab (build #42)") plus four numbers, so a reader had to open the dashboard
+for everything they act on. Every email about a run (run failed, high failure
+rate, AI summary, transitions, team and explicit routes) now carries a full
+run report under its message, in both the HTML and the plain-text part:
+
+- **Results** with the pass-rate change against the previous build on the same
+  branch.
+- **Run details**: project, build, status, test suite, release, branch, commit,
+  environment, CI provider/repo/PR/job link, who triggered it, start, finish,
+  duration, and a warning when ingestion rejected results.
+- **Release impact**: the release gate verdict as a live preview including this
+  run (the stored verdict above 200 release runs), release pass rate over
+  distinct tests, how many blocking tests fail in this run, quarantined
+  failures set aside, open and blocking defects, and the blocking tests by name.
+- **AI summary**: headline, signal and risk, summary, dominant failure, key
+  takeaways and recommended actions.
+- **Failing tests** (up to 25): NEW or still failing against the previous build,
+  quarantined/flaky, category, suite, class, duration, owner, the error
+  (credentials and email addresses redacted), and the AI root cause with its
+  confidence. Then a by-category count, a per-suite table and links.
+
+AI content goes through the review gate (`decide_run_distribution`, channel
+`email_run_report`): withheld with a notice when the gate refuses, watermarked
+where a project allows drafts, and audited. The relay builds the report once per
+run per batch (at most 10 runs), each read under its own SAVEPOINT; a report
+that cannot be built or rendered leaves the short email unchanged. The report is
+attached to the outgoing message only, never written to the notification row.
+
 ## Unreleased - E2E pass on the homelab: permissions, ingestion, analysis, gate, settings
 
 Exploratory and end-to-end testing of every feature on the homelab (2026-10-10),
