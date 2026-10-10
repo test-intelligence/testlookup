@@ -904,6 +904,53 @@ async def claim_pending_notification_deliveries(
     return claimed
 
 
+#: Runs whose full report one relay batch builds; the rest go with the short
+#: email. Each report is ~10 reads plus a bounded release-gate preview.
+_MAX_RUN_REPORTS_PER_BATCH = 10
+_RUN_REPORT_CHANNEL = "email_run_report"
+
+
+async def _build_run_reports(
+    db: Any, rows: list[NotificationLog]
+) -> tuple[dict[str, dict[str, Any]], list[tuple[Any, Any, Any]]]:
+    """One full run report per run in this batch, for its emails.
+
+    Owner request 2026-10-10: an email should carry the run -- project, suite,
+    build and CI facts, results against the previous build, every failing
+    test with its error, the AI conclusions the review gate allows, and what
+    the run does to the release -- so the reader need not open the dashboard.
+    Built here, once per run and before the concurrent fan-out, so no sender
+    touches the database. Returns the reports and the review-gate decisions,
+    whose audit rows the caller records after closing this session.
+    """
+    from app.core.config import settings  # noqa: PLC0415
+    from app.services.notification.run_report import build_run_report  # noqa: PLC0415
+
+    reports: dict[str, dict[str, Any]] = {}
+    decisions: list[tuple[Any, Any, Any]] = []
+    run_ids: list[Any] = []
+    for row in rows:
+        run_id = getattr(row, "run_id", None)
+        if run_id is not None and str(run_id) not in {str(r) for r in run_ids}:
+            run_ids.append(run_id)
+    for run_id in run_ids[:_MAX_RUN_REPORTS_PER_BATCH]:
+        try:
+            # A SAVEPOINT per report: a failed read rolls back to it, without
+            # aborting the relay's transaction or expiring the claimed rows
+            # the senders read after this session closes.
+            async with db.begin_nested():
+                report, decision = await build_run_report(
+                    db, run_id, base_url=settings.public_base_url, channel=_RUN_REPORT_CHANNEL,
+                )
+        except Exception as exc:  # noqa: BLE001 -- the short email still goes
+            logger.warning("run_report_build_failed run_id=%s error=%s", run_id, type(exc).__name__)
+            continue
+        if report is not None:
+            reports[str(run_id)] = report
+            decisions.append((decision, run_id, report["project"]["id"]))
+    return reports, decisions
+
+
 async def relay_pending_notification_deliveries(
     *, limit: int = 200
 ) -> dict[str, int]:
@@ -1014,6 +1061,30 @@ async def relay_pending_notification_deliveries(
 
             global_webhooks = await resolve_global_notification_webhooks(db)
 
+        run_reports: dict[str, dict[str, Any]] = {}
+        report_decisions: list[tuple[Any, Any, Any]] = []
+        if needs_email:
+            run_reports, report_decisions = await _build_run_reports(db, rows)
+
+    # After the relay's session is closed: the detached recorder opens its own.
+    if report_decisions:
+        from app.services.report_distribution_policy import (  # noqa: PLC0415
+            record_distribution_detached,
+        )
+
+        for decision, report_run_id, report_project_id in report_decisions:
+            await record_distribution_detached(
+                decision, channel=_RUN_REPORT_CHANNEL,
+                run_id=report_run_id, project_id=report_project_id,
+            )
+
+    def _with_run_report(row: NotificationLog, metadata: dict[str, Any]) -> dict[str, Any]:
+        """A copy carrying the run report, so it reaches the email and is never
+        written back onto the notification row."""
+        run_id = getattr(row, "run_id", None)
+        report = run_reports.get(str(run_id)) if run_id is not None else None
+        return {**metadata, "run_report": report} if report else metadata
+
     smtp_cfg = await email_service._get_smtp_cfg() if needs_email else None
 
     async def _dispatch_snapshotted_route(
@@ -1041,7 +1112,7 @@ async def relay_pending_notification_deliveries(
                     title=title,
                     body=body,
                     event_type=event.value,
-                    metadata=metadata,
+                    metadata=_with_run_report(row, metadata),
                     smtp_cfg=smtp_cfg,
                     delivery_id=row.delivery_key,
                 )
@@ -1142,7 +1213,7 @@ async def relay_pending_notification_deliveries(
             title,
             body,
             event,
-            metadata,
+            _with_run_report(row, metadata) if pref.channel == NotificationChannel.EMAIL else metadata,
             smtp_cfg,
             global_webhooks,
             delivery_id=row.delivery_key,

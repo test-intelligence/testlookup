@@ -152,6 +152,7 @@ def _build_html(
         </tr>"""
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    run_report_html = _run_report_section(metadata, event_type, html=True)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -171,7 +172,8 @@ def _build_html(
         <tr>
           <td style="padding:24px 28px;">
             {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{safe_body}</p>'}
-            {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows and not metadata.get("executive_panel") else ''}
+            {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows and not metadata.get("executive_panel") and not run_report_html else ''}
+            {run_report_html}
             {f'<a href="{dashboard_url}" style="display:inline-block;padding:10px 20px;background:{colour};color:#fff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">View in Dashboard →</a>' if dashboard_url != "#" else ''}
           </td>
         </tr>
@@ -197,7 +199,29 @@ def _build_executive_panel_section(metadata: dict) -> str:
     return render_executive_panel_email(metadata.get("executive_panel", {}))
 
 
-def _build_plain(title: str, body: str, metadata: dict) -> str:
+def _run_report_section(metadata: dict, event_type: str, *, html: bool) -> str:
+    """The full run report under the message (``run_report`` is attached by
+    the delivery relay). The AI-summary email already shows its own gated
+    executive panel, so the report does not repeat the AI summary there."""
+    report = metadata.get("run_report")
+    if not isinstance(report, dict):
+        return ""
+    from app.services.notification.run_report import (  # noqa: PLC0415
+        render_run_report_html,
+        render_run_report_text,
+    )
+
+    include_ai = not (event_type == "ai_analysis_complete" and metadata.get("executive_panel"))
+    try:
+        if html:
+            return render_run_report_html(report, include_ai_summary=include_ai)
+        return render_run_report_text(report, include_ai_summary=include_ai)
+    except Exception:  # noqa: BLE001 -- the short email still goes
+        logger.exception("run_report_render_failed")
+        return ""
+
+
+def _build_plain(title: str, body: str, metadata: dict, event_type: str = "") -> str:
     lines = [title, "=" * len(title), "", body, ""]
     if metadata.get("project_name"):
         lines.append(f"Project: {metadata['project_name']}")
@@ -207,6 +231,9 @@ def _build_plain(title: str, body: str, metadata: dict) -> str:
         lines.append(f"Pass rate: {metadata['pass_rate']:.1f}%")
     if metadata.get("failed_tests"):
         lines.append(f"Failed tests: {metadata['failed_tests']}")
+    report_text = _run_report_section(metadata, event_type, html=False)
+    if report_text:
+        lines.append(report_text)
     if metadata.get("dashboard_url") and metadata["dashboard_url"] != "#":
         lines.append(f"\nView: {metadata['dashboard_url']}")
     lines.append("\n--\nTestLookup notification service")
@@ -296,7 +323,7 @@ async def send_notification(
         # mail systems can use Message-ID to suppress an ambiguous resend.
         msg["Message-ID"] = f"<{delivery_id}@notifications.testlookup>"
 
-    msg.attach(MIMEText(_build_plain(title, body, meta), "plain"))
+    msg.attach(MIMEText(_build_plain(title, body, meta, event_type), "plain"))
     msg.attach(MIMEText(_build_html(title, body, event_type, meta), "html"))
 
     use_tls = bool(cfg.get("tls", True))
