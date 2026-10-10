@@ -76,6 +76,30 @@ _REDACTION_PLACEHOLDERS = frozenset({
 })
 
 
+def strip_nul_bytes(value: Any, _depth: int = 0) -> Any:
+    """Return ``value`` with every NUL character removed from its strings.
+
+    PostgreSQL text and JSONB cannot hold U+0000 (SQLSTATE 22021), so one NUL
+    anywhere in a result -- typically captured binary output in a stack
+    trace -- rejected the whole row. The row was then missing from the run:
+    a FAILED test with a NUL in its message vanished and the run read 100%
+    passed (E2E 2026-10-10). Dict keys are cleaned too; nesting deeper than
+    the sanitizer's own limit is left as is for it to bound.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if _depth > _MAX_NESTING_DEPTH:
+        return value
+    if isinstance(value, Mapping):
+        return {
+            strip_nul_bytes(k, _depth + 1): strip_nul_bytes(v, _depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [strip_nul_bytes(v, _depth + 1) for v in value]
+    return value
+
+
 def _normalized_key(key: object) -> str:
     return str(key).strip().lower().replace("-", "_")
 
@@ -231,6 +255,9 @@ def sanitize_test_result_payload(payload: object) -> dict[str, Any]:
     safe too. The shared redactor is idempotent, making those repeated checks
     intentional and harmless.
     """
+    # Before the type check, so the check narrows the stripped value (a
+    # non-mapping comes back as it was and is refused below).
+    payload = strip_nul_bytes(payload)
     if not isinstance(payload, Mapping):
         return {"_redacted": REDACTED}
     if len(payload) > _MAX_COLLECTION_ITEMS:

@@ -23,6 +23,15 @@ def _output(sample):
     return " ".join(sample.label.required_claims)
 
 
+@pytest.fixture(autouse=True)
+def body_project_check(monkeypatch):
+    """Membership of the body's project (``_authorize_body_project``) is
+    stubbed for the direct handler calls; the scoping test reads it back."""
+    check = AsyncMock()
+    monkeypatch.setattr(router, "_authorize_body_project", check)
+    return check
+
+
 def _body(*, agent_id: str = "agent.summary.v1") -> router.TierComparisonRequest:
     return router.TierComparisonRequest(
         project_id=uuid.uuid4(),
@@ -69,10 +78,21 @@ async def test_route_refuses_an_agent_capability_mismatch():
     assert exc.value.status_code == 422 and "does not match" in exc.value.detail
 
 
-def test_tier_comparison_is_project_scoped():
+async def test_tier_comparison_is_project_scoped(body_project_check):
+    """The project is in the BODY. The old guard, ``require_project_access()``,
+    reads the path, so it never ran -- while this test, which only looked for
+    ``project_id`` in the guard's closure, passed (E2E 2026-10-10). Now the
+    handler checks the body's project before computing anything, and QA_LEAD
+    is required."""
+    body_project_check.side_effect = HTTPException(403, "You do not have access to this project")
+    body = _body()
+    user = SimpleNamespace(id=uuid.uuid4())
+    with pytest.raises(HTTPException) as exc:
+        await router.run_tier_comparison(body, current_user=user, db=SimpleNamespace())
+    assert exc.value.status_code == 403
+    assert body_project_check.await_args.args[1:] == (user, body.project_id)
     dependency = inspect.signature(router.run_tier_comparison).parameters["current_user"].default.dependency
-    assert dependency is not None
-    assert "project_id" in [cell.cell_contents for cell in (dependency.__closure__ or ())]
+    assert router.UserRole.QA_LEAD in [cell.cell_contents for cell in (dependency.__closure__ or ())]
 
 
 async def test_agent_config_put_surfaces_unmeasured_downgrade_as_422(monkeypatch):

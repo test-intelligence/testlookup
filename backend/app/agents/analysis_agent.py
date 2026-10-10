@@ -48,6 +48,7 @@ from app.models.postgres import (
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
 from app.services.category_normalizer import normalize_category_in_analysis
+from app.services.failure_category_sync import mirror_ai_category as _mirror_category_to_test_case
 from app.services.confidence_validation import (
     engine_label,
     stringify_value,
@@ -1590,6 +1591,9 @@ class AnalysisAgent(BaseAgent):
                             },
                         )
                         await db.execute(stmt)
+                        await _mirror_category_to_test_case(
+                            db, tc_id, analysis.get("failure_category"),
+                        )
                     await db.commit()
                     committed = True
             except Exception as exc:

@@ -1409,8 +1409,10 @@ async def test_feedback_service_submit_feedback_backpropagates_incorrect_correct
         corrected_root_cause="New cause",
         comment="Wrong label",
     )
-    current_user = SimpleNamespace(id=uuid.uuid4())
-    db = FakeAsyncDB([FakeExecuteResult(scalar=analysis)])
+    current_user = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER")
+    # Second result: the correction also sets the test case's category
+    # (services/failure_category_sync.apply_human_category).
+    db = FakeAsyncDB([FakeExecuteResult(scalar=analysis), FakeExecuteResult()])
 
     async def fake_commit():
         for obj in db.added:

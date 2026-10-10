@@ -1,5 +1,87 @@
 # Changelog
 
+## Unreleased - E2E pass on the homelab: permissions, ingestion, analysis, gate, settings
+
+Exploratory and end-to-end testing of every feature on the homelab (2026-10-10),
+calling the API as every role, ingesting real runs into a dedicated project
+(JSON batch, file upload in eight formats, live stream), checking every claim
+against Postgres, and deploying each batch of fixes to the homelab before
+re-testing it. Each fix has a regression test.
+
+**Permissions.**
+- **A viewer could get a QA lead's password.** `POST /projects/{id}/default-qa-lead/reset-password`
+  required project access only and returned the project's synthetic QA_LEAD
+  account password. It now needs QA_LEAD.
+- **Live sessions in any project.** `POST/GET/DELETE /stream/sessions` checked
+  a project-bound key's binding and nothing else, so any signed-in user opened
+  a live run in any project (by UUID or by name) and read or closed other
+  projects' sessions. Membership is now checked; a name or session the caller
+  cannot access answers 404.
+- **Writes the UI already reserved for a higher role.** QA_ENGINEER for ingest
+  (`/ingest`, `/ingest/file`, opening/closing live sessions), classify-uncategorized,
+  deep-investigation start, cluster-to-defect promotion, AI-analysis
+  corrections, test-case review verdicts and notify-owner; QA_LEAD for
+  `email-trends` (mails project data to any address). Correct, Classify,
+  Notify and File defect are hidden below QA_ENGINEER.
+- **ai-eval routes checked the wrong project.** tier-comparison and
+  reviewer-quality carry the project in the body; their guards read the path.
+  Any user wrote a G2 verdict into any project, and a global QA lead disabled
+  another project's reviewer check. Body membership + QA_LEAD now.
+- **Share links outlived their creator.** A link stops serving once its
+  creator is removed from the project, deactivated or deleted.
+- **Deactivated users kept a JWT.** `get_api_key_context` refused a
+  deactivated API-key owner but not a deactivated bearer token (12 h).
+
+**Ingestion.**
+- **A NUL byte dropped a result.** PostgreSQL cannot store U+0000; a FAILED
+  test whose message carried one was rejected and the run read 100% passed. A
+  NUL in a build number made `POST /ingest` a 500. Every ingestion path strips it.
+- **Playwright reports failed to auto-detect.** The sniffer needed `"suites"` in
+  the first 2 KB; a real report (this repo's own config) puts it at byte 2573,
+  fell through to Allure and failed as "No test results". Detection now keys on
+  the leading `config` block.
+
+**Analysis.**
+- **The AI category never reached the test case.** The pipeline wrote it to
+  `ai_analysis` only; Failure Analysis, chart rows, digests, failure groups and
+  My Failures read `test_cases.failure_category`, so every pipeline-analysed
+  failure read "Unknown" there. Mirrored when unset; corrections set it;
+  migration **0200** backfills (homelab: 64 rows).
+- **Baselines compared with the future.** Anomaly and regression-watchman
+  baselines took recent runs with no time bound, so a queued pipeline compared
+  a project's first run with a run ingested after it ("dropped from the previous
+  100%"). Prior runs only.
+- **A failed explanation became the root cause.** "AI analysis could not
+  complete ... (invalid_json)" passed the summary's confidence floor on the
+  classifier's score and was summarised as "6 tests failing due to invalid JSON
+  parsing issues".
+
+**Defects and the release gate.**
+- **One open defect per test, not per run.** Triage deduplicated on the per-run
+  `test_case_id`: a test red in 12 runs held 12 OPEN defects (with Jira on, 12
+  tickets). The open defect for the test now takes a recurrence, once per run.
+  Duplicates opened before this fix are left as they are.
+- **Quarantine never unblocked the gate.** Ingestion tags quarantined results
+  so the gate can set them aside; nothing read the tag. Such failures stay
+  counted, are listed in `scorecard.quarantined_failures`, and no longer block.
+
+**Pages.**
+- **Summary Report, empty 24h window** (owner report). It was correct (the demo
+  projects last ran 39 h earlier) but gave no reason. It now names the last run
+  and offers the smallest window that holds it.
+- **Flaky tests page sat 30 s on "0 flaky tests".** `flaky-coach` (and
+  test-health, release-readiness) held two DB sessions per request on the 2+1
+  pool; two concurrent loads starved. One session now, and the header waits
+  for its count.
+- **SMTP password "would not save"** (owner report). It had saved; the page
+  showed an empty field over a red "Clear stored password" link, and the test
+  email failed on implicit TLS with port 587 behind a generic message. It now
+  says "Password saved", pairs the TLS mode with 465/587, warns on a mismatch,
+  and the test failure names the change to make.
+
+**Tests.** `test_integrations_secret_authority` leaked a fake `read_secret` and
+an `aiosmtplib` stub into later tests when run first in a process; fixed.
+
 ## Unreleased - Ask AI on Claude Haiku 5.5; two tool answers corrected
 
 **Model.** The homelab overlay sets `CHAT_LLM_MODEL: "anthropic/claude-haiku-5.5"`

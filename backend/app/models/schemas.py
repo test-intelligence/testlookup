@@ -1,7 +1,7 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     AliasChoices,
@@ -1064,6 +1064,10 @@ class SummaryReportResponse(BaseModel):
     runs_per_day: Optional[float] = None
     avg_duration_ms: int
     latest_run_at: Optional[str] = None
+    # Set only when the window holds NO run: the newest in-scope run before it,
+    # so an empty report can say when the project last ran instead of reading
+    # like a broken page ("no records in the last 24 hours", E2E 2026-10-10).
+    last_run_before_window_at: Optional[str] = None
     # Field-level scope exception (VIZ-202 review): ``meta.ignored_filters``
     # is per dimension and the rest of the body IS release-scoped, so the one
     # field that is not says so here. Text: summary_report_service.FLAKY_COUNT_SCOPE_NOTE.
@@ -2954,7 +2958,34 @@ SuppliedCommitRangeInput = Union[List[SuppliedCommit], SuppliedCommitRange]
 
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
-class LiveSessionCreate(BaseModel):
+class _NulFreeInput(BaseModel):
+    """Strips U+0000 from every string of an ingestion request body.
+
+    PostgreSQL text cannot hold a NUL. One in a build number or branch made
+    ``POST /ingest`` answer 500 (the run-identity lookup failed) and, in a
+    result, rejected that row from the run (E2E 2026-10-10). Captured test
+    output is where they come from; nothing downstream can store them.
+    """
+
+    #: Identity fields left as sent, so their own validation still refuses a
+    #: control character: a batch id is an idempotency key, and quietly
+    #: rewriting "bad<NUL>id" to "badid" would change which retry it matches.
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_nul_bytes(cls, data):
+        from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
+
+        if isinstance(data, dict) and cls._NUL_KEPT_FIELDS:
+            return {
+                key: value if key in cls._NUL_KEPT_FIELDS else strip_nul_bytes(value)
+                for key, value in data.items()
+            }
+        return strip_nul_bytes(data)
+
+
+class LiveSessionCreate(_NulFreeInput):
     """Request body to register a new live execution session.
 
     ``project_id`` accepts either a project UUID *or* a human-readable project
@@ -3033,11 +3064,12 @@ class LiveEvent(BaseModel):
     metadata: Optional[dict] = None
 
 
-class LiveEventBatch(BaseModel):
+class LiveEventBatch(_NulFreeInput):
     """
     A batch of events sent from a client machine.
     Batching amortises HTTP overhead — 50–1000 events per call is recommended.
     """
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset({"session_id", "run_id", "batch_id"})
     session_id: str = Field(..., min_length=1, max_length=255)
     run_id: str = Field(..., min_length=1, max_length=100)
     batch_id: Optional[str] = Field(
@@ -3076,7 +3108,7 @@ class LiveStreamMeta(BaseModel):
     metadata: Optional[dict] = None
 
 
-class LiveStreamIngestRequest(BaseModel):
+class LiveStreamIngestRequest(_NulFreeInput):
     """API-key-authenticated streaming ingest. Server auto-manages the session.
 
     A client-chosen ``run_id`` (any stable identifier — CI build id, UUID, etc.)
@@ -3084,6 +3116,7 @@ class LiveStreamIngestRequest(BaseModel):
     call for a given ``(project_id, run_id)`` pair auto-creates the session;
     subsequent calls reuse it. Clients never call ``/sessions`` themselves.
     """
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset({"session_id", "run_id", "batch_id"})
     run_id: str = Field(..., min_length=1, max_length=100)
     batch_id: Optional[str] = Field(
         None,
@@ -3123,7 +3156,7 @@ class IngestTestResult(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class IngestPayload(BaseModel):
+class IngestPayload(_NulFreeInput):
     """JSON batch ingest request body for POST /api/v1/ingest."""
     project_id: str = Field(..., description="Project UUID")
     build_number: str = Field(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH)

@@ -53,6 +53,26 @@ async def create_share_link(
     return CreatedShareLink(link=link, raw_token=raw_token)
 
 
+async def _require_creator_still_has_access(db: AsyncSession, link: ReportShareLink) -> None:
+    """A link speaks for its creator, so it lasts only as long as their access.
+
+    The public view never looked at the creator: removing someone from the
+    project, deactivating them or deleting them left every link they had
+    minted serving the report for up to 30 days (E2E 2026-10-10).
+    """
+    from app.core.deps import get_accessible_project_ids  # noqa: PLC0415
+    from app.models.postgres import User  # noqa: PLC0415
+
+    creator = (
+        await db.get(User, link.created_by_id) if link.created_by_id is not None else None
+    )
+    if creator is None or not creator.is_active:
+        raise ValueError("This share link is no longer valid")
+    accessible = await get_accessible_project_ids(db, creator)
+    if accessible is not None and link.project_id not in accessible:
+        raise ValueError("This share link is no longer valid")
+
+
 async def validate_share_link(
     db: AsyncSession,
     token: str,
@@ -76,6 +96,8 @@ async def validate_share_link(
 
     if link.expires_at < datetime.now(timezone.utc):
         raise ValueError("This share link has expired")
+
+    await _require_creator_still_has_access(db, link)
 
     link.access_count = (link.access_count or 0) + 1
     link.last_accessed_at = datetime.now(timezone.utc)

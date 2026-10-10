@@ -21,8 +21,12 @@ import type { QuarantineStatsResponse, QuarantineStatus } from '@/services/flaky
  * than sit hardcoded plural ("1 flaky tests").
  */
 export function flakySubtitle(coach: Pick<FlakyCoachResponse, 'total_flaky' | 'quarantine_candidates'> | undefined): string {
-  const flakyCount = coach?.total_flaky ?? 0
-  const candidateCount = coach?.quarantine_candidates ?? 0
+  // No answer yet (loading, or the analysis failed) is not "0 flaky tests":
+  // the header read that for the 30 s a starved request took while the list
+  // below it later showed two (E2E 2026-10-10).
+  if (!coach) return 'Counting flaky tests · last 30 days'
+  const flakyCount = coach.total_flaky ?? 0
+  const candidateCount = coach.quarantine_candidates ?? 0
   return `${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'} · last 30 days`
 }
 

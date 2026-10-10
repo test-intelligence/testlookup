@@ -65,3 +65,40 @@ def test_playwright_wins_over_cypress_when_both_markers_present():
         "results": [],
     })
     assert _detect_format("report.json", payload) == "playwright"
+
+
+def test_a_real_playwright_report_whose_config_pushes_suites_past_2kb():
+    """E2E 2026-10-10: ``suites`` follows the whole ``config`` block (argv,
+    every project, metadata). This repo's own config put it at byte 2573, so
+    the report fell through to the ``.json`` -> allure fallback and the
+    upload failed as "No test results were found"."""
+    config = {
+        "configFile": "C:/repo/frontend/playwright.config.ts",
+        "rootDir": "C:/repo/frontend/tests",
+        "forbidOnly": False,
+        "fullyParallel": True,
+        "metadata": {"actualWorkers": 4},
+        "projects": [
+            {"outputDir": f"C:/repo/frontend/test-results/{n}", "name": n, "retries": 2,
+             "testDir": "C:/repo/frontend/tests", "testIgnore": [], "testMatch": ["**/*.spec.ts"],
+             "timeout": 30000, "metadata": {"browser": n, "padding": "x" * 600}}
+            for n in ("chromium", "firefox", "webkit")
+        ],
+    }
+    payload = _json({"config": config, "suites": [{"title": "t", "specs": []}], "stats": {}})
+    assert payload.index(b'"suites"') > 2048
+    assert _detect_format("results.json", payload) == "playwright"
+
+
+def test_the_minimal_playwright_report_shipped_in_samples():
+    """``samples/playwright/playwright-results.json`` has ``config.rootDir``
+    and no ``projects``: it auto-detected as allure and parsed to nothing."""
+    payload = _json({"config": {"rootDir": "/app", "testDir": "./tests/e2e"}, "suites": []})
+    assert _detect_format("playwright-results.json", payload) == "playwright"
+
+
+def test_a_config_key_that_is_not_first_is_not_playwright():
+    """The new rule keys on ``config`` being the FIRST root key with a
+    Playwright setting in it; Allure results stay Allure."""
+    payload = _json({"uuid": "abc", "name": "t", "status": "passed", "config": {"rootDir": "/x"}})
+    assert _detect_format("result.json", payload) == "allure"

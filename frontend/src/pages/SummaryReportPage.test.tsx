@@ -284,6 +284,49 @@ describe('SummaryReportPage', () => {
     expect(await screen.findByText(/No executions in this window/i)).toBeInTheDocument()
   })
 
+  it('an empty 24h window says when the project last ran and offers the window that holds it (E2E 2026-10-10)', async () => {
+    // Reported as "no records in the last 24 hours": every demo project's
+    // newest run was 39 h old, so the 24h report was correctly empty -- and
+    // said nothing about why. The API now returns the newest run before the
+    // window; the page names it and offers the smallest window holding it.
+    useTimeWindowStore.setState({ days: 1 })
+    const zero = {
+      total_test_cases: 0, passed: 0, failed: 0, skipped: 0, broken: 0,
+      evaluated: 0, pass_rate_pct: 0, fail_rate_pct: 0,
+      skip_rate_pct: 0, broken_rate_pct: 0, weighted_pass_rate_pct: 0,
+    }
+    mockGet.mockResolvedValue(makeReport({
+      totals: zero, suites: [], top_failing_tests: [], run_count: 0,
+      latest_run_at: null,
+      last_run_before_window_at: new Date(Date.now() - 39 * 3600 * 1000).toISOString(),
+    }))
+
+    renderPage()
+
+    expect(await screen.findByText(/No executions in this window/i)).toBeInTheDocument()
+    expect(screen.getByText(/most recent run was yesterday, outside this window/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('summary-widen-window'))
+    expect(useTimeWindowStore.getState().days).toBe(7)
+  })
+
+  it('a project that never ran is not told to widen the window', async () => {
+    useTimeWindowStore.setState({ days: 1 })
+    mockGet.mockResolvedValue(makeReport({
+      totals: {
+        total_test_cases: 0, passed: 0, failed: 0, skipped: 0, broken: 0,
+        evaluated: 0, pass_rate_pct: 0, fail_rate_pct: 0,
+        skip_rate_pct: 0, broken_rate_pct: 0, weighted_pass_rate_pct: 0,
+      },
+      suites: [], top_failing_tests: [], run_count: 0,
+      latest_run_at: null, last_run_before_window_at: null,
+    }))
+
+    renderPage()
+
+    expect(await screen.findByText(/No executions in this window/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('summary-widen-window')).toBeNull()
+  })
+
   it('renders the no-data empty state (no crash) when the envelope has null totals', async () => {
     // The backend can short-circuit to an empty envelope where ``totals``
     // is absent entirely (not just zeroed) — the same shape the

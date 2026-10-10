@@ -201,11 +201,11 @@ class TestBuildRollupReadsTheDatabaseCorrectly:
         )
 
     @staticmethod
-    def _case(run_id, fingerprint, status, suite="ui", name=None):
+    def _case(run_id, fingerprint, status, suite="ui", name=None, tags=None):
         # fingerprint and name deliberately DIFFER, so ``fingerprint or name``
         # has two distinguishable branches. The previous helper set them equal,
         # which let both mutations of that expression survive.
-        return (run_id, fingerprint, name or f"name-of-{fingerprint}", suite, status)
+        return (run_id, fingerprint, name or f"name-of-{fingerprint}", suite, status, tags)
 
     def _build(self, runs, links, cases, project_id="p1", release_id="rel-1"):
         import asyncio
@@ -383,6 +383,46 @@ class TestBuildRollupReadsTheDatabaseCorrectly:
         assert result.latest_by_test["ui::fp_login"] == "FAILED"
         assert result.latest_by_test["api::fp_login"] == "PASSED"
 
+    def test_a_quarantined_failure_does_not_block_but_is_still_counted_and_named(self):
+        """E2E 2026-10-10: ingestion tags a result ``quarantined`` so the gate
+        can set it aside -- the documented contract -- but nothing read the
+        tag, so a quarantined flaky test held the release at NO_GO."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        runs = [self._run("r1", start_time=now - timedelta(hours=1)), self._run("r2", start_time=now)]
+        links = [("r1", "explicit_name"), ("r2", "explicit_name")]
+        passing = [self._case("r2", f"fp_ok{i}", "PASSED") for i in range(6)]
+        result, _ = self._build(runs, links, passing + [
+            self._case("r1", "fp_flip", "PASSED"),
+            self._case("r2", "fp_flip", "FAILED", tags=["failed", "quarantined", "flaky"]),
+        ])
+
+        assert result.latest_by_test["ui::fp_flip"] == "FAILED"
+        assert result.status_counts["FAILED"] == 1, "still counted"
+        assert result.blocking_count == 0
+        assert svc.decide(result) == ("GO", [])
+        assert svc.summarise(result)["quarantined_failures"] == ["ui::fp_flip"]
+
+    def test_a_quarantine_mark_follows_the_latest_result(self):
+        """Released from quarantine, the test's next untagged failure blocks
+        again; an unquarantined failure next to a quarantined one still does."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        runs = [self._run("r1", start_time=now - timedelta(hours=1)), self._run("r2", start_time=now)]
+        links = [("r1", "explicit_name"), ("r2", "explicit_name")]
+        passing = [self._case("r2", f"fp_ok{i}", "PASSED") for i in range(6)]
+        result, _ = self._build(runs, links, passing + [
+            self._case("r1", "fp_flip", "FAILED", tags=["quarantined"]),
+            self._case("r2", "fp_flip", "FAILED", tags=["failed"]),
+            self._case("r2", "fp_other", "BROKEN", tags=["quarantined"]),
+        ])
+
+        verdict, reasons = svc.decide(result)
+        assert verdict == "NO_GO"
+        assert reasons == ["ui::fp_flip is FAILED"]
+
     def test_a_row_with_no_identity_at_all_is_skipped(self):
         from datetime import datetime, timezone
 
@@ -390,7 +430,7 @@ class TestBuildRollupReadsTheDatabaseCorrectly:
         result, _ = self._build(
             [self._run("r1", start_time=now)],
             [("r1", "explicit_name")],
-            [("r1", None, None, "ui", "PASSED"), self._case("r1", "t1", "PASSED")],
+            [("r1", None, None, "ui", "PASSED", None), self._case("r1", "t1", "PASSED")],
         )
 
         # Counting it under a shared empty key would merge every such row into
@@ -474,7 +514,7 @@ class TestBuildRollupReadsTheDatabaseCorrectly:
         result, _ = self._build(
             [self._run("r1", start_time=now)],
             [("r1", "explicit_name")],
-            [("r1", None, "test_checkout", "ui", "FAILED")],
+            [("r1", None, "test_checkout", "ui", "FAILED", None)],
         )
 
         assert result.denominator == 1

@@ -50,6 +50,7 @@ import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
+import { usePermissions } from '@/hooks/usePermissions'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { onboardingService } from '@/services/onboardingService'
@@ -675,7 +676,8 @@ function WhatFailedCard({
 }: {
   clusters: FailureClusterIntel[]
   runId: string
-  onPromote: (cluster: FailureClusterIntel) => void
+  /** Absent below QA engineer: filing a defect needs that role. */
+  onPromote?: (cluster: FailureClusterIntel) => void
   onDecisionTrail: () => void
   /** ``test_runs.failed_tests`` aggregate (set by ingest even when per-test
    *  rows are missing). When > 0 with zero clusters, surface the data gap. */
@@ -767,7 +769,7 @@ function WhatFailedCard({
           key={c.cluster_id}
           cluster={c}
           runId={runId}
-          onPromote={() => onPromote(c)}
+          onPromote={onPromote ? () => onPromote(c) : undefined}
           onDecisionTrail={onDecisionTrail}
         />
       ))}
@@ -788,7 +790,7 @@ function FailureBlock({
 }: {
   cluster: FailureClusterIntel
   runId: string
-  onPromote: () => void
+  onPromote?: () => void
   onDecisionTrail: () => void
 }) {
   const firstTestId = cluster.member_test_ids[0]
@@ -845,9 +847,11 @@ function FailureBlock({
         <GhostBtn onClick={onDecisionTrail} title="Why the AI assigned this category">
           Decision trail
         </GhostBtn>
-        <GhostBtn onClick={onPromote} title="Promote this cluster to a defect (Jira)">
-          <TicketCheck className="h-3.5 w-3.5" /> File defect
-        </GhostBtn>
+        {onPromote && (
+          <GhostBtn onClick={onPromote} title="Promote this cluster to a defect (Jira)">
+            <TicketCheck className="h-3.5 w-3.5" /> File defect
+          </GhostBtn>
+        )}
       </div>
     </div>
   )
@@ -1379,6 +1383,8 @@ export function RunIntelligenceBody({
 
   const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
   const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
+  // Filing a defect needs QA engineer (POST .../promote, like /analytics/defects).
+  const { isQaEngineer } = usePermissions()
 
   if (isLoading) {
     return (
@@ -1432,7 +1438,7 @@ export function RunIntelligenceBody({
         <WhatFailedCard
           clusters={failure_clusters}
           runId={run.id}
-          onPromote={(c) => setPromoteCluster(c)}
+          onPromote={isQaEngineer ? (c) => setPromoteCluster(c) : undefined}
           onDecisionTrail={() => setDecisionTrailOpen(true)}
           aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
           aggregateTotalTests={run.total_tests ?? 0}

@@ -447,6 +447,11 @@ async def _upsert_test_case(
     a caller that did not perform a lookup. Its default preserves the inline
     lookup for direct callers.
     """
+    # Every transport reaches this write: PostgreSQL text cannot hold U+0000,
+    # and one NUL would reject (and so drop) the whole result.
+    from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
+
+    case_data = strip_nul_bytes(case_data)
     if fingerprint is None:
         fingerprint = make_test_fingerprint(
             case_data.get("test_name", ""),

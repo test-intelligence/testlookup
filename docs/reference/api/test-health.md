@@ -11,14 +11,14 @@ Get Project Flaky Coach
 Get project-level flaky test leaderboard with quarantine recommendations.
 Ranked by impact score (failure_rate × frequency).
 
-Source: [backend/app/routers/test_health.py:55](../../../backend/app/routers/test_health.py#L55).
+Source: [backend/app/routers/test_health.py:59](../../../backend/app/routers/test_health.py#L59).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, days: int=Query(default=30, ge=1, le=365), limit: int=Query(default=50, ge=1, le=200), current_user: User=Depends(get_current_active_user), _: User=Depends(require_project_access()), release_id: Optional[str]=Query(None, description='Only flaky tests that ran in this release.')
+project_id: uuid.UUID, days: int=Query(default=30, ge=1, le=365), limit: int=Query(default=50, ge=1, le=200), current_user: User=Depends(get_current_active_user), _: User=Depends(require_project_access()), release_id: Optional[str]=Query(None, description='Only flaky tests that ran in this release.'), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -141,14 +141,14 @@ Refresh Project Flaky Coach
 Trigger a refresh of the flaky coach data for a project.
 Recomputes quarantine recommendations from test case history.
 
-Source: [backend/app/routers/test_health.py:86](../../../backend/app/routers/test_health.py#L86).
+Source: [backend/app/routers/test_health.py:93](../../../backend/app/routers/test_health.py#L93).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, days: int=Query(default=30, ge=1, le=365), current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_project_access())
+project_id: uuid.UUID, days: int=Query(default=30, ge=1, le=365), current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_project_access()), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -247,14 +247,14 @@ Get Test Health
 Get test health findings for a specific run.
 Returns anti-pattern analysis, health scores, and stabilization recommendations.
 
-Source: [backend/app/routers/test_health.py:34](../../../backend/app/routers/test_health.py#L34).
+Source: [backend/app/routers/test_health.py:35](../../../backend/app/routers/test_health.py#L35).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, current_user: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):

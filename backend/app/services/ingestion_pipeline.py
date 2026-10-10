@@ -424,8 +424,13 @@ async def ingest_test_results(
     # PASSED or FAILED purely by document order. Collapse first, worst outcome
     # winning, so a failure can't be hidden by a later pass.
     from app.services.ingestion import collapse_duplicate_cases  # noqa: PLC0415
+    from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
 
-    results = collapse_duplicate_cases(results)
+    # Before fingerprinting: a NUL in a name or message used to reject the
+    # whole row at INSERT (PostgreSQL text cannot hold U+0000), dropping it
+    # from the run. Stripping first also keeps the fingerprint stable for a
+    # test whose name carried one.
+    results = collapse_duplicate_cases([strip_nul_bytes(case) for case in results])
 
     default_suite_name: Optional[str] = None
     needs_default = any(

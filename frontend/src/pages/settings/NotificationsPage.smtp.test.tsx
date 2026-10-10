@@ -110,3 +110,43 @@ describe('SmtpConfigCard when its config cannot be read', () => {
     expect(eye).toHaveAccessibleName('Hide password')
   })
 })
+
+describe('SmtpConfigCard: a saved password reads as saved, and the TLS mode matches the port (owner report 2026-10-10)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('says the password is saved, with Clear as a quiet action, not a red link that reads as an error', async () => {
+    // "Unable to save the SMTP password, it returns clear password error": the
+    // password HAD saved; the page showed an empty field and a red "Clear
+    // stored password" link under it.
+    const { appSettingsService } = await import('@/services/appSettingsService')
+    ;(appSettingsService.getSmtpConfig as ReturnType<typeof vi.fn>).mockResolvedValue(CONFIG)
+
+    render(<SmtpConfigCard />)
+
+    const status = await screen.findByTestId('smtp-password-status')
+    expect(status).toHaveTextContent('Password saved. Leave blank to keep it.')
+    expect(screen.queryByText('Clear stored password')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.getByTestId('smtp-password-status')).toHaveTextContent(/will be cleared on save/i)
+  })
+
+  it('warns when the port and the TLS mode disagree, and pairs them when the port changes', async () => {
+    const { appSettingsService } = await import('@/services/appSettingsService')
+    ;(appSettingsService.getSmtpConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...CONFIG, host: 'smtp.gmail.com', port: 587, implicit_tls: true,
+    })
+
+    render(<SmtpConfigCard />)
+
+    expect(await screen.findByTestId('smtp-tls-mismatch')).toHaveTextContent(/587 normally uses STARTTLS/)
+    expect(screen.getByTestId('smtp-tls-mode')).toHaveTextContent('Implicit TLS')
+
+    // Typing 465 then 587 pairs the mode each time; the warning goes away.
+    const port = screen.getByDisplayValue('587')
+    fireEvent.change(port, { target: { value: '465' } })
+    expect(screen.getByTestId('smtp-tls-mode')).toHaveTextContent('Implicit TLS')
+    fireEvent.change(port, { target: { value: '587' } })
+    expect(screen.getByTestId('smtp-tls-mode')).toHaveTextContent('STARTTLS')
+    expect(screen.queryByTestId('smtp-tls-mismatch')).toBeNull()
+  })
+})

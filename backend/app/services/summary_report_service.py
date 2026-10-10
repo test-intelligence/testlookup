@@ -213,6 +213,14 @@ async def build_summary_report(
             db, project_id, period_start, now, release_id=release_id, suite_name=suite_name
         )
 
+    last_run_before_window_at = (
+        await _last_run_before(
+            db, project_id, period_start, release_id=release_id, suite_name=suite_name,
+        )
+        if run_count == 0
+        else None
+    )
+
     # Suite-scoped by the dashboard's own flaky rule, so this equals the
     # Overview's flaky_test_count under the same suite filter. NOT release-
     # scoped: see FLAKY_COUNT_SCOPE_NOTE (declared on the response field).
@@ -311,6 +319,9 @@ async def build_summary_report(
         "runs_per_day": runs_per_day,
         "avg_duration_ms": avg_duration_ms,
         "latest_run_at": latest_run_at.isoformat() if latest_run_at else None,
+        "last_run_before_window_at": (
+            last_run_before_window_at.isoformat() if last_run_before_window_at else None
+        ),
         "flaky_test_count": flaky_count,
         # Published with the count so "0" cannot be read as "no flakiness"
         # (BUG-007). Flaky Coach applies a looser rule — 30 days, 3 runs — so
@@ -367,6 +378,7 @@ def _empty_envelope(*, days: int, mode: SummaryMode) -> dict:
         "runs_per_day": 0.0 if mode == "window" else None,
         "avg_duration_ms": 0,
         "latest_run_at": None,
+        "last_run_before_window_at": None,
         "flaky_test_count": 0,
         "flaky_rate_pct": 0.0,
         "suites": [],
@@ -381,6 +393,29 @@ async def _resolve_project_name(
         await db.execute(select(Project.name).where(Project.id == project_id))
     ).scalar_one_or_none()
     return row
+
+
+async def _last_run_before(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    start: datetime,
+    release_id: ReleaseArg = None,
+    suite_name: SuiteArg = None,
+) -> Optional[datetime]:
+    """The newest in-scope run older than the window, for an empty report.
+
+    Same scope as the window's run count (release predicate, suite clause), so
+    "the last run was 39 h ago" is about the runs this report would show.
+    """
+    stmt = select(func.max(TestRun.created_at)).where(
+        TestRun.project_id == project_id,
+        *_release_predicate(release_id),
+        TestRun.created_at < start,
+    )
+    in_scope = run_in_suite_scope_clause(suite_name)
+    if in_scope is not None:
+        stmt = stmt.where(in_scope)
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def _window_totals(

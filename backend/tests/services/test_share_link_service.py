@@ -46,6 +46,9 @@ def _make_db(*execute_returns):
     db.execute = AsyncMock(side_effect=[_execute_result(**r) for r in execute_returns])
     db.flush = AsyncMock()
     db.add = MagicMock()
+    # The link's creator: an active ADMIN, so the creator-access re-check
+    # (E2E 2026-10-10, see test_e2e_2026_10_10_role_gates) passes.
+    db.get = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4(), is_active=True, role="ADMIN"))
     return db
 
 

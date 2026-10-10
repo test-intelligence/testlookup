@@ -20,7 +20,7 @@ legitimately unscoped; the defect was that non-admins were unscoped too.
 ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
 already anticipated this filter.
 
-Source: [backend/app/routers/deep_investigation.py:428](../../../backend/app/routers/deep_investigation.py#L428).
+Source: [backend/app/routers/deep_investigation.py:432](../../../backend/app/routers/deep_investigation.py#L432).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -126,7 +126,7 @@ Approve or reject a defect that is pending review (QA Lead+ only).
 
 When approved with a Jira project key, the Jira ticket is created.
 
-Source: [backend/app/routers/deep_investigation.py:330](../../../backend/app/routers/deep_investigation.py#L330).
+Source: [backend/app/routers/deep_investigation.py:334](../../../backend/app/routers/deep_investigation.py#L334).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -227,14 +227,14 @@ Trigger the deep investigation pipeline for a completed test run.
 Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
 test health analysis, and release risk on top of the standard 5-stage pipeline.
 
-Source: [backend/app/routers/deep_investigation.py:89](../../../backend/app/routers/deep_investigation.py#L89).
+Source: [backend/app/routers/deep_investigation.py:88](../../../backend/app/routers/deep_investigation.py#L88).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, body: TriggerDeepRequest, current_user: User=Depends(get_current_active_user), _: User=Depends(require_run_access())
+run_id: uuid.UUID, body: TriggerDeepRequest, current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -327,7 +327,7 @@ Get Failure Clusters
 
 Return semantic failure clusters for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:143](../../../backend/app/routers/deep_investigation.py#L143).
+Source: [backend/app/routers/deep_investigation.py:144](../../../backend/app/routers/deep_investigation.py#L144).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -412,7 +412,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:272](../../../backend/app/routers/deep_investigation.py#L272).
+Source: [backend/app/routers/deep_investigation.py:276](../../../backend/app/routers/deep_investigation.py#L276).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -500,7 +500,7 @@ Get Cluster Defect Candidate
 
 Get a pre-assembled defect candidate for a failure cluster.
 
-Source: [backend/app/routers/deep_investigation.py:207](../../../backend/app/routers/deep_investigation.py#L207).
+Source: [backend/app/routers/deep_investigation.py:208](../../../backend/app/routers/deep_investigation.py#L208).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -598,7 +598,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:307](../../../backend/app/routers/deep_investigation.py#L307).
+Source: [backend/app/routers/deep_investigation.py:311](../../../backend/app/routers/deep_investigation.py#L311).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -700,14 +700,14 @@ Promote Cluster To Defect
 
 Promote a failure cluster to a defect record (optionally with Jira ticket).
 
-Source: [backend/app/routers/deep_investigation.py:225](../../../backend/app/routers/deep_investigation.py#L225).
+Source: [backend/app/routers/deep_investigation.py:226](../../../backend/app/routers/deep_investigation.py#L226).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, cluster_id: str, body: DefectPromotionRequest, current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
+run_id: uuid.UUID, cluster_id: str, body: DefectPromotionRequest, current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -807,7 +807,7 @@ Get Deep Findings
 
 Return deep investigation findings per failure cluster for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:171](../../../backend/app/routers/deep_investigation.py#L171).
+Source: [backend/app/routers/deep_investigation.py:172](../../../backend/app/routers/deep_investigation.py#L172).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

@@ -334,7 +334,14 @@ async def submit_feedback(
     # then stands for the full TTL — measured live on the feature-flag caches
     # and fixed there the same way.
     await feedback_service.evict_corrected_analysis_cache(db, analysis_id, body)
+    # A correction moved the test case's category, which analytics read.
+    corrected_project = await feedback_service.corrected_project_id(db, analysis_id, body)
+    if corrected_project is not None:
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(corrected_project)
     return result
+
 
 
 
@@ -366,6 +373,12 @@ async def update_feedback(
     result = await feedback_service.update_feedback(db, analysis_id, body, current_user)
     await db.commit()
     await feedback_service.evict_corrected_analysis_cache(db, analysis_id, body)
+    # A correction moved the test case's category, which analytics read.
+    corrected_project = await feedback_service.corrected_project_id(db, analysis_id, body)
+    if corrected_project is not None:
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(corrected_project)
     return result
 
 

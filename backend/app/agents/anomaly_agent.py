@@ -344,6 +344,18 @@ class AnomalyDetectionAgent(BaseAgent):
                     TestRun.project_id == project_id,
                     TestRun.id != current_run_id,
                     TestRun.pass_rate.is_not(None),
+                    # PRIOR runs only. Without this bound a pipeline that ran
+                    # late (a queued AI backlog, a re-trigger, a bulk re-run)
+                    # took runs ingested AFTER this one as its "previous" run:
+                    # the first run of a project read "dropped from the
+                    # previous 100%" -- a run that came 9 s later -- and its
+                    # failures were classified new/persistent against the
+                    # future (E2E 2026-10-10).
+                    TestRun.created_at < (
+                        select(TestRun.created_at)
+                        .where(TestRun.id == current_run_id)
+                        .scalar_subquery()
+                    ),
                 )
                 .order_by(TestRun.created_at.desc())
                 .limit(limit)

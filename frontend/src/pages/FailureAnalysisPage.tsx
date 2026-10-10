@@ -84,6 +84,7 @@ import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
+import { usePermissions } from '@/hooks/usePermissions'
 import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
@@ -1295,8 +1296,9 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
   categories: FailureCategoryItem[]
   totalFailures: number
   uncategorizedPct: number
-  /** Opens the correct-classification dialog for the top failing test. */
-  onCorrect: () => void
+  /** Opens the correct-classification dialog for the top failing test.
+   *  Absent below QA engineer: a correction rewrites the AI analysis. */
+  onCorrect?: () => void
   /** Opens the bulk "classify uncategorised failures" dialog. */
   onClassify?: () => void
   /** Active failure-kind filter — 'all' shows everything (US-9.2). */
@@ -1360,17 +1362,19 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
             <AlertTriangle className="h-3.5 w-3.5 flex-none mt-0.5" style={{ color: 'var(--status-broken)' }} />
             <span>
               Classifier confidence low — {Math.round(uncategorizedPct)}% of failures are sitting in <em>Unknown</em>.{' '}
-              <button
-                type="button"
-                onClick={onCorrect}
-                className="text-[var(--color-accent)] hover:underline"
-              >
-                Correct the classification →
-              </button>
+              {onCorrect && (
+                <button
+                  type="button"
+                  onClick={onCorrect}
+                  className="text-[var(--color-accent)] hover:underline"
+                >
+                  Correct the classification →
+                </button>
+              )}
               {/* The verdict card's "Classify" issue row, moved beside its own evidence. */}
               {onClassify && (
                 <>
-                  {' · '}
+                  {onCorrect && ' · '}
                   <button
                     type="button"
                     onClick={onClassify}
@@ -2005,6 +2009,10 @@ export default function FailureAnalysisPage() {
   // auto-quarantine is disabled"): Mute says so instead of opening a dialog
   // that can only fail (browser E2E pass, 2026-10-08).
   const quarantineOn = useFeatureFlagStatus('flaky_auto_quarantine')
+  // Correct and Classify rewrite failure categories (and the AI analysis), and
+  // Notify mails the suite owner: QA engineer and above, as the API requires.
+  // Offered to a viewer they could only fail.
+  const { isQaEngineer } = usePermissions()
 
   const actionTarget = model.topFailingTest
   const rowActions = useMemo<RowActionHandlers>(() => ({
@@ -2207,7 +2215,7 @@ export default function FailureAnalysisPage() {
       icon: <Download className="h-3.5 w-3.5" aria-hidden="true" />,
       onClick: () => handleExportCsv({ topFailing, flaky, categories, project, days, suiteFilter: suiteLabel || null }),
     },
-    ...(model.topFailingTest
+    ...(model.topFailingTest && isQaEngineer
       ? [{
           label: 'Notify suite owner',
           icon: <Mail className="h-3.5 w-3.5" aria-hidden="true" />,
@@ -2216,7 +2224,7 @@ export default function FailureAnalysisPage() {
         }]
       : []),
     // The verdict card's "N% of failures aren't categorised yet" issue row.
-    ...(model.uncategorizedPct >= 50
+    ...(model.uncategorizedPct >= 50 && isQaEngineer
       ? [{
           label: 'Classify uncategorised failures',
           icon: <Tags className="h-3.5 w-3.5" aria-hidden="true" />,
@@ -2355,8 +2363,8 @@ export default function FailureAnalysisPage() {
                   categories={kindFilteredCategories}
                   totalFailures={model.failedRuns}
                   uncategorizedPct={model.uncategorizedPct}
-                  onCorrect={openCorrection}
-                  onClassify={() => setClassifyOpen(true)}
+                  onCorrect={isQaEngineer ? openCorrection : undefined}
+                  onClassify={isQaEngineer ? () => setClassifyOpen(true) : undefined}
                   kindFilter={kindFilter}
                 />
               </>

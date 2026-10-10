@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 import uuid
 
 from fastapi import HTTPException
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections
 from app.services.eval_label_provenance import checksum_from_analysis
+from app.services.failure_category_sync import apply_human_category
 from app.services.privacy_service import sanitize_for_persistence
 
 from app.models.postgres import AIAnalysis, AIFeedback, DecisionReportFeedback, Defect, FeedbackRating, ModelVersion, TestRun
@@ -24,6 +26,30 @@ def _is_correction(body) -> bool:
     return bool(body.corrected_category) and body.rating == FeedbackRating.INCORRECT
 
 
+def _require_correction_role(body, current_user) -> None:
+    """A correction rewrites the analysis every surface renders: QA_ENGINEER.
+
+    Plain rating feedback stays open to every member. Applying a correction
+    overwrites the root cause and category, clears ``requires_human_review``
+    and plants a training label, and reading that analysis already needs
+    QA_ENGINEER (``GET /analyze``). With membership alone a VIEWER did all of
+    that (E2E 2026-10-10).
+    """
+    if not _is_correction(body):
+        return
+    from app.core.deps import _ROLE_ORDER, _normalize_user_role  # noqa: PLC0415
+    from app.models.postgres import UserRole  # noqa: PLC0415
+
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(current_user.role))
+    except ValueError:
+        idx = -1
+    if idx < _ROLE_ORDER.index(UserRole.QA_ENGINEER):
+        raise HTTPException(
+            403, detail="Correcting an AI analysis requires at least QA_ENGINEER role"
+        )
+
+
 def _apply_correction(analysis, body) -> None:
     """Push a correction onto the analysis every product surface renders.
 
@@ -34,6 +60,29 @@ def _apply_correction(analysis, body) -> None:
     if body.corrected_root_cause:
         analysis.root_cause_summary = body.corrected_root_cause
     analysis.requires_human_review = False
+
+
+async def corrected_project_id(db: AsyncSession, analysis_id: uuid.UUID, body) -> Optional[uuid.UUID]:
+    """The project whose analytics a correction changed, or None.
+
+    A correction now writes ``test_cases.failure_category`` -- the column the
+    Failure Analysis categories, chart rows and digests read -- so the router
+    bumps that project's analytics epoch after its commit (the
+    ``backend.analytics-epoch-bump`` guard), or the cached charts would keep
+    the old category until their TTL.
+    """
+    if not _is_correction(body):
+        return None
+    from app.models.postgres import TestCase  # noqa: PLC0415
+
+    return (
+        await db.execute(
+            select(TestRun.project_id)
+            .join(TestCase, TestCase.test_run_id == TestRun.id)
+            .join(AIAnalysis, AIAnalysis.test_case_id == TestCase.id)
+            .where(AIAnalysis.id == analysis_id)
+        )
+    ).scalar_one_or_none()
 
 
 async def evict_corrected_analysis_cache(
@@ -78,6 +127,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     # ``_invalidate_analysis_cache_for`` below already performs exactly this
     # join -- the scope was one line away the whole time.
     await _require_analysis_access(db, analysis, current_user)
+    _require_correction_role(body, current_user)
 
     feedback = AIFeedback(
         analysis_id=analysis_id,
@@ -97,6 +147,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
         # Close the correction loop. The analysis is what every product surface
         # renders; the AIFeedback row is only the training label.
         _apply_correction(analysis, body)
+        await apply_human_category(db, analysis.test_case_id, body.corrected_category)
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
@@ -363,9 +414,11 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     # touch that project -- membership can be revoked after the fact. Without
     # this the edit is the cross-tenant write the submit path was fixed for.
     await _require_analysis_access(db, analysis, current_user)
+    _require_correction_role(body, current_user)
 
     if _is_correction(body):
         _apply_correction(analysis, body)
+        await apply_human_category(db, analysis.test_case_id, body.corrected_category)
     # A retraction (INCORRECT -> CORRECT, or the category cleared) deliberately
     # leaves the analysis alone: AIAnalysis keeps no pre-correction original, so
     # the AI's first verdict is unrecoverable once a correction overwrote it.

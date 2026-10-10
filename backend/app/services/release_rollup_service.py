@@ -154,6 +154,10 @@ class ReleaseRollup:
     #: A truncated rollup that did not say so would report a smaller, and
     #: possibly cleaner, release than the one that exists.
     truncated: bool = False
+    #: Tests whose LATEST result in the release ran under an active quarantine
+    #: (ingestion tags those rows ``quarantined``). They stay in every count;
+    #: only the verdict sets their failures aside.
+    quarantined: set[str] = field(default_factory=set)
 
     @property
     def denominator(self) -> int:
@@ -171,7 +175,10 @@ class ReleaseRollup:
 
     @property
     def blocking_count(self) -> int:
-        return sum(1 for s in self.latest_by_test.values() if s in BLOCKING_STATUSES)
+        return sum(
+            1 for key, s in self.latest_by_test.items()
+            if s in BLOCKING_STATUSES and key not in self.quarantined
+        )
 
     def pass_rate(self) -> Optional[float]:
         """Passed over EVIDENCE, not over the denominator.
@@ -398,6 +405,7 @@ async def build_rollup(
                 TestCase.test_name,
                 TestCase.suite_name,
                 TestCase.status,
+                TestCase.tags,
             )
             .where(TestCase.test_run_id.in_([r.id for r in runs]))
             .limit(MAX_CASES + 1)
@@ -413,6 +421,7 @@ async def build_rollup(
             test_name=row[2],
             suite_name=row[3],
             status=row[4],
+            tags=row[5],
         )
         for row in case_rows
     ]
@@ -425,11 +434,27 @@ async def build_rollup(
         if key is None:
             continue
         rollup.latest_by_test[key] = _normalise(case.status)
+        # Latest wins for the quarantine mark too: a test released from
+        # quarantine counts again from its first untagged result.
+        if _is_quarantined(case.tags):
+            rollup.quarantined.add(key)
+        else:
+            rollup.quarantined.discard(key)
 
     rollup.status_counts = {s: 0 for s in STATUSES}
     for status in rollup.latest_by_test.values():
         rollup.status_counts[status] = rollup.status_counts.get(status, 0) + 1
     return rollup
+
+
+def _is_quarantined(tags: Any) -> bool:
+    """Ingestion tags a row ``quarantined`` when its test was under an active
+    quarantine as the run landed (``ingestion_pipeline._apply_quarantine_tags``)
+    -- the documented contract being that such results are "excluded from
+    release gate scoring". Nothing read the tag, so a quarantined flaky test
+    kept the gate at NO_GO, the one thing quarantining it was for (E2E
+    2026-10-10)."""
+    return isinstance(tags, (list, tuple)) and "quarantined" in tags
 
 
 def _normalise(status: Any) -> str:
@@ -461,7 +486,7 @@ def decide(rollup: ReleaseRollup, *, min_evidence: int = MIN_EVIDENCE) -> tuple[
     blocking = [
         f"{key} is {status}"
         for key, status in sorted(rollup.latest_by_test.items())
-        if status in BLOCKING_STATUSES
+        if status in BLOCKING_STATUSES and key not in rollup.quarantined
     ]
     if blocking:
         return "NO_GO", blocking
@@ -514,6 +539,12 @@ def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
         # A partial rollup announces itself. Reported unconditionally so its
         # absence cannot be mistaken for a complete read.
         "truncated": rollup.truncated,
+        # Failures the verdict set aside because the test is quarantined --
+        # named, so a GO with quarantined failures cannot read as a clean one.
+        "quarantined_failures": sorted(
+            key for key in rollup.quarantined
+            if rollup.latest_by_test.get(key) in BLOCKING_STATUSES
+        ),
     }
 
 

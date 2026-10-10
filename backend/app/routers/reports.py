@@ -15,11 +15,12 @@ from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import (
     get_current_active_user,
     require_link_access,
+    require_role,
     require_run_access,
     resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User
+from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User, UserRole
 from app.services import report_service
 from app.services.analytics_scope import ScopePolicy, resolve_analytics_scope
 
@@ -54,7 +55,11 @@ _EMAIL_SCOPE = ScopePolicy(default_days=30, max_days=365, project_required=True)
 async def email_trends_report(
     body: EmailTrendsRequest = Body(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # QA_LEAD: the report leaves the system for an address nobody verifies,
+    # so no later access control can contain it. Membership alone let a
+    # VIEWER mail project data anywhere, as often as they liked
+    # (E2E 2026-10-10). No page calls this; it is an integration endpoint.
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
     """Generate and email a trends report for the specified project and period."""
     # The caller supplies BOTH the project and the destination address, and

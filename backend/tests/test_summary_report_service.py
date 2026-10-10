@@ -290,6 +290,7 @@ async def test_zero_totals_produce_safe_pct_math():
         _one(_totals_row()),       # _window_totals run-aggregate — all zeros
         _one(_uniq_row()),         # _window_totals unique-fingerprint — all zeros
         _all([]),                  # no suites
+        _scalar(None),             # empty window: _last_run_before finds none
         _scalar(0),                # no flaky
         _all([]),                  # no top failing (enrich short-circuits — empty)
         _all([]),                  # _per_suite_step_success

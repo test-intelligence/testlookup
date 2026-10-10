@@ -324,8 +324,20 @@ def _without_meta(characterised: dict) -> dict:
             body = {k: v for k, v in body.items() if k != "meta"}
             if key.startswith("top_failing/"):
                 body = _without_top_failing_totals(key, body)
+            if key.startswith("summary_") and "last_run_before_window_at" in body:
+                body = _without_summary_last_run(key, body)
         out[key] = {"status": case["status"], "body": body}
     return out
+
+
+def _without_summary_last_run(key: str, body: dict) -> dict:
+    """2026-10-10 adds ``last_run_before_window_at`` to the summary report (an
+    empty window names the project's last run instead of reading as a broken
+    page) and changes nothing else: set it aside, checking it is only set when
+    the window holds no run."""
+    last = body["last_run_before_window_at"]
+    assert last is None or (body.get("run_count") == 0 and isinstance(last, str)), (key, last)
+    return {k: v for k, v in body.items() if k != "last_run_before_window_at"}
 
 
 def _without_top_failing_totals(key: str, body: dict) -> dict:

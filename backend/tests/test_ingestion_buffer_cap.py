@@ -183,7 +183,7 @@ async def test_close_commit_failure_does_not_finalize_redis(monkeypatch):
         await stream_router.close_session(
             session_id,
             db,
-            (type("User", (), {})(), None),
+            (type("User", (), {"role": "QA_ENGINEER"})(), None),
         )
 
     close.assert_awaited_once()
@@ -208,7 +208,7 @@ async def test_successful_close_commit_finalizes_redis_after_commit(monkeypatch)
     await stream_router.close_session(
         session_id,
         db,
-        (type("User", (), {})(), None),
+        (type("User", (), {"role": "QA_ENGINEER"})(), None),
     )
 
     assert order == ["close", "commit", "finalize"]

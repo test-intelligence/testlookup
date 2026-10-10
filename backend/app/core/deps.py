@@ -712,6 +712,15 @@ async def get_api_key_context(
     if bearer_token:
         user = await _bearer_user_or_fall_through(db, bearer_token)
         if user is not None:
+            # The API-key branch refuses a deactivated owner; the bearer branch
+            # did not, so a deactivated user's unexpired JWT (up to 12 h) kept
+            # ingesting and opening live runs (E2E 2026-10-10).
+            if not user.is_active:
+                _count_auth_failure("inactive_user")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Inactive user account",
+                )
             return user, None
 
     if x_api_key:
@@ -826,6 +835,32 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
         return current_user
 
     return _check
+
+
+INGEST_MIN_ROLE = UserRole.QA_ENGINEER
+
+
+def ensure_ingest_role(user: User) -> None:
+    """Writing test results needs QA_ENGINEER, whatever the credential.
+
+    The ingest and live-session routes authenticate with
+    ``get_api_key_context`` (JWT or API key) and checked project membership
+    only, so a VIEWER or TESTER member posted results, attached them to a
+    release, merged them into a CI run sharing the build number, and closed
+    other members' live runs (E2E 2026-10-10). The UI has always reserved
+    Upload for QA_ENGINEER, and only QA_ENGINEER+ may create an API key, so a
+    CI key -- its owner's role -- passes unchanged.
+    """
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+    except ValueError:
+        idx = -1
+    if idx < _ROLE_ORDER.index(INGEST_MIN_ROLE):
+        _count_auth_failure("insufficient_role")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires at least {INGEST_MIN_ROLE.value} role to submit test results",
+        )
 
 
 def require_instance_admin() -> Callable:

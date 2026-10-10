@@ -340,7 +340,16 @@ async def reset_project_data(
 
 @router.post(
     "/{project_id}/default-qa-lead/reset-password",
-    dependencies=[Depends(require_project_access())],
+    dependencies=[
+        # The response carries the plaintext password of a QA_LEAD account,
+        # so the caller must already hold that role: with project access
+        # alone, a VIEWER member signed in as the project's QA lead
+        # (E2E 2026-10-10). The page offering it (Projects -> Members) is
+        # QA lead and above. No project-bound key: a CI credential has no
+        # business minting a person's login.
+        Depends(require_role(UserRole.QA_LEAD)),
+        Depends(require_project_access()),
+    ],
 )
 async def reset_default_qa_lead_password_endpoint(
     project_id: uuid.UUID,
@@ -349,9 +358,10 @@ async def reset_default_qa_lead_password_endpoint(
 ):
     """Reset the project's auto-provisioned QA-lead account password.
 
-    Any user with access to the project can call this — the account is a
+    A QA lead (or admin) of the project can call this — the account is a
     shared, per-project triage inbox, not a personal user, so rotating
-    its password is a routine project-admin task.
+    its password is a routine project-admin task. It is a QA_LEAD login,
+    so nobody below that role may obtain it.
 
     Idempotently provisions the QA-lead user first if it doesn't exist
     yet (covers projects created before this feature shipped). Returns

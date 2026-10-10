@@ -82,6 +82,9 @@ export interface SummaryReport {
   runs_per_day: number | null
   avg_duration_ms: number
   latest_run_at: string | null
+  /** Only when the window holds no run: the newest in-scope run before it.
+   *  Optional because a cached or older payload predates the field. */
+  last_run_before_window_at?: string | null
   flaky_test_count: number
   flaky_rate_pct: number
   /**

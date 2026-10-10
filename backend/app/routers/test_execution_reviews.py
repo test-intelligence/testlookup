@@ -28,8 +28,9 @@ from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
     get_db,
+    require_role,
 )
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.models.schemas import (
     TestExecutionReviewRead,
     TestExecutionReviewUpdate,
@@ -92,7 +93,9 @@ async def upsert_test_case_review(
     test_case_id: uuid.UUID,
     payload: TestExecutionReviewUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER, as the AI panel hosting this control requires: a VIEWER
+    # member overwrote or erased other people's verdicts (E2E 2026-10-10).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Transition the review state. The router resolves the project via
     TestRun, enforces tenant access, then delegates to the service for
@@ -118,7 +121,9 @@ async def upsert_test_case_review(
 async def clear_test_case_review(
     test_case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER, as the AI panel hosting this control requires: a VIEWER
+    # member overwrote or erased other people's verdicts (E2E 2026-10-10).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Drop the review row so the case reverts to ``pending_review``."""
     project_id = await svc.get_test_case_project(db, test_case_id)

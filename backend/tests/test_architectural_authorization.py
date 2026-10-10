@@ -92,8 +92,9 @@ KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
     # ``get_current_active_user`` which is JWT-only and breaks SDK
     # callers that authenticate with ``X-API-Key``. The membership check
     # was moved inline into ``stream_service.get_session`` /
-    # ``close_session`` and honours either auth path via the
-    # ``bound_project_id`` derived from ``get_api_key_context``. Stays
+    # ``close_session`` (``assert_session_project_access``): the key's
+    # binding, or the caller's membership for a JWT / user-scoped key --
+    # which until 2026-10-10 it did NOT check. Stays
     # exempt until the guard is refactored onto ``get_current_user_or_api_key``.
     ("GET",    "/api/v1/stream/sessions/{session_id}"),
     ("DELETE", "/api/v1/stream/sessions/{session_id}"),

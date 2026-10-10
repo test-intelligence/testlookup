@@ -25344,6 +25344,17 @@
             "title": "Generated At",
             "type": "string"
           },
+          "last_run_before_window_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Before Window At"
+          },
           "latest_run_at": {
             "anyOf": [
               {
@@ -49777,7 +49788,7 @@
     },
     "/api/v1/projects/{project_id}/default-qa-lead/reset-password": {
       "post": {
-        "description": "Reset the project's auto-provisioned QA-lead account password.\n\nAny user with access to the project can call this — the account is a\nshared, per-project triage inbox, not a personal user, so rotating\nits password is a routine project-admin task.\n\nIdempotently provisions the QA-lead user first if it doesn't exist\nyet (covers projects created before this feature shipped). Returns\nthe new password so the operator can hand it off; the response is\nnot persisted anywhere else.",
+        "description": "Reset the project's auto-provisioned QA-lead account password.\n\nA QA lead (or admin) of the project can call this — the account is a\nshared, per-project triage inbox, not a personal user, so rotating\nits password is a routine project-admin task. It is a QA_LEAD login,\nso nobody below that role may obtain it.\n\nIdempotently provisions the QA-lead user first if it doesn't exist\nyet (covers projects created before this feature shipped). Returns\nthe new password so the operator can hand it off; the response is\nnot persisted anywhere else.",
         "operationId": "reset_default_qa_lead_password_endpoint_api_v1_projects__project_id__default_qa_lead_reset_password_post",
         "parameters": [
           {

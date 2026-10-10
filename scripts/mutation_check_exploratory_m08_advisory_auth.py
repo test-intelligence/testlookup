@@ -28,13 +28,13 @@ MUTATIONS = [
     (
         ROOT / "backend/app/routers/release_readiness.py",
         "readiness-drops-exact-pipeline-subject",
-        "            pipeline_run_id=pipeline_run_id,\n",
-        "            pipeline_run_id=None,\n",
+        "        pipeline_run_id=pipeline_run_id,\n",
+        "        pipeline_run_id=None,\n",
     ),
     (
         ROOT / "backend/app/routers/release_readiness.py",
         "advisory-skips-commit",
-        "        if allow_advisory and response.recommendation.startswith(\"ADVISORY_\"):\n            await db.commit()\n",
+        "    if allow_advisory and response.recommendation.startswith(\"ADVISORY_\"):\n        await db.commit()\n",
         "",
     ),
 ]

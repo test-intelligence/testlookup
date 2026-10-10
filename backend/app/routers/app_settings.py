@@ -229,12 +229,47 @@ async def test_smtp_config(
         )
         logger.info("SMTP test email sent for user_id=%s", current_user.id)
         return SmtpTestResult(success=True, message=f"Test email sent to {current_user.email}")
-    except Exception:
+    except Exception as exc:
         logger.exception("SMTP test failed")
         return SmtpTestResult(
             success=False,
-            message="Failed to send test email. Please verify the SMTP configuration and try again.",
+            message=smtp_failure_hint(
+                exc, port=int(cfg.get("port", 587)), implicit_tls=bool(cfg.get("tls", True)),
+            ),
         )
+
+
+def smtp_failure_hint(exc: BaseException, *, port: int, implicit_tls: bool) -> str:
+    """Say what to change, not just that the test failed.
+
+    Owner report 2026-10-10: Gmail on port 587 with implicit TLS on failed with
+    "Failed to send test email. Please verify the SMTP configuration" -- the
+    stored password was fine, but the generic text read as "the password did
+    not save". The cause was the TLS mode (587 speaks STARTTLS). Never echoes
+    credentials: only the exception's class and message are inspected.
+    """
+    # By class NAME: several test suites put a stub in sys.modules["aiosmtplib"],
+    # and an isinstance against a stub's attribute raises instead of matching.
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    text = f"{type(exc).__name__}: {exc}"
+    if "SMTPAuthenticationError" in names:
+        return (
+            "The server rejected the username or password. Check both; Gmail and Outlook "
+            "need an app password, not the account password."
+        )
+    if "WRONG_VERSION_NUMBER" in text or (implicit_tls and port in (25, 587)):
+        return (
+            f"The server on port {port} did not start TLS on connect. Port {port} normally uses "
+            "STARTTLS: turn implicit TLS off (or use port 465 with implicit TLS), save, and test again."
+        )
+    if not implicit_tls and port == 465:
+        return (
+            "Port 465 expects implicit TLS on connect: turn implicit TLS on (or use port 587 "
+            "with STARTTLS), save, and test again."
+        )
+    if names & {"SMTPConnectError", "SMTPServerDisconnected", "SMTPConnectTimeoutError", "OSError"}:
+        return f"Could not connect to the mail server on port {port}. Check the host, the port and that it is reachable."
+    return "Failed to send test email. Please verify the SMTP configuration and try again."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
