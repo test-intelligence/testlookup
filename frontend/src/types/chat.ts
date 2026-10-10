@@ -28,7 +28,10 @@ export interface ChatMeta {
   tool_ms?: number | null
   context_ms?: number | null
   rounds?: number
+  /** The model's own tool calls. */
   tool_calls?: number
+  /** Every lookup behind the answer, the up-front ones included. */
+  lookups?: number
   tools?: boolean
 }
 

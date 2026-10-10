@@ -149,11 +149,13 @@ What a turn has shown and whether its answer is being saved.
 timings: _Timings = field(default_factory=_Timings)
 shown: list[str] = field(default_factory=list)
 saving: bool = False
+provider: Optional[str] = None
+model: Optional[str] = None
 ```
 
 ## backend/app/agents/conversation.py — ChatTurn
 
-[backend/app/agents/conversation.py:497](../../backend/app/agents/conversation.py#L497)
+[backend/app/agents/conversation.py:501](../../backend/app/agents/conversation.py#L501)
 
 Bases: ``.
 
@@ -19293,7 +19295,7 @@ cache_write_per_mtok: Optional[float] = None
 
 ## backend/app/services/llm_pricing.py — CostEstimate
 
-[backend/app/services/llm_pricing.py:138](../../backend/app/services/llm_pricing.py#L138)
+[backend/app/services/llm_pricing.py:142](../../backend/app/services/llm_pricing.py#L142)
 
 Bases: ``.
 
@@ -19310,7 +19312,7 @@ note: Optional[str] = None
 
 ## backend/app/services/llm_pricing.py — TokenUsage
 
-[backend/app/services/llm_pricing.py:301](../../backend/app/services/llm_pricing.py#L301)
+[backend/app/services/llm_pricing.py:305](../../backend/app/services/llm_pricing.py#L305)
 
 Bases: ``.
 

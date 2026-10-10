@@ -385,6 +385,103 @@ async def test_comparison_defaults_to_the_previous_run_of_the_same_suite(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_run_without_a_primary_suite_is_compared_with_one_without_either(monkeypatch):
+    """Measured on the homelab, 2026-10-10: "What changed since the previous
+    build?" compared build-2029 (no primary suite) with viz-3044, a
+    CheckoutSuite run on a feature branch that happened to start between it
+    and build-2028. "No primary suite" now matches "no primary suite"."""
+    newer = SimpleNamespace(id=uuid.uuid4(), build_number="build-2029", start_time=_at(7), primary_suite_name=None)
+    older = SimpleNamespace(id=uuid.uuid4(), build_number="build-2028", start_time=_at(5), primary_suite_name=None)
+    db = _FakeDB(results=[_FakeResult(first=newer), _FakeResult(first=older)])
+    compared = {}
+
+    async def fake_compare(db, left, right):
+        compared["pair"] = (left, right)
+        return {"left": {}, "right": {}, "test_deltas": []}
+
+    monkeypatch.setattr("app.services.run_compare_service.compare_runs", fake_compare)
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, _ = await crt._fetch_build_comparison(state, "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert compared["pair"] == (older.id, newer.id)
+    assert text.startswith("Build-2028 → build-2029:")
+    previous_query = str(db.statements[1])
+    assert "primary_suite_name IS NULL" in previous_query
+
+
+@pytest.mark.asyncio
+async def test_clusters_name_their_member_tests():
+    """Measured on the homelab, 2026-10-10: asked which tests are behind the
+    biggest blocker, Haiku could only say "the clusters don't list their member
+    tests". They are stored (member_test_ids); the tool now names them and links
+    them, and says so when none belong to this run."""
+    run_id = uuid.uuid4()
+    a, b, stray = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    clusters = [
+        SimpleNamespace(cluster_id="cl_001", label="Payment Gateway Timeout", size=2,
+                        representative_error="ConnectionRefused", regression_classification=None,
+                        member_test_ids=[str(a), str(b)]),
+        SimpleNamespace(cluster_id="cl_002", label="Elsewhere", size=1,
+                        representative_error=None, regression_classification=None,
+                        member_test_ids=[str(stray)]),
+    ]
+    cases = [SimpleNamespace(id=a, test_name="testAuthenticationCase04"),
+             SimpleNamespace(id=b, test_name="testSearchCase05")]
+    db = _FakeDB(results=[
+        _FakeResult(first=SimpleNamespace(id=run_id, build_number="build-2029")),
+        _FakeResult(rows=clusters),
+        _FakeResult(rows=cases),
+    ])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, _ = await crt._fetch_failure_clusters(state, "")
+        refs = list(state.refs.values())
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "  members: testAuthenticationCase04, testSearchCase05" in text
+    assert "  members: 1 recorded, none found among this run's test cases" in text
+    # Only this run's cases are looked up.
+    assert "test_run_id" in str(db.statements[2])
+    assert {"type": "test_case", "id": str(a), "run_id": str(run_id), "name": "testAuthenticationCase04"} in refs
+
+
+@pytest.mark.parametrize("args, label", [
+    ({"builds": "build-2029"}, "Comparing build-2029 with the build before it…"),
+    ({"builds": "build-2027 vs build-2029"}, "Comparing build-2027 with build-2029…"),
+    ({"builds": "104 and 105"}, "Comparing build 104 with build 105…"),
+    ({"builds": ""}, "Comparing the latest build with the previous one…"),
+])
+def test_the_compare_label_reads_for_one_build_or_two(args, label):
+    """Measured: "Comparing builds build-2029…" for a single build."""
+    assert crt.tool_status_label("compare_builds", args) == label
+
+
+@pytest.mark.asyncio
+async def test_no_quarantine_record_does_not_read_as_not_flaky():
+    """Measured: "No flaky signal or quarantine record" for testCheckoutCase03,
+    which the flaky-tests list showed failing 33% of its runs. The tool checks
+    quarantine records and AI flags only, and now says so."""
+    db = _FakeDB(results=[_FakeResult(), _FakeResult()])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_quarantine_status(state, "testCheckoutCase03")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "No flaky signal" not in text
+    assert text.startswith("No quarantine record for tests matching 'testCheckoutCase03'")
+    assert "Run-history flakiness is a separate measure" in text
+    assert summary.endswith("— no record")
+
+
+@pytest.mark.asyncio
 async def test_the_flaky_list_carries_quarantine_state(monkeypatch):
     async def flaky(db, project_id, days, limit):
         assert project_id == PROJECT_A and days == 30

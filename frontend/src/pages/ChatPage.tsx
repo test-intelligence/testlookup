@@ -59,7 +59,7 @@ function SessionItem({
 }
 
 export default function ChatPage() {
-  const { activeProject } = useProjectStore()
+  const { activeProject, projects, setActiveProject } = useProjectStore()
   const { data: aiConfig } = useAIConfig()
   const llmAvailable = isLLMAvailable(aiConfig)
   const projectId = activeProject?.id ?? null
@@ -72,13 +72,25 @@ export default function ChatPage() {
   const composer = useRef<ChatComposerHandle>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
+  // `&project=<id>` names the project the prompt is about. "Ask AI about this
+  // run" on an E-Commerce run, with Checkout Service active, asked Checkout
+  // Service and got "I can't find build viz-3043" (homelab, 2026-10-10). The
+  // chat switches to that project when it is one of the user's; the prompt
+  // is local state, so it survives the switch.
+  const linkedProjectId = searchParams.get('project')
   useEffect(() => {
-    if (!searchParams.get('prompt')) return
+    if (!searchParams.get('prompt') && !linkedProjectId) return
+    if (linkedProjectId && projects.length === 0) return // wait for the project list
+    if (linkedProjectId) {
+      const linked = projects.find((p) => p.id === linkedProjectId)
+      if (linked && linked.id !== activeProject?.id) setActiveProject(linked)
+    }
     const next = new URLSearchParams(searchParams)
     next.delete('prompt')
+    next.delete('project')
     setSearchParams(next, { replace: true })
     composer.current?.focus()
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, linkedProjectId, projects, activeProject?.id, setActiveProject])
 
   const { messages, pending } = chat
   useEffect(() => {

@@ -372,6 +372,10 @@ class _TurnState:
     # Set once the complete answer starts to be saved: a Stop arriving after
     # that must not save a second, "stopped" copy of it.
     saving: bool = False
+    # The model answering, for a stopped answer's footer (it showed timings
+    # but no model, unlike a complete one).
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 # One turn at a time per conversation: two tabs (or a double Retry) would
@@ -748,6 +752,8 @@ class ConversationAgent:
                 f"No AI provider is available for chat: {reason}",
                 retryable=False,
             ) from exc
+        state.provider = getattr(llm, "provider_name", None)
+        state.model = getattr(llm, "model_label", None)
         total_tokens, call_tokens = _tool_budgets(llm)
 
         # The tools' tenancy + budget state is bound for the whole turn: the
@@ -846,6 +852,10 @@ class ConversationAgent:
             "context_ms": int(timings.context_ms),
             "rounds": stats["rounds"],
             "tool_calls": stats["tool_calls"],
+            # Every lookup, the up-front ones included: the footer counted only
+            # the model's calls, so "How I looked this up · 1 check" sat over a
+            # footer with no lookups (homelab, 2026-10-10).
+            "lookups": len(tool_trace),
             "tools": stats["tools"],
         }
         return {
@@ -1570,6 +1580,8 @@ class ConversationAgent:
             await self._save_message(session_id, "assistant", text, sources=[{
                 "type": "meta",
                 "status": "stopped",
+                "provider": state.provider,
+                "model": state.model,
                 "first_token_ms": state.timings.first_token_ms,
                 "total_ms": state.timings.since_start(),
             }])

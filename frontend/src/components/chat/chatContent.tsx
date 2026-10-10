@@ -37,6 +37,17 @@ export function askAboutRun(build: string | number | null | undefined): string {
   return `What failed in ${label}, and why? Are any of these failures new since the previous build?`
 }
 
+/**
+ * The chat link "Ask AI about this run" opens: the question, and the run's
+ * project. The chat answers in the active project's scope, which need not be
+ * the run's: an E-Commerce run asked from Checkout Service got "I can't find
+ * build viz-3043" (homelab, 2026-10-10).
+ */
+export function askAboutRunHref(run: { build_number?: string | number | null; project_id?: string | null }): string {
+  const project = run.project_id ? `&project=${encodeURIComponent(run.project_id)}` : ''
+  return `/chat?prompt=${encodeURIComponent(askAboutRun(run.build_number))}${project}`
+}
+
 export interface SourceLink {
   key: string
   to: string
@@ -76,6 +87,9 @@ export function metaLine(meta: ChatMeta | null): string | null {
   if (first) parts.push(`first words in ${first}`)
   const total = seconds(meta.total_ms)
   if (total) parts.push(`${meta.status === 'stopped' ? 'stopped after' : 'answered in'} ${total}`)
-  if (meta.tool_calls) parts.push(`${meta.tool_calls} lookup${meta.tool_calls === 1 ? '' : 's'}`)
+  // `lookups` counts the up-front lookups too; answers saved before it existed
+  // carry only the model's own `tool_calls`.
+  const lookups = meta.lookups ?? meta.tool_calls
+  if (lookups) parts.push(`${lookups} lookup${lookups === 1 ? '' : 's'}`)
   return parts.length ? parts.join(' · ') : null
 }

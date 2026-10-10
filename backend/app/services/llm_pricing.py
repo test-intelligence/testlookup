@@ -124,6 +124,10 @@ PRICE_TABLE: list[tuple[str, str, ModelPrice]] = [
     ("openrouter", r"llama-3\.1-8b",   ModelPrice(0.05,  0.08)),
     ("openrouter", r"mistral-small",   ModelPrice(0.05,  0.08)),
     ("openrouter", r"gemma-3-4b",      ModelPrice(0.05,  0.10)),
+    # Ask AI's model on the homelab (CHAT_LLM_MODEL), and the step up from it.
+    # Verified against https://openrouter.ai/api/v1/models on 2026-10-10.
+    ("openrouter", r"claude-haiku-5\.5",  ModelPrice(0.10, 0.50, cached_input_per_mtok=0.01, cache_write_per_mtok=0.125)),
+    ("openrouter", r"claude-sonnet-5\.5", ModelPrice(2.00, 10.00, cached_input_per_mtok=0.10, cache_write_per_mtok=2.50)),
     # Catch-all, deliberately NOT cheap: an unrecognised OpenRouter model is
     # more likely a frontier model than a budget one, and over-estimating a
     # bill is recoverable where under-estimating it is not. Override per

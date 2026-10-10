@@ -111,17 +111,22 @@ def test_summary_layers_are_deliberate_v2():
         assert anchors[pid] in p.text, f"{pid} lost a v1 structural anchor"
 
 
-# The ORIGINAL chat_system (v1) hash and v2's: v3 deliberately differs from both.
+# The ORIGINAL chat_system (v1) hash, v2's and v3's: v4 deliberately differs.
 _CHAT_SYSTEM_V1_HASH = "b52c5b2cf229"
 _CHAT_SYSTEM_V2_HASH = "5052234131d8"
+_CHAT_SYSTEM_V3_HASH = "22c78598851c"
 
 
-def test_chat_system_is_deliberate_v3():
+def test_chat_system_is_deliberate_v4():
     """v3 (2026-10-09) is the prompt of a tool-calling chat agent: v2's
-    single-shot path had no per-test history and invented one."""
+    single-shot path had no per-test history and invented one. v4
+    (2026-10-10) adds one rule: earlier answers' lookups are not replayed, so
+    their facts are not to be retracted without contrary data (measured: a
+    real 2026-08-25 analysis cited in turn 1 was "corrected" away in turn 2)."""
     p = pr.get_prompt("chat_system")
-    assert p.version == 3
-    assert p.content_hash not in (_CHAT_SYSTEM_V1_HASH, _CHAT_SYSTEM_V2_HASH)
+    assert p.version == 4
+    assert p.content_hash not in (_CHAT_SYSTEM_V1_HASH, _CHAT_SYSTEM_V2_HASH, _CHAT_SYSTEM_V3_HASH)
+    assert "do not retract or \"correct\" one unless the snapshot or a tool result now contradicts it" in p.text
     # The slots the agent fills.
     for slot in ("{now}", "{project_scope}", "{snapshot}"):
         assert slot in p.text
