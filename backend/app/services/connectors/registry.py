@@ -1,6 +1,8 @@
 """Connector registry — maps source types to connector instances."""
 from __future__ import annotations
 
+from typing import Any
+
 from app.services.connectors.base import KnowledgeConnectorBase
 from app.services.connectors.confluence_connector import ConfluenceKnowledgeConnector
 from app.services.connectors.document_connector import DocumentConnector
@@ -22,4 +24,15 @@ def get_connector(source_type: str) -> KnowledgeConnectorBase:
     connector = _REGISTRY.get(source_type)
     if connector is None:
         raise ValueError(f"No connector registered for source_type={source_type!r}")
+    return connector
+
+
+async def bind_to_deployment(connector: KnowledgeConnectorBase, db: Any) -> KnowledgeConnectorBase:
+    """The connector to use for one call, with configuration that lives in the
+    database resolved. Jira's does (Settings -> Integrations: AppSetting plus
+    the secret service); every other connector reads ``settings``."""
+    if isinstance(connector, JiraKnowledgeConnector):
+        from app.services.defect_jira_service import resolve_jira_config  # noqa: PLC0415
+
+        return connector.with_config(await resolve_jira_config(db))
     return connector

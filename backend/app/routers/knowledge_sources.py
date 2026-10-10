@@ -188,11 +188,12 @@ async def test_connector(
     _: User = Depends(get_current_active_user),
 ):
     await svc.require_rag_enabled_async(db)
-    from app.services.connectors.registry import get_connector
+    from app.services.connectors.registry import bind_to_deployment, get_connector
     try:
         connector = get_connector(payload.source_type)
     except ValueError as e:
         return ConnectorTestResult(success=False, error=str(e))
+    connector = await bind_to_deployment(connector, db)
     result = await connector.test_connection()
     return ConnectorTestResult(**result)
 

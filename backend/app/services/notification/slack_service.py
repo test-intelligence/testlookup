@@ -42,6 +42,39 @@ _EVENT_COLOUR = {
 }
 
 
+# Block Kit limits. Slack refuses the WHOLE message (400 invalid_blocks) when
+# one block is over its limit, so an AI summary longer than one section used to
+# cost the notification entirely (found against the contract fake, 2026-10-10).
+_HEADER_MAX = 150
+_SECTION_MAX = 3000
+_MAX_BODY_SECTIONS = 10
+_TRUNCATED = "\n_…truncated. Open TestLookup for the full text._"
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _body_sections(body: str) -> list[str]:
+    """``body`` as section texts within Slack's limit, split at line breaks
+    where possible. An empty body has no section (Slack refuses empty text)."""
+    rest = (body or "").strip()
+    chunks: list[str] = []
+    while rest:
+        if len(chunks) == _MAX_BODY_SECTIONS - 1 and len(rest) > _SECTION_MAX:
+            chunks.append(rest[: _SECTION_MAX - len(_TRUNCATED)].rstrip() + _TRUNCATED)
+            break
+        if len(rest) <= _SECTION_MAX:
+            chunks.append(rest)
+            break
+        cut = rest.rfind("\n", 0, _SECTION_MAX)
+        if cut < _SECTION_MAX // 2:
+            cut = _SECTION_MAX
+        chunks.append(rest[:cut].rstrip())
+        rest = rest[cut:].strip()
+    return chunks
+
+
 def _build_blocks(
     title: str,
     body: str,
@@ -52,12 +85,12 @@ def _build_blocks(
     blocks: list = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"{emoji}  {title}", "emoji": True},
+            "text": {"type": "plain_text", "text": _clip(f"{emoji}  {title}", _HEADER_MAX), "emoji": True},
         },
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": body},
-        },
+    ]
+    blocks += [
+        {"type": "section", "text": {"type": "mrkdwn", "text": chunk}}
+        for chunk in _body_sections(body)
     ]
 
     # Stats fields

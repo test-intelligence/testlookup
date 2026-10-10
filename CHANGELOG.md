@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased - Jira and Slack tested against contract fakes
+
+Owner request 2026-10-10: the real Jira and Slack are not available, so test
+the integrations with mock services. `backend/tests/fakes/fake_integrations.py`
+is a fake Jira Cloud (REST v3) and a fake Slack incoming webhook in one ASGI
+app. It refuses what the real services refuse: Basic auth, unknown projects
+and issue types, a summary over 255 characters or with a newline, a description
+that is not a valid Atlassian Document, a label with a space, the removed
+`/rest/api/3/search` (410), and Block Kit messages over Slack's limits. It
+records every request and can inject failures, including "Jira created the
+issue, then the answer was lost". The test suite drives the real services into
+it through `httpx.ASGITransport`; the homelab serves the same file over TLS.
+
+Defects it found, each fixed with a regression test:
+- **A Slack message over Block Kit's limits was refused whole.** A body over
+  3,000 characters (a long AI summary), a title over 150, or an empty body made
+  Slack answer 400 and the notification failed. The body is now split across
+  sections at line breaks (truncated after ten), the header is clipped, and an
+  empty body is left out.
+- **A test name with a newline could not be filed to Jira.** The summary is
+  `[TestLookup] <test name>`; Jira refuses a newline in it, and a parametrized
+  test id can carry one. Whitespace is collapsed.
+- **Epic knowledge sources lost their child issues.** The connector searched
+  `/rest/api/3/search`, which Jira Cloud removed (410 Gone, Atlassian
+  CHANGE-2046); the failure was swallowed. It uses `/rest/api/3/search/jql`.
+- **Knowledge sources ignored the Jira configured in Settings.** The connector
+  read only `JIRA_DOMAIN`/`JIRA_EMAIL`/`JIRA_API_TOKEN`, so a Jira set up under
+  Settings -> Integrations (AppSetting plus the secret service) answered "not
+  configured" for knowledge sources while defects filed fine. It now resolves
+  the same config as defect filing (`registry.bind_to_deployment`).
+- **Jira fix-version sync ignored `HTTP_CA_BUNDLE`.** It built its own client
+  with the default trust store, so an on-prem Jira behind an internal CA worked
+  for defect filing and failed for version sync.
+
+New setting: **`WEBHOOK_PRIVATE_ALLOWED_HOSTS`** (exact host names, empty by
+default). Online, Slack and Teams webhooks go through the public-only client,
+which refuses private addresses; a host named here (an on-prem Slack-compatible
+server such as Mattermost, or the homelab's fake) is reached through the shared
+client instead. Offline mode is unchanged.
+
 ## Unreleased - Run emails carry the whole run
 
 Owner request 2026-10-10: a run email said one line ("2 failures detected in

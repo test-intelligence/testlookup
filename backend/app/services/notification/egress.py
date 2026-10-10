@@ -230,17 +230,38 @@ def delivery_http_client(destination: str | None, *, deployment_wide: bool = Fal
 
     Only the operator's allow-listed deployment-wide host (e.g. a hosted Slack
     workspace in ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS``) is off-box by design,
-    and keeps the public client. Online, the public client as before.
+    and keeps the public client. Online, the public client as before -- except
+    for a host the operator named in ``WEBHOOK_PRIVATE_ALLOWED_HOSTS`` (an
+    on-prem Slack-compatible server), which the public client would refuse.
     """
-    from app.core.http_client import get_public_http_client
+    from app.core.http_client import get_http_client, get_public_http_client
 
+    host = _host_of(destination or "")
     if settings.AI_OFFLINE_MODE:
-        host = _host_of(destination or "")
         if not (host and deployment_wide and _allow_listed(host)):
             from app.services.llm_egress import get_local_only_http_client
 
             return get_local_only_http_client()
+    elif private_webhook_host_listed(host):
+        return get_http_client()
     return get_public_http_client()
+
+
+def private_webhook_host_listed(host: str | None) -> bool:
+    """Whether the operator named ``host`` in ``WEBHOOK_PRIVATE_ALLOWED_HOSTS``.
+
+    Exact match only (case and a trailing dot aside): no subdomain wildcard
+    and no address range, because any webhook -- a user's, a team's or the
+    deployment's -- may then reach the host on the private network.
+    """
+    wanted = (host or "").strip().lower().rstrip(".")
+    if not wanted:
+        return False
+    listed = {
+        entry.strip().lower().rstrip(".")
+        for entry in (settings.WEBHOOK_PRIVATE_ALLOWED_HOSTS or "").split(",")
+    }
+    return wanted in listed
 
 
 async def assert_delivery_allowed_async(

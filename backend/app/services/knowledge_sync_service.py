@@ -29,7 +29,7 @@ from app.models.postgres import (
 import structlog
 
 from app.services.connectors.base import ConnectorFetchError, FetchedContent
-from app.services.connectors.registry import get_connector
+from app.services.connectors.registry import bind_to_deployment, get_connector
 
 logger = structlog.get_logger(__name__)
 
@@ -112,7 +112,7 @@ async def run_sync(
         await db.commit()
 
         # Fetch content via connector
-        connector = get_connector(source.source_type)
+        connector = await bind_to_deployment(get_connector(source.source_type), db)
         content = await connector.fetch_content(source.canonical_url, source.external_id)
 
         # Check for unchanged content (skip if not initial sync)

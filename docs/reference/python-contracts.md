@@ -977,6 +977,7 @@ AI_LLM_PROVIDER_ALLOWLIST: str = ''
 AI_LLM_ALLOWED_BASE_URLS: str = ''
 OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ''
 OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ''
+WEBHOOK_PRIVATE_ALLOWED_HOSTS: str = ''
 AGENT_MEMORY_RETENTION_DAYS: int = 365
 AI_CONFIDENCE_THRESHOLD: int = 80
 AIQ_GAP_REFINEMENT_ENABLED: bool = False
@@ -1124,8 +1125,8 @@ LOG_FORMAT: Literal['json', 'text'] = 'json'
 model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', case_sensitive=True, extra='ignore', env_ignore_empty=True, populate_by_name=True)
 ```
 
-- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:632](../../backend/app/core/config.py#L632). Read source for the cross-field or conversion rule.
-- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:647](../../backend/app/core/config.py#L647). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:640](../../backend/app/core/config.py#L640). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:655](../../backend/app/core/config.py#L655). Read source for the cross-field or conversion rule.
 ## backend/app/core/deps.py — AuthorizedTestCaseContext
 
 [backend/app/core/deps.py:45](../../backend/app/core/deps.py#L45)

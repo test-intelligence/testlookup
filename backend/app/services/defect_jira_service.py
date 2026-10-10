@@ -338,7 +338,10 @@ async def build_prefill(
         else f"{settings.public_base_url}/failures"
     )
 
-    summary = f"[TestLookup] {label}"[:255]
+    # One line: Jira refuses a summary with a newline ("The summary is invalid
+    # because it contains newline characters"), and a parametrized test id or
+    # a cluster label can carry one (found against the contract fake).
+    summary = " ".join(f"[TestLookup] {label}".split())[:255]
     description = _build_description_text(
         label=label,
         suite_name=suite_name,

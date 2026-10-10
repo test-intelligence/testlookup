@@ -119,6 +119,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `AI_LLM_ALLOWED_BASE_URLS` | `str` | `''` |
 | `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` | `str` | `''` |
 | `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` | `str` | `''` |
+| `WEBHOOK_PRIVATE_ALLOWED_HOSTS` | `str` | `''` |
 | `AGENT_MEMORY_RETENTION_DAYS` | `int` | `365` |
 | `AI_CONFIDENCE_THRESHOLD` | `int` | `80` |
 | `AIQ_GAP_REFINEMENT_ENABLED` | `bool` | `False` |
