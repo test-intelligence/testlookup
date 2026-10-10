@@ -56,6 +56,14 @@ re-tested in the browser on Haiku 5.5, with every claim checked against Postgres
   from lookups that are not shown again, so treat their facts as read, and do
   not retract one unless current data contradicts it. The prompt was
   re-attested (`source_review`).
+- **Which build an analysis covered.** Memory recall listed "2026-08-25: prior
+  analysis → PRODUCT_BUG" without the run it analysed. Asked whether it was
+  build 105's, the model could only answer that the record didn't say. The
+  line now reads "prior analysis of build 105"; rows without a build keep the
+  old line.
+- **Model on a stopped answer.** A stopped answer's footer showed timings but
+  no model. Its metadata now carries the provider and model, as a complete
+  answer's does.
 
 Checked and not bugs:
 - **Compare picked build 103 for "the build before 105".** In the seed data,

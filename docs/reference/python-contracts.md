@@ -149,11 +149,13 @@ What a turn has shown and whether its answer is being saved.
 timings: _Timings = field(default_factory=_Timings)
 shown: list[str] = field(default_factory=list)
 saving: bool = False
+provider: Optional[str] = None
+model: Optional[str] = None
 ```
 
 ## backend/app/agents/conversation.py — ChatTurn
 
-[backend/app/agents/conversation.py:497](../../backend/app/agents/conversation.py#L497)
+[backend/app/agents/conversation.py:501](../../backend/app/agents/conversation.py#L501)
 
 Bases: ``.
 
