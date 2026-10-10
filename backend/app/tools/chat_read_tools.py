@@ -406,9 +406,14 @@ async def _fetch_quarantine_status(state: ChatToolState, test_name: str) -> tupl
             })
 
     if not lines:
+        # Say what was checked. "No flaky signal" read as "not flaky" beside the
+        # flaky-tests list, which measures run history (testCheckoutCase03,
+        # 33% failure rate, homelab 2026-10-10).
         return (
-            f"No flaky signal or quarantine record for tests matching {test_name!r}.",
-            f"checked flaky/quarantine status for '{test_name[:60]}' — clean",
+            f"No quarantine record for tests matching {test_name!r}, and no AI analysis "
+            "flagged one as flaky. Run-history flakiness is a separate measure: the "
+            "flaky-tests list and the test's history report it.",
+            f"checked quarantine status for '{test_name[:60]}' — no record",
         )
     n_active = len(quarantined_fps)
     return (
@@ -829,12 +834,16 @@ async def _fetch_build_comparison(state: ChatToolState, builds: str) -> tuple[st
                 )
                 .order_by(TestRun.start_time.desc())
             )
-            if run.primary_suite_name:
-                same_suite = (
-                    await db.execute(q.where(TestRun.primary_suite_name == run.primary_suite_name).limit(1))
-                ).first()
-                if same_suite is not None:
-                    return same_suite
+            # The run's own suite, and "no primary suite" is one too: the
+            # homelab's build-2029 (none) was compared with viz-3044, a
+            # CheckoutSuite run on a feature branch, instead of build-2028.
+            same = (
+                TestRun.primary_suite_name == run.primary_suite_name
+                if run.primary_suite_name else TestRun.primary_suite_name.is_(None)
+            )
+            same_suite = (await db.execute(q.where(same).limit(1))).first()
+            if same_suite is not None:
+                return same_suite
             return (await db.execute(q.limit(1))).first()
 
         if len(tokens) >= 2:

@@ -270,6 +270,12 @@ patches:
         AI_OFFLINE_MODE: "false"
         LLM_PROVIDER: "openrouter"
         LLM_MODEL: "mistralai/mistral-nemo"
+        # Ask AI only (the pipeline keeps LLM_MODEL). Measured 2026-10-09/10:
+        # mistral-nemo skipped tools, answered about the wrong test, and wrote
+        # "[ADDRESS]" for "200ms"; claude-haiku-5.5 resolved every reference
+        # and flagged inconsistent data, at about $0.001 a turn. Priced in
+        # app/services/llm_pricing.py; the step up is claude-sonnet-5.5.
+        CHAT_LLM_MODEL: "anthropic/claude-haiku-5.5"
         # ollama stays permitted so the local path remains available and
         # reverting is a single LLM_PROVIDER change, not another allowlist edit.
         AI_LLM_PROVIDER_ALLOWLIST: "ollama,openrouter"

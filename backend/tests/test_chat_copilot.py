@@ -385,6 +385,54 @@ async def test_comparison_defaults_to_the_previous_run_of_the_same_suite(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_run_without_a_primary_suite_is_compared_with_one_without_either(monkeypatch):
+    """Measured on the homelab, 2026-10-10: "What changed since the previous
+    build?" compared build-2029 (no primary suite) with viz-3044, a
+    CheckoutSuite run on a feature branch that happened to start between it
+    and build-2028. "No primary suite" now matches "no primary suite"."""
+    newer = SimpleNamespace(id=uuid.uuid4(), build_number="build-2029", start_time=_at(7), primary_suite_name=None)
+    older = SimpleNamespace(id=uuid.uuid4(), build_number="build-2028", start_time=_at(5), primary_suite_name=None)
+    db = _FakeDB(results=[_FakeResult(first=newer), _FakeResult(first=older)])
+    compared = {}
+
+    async def fake_compare(db, left, right):
+        compared["pair"] = (left, right)
+        return {"left": {}, "right": {}, "test_deltas": []}
+
+    monkeypatch.setattr("app.services.run_compare_service.compare_runs", fake_compare)
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, _ = await crt._fetch_build_comparison(state, "")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert compared["pair"] == (older.id, newer.id)
+    assert text.startswith("Build-2028 → build-2029:")
+    previous_query = str(db.statements[1])
+    assert "primary_suite_name IS NULL" in previous_query
+
+
+@pytest.mark.asyncio
+async def test_no_quarantine_record_does_not_read_as_not_flaky():
+    """Measured: "No flaky signal or quarantine record" for testCheckoutCase03,
+    which the flaky-tests list showed failing 33% of its runs. The tool checks
+    quarantine records and AI flags only, and now says so."""
+    db = _FakeDB(results=[_FakeResult(), _FakeResult()])
+    token = crt.set_chat_tool_context(project_id=PROJECT_A)
+    try:
+        state = crt.get_chat_tool_state()
+        with patch("app.db.postgres.AsyncSessionLocal", return_value=db):
+            text, summary = await crt._fetch_quarantine_status(state, "testCheckoutCase03")
+    finally:
+        crt.reset_chat_tool_context(token)
+    assert "No flaky signal" not in text
+    assert text.startswith("No quarantine record for tests matching 'testCheckoutCase03'")
+    assert "Run-history flakiness is a separate measure" in text
+    assert summary.endswith("— no record")
+
+
+@pytest.mark.asyncio
 async def test_the_flaky_list_carries_quarantine_state(monkeypatch):
     async def flaky(db, project_id, days, limit):
         assert project_id == PROJECT_A and days == 30

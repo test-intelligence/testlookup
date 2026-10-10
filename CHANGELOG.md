@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased - Ask AI on Claude Haiku 5.5; two tool answers corrected
+
+**Model.** The homelab overlay sets `CHAT_LLM_MODEL: "anthropic/claude-haiku-5.5"`
+for Ask AI only; the pipeline keeps `LLM_MODEL` (`mistralai/mistral-nemo`). The
+browser validation found mistral-nemo answering about the wrong test and
+writing "[ADDRESS]" in place of "200ms" (the text it was given had "200ms").
+The same eight turns against Haiku 5.5, in the pod, gave:
+- every reference resolved to the right test;
+- "200ms" as written;
+- a release answer that flagged that the gate's payment and security blockers
+  match none of build-2029's failures.
+
+Haiku lists at $0.10 / $0.50 per million tokens on OpenRouter, about $0.001 a
+turn. Its first words came in 4.8–9.2 s (mistral-nemo: 1.5–4.5 s); total times
+were similar. `llm_pricing` now prices `claude-haiku-5.5` and the step up,
+`claude-sonnet-5.5`, on OpenRouter. Without the entries they metered at the
+catch-all $3 / $15, about 30 times Haiku's cost, which would have used up the
+per-project USD cap that much sooner.
+`tests/regression/test_homelab_llm_models_are_priced.py` fails if a model the
+overlay names falls back to the catch-all.
+
+**Two tool fixes Haiku surfaced** (it flagged both in its answers):
+- **`compare_builds`.** With no builds named, it compared build-2029 (no primary
+  suite) with `viz-3044`, a CheckoutSuite run on a feature branch that started
+  between it and build-2028. A run with no primary suite now compares with the
+  previous run that also has none.
+- **`check_quarantine_status`.** It said "No flaky signal or quarantine record"
+  for `testCheckoutCase03`, which the flaky-tests list shows failing 33% of its
+  runs. The tool reads only quarantine records and AI flaky flags, and now says
+  that, pointing to run history as the separate measure.
+
 ## Unreleased - Fix: Ask AI answered about the wrong test for "the first one"
 
 Browser validation of the rebuilt Ask AI on the homelab (`mistral-nemo`,
