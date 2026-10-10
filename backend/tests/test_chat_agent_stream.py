@@ -575,6 +575,10 @@ async def test_stop_keeps_the_text_already_shown_marked_stopped(monkeypatch, gat
     assert len(answers) == 1
     assert answers[0]["content"].startswith("one")
     assert conv._is_stopped(answers[0]["sources"])
+    # The footer names the model for a stopped answer too (homelab, 2026-10-10:
+    # "first words in 5.5 s · stopped after 6.2 s", no model).
+    meta = next(s for s in answers[0]["sources"] if s.get("type") == "meta")
+    assert (meta["provider"], meta["model"]) == ("openrouter", "scripted-model")
 
 
 @pytest.mark.asyncio

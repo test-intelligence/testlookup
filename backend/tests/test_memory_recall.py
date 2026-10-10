@@ -121,6 +121,19 @@ async def test_prior_analyses_are_cited_with_category_confidence_date():
     assert "test_fingerprint" in joined_sql
 
 
+def test_a_prior_analysis_names_the_build_it_analysed():
+    """Homelab, 2026-10-10: asked whether an analysis dated 2026-08-25 was of
+    build 105, Ask AI could only say the record did not say. It does."""
+    report = mr.render_recall_report({
+        "test_name": "test_refund_flow",
+        "prior_analyses": [{
+            "failure_category": "PRODUCT_BUG", "confidence_score": 95, "root_cause_summary": None,
+            "created_at": datetime(2026, 8, 25, tzinfo=timezone.utc), "build_number": "105",
+        }],
+    })
+    assert "2026-08-25: prior analysis of build 105 → PRODUCT_BUG (confidence 95)" in report
+
+
 @pytest.mark.asyncio
 async def test_quarantine_history_one_liner():
     quarantine_row = SimpleNamespace(

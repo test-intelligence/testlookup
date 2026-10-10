@@ -89,6 +89,7 @@ async def _fetch_prior_analyses(
                     AIAnalysis.confidence_score,
                     AIAnalysis.root_cause_summary,
                     AIAnalysis.created_at,
+                    TestRun.build_number,
                 )
                 .join(TestCase, AIAnalysis.test_case_id == TestCase.id)
                 .join(TestRun, TestCase.test_run_id == TestRun.id)
@@ -106,6 +107,10 @@ async def _fetch_prior_analyses(
                 "confidence_score": r.confidence_score,
                 "root_cause_summary": r.root_cause_summary,
                 "created_at": r.created_at,
+                # Which run it analysed: asked how an analysis related to
+                # build 105, Ask AI could only say "the record doesn't say
+                # which build it covered" (homelab, 2026-10-10).
+                "build_number": getattr(r, "build_number", None),
             }
             for r in rows
         ]
@@ -237,8 +242,10 @@ def format_recall_lines(recall: dict[str, Any]) -> list[str]:
         lines.append(line)
 
     for a in recall.get("prior_analyses") or []:
+        build = a.get("build_number")
+        of_build = f" of build {build}" if build not in (None, "") else ""
         line = (
-            f"{_date_of(a.get('created_at'))}: prior analysis → "
+            f"{_date_of(a.get('created_at'))}: prior analysis{of_build} → "
             f"{a.get('failure_category')} "
             f"(confidence {a.get('confidence_score') if a.get('confidence_score') is not None else '?'})"
         )
