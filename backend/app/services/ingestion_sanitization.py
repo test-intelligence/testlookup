@@ -255,9 +255,11 @@ def sanitize_test_result_payload(payload: object) -> dict[str, Any]:
     safe too. The shared redactor is idempotent, making those repeated checks
     intentional and harmless.
     """
+    # Before the type check, so the check narrows the stripped value (a
+    # non-mapping comes back as it was and is refused below).
+    payload = strip_nul_bytes(payload)
     if not isinstance(payload, Mapping):
         return {"_redacted": REDACTED}
-    payload = strip_nul_bytes(payload)
     if len(payload) > _MAX_COLLECTION_ITEMS:
         compact: dict[str, Any] = {"_redacted": REDACTED}
         budget = [_MAX_TOTAL_NODES, _MAX_TOTAL_TEXT_CHARS]
