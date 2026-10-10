@@ -846,6 +846,10 @@ class ConversationAgent:
             "context_ms": int(timings.context_ms),
             "rounds": stats["rounds"],
             "tool_calls": stats["tool_calls"],
+            # Every lookup, the up-front ones included: the footer counted only
+            # the model's calls, so "How I looked this up · 1 check" sat over a
+            # footer with no lookups (homelab, 2026-10-10).
+            "lookups": len(tool_trace),
             "tools": stats["tools"],
         }
         return {

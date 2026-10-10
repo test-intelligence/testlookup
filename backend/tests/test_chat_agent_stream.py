@@ -330,6 +330,10 @@ async def test_a_named_test_is_looked_up_before_the_model_and_rides_with_the_que
     labels = [d["label"] for d in data(events, "status")]
     assert "Checking the history of test_refund_flow…" in labels
     assert "Checking quarantine status of test_refund_flow…" in labels
+    # The footer's count is every lookup, not only the model's calls (it said
+    # nothing under "How I looked this up · 2 checks").
+    meta = data(events, "done")[0]["meta"]
+    assert meta["tool_calls"] == 0 and meta["lookups"] == 2
     # The saved question is the user's words, not the lookups.
     assert h.store[0]["content"] == "Has test_refund_flow failed before, and is it quarantined?"
 

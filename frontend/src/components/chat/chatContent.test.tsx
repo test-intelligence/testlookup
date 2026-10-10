@@ -37,4 +37,12 @@ describe('chat text helpers', () => {
     expect(metaLine({ status: 'stopped', total_ms: 3000 })).toBe('stopped after 3.0 s')
     expect(metaLine(null)).toBeNull()
   })
+
+  it('counts the lookups made before the model ran (homelab, 2026-10-10)', () => {
+    // A flaky-tests answer: the list was looked up up front, the model called
+    // nothing. The footer said nothing while "How I looked this up" said 1.
+    expect(metaLine({ status: 'complete', model: 'anthropic/claude-haiku-5.5', first_token_ms: 5600, total_ms: 7300, tool_calls: 0, lookups: 1 }))
+      .toBe('claude-haiku-5.5 · first words in 5.6 s · answered in 7.3 s · 1 lookup')
+    expect(metaLine({ status: 'complete', total_ms: 4000, tool_calls: 1, lookups: 3 })).toBe('answered in 4.0 s · 3 lookups')
+  })
 })

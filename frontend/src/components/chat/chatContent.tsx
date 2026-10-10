@@ -76,6 +76,9 @@ export function metaLine(meta: ChatMeta | null): string | null {
   if (first) parts.push(`first words in ${first}`)
   const total = seconds(meta.total_ms)
   if (total) parts.push(`${meta.status === 'stopped' ? 'stopped after' : 'answered in'} ${total}`)
-  if (meta.tool_calls) parts.push(`${meta.tool_calls} lookup${meta.tool_calls === 1 ? '' : 's'}`)
+  // `lookups` counts the up-front lookups too; answers saved before it existed
+  // carry only the model's own `tool_calls`.
+  const lookups = meta.lookups ?? meta.tool_calls
+  if (lookups) parts.push(`${lookups} lookup${lookups === 1 ? '' : 's'}`)
   return parts.length ? parts.join(' · ') : null
 }

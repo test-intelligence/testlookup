@@ -125,6 +125,17 @@ def _project_uuid(state: ChatToolState) -> Optional[uuid.UUID]:
         return None
 
 
+def _as_uuid(value: Any) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+#: Member tests named per failure cluster.
+_CLUSTER_MEMBERS = 10
+
+
 async def _run_bounded(tool_name: str, fetcher, tool_input: str = "") -> str:
     """Shared guard rails: context check → budget check → fetch → truncate,
     meter, trace. ``fetcher(state, tool_input)`` returns ``(text, summary)``.
@@ -278,7 +289,7 @@ async def _fetch_failure_clusters(state: ChatToolState, build: str) -> tuple[str
     from sqlalchemy import select
 
     from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import FailureCluster, TestRun
+    from app.models.postgres import FailureCluster, TestCase, TestRun
 
     async with AsyncSessionLocal() as db:
         run_q = (
@@ -297,12 +308,31 @@ async def _fetch_failure_clusters(state: ChatToolState, build: str) -> tuple[str
                     FailureCluster.cluster_id, FailureCluster.label,
                     FailureCluster.size, FailureCluster.representative_error,
                     FailureCluster.regression_classification,
+                    FailureCluster.member_test_ids,
                 )
                 .where(FailureCluster.test_run_id == run_row.id)
                 .order_by(FailureCluster.size.desc())
                 .limit(10)
             )
         ).all()
+        # The members, by name. Without them, asked "which tests are behind the
+        # biggest blocker?", the model could only say the clusters do not name
+        # their tests (homelab, 2026-10-10). Only this run's own test cases.
+        member_ids = {
+            parsed
+            for r in rows
+            for parsed in (_as_uuid(m) for m in list(r.member_test_ids or [])[:_CLUSTER_MEMBERS])
+            if parsed is not None
+        }
+        names: dict[str, str] = {}
+        if member_ids:
+            for case in (
+                await db.execute(
+                    select(TestCase.id, TestCase.test_name)
+                    .where(TestCase.id.in_(member_ids), TestCase.test_run_id == run_row.id)
+                )
+            ).all():
+                names[str(case.id)] = str(case.test_name)
     if not rows:
         return (
             f"{_b(run_row.build_number, cap=True)}: no failure clusters recorded.",
@@ -313,6 +343,16 @@ async def _fetch_failure_clusters(state: ChatToolState, build: str) -> tuple[str
         err = (r.representative_error or "").replace("\n", " ").strip()[:140]
         klass = f" [{r.regression_classification}]" if r.regression_classification else ""
         lines.append(f"- {r.cluster_id} **{r.label}** ({r.size} tests){klass}" + (f": {err}" if err else ""))
+        members = list(r.member_test_ids or [])
+        named = [names[str(m)] for m in members[:_CLUSTER_MEMBERS] if str(m) in names]
+        for m in members[:_CLUSTER_MEMBERS]:
+            if str(m) in names:
+                state.add_ref({"type": "test_case", "id": str(m), "run_id": str(run_row.id), "name": names[str(m)]})
+        if named:
+            more = len(members) - len(named)
+            lines.append("  members: " + ", ".join(named) + (f" (+{more} more)" if more > 0 else ""))
+        elif members:
+            lines.append(f"  members: {len(members)} recorded, none found among this run's test cases")
     return (
         "\n".join(lines),
         f"found {len(rows)} failure clusters in {_b(run_row.build_number)}",
@@ -1006,6 +1046,14 @@ def tool_status_label(name: str, args: Any) -> str:
     arg = arg.strip()[:60]
     if arg and name in ("list_run_failures", "get_failure_clusters"):
         arg = _b(arg)
+    if arg and name == "compare_builds":
+        # "Comparing builds build-2029…" was shown for one build (homelab,
+        # 2026-10-10): the tool compares it with the run before it.
+        builds = _build_tokens(arg)
+        if len(builds) >= 2:
+            return f"Comparing {_b(builds[0])} with {_b(builds[1])}…"
+        if builds:
+            return f"Comparing {_b(builds[0])} with the build before it…"
     return with_arg.format(arg=arg) if arg else without
 
 
