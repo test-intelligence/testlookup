@@ -384,3 +384,90 @@ def test_the_private_allow_list_does_not_widen_offline_mode(monkeypatch):
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", True)
     monkeypatch.setattr(settings, "WEBHOOK_PRIVATE_ALLOWED_HOSTS", "chat.corp.internal")
     assert egress.delivery_http_client("https://chat.corp.internal/hooks/x") is local
+
+
+# ── Integration health: SMTP ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_smtp_probe_checks_the_relay_configured_in_settings(monkeypatch):
+    """Found on the homelab: SMTP configured under Settings -> Notifications was
+    delivering mail while integration health said "SMTP_ENABLED=false"."""
+    import aiosmtplib
+
+    from app.core.config import settings
+    from app.services import integration_probe_service as probe
+    from app.services.notification import email_service
+
+    async def stored():
+        return {"enabled": True, "host": "smtp.example.test", "port": 587,
+                "user": "relay-user", "password": "relay-pass", "tls": False}
+
+    opened: list = []
+
+    class _Smtp:
+        def __init__(self, **kwargs):
+            opened.append(kwargs)
+
+        async def connect(self):
+            return None
+
+        async def login(self, user, password):
+            opened.append(("login", user))
+
+        async def quit(self):
+            return None
+
+    monkeypatch.setattr(settings, "SMTP_ENABLED", False)  # nothing in the environment
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(email_service, "_get_smtp_cfg", stored)
+    monkeypatch.setattr(aiosmtplib, "SMTP", _Smtp)
+
+    result = await probe.probe_smtp()
+
+    assert result.status == "healthy", result.message
+    assert opened[0]["hostname"] == "smtp.example.test" and opened[0]["port"] == 587
+    assert opened[0]["start_tls"] is True and opened[0]["use_tls"] is False  # the sender's rule for 587
+    assert ("login", "relay-user") in opened
+
+
+# ── Send test notification ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_send_test_reaches_the_shared_slack_channel_when_the_preference_has_none(fake, monkeypatch):
+    """Found on the homelab: the form says "leave blank to use the shared Slack
+    channel", and Send test then failed "No Slack webhook URL configured"."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.models.postgres import NotificationChannel
+    from app.services import integration_config_service
+    from app.services.notification import manager
+
+    user = SimpleNamespace(email="admin@example.test")
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: user))
+
+    class _Session:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def shared(db, **kwargs):
+        return {"slack_enabled": True, "slack_webhook_url": WEBHOOK,
+                "teams_enabled": False, "teams_webhook_url": None}
+
+    monkeypatch.setattr(manager, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(integration_config_service, "resolve_global_notification_webhooks", shared)
+    _route_slack(monkeypatch, fake)
+
+    status, error = await manager.send_test_notification(
+        user_id=uuid.uuid4(), channel=NotificationChannel.SLACK,
+        email_override=None, slack_webhook_url=None, teams_webhook_url=None,
+    )
+
+    assert (status, error) == ("sent", None)
+    [message] = fake.state.slack_messages
+    assert message["path"] == "/services/T000/B000/XXXX"

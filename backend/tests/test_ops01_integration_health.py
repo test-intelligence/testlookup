@@ -14,7 +14,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -236,10 +236,16 @@ class TestProbeSkipping:
         from app.services.integration_probe_service import probe_smtp
         from app.core.config import settings
 
+        from app.services.notification import email_service
+
+        async def env_cfg():
+            return email_service._env_smtp_cfg()
+
         original = settings.SMTP_ENABLED
         try:
             settings.SMTP_ENABLED = False
-            result = await probe_smtp()
+            with patch.object(email_service, "_get_smtp_cfg", env_cfg):
+                result = await probe_smtp()
             assert result.status == "skipped"
         finally:
             settings.SMTP_ENABLED = original

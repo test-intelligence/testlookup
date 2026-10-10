@@ -34,6 +34,16 @@ Defects it found, each fixed with a regression test:
   with the default trust store, so an on-prem Jira behind an internal CA worked
   for defect filing and failed for version sync.
 
+Found in the homelab end-to-end pass against the deployed fake:
+- **"Send test" for Slack/Teams failed on the recommended setup.** The form
+  says "leave blank to use the shared Slack channel"; Send test then answered
+  "No Slack webhook URL configured", because the test path never resolved the
+  shared webhook that every real delivery uses. It does now.
+- **Integration health said SMTP was off while it delivered mail.** The probe
+  read only `SMTP_*` env; SMTP configured under Settings -> Notifications was
+  reported "SMTP_ENABLED=false". It now probes the sender's own configuration,
+  with the sender's TLS rule (STARTTLS on 587).
+
 New setting: **`WEBHOOK_PRIVATE_ALLOWED_HOSTS`** (exact host names, empty by
 default). Online, Slack and Teams webhooks go through the public-only client,
 which refuses private addresses; a host named here (an on-prem Slack-compatible

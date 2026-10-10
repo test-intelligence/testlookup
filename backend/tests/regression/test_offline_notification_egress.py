@@ -595,7 +595,16 @@ def smtp_sends(monkeypatch):
 
 
 def _patch_probe_smtp(monkeypatch, fake) -> None:
-    """The SMTP probe's ``aiosmtplib.SMTP``, on every module object it may use."""
+    """The SMTP probe's ``aiosmtplib.SMTP``, on every module object it may use.
+
+    The probe resolves the sender's configuration (stored, else environment);
+    these tests drive it through the environment, so no session is opened."""
+    from app.services.notification import email_service
+
+    async def env_cfg():
+        return email_service._env_smtp_cfg()
+
+    monkeypatch.setattr(email_service, "_get_smtp_cfg", env_cfg)
     for module in _aiosmtplib_modules():
         monkeypatch.setattr(module, "SMTP", fake, raising=False)
 

@@ -1544,10 +1544,21 @@ async def send_test_notification(
     body = "If you received this, your notification channel is configured correctly."
     meta: dict = {}
 
+    global_webhooks = None
     async with AsyncSessionLocal() as db:
         user_result = await db.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
         user_email = user.email if user else None
+        # A preference with no webhook of its own delivers to the shared one,
+        # as the relay does for every real notification. Without this the test
+        # failed "No Slack webhook URL configured" for exactly the setup the
+        # form recommends ("leave blank to use the shared Slack channel").
+        if channel in (NotificationChannel.SLACK, NotificationChannel.TEAMS):
+            from app.services.integration_config_service import (  # noqa: PLC0415
+                resolve_global_notification_webhooks,
+            )
+
+            global_webhooks = await resolve_global_notification_webhooks(db)
 
     # Build a mock preference for dispatch
     from app.models.postgres import NotificationPreference as NP
@@ -1567,4 +1578,5 @@ async def send_test_notification(
         body,
         NotificationEventType.RUN_PASSED,
         meta,
+        global_webhooks=global_webhooks,
     )
