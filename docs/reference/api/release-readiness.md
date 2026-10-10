@@ -12,14 +12,14 @@ Retrieve the release readiness decision with full council context:
 dimension scores, linked cluster insights, baseline diff, open defects,
 and override audit trail.
 
-Source: [backend/app/routers/release_readiness.py:44](../../../backend/app/routers/release_readiness.py#L44).
+Source: [backend/app/routers/release_readiness.py:45](../../../backend/app/routers/release_readiness.py#L45).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, allow_advisory: bool=Query(default=False, description='While the review gate is enforced, return ADVISORY_<value> for an unreviewed AI decision instead of PENDING_REVIEW.'), current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, allow_advisory: bool=Query(default=False, description='While the review gate is enforced, return ADVISORY_<value> for an unreviewed AI decision instead of PENDING_REVIEW.'), current_user: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -113,7 +113,7 @@ Override Release Decision
 Override the AI release decision (QA Lead only).
 Records the override in an immutable audit trail with before/after values.
 
-Source: [backend/app/routers/release_readiness.py:100](../../../backend/app/routers/release_readiness.py#L100).
+Source: [backend/app/routers/release_readiness.py:104](../../../backend/app/routers/release_readiness.py#L104).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 

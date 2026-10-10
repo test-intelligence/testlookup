@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:173](../../../backend/app/routers/stream.py#L173).
+Source: [backend/app/routers/stream.py:177](../../../backend/app/routers/stream.py#L177).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -139,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:109](../../../backend/app/routers/stream.py#L109).
+Source: [backend/app/routers/stream.py:113](../../../backend/app/routers/stream.py#L113).
 
 Dependency chain: .
 
@@ -213,7 +213,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:132](../../../backend/app/routers/stream.py#L132).
+Source: [backend/app/routers/stream.py:136](../../../backend/app/routers/stream.py#L136).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -289,7 +289,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/stream.py:48](../../../backend/app/routers/stream.py#L48).
+Source: [backend/app/routers/stream.py:49](../../../backend/app/routers/stream.py#L49).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -376,7 +376,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:90](../../../backend/app/routers/stream.py#L90).
+Source: [backend/app/routers/stream.py:92](../../../backend/app/routers/stream.py#L92).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -449,7 +449,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:74](../../../backend/app/routers/stream.py#L74).
+Source: [backend/app/routers/stream.py:76](../../../backend/app/routers/stream.py#L76).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -524,7 +524,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await stream_service.get_session(db, session_id, bound_project_id=bound_project_id)
+await stream_service.get_session(db, session_id, bound_project_id=bound_project_id, user=current_user)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -535,7 +535,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:248](../../../backend/app/routers/stream.py#L248).
+Source: [backend/app/routers/stream.py:252](../../../backend/app/routers/stream.py#L252).
 
 Dependency chain: .
 

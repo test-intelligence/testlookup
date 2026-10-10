@@ -99,7 +99,7 @@ List Agent Stack Gate Runs
 
 List historical agent-stack release gate decisions.
 
-Source: [backend/app/routers/ai_evaluation.py:647](../../../backend/app/routers/ai_evaluation.py#L647).
+Source: [backend/app/routers/ai_evaluation.py:662](../../../backend/app/routers/ai_evaluation.py#L662).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -218,7 +218,7 @@ List Baselines
 
 List active evaluation baselines.
 
-Source: [backend/app/routers/ai_evaluation.py:711](../../../backend/app/routers/ai_evaluation.py#L711).
+Source: [backend/app/routers/ai_evaluation.py:726](../../../backend/app/routers/ai_evaluation.py#L726).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -314,7 +314,7 @@ Set a baseline from a dataset evaluation (ADMIN only).
 Computes metrics and stores them as the active baseline for the
 specified agent/task_type. Deactivates any prior baseline.
 
-Source: [backend/app/routers/ai_evaluation.py:680](../../../backend/app/routers/ai_evaluation.py#L680).
+Source: [backend/app/routers/ai_evaluation.py:695](../../../backend/app/routers/ai_evaluation.py#L695).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -938,7 +938,7 @@ Get Eval Manifest
 
 Resolve the immutable eval manifest stamped on an agent pipeline run.
 
-Source: [backend/app/routers/ai_evaluation.py:665](../../../backend/app/routers/ai_evaluation.py#L665).
+Source: [backend/app/routers/ai_evaluation.py:680](../../../backend/app/routers/ai_evaluation.py#L680).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1027,7 +1027,7 @@ Seed the golden reference datasets for all evaluation categories (ADMIN only).
 Creates 4 golden datasets (classification, root_cause, duplicate_detection,
 release_decision) if they don't already exist.
 
-Source: [backend/app/routers/ai_evaluation.py:743](../../../backend/app/routers/ai_evaluation.py#L743).
+Source: [backend/app/routers/ai_evaluation.py:758](../../../backend/app/routers/ai_evaluation.py#L758).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1565,14 +1565,14 @@ Run Reviewer Quality
 
 Run G3 and apply its guarded second-model retirement decision.
 
-Source: [backend/app/routers/ai_evaluation.py:578](../../../backend/app/routers/ai_evaluation.py#L578).
+Source: [backend/app/routers/ai_evaluation.py:593](../../../backend/app/routers/ai_evaluation.py#L593).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-body: ReviewerQualityRequest, current_user: User=Depends(require_project_access()), _lead: User=Depends(require_project_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+body: ReviewerQualityRequest, current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -1867,14 +1867,14 @@ Run Tier Comparison
 
 Run G2 against paired golden outputs and optionally retain the decision.
 
-Source: [backend/app/routers/ai_evaluation.py:525](../../../backend/app/routers/ai_evaluation.py#L525).
+Source: [backend/app/routers/ai_evaluation.py:539](../../../backend/app/routers/ai_evaluation.py#L539).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-body: TierComparisonRequest, current_user: User=Depends(require_project_access()), db: AsyncSession=Depends(get_db)
+body: TierComparisonRequest, current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):

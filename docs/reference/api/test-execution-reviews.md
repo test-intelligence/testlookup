@@ -10,14 +10,14 @@ Clear Test Case Review
 
 Drop the review row so the case reverts to ``pending_review``.
 
-Source: [backend/app/routers/test_execution_reviews.py:117](../../../backend/app/routers/test_execution_reviews.py#L117).
+Source: [backend/app/routers/test_execution_reviews.py:120](../../../backend/app/routers/test_execution_reviews.py#L120).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-test_case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+test_case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -97,7 +97,7 @@ tab with red error rows on every page load. The frontend service
 treats ``null`` and 404 identically — but 200/null keeps the tab
 clean and removes a UI-test false positive. (Bug 2026-05-19.)
 
-Source: [backend/app/routers/test_execution_reviews.py:61](../../../backend/app/routers/test_execution_reviews.py#L61).
+Source: [backend/app/routers/test_execution_reviews.py:62](../../../backend/app/routers/test_execution_reviews.py#L62).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -194,14 +194,14 @@ Transition the review state. The router resolves the project via
 TestRun, enforces tenant access, then delegates to the service for
 state-machine validation + write.
 
-Source: [backend/app/routers/test_execution_reviews.py:90](../../../backend/app/routers/test_execution_reviews.py#L90).
+Source: [backend/app/routers/test_execution_reviews.py:91](../../../backend/app/routers/test_execution_reviews.py#L91).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-test_case_id: uuid.UUID, payload: TestExecutionReviewUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+test_case_id: uuid.UUID, payload: TestExecutionReviewUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):

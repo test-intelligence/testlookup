@@ -168,7 +168,7 @@ so the table view and CSV export need no transformation. Each point carries
 ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
 ``y: null`` with ``measured: false`` and a reason, never 0.
 
-Source: [backend/app/routers/analytics.py:928](../../../backend/app/routers/analytics.py#L928).
+Source: [backend/app/routers/analytics.py:934](../../../backend/app/routers/analytics.py#L934).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -820,14 +820,14 @@ Used by the Failures page "Classify" CTA when the AI classifier left a
 large chunk of failures uncategorized — lets the user tag them all in
 one shot rather than per-test.
 
-Source: [backend/app/routers/analytics.py:797](../../../backend/app/routers/analytics.py#L797).
+Source: [backend/app/routers/analytics.py:800](../../../backend/app/routers/analytics.py#L800).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: ClassifyUncategorizedRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: ClassifyUncategorizedRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -2647,12 +2647,12 @@ of erroring, so the UI can show a clear actionable message.
 
 Source: [backend/app/routers/analytics.py:712](../../../backend/app/routers/analytics.py#L712).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: NotifyTestOwnerRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: NotifyTestOwnerRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):

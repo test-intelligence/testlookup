@@ -27227,6 +27227,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Generated At",
       "type": "string"
     },
+    "last_run_before_window_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Run Before Window At"
+    },
     "latest_run_at": {
       "anyOf": [
         {

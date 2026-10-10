@@ -441,9 +441,10 @@ Reset Default Qa Lead Password Endpoint
 
 Reset the project's auto-provisioned QA-lead account password.
 
-Any user with access to the project can call this — the account is a
+A QA lead (or admin) of the project can call this — the account is a
 shared, per-project triage inbox, not a personal user, so rotating
-its password is a routine project-admin task.
+its password is a routine project-admin task. It is a QA_LEAD login,
+so nobody below that role may obtain it.
 
 Idempotently provisions the QA-lead user first if it doesn't exist
 yet (covers projects created before this feature shipped). Returns
@@ -452,7 +453,7 @@ not persisted anywhere else.
 
 Source: [backend/app/routers/projects.py:341](../../../backend/app/routers/projects.py#L341).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
