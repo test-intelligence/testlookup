@@ -1429,7 +1429,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.scope.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@v4.4.1
         # Not from Docker Hub: buildkit's own image comes from AWS's mirror and
         # every docker.io base image (python, node, nginx) through
         # mirror.gcr.io, falling back to Docker Hub. On 2026-10-09 all three
@@ -1566,7 +1566,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@v4.4.1
         # Mirrors, not Docker Hub: see the image-scan job's buildx step.
         with:
           driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
