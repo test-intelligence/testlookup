@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { askAboutRun, buildLabel, metaLine, sourceLinks, starterPrompts } from './chatContent'
+import { askAboutRun, askAboutRunHref, buildLabel, metaLine, sourceLinks, starterPrompts } from './chatContent'
 
 describe('chat text helpers', () => {
+  it("links a run's question to the run's own project (homelab, 2026-10-10)", () => {
+    const href = askAboutRunHref({ build_number: 'viz-3043', project_id: '9eb9d19f-4b40' })
+    const url = new URL(href, 'http://x')
+    expect(url.pathname).toBe('/chat')
+    expect(url.searchParams.get('prompt')).toBe(askAboutRun('viz-3043'))
+    expect(url.searchParams.get('project')).toBe('9eb9d19f-4b40')
+    expect(new URL(askAboutRunHref({ build_number: '105' }), 'http://x').searchParams.has('project')).toBe(false)
+  })
+
   it('labels builds the way they are written', () => {
     expect(buildLabel('105')).toBe('build 105')
     expect(buildLabel(105, true)).toBe('Build 105')

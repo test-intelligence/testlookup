@@ -31,6 +31,39 @@ overlay names falls back to the catch-all.
   runs. The tool reads only quarantine records and AI flaky flags, and now says
   that, pointing to run history as the separate measure.
 
+**Bug hunt on the homelab.** Each fix was deployed straight to the homelab and
+re-tested in the browser on Haiku 5.5, with every claim checked against Postgres:
+- **Clusters name their tests.** `get_failure_clusters` never selected
+  `member_test_ids`. Asked "which tests are behind the biggest blocker?", the
+  model could only answer "the clusters don't list their member tests". The
+  tool now names up to 10 members per cluster, taken from this run's cases
+  only, links them as chips, and says when no member belongs to the run.
+- **Compare status line.** It read "Comparing builds build-2029…" for a single
+  build. It now reads "Comparing build-2029 with the build before it…", or "A
+  with B" for two builds.
+- **Lookup count.** The footer counted only the model's own tool calls. Under
+  "How I looked this up · 1 check" for the flaky list, it showed no lookups.
+  `meta.lookups` now counts every lookup, and the footer uses it.
+- **"Ask AI about this run" in the wrong project.** On an E-Commerce run, with
+  Checkout Service active, the question went to Checkout's chat, which
+  answered "I can't find build viz-3043". The link now carries the run's
+  project (`&project=`). The chat switches to it when the reader has that
+  project, and the pre-filled question survives the switch.
+- **A true fact retracted.** In turn 1 the model cited a real analysis dated
+  2026-08-25 (PRODUCT_BUG, 95%), which came from that turn's recall lookup. In
+  turn 2, no longer seeing that lookup, it "corrected" the date away as "not
+  supported". `chat_system` v4 adds one rule: earlier answers were written
+  from lookups that are not shown again, so treat their facts as read, and do
+  not retract one unless current data contradicts it. The prompt was
+  re-attested (`source_review`).
+
+Checked and not bugs:
+- **Compare picked build 103 for "the build before 105".** In the seed data,
+  build 103 started after 104 (by under a millisecond) and is on 105's
+  branch.
+- **Checkout Service shows no recent runs.** Its runs are all older than the
+  panel's five days.
+
 ## Unreleased - Fix: Ask AI answered about the wrong test for "the first one"
 
 Browser validation of the rebuilt Ask AI on the homelab (`mistral-nemo`,

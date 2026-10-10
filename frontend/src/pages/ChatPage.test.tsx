@@ -8,6 +8,8 @@ const state = vi.hoisted(() => ({
   conversation: {} as Record<string, unknown>,
   mode: 'llm' as string,
   project: { id: 'p-1', name: 'Checkout Service' } as { id: string; name: string } | null,
+  projects: [] as Array<{ id: string; name: string }>,
+  setActiveProject: vi.fn(),
 }))
 
 vi.mock('@/hooks/useChat', async () => {
@@ -29,7 +31,7 @@ vi.mock('@/hooks/useAIConfig', () => ({
   isLLMAvailable: (c?: { analysis_mode: string }) => !c || c.analysis_mode === 'llm' || c.analysis_mode === 'auto',
 }))
 vi.mock('@/store/projectStore', () => ({
-  useProjectStore: () => ({ activeProject: state.project }),
+  useProjectStore: () => ({ activeProject: state.project, projects: state.projects, setActiveProject: state.setActiveProject }),
 }))
 vi.mock('@/components/chat/AssistantMessageExtras', () => ({ default: () => null }))
 
@@ -77,6 +79,8 @@ describe('ChatPage', () => {
   beforeEach(() => {
     state.mode = 'llm'
     state.project = { id: 'p-1', name: 'Checkout Service' }
+    state.projects = [{ id: 'p-1', name: 'Checkout Service' }, { id: 'p-2', name: 'E-Commerce Platform' }]
+    state.setActiveProject = vi.fn()
     state.conversation = conversation()
   })
 
@@ -171,6 +175,21 @@ describe('ChatPage', () => {
     renderPage('/chat?prompt=What%20failed%20in%20build%20105%3F')
     expect(screen.getByTestId('chat-input')).toHaveValue('What failed in build 105?')
     expect(state.conversation.send).not.toHaveBeenCalled()
+  })
+
+  it("asks the run's own project when the link names it (homelab, 2026-10-10)", () => {
+    // "Ask AI about this run" on an E-Commerce run, with Checkout Service
+    // active, was answered in Checkout's scope: "I can't find build viz-3043".
+    renderPage('/chat?prompt=What%20failed%20in%20build%20viz-3043%3F&project=p-2')
+    expect(state.setActiveProject).toHaveBeenCalledWith({ id: 'p-2', name: 'E-Commerce Platform' })
+    expect(screen.getByTestId('chat-input')).toHaveValue('What failed in build viz-3043?')
+    expect(state.conversation.send).not.toHaveBeenCalled()
+  })
+
+  it('stays put for a project that is not one of the reader’s, or already active', () => {
+    renderPage('/chat?prompt=Hi&project=p-unknown')
+    renderPage('/chat?prompt=Hi&project=p-1')
+    expect(state.setActiveProject).not.toHaveBeenCalled()
   })
 
   it('explains itself in Rules mode instead of offering a box', () => {

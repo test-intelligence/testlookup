@@ -37,6 +37,17 @@ export function askAboutRun(build: string | number | null | undefined): string {
   return `What failed in ${label}, and why? Are any of these failures new since the previous build?`
 }
 
+/**
+ * The chat link "Ask AI about this run" opens: the question, and the run's
+ * project. The chat answers in the active project's scope, which need not be
+ * the run's: an E-Commerce run asked from Checkout Service got "I can't find
+ * build viz-3043" (homelab, 2026-10-10).
+ */
+export function askAboutRunHref(run: { build_number?: string | number | null; project_id?: string | null }): string {
+  const project = run.project_id ? `&project=${encodeURIComponent(run.project_id)}` : ''
+  return `/chat?prompt=${encodeURIComponent(askAboutRun(run.build_number))}${project}`
+}
+
 export interface SourceLink {
   key: string
   to: string

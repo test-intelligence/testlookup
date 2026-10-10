@@ -37,7 +37,7 @@ import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
-import { askAboutRun } from '@/components/chat/chatContent'
+import { askAboutRunHref } from '@/components/chat/chatContent'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
@@ -326,7 +326,7 @@ export default function RunDetailPage() {
       ? [{
           label: 'Ask AI about this run',
           icon: <MessageSquare className="h-3.5 w-3.5" />,
-          href: `/chat?prompt=${encodeURIComponent(askAboutRun(run.build_number))}`,
+          href: askAboutRunHref(run),
         }]
       : []),
   ]
